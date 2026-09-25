@@ -51,6 +51,23 @@ struct SkillsView: View {
                 .fixedSize()
                 .help(filterHelp)
             }
+            ToolbarItem(placement: .navigation) {
+                Menu {
+                    Picker("Harness", selection: $model.skillsHarness) {
+                        Text("All Harnesses").tag(String?.none)
+                        Divider()
+                        ForEach(model.installations) { harness in
+                            Text(harness.displayName).tag(Optional(harness.id.rawValue))
+                        }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Label(harnessTitle, systemImage: "cpu")
+                        .labelStyle(.titleAndIcon)
+                }
+                .fixedSize()
+                .help(model.skillsHarness == nil ? "Showing skills of every harness" : "Showing only skills \(harnessTitle) sees")
+            }
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .disabled(model.isScanning)
@@ -82,6 +99,9 @@ struct SkillsView: View {
             if !reveal() { selection = selection ?? filtered.first?.id }
         }
         .onChange(of: model.revealSkill) { reveal() }
+        .onChange(of: model.skillsHarness) {
+            if selection.flatMap({ id in filtered.first { $0.id == id } }) == nil { selection = filtered.first?.id }
+        }
         .onChange(of: model.skillsFilter) {
             if selection.flatMap({ id in filtered.first { $0.id == id } }) == nil { selection = filtered.first?.id }
         }
@@ -167,7 +187,17 @@ struct SkillsView: View {
     }
 
     /// Skills for the chosen project filter, before the search text.
-    private var scoped: [Skill] { model.skills.filter { model.skillsFilter.includes($0.scope) } }
+    private var scoped: [Skill] {
+        model.skills.filter { skill in
+            model.skillsFilter.includes(skill.scope)
+                && (model.skillsHarness.map { id in skill.visibleTo.contains { $0.rawValue == id } } ?? true)
+        }
+    }
+
+    private var harnessTitle: String {
+        guard let id = model.skillsHarness else { return "All Harnesses" }
+        return model.installations.first { $0.id.rawValue == id }?.displayName ?? id
+    }
 
     private var filtered: [Skill] {
         let q = query.trimmingCharacters(in: .whitespaces)

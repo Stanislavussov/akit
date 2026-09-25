@@ -20,6 +20,8 @@ final class AppModel {
     var revealSkill: Skill.ID?
     /// Which skills the Skills screen lists: all, only global ones, or what one project sees.
     var skillsFilter: SkillsFilter = .initial
+    /// Skills screen: only skills this harness sees (`HarnessID.rawValue`); nil = every harness.
+    var skillsHarness: String? = DebugSnapshot.options?.harness
 
     /// Opens the Skills screen on the skill in this folder.
     func showSkill(inFolder folder: URL) {
