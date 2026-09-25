@@ -169,6 +169,9 @@ private struct RemoteSkillDetailView: View {
     @State private var isInstalling = false
     @State private var confirmReplace = false
     @State private var installError: String?
+    @State private var errorTitle = "Couldn't install the skill"
+    /// Installed copy waiting for "Move to Trash" confirmation.
+    @State private var pendingRemove: URL?
 
     var body: some View {
         ScrollView {
@@ -201,7 +204,15 @@ private struct RemoteSkillDetailView: View {
             Text(conflicts.map(\.tildePath).joined(separator: "\n")
                  + "\n\nThe existing folder goes to the Trash; you can put it back from there.")
         }
-        .alert("Couldn't install the skill", isPresented: Binding(get: { installError != nil }, set: { if !$0 { installError = nil } })) {
+        .confirmationDialog("Remove “\(pendingRemove?.lastPathComponent ?? "")”?",
+                            isPresented: Binding(get: { pendingRemove != nil }, set: { if !$0 { pendingRemove = nil } }),
+                            titleVisibility: .visible, presenting: pendingRemove) { folder in
+            Button("Move to Trash", role: .destructive) { remove(folder) }
+            Button("Cancel", role: .cancel) {}
+        } message: { folder in
+            Text("\(folder.tildePath) will be moved to the Trash. You can put it back from there.")
+        }
+        .alert(errorTitle, isPresented: Binding(get: { installError != nil }, set: { if !$0 { installError = nil } })) {
             Button("OK") {}
         } message: {
             Text(installError ?? "")
@@ -371,6 +382,9 @@ private struct RemoteSkillDetailView: View {
                     }
                     .labelStyle(.iconOnly)
                     .help("Show in Finder")
+                    Button("Move to Trash…", systemImage: "trash", role: .destructive) { pendingRemove = folder }
+                        .labelStyle(.iconOnly)
+                        .help("Remove this skill: move it to the Trash")
                 }
                 .controlSize(.small)
             }
@@ -535,6 +549,21 @@ private struct RemoteSkillDetailView: View {
         return skill.remote.skillId
     }
 
+    private func remove(_ folder: URL) {
+        Task {
+            do {
+                guard let skill = model.skill(inFolder: folder) else {
+                    throw NSError(domain: "AKit", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                        "\(folder.tildePath) isn't in the skills list. Refresh (⌘R) and try again."])
+                }
+                try await model.delete(skill)
+            } catch {
+                errorTitle = "Couldn't remove the skill"
+                installError = error.localizedDescription
+            }
+        }
+    }
+
     private func install(replace: Bool) {
         guard let fetched else { return }
         let request = InstallRequest(skill: fetched, name: name, mode: mode, editedText: editedText)
@@ -545,6 +574,7 @@ private struct RemoteSkillDetailView: View {
             do {
                 _ = try await model.install(request, into: targets, replace: replace)
             } catch {
+                errorTitle = "Couldn't install the skill"
                 installError = error.localizedDescription
             }
         }

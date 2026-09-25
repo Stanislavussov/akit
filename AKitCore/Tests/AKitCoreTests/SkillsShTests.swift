@@ -331,6 +331,16 @@ struct SkillsShTests {
         }
     }
 
+    @Test func removedSkillIsForgottenInTheLock() throws {
+        try write(repo.appending(path: "tdd/SKILL.md"), skill("tdd"))
+        let found = try fetched("tdd")
+        let request = InstallRequest(skill: found, name: "tdd", mode: .published)
+        let folder = try #require(try SkillInstaller.install(request, into: claudeGlobal(), replace: false, in: env).first)
+        #expect(try InstalledSkillLock.load(in: env).entries.count == 1)
+        InstalledSkillLock.forget(folder: folder, in: env)
+        #expect(try InstalledSkillLock.load(in: env).entries.isEmpty)
+    }
+
     // MARK: - SKILL.md name
 
     @Test func settingNameReplacesOrAddsIt() {

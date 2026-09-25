@@ -21,8 +21,7 @@ final class AppModel {
 
     /// Opens the Skills screen on the skill in this folder.
     func showSkill(inFolder folder: URL) {
-        let real = folder.resolvingSymlinksInPath().path
-        guard let skill = skills.first(where: { $0.realFolder.path == real }) else { return }
+        guard let skill = skill(inFolder: folder) else { return }
         revealSkill = skill.id
         section = .skills
     }
@@ -67,8 +66,19 @@ final class AppModel {
 
     /// Moves a skill to the Trash, then rescans.
     func delete(_ skill: Skill) async throws {
-        _ = try await Task.detached { try SkillRemover.moveToTrash(skill) }.value
+        _ = try await Task.detached {
+            // Resolve before trashing: afterwards the path no longer exists.
+            let folder = skill.realFolder.resolvingSymlinksInPath()
+            try SkillRemover.moveToTrash(skill)
+            InstalledSkillLock.forget(folder: folder, in: .current)
+        }.value
         await refresh()
+    }
+
+    /// The scanned skill that lives in this folder, if any.
+    func skill(inFolder folder: URL) -> Skill? {
+        let real = folder.resolvingSymlinksInPath().path
+        return skills.first { $0.realFolder.path == real }
     }
 
     /// Built-in and custom adapters, for planning installs.

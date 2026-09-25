@@ -69,6 +69,14 @@ public struct InstalledSkillLock: Codable, Sendable, Equatable {
         try encoder.encode(lock).write(to: url, options: .atomic)
     }
 
+    /// Drops the record of a skill folder that was removed. A missing or broken lock is left alone.
+    public static func forget(folder: URL, in env: HarnessEnvironment) {
+        let path = folder.resolvingSymlinksInPath().path
+        guard var lock = try? load(in: env), lock.entries.contains(where: { $0.path == path }) else { return }
+        lock.entries.removeAll { $0.path == path }
+        try? save(lock, in: env)
+    }
+
     /// The record for a skill folder (symlinks resolved), nil if AKit didn't install it.
     public func entry(forSkillFolder folder: URL) -> Entry? {
         let path = folder.resolvingSymlinksInPath().path
