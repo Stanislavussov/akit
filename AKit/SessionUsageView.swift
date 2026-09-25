@@ -17,6 +17,8 @@ enum UsageText {
     static func short(_ value: Int) -> String { value.formatted(.number.notation(.compactName)) }
     static func full(_ value: Int) -> String { value.formatted(.number) }
     static func money(_ value: Double) -> String { value.formatted(.currency(code: "USD").precision(.fractionLength(2...4))) }
+    /// Whole cents, for totals.
+    static func dollars(_ value: Double) -> String { value.formatted(.currency(code: "USD").precision(.fractionLength(2))) }
 
     static func duration(_ seconds: TimeInterval) -> String {
         Duration.seconds(seconds.rounded()).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))

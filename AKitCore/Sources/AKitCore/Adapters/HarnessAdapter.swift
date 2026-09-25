@@ -25,6 +25,10 @@ public protocol HarnessAdapter: Sendable {
     /// Messages of one saved session from `sessions(in:)`.
     func transcript(of session: SessionSummary) throws -> SessionTranscript
 
+    /// Token usage of every model response recorded at or after `since`, from all saved
+    /// sessions. Empty if the harness records none or AKit can't read it.
+    func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord]
+
     /// The system prompt the harness saved inside this session, if it saves one.
     func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot?
 
@@ -48,6 +52,7 @@ extension HarnessAdapter {
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] { [] }
     public func sessions(in env: HarnessEnvironment) -> [SessionSummary] { [] }
     public func transcript(of session: SessionSummary) throws -> SessionTranscript { SessionTranscript() }
+    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] { [] }
     public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? { nil }
     public var systemPromptAccess: SystemPromptAccess { .unavailable }
     public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? { nil }

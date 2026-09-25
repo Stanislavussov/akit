@@ -113,6 +113,10 @@ public struct PiAdapter: HarnessAdapter {
         try PiSessions.transcript(of: session.file)
     }
 
+    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
+        PiSessions.usage(folder: PiSessions.folder(configRoot: configRoot(in: env), in: env), since: since)
+    }
+
     public var systemPromptAccess: SystemPromptAccess { .captured }
 
     /// See PiPromptProbe. nil when the `pi` command isn't found.

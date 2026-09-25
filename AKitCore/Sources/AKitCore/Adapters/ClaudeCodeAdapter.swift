@@ -80,6 +80,10 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
         try ClaudeSessions.transcript(of: session.file)
     }
 
+    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
+        ClaudeSessions.usage(configRoot: configRoot(in: env), since: since)
+    }
+
     public var systemPromptAccess: SystemPromptAccess { .recorded }
 
     public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? {

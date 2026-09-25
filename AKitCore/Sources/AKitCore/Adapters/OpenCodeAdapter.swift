@@ -50,6 +50,11 @@ public struct OpenCodeAdapter: HarnessAdapter {
                                    configRoot: root, locations: locations)
     }
 
+    /// Token counts and cost from OpenCode's session database.
+    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
+        OpenCodeUsage.usage(database: OpenCodeUsage.database(in: env), since: since)
+    }
+
     /// The `mcp` key of `opencode.json(c)`: global, in OPENCODE_CONFIG_DIR, and in the project root.
     public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {
         func config(in dir: URL) -> URL {

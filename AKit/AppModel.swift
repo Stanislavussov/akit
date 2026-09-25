@@ -180,6 +180,17 @@ final class AppModel {
         return try await Self.background { try adapter.transcript(of: session) }
     }
 
+    // MARK: Usage
+
+    /// Token usage recorded by the installed harnesses from `since` on, read in the background.
+    func usage(since: Date) async throws -> [UsageRecord] {
+        let installations = installations
+        let adapters = adapters
+        return try await Self.background {
+            UsageScanner.scan(installations: installations, adapters: adapters, since: since, in: .current)
+        }
+    }
+
     // MARK: System prompt
 
     /// Prompts caught from harnesses in this run of AKit, by harness and project.

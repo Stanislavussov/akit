@@ -7,7 +7,8 @@ import SwiftUI
 ///   AKit.app/Contents/MacOS/AKit --snapshot /tmp/shot.png [--section overview] [--delay 2] [--query tdd]
 ///     [--harness pi] [--capture] [--tab prompt]   (Sessions: harness filter, session tab)
 ///
-/// `--query` fills the search field of the section (skills.sh selects the first result);
+/// `--query` fills the search field of the section (skills.sh selects the first result;
+/// Usage takes it as the period: week, month, quarter, year, all);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
 /// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet.
 ///
