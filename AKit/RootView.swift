@@ -26,17 +26,17 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
-    @State private var selection: SidebarSection? = DebugSnapshot.options?.section ?? .overview
 
     var body: some View {
+        @Bindable var model = model
         NavigationSplitView {
-            List(SidebarSection.allCases, selection: $selection) { section in
+            List(SidebarSection.allCases, selection: $model.section) { section in
                 Label(section.title, systemImage: section.icon)
                     .badge(section == .skills ? model.skills.count : 0)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200)
         } detail: {
-            switch selection ?? .overview {
+            switch model.section ?? .overview {
             case .overview: OverviewView()
             case .skills: SkillsView()
             case .skillsSh: SkillsShView()

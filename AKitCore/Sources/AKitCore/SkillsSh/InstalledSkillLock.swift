@@ -33,6 +33,8 @@ public struct InstalledSkillLock: Codable, Sendable, Equatable {
     public var version = 1
     public var entries: [Entry] = []
 
+    public init() {}
+
     public enum Failure: LocalizedError {
         case unreadable(String)
 
@@ -65,6 +67,12 @@ public struct InstalledSkillLock: Codable, Sendable, Equatable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         try encoder.encode(lock).write(to: url, options: .atomic)
+    }
+
+    /// The record for a skill folder (symlinks resolved), nil if AKit didn't install it.
+    public func entry(forSkillFolder folder: URL) -> Entry? {
+        let path = folder.resolvingSymlinksInPath().path
+        return entries.last { $0.path == path }
     }
 
     /// Where a skill folder came from: `skills.sh · mattpocock/skills`, or for your own copy

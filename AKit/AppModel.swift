@@ -11,6 +11,19 @@ final class AppModel {
     private(set) var skills: [Skill] = []
     /// Project folders the harnesses know about plus those found in `projectRoots`.
     private(set) var projects: [URL] = []
+
+    /// Sidebar section shown in the window.
+    var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
+    /// A skill the Skills screen should select when it appears (set by "Show in Skills").
+    var revealSkill: Skill.ID?
+
+    /// Opens the Skills screen on the skill in this folder.
+    func showSkill(inFolder folder: URL) {
+        let real = folder.resolvingSymlinksInPath().path
+        guard let skill = skills.first(where: { $0.realFolder.path == real }) else { return }
+        revealSkill = skill.id
+        section = .skills
+    }
     private(set) var isScanning = false
     private(set) var lastScan: Date?
 

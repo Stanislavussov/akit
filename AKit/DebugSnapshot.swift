@@ -7,7 +7,8 @@ import SwiftUI
 ///   AKit.app/Contents/MacOS/AKit --snapshot /tmp/shot.png [--section overview] [--delay 2] [--query tdd]
 ///
 /// `--query` fills the search field of the section (skills.sh selects the first result);
-/// `--own-copy` opens the skills.sh install form in "My own copy" mode.
+/// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
+/// picks that project as the install place.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens.
 enum DebugSnapshot {
@@ -17,6 +18,7 @@ enum DebugSnapshot {
         var delay: Double
         var query: String?
         var ownCopy: Bool
+        var project: String?
     }
 
     static let options: Options? = {
@@ -31,7 +33,8 @@ enum DebugSnapshot {
             section: value("--section").flatMap(SidebarSection.init(rawValue:)),
             delay: value("--delay").flatMap(Double.init) ?? 2,
             query: value("--query"),
-            ownCopy: args.contains("--own-copy")
+            ownCopy: args.contains("--own-copy"),
+            project: value("--project")
         )
     }()
 

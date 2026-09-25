@@ -50,7 +50,10 @@ struct SkillsView: View {
         } message: {
             Text(deleteError ?? "")
         }
-        .onAppear { selection = selection ?? filtered.first?.id }
+        .onAppear {
+            if !reveal() { selection = selection ?? filtered.first?.id }
+        }
+        .onChange(of: model.revealSkill) { reveal() }
         .onChange(of: model.skills) { if selection.flatMap({ id in model.skills.first { $0.id == id } }) == nil { selection = filtered.first?.id } }
     }
 
@@ -84,6 +87,16 @@ struct SkillsView: View {
                 ContentUnavailableView("No skills found", systemImage: "book.closed")
             }
         }
+    }
+
+    /// Selects the skill another screen asked to show. Returns whether there was one.
+    @discardableResult
+    private func reveal() -> Bool {
+        guard let id = model.revealSkill else { return false }
+        model.revealSkill = nil
+        query = ""
+        selection = id
+        return true
     }
 
     private func deleteMessage(for skill: Skill) -> String {
