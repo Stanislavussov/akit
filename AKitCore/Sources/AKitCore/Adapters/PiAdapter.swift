@@ -60,6 +60,14 @@ public struct PiAdapter: HarnessAdapter {
         return roots
     }
 
+    /// The shared `.agents/skills` (Codex and OpenCode read it too), not `~/.pi/agent/skills`.
+    public func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL? {
+        switch scope {
+        case .global: env.homeDirectory.appending(path: ".agents/skills")
+        case .project(let project): project.appending(path: ".agents/skills")
+        }
+    }
+
     /// The folder itself and its parents up to the git root. Without a git root Pi
     /// walks to `/`; we stop at home, whose `.agents/skills` is already the global root.
     static func ancestorsToGitRoot(of start: URL, home: URL) -> [URL] {

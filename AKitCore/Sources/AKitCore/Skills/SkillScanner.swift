@@ -11,13 +11,7 @@ public enum SkillScanner {
                             in env: HarnessEnvironment) -> [Skill] {
         let installed = Set(installations.map(\.id))
         let active = adapters.filter { installed.contains($0.id) }
-
-        // The home folder is not a project: its skill folders are the global ones.
-        let home = env.homeDirectory.standardizedFileURL.path
-        var seenProjects: Set<String> = [home]
-        let projects = (active.flatMap { $0.knownProjects(in: env) } + extraProjects)
-            .filter { SkillScanner.isDirectory($0) }
-            .filter { seenProjects.insert($0.standardizedFileURL.path).inserted }
+        let projects = projects(installations: installations, extraProjects: extraProjects, adapters: adapters, in: env)
 
         let roots = active.flatMap { $0.skillRoots(in: env, projects: projects) }
             .sorted { $0.scope.sortRank < $1.scope.sortRank } // first root wins the scope
@@ -25,6 +19,18 @@ public enum SkillScanner {
         let syncedFolders = roots.compactMap(\.syncedFolder).map { $0.resolvingSymlinksInPath().path + "/" }
         return merge(roots.flatMap { found(in: $0) }, lock: SkillLock.read(in: env), home: env.homeDirectory,
                      syncedFolders: syncedFolders)
+    }
+
+    /// Project folders the installed harnesses know about plus `extraProjects`, existing ones, no duplicates.
+    /// The home folder is not a project: its skill folders are the global ones.
+    public static func projects(installations: [HarnessInstallation], extraProjects: [URL] = [],
+                                adapters: [any HarnessAdapter] = HarnessCatalog.adapters,
+                                in env: HarnessEnvironment) -> [URL] {
+        let installed = Set(installations.map(\.id))
+        var seen: Set<String> = [env.homeDirectory.standardizedFileURL.path]
+        return (adapters.filter { installed.contains($0.id) }.flatMap { $0.knownProjects(in: env) } + extraProjects)
+            .filter { SkillScanner.isDirectory($0) }
+            .filter { seen.insert($0.standardizedFileURL.path).inserted }
     }
 
     // MARK: - Walking
@@ -216,10 +222,12 @@ public enum PiNameRule {
     }
 }
 
-/// `~/.agents/.skill-lock.json`, written by the `npx skills` tool: where each shared skill came from.
+/// Where installed skills came from: `~/.agents/.skill-lock.json` (written by `npx skills`)
+/// plus AKit's own `~/.akit/skills-lock.json`.
 public struct SkillLock: Sendable {
     let skillsFolder: URL
     let sources: [String: String]
+    var installed = InstalledSkillLock()
 
     static func read(in env: HarnessEnvironment) -> SkillLock {
         let folder = env.homeDirectory.appending(path: ".agents/skills").resolvingSymlinksInPath()
@@ -232,10 +240,13 @@ public struct SkillLock: Sendable {
                 if let source = (entry as? [String: Any])?["source"] as? String { sources[name] = source }
             }
         }
-        return SkillLock(skillsFolder: folder, sources: sources)
+        var lock = SkillLock(skillsFolder: folder, sources: sources)
+        lock.installed = (try? InstalledSkillLock.load(in: env)) ?? InstalledSkillLock()
+        return lock
     }
 
     func source(forSkillFolder folder: URL) -> String? {
+        if let origin = installed.origin(forSkillFolder: folder) { return origin }
         guard folder.deletingLastPathComponent().path == skillsFolder.path else { return nil }
         return sources[folder.lastPathComponent]
     }

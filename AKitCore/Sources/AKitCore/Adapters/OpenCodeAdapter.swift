@@ -67,4 +67,12 @@ public struct OpenCodeAdapter: HarnessAdapter {
         }
         return roots
     }
+
+    /// The shared `.agents/skills`, so one copy also serves Pi and Codex.
+    public func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL? {
+        switch scope {
+        case .global: env.homeDirectory.appending(path: ".agents/skills")
+        case .project(let project): project.appending(path: ".agents/skills")
+        }
+    }
 }
