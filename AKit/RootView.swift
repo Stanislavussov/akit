@@ -5,6 +5,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case overview
     case skills
     case skillsSh
+    case sessions
     var id: Self { self }
 
     var title: String {
@@ -12,6 +13,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .skills: "Skills"
         case .skillsSh: "skills.sh"
+        case .sessions: "Sessions"
         }
     }
 
@@ -20,12 +22,14 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .overview: "square.grid.2x2"
         case .skills: "book.closed"
         case .skillsSh: "sparkle.magnifyingglass"
+        case .sessions: "bubble.left.and.bubble.right"
         }
     }
 }
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(SelfRebuild.self) private var rebuild
 
     var body: some View {
         @Bindable var model = model
@@ -35,12 +39,37 @@ struct RootView: View {
                     .badge(section == .skills ? model.skills.count : 0)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200)
+            .safeAreaInset(edge: .bottom) { BuildBadge(info: .current) }
         } detail: {
             switch model.section ?? .overview {
             case .overview: OverviewView()
             case .skills: SkillsView()
             case .skillsSh: SkillsShView()
+            case .sessions: SessionsView()
             }
         }
+        .overlay(alignment: .bottom) {
+            if rebuild.state == .building {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Rebuilding AKit… It restarts when the build is done.")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.bottom, 16)
+            }
+        }
+        .alert("Couldn't rebuild AKit", isPresented: Binding(get: { rebuildError != nil },
+                                                             set: { if !$0 { rebuild.dismissError() } })) {
+            Button("OK") { rebuild.dismissError() }
+        } message: {
+            Text(rebuildError ?? "")
+        }
+    }
+
+    private var rebuildError: String? {
+        if case .failed(let message) = rebuild.state { return message }
+        return nil
     }
 }

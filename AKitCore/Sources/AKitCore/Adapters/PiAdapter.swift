@@ -60,6 +60,22 @@ public struct PiAdapter: HarnessAdapter {
         return roots
     }
 
+    public func sessions(in env: HarnessEnvironment) -> [SessionSummary] {
+        PiSessions.list(folder: PiSessions.folder(configRoot: configRoot(in: env), in: env))
+    }
+
+    public func transcript(of session: SessionSummary) throws -> SessionTranscript {
+        try PiSessions.transcript(of: session.file)
+    }
+
+    public var systemPromptAccess: SystemPromptAccess { .captured }
+
+    /// See PiPromptProbe. nil when the `pi` command isn't found.
+    public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? {
+        guard let executable = env.findExecutable("pi") else { return nil }
+        return try await PiPromptProbe.capture(executable: executable, project: project, env: env)
+    }
+
     /// The shared `.agents/skills` (Codex and OpenCode read it too), not `~/.pi/agent/skills`.
     public func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL? {
         switch scope {

@@ -5,6 +5,7 @@ import SwiftUI
 /// No Screen Recording permission needed — the app only draws its own window.
 ///
 ///   AKit.app/Contents/MacOS/AKit --snapshot /tmp/shot.png [--section overview] [--delay 2] [--query tdd]
+///     [--harness pi] [--capture] [--tab prompt]   (Sessions: harness filter, session tab)
 ///
 /// `--query` fills the search field of the section (skills.sh selects the first result);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
@@ -19,6 +20,12 @@ enum DebugSnapshot {
         var query: String?
         var ownCopy: Bool
         var project: String?
+        /// Sessions screen: show only this harness (HarnessID raw value).
+        var harness: String?
+        /// Session System Prompt tab: capture the prompt right away (Pi).
+        var capture: Bool
+        /// Session detail tab (SessionDetailTab raw value).
+        var tab: String?
     }
 
     static let options: Options? = {
@@ -34,7 +41,10 @@ enum DebugSnapshot {
             delay: value("--delay").flatMap(Double.init) ?? 2,
             query: value("--query"),
             ownCopy: args.contains("--own-copy"),
-            project: value("--project")
+            project: value("--project"),
+            harness: value("--harness"),
+            capture: args.contains("--capture"),
+            tab: value("--tab")
         )
     }()
 

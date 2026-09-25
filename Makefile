@@ -14,6 +14,11 @@ build: generate   ## build the app from the terminal
 run: build   ## build and launch
 	open $(DERIVED)/Build/Products/Debug/AKit.app
 
+restart: build   ## quit this checkout's AKit, rebuild and start it again (in the app: ⌘⇧R)
+	pkill -f "$(CURDIR)/$(DERIVED)/Build/Products/Debug/AKit.app/" || true
+	sleep 1
+	open $(DERIVED)/Build/Products/Debug/AKit.app
+
 test:   ## core tests (no UI)
 	cd AKitCore && swift test
 
@@ -26,4 +31,4 @@ snapshot: build   ## window snapshot without screen recording: make snapshot OUT
 icon:   ## redraw the app icon
 	swift tools/make-icon.swift
 
-.PHONY: generate open build run test snapshot icon
+.PHONY: generate open build run restart test snapshot icon

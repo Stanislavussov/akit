@@ -9,6 +9,8 @@ final class AppModel {
     private(set) var installations: [HarnessInstallation] = []
     private(set) var versions: [HarnessID: String] = [:]
     private(set) var skills: [Skill] = []
+    /// Saved conversations of all installed harnesses, newest first.
+    private(set) var sessions: [SessionSummary] = []
     /// Project folders the harnesses know about plus those found in `projectRoots`.
     private(set) var projects: [URL] = []
 
@@ -87,6 +89,56 @@ final class AppModel {
         return folders
     }
 
+    /// Messages of one session, read in the background.
+    func transcript(of session: SessionSummary) async throws -> SessionTranscript {
+        guard let adapter = adapter(for: session.harness) else { return SessionTranscript() }
+        return try await Self.background { try adapter.transcript(of: session) }
+    }
+
+    // MARK: System prompt
+
+    /// Prompts caught from harnesses in this run of AKit, by harness and project.
+    private(set) var capturedPrompts: [String: PromptSnapshot] = [:]
+
+    func promptAccess(_ harness: HarnessID) -> SystemPromptAccess {
+        adapter(for: harness)?.systemPromptAccess ?? .unavailable
+    }
+
+    /// The system prompt saved in this session, if the harness saves it.
+    func recordedPrompt(in session: SessionSummary) async throws -> PromptSnapshot? {
+        guard let adapter = adapter(for: session.harness) else { return nil }
+        return try await Self.background { try adapter.recordedPrompt(in: session) }
+    }
+
+    func capturedPrompt(harness: HarnessID, project: URL) -> PromptSnapshot? {
+        capturedPrompts[Self.promptKey(harness, project)]
+    }
+
+    /// Asks the harness for its current system prompt in `project` (see PiPromptProbe).
+    func capturePrompt(harness: HarnessID, project: URL) async throws {
+        guard let adapter = adapter(for: harness) else { return }
+        guard let prompt = try await adapter.capturePrompt(in: project, env: .current) else {
+            throw NSError(domain: "AKit", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                "\(adapter.displayName) couldn't be started: its command was not found."])
+        }
+        capturedPrompts[Self.promptKey(harness, project)] = prompt
+    }
+
+    private static func promptKey(_ harness: HarnessID, _ project: URL) -> String {
+        "\(harness.rawValue)|\(project.standardizedFileURL.path)"
+    }
+
+    /// Runs file reading off the main actor. Cancelling the caller (the view's task) cancels
+    /// the work too, so moving through large sessions quickly doesn't pile up parsing.
+    private static func background<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        let task = Task.detached(priority: .userInitiated) { try work() }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    private func adapter(for harness: HarnessID) -> (any HarnessAdapter)? {
+        adapters.first { $0.id == harness }
+    }
+
     /// Adds or replaces (same id) a custom harness. The file is re-read right before
     /// saving, so hand edits made meanwhile are kept, and a broken file is never overwritten.
     func saveCustomHarness(_ harness: CustomHarness) throws {
@@ -126,15 +178,18 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, projects) = await Task.detached {
+        let (found, skills, projects, sessions) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
-            let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
-            return (found, SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env), projects)
+            async let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
+            async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env)
+            async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
+            return (found, await skills, await projects, await sessions)
         }.value
         installations = found
         self.skills = skills
         self.projects = projects
+        self.sessions = sessions
         lastScan = .now
 
         var newVersions: [HarnessID: String] = [:]
