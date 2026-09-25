@@ -1,6 +1,6 @@
 # Layers: per-project harness setup
 
-Status: design, agreed 2026-09-25. Not implemented yet.
+Status: design, agreed 2026-09-25. Roadmap step 2 (read-only brain) in progress.
 
 ## Goal
 
@@ -18,8 +18,10 @@ Flow:
 
 ## Terms
 
-- **Brain repo**: your own git repo with the skill library, layers and project
-  metadata. Cloned to `~/.akit/registry`. No harness reads it.
+- **Brain repo**: your own private git repo with the skill library, layers and
+  project metadata. Lives in `~/.akit/registry` (changeable in Settings). No
+  harness reads it. It is private because `projects/` holds project URLs and
+  answers; a public skills marketplace, if any, is a separate repo.
 - **Layer**: a composable piece of setup (`base`, `backend-node`, `docker`,
   `take-home`, …). Brings skills, questions (fields) and file templates.
 - **Answers**: chosen layers and field values for one project.
@@ -82,7 +84,10 @@ files:
     when: reviewer_readme == true
 ```
 
-`choice` and `multi` fields add `options: [...]`.
+`choice` and `multi` fields add `options: [...]`. A skill may be a bare name
+(`skills: [tdd]`, mode `auto`); `to` defaults to the template path. Field ids use
+letters, digits, `_` and `-`. An empty `layer.yaml` is a valid empty layer.
+AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 
 ### Templates
 
@@ -155,8 +160,8 @@ as `${VAR}` references; the real values come from Keychain.
 
 ## Roadmap
 
-1. Safe write: backup + diff viewer + Apply.
-2. Brain repo + layers read-only in AKit; move the global skill library from
+1. Safe write: backup + diff viewer + Apply. (Done for MCP; to be shared with render.)
+2. Brain repo + layers read-only in AKit (done: Brain screen, checks, Create Brain Repo); move the global skill library from
    `~/.agents/skills` into the brain; core layer with `manual` skills.
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end.

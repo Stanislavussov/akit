@@ -8,6 +8,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case mcp
     case sessions
     case usage
+    case brain
     var id: Self { self }
 
     var title: String {
@@ -18,6 +19,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .mcp: "MCP Servers"
         case .sessions: "Sessions"
         case .usage: "Usage"
+        case .brain: "Brain"
         }
     }
 
@@ -29,6 +31,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .mcp: "server.rack"
         case .sessions: "bubble.left.and.bubble.right"
         case .usage: "chart.bar.xaxis"
+        case .brain: "brain"
         }
     }
 }
@@ -54,6 +57,7 @@ struct RootView: View {
             case .mcp: MCPView()
             case .sessions: SessionsView()
             case .usage: UsageView()
+            case .brain: BrainView()
             }
         }
         .overlay(alignment: .bottom) {
