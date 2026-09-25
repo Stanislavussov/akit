@@ -1,14 +1,20 @@
 import AKitCore
 import SwiftUI
 
-/// Sheet for adding an MCP server: fill the form or paste JSON, pick where it goes,
-/// check the diff, Apply. Secret values go to the Keychain, never into the file.
-struct AddMCPServerView: View {
+/// Sheet for adding, editing or deleting an MCP server: fill the form or paste JSON, pick
+/// where it goes, check the diff, Apply. Secret values go to the Keychain, never into the file.
+struct MCPServerEditor: View {
+    enum Mode {
+        /// New server; the project preselects where it goes (the MCP screen's filter).
+        case add(project: URL?)
+        case edit(MCPServer)
+        case remove(MCPServer)
+    }
+
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
-    /// Project to preselect (the MCP screen's filter).
-    let project: URL?
+    let mode: Mode
 
     private enum Input: String, CaseIterable { case form = "Form", json = "JSON" }
 
@@ -25,6 +31,8 @@ struct AddMCPServerView: View {
     @State private var error: String?
     @State private var isApplying = false
     @State private var done: MCPWriter.Outcome?
+    /// Editing: the file text the form was filled from.
+    @State private var openedText: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +40,16 @@ struct AddMCPServerView: View {
                 finished(done)
             } else if let plan {
                 preview(plan)
+            } else if case .remove = mode {
+                VStack(spacing: 12) {
+                    if let error {
+                        Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    } else {
+                        ProgressView()
+                    }
+                    Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 editor
             }
@@ -47,14 +65,16 @@ struct AddMCPServerView: View {
     private var editor: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Add MCP Server").font(.title2.bold())
+                Text(editing == nil ? "Add MCP Server" : "Edit “\(editing!.name)”").font(.title2.bold())
                 Spacer()
-                Picker("Input", selection: $input) {
-                    ForEach(Input.allCases, id: \.self) { Text($0.rawValue) }
+                if editing == nil {
+                    Picker("Input", selection: $input) {
+                        ForEach(Input.allCases, id: \.self) { Text($0.rawValue) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 160)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 160)
             }
             .padding([.horizontal, .top], 20)
 
@@ -90,6 +110,7 @@ struct AddMCPServerView: View {
                 values("Headers", $draft.headers, keyPrompt: "Authorization")
             }
             Section("Where") {
+                if editing == nil {
                 Picker("Add to", selection: $targetID) {
                     ForEach(targetGroups, id: \.scope) { group in
                         Section(group.title) {
@@ -99,6 +120,9 @@ struct AddMCPServerView: View {
                         }
                     }
                 }
+                } else if let target = selectedTarget {
+                    LabeledContent("File", value: targetTitle(target))
+                }
                 if let target = selectedTarget {
                     Text(target.file.tildePath + (target.claudeScope.map { " · written by claude mcp add-json --scope \($0)" } ?? ""))
                         .font(.caption.monospaced())
@@ -106,15 +130,19 @@ struct AddMCPServerView: View {
                     if let reason = target.blockedReason {
                         Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
+                    if let reason = target.inactiveReason {
+                        Label("Not loaded now: \(reason)", systemImage: "info.circle").foregroundStyle(.secondary)
+                    }
                 }
                 if hasSecrets {
                     Picker("Secrets", selection: $secretMode) {
                         Text("Read from the Keychain by the config (this Mac)").tag(MCPSecretMode.keychainLookup)
                         Text("${VAR} reference, exported by ~/.akit/env.sh").tag(MCPSecretMode.environment)
                     }
-                    Text(secretMode == .keychainLookup
+                    Text((secretMode == .keychainLookup
                          ? "Works however the harness is started. The file names a Keychain item that exists only on this Mac."
                          : "Keeps the file portable for a team. The harness sees the value only when started from a shell that sources ~/.akit/env.sh.")
+                         + " Keeps secrets out of files and git; programs running as you can still read them with /usr/bin/security.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -130,9 +158,13 @@ struct AddMCPServerView: View {
                 HStack {
                     TextField("Name", text: $value.key, prompt: Text(keyPrompt))
                         .font(.body.monospaced())
-                        .frame(width: 200)
+                        .frame(minWidth: 160, idealWidth: 270, maxWidth: 300)
                     Group {
-                        if value.isSecret {
+                        if let account = value.keychainAccount {
+                            SecureField("Value", text: $value.value, prompt: Text("Keychain: \(account) (unchanged)"))
+                        } else if value.hasHiddenValue {
+                            SecureField("Value", text: $value.value, prompt: Text("unchanged (hidden)"))
+                        } else if value.isSecret {
                             SecureField("Value", text: $value.value, prompt: Text("secret"))
                         } else {
                             TextField("Value", text: $value.value, prompt: Text("value or ${VAR}"))
@@ -141,7 +173,9 @@ struct AddMCPServerView: View {
                     .font(.body.monospaced())
                     Toggle("Secret", isOn: $value.isSecret)
                         .toggleStyle(.checkbox)
-                        .help("Store the value in the Keychain instead of the file")
+                        .help(value.hasHiddenValue && value.value.isEmpty
+                              ? "Move the value written in the file into the Keychain"
+                              : "Store the value in the Keychain instead of the file")
                     Button("Remove", systemImage: "minus.circle") {
                         list.wrappedValue.removeAll { $0.id == value.id }
                     }
@@ -208,13 +242,16 @@ struct AddMCPServerView: View {
 
     private func preview(_ plan: MCPWritePlan) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(plan.replaces ? "Replace “\(plan.name)”" : "Add “\(plan.name)”").font(.title2.bold())
+            Text(planTitle(plan)).font(.title2.bold())
             Text("\(targetTitle(plan.target)) · \(plan.target.file.tildePath)")
                 .font(.callout.monospaced())
                 .foregroundStyle(.secondary)
             if !plan.secretNames.isEmpty {
                 Label("Keychain (service “\(KeychainSecretStore.service)”): \(plan.secretNames.joined(separator: ", "))",
                       systemImage: "key.fill")
+            }
+            ForEach(plan.warnings, id: \.self) { warning in
+                Label(warning, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             }
             ForEach(plan.notes, id: \.self) { note in
                 Label(note, systemImage: "info.circle").foregroundStyle(.secondary)
@@ -240,11 +277,18 @@ struct AddMCPServerView: View {
                     Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3)
                 }
                 Spacer()
-                Button("Back") { self.plan = nil; error = nil }
-                    .keyboardShortcut(.cancelAction)
-                Button(plan.replaces ? "Replace" : "Apply") { apply(plan) }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(isApplying)
+                if case .remove = mode {
+                    Button("Cancel", role: .cancel) { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                } else {
+                    Button("Back") { self.plan = nil; error = nil }
+                        .keyboardShortcut(.cancelAction)
+                }
+                Button(plan.isRemoval ? "Delete" : plan.replaces ? "Save" : "Apply", role: plan.isRemoval ? .destructive : nil) {
+                    apply(plan)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isApplying)
             }
         }
         .padding(16)
@@ -275,7 +319,7 @@ struct AddMCPServerView: View {
 
     private func finished(_ outcome: MCPWriter.Outcome) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Added “\(plan?.name ?? draft.name)”", systemImage: "checkmark.circle.fill")
+            Label(doneTitle, systemImage: "checkmark.circle.fill")
                 .font(.title2.bold())
                 .foregroundStyle(.green)
             if let backup = outcome.backup {
@@ -284,7 +328,7 @@ struct AddMCPServerView: View {
             ForEach(outcome.notes, id: \.self) { note in
                 Label(note, systemImage: "info.circle").textSelection(.enabled)
             }
-            Text("Restart the harness (or reload its MCP servers) to pick the server up.")
+            Text("Restart the harness (or reload its MCP servers) to pick the change up.")
                 .foregroundStyle(.secondary)
             Spacer()
             HStack {
@@ -299,6 +343,38 @@ struct AddMCPServerView: View {
 
     private func loadTargets() {
         targets = model.mcpTargets()
+        switch mode {
+        case .add(let project): preselect(project)
+        case .edit(let server):
+            guard let target = MCPWriter.target(of: server, in: targets) else {
+                if model.lastScan != nil { error = "AKit can't edit this file." }
+                return
+            }
+            targetID = target.id
+            if let raw = MCPWriter.rawEntry(of: server, target: target) {
+                openedText = raw.fileText
+                draft = MCPDraft.editing(name: server.name, entry: raw.entry, dialect: target.dialect, keychain: KeychainSecretStore())
+                argumentLine = MCPDraft.joinArguments(draft.arguments)
+                let lookups = raw.entry.description.contains("find-generic-password -s '\(KeychainSecretStore.service)'")
+                secretMode = lookups ? .keychainLookup : target.isShared ? .environment : .keychainLookup
+            } else {
+                error = "“\(server.name)” is no longer in \(target.file.tildePath)."
+            }
+        case .remove(let server):
+            guard let target = MCPWriter.target(of: server, in: targets) else {
+                if model.lastScan != nil { error = "AKit can't edit this file." }
+                return
+            }
+            targetID = target.id
+            do {
+                plan = try MCPWriter.removalPlan(server.name, from: target, home: FileManager.default.homeDirectoryForCurrentUser)
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    private func preselect(_ project: URL?) {
         let projectTarget = project.flatMap { project in
             targets.first { target in
                 guard case .project(let url) = target.scope else { return false }
@@ -335,7 +411,8 @@ struct AddMCPServerView: View {
     private func makePlan() {
         guard let target = selectedTarget else { return }
         do {
-            plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode,
+            plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode, replacing: editing?.name,
+                                      openedText: openedText, keychain: KeychainSecretStore(),
                                       home: FileManager.default.homeDirectoryForCurrentUser)
             error = nil
         } catch {
@@ -360,8 +437,25 @@ struct AddMCPServerView: View {
 
     private var selectedTarget: MCPWriteTarget? { targets.first { $0.id == targetID } }
 
+    private var editing: MCPServer? {
+        if case .edit(let server) = mode { return server }
+        return nil
+    }
+
+    private func planTitle(_ plan: MCPWritePlan) -> String {
+        if plan.isRemoval { return "Delete “\(plan.name)”" }
+        if let original = plan.originalName, original != plan.name { return "Rename “\(original)” to “\(plan.name)”" }
+        return plan.replaces ? "Save “\(plan.name)”" : "Add “\(plan.name)”"
+    }
+
+    private var doneTitle: String {
+        guard let plan else { return "Done" }
+        if plan.isRemoval { return "Deleted “\(plan.name)”" }
+        return plan.replaces || plan.originalName != nil ? "Saved “\(plan.name)”" : "Added “\(plan.name)”"
+    }
+
     private var hasSecrets: Bool {
-        (draft.transport == .stdio ? draft.environment : draft.headers).contains(where: \.isSecret)
+        draft.activeValues.contains(where: \.isSecret)
     }
 
     /// Global first, then projects by name; the folder path tells same-named projects apart.
@@ -377,6 +471,6 @@ struct AddMCPServerView: View {
 
     private func targetTitle(_ target: MCPWriteTarget) -> String {
         let who = target.harnesses.map(\.displayName).joined(separator: ", ")
-        return "\(who) · \(target.layer) (\(target.file.lastPathComponent))"
+        return "\(who) · \(target.layer) (\(target.file.lastPathComponent))" + (target.inactiveReason == nil ? "" : " – not loaded")
     }
 }

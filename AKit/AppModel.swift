@@ -17,6 +17,8 @@ final class AppModel {
     private(set) var mcpServers: [MCPServer] = []
     /// MCP config files that couldn't be read (file: reason).
     private(set) var mcpProblems: [String] = []
+    /// Places a new MCP server can be written to (from the last scan).
+    private(set) var mcpWriteTargets: [MCPWriteTarget] = []
 
     /// Sidebar section shown in the window.
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
@@ -118,8 +120,35 @@ final class AppModel {
     // MARK: MCP
 
     /// Places a new MCP server can be written to, for the installed harnesses and known projects.
-    func mcpTargets() -> [MCPWriteTarget] {
-        MCPWriter.targets(installations: installations, projects: projects, adapters: adapters, in: .current)
+    func mcpTargets() -> [MCPWriteTarget] { mcpWriteTargets }
+
+    /// Whether AKit can change this server's file (not a plugin, not TOML, no comments).
+    func canEdit(_ server: MCPServer) -> Bool {
+        guard !server.isReadOnly, let target = MCPWriter.target(of: server, in: mcpWriteTargets) else { return false }
+        return target.blockedReason == nil
+    }
+
+    /// Bumped after a secret is saved, so Keychain badges refresh.
+    private(set) var keychainVersion = 0
+
+    func isInKeychain(_ account: String) -> Bool {
+        _ = keychainVersion
+        return KeychainSecretStore().contains(account)
+    }
+
+    var envFileSourced: Bool {
+        _ = keychainVersion
+        return MCPWriter.isEnvFileSourced(home: HarnessEnvironment.current.homeDirectory)
+    }
+
+    /// "Set in Keychain": saves the value and exports it from ~/.akit/env.sh. Returns hints.
+    /// Runs off the main thread: /usr/bin/security may wait for an unlocked Keychain.
+    func storeSecret(_ value: String, for account: String) async throws -> [String] {
+        defer { keychainVersion += 1 }
+        let home = HarnessEnvironment.current.homeDirectory
+        return try await Task.detached {
+            try MCPWriter.storeSecret(value, for: account, in: KeychainSecretStore(), home: home)
+        }.value
     }
 
     /// Stores the secrets in the Keychain, writes the server (backup first), then rescans.
@@ -140,6 +169,7 @@ final class AppModel {
                     "claude \(arguments.prefix(2).joined(separator: " ")) failed: \(output)"])
             }
         }
+        keychainVersion += 1
         await refresh()
         return outcome
     }
@@ -233,14 +263,15 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, projects, sessions, mcp) = await Task.detached {
+        let (found, skills, projects, sessions, mcp, targets) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
             async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env)
             async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
-            return (found, await skills, projects, await sessions, await mcp)
+            async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
+            return (found, await skills, projects, await sessions, await mcp, await targets)
         }.value
         installations = found
         self.skills = skills
@@ -248,6 +279,7 @@ final class AppModel {
         self.sessions = sessions
         mcpServers = mcp.servers
         mcpProblems = mcp.problems
+        mcpWriteTargets = targets
         lastScan = .now
 
         var newVersions: [HarnessID: String] = [:]

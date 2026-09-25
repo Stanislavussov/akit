@@ -8,7 +8,7 @@ struct MCPView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: MCPServer.ID?
     @State private var query = DebugSnapshot.options?.add == true ? "" : DebugSnapshot.options?.query ?? ""
-    @State private var isAdding = DebugSnapshot.options?.add == true
+    @State private var editor: EditorRequest? = DebugSnapshot.options?.add == true ? EditorRequest(mode: .add(project: nil)) : nil
 
     var body: some View {
         @Bindable var model = model
@@ -17,7 +17,9 @@ struct MCPView: View {
                 .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
             Group {
                 if let server = model.mcpServers.first(where: { $0.id == selection }) {
-                    MCPServerDetailView(server: server)
+                    MCPServerDetailView(server: server,
+                                        onEdit: { editor = EditorRequest(mode: .edit(server)) },
+                                        onDelete: { editor = EditorRequest(mode: .remove(server)) })
                 } else {
                     ContentUnavailableView("Select a server", systemImage: "server.rack")
                 }
@@ -73,12 +75,12 @@ struct MCPView: View {
                     .help("Rescan config files (⌘R)")
             }
             ToolbarItem {
-                Button("Add Server…", systemImage: "plus") { isAdding = true }
+                Button("Add Server…", systemImage: "plus") { editor = EditorRequest(mode: .add(project: chosenProject)) }
                     .help("Add an MCP server from a form or pasted JSON")
             }
         }
-        .sheet(isPresented: $isAdding) {
-            AddMCPServerView(project: { if case .project(let url) = model.mcpFilter { url } else { nil } }())
+        .sheet(item: $editor) { request in
+            MCPServerEditor(mode: request.mode)
         }
         .onAppear {
             if case .project(let chosen) = model.mcpFilter,
@@ -89,7 +91,19 @@ struct MCPView: View {
         }
         .onChange(of: model.mcpHarness) { keepSelectionVisible() }
         .onChange(of: model.mcpFilter) { keepSelectionVisible() }
-        .onChange(of: model.mcpServers) { keepSelectionVisible() }
+        .onChange(of: model.mcpServers) {
+            keepSelectionVisible()
+            // Snapshot mode: `--tab edit` / `--tab delete` opens the editor on the first listed server.
+            if let tab = DebugSnapshot.options?.tab, editor == nil, let server = filtered.first {
+                if tab == "edit" { editor = EditorRequest(mode: .edit(server)) }
+                if tab == "delete" { editor = EditorRequest(mode: .remove(server)) }
+            }
+        }
+    }
+
+    private var chosenProject: URL? {
+        if case .project(let url) = model.mcpFilter { return url }
+        return nil
     }
 
     private func keepSelectionVisible() {
@@ -110,6 +124,11 @@ struct MCPView: View {
                                     }
                                 }
                                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([server.file]) }
+                                Divider()
+                                Button("Edit…") { editor = EditorRequest(mode: .edit(server)) }
+                                    .disabled(!model.canEdit(server))
+                                Button("Delete…", role: .destructive) { editor = EditorRequest(mode: .remove(server)) }
+                                    .disabled(!model.canEdit(server))
                             }
                     }
                 } header: {
@@ -254,8 +273,18 @@ private struct MCPServerRow: View {
     }
 }
 
+/// One open editor sheet.
+private struct EditorRequest: Identifiable {
+    let id = UUID()
+    let mode: MCPServerEditor.Mode
+}
+
 private struct MCPServerDetailView: View {
+    @Environment(AppModel.self) private var model
     let server: MCPServer
+    let onEdit: () -> Void
+    let onDelete: () -> Void
+    @State private var secretFor: String?
 
     var body: some View {
         ScrollView {
@@ -287,9 +316,17 @@ private struct MCPServerDetailView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if model.canEdit(server) {
+                Button("Edit…", systemImage: "pencil", action: onEdit)
+                    .help("Change this server; values in the file stay hidden")
+                Button("Delete…", systemImage: "trash", role: .destructive, action: onDelete)
+                    .labelStyle(.iconOnly)
+                    .help("Remove this server from \(server.file.tildePath)")
+            }
             if ExternalEditor.appURL != nil {
-                Button("Open in \(ExternalEditor.name)", systemImage: "square.and.pencil") { ExternalEditor.open(server.file) }
-                    .help("Open \(server.file.tildePath)")
+                Button("Open in \(ExternalEditor.name)", systemImage: "arrow.up.forward.app") { ExternalEditor.open(server.file) }
+                    .labelStyle(.iconOnly)
+                    .help("Open \(server.file.tildePath) in \(ExternalEditor.name)")
             }
             Button("Show in Finder", systemImage: "folder") {
                 NSWorkspace.shared.activateFileViewerSelecting([server.file])
@@ -378,17 +415,43 @@ private struct MCPServerDetailView: View {
 
     private var variables: some View {
         GroupBox("Needs variables") {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(server.variables, id: \.self) { name in
-                    Text(name).monospaced().textSelection(.enabled)
+                    HStack {
+                        Text(name).monospaced().textSelection(.enabled)
+                        Spacer()
+                        if model.isInKeychain(name) {
+                            Label("In Keychain", systemImage: "key.fill").foregroundStyle(.green)
+                            Button("Replace…") { secretFor = name }
+                        } else {
+                            Label("Not in AKit's Keychain", systemImage: "key").foregroundStyle(.secondary)
+                            Button("Set in Keychain…") { secretFor = name }
+                        }
+                    }
                 }
-                Text("The harness takes them from the environment it was started in. Variables from ~/.zshrc are only there when the harness is started from a terminal.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if model.envFileSourced {
+                    Text("~/.akit/env.sh exports them from the Keychain and ~/.zshrc sources it: harnesses started from a terminal get them. Started from the Dock, they don't; Edit… → “Read from the Keychain by the config” works everywhere.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("The harness takes them from the environment it was started in. Keychain values reach a terminal once ~/.zshrc has: \(MCPWriter.sourceLine)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Copy Line") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(MCPWriter.sourceLine, forType: .string)
+                        }
+                        .controlSize(.small)
+                    }
+                }
             }
             .font(.callout)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(4)
+        }
+        .sheet(item: Binding(get: { secretFor.map(SecretRequest.init) }, set: { secretFor = $0?.name })) { request in
+            KeychainSecretSheet(name: request.name)
         }
     }
 
@@ -424,6 +487,66 @@ extension MCPState {
         case .rejected: "xmark.circle"
         case .shadowed: "arrow.triangle.branch"
         case .inactive: "minus.circle"
+        }
+    }
+}
+
+private struct SecretRequest: Identifiable {
+    let name: String
+    var id: String { name }
+}
+
+/// Asks for one secret value and stores it in the Keychain (service "AKit MCP").
+private struct KeychainSecretSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let name: String
+    @State private var value = ""
+    @State private var error: String?
+    @State private var notes: [String]?
+    @State private var isSaving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Keychain: \(name)").font(.title3.bold())
+            if let notes {
+                Label("Saved in the Keychain (service “\(KeychainSecretStore.service)”).", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                ForEach(notes, id: \.self) { Label($0, systemImage: "info.circle").textSelection(.enabled) }
+                HStack {
+                    Spacer()
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                }
+            } else {
+                Text("The value goes to your login Keychain through /usr/bin/security (never as a command argument) and is not shown again; ~/.akit/env.sh exports it as \(name). It stays out of files and git, but programs running as you can read it with /usr/bin/security — the same as a token in ~/.zshrc.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                SecureField("Value", text: $value, prompt: Text("paste the token"))
+                if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                HStack {
+                    Spacer()
+                    Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                    if isSaving { ProgressView().controlSize(.small) }
+                    Button("Save") { save() }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(value.isEmpty || isSaving)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func save() {
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                notes = try await model.storeSecret(value, for: name)
+                value = ""
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 }
