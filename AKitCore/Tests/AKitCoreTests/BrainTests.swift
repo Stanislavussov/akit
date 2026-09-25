@@ -1,0 +1,185 @@
+import Foundation
+import Testing
+@testable import AKitCore
+
+/// Brain repo loading and layer checks, in a temporary folder.
+struct BrainTests {
+    let root: URL
+    let fm = FileManager.default
+
+    init() throws {
+        root = fm.temporaryDirectory.appending(path: "akit-brain-\(UUID().uuidString)")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+
+    func write(_ path: String, _ text: String = "") throws {
+        let url = root.appending(path: path)
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+    }
+
+    func skill(_ name: String) throws {
+        try write("skills/\(name)/SKILL.md", "---\nname: \(name)\ndescription: The \(name) skill\n---\n")
+    }
+
+    func load() throws -> Brain { try #require(Brain.load(from: root)) }
+
+    func messages(_ brain: Brain, _ layer: String? = nil) -> [String] {
+        brain.problems.filter { layer == nil || $0.layer == layer }.map(\.message)
+    }
+
+    @Test func missingFolderIsNoBrain() {
+        #expect(Brain.load(from: root.appending(path: "nope")) == nil)
+    }
+
+    @Test func readsTheLayerFromTheDesignDoc() throws {
+        try skill("grilling")
+        try skill("tdd")
+        try write("layers/base/layer.yaml", "name: base\ndescription: Always\n")
+        try write("layers/take-home/templates/AGENTS.md.d/take-home.md", "# {{company}}\n")
+        try write("layers/take-home/templates/REVIEW.md")
+        try write("layers/take-home/layer.yaml", """
+            name: take-home
+            description: Take-home assignment for a job application
+            requires: [base]
+            conflicts: []
+
+            fields:
+              - id: company
+                prompt: Company name
+                type: text
+                required: true
+              - id: stack
+                prompt: Stack
+                type: choice
+                options: [node, swift]
+                default: node
+              - id: reviewer_readme
+                prompt: Write a README for the reviewer?
+                type: bool
+                default: true
+
+            skills:
+              - name: grilling
+                mode: manual
+              - tdd
+
+            files:
+              - template: AGENTS.md.d/take-home.md
+                to: AGENTS.md
+              - template: REVIEW.md
+                to: REVIEW.md
+                when: reviewer_readme == true
+              - template: REVIEW.md
+                to: CLAUDE-REVIEW.md
+                when: [reviewer_readme, target == "claude"]
+            """)
+
+        let brain = try load()
+        #expect(brain.problems.isEmpty, "\(brain.problems)")
+        #expect(brain.skills.map(\.name) == ["grilling", "tdd"])
+        #expect(brain.skills.first?.description == "The grilling skill")
+        #expect(brain.layers.map(\.name) == ["base", "take-home"])
+
+        let layer = brain.layers[1]
+        #expect(layer.requires == ["base"])
+        #expect(layer.conflicts == [])
+        #expect(layer.fields.map(\.id) == ["company", "stack", "reviewer_readme"])
+        #expect(layer.fields[0].required)
+        #expect(layer.fields[1].kind == .choice && layer.fields[1].options == ["node", "swift"])
+        #expect(layer.fields[1].defaultValue == .text("node"))
+        #expect(layer.fields[2].defaultValue == .bool(true))
+        #expect(layer.skills.map(\.mode) == [.manual, .auto])
+        #expect(layer.files[0].to == "AGENTS.md")
+        #expect(layer.files[1].when == [Condition(field: "reviewer_readme", test: .equals("true"))])
+        #expect(layer.files[2].when == [Condition(field: "reviewer_readme", test: .isSet),
+                                        Condition(field: "target", test: .equals("claude"))])
+    }
+
+    @Test func conditionForms() {
+        #expect(Condition(parsing: "a == b") == Condition(field: "a", test: .equals("b")))
+        #expect(Condition(parsing: "a != 'x y'") == Condition(field: "a", test: .notEquals("x y")))
+        #expect(Condition(parsing: " flag ") == Condition(field: "flag", test: .isSet))
+        #expect(Condition(parsing: "a ==") == nil)
+        #expect(Condition(parsing: "a b") == nil)
+        #expect(Condition(parsing: "a == b == c") == nil)
+    }
+
+    @Test func brokenYamlIsReportedAndOtherLayersStillLoad() throws {
+        try write("layers/good/layer.yaml", "description: fine\n")
+        try write("layers/bad/layer.yaml", "fields: [unclosed\n")
+        try write("layers/empty/README.md")
+
+        let brain = try load()
+        #expect(brain.layers.map(\.name) == ["good"])
+        let problems = messages(brain)
+        #expect(problems.contains { $0.hasPrefix("layers/bad: layer.yaml is not valid YAML") })
+        #expect(problems.contains("layers/empty has no layer.yaml."))
+    }
+
+    @Test func manifestMistakesBecomeProblems() throws {
+        try write("layers/x/layer.yaml", """
+            name: other
+            colour: blue
+            fields:
+              - id: a
+                type: number
+              - id: pick
+                type: choice
+              - id: flag
+                type: bool
+                default: maybe
+              - prompt: no id
+              - id: a
+              - id: target
+            skills:
+              - name: s
+                mode: sometimes
+            files:
+              - template: ../outside.md
+              - template: ok.md
+                when: "a =="
+            """)
+
+        let problems = messages(try load(), "x")
+        #expect(problems.contains("name “other” differs from the folder “x”; the folder name is used."))
+        #expect(problems.contains("Unknown key “colour”."))
+        #expect(problems.contains("Field “a”: unknown type “number” (text, choice, bool or multi)."))
+        #expect(problems.contains("Field “pick”: a choice field needs options."))
+        #expect(problems.contains("Field “flag”: default doesn't fit type bool."))
+        #expect(problems.contains("A field has no id."))
+        #expect(problems.contains("Field “target” is built in; pick another id."))
+        #expect(problems.contains("Skill “s”: unknown mode “sometimes” (auto, manual or off)."))
+        #expect(problems.contains("File “../outside.md”: “../outside.md” must be a relative path inside the folder."))
+        #expect(problems.contains("File “ok.md”: can't read when “a ==” (use field == value, field != value or field)."))
+        #expect(problems.contains("Template “ok.md” is missing in templates/."))
+    }
+
+    @Test func crossLayerChecks() throws {
+        try skill("tdd")
+        try write("layers/a/layer.yaml", """
+            requires: [b, ghost]
+            conflicts: b
+            fields:
+              - id: own
+            skills: [tdd, tdd, missing]
+            files:
+              - template: f.md
+                when: [own, from_b, from_c, target != pi]
+            """)
+        try write("layers/a/templates/f.md")
+        try write("layers/b/layer.yaml", "requires: [a]\nfields:\n  - id: from_b\n")
+        try write("layers/c/layer.yaml", "fields:\n  - id: from_c\n")
+
+        let brain = try load()
+        let a = messages(brain, "a")
+        #expect(a.contains("Requires “ghost”, which doesn't exist."))
+        #expect(a.contains("Both requires and conflicts with “b”."))
+        #expect(a.contains("Skill “tdd” is listed twice."))
+        #expect(a.contains("Skill “missing” is not in skills/."))
+        #expect(a.contains("when uses “from_c”, which is not a field of this layer or the layers it requires."))
+        #expect(!a.contains { $0.contains("“own”") || $0.contains("“from_b”") || $0.contains("“target”") })
+        #expect(a.contains("requires goes in a circle: a → b → a."))
+        #expect(messages(brain).filter { $0.contains("circle") }.count == 1)
+    }
+}
