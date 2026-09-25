@@ -60,6 +60,14 @@ public struct PiAdapter: HarnessAdapter {
         return roots
     }
 
+    public func sessions(in env: HarnessEnvironment) -> [SessionSummary] {
+        PiSessions.list(folder: PiSessions.folder(configRoot: configRoot(in: env), in: env))
+    }
+
+    public func transcript(of session: SessionSummary) throws -> SessionTranscript {
+        try PiSessions.transcript(of: session.file)
+    }
+
     /// The folder itself and its parents up to the git root. Without a git root Pi
     /// walks to `/`; we stop at home, whose `.agents/skills` is already the global root.
     static func ancestorsToGitRoot(of start: URL, home: URL) -> [URL] {

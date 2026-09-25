@@ -9,6 +9,8 @@ final class AppModel {
     private(set) var installations: [HarnessInstallation] = []
     private(set) var versions: [HarnessID: String] = [:]
     private(set) var skills: [Skill] = []
+    /// Saved conversations of all installed harnesses, newest first.
+    private(set) var sessions: [SessionSummary] = []
     private(set) var isScanning = false
     private(set) var lastScan: Date?
 
@@ -54,6 +56,13 @@ final class AppModel {
         await refresh()
     }
 
+    /// Messages of one session, read in the background.
+    func transcript(of session: SessionSummary) async throws -> SessionTranscript {
+        let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
+        guard let adapter = adapters.first(where: { $0.id == session.harness }) else { return SessionTranscript() }
+        return try await Task.detached { try adapter.transcript(of: session) }.value
+    }
+
     /// Adds or replaces (same id) a custom harness and saves the file.
     func saveCustomHarness(_ harness: CustomHarness) throws {
         var list = customHarnesses
@@ -89,13 +98,16 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills) = await Task.detached {
+        let (found, skills, sessions) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let projects = ProjectFinder.projects(inRoots: roots)
-            return (found, SkillScanner.scan(installations: found, extraProjects: projects, adapters: adapters, in: env))
+            async let skills = SkillScanner.scan(installations: found, extraProjects: projects, adapters: adapters, in: env)
+            async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
+            return (found, await skills, await sessions)
         }.value
         installations = found
         self.skills = skills
+        self.sessions = sessions
         lastScan = .now
 
         var newVersions: [HarnessID: String] = [:]

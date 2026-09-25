@@ -4,12 +4,14 @@ import SwiftUI
 enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case overview
     case skills
+    case sessions
     var id: Self { self }
 
     var title: String {
         switch self {
         case .overview: "Overview"
         case .skills: "Skills"
+        case .sessions: "Sessions"
         }
     }
 
@@ -17,6 +19,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         switch self {
         case .overview: "square.grid.2x2"
         case .skills: "book.closed"
+        case .sessions: "bubble.left.and.bubble.right"
         }
     }
 }
@@ -36,6 +39,7 @@ struct RootView: View {
             switch selection ?? .overview {
             case .overview: OverviewView()
             case .skills: SkillsView()
+            case .sessions: SessionsView()
             }
         }
     }

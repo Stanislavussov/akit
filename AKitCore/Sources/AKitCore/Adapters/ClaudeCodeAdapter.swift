@@ -71,6 +71,15 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
         return roots
     }
 
+    /// `<config>/projects/*/<session id>.jsonl`.
+    public func sessions(in env: HarnessEnvironment) -> [SessionSummary] {
+        ClaudeSessions.list(configRoot: configRoot(in: env))
+    }
+
+    public func transcript(of session: SessionSummary) throws -> SessionTranscript {
+        try ClaudeSessions.transcript(of: session.file)
+    }
+
     struct InstalledPlugin {
         let name: String
         let version: String?

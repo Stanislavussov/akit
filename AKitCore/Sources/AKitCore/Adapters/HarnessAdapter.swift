@@ -18,11 +18,19 @@ public protocol HarnessAdapter: Sendable {
 
     /// Folders the harness reads skills from, global and for the given projects.
     func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot]
+
+    /// Saved conversations (any order). Empty if the harness keeps none or AKit can't read them.
+    func sessions(in env: HarnessEnvironment) -> [SessionSummary]
+
+    /// Messages of one saved session from `sessions(in:)`.
+    func transcript(of session: SessionSummary) throws -> SessionTranscript
 }
 
 extension HarnessAdapter {
     public func knownProjects(in env: HarnessEnvironment) -> [URL] { [] }
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] { [] }
+    public func sessions(in env: HarnessEnvironment) -> [SessionSummary] { [] }
+    public func transcript(of session: SessionSummary) throws -> SessionTranscript { SessionTranscript() }
 }
 
 /// All known adapters.
