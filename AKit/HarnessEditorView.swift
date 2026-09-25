@@ -73,6 +73,17 @@ struct HarnessEditorView: View {
                     Button("Remove…", role: .destructive) { confirmRemove = true }
                 }
                 Text("Saved to ~/.akit/harnesses.json").font(.caption).foregroundStyle(.secondary)
+                if ExternalEditor.appURL != nil {
+                    let file = CustomHarnessStore.url(in: .current)
+                    Button {
+                        ExternalEditor.open(file)
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!FileManager.default.fileExists(atPath: file.path))
+                    .help("Open ~/.akit/harnesses.json in \(ExternalEditor.name)")
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
