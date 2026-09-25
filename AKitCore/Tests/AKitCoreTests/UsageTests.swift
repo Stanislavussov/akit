@@ -55,6 +55,32 @@ struct UsageTests {
         #expect(opus.tokens == TokenCounts(input: 5, output: 70, cacheRead: 100, cacheWrite: 10))
     }
 
+    @Test func claudeSessionCostIsSpreadOverItsResponses() throws {
+        try write(".claude/projects/-work-app/s.jsonl", lines: [
+            claudeAnswer(id: "m1", time: "2026-09-20T22:00:00.000Z", model: "claude-opus-5[1m]", input: 100, output: 0),
+            claudeAnswer(id: "m2", time: "2026-09-21T09:00:00.000Z", model: "claude-opus-5[1m]", input: 300, output: 0),
+            ["type": "cost-state", "sessionId": "s", "totalCostUSD": 1.0,
+             "modelUsage": ["claude-opus-5[1m]": ["costUSD": 0.2], "claude-haiku-4-5-20251001": ["costUSD": 0.3]]],
+            // Saved again after a resume with the total so far.
+            ["type": "cost-state", "sessionId": "s", "totalCostUSD": 1.2,
+             "modelUsage": ["claude-opus-5[1m]": ["costUSD": 0.8], "claude-haiku-4-5-20251001": ["costUSD": 0.3]]],
+        ])
+        // A subagent answered with a model the cost-state lists too.
+        try write(".claude/projects/-work-app/s/subagents/agent-1.jsonl", lines: [
+            claudeAnswer(id: "m3", time: "2026-09-21T10:00:00.000Z", model: "claude-haiku-4-5-20251001", input: 5, output: 5),
+        ])
+        try write(".claude/projects/-work-app/no-cost.jsonl", lines: [
+            claudeAnswer(id: "m4", time: "2026-09-21T11:00:00.000Z", input: 1, output: 1),
+        ])
+
+        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        #expect(records.map(\.model) == ["claude-opus-5[1m]", "claude-opus-5[1m]", "claude-haiku-4-5-20251001", "claude-opus-5"])
+        let costs = records.map { $0.cost.map { ($0 * 1000).rounded() / 1000 } }
+        // Opus: 210 and 410 tokens (with the cache) share $0.80; haiku gets its $0.30;
+        // the other session has no cost.
+        #expect(costs == [0.271, 0.529, 0.3, nil])
+    }
+
     @Test func oldFilesAreNotRead() throws {
         try write(".claude/projects/-work-app/a.jsonl", lines: [
             claudeAnswer(id: "msg_1", time: "2026-09-20T10:00:00.000Z", input: 5, output: 50),

@@ -5,42 +5,112 @@ import SQLite3
 // They only read files, and only lines that can hold usage are decoded.
 
 extension ClaudeSessions {
-    /// `message.usage` of assistant entries in all sessions and subagent runs. One response
-    /// is written as several lines with the same `message.id`, and resumed or forked
-    /// sessions copy earlier lines, so responses are counted once per id.
+    /// `message.usage` of assistant entries in all sessions and their subagent runs. One
+    /// response is written as several lines with the same `message.id`, and resumed or
+    /// forked sessions copy earlier lines, so responses are counted once per id.
+    ///
+    /// Claude Code records no cost per response, but when a session ends it saves a
+    /// `cost-state` line: the session's total (what `/cost` shows) and each model's part.
+    /// Each model's part is spread over that model's responses by their share of its
+    /// tokens, so a session that ran over several days lands on each of them.
     static func usage(configRoot: URL, since: Date) -> [UsageRecord] {
-        let files = UsageScanner.files(in: [configRoot.appending(path: "projects")], since: since)
+        let sessions = UsageScanner.files(in: [configRoot.appending(path: "projects")], since: since) {
+            $0.pathExtension == "jsonl" && $0.deletingLastPathComponent().lastPathComponent != "subagents"
+        }
+        return UsageScanner.read(sessions) { session in
+            var (responses, cost) = sessionUsage(in: session)
+            let subagents = session.deletingPathExtension().appending(path: "subagents")
+            for agent in SkillScanner.children(of: subagents) where agent.pathExtension == "jsonl" {
+                responses += sessionUsage(in: agent).responses
+            }
+            if let cost { responses = spread(cost, over: responses) }
+            return responses.filter { $0.record.time >= since }
+        }
+    }
+
+    /// Cost Claude Code saved for a session, in US dollars.
+    struct CostState {
+        var total: Double
+        /// By model id without a context suffix such as `[1m]`.
+        var byModel: [String: Double]
+    }
+
+    static func sessionUsage(in file: URL) -> (responses: [(key: String?, record: UsageRecord)], cost: CostState?) {
         let usageMarker = Data(#""usage""#.utf8)
         let assistantMarker = Data(#""type":"assistant""#.utf8)
-        return UsageScanner.read(files) { file in
-            guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
-                  let entries = try? JSONLines.objects(in: data, where: {
-                      JSONLines.contains($0, assistantMarker) && JSONLines.contains($0, usageMarker)
-                  }) else { return [] }
-            var byID: [String: Int] = [:]
-            var result: [(key: String?, record: UsageRecord)] = []
-            for entry in entries where entry["type"] as? String == "assistant" {
-                guard let message = entry["message"] as? JSONLines.Object, let usage = message["usage"] as? JSONLines.Object,
-                      let model = message["model"] as? String, model != "<synthetic>",
-                      let time = JSONLines.date(entry["timestamp"]), time >= since else { continue }
-                func count(_ key: String, in object: JSONLines.Object? = usage) -> Int { (object?[key] as? NSNumber)?.intValue ?? 0 }
-                let tokens = TokenCounts(input: count("input_tokens"), output: count("output_tokens"),
-                                         cacheRead: count("cache_read_input_tokens"),
-                                         cacheWrite: count("cache_creation_input_tokens"),
-                                         reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? JSONLines.Object))
-                let record = UsageRecord(time: time, harness: .claudeCode, provider: "anthropic", model: model,
-                                         tokens: tokens, cost: nil)
-                let id = message["id"] as? String ?? entry["requestId"] as? String
-                // The last line of a response carries its final usage.
-                if let id, let index = byID[id] {
-                    result[index] = (id, record)
-                } else {
-                    if let id { byID[id] = result.count }
-                    result.append((id, record))
+        let costMarker = Data(#""cost-state""#.utf8)
+        guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
+              let entries = try? JSONLines.objects(in: data, where: {
+                  (JSONLines.contains($0, assistantMarker) && JSONLines.contains($0, usageMarker)) || JSONLines.contains($0, costMarker)
+              }) else { return ([], nil) }
+        var byID: [String: Int] = [:]
+        var result: [(key: String?, record: UsageRecord)] = []
+        var cost: CostState?
+        for entry in entries {
+            if entry["type"] as? String == "cost-state" {
+                // A resumed session saves it again with the total so far: the largest wins.
+                if let total = (entry["totalCostUSD"] as? NSNumber)?.doubleValue, total >= (cost?.total ?? 0) {
+                    var byModel: [String: Double] = [:]
+                    for (model, usage) in entry["modelUsage"] as? JSONLines.Object ?? [:] {
+                        if let dollars = ((usage as? JSONLines.Object)?["costUSD"] as? NSNumber)?.doubleValue {
+                            byModel[baseModel(model), default: 0] += dollars
+                        }
+                    }
+                    cost = CostState(total: total, byModel: byModel)
                 }
+                continue
             }
-            return result
+            guard entry["type"] as? String == "assistant",
+                  let message = entry["message"] as? JSONLines.Object, let usage = message["usage"] as? JSONLines.Object,
+                  let model = message["model"] as? String, model != "<synthetic>",
+                  let time = JSONLines.date(entry["timestamp"]) else { continue }
+            func count(_ key: String, in object: JSONLines.Object? = usage) -> Int { (object?[key] as? NSNumber)?.intValue ?? 0 }
+            let tokens = TokenCounts(input: count("input_tokens"), output: count("output_tokens"),
+                                     cacheRead: count("cache_read_input_tokens"),
+                                     cacheWrite: count("cache_creation_input_tokens"),
+                                     reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? JSONLines.Object))
+            let record = UsageRecord(time: time, harness: .claudeCode, provider: "anthropic", model: model,
+                                     tokens: tokens, cost: nil)
+            let id = message["id"] as? String ?? entry["requestId"] as? String
+            // The last line of a response carries its final usage.
+            if let id, let index = byID[id] {
+                result[index] = (id, record)
+            } else {
+                if let id { byID[id] = result.count }
+                result.append((id, record))
+            }
         }
+        return (result, cost)
+    }
+
+    /// `claude-opus-5[1m]` → `claude-opus-5`
+    static func baseModel(_ model: String) -> String {
+        model.firstIndex(of: "[").map { String(model[..<$0]) } ?? model
+    }
+
+    /// Gives each response its share of the saved cost. A model the cost-state doesn't
+    /// list shares what is left of the total with the other unlisted ones.
+    static func spread(_ cost: CostState, over responses: [(key: String?, record: UsageRecord)])
+        -> [(key: String?, record: UsageRecord)] {
+        var groups: [String: [Int]] = [:]
+        for (index, item) in responses.enumerated() { groups[baseModel(item.record.model), default: []].append(index) }
+        let listed = groups.keys.filter { cost.byModel[$0] != nil }
+        let unlisted = groups.keys.filter { cost.byModel[$0] == nil }
+        let leftover = max(cost.total - listed.reduce(0) { $0 + cost.byModel[$1]! }, 0)
+
+        var result = responses
+        func give(_ dollars: Double, to indices: [Int]) {
+            let tokens = indices.reduce(0) { $0 + responses[$1].record.tokens.total }
+            for index in indices {
+                let share = tokens > 0 ? Double(responses[index].record.tokens.total) / Double(tokens) : 1 / Double(indices.count)
+                let record = responses[index].record
+                result[index].record = UsageRecord(time: record.time, harness: record.harness, provider: record.provider,
+                                                   model: record.model, tokens: record.tokens, cost: dollars * share)
+            }
+        }
+        for model in listed { give(cost.byModel[model]!, to: groups[model]!) }
+        if !unlisted.isEmpty { give(leftover, to: unlisted.flatMap { groups[$0]! }) }
+        return result
     }
 }
 

@@ -48,9 +48,8 @@ struct UsageView: View {
     @State private var error: String?
     @State private var isLoading = false
     @State private var updated: Date?
-
-    /// While the screen is open, sessions are read again this often, so new usage shows up by itself.
-    private static let autoRefresh: Duration = .seconds(60)
+    /// Bumped by the Refresh button to read the session files again.
+    @State private var reloads = 0
 
     var body: some View {
         content
@@ -71,19 +70,13 @@ struct UsageView: View {
                     .help("Days to show")
                 }
                 ToolbarItem {
-                    Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                    Button("Refresh", systemImage: "arrow.clockwise") { reloads += 1 }
                         .disabled(model.isScanning || isLoading)
-                        .help("Read the session files again (⌘R)")
+                        .help("Read the session files again")
                 }
             }
-            // Reload when the period changes, after every scan (new sessions, harnesses) and
-            // every minute while the screen is open. Leaving the screen cancels the loop.
-            .task(id: "\(period.rawValue)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") {
-                while !Task.isCancelled {
-                    await load()
-                    try? await Task.sleep(for: Self.autoRefresh)
-                }
-            }
+            // Read when the period changes, on Refresh and after a scan (new harnesses).
+            .task(id: "\(period.rawValue)|\(reloads)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") { await load() }
             .onChange(of: harness) { rebuildReport() }
     }
 
@@ -137,14 +130,15 @@ struct UsageView: View {
 
     private var subtitle: String {
         guard let report, !report.isEmpty else { return "" }
-        let parts = ["\(report.days.count) days", "\(report.subscriptions.count) subscriptions",
+        let parts = ["\(report.days.count) days", report.subscriptions.count == 1 ? "1 subscription" : "\(report.subscriptions.count) subscriptions",
                      updated.map { "updated \($0.formatted(date: .omitted, time: .shortened))" }]
         return parts.compactMap(\.self).joined(separator: " · ")
     }
 
     private func note(_ report: DailyUsageReport) -> String {
         var text = "Numbers come straight from the harnesses' session files. Tokens include cache reads and writes. "
-            + "Cost is shown only where the harness recorded it: Pi and OpenCode do, Claude Code and Codex don't."
+            + "Cost is shown only where the harness recorded it: Pi and OpenCode for each response; Claude Code once per "
+            + "session when it ends (the /cost total), spread over the session's days by tokens; Codex never."
         if report.grandTotal.unpricedRequests > 0 && report.grandTotal.cost != nil {
             text += " \"≥\" marks a cost that leaves out responses without a recorded cost."
         }
