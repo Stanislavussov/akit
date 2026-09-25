@@ -76,7 +76,12 @@ enum ClaudeSessions {
         var tools: [String: ToolCall] = [:]
         var shellReadsSecret = false // the last `!` shell command read a secret file
 
-        for entry in try JSONLines.objects(in: data) where !isSidechain(entry) {
+        for entry in try JSONLines.objects(in: data) {
+            // Side chains: subagents of old versions, written into the main file.
+            if isSidechain(entry) {
+                recordUsage(entry, in: &builder.subagentUsage)
+                continue
+            }
             let time = JSONLines.date(entry["timestamp"])
             switch entry["type"] as? String {
             case "user":
@@ -84,6 +89,7 @@ enum ClaudeSessions {
             case "assistant":
                 guard let message = entry["message"] as? Object else { continue }
                 builder.noteModel((message["model"] as? String).flatMap { $0 == "<synthetic>" ? nil : $0 })
+                recordUsage(entry, in: &builder.usage)
                 for block in message["content"] as? [Object] ?? [] {
                     switch block["type"] as? String {
                     case "text":
@@ -105,13 +111,47 @@ enum ClaudeSessions {
                 switch entry["subtype"] as? String {
                 case "compact_boundary": builder.add(.event("Compacted"), "Earlier messages were summarized", at: time)
                 case "local_command": builder.add(.event("Command"), stripTags(entry["content"] as? String ?? ""), at: time)
+                case "turn_duration":
+                    if let milliseconds = entry["durationMs"] as? NSNumber, let end = time {
+                        builder.addActiveTurn(DateInterval(start: end.addingTimeInterval(-milliseconds.doubleValue / 1000),
+                                                           end: end))
+                    }
                 default: break
                 }
             default:
                 break
             }
         }
+        try addSubagents(of: file, to: &builder)
         return builder.transcript
+    }
+
+    /// Subagents of newer versions: `<session>/subagents/agent-*.jsonl`. Only their usage is read.
+    private static func addSubagents(of file: URL, to builder: inout TranscriptBuilder) throws {
+        let folder = file.deletingPathExtension().appending(path: "subagents")
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        let usageLine = Data(#""usage""#.utf8)
+        for agent in files where agent.pathExtension == "jsonl" {
+            guard let data = try? Data(contentsOf: agent) else { continue }
+            builder.subagentRuns += 1
+            for entry in try JSONLines.objects(in: data, where: { JSONLines.contains($0, usageLine) })
+            where entry["type"] as? String == "assistant" {
+                recordUsage(entry, in: &builder.subagentUsage)
+            }
+        }
+    }
+
+    /// `message.usage` of an assistant entry. Lines of one response share `message.id`.
+    private static func recordUsage(_ entry: Object, in counter: inout UsageCounter) {
+        guard entry["type"] as? String == "assistant", let message = entry["message"] as? Object,
+              let usage = message["usage"] as? Object else { return }
+        func count(_ key: String, in object: Object? = usage) -> Int { (object?[key] as? NSNumber)?.intValue ?? 0 }
+        let tokens = TokenCounts(input: count("input_tokens"), output: count("output_tokens"),
+                                 cacheRead: count("cache_read_input_tokens"),
+                                 cacheWrite: count("cache_creation_input_tokens"),
+                                 reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? Object))
+        counter.record(id: message["id"] as? String ?? entry["requestId"] as? String,
+                       model: message["model"] as? String, tokens: tokens)
     }
 
     struct ToolCall {

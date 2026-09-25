@@ -115,12 +115,14 @@ private struct SessionRow: View {
 
 enum SessionDetailTab: String, CaseIterable, Identifiable {
     case conversation
+    case usage
     case prompt
     var id: Self { self }
 
     var title: String {
         switch self {
         case .conversation: "Conversation"
+        case .usage: "Usage"
         case .prompt: "System Prompt"
         }
     }
@@ -141,6 +143,7 @@ private struct SessionDetailView: View {
             Divider()
             switch tab {
             case .conversation: content
+            case .usage: usage
             case .prompt: SessionPromptView(session: session)
             }
         }
@@ -190,6 +193,9 @@ private struct SessionDetailView: View {
                 if let models = transcript?.models, !models.isEmpty {
                     row("Model", models.joined(separator: ", "))
                 }
+                if let usage = transcript?.usage, usage.hasTokens {
+                    row("Tokens", UsageText.summary(usage))
+                }
                 row("File", "\(session.file.tildePath) · \(session.size.formatted(.byteCount(style: .file)))", monospaced: true)
                 if let version = session.harnessVersion {
                     row("Version", version)
@@ -212,6 +218,9 @@ private struct SessionDetailView: View {
         Menu {
             Button("Copy as Markdown") { copy(SessionExport.markdown) }
             Button("Copy as JSON") { copy(SessionExport.json) }
+            Divider()
+            Button("Copy Usage Only") { copy(SessionExport.usageMarkdown) }
+                .disabled(!(transcript?.usage.hasTokens ?? false))
         } label: {
             Label(copied ? "Copied" : "Copy Session", systemImage: copied ? "checkmark" : "doc.on.doc")
         } primaryAction: {
@@ -238,6 +247,17 @@ private struct SessionDetailView: View {
         GridRow {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
             Text(value).monospaced(monospaced).lineLimit(2).truncationMode(.middle)
+        }
+    }
+
+    @ViewBuilder private var usage: some View {
+        if let error {
+            ContentUnavailableView("Couldn't read the session", systemImage: "exclamationmark.triangle",
+                                   description: Text(error))
+        } else if let transcript {
+            SessionUsageView(usage: transcript.usage)
+        } else {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

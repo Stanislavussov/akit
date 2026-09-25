@@ -352,4 +352,85 @@ struct SessionTests {
                                      project: nil, started: nil, modified: .now, size: 0)
         #expect(!session.title.contains("sk-ant-api03"))
     }
+
+    // MARK: Usage
+
+    func claudeAnswer(id: String, model: String = "claude-opus-5-5", sidechain: Bool = false, block: [String: Any],
+                      input: Int, output: Int, cacheRead: Int = 0, cacheWrite: Int = 0, thinking: Int = 0) -> [String: Any] {
+        ["type": "assistant", "isSidechain": sidechain, "timestamp": "2026-09-20T10:01:00.000Z",
+         "message": ["id": id, "role": "assistant", "model": model, "content": [block],
+                     "usage": ["input_tokens": input, "output_tokens": output, "cache_read_input_tokens": cacheRead,
+                               "cache_creation_input_tokens": cacheWrite,
+                               "output_tokens_details": ["thinking_tokens": thinking]]]]
+    }
+
+    @Test func claudeUsageCountsEachResponseOnceAndSubagentsApart() throws {
+        let text: [String: Any] = ["type": "text", "text": "ok"]
+        let tool: [String: Any] = ["type": "tool_use", "id": "t9", "name": "Bash", "input": ["command": "ls"]]
+        try write(claudeFile, lines: claudeSession(extra: [
+            // One response written as two lines (text, then tool use) with the same usage.
+            claudeAnswer(id: "m1", block: text, input: 10, output: 100, cacheRead: 1000, cacheWrite: 50, thinking: 7),
+            claudeAnswer(id: "m1", block: tool, input: 10, output: 100, cacheRead: 1000, cacheWrite: 50, thinking: 7),
+            claudeAnswer(id: "m2", model: "claude-haiku-4-5", block: text, input: 5, output: 20, cacheRead: 3000),
+            claudeAnswer(id: "s1", sidechain: true, block: text, input: 1, output: 2),
+            // Overlaps the turn before it: counted once.
+            ["type": "system", "subtype": "turn_duration", "durationMs": 2500, "timestamp": "2026-09-20T10:01:02.000Z"],
+            ["type": "system", "subtype": "turn_duration", "durationMs": 1000, "timestamp": "2026-09-20T10:01:01.500Z"],
+            ["type": "system", "subtype": "turn_duration", "durationMs": 4000, "timestamp": "2026-09-20T10:01:10.000Z"],
+        ]))
+        try write(".claude/projects/-work-app/1111/subagents/agent-a1.jsonl", lines: [
+            ["type": "user", "isSidechain": true, "message": ["role": "user", "content": "review"]],
+            claudeAnswer(id: "s2", model: "claude-sonnet-5", sidechain: true, block: text, input: 3, output: 4),
+        ])
+        let adapter = ClaudeCodeAdapter()
+        let usage = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).usage
+
+        #expect(usage.models.map(\.model) == ["claude-opus-5-5", "claude-haiku-4-5"])
+        let opus = try #require(usage.models.first)
+        #expect(opus.requests == 1)
+        #expect(opus.tokens == TokenCounts(input: 10, output: 100, cacheRead: 1000, cacheWrite: 50, reasoning: 7))
+        #expect(usage.tokens.output == 120)
+        #expect(usage.peakContext == 3005)
+        #expect(usage.lastContext == 3005)
+        #expect(usage.subagentRuns == 1)
+        #expect(usage.subagentModels.map(\.model) == ["claude-opus-5-5", "claude-sonnet-5"])
+        #expect(usage.subagentTokens.output == 6)
+        #expect(usage.activeTime == 6.5) // 2.5 s (with the overlap) + 4 s; the one without a timestamp is skipped
+        #expect(usage.cost == nil)
+        #expect(usage.userPrompts == 1)
+        #expect(usage.tools.first == ToolCount(name: "Bash", calls: 1))
+    }
+
+    @Test func piUsageIncludesCostAndAbandonedBranches() throws {
+        var lines = piSession()
+        func withUsage(_ index: Int, input: Int, output: Int, cost: Double) {
+            var entry = lines[index]
+            var message = entry["message"] as! [String: Any]
+            message["provider"] = "anthropic"
+            message["usage"] = ["input": input, "output": output, "cacheRead": 10, "cacheWrite": 0, "totalTokens": 0,
+                                "cost": ["total": cost]]
+            entry["message"] = message
+            lines[index] = entry
+        }
+        withUsage(3, input: 100, output: 5, cost: 0.25) // abandoned branch, model "old"
+        withUsage(4, input: 200, output: 7, cost: 0.5)
+        try write(piFile, lines: lines)
+        let adapter = PiAdapter()
+        let transcript = try adapter.transcript(of: try #require(adapter.sessions(in: env).first))
+        let usage = transcript.usage
+
+        #expect(usage.models.map(\.id) == ["anthropic/old", "anthropic/claude-opus-5-5"])
+        #expect(usage.tokens == TokenCounts(input: 300, output: 12, cacheRead: 20))
+        #expect(usage.cost == 0.75)
+        #expect(usage.toolErrors == 1)
+
+        let markdown = SessionExport.markdown(try #require(adapter.sessions(in: env).first), transcript)
+        #expect(markdown.contains("| anthropic/claude-opus-5-5 | 1 | 200 | 7 | 0 | 10 | 0 | 217 | 0.5000 |"))
+        #expect(markdown.contains("| **Total** | 2 | 300 | 12 | 0 | 20 | 0 | 332 | 0.7500 |"))
+        let json = SessionExport.json(try #require(adapter.sessions(in: env).first), transcript)
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let exported = try #require(object["usage"] as? [String: Any])
+        #expect(exported["costUSD"] as? Double == 0.75)
+        #expect((exported["tokens"] as? [String: Any])?["output"] as? Int == 12)
+    }
 }

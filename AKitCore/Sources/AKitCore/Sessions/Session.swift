@@ -37,10 +37,12 @@ public struct SessionTranscript: Sendable, Hashable {
     public var items: [TranscriptItem]
     /// Models that answered, in order of first use.
     public var models: [String]
+    public var usage: SessionUsage
 
-    public init(items: [TranscriptItem] = [], models: [String] = []) {
+    public init(items: [TranscriptItem] = [], models: [String] = [], usage: SessionUsage = SessionUsage()) {
         self.items = items
         self.models = models
+        self.usage = usage
     }
 }
 
@@ -91,7 +93,61 @@ struct TranscriptBuilder {
         models.append(model)
     }
 
-    var transcript: SessionTranscript { SessionTranscript(items: items, models: models) }
+    /// Token usage of the main conversation and of subagents.
+    var usage = UsageCounter()
+    var subagentUsage = UsageCounter()
+    var subagentRuns = 0
+    private var activeTurns: [DateInterval] = []
+
+    /// A turn the harness worked on. Turns can overlap (a prompt queued while another
+    /// runs), so active time is the length of their union, not the sum.
+    mutating func addActiveTurn(_ turn: DateInterval) {
+        activeTurns.append(turn)
+    }
+
+    private var activeTime: TimeInterval? {
+        guard !activeTurns.isEmpty else { return nil }
+        var total: TimeInterval = 0
+        var current: DateInterval?
+        for turn in activeTurns.sorted(by: { $0.start < $1.start }) {
+            if let open = current, turn.start <= open.end {
+                current = DateInterval(start: open.start, end: max(open.end, turn.end))
+            } else {
+                total += current?.duration ?? 0
+                current = turn
+            }
+        }
+        return total + (current?.duration ?? 0)
+    }
+
+    var transcript: SessionTranscript { SessionTranscript(items: items, models: models, usage: sessionUsage) }
+
+    private var sessionUsage: SessionUsage {
+        var result = SessionUsage()
+        result.models = usage.models
+        result.subagentModels = subagentUsage.models
+        result.subagentRuns = subagentRuns
+        let contexts = usage.contexts
+        result.peakContext = contexts.max() ?? 0
+        result.lastContext = contexts.last ?? 0
+        result.activeTime = activeTime
+        result.firstActivity = items.lazy.compactMap(\.timestamp).first
+        result.lastActivity = items.reversed().lazy.compactMap(\.timestamp).first
+        var tools: [String: Int] = [:]
+        for item in items {
+            switch item.kind {
+            case .user: result.userPrompts += 1
+            case .toolCall(let name): tools[name, default: 0] += 1
+            case .toolResult(_, let isError): if isError { result.toolErrors += 1 }
+            case .event(let title): if title == "Compacted" { result.compactions += 1 }
+            case .assistant, .thinking: break
+            }
+        }
+        result.toolCalls = tools.values.reduce(0, +)
+        result.tools = tools.map { ToolCount(name: $0.key, calls: $0.value) }
+            .sorted { ($0.calls, $1.name) > ($1.calls, $0.name) }
+        return result
+    }
 }
 
 /// Sessions of all installed harnesses. Read-only.
