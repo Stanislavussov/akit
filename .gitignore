@@ -1,0 +1,7 @@
+.DS_Store
+build/
+AKitCore/.build/
+AKit.xcodeproj/
+xcuserdata/
+*.xcuserstate
+.omc/

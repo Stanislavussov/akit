@@ -1,0 +1,40 @@
+# Xcode project definition. After editing run `make generate` (or just `make open`).
+name: AKit
+options:
+  bundleIdPrefix: dev.ussov
+  deploymentTarget:
+    macOS: "15.0"
+packages:
+  AKitCore:
+    path: AKitCore
+targets:
+  AKit:
+    type: application
+    platform: macOS
+    sources: [AKit]
+    dependencies:
+      - package: AKitCore
+    settings:
+      base:
+        PRODUCT_NAME: AKit
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ussov.akit
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: AKit
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "6.0"
+        # Personal app: ad-hoc "Sign to Run Locally", no App Sandbox,
+        # so it can access ~/.claude, ~/.pi and project folders.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+schemes:
+  AKit:
+    build:
+      targets:
+        AKit: all
+    run:
+      config: Debug
