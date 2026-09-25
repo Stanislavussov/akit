@@ -9,7 +9,7 @@ import SwiftUI
 ///
 /// `--query` fills the search field of the section (skills.sh selects the first result);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
-/// picks that project as the install place.
+/// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens.
 enum DebugSnapshot {
@@ -26,6 +26,8 @@ enum DebugSnapshot {
         var capture: Bool
         /// Session detail tab (SessionDetailTab raw value).
         var tab: String?
+        /// MCP screen: open the Add Server sheet.
+        var add: Bool
     }
 
     static let options: Options? = {
@@ -44,7 +46,8 @@ enum DebugSnapshot {
             project: value("--project"),
             harness: value("--harness"),
             capture: args.contains("--capture"),
-            tab: value("--tab")
+            tab: value("--tab"),
+            add: args.contains("--add")
         )
     }()
 
@@ -52,7 +55,9 @@ enum DebugSnapshot {
     @MainActor
     static func captureAndQuit(_ options: Options) async {
         try? await Task.sleep(for: .seconds(options.delay))
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
+        // An open sheet (e.g. `--add`) is its own window: capture it instead.
+        guard let main = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.sheetParent == nil }),
+              case let window = main.attachedSheet ?? main,
               let view = window.contentView?.superview ?? window.contentView else {
             FileHandle.standardError.write(Data("snapshot: window not found\n".utf8))
             exit(1)

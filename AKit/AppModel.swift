@@ -115,6 +115,35 @@ final class AppModel {
         return folders
     }
 
+    // MARK: MCP
+
+    /// Places a new MCP server can be written to, for the installed harnesses and known projects.
+    func mcpTargets() -> [MCPWriteTarget] {
+        MCPWriter.targets(installations: installations, projects: projects, adapters: adapters, in: .current)
+    }
+
+    /// Stores the secrets in the Keychain, writes the server (backup first), then rescans.
+    func applyMCP(_ plan: MCPWritePlan) async throws -> MCPWriter.Outcome {
+        let env = HarnessEnvironment.current
+        let claude = installations.first { $0.id == .claudeCode }?.executableURL
+        let outcome = try await MCPWriter.apply(plan, secrets: KeychainSecretStore(), home: env.homeDirectory) { arguments, directory in
+            guard let claude else { throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "The claude command was not found."]) }
+            var environment = env.variables
+            environment["PATH"] = env.pathForChildProcesses
+            guard let result = await ProcessRunner.run(claude, arguments: arguments, directory: directory,
+                                                       environment: environment, timeout: 30) else {
+                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "claude couldn't be started."])
+            }
+            guard result.succeeded else {
+                let output = SecretFilter.masked(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
+                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey:
+                    "claude \(arguments.prefix(2).joined(separator: " ")) failed: \(output)"])
+            }
+        }
+        await refresh()
+        return outcome
+    }
+
     /// Messages of one session, read in the background.
     func transcript(of session: SessionSummary) async throws -> SessionTranscript {
         guard let adapter = adapter(for: session.harness) else { return SessionTranscript() }

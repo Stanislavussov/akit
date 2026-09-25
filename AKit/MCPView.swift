@@ -7,7 +7,8 @@ import SwiftUI
 struct MCPView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: MCPServer.ID?
-    @State private var query = DebugSnapshot.options?.query ?? ""
+    @State private var query = DebugSnapshot.options?.add == true ? "" : DebugSnapshot.options?.query ?? ""
+    @State private var isAdding = DebugSnapshot.options?.add == true
 
     var body: some View {
         @Bindable var model = model
@@ -71,6 +72,13 @@ struct MCPView: View {
                     .disabled(model.isScanning)
                     .help("Rescan config files (⌘R)")
             }
+            ToolbarItem {
+                Button("Add Server…", systemImage: "plus") { isAdding = true }
+                    .help("Add an MCP server from a form or pasted JSON")
+            }
+        }
+        .sheet(isPresented: $isAdding) {
+            AddMCPServerView(project: { if case .project(let url) = model.mcpFilter { url } else { nil } }())
         }
         .onAppear {
             if case .project(let chosen) = model.mcpFilter,
