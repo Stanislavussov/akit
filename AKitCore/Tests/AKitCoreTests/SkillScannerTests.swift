@@ -290,16 +290,38 @@ struct SkillRemoverTests {
         #expect(scan().map(\.name) == ["keep"])
     }
 
-    @Test func perSkillSymlinkIsRemovedToo() throws {
+    @Test func perSkillSymlinkOnlyTheLinkIsRemoved() throws {
         try fm.createDirectory(at: home.appending(path: ".claude/skills"), withIntermediateDirectories: true)
         try write("library/lint/SKILL.md", "---\nname: lint\ndescription: d\n---\n")
         try fm.createSymbolicLink(at: home.appending(path: ".claude/skills/lint"), withDestinationURL: home.appending(path: "library/lint"))
 
         let lint = try #require(scan().first)
-        #expect(try SkillRemover.items(for: lint).count == 2)
+        #expect(SkillRemover.removesOnlyLink(lint))
+        #expect(try SkillRemover.items(for: lint).map(\.standardizedFileURL.path) == [home.appending(path: ".claude/skills/lint").standardizedFileURL.path])
         try SkillRemover.moveToTrash(lint, trash: fakeTrash)
         #expect((try? fm.destinationOfSymbolicLink(atPath: home.appending(path: ".claude/skills/lint").path)) == nil)
+        #expect(fm.fileExists(atPath: home.appending(path: "library/lint/SKILL.md").path)) // original kept
         #expect(scan().isEmpty)
+    }
+
+    @Test func linkedSkillFileNeverTrashesItsTargetFolder() throws {
+        try fm.createDirectory(at: home.appending(path: ".claude/skills/x"), withIntermediateDirectories: true)
+        try write("src/x-repo/SKILL.md", "---\nname: x\ndescription: d\n---\n")
+        try write("src/x-repo/.git/HEAD", "ref")
+        try fm.createSymbolicLink(at: home.appending(path: ".claude/skills/x/SKILL.md"),
+                                  withDestinationURL: home.appending(path: "src/x-repo/SKILL.md"))
+        let x = try #require(scan().first)
+        #expect(throws: SkillRemover.Failure.self) { try SkillRemover.moveToTrash(x, trash: fakeTrash) }
+        #expect(fm.fileExists(atPath: home.appending(path: "src/x-repo/.git/HEAD").path))
+    }
+
+    @Test func skillRootItselfIsNeverTrashed() throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        try write(".agents/skills/SKILL.md", "---\nname: stray\ndescription: d\n---\n")
+        try write(".agents/skills/other/SKILL.md", "---\nname: other\ndescription: d\n---\n")
+        let stray = try #require(scan().first { $0.name == "stray" })
+        #expect(throws: SkillRemover.Failure.self) { try SkillRemover.moveToTrash(stray, trash: fakeTrash) }
+        #expect(fm.fileExists(atPath: home.appending(path: ".agents/skills/other/SKILL.md").path))
     }
 
     @Test func readOnlySkillsAreRefused() throws {
@@ -307,5 +329,48 @@ struct SkillRemoverTests {
         let pdf = try #require(scan().first)
         #expect(throws: SkillRemover.Failure.self) { try SkillRemover.moveToTrash(pdf, trash: fakeTrash) }
         #expect(fm.fileExists(atPath: pdf.realFile.path))
+    }
+}
+
+struct MoreHarnessTests {
+    let home: URL
+    let fm = FileManager.default
+
+    init() throws {
+        home = fm.temporaryDirectory.appending(path: "akit-more-\(UUID().uuidString)")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+    }
+
+    var env: HarnessEnvironment { HarnessEnvironment(homeDirectory: home) }
+
+    func write(_ path: String, _ text: String = "---\nname: x\ndescription: d\n---\n") throws {
+        let url = home.appending(path: path)
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+    }
+
+    func skill(_ name: String) -> String { "---\nname: \(name)\ndescription: d\n---\n" }
+
+    @Test func openCodeAndCodexShareTheAgentsFolder() throws {
+        try fm.createDirectory(at: home.appending(path: ".config/opencode"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appending(path: ".codex"), withIntermediateDirectories: true)
+        try write(".agents/skills/tdd/SKILL.md", skill("tdd"))
+        try write(".config/opencode/skill/oc-only/SKILL.md", skill("oc-only"))
+        try write(".codex/skills/.system/imagegen/SKILL.md", skill("imagegen"))
+
+        let found = HarnessCatalog.detectAll(in: env)
+        #expect(Set(found.map(\.id)) == [.openCode, .codex])
+        let byName = Dictionary(uniqueKeysWithValues: SkillScanner.scan(installations: found, in: env).map { ($0.name, $0) })
+        #expect(byName["tdd"]?.visibleTo == [.codex, .openCode])
+        #expect(byName["oc-only"]?.visibleTo == [.openCode])
+        #expect(byName["imagegen"]?.scope == .bundled(.codex))
+        #expect(byName["imagegen"]?.isReadOnly == true)
+    }
+
+    @Test func codexHomeOverride() throws {
+        try fm.createDirectory(at: home.appending(path: "ch"), withIntermediateDirectories: true)
+        var e = env
+        e.variables["CODEX_HOME"] = "~/ch"
+        #expect(CodexAdapter().detect(in: e)?.configRoot.lastPathComponent == "ch")
     }
 }

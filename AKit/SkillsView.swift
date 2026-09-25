@@ -87,8 +87,14 @@ struct SkillsView: View {
     }
 
     private func deleteMessage(for skill: Skill) -> String {
-        let place = (skill.isSingleFile ? skill.realFile : skill.realFolder).tildePath
-        var lines = ["\(place) will be moved to the Trash. You can put it back from there."]
+        var lines: [String]
+        if SkillRemover.removesOnlyLink(skill) {
+            let link = (skill.isSingleFile ? skill.file : skill.folder).tildePath
+            lines = ["\(link) is a link. Only the link is moved to the Trash; the skill itself stays in \(skill.realFolder.tildePath)."]
+        } else {
+            let place = (skill.isSingleFile ? skill.realFile : skill.realFolder).tildePath
+            lines = ["\(place) will be moved to the Trash. You can put it back from there."]
+        }
         if skill.visibleTo.count > 1 {
             lines.append("It is shared: \(skill.visibleTo.map(\.displayName).joined(separator: " and ")) will all stop seeing it.")
         } else if let harness = skill.visibleTo.first {

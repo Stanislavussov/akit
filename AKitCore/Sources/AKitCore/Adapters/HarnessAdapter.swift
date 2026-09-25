@@ -34,6 +34,9 @@ public protocol HarnessAdapter: Sendable {
     /// Starts the harness in `project` to read the system prompt it would send now.
     /// Must not contact the model or save a session.
     func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot?
+
+    /// Folder new skills are installed into. nil = this harness can't take skills there.
+    func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL?
 }
 
 extension HarnessAdapter {
@@ -44,6 +47,16 @@ extension HarnessAdapter {
     public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? { nil }
     public var systemPromptAccess: SystemPromptAccess { .unavailable }
     public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? { nil }
+
+    /// The first writable skill root of that scope.
+    public func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL? {
+        switch scope {
+        case .global:
+            return skillRoots(in: env, projects: []).first { $0.scope == .global && !$0.isReadOnly }?.url
+        case .project(let project):
+            return skillRoots(in: env, projects: [project]).first { $0.scope == .project(project) && !$0.isReadOnly }?.url
+        }
+    }
 }
 
 public enum SystemPromptAccess: Sendable {
@@ -59,6 +72,8 @@ public enum HarnessCatalog {
     public static let adapters: [any HarnessAdapter] = [
         ClaudeCodeAdapter(),
         PiAdapter(),
+        OpenCodeAdapter(),
+        CodexAdapter(),
     ]
 
     /// Built-in adapters plus the user's own from `~/.akit/harnesses.json`.

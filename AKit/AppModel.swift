@@ -11,6 +11,8 @@ final class AppModel {
     private(set) var skills: [Skill] = []
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
+    /// Project folders the harnesses know about plus those found in `projectRoots`.
+    private(set) var projects: [URL] = []
     private(set) var isScanning = false
     private(set) var lastScan: Date?
 
@@ -54,6 +56,24 @@ final class AppModel {
     func delete(_ skill: Skill) async throws {
         _ = try await Task.detached { try SkillRemover.moveToTrash(skill) }.value
         await refresh()
+    }
+
+    /// Built-in and custom adapters, for planning installs.
+    var adapters: [any HarnessAdapter] { HarnessCatalog.allAdapters(custom: customHarnesses) }
+
+    /// Where a skill would be copied for these harnesses and scope.
+    func installTargets(for harnesses: [HarnessID], scope: InstallScope) -> [InstallTarget] {
+        SkillInstaller.targets(for: harnesses, scope: scope, adapters: adapters,
+                               installed: installations.map(\.id), in: .current)
+    }
+
+    /// Installs a skill from skills.sh, then rescans. Returns the new skill folders.
+    func install(_ request: InstallRequest, into targets: [InstallTarget], replace: Bool) async throws -> [URL] {
+        let folders = try await Task.detached {
+            try SkillInstaller.install(request, into: targets, replace: replace, in: .current)
+        }.value
+        await refresh()
+        return folders
     }
 
     /// Messages of one session, read in the background.
@@ -115,31 +135,36 @@ final class AppModel {
     }
 
     private func adapter(for harness: HarnessID) -> (any HarnessAdapter)? {
-        HarnessCatalog.allAdapters(custom: customHarnesses).first { $0.id == harness }
+        adapters.first { $0.id == harness }
     }
 
-    /// Adds or replaces (same id) a custom harness and saves the file.
+
+    /// Adds or replaces (same id) a custom harness. The file is re-read right before
+    /// saving, so hand edits made meanwhile are kept, and a broken file is never overwritten.
     func saveCustomHarness(_ harness: CustomHarness) throws {
-        var list = customHarnesses
-        if let index = list.firstIndex(where: { $0.id == harness.id }) {
-            list[index] = harness
-        } else {
-            list.append(harness)
+        try updateCustomHarnesses { list in
+            var list = list
+            if let index = list.firstIndex(where: { $0.id == harness.id }) {
+                list[index] = harness
+            } else {
+                list.append(harness)
+            }
+            return list
         }
-        try writeCustomHarnesses(list)
     }
 
     func removeCustomHarness(_ harness: CustomHarness) throws {
-        try writeCustomHarnesses(customHarnesses.filter { $0.id != harness.id })
+        try updateCustomHarnesses { $0.filter { $0.id != harness.id } }
     }
 
-    private func writeCustomHarnesses(_ list: [CustomHarness]) throws {
-        if let customHarnessError {
+    private func updateCustomHarnesses(_ change: ([CustomHarness]) throws -> [CustomHarness]) throws {
+        do {
+            customHarnesses = try CustomHarnessStore.update(in: .current, change)
+            customHarnessError = nil
+        } catch {
             throw NSError(domain: "AKit", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                "~/.akit/harnesses.json could not be read (\(customHarnessError)). Fix or remove it first; AKit won't overwrite it."])
+                "~/.akit/harnesses.json was not changed: \(error.localizedDescription)"])
         }
-        try CustomHarnessStore.save(list, in: .current)
-        customHarnesses = list
         Task { await refresh() }
     }
 
@@ -153,15 +178,17 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, sessions) = await Task.detached {
+        let (found, skills, projects, sessions) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
-            let projects = ProjectFinder.projects(inRoots: roots)
-            async let skills = SkillScanner.scan(installations: found, extraProjects: projects, adapters: adapters, in: env)
+            let extra = ProjectFinder.projects(inRoots: roots)
+            async let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
+            async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env)
             async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
-            return (found, await skills, await sessions)
+            return (found, await skills, await projects, await sessions)
         }.value
         installations = found
         self.skills = skills
+        self.projects = projects
         self.sessions = sessions
         lastScan = .now
 

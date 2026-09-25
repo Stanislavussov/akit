@@ -17,9 +17,10 @@ run: build   ## build and launch
 test:   ## core tests (no UI)
 	cd AKitCore && swift test
 
-snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview]
+snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [OWN=1]
 	pkill -x AKit || true
-	$(DERIVED)/Build/Products/Debug/AKit.app/Contents/MacOS/AKit --snapshot $(or $(OUT),/tmp/akit.png) $(if $(SECTION),--section $(SECTION))
+	$(DERIVED)/Build/Products/Debug/AKit.app/Contents/MacOS/AKit --snapshot $(or $(OUT),/tmp/akit.png) \
+	  $(if $(SECTION),--section $(SECTION)) $(if $(QUERY),--query "$(QUERY)") $(if $(DELAY),--delay $(DELAY)) $(if $(OWN),--own-copy)
 
 icon:   ## redraw the app icon
 	swift tools/make-icon.swift

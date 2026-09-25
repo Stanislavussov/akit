@@ -65,8 +65,45 @@ struct CustomHarnessTests {
         renamed.name = "Goose CLI"
         try CustomHarnessStore.save([renamed], in: env)
         #expect(try CustomHarnessStore.load(in: env).first?.name == "Goose CLI")
-        let backup = CustomHarnessStore.url(in: env).appendingPathExtension("bak")
-        #expect(try String(contentsOf: backup, encoding: .utf8).contains("\"Goose\""))
+        let folder = CustomHarnessStore.backupFolder(in: env)
+        let backups = try fm.contentsOfDirectory(atPath: folder.path)
+        #expect(backups.count == 1)
+        #expect(try String(contentsOf: folder.appending(path: backups[0]), encoding: .utf8).contains("\"Goose\""))
+    }
+
+    @Test func updateRereadsTheFileAndRefusesBrokenOnes() throws {
+        try CustomHarnessStore.save([goose], in: env)
+        // Someone adds an entry by hand while AKit is open.
+        try write(".akit/harnesses.json", #"{"harnesses": [{"name": "Goose", "command": "goose"}, {"name": "Hand", "command": "hand"}]}"#)
+        let saved = try CustomHarnessStore.update(in: env) { $0 + [CustomHarness(id: "new-one", name: "New One", command: "n")] }
+        #expect(saved.map(\.id) == ["goose", "hand", "new-one"])
+
+        try write(".akit/harnesses.json", "{ broken")
+        #expect(throws: (any Error).self) { try CustomHarnessStore.update(in: env) { $0 } }
+        #expect(try String(contentsOf: CustomHarnessStore.url(in: env), encoding: .utf8) == "{ broken")
+    }
+
+    @Test func wrongTypesAndDuplicateIDsAreErrors() throws {
+        try write(".akit/harnesses.json", #"{"harnesses": [{"name": "A", "skillFolders": "~/x"}]}"#)
+        #expect(throws: (any Error).self) { try CustomHarnessStore.load(in: env) }
+        try write(".akit/harnesses.json", #"{"harnesses": [{"name": "A b"}, {"name": "a-B"}]}"#)
+        #expect(throws: CustomHarnessStore.Failure.self) { try CustomHarnessStore.load(in: env) }
+    }
+
+    @Test func symlinkedFileStaysASymlink() throws {
+        try write("dotfiles/harnesses.json", #"{"harnesses": []}"#)
+        try fm.createDirectory(at: home.appending(path: ".akit"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: CustomHarnessStore.url(in: env), withDestinationURL: home.appending(path: "dotfiles/harnesses.json"))
+        try CustomHarnessStore.update(in: env) { $0 + [goose] }
+        #expect((try? fm.destinationOfSymbolicLink(atPath: CustomHarnessStore.url(in: env).path)) != nil)
+        #expect(try String(contentsOf: home.appending(path: "dotfiles/harnesses.json"), encoding: .utf8).contains("goose"))
+    }
+
+    @Test func relativeConfigFolderDoesNotLoopOrDetect() throws {
+        let bad = CustomHarness(id: "bad", name: "Bad", configRoot: ".config/bad", skillFolders: ["skills"])
+        #expect(CustomHarnessAdapter(bad).detect(in: env) == nil)
+        #expect(CustomHarnessAdapter(bad).skillRoots(in: env, projects: []).isEmpty)
+        #expect(bad.validate(against: [], reservedNames: [], isNew: true).contains("Config folder must start with / or ~/."))
     }
 
     @Test func handEditedFileWithMissingKeysLoads() throws {
@@ -82,11 +119,21 @@ struct CustomHarnessTests {
     }
 
     @Test func validation() {
-        #expect(CustomHarness(name: "", command: "x").validate(against: [], reservedNames: []).contains("Name is required."))
-        #expect(CustomHarness(name: "X").validate(against: [], reservedNames: []).count == 1) // no command/folder
-        #expect(!CustomHarness(name: "claude code", command: "c").validate(against: [], reservedNames: ["Claude Code"]).isEmpty)
-        #expect(!CustomHarness(name: "A", command: "a", projectSkillFolder: "~/x").validate(against: [], reservedNames: []).isEmpty)
-        #expect(goose.validate(against: [goose], reservedNames: ["Claude Code", "Pi"]).isEmpty)
+        func problems(_ h: CustomHarness, _ others: [CustomHarness] = [], isNew: Bool = true) -> [String] {
+            h.validate(against: others, reservedNames: ["Claude Code", "Pi"], isNew: isNew)
+        }
+        #expect(problems(CustomHarness(name: "", command: "x")).contains("Name is required."))
+        #expect(problems(CustomHarness(name: "X")).count == 1) // no command/folder
+        #expect(!problems(CustomHarness(name: "claude code", command: "c")).isEmpty)
+        #expect(!problems(CustomHarness(name: "A", command: "a", projectSkillFolder: "~/x")).isEmpty)
+        #expect(!problems(CustomHarness(name: "A", command: "a", projectSkillFolder: ".")).isEmpty)
+        #expect(!problems(CustomHarness(name: "A", command: "a", skillFolders: ["skills"])).isEmpty) // relative, no root
+        #expect(!problems(CustomHarness(name: "A", configRoot: "~/a", skillFolders: ["../x"])).isEmpty)
+        #expect(problems(goose, [goose], isNew: false).isEmpty)       // editing itself is fine
+        #expect(!problems(goose, [goose], isNew: true).isEmpty)       // adding a second Goose is not
+        var renamed = goose
+        renamed.name = "Other"
+        #expect(!problems(CustomHarness(name: "Goose", command: "g"), [renamed]).isEmpty) // id "goose" is taken
         #expect(CustomHarness.slug("My Agent 2!") == "my-agent-2")
     }
 }

@@ -18,6 +18,7 @@ extension SkillScope {
         case .project(let url): "Project · \(url.lastPathComponent)"
         case .synced: "claude.ai (synced)"
         case .plugin(let name): "Plugin · \(name)"
+        case .bundled(let harness): "Built into \(harness.displayName)"
         }
     }
 }
@@ -39,9 +40,11 @@ struct HarnessBadge: View {
         switch harness {
         case .claudeCode: return .orange
         case .pi: return .blue
+        case .openCode: return .green
+        case .codex: return .purple
         default:
             // Stable color per harness id.
-            let palette: [Color] = [.green, .purple, .pink, .teal, .indigo, .mint, .brown]
+            let palette: [Color] = [.pink, .teal, .indigo, .mint, .brown, .cyan]
             let sum = harness.rawValue.unicodeScalars.reduce(0) { $0 + Int($1.value) }
             return palette[sum % palette.count]
         }

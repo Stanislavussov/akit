@@ -4,6 +4,7 @@ import SwiftUI
 enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case overview
     case skills
+    case skillsSh
     case sessions
     case systemPrompt
     var id: Self { self }
@@ -12,6 +13,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         switch self {
         case .overview: "Overview"
         case .skills: "Skills"
+        case .skillsSh: "skills.sh"
         case .sessions: "Sessions"
         case .systemPrompt: "System Prompt"
         }
@@ -21,6 +23,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         switch self {
         case .overview: "square.grid.2x2"
         case .skills: "book.closed"
+        case .skillsSh: "sparkle.magnifyingglass"
         case .sessions: "bubble.left.and.bubble.right"
         case .systemPrompt: "doc.plaintext"
         }
@@ -42,6 +45,7 @@ struct RootView: View {
             switch selection ?? .overview {
             case .overview: OverviewView()
             case .skills: SkillsView()
+            case .skillsSh: SkillsShView()
             case .sessions: SessionsView()
             case .systemPrompt: SystemPromptView()
             }
