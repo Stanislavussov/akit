@@ -46,10 +46,14 @@ public struct Skill: Identifiable, Hashable, Sendable {
     /// Where it was installed from, e.g. `vercel-labs/skills`, `claude.ai`, `oh-my-claudecode 4.15.2`.
     public internal(set) var origin: String?
     public internal(set) var warnings: [String]
+    /// The skill folder this skill was found in (symlinks resolved), e.g. `~/.agents/skills`.
+    public let root: URL
 
     /// The skill folder (or the file itself for a single-file skill).
     public var folder: URL { isSingleFile ? file : file.deletingLastPathComponent() }
-    public var realFolder: URL { isSingleFile ? realFile : realFile.deletingLastPathComponent() }
+    /// The skill folder with symlinks resolved on the folder itself (a symlinked
+    /// SKILL.md does not move the folder somewhere else).
+    public var realFolder: URL { isSingleFile ? realFile : folder.resolvingSymlinksInPath() }
 }
 
 /// A folder a harness reads skills from.

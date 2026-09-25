@@ -123,7 +123,8 @@ public enum SkillScanner {
             }
             byID[id] = Skill(name: name, description: description, file: hit.file, realFile: real,
                              isSingleFile: hit.isSingleFile, scope: scope, visibleTo: [hit.root.harness],
-                             isReadOnly: hit.root.isReadOnly || isSynced, origin: origin, warnings: [])
+                             isReadOnly: hit.root.isReadOnly || isSynced, origin: origin, warnings: [],
+                             root: hit.root.url.resolvingSymlinksInPath())
             order.append(id)
         }
 

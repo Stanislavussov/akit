@@ -74,28 +74,32 @@ final class AppModel {
         return folders
     }
 
-    /// Adds or replaces (same id) a custom harness and saves the file.
+    /// Adds or replaces (same id) a custom harness. The file is re-read right before
+    /// saving, so hand edits made meanwhile are kept, and a broken file is never overwritten.
     func saveCustomHarness(_ harness: CustomHarness) throws {
-        var list = customHarnesses
-        if let index = list.firstIndex(where: { $0.id == harness.id }) {
-            list[index] = harness
-        } else {
-            list.append(harness)
+        try updateCustomHarnesses { list in
+            var list = list
+            if let index = list.firstIndex(where: { $0.id == harness.id }) {
+                list[index] = harness
+            } else {
+                list.append(harness)
+            }
+            return list
         }
-        try writeCustomHarnesses(list)
     }
 
     func removeCustomHarness(_ harness: CustomHarness) throws {
-        try writeCustomHarnesses(customHarnesses.filter { $0.id != harness.id })
+        try updateCustomHarnesses { $0.filter { $0.id != harness.id } }
     }
 
-    private func writeCustomHarnesses(_ list: [CustomHarness]) throws {
-        if let customHarnessError {
+    private func updateCustomHarnesses(_ change: ([CustomHarness]) throws -> [CustomHarness]) throws {
+        do {
+            customHarnesses = try CustomHarnessStore.update(in: .current, change)
+            customHarnessError = nil
+        } catch {
             throw NSError(domain: "AKit", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                "~/.akit/harnesses.json could not be read (\(customHarnessError)). Fix or remove it first; AKit won't overwrite it."])
+                "~/.akit/harnesses.json was not changed: \(error.localizedDescription)"])
         }
-        try CustomHarnessStore.save(list, in: .current)
-        customHarnesses = list
         Task { await refresh() }
     }
 

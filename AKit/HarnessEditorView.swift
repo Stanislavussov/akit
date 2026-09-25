@@ -10,6 +10,7 @@ struct HarnessEditorView: View {
 
     @State private var draft: CustomHarness
     @State private var saveError: String?
+    @State private var confirmRemove = false
     private let isNew: Bool
 
     init(harness: CustomHarness? = nil) {
@@ -18,9 +19,7 @@ struct HarnessEditorView: View {
     }
 
     private var problems: [String] {
-        var candidate = draft
-        if isNew { candidate.id = CustomHarness.slug(draft.name) }
-        return candidate.validate(against: model.customHarnesses, reservedNames: model.builtInNames)
+        draft.validate(against: model.customHarnesses, reservedNames: model.builtInNames, isNew: isNew)
     }
 
     var body: some View {
@@ -45,8 +44,8 @@ struct HarnessEditorView: View {
                 Section {
                     ForEach(draft.skillFolders.indices, id: \.self) { index in
                         HStack {
-                            PathField(title: "Skill folder", text: $draft.skillFolders[index], prompt: "skills", pickFolders: true)
-                            Button("Remove", systemImage: "minus.circle") { draft.skillFolders.remove(at: index) }
+                            PathField(title: "Skill folder", text: skillFolder(at: index), prompt: "skills", pickFolders: true)
+                            Button("Remove", systemImage: "minus.circle") { if index < draft.skillFolders.count { draft.skillFolders.remove(at: index) } }
                                 .labelStyle(.iconOnly)
                                 .buttonStyle(.borderless)
                         }
@@ -56,7 +55,7 @@ struct HarnessEditorView: View {
                 } header: {
                     Text("Skills")
                 } footer: {
-                    Text("Relative paths are inside the config folder. Folders are searched for <name>/SKILL.md at any depth. Use ~/.agents/skills to share the skills Claude and Pi already use.")
+                    Text("Relative paths are inside the config folder (which must start with / or ~/). Folders are searched for <name>/SKILL.md at any depth. Use ~/.agents/skills to share the skills Claude and Pi already use.")
                         .foregroundStyle(.secondary)
                 }
 
@@ -70,6 +69,9 @@ struct HarnessEditorView: View {
 
             Divider()
             HStack {
+                if !isNew {
+                    Button("Remove…", role: .destructive) { confirmRemove = true }
+                }
                 Text("Saved to ~/.akit/harnesses.json").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -81,10 +83,32 @@ struct HarnessEditorView: View {
             .padding(12)
         }
         .frame(width: 560, height: 640)
+        .confirmationDialog("Remove “\(draft.name)” from AKit?", isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button("Remove", role: .destructive, action: remove)
+        } message: {
+            Text("Only its description in ~/.akit/harnesses.json is removed. The harness and its files stay untouched.")
+        }
         .alert("Couldn't save", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
             Button("OK") {}
         } message: {
             Text(saveError ?? "")
+        }
+    }
+
+    /// Index-checked binding: removing a row must not crash a field that is still on screen.
+    private func skillFolder(at index: Int) -> Binding<String> {
+        Binding(
+            get: { index < draft.skillFolders.count ? draft.skillFolders[index] : "" },
+            set: { if index < draft.skillFolders.count { draft.skillFolders[index] = $0 } }
+        )
+    }
+
+    private func remove() {
+        do {
+            try model.removeCustomHarness(draft)
+            dismiss()
+        } catch {
+            saveError = error.localizedDescription
         }
     }
 
