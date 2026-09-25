@@ -50,6 +50,8 @@ public enum SkillInstaller {
         case noTarget
         case alreadyInstalled([URL])
         case tooLarge(Int)
+        case notASkill([URL])
+        case sourceChanged
 
         public var errorDescription: String? {
             switch self {
@@ -58,6 +60,9 @@ public enum SkillInstaller {
             case .alreadyInstalled(let urls):
                 "A skill with this name already exists: \(urls.map(\.path).joined(separator: ", "))"
             case .tooLarge(let bytes): "The skill is too large to install (\(bytes / 1_000_000) MB)."
+            case .notASkill(let urls):
+                "\(urls.map(\.path).joined(separator: ", ")) exists and is not a single skill. Choose another name."
+            case .sourceChanged: "The downloaded files changed since the preview. Select the skill again."
             }
         }
     }
@@ -115,42 +120,69 @@ public enum SkillInstaller {
         targets.map { $0.folder(for: name) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    /// Existing paths that are not one skill (e.g. Claude's `synced` folder or a folder that
+    /// groups several skills). Those are never replaced.
+    public static func blockedConflicts(name: String, targets: [InstallTarget]) -> [URL] {
+        conflicts(name: name, targets: targets).filter { !SkillScanner.hasSkillFile($0) }
+    }
+
+    /// One install at a time, so two installs never lose each other's lock entries.
+    private static let serial = NSLock()
+
     /// Copies the skill into every target and records it in `~/.akit/skills-lock.json`.
     /// `replace`: move existing same-name skills to the Trash first; otherwise they block the install.
+    /// Everything is staged before anything is trashed; if a step fails, trashed skills are put back.
     /// Returns the new skill folders.
     @discardableResult
     public static func install(_ request: InstallRequest, into targets: [InstallTarget], replace: Bool,
                                in env: HarnessEnvironment,
                                trash: (URL) throws -> URL? = SkillRemover.defaultTrash) throws -> [URL] {
+        serial.lock()
+        defer { serial.unlock() }
+
         if let problem = nameProblems(request.name).first { throw Failure.invalidName(problem) }
         guard !targets.isEmpty else { throw Failure.noTarget }
         let files = SkillCopier.files(in: request.skill.folder)
+        // The cached download may have been cleaned up since the preview.
+        guard files.map(\.relative) == request.skill.files else { throw Failure.sourceChanged }
         let bytes = files.reduce(0) { $0 + $1.size }
         guard bytes <= maxBytes else { throw Failure.tooLarge(bytes) }
 
+        let blocked = blockedConflicts(name: request.name, targets: targets)
+        guard blocked.isEmpty else { throw Failure.notASkill(blocked) }
         let existing = conflicts(name: request.name, targets: targets)
-        if !existing.isEmpty {
-            guard replace else { throw Failure.alreadyInstalled(existing) }
-        }
+        if !existing.isEmpty, !replace { throw Failure.alreadyInstalled(existing) }
         // Read the lock before touching anything: a broken lock stops the install.
         var lock = try InstalledSkillLock.load(in: env)
-        for url in existing { _ = try trash(url) }
 
         let fm = FileManager.default
-        var installed: [URL] = []
+        var staged: [(staging: URL, destination: URL)] = []
+        defer { for item in staged { try? fm.removeItem(at: item.staging) } }
         for target in targets {
-            let destination = target.folder(for: request.name)
             let staging = target.root.appending(path: ".akit-install-\(UUID().uuidString)", directoryHint: .isDirectory)
             try fm.createDirectory(at: staging, withIntermediateDirectories: true)
-            do {
-                try SkillCopier.copy(files, to: staging)
-                try Data(request.finalText.utf8).write(to: staging.appending(path: "SKILL.md"), options: .atomic)
-                try fm.moveItem(at: staging, to: destination)
-            } catch {
-                try? fm.removeItem(at: staging)
-                throw error
+            staged.append((staging, target.folder(for: request.name)))
+            try SkillCopier.copy(files, to: staging)
+            try Data(request.finalText.utf8).write(to: staging.appending(path: "SKILL.md"), options: .atomic)
+        }
+
+        var trashed: [(original: URL, inTrash: URL)] = []
+        var installed: [URL] = []
+        do {
+            for url in existing {
+                if let moved = try trash(url) { trashed.append((url, moved)) }
             }
-            installed.append(destination)
+            for item in staged {
+                try fm.moveItem(at: item.staging, to: item.destination)
+                installed.append(item.destination)
+            }
+        } catch {
+            // Undo: remove the new copies, put the old skills back.
+            for url in installed { try? fm.removeItem(at: url) }
+            for item in trashed where !fm.fileExists(atPath: item.original.path) {
+                try? fm.moveItem(at: item.inTrash, to: item.original)
+            }
+            throw error
         }
 
         let date = ISO8601DateFormatter().string(from: .now)

@@ -100,8 +100,8 @@ struct SkillsShView: View {
     }
 
     private func isInstalled(_ remote: RemoteSkill) -> Bool {
-        model.skills.contains { $0.origin?.hasPrefix("skills.sh · \(remote.source)") == true && $0.name == remote.name }
-            || model.skills.contains { $0.origin == remote.source && $0.name == remote.name }
+        let origins: Set<String> = [remote.source, "skills.sh · \(remote.source)", "skills.sh · \(remote.source) (edited)"]
+        return model.skills.contains { $0.name == remote.name && $0.origin.map(origins.contains) == true }
     }
 }
 
@@ -150,6 +150,11 @@ private struct RemoteSkillDetailView: View {
     @State private var isEditing = false
     @State private var editedText = ""
 
+    // Planned install, recomputed only when the options change (it reads harness files).
+    @State private var targets: [InstallTarget] = []
+    @State private var conflicts: [URL] = []
+    @State private var blockedConflicts: [URL] = []
+
     @State private var isInstalling = false
     @State private var confirmReplace = false
     @State private var installError: String?
@@ -176,6 +181,7 @@ private struct RemoteSkillDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task { await load() }
+        .task(id: planKey) { plan() }
         .confirmationDialog("Replace the existing skill?", isPresented: $confirmReplace, titleVisibility: .visible) {
             Button("Move Old to Trash and Install", role: .destructive) { install(replace: true) }
             Button("Cancel", role: .cancel) {}
@@ -327,13 +333,23 @@ private struct RemoteSkillDetailView: View {
         return "Your global skill folders"
     }
 
-    private var targets: [InstallTarget] {
-        model.installTargets(for: model.installations.map(\.id).filter(harnesses.contains), scope: scope)
+    /// Changes whenever the planned install could change, including after a rescan.
+    private var planKey: String {
+        let scopeKey = if case .project(let url) = scope { url.path } else { "global" }
+        return [harnesses.map(\.rawValue).sorted().joined(separator: ","), scopeKey, name,
+                "\(model.lastScan?.timeIntervalSince1970 ?? 0)"].joined(separator: "|")
     }
 
-    private var conflicts: [URL] { SkillInstaller.conflicts(name: name, targets: targets) }
+    private func plan() {
+        targets = model.installTargets(for: model.installations.map(\.id).filter(harnesses.contains), scope: scope)
+        conflicts = SkillInstaller.conflicts(name: name, targets: targets)
+        blockedConflicts = SkillInstaller.blockedConflicts(name: name, targets: targets)
+    }
 
-    private var problems: [String] { SkillInstaller.nameProblems(name).map { $0.prefix(1).uppercased() + $0.dropFirst() } }
+    private var problems: [String] {
+        SkillInstaller.nameProblems(name).map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            + blockedConflicts.map { "\($0.tildePath) exists and is not a single skill; choose another name" }
+    }
 
     private var warnings: [String] {
         var result: [String] = []
@@ -342,7 +358,7 @@ private struct RemoteSkillDetailView: View {
         }
         let missing = harnesses.filter { id in !targets.contains { $0.harnesses.contains(id) } }
         result += missing.sorted().map { "\($0.displayName) has no skills folder for this choice" }
-        if !conflicts.isEmpty {
+        if !conflicts.isEmpty, blockedConflicts.isEmpty {
             result.append("A skill named “\(name)” already exists there; installing replaces it (the old one goes to the Trash).")
         }
         return result

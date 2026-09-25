@@ -54,24 +54,42 @@ public enum RemoteSkillFetcher {
 
     /// Finds the skill in an unpacked repository and reads it.
     public static func locate(_ remote: RemoteSkill, in root: URL) throws -> FetchedSkill {
+        let rootPath = root.resolvingSymlinksInPath().path
         guard let folder = SkillLocator.find(skillId: remote.skillId, name: remote.name, in: root),
+              SkillLocator.isRealSkillFile(folder.appending(path: "SKILL.md"), inside: rootPath),
               let text = try? String(contentsOf: folder.appending(path: "SKILL.md"), encoding: .utf8) else {
             throw Failure.skillNotFound(remote.name, remote.source)
         }
-        let rootPath = root.standardizedFileURL.path
-        let folderPath = folder.standardizedFileURL.path
+        let folderPath = folder.resolvingSymlinksInPath().path
         let inRepo = folderPath == rootPath ? "" : String(folderPath.dropFirst(rootPath.count + 1))
         return FetchedSkill(remote: remote, folder: folder, pathInRepo: inRepo, skillText: text,
                             files: SkillCopier.files(in: folder).map(\.relative))
     }
 
     /// Unpacked repository root, downloaded again when older than `cacheLifetime`.
+    /// Concurrent requests for one repository share a single download.
     static func repository(owner: String, repo: String, cache: URL, session: URLSession) async throws -> URL {
+        try await RepositoryDownloads.shared.root(key: "\(owner)/\(repo)") {
+            try await download(owner: owner, repo: repo, cache: cache, session: session)
+        }
+    }
+
+    /// Every download unpacks into its own `<owner>/<repo>/<time>-<uuid>` folder, so a
+    /// newer download never replaces files a preview or an install is still reading.
+    /// Versions older than twice the lifetime are removed.
+    private static func download(owner: String, repo: String, cache: URL, session: URLSession) async throws -> URL {
         let fm = FileManager.default
-        let target = cache.appending(path: "\(owner)/\(repo)", directoryHint: .isDirectory)
-        if let modified = (try? fm.attributesOfItem(atPath: target.path))?[.modificationDate] as? Date,
-           Date.now.timeIntervalSince(modified) < cacheLifetime,
-           let unpacked = SkillScanner.children(of: target).first(where: SkillScanner.isDirectory) {
+        let versions = cache.appending(path: "\(owner)/\(repo)", directoryHint: .isDirectory)
+        let now = Date.now.timeIntervalSince1970
+        func age(_ folder: URL) -> TimeInterval? {
+            folder.lastPathComponent.split(separator: "-").first.flatMap { Double($0) }.map { now - $0 }
+        }
+        let existing = SkillScanner.children(of: versions).filter(SkillScanner.isDirectory)
+        for folder in existing where (age(folder) ?? .infinity) > 2 * cacheLifetime {
+            try? fm.removeItem(at: folder)
+        }
+        if let fresh = existing.filter({ (age($0) ?? .infinity) < cacheLifetime }).max(by: { $0.lastPathComponent < $1.lastPathComponent }),
+           let unpacked = SkillScanner.children(of: fresh).first(where: SkillScanner.isDirectory) {
             return unpacked
         }
 
@@ -95,8 +113,8 @@ public enum RemoteSkillFetcher {
         defer { try? fm.removeItem(at: staging) }
         try await untar(archive, into: staging)
 
-        try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+        let target = versions.appending(path: "\(Int(now))-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fm.createDirectory(at: versions, withIntermediateDirectories: true)
         try fm.moveItem(at: staging, to: target)
         guard let unpacked = SkillScanner.children(of: target).first(where: SkillScanner.isDirectory) else {
             throw Failure.unpack("the archive is empty")
@@ -157,7 +175,8 @@ public enum SkillLocator {
     private static func collect(_ dir: URL, depth: Int, maxDepth: Int,
                                 into result: inout [(folder: URL, depth: Int, name: String?)]) {
         guard depth <= maxDepth else { return }
-        if SkillScanner.hasSkillFile(dir) {
+        // A symlinked SKILL.md could point at any file on this Mac (e.g. a token): never read it.
+        if SkillScanner.hasSkillFile(dir), isRealSkillFile(dir.appending(path: "SKILL.md"), inside: nil) {
             let text = try? String(contentsOf: dir.appending(path: "SKILL.md"), encoding: .utf8)
             result.append((dir, depth, text.flatMap { Frontmatter.parse($0)["name"] }))
         }
@@ -169,6 +188,14 @@ public enum SkillLocator {
             guard values?.isDirectory == true, values?.isSymbolicLink != true else { continue }
             collect(child, depth: depth + 1, maxDepth: maxDepth, into: &result)
         }
+    }
+
+    /// A regular file, not a symlink, and (when `root` is given) really inside that folder.
+    static func isRealSkillFile(_ file: URL, inside root: String?) -> Bool {
+        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values?.isSymbolicLink == false, values?.isRegularFile == true else { return false }
+        guard let root else { return true }
+        return file.resolvingSymlinksInPath().path.hasPrefix(root + "/")
     }
 
     /// skills.sh ids: lower case, spaces become hyphens, other symbols are dropped
@@ -184,5 +211,19 @@ public enum SkillLocator {
         }
         while result.last == "-" { result.removeLast() }
         return result
+    }
+}
+
+/// One download per repository at a time; later callers wait for the running one.
+private actor RepositoryDownloads {
+    static let shared = RepositoryDownloads()
+    private var running: [String: Task<URL, Error>] = [:]
+
+    func root(key: String, download: @escaping @Sendable () async throws -> URL) async throws -> URL {
+        if let task = running[key] { return try await task.value }
+        let task = Task { try await download() }
+        running[key] = task
+        defer { running[key] = nil }
+        return try await task.value
     }
 }

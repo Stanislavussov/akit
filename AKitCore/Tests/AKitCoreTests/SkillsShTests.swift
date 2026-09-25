@@ -231,6 +231,86 @@ struct SkillsShTests {
         #expect(SkillInstaller.nameProblems("my-tdd").isEmpty)
     }
 
+    // MARK: - Hostile or changed repositories
+
+    @Test func symlinkedSkillFileIsNeverRead() throws {
+        let secret = home.appending(path: ".claude/.credentials.json")
+        try write(secret, "TOKEN")
+        try fm.createDirectory(at: repo.appending(path: "x"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: repo.appending(path: "x/SKILL.md"), withDestinationURL: secret)
+        #expect(throws: RemoteSkillFetcher.Failure.self) { try fetched("x") }
+    }
+
+    @Test func onlyPlainGitHubRepoNamesAreAccepted() {
+        func repo(_ source: String) -> Bool {
+            RemoteSkill(id: source + "/s", source: source, skillId: "s", name: "s", installs: 0).gitHubRepo != nil
+        }
+        #expect(repo("vercel-labs/agent-skills"))
+        #expect(repo("me/my.skills"))
+        #expect(!repo("me/.."))
+        #expect(!repo("open.feishu.cn"))
+        #expect(!repo("a/b/c"))
+    }
+
+    @Test func folderThatIsNotOneSkillIsNeverReplaced() throws {
+        try write(repo.appending(path: "synced/SKILL.md"), skill("synced"))
+        try write(home.appending(path: ".claude/skills/synced/bucket/x/SKILL.md"), skill("x"))
+        let found = try fetched("synced")
+        let request = InstallRequest(skill: found, name: "synced", skillText: found.skillText, keepSource: true)
+        #expect(throws: SkillInstaller.Failure.self) {
+            try SkillInstaller.install(request, into: claudeGlobal(), replace: true, in: env) { _ in
+                Issue.record("nothing may be trashed")
+                return nil
+            }
+        }
+        #expect(fm.fileExists(atPath: home.appending(path: ".claude/skills/synced/bucket/x/SKILL.md").path))
+    }
+
+    @Test func failedInstallPutsTheOldSkillBack() throws {
+        try write(repo.appending(path: "tdd/SKILL.md"), skill("tdd"))
+        try write(home.appending(path: ".claude/skills/tdd/SKILL.md"), skill("old"))
+        // Second target: a skills "folder" that is a file, so moving the new copy there fails.
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        try write(home.appending(path: ".agents/skills/tdd/SKILL.md"), skill("old-shared"))
+        let found = try fetched("tdd")
+        let targets = SkillInstaller.targets(for: [.claudeCode, .pi], scope: .global,
+                                             adapters: HarnessCatalog.adapters, installed: detect(), in: env)
+        #expect(targets.count == 2)
+
+        let trashFolder = home.appending(path: "Trash")
+        try fm.createDirectory(at: trashFolder, withIntermediateDirectories: true)
+        var calls = 0
+        let request = InstallRequest(skill: found, name: "tdd", skillText: found.skillText, keepSource: true)
+        #expect(throws: (any Error).self) {
+            try SkillInstaller.install(request, into: targets, replace: true, in: env) { url in
+                calls += 1
+                let moved = trashFolder.appending(path: "\(calls)-\(url.lastPathComponent)")
+                try fm.moveItem(at: url, to: moved)
+                if calls == 2 {
+                    // Something grabs the name before the move: the move must fail.
+                    try fm.createDirectory(at: url, withIntermediateDirectories: true)
+                }
+                return moved
+            }
+        }
+        let claude = try String(contentsOf: home.appending(path: ".claude/skills/tdd/SKILL.md"), encoding: .utf8)
+        #expect(Frontmatter.parse(claude)["name"] == "old") // put back from the Trash
+        #expect(try InstalledSkillLock.load(in: env).entries.isEmpty)
+        let leftovers = try fm.contentsOfDirectory(atPath: home.appending(path: ".claude/skills").path)
+        #expect(leftovers == ["tdd"]) // no staging folders left
+    }
+
+    @Test func changedDownloadIsRefused() throws {
+        try write(repo.appending(path: "tdd/SKILL.md"), skill("tdd"))
+        try write(repo.appending(path: "tdd/refs.md"), "r")
+        let found = try fetched("tdd")
+        try fm.removeItem(at: repo.appending(path: "tdd/refs.md"))
+        let request = InstallRequest(skill: found, name: "tdd", skillText: found.skillText, keepSource: true)
+        #expect(throws: SkillInstaller.Failure.self) {
+            try SkillInstaller.install(request, into: claudeGlobal(), replace: false, in: env)
+        }
+    }
+
     // MARK: - SKILL.md name
 
     @Test func settingNameReplacesOrAddsIt() {

@@ -22,9 +22,12 @@ public struct RemoteSkill: Identifiable, Hashable, Sendable, Codable {
 
     /// `owner/repo` when the source is a GitHub repository, nil otherwise.
     public var gitHubRepo: (owner: String, repo: String)? {
-        let parts = source.split(separator: "/", omittingEmptySubsequences: false)
-        guard parts.count == 2, !parts[0].contains("."), parts.allSatisfy({ !$0.isEmpty }) else { return nil }
-        return (String(parts[0]), String(parts[1]))
+        let parts = source.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 2,
+              parts[0].range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil,
+              parts[1].range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) != nil,
+              parts[1] != ".", parts[1] != ".." else { return nil }
+        return (parts[0], parts[1])
     }
 
     public var pageURL: URL { SkillsShClient.base.appending(path: id) }
