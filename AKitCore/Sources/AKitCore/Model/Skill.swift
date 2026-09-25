@@ -10,6 +10,8 @@ public enum SkillScope: Hashable, Sendable {
     case synced
     /// Shipped by an enabled Claude Code plugin. Read-only.
     case plugin(name: String)
+    /// Bundled with a harness itself (e.g. Codex's `.system` skills). Read-only.
+    case bundled(HarnessID)
 
     /// Group order in the list: global, projects, synced, plugins.
     public var sortRank: Int {
@@ -18,6 +20,7 @@ public enum SkillScope: Hashable, Sendable {
         case .project: 1
         case .synced: 2
         case .plugin: 3
+        case .bundled: 4
         }
     }
 }

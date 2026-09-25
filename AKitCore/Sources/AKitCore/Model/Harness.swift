@@ -15,6 +15,8 @@ public struct HarnessID: Sendable, Hashable, Codable, Comparable, CustomStringCo
 
     public static let claudeCode = HarnessID("claude-code", displayName: "Claude")
     public static let pi = HarnessID("pi", displayName: "Pi")
+    public static let openCode = HarnessID("opencode", displayName: "OpenCode")
+    public static let codex = HarnessID("codex", displayName: "Codex")
 
     public static func == (a: HarnessID, b: HarnessID) -> Bool { a.rawValue == b.rawValue }
     public static func < (a: HarnessID, b: HarnessID) -> Bool { a.rawValue < b.rawValue }

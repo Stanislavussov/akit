@@ -30,6 +30,8 @@ public enum HarnessCatalog {
     public static let adapters: [any HarnessAdapter] = [
         ClaudeCodeAdapter(),
         PiAdapter(),
+        OpenCodeAdapter(),
+        CodexAdapter(),
     ]
 
     /// Built-in adapters plus the user's own from `~/.akit/harnesses.json`.

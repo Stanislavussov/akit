@@ -155,7 +155,7 @@ public enum SkillScanner {
                     let skill = skills[index]
                     guard skill.visibleTo.contains(harness) else { return false }
                     switch skill.scope {
-                    case .global, .synced: return true
+                    case .global, .synced, .bundled: return true
                     case .plugin: return harness != .claudeCode
                     case .project(let url): return url == context
                     }

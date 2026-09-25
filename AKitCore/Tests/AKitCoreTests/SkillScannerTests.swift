@@ -309,3 +309,46 @@ struct SkillRemoverTests {
         #expect(fm.fileExists(atPath: pdf.realFile.path))
     }
 }
+
+struct MoreHarnessTests {
+    let home: URL
+    let fm = FileManager.default
+
+    init() throws {
+        home = fm.temporaryDirectory.appending(path: "akit-more-\(UUID().uuidString)")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+    }
+
+    var env: HarnessEnvironment { HarnessEnvironment(homeDirectory: home) }
+
+    func write(_ path: String, _ text: String = "---\nname: x\ndescription: d\n---\n") throws {
+        let url = home.appending(path: path)
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+    }
+
+    func skill(_ name: String) -> String { "---\nname: \(name)\ndescription: d\n---\n" }
+
+    @Test func openCodeAndCodexShareTheAgentsFolder() throws {
+        try fm.createDirectory(at: home.appending(path: ".config/opencode"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appending(path: ".codex"), withIntermediateDirectories: true)
+        try write(".agents/skills/tdd/SKILL.md", skill("tdd"))
+        try write(".config/opencode/skill/oc-only/SKILL.md", skill("oc-only"))
+        try write(".codex/skills/.system/imagegen/SKILL.md", skill("imagegen"))
+
+        let found = HarnessCatalog.detectAll(in: env)
+        #expect(Set(found.map(\.id)) == [.openCode, .codex])
+        let byName = Dictionary(uniqueKeysWithValues: SkillScanner.scan(installations: found, in: env).map { ($0.name, $0) })
+        #expect(byName["tdd"]?.visibleTo == [.codex, .openCode])
+        #expect(byName["oc-only"]?.visibleTo == [.openCode])
+        #expect(byName["imagegen"]?.scope == .bundled(.codex))
+        #expect(byName["imagegen"]?.isReadOnly == true)
+    }
+
+    @Test func codexHomeOverride() throws {
+        try fm.createDirectory(at: home.appending(path: "ch"), withIntermediateDirectories: true)
+        var e = env
+        e.variables["CODEX_HOME"] = "~/ch"
+        #expect(CodexAdapter().detect(in: e)?.configRoot.lastPathComponent == "ch")
+    }
+}
