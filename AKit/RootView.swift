@@ -5,6 +5,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case overview
     case skills
     case sessions
+    case systemPrompt
     var id: Self { self }
 
     var title: String {
@@ -12,6 +13,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .skills: "Skills"
         case .sessions: "Sessions"
+        case .systemPrompt: "System Prompt"
         }
     }
 
@@ -20,6 +22,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .overview: "square.grid.2x2"
         case .skills: "book.closed"
         case .sessions: "bubble.left.and.bubble.right"
+        case .systemPrompt: "doc.plaintext"
         }
     }
 }
@@ -40,6 +43,7 @@ struct RootView: View {
             case .overview: OverviewView()
             case .skills: SkillsView()
             case .sessions: SessionsView()
+            case .systemPrompt: SystemPromptView()
             }
         }
     }

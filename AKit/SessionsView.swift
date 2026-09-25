@@ -113,18 +113,35 @@ private struct SessionRow: View {
     }
 }
 
+enum SessionDetailTab: String, CaseIterable, Identifiable {
+    case conversation
+    case prompt
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .conversation: "Conversation"
+        case .prompt: "System Prompt"
+        }
+    }
+}
+
 private struct SessionDetailView: View {
     @Environment(AppModel.self) private var model
     let session: SessionSummary
     @State private var transcript: SessionTranscript?
     @State private var error: String?
+    @State private var tab = DebugSnapshot.options?.tab.flatMap(SessionDetailTab.init(rawValue:)) ?? .conversation
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(20)
             Divider()
-            content
+            switch tab {
+            case .conversation: content
+            case .prompt: SessionPromptView(session: session)
+            }
         }
         // Reload on selection change and after every rescan (⌘R).
         .task(id: "\(session.id)|\(session.modified.timeIntervalSince1970)") {
@@ -177,6 +194,13 @@ private struct SessionDetailView: View {
             }
             .font(.callout)
             .textSelection(.enabled)
+
+            Picker("View", selection: $tab) {
+                ForEach(SessionDetailTab.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
         }
     }
 
@@ -199,6 +223,55 @@ private struct SessionDetailView: View {
             }
         } else {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+/// The system prompt of one session: saved in it (Claude Code) or caught now (Pi).
+private struct SessionPromptView: View {
+    @Environment(AppModel.self) private var model
+    let session: SessionSummary
+    @State private var prompt: PromptSnapshot?
+    @State private var isLoading = true
+    @State private var error: String?
+
+    var body: some View {
+        switch model.promptAccess(session.harness) {
+        case .recorded: recorded
+        case .captured:
+            CapturedPromptView(harness: session.harness,
+                               project: session.project ?? FileManager.default.homeDirectoryForCurrentUser)
+        case .unavailable:
+            ContentUnavailableView("Not available", systemImage: "doc.plaintext",
+                                   description: Text("AKit can't read the system prompt of \(session.harness.displayName)."))
+        }
+    }
+
+    private var recorded: some View {
+        Group {
+            if let prompt {
+                PromptSnapshotView(snapshot: prompt) {
+                    Text("As saved by \(session.harness.displayName) in this session: the latest version, reused until the conversation is compacted.")
+                }
+            } else if isLoading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView("No saved system prompt", systemImage: "doc.plaintext",
+                                       description: Text(error ?? "This session was written by a version that doesn't save it (Claude Code saves it since 2.1.265)."))
+            }
+        }
+        .task(id: "\(session.id)|\(session.modified.timeIntervalSince1970)") {
+            isLoading = true
+            error = nil
+            do {
+                let loaded = try await model.recordedPrompt(in: session)
+                guard !Task.isCancelled else { return }
+                prompt = loaded
+            } catch {
+                prompt = nil
+                self.error = error.localizedDescription
+            }
+            isLoading = false
         }
     }
 }
@@ -244,67 +317,6 @@ private struct TranscriptRow: View {
         case .event(let title):
             Collapsible(title: title, icon: "info.circle", tint: .orange, text: item.text, monospaced: false,
                         startsExpanded: item.text.count < 200)
-        }
-    }
-}
-
-/// A collapsed block with a one-line preview.
-private struct Collapsible: View {
-    let title: String
-    let icon: String
-    let tint: Color
-    let text: String
-    let monospaced: Bool
-    var startsExpanded = false
-    @State private var expanded: Bool?
-
-    var body: some View {
-        DisclosureGroup(isExpanded: Binding(get: { expanded ?? startsExpanded }, set: { expanded = $0 })) {
-            LongText(text: text, monospaced: monospaced)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-        } label: {
-            HStack(spacing: 6) {
-                Label(title, systemImage: icon).foregroundStyle(tint).fontWeight(.medium)
-                if !(expanded ?? startsExpanded) {
-                    Text(JSONLinePreview.line(text))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-            .font(.callout)
-        }
-    }
-}
-
-private enum JSONLinePreview {
-    static func line(_ text: String) -> String {
-        text.split(whereSeparator: \.isNewline).lazy
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .first { !$0.isEmpty && $0 != "{" } ?? ""
-    }
-}
-
-/// Selectable text; very long texts show their start and a button for the rest.
-private struct LongText: View {
-    let text: String
-    var monospaced = false
-    @State private var showAll = false
-    private static let limit = 4_000
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(showAll || text.count <= Self.limit ? text : String(text.prefix(Self.limit)) + "…")
-                .font(monospaced ? .system(.callout, design: .monospaced) : .body)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if text.count > Self.limit {
-                Button(showAll ? "Show less" : "Show all (\(text.count.formatted()) characters)") { showAll.toggle() }
-                    .buttonStyle(.link)
-                    .font(.caption)
-            }
         }
     }
 }

@@ -159,3 +159,92 @@ enum ClaudeSessions {
         text.replacingOccurrences(of: "</?[a-z-]+>", with: "", options: .regularExpression)
     }
 }
+
+// MARK: - System prompt
+
+extension ClaudeSessions {
+    /// Claude Code (2.1.26x and newer) records the system prompt it sends as a
+    /// `prompt_snapshot` attachment and reuses it until the conversation is compacted;
+    /// the latest one is returned. Context comes from the attachments of the first request:
+    /// Claude writes them around the first prompt, before the first answer.
+    /// nil = the session has no snapshot (older versions).
+    static func recordedPrompt(in file: URL) throws -> PromptSnapshot? {
+        let data = try Data(contentsOf: file)
+        var sections: [String]?
+        var tools: [PromptTool] = []
+        var context: [PromptContextPart] = []
+        var beforeFirstAnswer = true
+
+        for entry in JSONLines.objects(in: data) where !isSidechain(entry) {
+            if entry["type"] as? String == "assistant" { beforeFirstAnswer = false }
+            guard entry["type"] as? String == "attachment", let attachment = entry["attachment"] as? Object else { continue }
+            if attachment["type"] as? String == "prompt_snapshot" {
+                let prompt = attachment["systemPrompt"]
+                sections = (prompt as? [String]) ?? (prompt as? String).map { [$0] } ?? sections
+                // Some snapshots carry only the prompt; keep the last tool list seen.
+                let listed = PromptTool.list(attachment["tools"])
+                if !listed.isEmpty { tools = listed }
+            } else if beforeFirstAnswer {
+                context += contextParts(of: attachment, startingAt: context.count)
+            }
+        }
+        guard let sections else { return nil }
+        return PromptSnapshot(harness: .claudeCode, source: .recorded(session: file), sections: sections,
+                              tools: tools, context: context)
+    }
+
+    /// Attachments that only concern the UI or hold account data are left out.
+    static let hiddenAttachments: Set<String> = [
+        "credential_org", "hook_success", "hook_system_message", "remote_session_change", "auto_mode",
+        "file-history-snapshot", "atis-latch",
+    ]
+
+    static func contextParts(of attachment: Object, startingAt id: Int) -> [PromptContextPart] {
+        let type = attachment["type"] as? String ?? ""
+        guard !hiddenAttachments.contains(type) else { return [] }
+        func part(_ title: String, _ text: String?, source: String? = nil) -> [PromptContextPart] {
+            guard let text, !text.isEmpty else { return [] }
+            return [PromptContextPart(id: id, title: title, source: source, text: text)]
+        }
+        func lines(_ key: String, separator: String = "\n") -> String? {
+            (attachment[key] as? [String])?.joined(separator: separator)
+        }
+
+        switch type {
+        case "instructions":
+            let files = attachment["files"] as? [Object] ?? []
+            return files.enumerated().compactMap { index, file in
+                guard let text = file["content"] as? String else { return nil }
+                let path = file["path"] as? String
+                let name = path.map { URL(filePath: $0).lastPathComponent } ?? "Instructions"
+                let kind = file["type"] as? String
+                return PromptContextPart(id: id + index, title: kind.map { "\(name) · \($0)" } ?? name,
+                                         source: path, text: text)
+            }
+        case "skill_listing":
+            let count = attachment["skillCount"] as? Int
+            return part(count.map { "Skills (\($0))" } ?? "Skills", attachment["content"] as? String)
+        case "agent_listing_delta":
+            return part("Subagents", lines("addedLines"))
+        case "mcp_instructions_delta":
+            return part("MCP server instructions", lines("addedBlocks", separator: "\n\n"))
+        case "deferred_tools_delta":
+            let names = attachment["addedNames"] as? [String] ?? []
+            return part("Deferred tools (\(names.count))", names.joined(separator: "\n"))
+        case "environment":
+            return part("Environment", JSONLines.pretty(attachment["snapshot"]))
+        case "session_context":
+            let values = (attachment["context"] as? [String: String] ?? [:]).sorted { $0.key < $1.key }.map(\.value)
+            return part("Session context", values.joined(separator: "\n\n"))
+        case "hook_additional_context":
+            let name = attachment["hookName"] as? String ?? "hook"
+            return part("Hook · \(name)", lines("content", separator: "\n\n") ?? attachment["content"] as? String)
+        case "date":
+            return part("Date", attachment["date"] as? String)
+        default:
+            // Other known shapes carry their rendered text directly.
+            let title = type.replacingOccurrences(of: "_", with: " ").capitalized
+            return part(title, attachment["text"] as? String ?? attachment["content"] as? String)
+        }
+    }
+}

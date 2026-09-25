@@ -24,6 +24,16 @@ public protocol HarnessAdapter: Sendable {
 
     /// Messages of one saved session from `sessions(in:)`.
     func transcript(of session: SessionSummary) throws -> SessionTranscript
+
+    /// The system prompt the harness saved inside this session, if it saves one.
+    func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot?
+
+    /// How AKit can show this harness's system prompt.
+    var systemPromptAccess: SystemPromptAccess { get }
+
+    /// Starts the harness in `project` to read the system prompt it would send now.
+    /// Must not contact the model or save a session.
+    func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot?
 }
 
 extension HarnessAdapter {
@@ -31,6 +41,17 @@ extension HarnessAdapter {
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] { [] }
     public func sessions(in env: HarnessEnvironment) -> [SessionSummary] { [] }
     public func transcript(of session: SessionSummary) throws -> SessionTranscript { SessionTranscript() }
+    public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? { nil }
+    public var systemPromptAccess: SystemPromptAccess { .unavailable }
+    public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? { nil }
+}
+
+public enum SystemPromptAccess: Sendable {
+    case unavailable
+    /// Saved inside session files: `recordedPrompt(in:)`.
+    case recorded
+    /// Asked from the harness on demand: `capturePrompt(in:env:)`.
+    case captured
 }
 
 /// All known adapters.

@@ -167,4 +167,81 @@ struct SessionTests {
         let sessions = SessionScanner.scan(installations: HarnessCatalog.detectAll(in: env), in: env)
         #expect(sessions.map(\.harness) == [.pi, .claudeCode])
     }
+
+    // MARK: System prompt
+
+    @Test func claudeRecordedPromptWithToolsAndInitialContext() throws {
+        let snapshot: [String: Any] = ["type": "attachment", "attachment": [
+            "type": "prompt_snapshot", "systemPrompt": ["You are Claude Code.", "# Harness"],
+            "tools": [["name": "Bash", "description": "Run a command", "schema": ["type": "object"]]],
+        ]]
+        // Real order: the typed prompt, then the context of the first request, then the answer.
+        var lines = claudeSession()
+        let prompt = try #require(lines.firstIndex { ClaudeSessions.promptText($0) != nil })
+        lines.insert(contentsOf: [
+            ["type": "attachment", "attachment": ["type": "instructions", "files": [
+                ["path": "/home/.claude/CLAUDE.md", "type": "User", "content": "Be brief."],
+            ]]],
+            ["type": "attachment", "attachment": ["type": "credential_org", "org": "secret-org"]],
+            ["type": "attachment", "attachment": ["type": "skill_listing", "content": "- tdd: tests first", "skillCount": 1]],
+            ["type": "attachment", "attachment": ["type": "prompt_snapshot", "systemPrompt": ["You are Claude Code.", "# Harness"]]],
+            snapshot,
+        ], at: prompt + 1)
+        lines.append(["type": "attachment", "attachment": ["type": "date", "date": "later, not initial"]])
+        try write(claudeFile, lines: lines)
+
+        let adapter = ClaudeCodeAdapter()
+        let session = try #require(adapter.sessions(in: env).first)
+        let recorded = try #require(try adapter.recordedPrompt(in: session))
+        #expect(recorded.sections == ["You are Claude Code.", "# Harness"])
+        #expect(recorded.tools.map(\.name) == ["Bash"])
+        #expect(recorded.tools.first?.schema.contains("\"type\" : \"object\"") == true)
+        #expect(recorded.context.map(\.title) == ["Date", "CLAUDE.md · User", "Skills (1)"])
+        #expect(recorded.context[1].source == "/home/.claude/CLAUDE.md")
+        #expect(!recorded.context.contains { $0.text.contains("secret-org") || $0.text.contains("later") })
+    }
+
+    @Test func claudeSessionWithoutSnapshotHasNoPrompt() throws {
+        try write(claudeFile, lines: claudeSession())
+        let adapter = ClaudeCodeAdapter()
+        let session = try #require(adapter.sessions(in: env).first)
+        #expect(try adapter.recordedPrompt(in: session) == nil)
+    }
+
+    /// A stand-in `pi` that behaves like the probe extension: writes the prompt file.
+    func fakePi(_ body: String) throws -> HarnessEnvironment {
+        let url = home.appending(path: "bin/pi")
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        try fm.createDirectory(at: home.appending(path: "work/app"), withIntermediateDirectories: true)
+        return HarnessEnvironment(homeDirectory: home, executableSearchPaths: [home.appending(path: "bin")])
+    }
+
+    @Test func piCaptureRunsWithoutSessionInTheProject() async throws {
+        let env = try fakePi("""
+        case "$*" in *--no-session*--offline*-p*-e*) ;; *) echo "unexpected: $*"; exit 2;; esac
+        printf '{"systemPrompt":"You are pi in %s","tools":[{"name":"read","description":"Read files","parameters":{"type":"object"}}],"contextFiles":["/p/AGENTS.md"],"skills":["tdd"]}' "$(basename "$(pwd)")" > "$AKIT_PROMPT_OUT"
+        """)
+        let prompt = try #require(try await PiAdapter().capturePrompt(in: home.appending(path: "work/app"), env: env))
+        #expect(prompt.systemPrompt == "You are pi in app")
+        #expect(prompt.tools.map(\.name) == ["read"])
+        #expect(prompt.context.map(\.title) == ["Context files (1)", "Skills (1)"])
+    }
+
+    @Test func piCaptureFailureShowsPiOutput() async throws {
+        let env = try fakePi("echo 'No model configured'; exit 1")
+        await #expect(throws: PiPromptProbe.ProbeError.self) {
+            _ = try await PiAdapter().capturePrompt(in: home.appending(path: "work/app"), env: env)
+        }
+        do {
+            _ = try await PiAdapter().capturePrompt(in: home.appending(path: "work/app"), env: env)
+        } catch {
+            #expect(error.localizedDescription.contains("No model configured"))
+        }
+    }
+
+    @Test func piCaptureWithoutExecutableIsNil() async throws {
+        #expect(try await PiAdapter().capturePrompt(in: home, env: env) == nil)
+    }
 }

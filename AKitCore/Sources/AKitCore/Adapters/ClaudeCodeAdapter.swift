@@ -80,6 +80,12 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
         try ClaudeSessions.transcript(of: session.file)
     }
 
+    public var systemPromptAccess: SystemPromptAccess { .recorded }
+
+    public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? {
+        try ClaudeSessions.recordedPrompt(in: session.file)
+    }
+
     struct InstalledPlugin {
         let name: String
         let version: String?

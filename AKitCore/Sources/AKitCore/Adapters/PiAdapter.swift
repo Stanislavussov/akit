@@ -68,6 +68,14 @@ public struct PiAdapter: HarnessAdapter {
         try PiSessions.transcript(of: session.file)
     }
 
+    public var systemPromptAccess: SystemPromptAccess { .captured }
+
+    /// See PiPromptProbe. nil when the `pi` command isn't found.
+    public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? {
+        guard let executable = env.findExecutable("pi") else { return nil }
+        return try await PiPromptProbe.capture(executable: executable, project: project, env: env)
+    }
+
     /// The folder itself and its parents up to the git root. Without a git root Pi
     /// walks to `/`; we stop at home, whose `.agents/skills` is already the global root.
     static func ancestorsToGitRoot(of start: URL, home: URL) -> [URL] {

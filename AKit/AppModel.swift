@@ -58,9 +58,57 @@ final class AppModel {
 
     /// Messages of one session, read in the background.
     func transcript(of session: SessionSummary) async throws -> SessionTranscript {
-        let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        guard let adapter = adapters.first(where: { $0.id == session.harness }) else { return SessionTranscript() }
+        guard let adapter = adapter(for: session.harness) else { return SessionTranscript() }
         return try await Task.detached { try adapter.transcript(of: session) }.value
+    }
+
+    // MARK: System prompt
+
+    /// Prompts caught from harnesses in this run of AKit, by harness and project.
+    private(set) var capturedPrompts: [String: PromptSnapshot] = [:]
+
+    func promptAccess(_ harness: HarnessID) -> SystemPromptAccess {
+        adapter(for: harness)?.systemPromptAccess ?? .unavailable
+    }
+
+    /// The system prompt saved in this session, if the harness saves it.
+    func recordedPrompt(in session: SessionSummary) async throws -> PromptSnapshot? {
+        guard let adapter = adapter(for: session.harness) else { return nil }
+        return try await Task.detached { try adapter.recordedPrompt(in: session) }.value
+    }
+
+    /// The newest saved system prompt among this harness's sessions in `project`.
+    func latestRecordedPrompt(harness: HarnessID, project: URL) async throws -> (PromptSnapshot, SessionSummary)? {
+        guard let adapter = adapter(for: harness) else { return nil }
+        let candidates = sessions.filter { $0.harness == harness && $0.project?.standardizedFileURL == project.standardizedFileURL }
+        return try await Task.detached {
+            for session in candidates {
+                if let prompt = try adapter.recordedPrompt(in: session) { return (prompt, session) }
+            }
+            return nil
+        }.value
+    }
+
+    func capturedPrompt(harness: HarnessID, project: URL) -> PromptSnapshot? {
+        capturedPrompts[Self.promptKey(harness, project)]
+    }
+
+    /// Asks the harness for its current system prompt in `project` (see PiPromptProbe).
+    func capturePrompt(harness: HarnessID, project: URL) async throws {
+        guard let adapter = adapter(for: harness) else { return }
+        guard let prompt = try await adapter.capturePrompt(in: project, env: .current) else {
+            throw NSError(domain: "AKit", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                "\(adapter.displayName) couldn't be started: its command was not found."])
+        }
+        capturedPrompts[Self.promptKey(harness, project)] = prompt
+    }
+
+    private static func promptKey(_ harness: HarnessID, _ project: URL) -> String {
+        "\(harness.rawValue)|\(project.standardizedFileURL.path)"
+    }
+
+    private func adapter(for harness: HarnessID) -> (any HarnessAdapter)? {
+        HarnessCatalog.allAdapters(custom: customHarnesses).first { $0.id == harness }
     }
 
     /// Adds or replaces (same id) a custom harness and saves the file.
