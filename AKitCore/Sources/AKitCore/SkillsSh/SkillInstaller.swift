@@ -176,8 +176,20 @@ public enum SkillInstaller {
                 try fm.moveItem(at: item.staging, to: item.destination)
                 installed.append(item.destination)
             }
+            let date = ISO8601DateFormatter().string(from: .now)
+            for folder in installed {
+                let path = folder.resolvingSymlinksInPath().path
+                lock.entries.removeAll { $0.path == path }
+                if request.keepSource {
+                    lock.entries.append(.init(path: path, source: request.skill.remote.source,
+                                              skillId: request.skill.remote.skillId,
+                                              pathInRepo: request.skill.pathInRepo,
+                                              modified: request.isModified, installedAt: date))
+                }
+            }
+            try InstalledSkillLock.save(lock, in: env)
         } catch {
-            // Undo: remove the new copies, put the old skills back.
+            // Undo (also when the lock can't be saved): remove the new copies, put the old skills back.
             for url in installed { try? fm.removeItem(at: url) }
             for item in trashed where !fm.fileExists(atPath: item.original.path) {
                 try? fm.moveItem(at: item.inTrash, to: item.original)
@@ -185,18 +197,6 @@ public enum SkillInstaller {
             throw error
         }
 
-        let date = ISO8601DateFormatter().string(from: .now)
-        for folder in installed {
-            let path = folder.resolvingSymlinksInPath().path
-            lock.entries.removeAll { $0.path == path }
-            if request.keepSource {
-                lock.entries.append(.init(path: path, source: request.skill.remote.source,
-                                          skillId: request.skill.remote.skillId,
-                                          pathInRepo: request.skill.pathInRepo,
-                                          modified: request.isModified, installedAt: date))
-            }
-        }
-        try InstalledSkillLock.save(lock, in: env)
         return installed
     }
 }
