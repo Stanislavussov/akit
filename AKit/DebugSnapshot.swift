@@ -9,7 +9,8 @@ import SwiftUI
 ///
 /// `--query` fills the search field of the section (skills.sh selects the first result);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
-/// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet.
+/// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet;
+/// `--brain <folder>` reads the brain repo from there (not saved in Settings).
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens.
 enum DebugSnapshot {
@@ -28,6 +29,8 @@ enum DebugSnapshot {
         var tab: String?
         /// MCP screen: open the Add Server sheet.
         var add: Bool
+        /// Brain repo folder for this run only.
+        var brain: String?
     }
 
     static let options: Options? = {
@@ -47,7 +50,8 @@ enum DebugSnapshot {
             harness: value("--harness"),
             capture: args.contains("--capture"),
             tab: value("--tab"),
-            add: args.contains("--add")
+            add: args.contains("--add"),
+            brain: value("--brain")
         )
     }()
 

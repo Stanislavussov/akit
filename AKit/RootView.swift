@@ -7,6 +7,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case skillsSh
     case mcp
     case sessions
+    case brain
     var id: Self { self }
 
     var title: String {
@@ -16,6 +17,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .skillsSh: "skills.sh"
         case .mcp: "MCP Servers"
         case .sessions: "Sessions"
+        case .brain: "Brain"
         }
     }
 
@@ -26,6 +28,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .skillsSh: "sparkle.magnifyingglass"
         case .mcp: "server.rack"
         case .sessions: "bubble.left.and.bubble.right"
+        case .brain: "brain"
         }
     }
 }
@@ -50,6 +53,7 @@ struct RootView: View {
             case .skillsSh: SkillsShView()
             case .mcp: MCPView()
             case .sessions: SessionsView()
+            case .brain: BrainView()
             }
         }
         .overlay(alignment: .bottom) {

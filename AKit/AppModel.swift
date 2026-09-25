@@ -52,6 +52,14 @@ final class AppModel {
         didSet { UserDefaults.standard.set(projectRoots, forKey: Self.projectRootsKey) }
     }
 
+    /// Brain repo folder (`~/.akit/registry` by default). Stored per machine.
+    var brainPath: String {
+        didSet { UserDefaults.standard.set(brainPath, forKey: Self.brainPathKey) }
+    }
+    var brainRoot: URL { HarnessEnvironment.current.expand(brainPath) }
+    /// The brain repo from the last scan; nil when there is no folder at `brainPath`.
+    private(set) var brain: Brain?
+
     /// Harnesses described by the user in `~/.akit/harnesses.json`.
     private(set) var customHarnesses: [CustomHarness] = []
     /// Set when `~/.akit/harnesses.json` can't be read; AKit then refuses to overwrite it.
@@ -61,11 +69,14 @@ final class AppModel {
     var builtInNames: [String] { HarnessCatalog.adapters.map(\.displayName) }
 
     private static let projectRootsKey = "projectRoots"
+    private static let brainPathKey = "brainPath"
+    static let defaultBrainPath = "~/.akit/registry"
     /// A refresh was requested while a scan was running: scan once more when it ends.
     private var rescanRequested = false
 
     init() {
         projectRoots = UserDefaults.standard.stringArray(forKey: Self.projectRootsKey) ?? ProjectFinder.defaultRoots
+        brainPath = DebugSnapshot.options?.brain ?? UserDefaults.standard.string(forKey: Self.brainPathKey) ?? Self.defaultBrainPath
     }
 
     /// Re-detect harnesses, their versions and skills. Files are only read.
@@ -256,6 +267,7 @@ final class AppModel {
     private func scan() async {
         let env = HarnessEnvironment.current
         let roots = projectRoots.map(env.expand)
+        let brainRoot = brainRoot
         do {
             customHarnesses = try CustomHarnessStore.load(in: env)
             customHarnessError = nil
@@ -263,7 +275,7 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, projects, sessions, mcp, targets) = await Task.detached {
+        let (found, skills, projects, sessions, mcp, targets, brain) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
@@ -271,8 +283,10 @@ final class AppModel {
             async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
             async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
-            return (found, await skills, projects, await sessions, await mcp, await targets)
+            async let brain = Brain.load(from: brainRoot)
+            return (found, await skills, projects, await sessions, await mcp, await targets, await brain)
         }.value
+        self.brain = brain
         installations = found
         self.skills = skills
         self.projects = projects
