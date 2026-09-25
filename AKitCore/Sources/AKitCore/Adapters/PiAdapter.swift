@@ -39,6 +39,51 @@ public struct PiAdapter: HarnessAdapter {
                                    configRoot: root, locations: locations)
     }
 
+    /// Pi has no MCP of its own; the pi-mcp-adapter package reads these files (later wins):
+    /// `~/.config/mcp/mcp.json`, `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`,
+    /// `<Pi dir>/mcp.json`, then per project `.mcp.json` and `.pi/mcp.json`.
+    /// Without the package only Pi's own files are listed, marked as not loaded.
+    public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {
+        let root = configRoot(in: env)
+        let home = env.homeDirectory
+        let globalAdapter = Self.hasMCPAdapter(settings: root.appending(path: "settings.json"))
+        func source(_ file: URL, _ scope: SkillScope, _ layer: String, _ precedence: Int, installed: Bool) -> MCPSource {
+            var source = MCPSource(file: file, keyPath: ["mcpServers"], harness: id, scope: scope,
+                                   layer: layer, precedence: precedence)
+            if !installed { source.inactiveReason = "Needs the pi-mcp-adapter package" }
+            return source
+        }
+        var sources: [MCPSource] = []
+        if globalAdapter {
+            sources += [
+                source(home.appending(path: ".config/mcp/mcp.json"), .global, "Shared", 0, installed: true),
+                source(home.appending(path: ".agents/mcp.json"), .global, "Shared", 1, installed: true),
+                source(home.appending(path: ".agents/mcp/mcp.json"), .global, "Shared", 2, installed: true),
+            ]
+        }
+        sources.append(source(root.appending(path: "mcp.json"), .global, "Pi global", 3, installed: globalAdapter))
+        for project in projects {
+            let installed = globalAdapter || Self.hasMCPAdapter(settings: project.appending(path: ".pi/settings.json"))
+            if installed {
+                sources.append(source(project.appending(path: ".mcp.json"), .project(project), "Project", 4, installed: true))
+            }
+            sources.append(source(project.appending(path: ".pi/mcp.json"), .project(project), "Pi project", 5,
+                                  installed: installed))
+        }
+        return sources
+    }
+
+    /// Whether Pi settings list the pi-mcp-adapter package (`packages`, plain or `{source}` entries).
+    static func hasMCPAdapter(settings: URL) -> Bool {
+        guard let data = try? Data(contentsOf: settings),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let packages = json["packages"] as? [Any] else { return false }
+        return packages.contains { entry in
+            let text = entry as? String ?? (entry as? [String: Any])?["source"] as? String ?? ""
+            return text.contains("pi-mcp-adapter")
+        }
+    }
+
     /// Mirrors Pi's loader (core/package-manager.js):
     /// global `~/.pi/agent/skills` and `~/.agents/skills`; per project `.pi/skills`
     /// and `.agents/skills` in the project and each parent up to the git root.

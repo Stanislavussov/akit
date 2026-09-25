@@ -246,6 +246,21 @@ public struct CustomHarnessAdapter: HarnessAdapter {
                                    locations: locations, isCustom: true)
     }
 
+    /// The MCP file from the definition: TOML is read like Codex's `[mcp_servers]`, JSON like
+    /// Claude's `mcpServers` (or a bare `name → server` object).
+    public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {
+        guard let url = path(definition.mcpFile, in: env) else { return [] }
+        if url.pathExtension == "toml" {
+            return [MCPSource(file: url, format: .toml, dialect: .codex, keyPath: ["mcp_servers"], harness: id,
+                              scope: .global, layer: "Global", precedence: 0)]
+        }
+        let jsonc = url.pathExtension == "jsonc"
+        let top = (try? Data(contentsOf: url)).flatMap { try? ConfigText.jsonObject($0, jsonc: jsonc) } ?? [:]
+        let key = ["mcpServers", "mcp_servers", "servers", "mcp"].first { top[$0] is [String: Any] }
+        return [MCPSource(file: url, format: jsonc ? .jsonc : .json, keyPath: key.map { [$0] } ?? [], harness: id,
+                          scope: .global, layer: "Global", precedence: 0)]
+    }
+
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] {
         var roots = definition.skillFolders.compactMap { path($0, in: env) }.map {
             SkillRoot(url: $0, harness: id, scope: .global, layout: .recursive(rootMarkdown: false))

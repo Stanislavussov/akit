@@ -5,6 +5,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case overview
     case skills
     case skillsSh
+    case mcp
     case sessions
     var id: Self { self }
 
@@ -13,6 +14,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .overview: "Overview"
         case .skills: "Skills"
         case .skillsSh: "skills.sh"
+        case .mcp: "MCP Servers"
         case .sessions: "Sessions"
         }
     }
@@ -22,6 +24,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .overview: "square.grid.2x2"
         case .skills: "book.closed"
         case .skillsSh: "sparkle.magnifyingglass"
+        case .mcp: "server.rack"
         case .sessions: "bubble.left.and.bubble.right"
         }
     }
@@ -36,7 +39,7 @@ struct RootView: View {
         NavigationSplitView {
             List(SidebarSection.allCases, selection: $model.section) { section in
                 Label(section.title, systemImage: section.icon)
-                    .badge(section == .skills ? model.skills.count : 0)
+                    .badge(section == .skills ? model.skills.count : section == .mcp ? model.mcpServers.count : 0)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200)
             .safeAreaInset(edge: .bottom) { BuildBadge(info: .current) }
@@ -45,6 +48,7 @@ struct RootView: View {
             case .overview: OverviewView()
             case .skills: SkillsView()
             case .skillsSh: SkillsShView()
+            case .mcp: MCPView()
             case .sessions: SessionsView()
             }
         }

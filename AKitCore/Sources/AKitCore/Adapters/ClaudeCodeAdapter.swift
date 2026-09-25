@@ -86,9 +86,67 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
         try ClaudeSessions.recordedPrompt(in: session.file)
     }
 
+    /// User servers (`~/.claude.json` → `mcpServers`), local ones (`projects[path].mcpServers`),
+    /// project `.mcp.json` with Claude's approval, and servers of enabled plugins.
+    /// Claude's order when names clash: local > project > user.
+    public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {
+        let state = stateFile(in: env)
+        let root = configRoot(in: env)
+        let stateJSON = Self.json(state) ?? [:]
+        let stateProjects = stateJSON["projects"] as? [String: Any] ?? [:]
+        let userSettings = Self.json(root.appending(path: "settings.json")) ?? [:]
+
+        var sources = [MCPSource(file: state, keyPath: ["mcpServers"], harness: id, scope: .global,
+                                 layer: "User", precedence: 0)]
+        for project in projects {
+            let key = project.standardizedFileURL.path
+            let entry = stateProjects[key] as? [String: Any] ?? [:]
+            // Servers switched off with Claude's /mcp toggle in this project.
+            let turnedOff = Set(entry["disabledMcpServers"] as? [String] ?? [])
+            var local = MCPSource(file: state, keyPath: ["projects", key, "mcpServers"], harness: id,
+                                  scope: .project(project), layer: "Local", precedence: 2)
+            local.turnedOff = turnedOff
+            var approval = MCPApproval()
+            for settings in [userSettings, Self.json(project.appending(path: ".claude/settings.json")) ?? [:],
+                             Self.json(project.appending(path: ".claude/settings.local.json")) ?? [:], entry] {
+                approval.enabled.formUnion(settings["enabledMcpjsonServers"] as? [String] ?? [])
+                approval.disabled.formUnion(settings["disabledMcpjsonServers"] as? [String] ?? [])
+                if settings["enableAllProjectMcpServers"] as? Bool == true { approval.enableAll = true }
+            }
+            var shared = MCPSource(file: project.appending(path: ".mcp.json"), keyPath: ["mcpServers"], harness: id,
+                                   scope: .project(project), layer: "Project", precedence: 1)
+            shared.approval = approval
+            shared.turnedOff = turnedOff
+            sources += [local, shared]
+        }
+        for plugin in enabledPlugins(configRoot: root) {
+            let manifest = plugin.folder.appending(path: ".claude-plugin/plugin.json")
+            let listed = Self.json(manifest)?["mcpServers"]
+            let origin = [plugin.name, plugin.version].compactMap { $0 }.joined(separator: " ")
+            func source(_ file: URL) -> MCPSource {
+                MCPSource(file: file, keyPath: ["mcpServers"], harness: id, scope: .plugin(name: plugin.name),
+                          layer: "Plugin \(origin)", precedence: 0, isReadOnly: true)
+            }
+            if listed is [String: Any] {
+                sources.append(source(manifest))
+            } else if let path = listed as? String {
+                sources.append(source(plugin.folder.appending(path: path).standardizedFileURL))
+            } else {
+                sources.append(source(plugin.folder.appending(path: ".mcp.json")))
+            }
+        }
+        return sources
+    }
+
+    static func json(_ url: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
     struct InstalledPlugin {
         let name: String
         let version: String?
+        let folder: URL
         let skillFolders: [URL]
     }
 
@@ -114,7 +172,8 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
                 let listed = json(base.appending(path: ".claude-plugin/plugin.json"))?["skills"]
                 let paths = (listed as? [String]) ?? (listed as? String).map { [$0] } ?? []
                 folders += paths.map { base.appending(path: $0) }
-                result.append(InstalledPlugin(name: name, version: entry["version"] as? String, skillFolders: folders))
+                result.append(InstalledPlugin(name: name, version: entry["version"] as? String, folder: base,
+                                              skillFolders: folders))
             }
         }
         return result

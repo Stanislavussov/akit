@@ -37,6 +37,10 @@ public protocol HarnessAdapter: Sendable {
 
     /// Folder new skills are installed into. nil = this harness can't take skills there.
     func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL?
+
+    /// Files (and places inside them) the harness reads MCP servers from, global and for
+    /// the given projects, whether they exist or not.
+    func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource]
 }
 
 extension HarnessAdapter {
@@ -47,6 +51,7 @@ extension HarnessAdapter {
     public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? { nil }
     public var systemPromptAccess: SystemPromptAccess { .unavailable }
     public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? { nil }
+    public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] { [] }
 
     /// The first writable skill root of that scope.
     public func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL? {

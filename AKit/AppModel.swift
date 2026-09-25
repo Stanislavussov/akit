@@ -13,6 +13,10 @@ final class AppModel {
     private(set) var sessions: [SessionSummary] = []
     /// Project folders the harnesses know about plus those found in `projectRoots`.
     private(set) var projects: [URL] = []
+    /// MCP servers from the config files of all installed harnesses.
+    private(set) var mcpServers: [MCPServer] = []
+    /// MCP config files that couldn't be read (file: reason).
+    private(set) var mcpProblems: [String] = []
 
     /// Sidebar section shown in the window.
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
@@ -22,6 +26,9 @@ final class AppModel {
     var skillsFilter: SkillsFilter = .initial
     /// Skills screen: only skills this harness sees (`HarnessID.rawValue`); nil = every harness.
     var skillsHarness: String? = DebugSnapshot.options?.harness
+    /// MCP screen filters, same meaning as the Skills ones.
+    var mcpFilter: SkillsFilter = .initial
+    var mcpHarness: String? = DebugSnapshot.options?.harness
 
     /// Opens the Skills screen on the skill in this folder.
     func showSkill(inFolder folder: URL) {
@@ -197,18 +204,21 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, projects, sessions) = await Task.detached {
+        let (found, skills, projects, sessions, mcp) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
-            async let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
+            let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
             async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env)
             async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
-            return (found, await skills, await projects, await sessions)
+            async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
+            return (found, await skills, projects, await sessions, await mcp)
         }.value
         installations = found
         self.skills = skills
         self.projects = projects
         self.sessions = sessions
+        mcpServers = mcp.servers
+        mcpProblems = mcp.problems
         lastScan = .now
 
         var newVersions: [HarnessID: String] = [:]

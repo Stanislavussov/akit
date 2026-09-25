@@ -50,6 +50,22 @@ public struct OpenCodeAdapter: HarnessAdapter {
                                    configRoot: root, locations: locations)
     }
 
+    /// The `mcp` key of `opencode.json(c)`: global, in OPENCODE_CONFIG_DIR, and in the project root.
+    public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {
+        func config(in dir: URL) -> URL {
+            let jsonc = dir.appending(path: "opencode.jsonc")
+            return FileProbe.exists(jsonc) ? jsonc : dir.appending(path: "opencode.json")
+        }
+        func source(_ dir: URL, _ scope: SkillScope, _ layer: String, _ precedence: Int) -> MCPSource {
+            MCPSource(file: config(in: dir), format: .jsonc, dialect: .openCode, keyPath: ["mcp"], harness: id,
+                      scope: scope, layer: layer, precedence: precedence)
+        }
+        var sources = [source(configRoot(in: env), .global, "User", 0)]
+        if let extra = extraConfigDir(in: env) { sources.append(source(extra, .global, "OPENCODE_CONFIG_DIR", 1)) }
+        sources += projects.map { source($0, .project($0), "Project", 2) }
+        return sources
+    }
+
     /// The binary (1.18) globs `{skill,skills}/**/SKILL.md` in its own config folders and
     /// `skills/**/SKILL.md` in `.claude` / `.agents` (the docs say one level; the code recurses).
     /// Project folders are looked up from the project up to the git root.

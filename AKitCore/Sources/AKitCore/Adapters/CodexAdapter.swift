@@ -36,6 +36,25 @@ public struct CodexAdapter: HarnessAdapter {
                                    configRoot: root, locations: locations)
     }
 
+    /// `[mcp_servers.<name>]` in `config.toml`, global and in a project's `.codex/config.toml`.
+    /// Codex reads the project file only in projects the user trusted.
+    public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {
+        let global = configRoot(in: env).appending(path: "config.toml")
+        let trusted = ((try? String(contentsOf: global, encoding: .utf8)).flatMap { try? MiniTOML.parse($0) }?["projects"]
+            as? [String: Any]) ?? [:]
+        var sources = [MCPSource(file: global, format: .toml, dialect: .codex, keyPath: ["mcp_servers"], harness: id,
+                                 scope: .global, layer: "User", precedence: 0)]
+        for project in projects {
+            var source = MCPSource(file: project.appending(path: ".codex/config.toml"), format: .toml, dialect: .codex,
+                                   keyPath: ["mcp_servers"], harness: id, scope: .project(project), layer: "Project",
+                                   precedence: 1)
+            let level = (trusted[project.standardizedFileURL.path] as? [String: Any])?["trust_level"] as? String
+            if level != "trusted" { source.inactiveReason = "Codex reads it only in trusted projects" }
+            sources.append(source)
+        }
+        return sources
+    }
+
     /// User skills: `~/.agents/skills`; project: `.agents/skills` from the project up to
     /// the repo root. Bundled skills sit in `~/.codex/skills/.system` (read-only).
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] {
