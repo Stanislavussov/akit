@@ -23,9 +23,11 @@ public struct HarnessID: Sendable, Hashable, Codable, Comparable, CustomStringCo
     public func hash(into hasher: inout Hasher) { hasher.combine(rawValue) }
     public var description: String { rawValue }
 
+    public static let builtIn: [HarnessID] = [.claudeCode, .pi, .openCode, .codex]
+
     public init(from decoder: Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        self.init(raw, displayName: raw)
+        self = Self.builtIn.first { $0.rawValue == raw } ?? HarnessID(raw, displayName: raw)
     }
 
     public func encode(to encoder: Encoder) throws {

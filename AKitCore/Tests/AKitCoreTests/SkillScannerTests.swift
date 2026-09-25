@@ -290,16 +290,38 @@ struct SkillRemoverTests {
         #expect(scan().map(\.name) == ["keep"])
     }
 
-    @Test func perSkillSymlinkIsRemovedToo() throws {
+    @Test func perSkillSymlinkOnlyTheLinkIsRemoved() throws {
         try fm.createDirectory(at: home.appending(path: ".claude/skills"), withIntermediateDirectories: true)
         try write("library/lint/SKILL.md", "---\nname: lint\ndescription: d\n---\n")
         try fm.createSymbolicLink(at: home.appending(path: ".claude/skills/lint"), withDestinationURL: home.appending(path: "library/lint"))
 
         let lint = try #require(scan().first)
-        #expect(try SkillRemover.items(for: lint).count == 2)
+        #expect(SkillRemover.removesOnlyLink(lint))
+        #expect(try SkillRemover.items(for: lint).map(\.standardizedFileURL.path) == [home.appending(path: ".claude/skills/lint").standardizedFileURL.path])
         try SkillRemover.moveToTrash(lint, trash: fakeTrash)
         #expect((try? fm.destinationOfSymbolicLink(atPath: home.appending(path: ".claude/skills/lint").path)) == nil)
+        #expect(fm.fileExists(atPath: home.appending(path: "library/lint/SKILL.md").path)) // original kept
         #expect(scan().isEmpty)
+    }
+
+    @Test func linkedSkillFileNeverTrashesItsTargetFolder() throws {
+        try fm.createDirectory(at: home.appending(path: ".claude/skills/x"), withIntermediateDirectories: true)
+        try write("src/x-repo/SKILL.md", "---\nname: x\ndescription: d\n---\n")
+        try write("src/x-repo/.git/HEAD", "ref")
+        try fm.createSymbolicLink(at: home.appending(path: ".claude/skills/x/SKILL.md"),
+                                  withDestinationURL: home.appending(path: "src/x-repo/SKILL.md"))
+        let x = try #require(scan().first)
+        #expect(throws: SkillRemover.Failure.self) { try SkillRemover.moveToTrash(x, trash: fakeTrash) }
+        #expect(fm.fileExists(atPath: home.appending(path: "src/x-repo/.git/HEAD").path))
+    }
+
+    @Test func skillRootItselfIsNeverTrashed() throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        try write(".agents/skills/SKILL.md", "---\nname: stray\ndescription: d\n---\n")
+        try write(".agents/skills/other/SKILL.md", "---\nname: other\ndescription: d\n---\n")
+        let stray = try #require(scan().first { $0.name == "stray" })
+        #expect(throws: SkillRemover.Failure.self) { try SkillRemover.moveToTrash(stray, trash: fakeTrash) }
+        #expect(fm.fileExists(atPath: home.appending(path: ".agents/skills/other/SKILL.md").path))
     }
 
     @Test func readOnlySkillsAreRefused() throws {

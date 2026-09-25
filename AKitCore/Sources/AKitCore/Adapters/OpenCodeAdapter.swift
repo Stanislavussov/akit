@@ -28,8 +28,11 @@ public struct OpenCodeAdapter: HarnessAdapter {
         let executable = env.findExecutable("opencode")
         guard executable != nil || FileProbe.exists(root) else { return nil }
 
+        // opencode.jsonc is accepted too; show whichever exists.
+        let jsonc = root.appending(path: "opencode.jsonc")
+        let settings = FileProbe.exists(jsonc) ? jsonc : root.appending(path: "opencode.json")
         var locations = [
-            FileProbe.location("Settings & MCP", root.appending(path: "opencode.json"), kind: .file, role: .settings,
+            FileProbe.location("Settings & MCP", settings, kind: .file, role: .settings,
                                note: "MCP servers live under the \"mcp\" key"),
             FileProbe.location("Skills", root.appending(path: "skills"), kind: .directory, role: .skills),
             FileProbe.location("Shared skills", env.homeDirectory.appending(path: ".agents/skills"), kind: .directory, role: .skills,

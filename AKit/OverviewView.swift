@@ -14,7 +14,7 @@ struct OverviewView: View {
         var id: String {
             switch self {
             case .new: "new"
-            case .existing(let harness): harness.id
+            case .existing(let harness): "edit:" + harness.id
             }
         }
     }
@@ -22,11 +22,14 @@ struct OverviewView: View {
     var body: some View {
         Group {
             if model.installations.isEmpty && !model.isScanning {
-                ContentUnavailableView(
-                    "No harnesses found",
-                    systemImage: "questionmark.folder",
-                    description: Text("Checked: \(model.checkedAdapters.joined(separator: ", ")).")
-                )
+                VStack(spacing: 16) {
+                    ContentUnavailableView(
+                        "No harnesses found",
+                        systemImage: "questionmark.folder",
+                        description: Text("Use + to describe a harness AKit doesn't know yet.")
+                    )
+                    footer.padding(20)
+                }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -103,6 +106,7 @@ private struct HarnessCard: View {
     /// Set for harnesses described by the user.
     let onEdit: (() -> Void)?
     @State private var confirmRemove = false
+    @State private var removeError: String?
 
     var body: some View {
         GroupBox {
@@ -139,11 +143,20 @@ private struct HarnessCard: View {
                             titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 if let harness = model.customHarnesses.first(where: { $0.harnessID == installation.id }) {
-                    try? model.removeCustomHarness(harness)
+                    do {
+                        try model.removeCustomHarness(harness)
+                    } catch {
+                        removeError = error.localizedDescription
+                    }
                 }
             }
         } message: {
             Text("Only its description in ~/.akit/harnesses.json is removed. The harness and its files stay untouched.")
+        }
+        .alert("Couldn't remove", isPresented: Binding(get: { removeError != nil }, set: { if !$0 { removeError = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(removeError ?? "")
         }
     }
 }
