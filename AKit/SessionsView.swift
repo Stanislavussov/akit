@@ -152,6 +152,7 @@ private struct SessionDetailView: View {
                 guard !Task.isCancelled else { return }
                 transcript = loaded
             } catch {
+                guard !Task.isCancelled else { return }
                 self.error = error.localizedDescription
             }
         }
@@ -239,8 +240,9 @@ private struct SessionPromptView: View {
         switch model.promptAccess(session.harness) {
         case .recorded: recorded
         case .captured:
-            CapturedPromptView(harness: session.harness,
-                               project: session.project ?? FileManager.default.homeDirectoryForCurrentUser)
+            let project = session.project ?? FileManager.default.homeDirectoryForCurrentUser
+            CapturedPromptView(harness: session.harness, project: project)
+                .id(project)
         case .unavailable:
             ContentUnavailableView("Not available", systemImage: "doc.plaintext",
                                    description: Text("AKit can't read the system prompt of \(session.harness.displayName)."))
@@ -261,6 +263,8 @@ private struct SessionPromptView: View {
             }
         }
         .task(id: "\(session.id)|\(session.modified.timeIntervalSince1970)") {
+            // Never show the previous session's prompt while this one loads.
+            prompt = nil
             isLoading = true
             error = nil
             do {
@@ -268,7 +272,7 @@ private struct SessionPromptView: View {
                 guard !Task.isCancelled else { return }
                 prompt = loaded
             } catch {
-                prompt = nil
+                guard !Task.isCancelled else { return }
                 self.error = error.localizedDescription
             }
             isLoading = false

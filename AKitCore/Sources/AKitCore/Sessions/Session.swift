@@ -73,10 +73,17 @@ struct TranscriptBuilder {
     private(set) var items: [TranscriptItem] = []
     private(set) var models: [String] = []
 
+    /// Token-like values are masked (see SecretFilter).
     mutating func add(_ kind: TranscriptItem.Kind, _ text: String, at timestamp: Date?) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        items.append(TranscriptItem(id: items.count, kind: kind, text: trimmed, timestamp: timestamp))
+        items.append(TranscriptItem(id: items.count, kind: kind, text: SecretFilter.masked(trimmed), timestamp: timestamp))
+    }
+
+    /// Output of a tool that read a secrets file is replaced as a whole.
+    mutating func addToolOutput(_ kind: TranscriptItem.Kind, _ text: String, readSecretFile: Bool, at timestamp: Date?) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        add(kind, readSecretFile ? SecretFilter.hiddenOutput : text, at: timestamp)
     }
 
     mutating func noteModel(_ model: String?) {

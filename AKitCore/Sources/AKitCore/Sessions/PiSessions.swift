@@ -31,7 +31,7 @@ enum PiSessions {
         var header: Object?
         var firstPrompt: String?
         var name: String?
-        JSONLines.scanHead(of: file, limit: 1 << 20) { entry in
+        JSONLines.scanHead(of: file) { entry in
             if header == nil, entry["type"] as? String == "session" { header = entry }
             if entry["type"] as? String == "session_info" { name = entry["name"] as? String ?? name }
             if firstPrompt == nil, entry["type"] as? String == "message",
@@ -46,7 +46,7 @@ enum PiSessions {
         for entry in JSONLines.tail(of: file) where entry["type"] as? String == "session_info" {
             name = entry["name"] as? String ?? name
         }
-        let title = [name, firstPrompt.map { JSONLines.titleLine(promptTitle($0)) }]
+        let title = [name, firstPrompt.map { JSONLines.titleLine(SecretFilter.masked(promptTitle($0))) }]
             .compactMap { $0 }.first { !$0.isEmpty } ?? "Untitled session"
         let info = JSONLines.fileInfo(file)
         return SessionSummary(harness: .pi, file: file, title: title,
@@ -64,10 +64,11 @@ enum PiSessions {
     // MARK: - Transcript
 
     static func transcript(of file: URL) throws -> SessionTranscript {
-        let entries = JSONLines.objects(in: try Data(contentsOf: file)).filter { $0["type"] as? String != "session" }
+        let entries = try JSONLines.objects(in: try Data(contentsOf: file)).filter { $0["type"] as? String != "session" }
         var builder = TranscriptBuilder()
+        var secretCalls = Set<String>()
         for entry in activeBranch(entries) {
-            add(entry, to: &builder)
+            add(entry, secretCalls: &secretCalls, to: &builder)
         }
         return builder.transcript
     }
@@ -90,12 +91,12 @@ enum PiSessions {
         return path.reversed()
     }
 
-    private static func add(_ entry: Object, to builder: inout TranscriptBuilder) {
+    private static func add(_ entry: Object, secretCalls: inout Set<String>, to builder: inout TranscriptBuilder) {
         let time = JSONLines.date(entry["timestamp"])
         switch entry["type"] as? String {
         case "message":
             guard let message = entry["message"] as? Object else { return }
-            addMessage(message, at: time, to: &builder)
+            addMessage(message, at: time, secretCalls: &secretCalls, to: &builder)
         case "model_change":
             let model = [entry["provider"] as? String, entry["modelId"] as? String].compactMap { $0 }.joined(separator: "/")
             builder.add(.event("Model"), model, at: time)
@@ -113,7 +114,9 @@ enum PiSessions {
         }
     }
 
-    private static func addMessage(_ message: Object, at time: Date?, to builder: inout TranscriptBuilder) {
+    /// `secretCalls`: ids of tool calls that touched a secrets file; their results are hidden.
+    private static func addMessage(_ message: Object, at time: Date?, secretCalls: inout Set<String>,
+                                   to builder: inout TranscriptBuilder) {
         switch message["role"] as? String {
         case "user":
             builder.add(.user, JSONLines.text(of: message["content"]), at: time)
@@ -126,6 +129,7 @@ enum PiSessions {
                 case "thinking":
                     builder.add(.thinking, stripANSI(block["thinking"] as? String ?? ""), at: time)
                 case "toolCall":
+                    if let id = block["id"] as? String, SecretFilter.readsSecretFile(block["arguments"]) { secretCalls.insert(id) }
                     builder.add(.toolCall(name: block["name"] as? String ?? "tool"), JSONLines.pretty(block["arguments"]), at: time)
                 default:
                     break
@@ -135,11 +139,12 @@ enum PiSessions {
                 builder.add(.event("Error"), error, at: time)
             }
         case "toolResult":
-            builder.add(.toolResult(name: message["toolName"] as? String, isError: message["isError"] as? Bool == true),
-                        JSONLines.text(of: message["content"]), at: time)
+            let hidden = (message["toolCallId"] as? String).map(secretCalls.contains) ?? false
+            builder.addToolOutput(.toolResult(name: message["toolName"] as? String, isError: message["isError"] as? Bool == true),
+                                  JSONLines.text(of: message["content"]), readSecretFile: hidden, at: time)
         case "bashExecution":
             let command = message["command"] as? String ?? ""
-            let output = message["output"] as? String ?? ""
+            let output = SecretFilter.commandReadsSecretFile(command) ? SecretFilter.hiddenOutput : message["output"] as? String ?? ""
             builder.add(.event("Shell"), "$ \(command)\n\(output)", at: time)
         case "custom":
             guard message["display"] as? Bool != false else { return }

@@ -15,7 +15,7 @@ struct SystemPromptView: View {
             if let harness, let project {
                 switch model.promptAccess(harness) {
                 case .recorded: RecordedPromptView(harness: harness, project: project)
-                case .captured: CapturedPromptView(harness: harness, project: project)
+                case .captured: CapturedPromptView(harness: harness, project: project).id("\(harness)|\(project.path)")
                 case .unavailable: unavailable
                 }
             } else if harnesses.isEmpty {
@@ -105,6 +105,8 @@ private struct RecordedPromptView: View {
             }
         }
         .task(id: "\(harness)|\(project.path)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") {
+            // Never show another project's prompt while this one loads.
+            loaded = nil
             isLoading = true
             error = nil
             do {
@@ -112,7 +114,7 @@ private struct RecordedPromptView: View {
                 guard !Task.isCancelled else { return }
                 loaded = result
             } catch {
-                loaded = nil
+                guard !Task.isCancelled else { return }
                 self.error = error.localizedDescription
             }
             isLoading = false

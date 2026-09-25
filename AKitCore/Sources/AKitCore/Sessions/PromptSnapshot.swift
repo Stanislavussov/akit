@@ -38,13 +38,15 @@ public struct PromptSnapshot: Sendable, Hashable {
 }
 
 public struct PromptTool: Identifiable, Sendable, Hashable {
-    public var id: String { name }
+    /// Position in the list; names can repeat when an extension overrides a built-in tool.
+    public let id: Int
     public let name: String
     public let description: String
     /// Input JSON schema, pretty-printed.
     public let schema: String
 
-    public init(name: String, description: String, schema: String) {
+    public init(id: Int, name: String, description: String, schema: String) {
+        self.id = id
         self.name = name
         self.description = description
         self.schema = schema
@@ -52,10 +54,10 @@ public struct PromptTool: Identifiable, Sendable, Hashable {
 
     /// `[{name, description, schema | input_schema | parameters}]`.
     static func list(_ value: Any?) -> [PromptTool] {
-        (value as? [JSONLines.Object] ?? []).compactMap { tool in
+        (value as? [JSONLines.Object] ?? []).enumerated().compactMap { index, tool in
             guard let name = tool["name"] as? String else { return nil }
             let schema = tool["schema"] ?? tool["input_schema"] ?? tool["parameters"]
-            return PromptTool(name: name, description: tool["description"] as? String ?? "",
+            return PromptTool(id: index, name: name, description: tool["description"] as? String ?? "",
                               schema: schema is NSNull ? "" : JSONLines.pretty(schema))
         }
     }

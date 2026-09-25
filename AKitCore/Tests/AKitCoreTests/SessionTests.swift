@@ -90,6 +90,23 @@ struct SessionTests {
         #expect(transcript.models == ["claude-opus-5-5"])
     }
 
+    @Test func claudeHidesOutputOfSecretFilesAndMasksTokens() throws {
+        var lines = claudeSession()
+        lines.append(["type": "assistant", "message": ["role": "assistant", "content": [
+            ["type": "tool_use", "id": "t2", "name": "Bash", "input": ["command": "cat .env"]],
+        ]]])
+        lines.append(["type": "user", "message": ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "t2", "content": "DB_PASSWORD=hunter2hunter2"],
+        ]]])
+        lines.append(["type": "user", "message": ["role": "user", "content": "use key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123"]])
+        try write(claudeFile, lines: lines)
+        let adapter = ClaudeCodeAdapter()
+        let items = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).items
+
+        #expect(items.contains { $0.kind == .toolResult(name: "Bash", isError: false) && $0.text == SecretFilter.hiddenOutput })
+        #expect(!items.contains { $0.text.contains("hunter2") || $0.text.contains("sk-ant-api03") })
+    }
+
     @Test func claudeFileWithoutConversationIsSkipped() throws {
         try write(claudeFile, lines: [["type": "permission-mode", "permissionMode": "default", "sessionId": "1111"]])
         #expect(ClaudeCodeAdapter().sessions(in: env).isEmpty)
@@ -152,6 +169,21 @@ struct SessionTests {
         #expect(transcript.models == ["claude-opus-5-5"])
     }
 
+    @Test func piHidesOutputOfSecretFiles() throws {
+        var lines = piSession()
+        lines.append(["type": "message", "id": "a7", "parentId": "a6", "message": ["role": "assistant", "content": [
+            ["type": "toolCall", "id": "c2", "name": "read", "arguments": ["path": "/Users/me/.pi/agent/auth.json"]],
+        ]]])
+        lines.append(["type": "message", "id": "a8", "parentId": "a7", "message": [
+            "role": "toolResult", "toolCallId": "c2", "toolName": "read", "isError": false,
+            "content": [["type": "text", "text": "{\"access\": \"secret-value-123456\"}"]],
+        ]])
+        try write(piFile, lines: lines)
+        let adapter = PiAdapter()
+        let items = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).items
+        #expect(items.last?.text == SecretFilter.hiddenOutput)
+    }
+
     @Test func piSessionFolderFromEnvironment() throws {
         let custom = HarnessEnvironment(homeDirectory: home, variables: ["PI_CODING_AGENT_SESSION_DIR": "~/pi-sessions"])
         try write("pi-sessions/--work-app--/s.jsonl", lines: piSession())
@@ -183,6 +215,7 @@ struct SessionTests {
                 ["path": "/home/.claude/CLAUDE.md", "type": "User", "content": "Be brief."],
             ]]],
             ["type": "attachment", "attachment": ["type": "credential_org", "org": "secret-org"]],
+            ["type": "attachment", "attachment": ["type": "future_type", "text": "unknown, not shown"]],
             ["type": "attachment", "attachment": ["type": "skill_listing", "content": "- tdd: tests first", "skillCount": 1]],
             ["type": "attachment", "attachment": ["type": "prompt_snapshot", "systemPrompt": ["You are Claude Code.", "# Harness"]]],
             snapshot,
@@ -198,7 +231,9 @@ struct SessionTests {
         #expect(recorded.tools.first?.schema.contains("\"type\" : \"object\"") == true)
         #expect(recorded.context.map(\.title) == ["Date", "CLAUDE.md · User", "Skills (1)"])
         #expect(recorded.context[1].source == "/home/.claude/CLAUDE.md")
-        #expect(!recorded.context.contains { $0.text.contains("secret-org") || $0.text.contains("later") })
+        #expect(!recorded.context.contains {
+            $0.text.contains("secret-org") || $0.text.contains("later") || $0.text.contains("unknown")
+        })
     }
 
     @Test func claudeSessionWithoutSnapshotHasNoPrompt() throws {

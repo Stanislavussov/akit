@@ -59,7 +59,7 @@ final class AppModel {
     /// Messages of one session, read in the background.
     func transcript(of session: SessionSummary) async throws -> SessionTranscript {
         guard let adapter = adapter(for: session.harness) else { return SessionTranscript() }
-        return try await Task.detached { try adapter.transcript(of: session) }.value
+        return try await Self.background { try adapter.transcript(of: session) }
     }
 
     // MARK: System prompt
@@ -74,19 +74,19 @@ final class AppModel {
     /// The system prompt saved in this session, if the harness saves it.
     func recordedPrompt(in session: SessionSummary) async throws -> PromptSnapshot? {
         guard let adapter = adapter(for: session.harness) else { return nil }
-        return try await Task.detached { try adapter.recordedPrompt(in: session) }.value
+        return try await Self.background { try adapter.recordedPrompt(in: session) }
     }
 
     /// The newest saved system prompt among this harness's sessions in `project`.
     func latestRecordedPrompt(harness: HarnessID, project: URL) async throws -> (PromptSnapshot, SessionSummary)? {
         guard let adapter = adapter(for: harness) else { return nil }
         let candidates = sessions.filter { $0.harness == harness && $0.project?.standardizedFileURL == project.standardizedFileURL }
-        return try await Task.detached {
+        return try await Self.background {
             for session in candidates {
                 if let prompt = try adapter.recordedPrompt(in: session) { return (prompt, session) }
             }
             return nil
-        }.value
+        }
     }
 
     func capturedPrompt(harness: HarnessID, project: URL) -> PromptSnapshot? {
@@ -105,6 +105,13 @@ final class AppModel {
 
     private static func promptKey(_ harness: HarnessID, _ project: URL) -> String {
         "\(harness.rawValue)|\(project.standardizedFileURL.path)"
+    }
+
+    /// Runs file reading off the main actor. Cancelling the caller (the view's task) cancels
+    /// the work too, so moving through large sessions quickly doesn't pile up parsing.
+    private static func background<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        let task = Task.detached(priority: .userInitiated) { try work() }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
     }
 
     private func adapter(for harness: HarnessID) -> (any HarnessAdapter)? {

@@ -44,7 +44,7 @@ enum ClaudeSessions {
         // A file with nothing but metadata (e.g. an aborted start) is not a conversation.
         guard firstPrompt != nil || aiTitle != nil || customTitle != nil else { return nil }
 
-        let title = [customTitle, aiTitle, summaryTitle, firstPrompt.map { JSONLines.titleLine($0) }]
+        let title = [customTitle, aiTitle, summaryTitle, firstPrompt.map { JSONLines.titleLine(SecretFilter.masked($0)) }]
             .compactMap { $0 }.first { !$0.isEmpty } ?? "Untitled session"
         let info = JSONLines.fileInfo(file)
         return SessionSummary(harness: .claudeCode, file: file, title: title,
@@ -73,13 +73,13 @@ enum ClaudeSessions {
     static func transcript(of file: URL) throws -> SessionTranscript {
         let data = try Data(contentsOf: file)
         var builder = TranscriptBuilder()
-        var toolNames: [String: String] = [:]
+        var tools: [String: ToolCall] = [:]
 
-        for entry in JSONLines.objects(in: data) where !isSidechain(entry) {
+        for entry in try JSONLines.objects(in: data) where !isSidechain(entry) {
             let time = JSONLines.date(entry["timestamp"])
             switch entry["type"] as? String {
             case "user":
-                addUser(entry, at: time, toolNames: toolNames, to: &builder)
+                addUser(entry, at: time, tools: tools, to: &builder)
             case "assistant":
                 guard let message = entry["message"] as? Object else { continue }
                 builder.noteModel((message["model"] as? String).flatMap { $0 == "<synthetic>" ? nil : $0 })
@@ -91,8 +91,11 @@ enum ClaudeSessions {
                         builder.add(.thinking, block["thinking"] as? String ?? "", at: time)
                     case "tool_use":
                         let name = block["name"] as? String ?? "tool"
-                        if let id = block["id"] as? String { toolNames[id] = name }
-                        builder.add(.toolCall(name: name), JSONLines.pretty(block["input"]), at: time)
+                        let input = JSONLines.pretty(block["input"])
+                        if let id = block["id"] as? String {
+                            tools[id] = ToolCall(name: name, readsSecretFile: SecretFilter.readsSecretFile(block["input"]))
+                        }
+                        builder.add(.toolCall(name: name), input, at: time)
                     default:
                         break
                     }
@@ -110,7 +113,12 @@ enum ClaudeSessions {
         return builder.transcript
     }
 
-    private static func addUser(_ entry: Object, at time: Date?, toolNames: [String: String],
+    struct ToolCall {
+        let name: String
+        let readsSecretFile: Bool
+    }
+
+    private static func addUser(_ entry: Object, at time: Date?, tools: [String: ToolCall],
                                 to builder: inout TranscriptBuilder) {
         guard entry["isMeta"] as? Bool != true, let message = entry["message"] as? Object else { return }
         let content = message["content"]
@@ -120,9 +128,10 @@ enum ClaudeSessions {
         }
         if let blocks = content as? [Object] {
             for block in blocks where block["type"] as? String == "tool_result" {
-                let name = (block["tool_use_id"] as? String).flatMap { toolNames[$0] }
-                builder.add(.toolResult(name: name, isError: block["is_error"] as? Bool == true),
-                            JSONLines.text(of: block["content"]), at: time)
+                let call = (block["tool_use_id"] as? String).flatMap { tools[$0] }
+                builder.addToolOutput(.toolResult(name: call?.name, isError: block["is_error"] as? Bool == true),
+                                      JSONLines.text(of: block["content"]),
+                                      readSecretFile: call?.readsSecretFile ?? false, at: time)
             }
             let text = JSONLines.text(of: blocks.filter { $0["type"] as? String != "tool_result" })
             addPrompt(text, at: time, to: &builder)
@@ -169,13 +178,21 @@ extension ClaudeSessions {
     /// Claude writes them around the first prompt, before the first answer.
     /// nil = the session has no snapshot (older versions).
     static func recordedPrompt(in file: URL) throws -> PromptSnapshot? {
-        let data = try Data(contentsOf: file)
+        let data = try Data(contentsOf: file, options: .mappedIfSafe)
+        // Most lines are messages and tool output; only decode the ones that matter here.
+        let snapshotMarker = Data("\"prompt_snapshot\"".utf8)
+        guard data.range(of: snapshotMarker) != nil else { return nil }
+        let attachment = Data("\"type\":\"attachment\"".utf8)
+        let assistant = Data("\"type\":\"assistant\"".utf8)
         var sections: [String]?
         var tools: [PromptTool] = []
         var context: [PromptContextPart] = []
         var beforeFirstAnswer = true
 
-        for entry in JSONLines.objects(in: data) where !isSidechain(entry) {
+        let entries = try JSONLines.objects(in: data) { line in
+            JSONLines.contains(line, attachment) || JSONLines.contains(line, assistant)
+        }
+        for entry in entries where !isSidechain(entry) {
             if entry["type"] as? String == "assistant" { beforeFirstAnswer = false }
             guard entry["type"] as? String == "attachment", let attachment = entry["attachment"] as? Object else { continue }
             if attachment["type"] as? String == "prompt_snapshot" {
@@ -193,18 +210,13 @@ extension ClaudeSessions {
                               tools: tools, context: context)
     }
 
-    /// Attachments that only concern the UI or hold account data are left out.
-    static let hiddenAttachments: Set<String> = [
-        "credential_org", "hook_success", "hook_system_message", "remote_session_change", "auto_mode",
-        "file-history-snapshot", "atis-latch",
-    ]
-
+    /// Only attachment types known to be model context are shown. Others (account data,
+    /// hook stdout, UI state) and types added by future versions are left out.
     static func contextParts(of attachment: Object, startingAt id: Int) -> [PromptContextPart] {
         let type = attachment["type"] as? String ?? ""
-        guard !hiddenAttachments.contains(type) else { return [] }
         func part(_ title: String, _ text: String?, source: String? = nil) -> [PromptContextPart] {
             guard let text, !text.isEmpty else { return [] }
-            return [PromptContextPart(id: id, title: title, source: source, text: text)]
+            return [PromptContextPart(id: id, title: title, source: source, text: SecretFilter.masked(text))]
         }
         func lines(_ key: String, separator: String = "\n") -> String? {
             (attachment[key] as? [String])?.joined(separator: separator)
@@ -219,7 +231,7 @@ extension ClaudeSessions {
                 let name = path.map { URL(filePath: $0).lastPathComponent } ?? "Instructions"
                 let kind = file["type"] as? String
                 return PromptContextPart(id: id + index, title: kind.map { "\(name) · \($0)" } ?? name,
-                                         source: path, text: text)
+                                         source: path, text: SecretFilter.masked(text))
             }
         case "skill_listing":
             let count = attachment["skillCount"] as? Int
@@ -241,10 +253,12 @@ extension ClaudeSessions {
             return part("Hook · \(name)", lines("content", separator: "\n\n") ?? attachment["content"] as? String)
         case "date":
             return part("Date", attachment["date"] as? String)
+        case "model":
+            return part("Model", attachment["text"] as? String)
+        case "total_tokens_reminder":
+            return part("Token budget", attachment["text"] as? String)
         default:
-            // Other known shapes carry their rendered text directly.
-            let title = type.replacingOccurrences(of: "_", with: " ").capitalized
-            return part(title, attachment["text"] as? String ?? attachment["content"] as? String)
+            return []
         }
     }
 }

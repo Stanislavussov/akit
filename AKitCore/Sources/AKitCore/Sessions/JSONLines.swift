@@ -5,8 +5,20 @@ import Foundation
 enum JSONLines {
     typealias Object = [String: Any]
 
-    static func objects(in data: Data) -> [Object] {
-        data.split(separator: UInt8(ascii: "\n")).compactMap(decode)
+    /// Every line decoded. Throws CancellationError when the surrounding task is cancelled,
+    /// so leaving a large session early stops the work.
+    static func objects(in data: Data, where keep: (Data) -> Bool = { _ in true }) throws -> [Object] {
+        var result: [Object] = []
+        for (index, line) in data.split(separator: UInt8(ascii: "\n")).enumerated() {
+            if index % 256 == 0 { try Task.checkCancellation() }
+            if keep(line), let object = decode(line) { result.append(object) }
+        }
+        return result
+    }
+
+    /// Cheap byte search before decoding: skips lines that can't be what we look for.
+    static func contains(_ line: Data, _ needle: Data) -> Bool {
+        line.range(of: needle) != nil
     }
 
     static func decode(_ line: Data) -> Object? {
@@ -37,17 +49,28 @@ enum JSONLines {
         return false
     }
 
-    /// Complete lines from the last `bytes` of the file.
-    static func tail(of url: URL, bytes: Int = 256 << 10) -> [Object] {
+    /// Complete lines from the last `bytes` of the file. If the last line alone is longer,
+    /// the window grows (up to `maxBytes`) until at least one complete line fits.
+    static func tail(of url: URL, bytes: Int = 256 << 10, maxBytes: Int = 16 << 20) -> [Object] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return [] }
-        let start = size > UInt64(bytes) ? size - UInt64(bytes) : 0
-        guard (try? handle.seek(toOffset: start)) != nil, var data = try? handle.readToEnd() else { return [] }
-        if start > 0, let firstNewline = data.firstIndex(of: UInt8(ascii: "\n")) {
-            data = Data(data[data.index(after: firstNewline)...]) // drop the cut-off first line
+        var window = UInt64(bytes)
+        while true {
+            let start = size > window ? size - window : 0
+            guard (try? handle.seek(toOffset: start)) != nil, var data = try? handle.readToEnd() else { return [] }
+            if start > 0 {
+                // Drop the cut-off first line (all of it when the window has no line break).
+                if let firstNewline = data.firstIndex(of: UInt8(ascii: "\n")) {
+                    data = Data(data[data.index(after: firstNewline)...])
+                } else {
+                    data = Data()
+                }
+            }
+            let objects = (try? objects(in: data)) ?? []
+            if !objects.isEmpty || start == 0 || window >= UInt64(maxBytes) { return objects }
+            window *= 4
         }
-        return objects(in: data)
     }
 
     static func date(_ value: Any?) -> Date? {

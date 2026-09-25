@@ -32,8 +32,9 @@ struct Collapsible: View {
 }
 
 enum PreviewLine {
+    /// Only the start of the text is looked at; tool output can be megabytes.
     static func line(_ text: String) -> String {
-        text.split(whereSeparator: \.isNewline).lazy
+        text.prefix(2_000).split(whereSeparator: \.isNewline).lazy
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .first { !$0.isEmpty && $0 != "{" } ?? ""
     }
@@ -43,19 +44,24 @@ enum PreviewLine {
 struct LongText: View {
     let text: String
     var monospaced = false
+    /// Bytes shown before "Show all". `utf8.count` is cheap, `count` walks the whole string.
     var limit = 4_000
     @State private var showAll = false
 
+    private var isLong: Bool { text.utf8.count > limit }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(showAll || text.count <= limit ? text : String(text.prefix(limit)) + "…")
+            Text(showAll || !isLong ? text : String(text.prefix(limit)) + "…")
                 .font(monospaced ? .system(.callout, design: .monospaced) : .body)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if text.count > limit {
-                Button(showAll ? "Show less" : "Show all (\(text.count.formatted()) characters)") { showAll.toggle() }
-                    .buttonStyle(.link)
-                    .font(.caption)
+            if isLong {
+                Button(showAll ? "Show less" : "Show all (\(text.utf8.count.formatted(.byteCount(style: .file))))") {
+                    showAll.toggle()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
             }
         }
     }
