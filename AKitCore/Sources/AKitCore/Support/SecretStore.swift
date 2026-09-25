@@ -9,7 +9,7 @@ public protocol SecretStore: Sendable {
 }
 
 /// Generic passwords in the login Keychain, service `AKit MCP`, account = variable name.
-/// `/usr/bin/security` is trusted on each item, so a harness can read it with
+/// `/usr/bin/security` creates and is trusted on each item, so a harness can read it with
 /// `security find-generic-password -s "AKit MCP" -a NAME -w` without a Keychain prompt.
 public struct KeychainSecretStore: SecretStore {
     public static let service = "AKit MCP"
@@ -28,41 +28,32 @@ public struct KeychainSecretStore: SecretStore {
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
+    /// Written by `/usr/bin/security` itself, not SecItemAdd: an item AKit creates lands in
+    /// AKit's own partition, and `security` then shows a password prompt every time a
+    /// harness starts the server. The command goes through stdin (`security -i`) with the
+    /// value as hex (`-X`), so the secret never appears in a process argument list.
     public func save(_ value: String, for account: String) throws {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: Self.service,
-                                    kSecAttrAccount as String: account]
-        SecItemDelete(query as CFDictionary) // replace, so the access list is always ours
-        var item = query
-        item[kSecValueData as String] = Data(value.utf8)
-        item[kSecAttrLabel as String] = "\(Self.service): \(account)"
-        if let access = (LegacyAccess.self as any AccessMaker.Type).make("\(Self.service): \(account)") {
-            item[kSecAttrAccess as String] = access
+        guard account.range(of: "^[A-Za-z0-9_.-]+$", options: .regularExpression) != nil else {
+            throw ConfigTextError("Keychain: \(account) is not a valid name.")
         }
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            let message = SecCopyErrorMessageString(status, nil) as String? ?? "error \(status)"
-            throw ConfigTextError("Keychain: \(message)")
-        }
-    }
-}
+        let hex = Data(value.utf8).map { String(format: "%02x", $0) }.joined()
+        let commands = """
+        delete-generic-password -a \(account) -s "\(Self.service)"
+        add-generic-password -U -a \(account) -s "\(Self.service)" -l "\(Self.service): \(account)" -T /usr/bin/security -X \(hex)
 
-/// Called through this protocol so the deprecated API below doesn't warn at every build.
-private protocol AccessMaker { static func make(_ label: String) -> SecAccess? }
-
-/// Access list: AKit itself and `/usr/bin/security`. The file-based login Keychain
-/// only offers the deprecated SecAccess API for this.
-private enum LegacyAccess: AccessMaker {
-    @available(macOS, deprecated: 10.10)
-    static func make(_ label: String) -> SecAccess? {
-        var apps: [SecTrustedApplication] = []
-        var me: SecTrustedApplication?
-        var tool: SecTrustedApplication?
-        if SecTrustedApplicationCreateFromPath(nil, &me) == errSecSuccess, let me { apps.append(me) }
-        if SecTrustedApplicationCreateFromPath("/usr/bin/security", &tool) == errSecSuccess, let tool { apps.append(tool) }
-        var access: SecAccess?
-        guard SecAccessCreate(label as CFString, apps as CFArray, &access) == errSecSuccess else { return nil }
-        return access
+        """
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/security")
+        process.arguments = ["-i"]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        input.fileHandleForWriting.write(Data(commands.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        guard contains(account) else { throw ConfigTextError("Keychain: \(account) could not be saved.") }
     }
 }
 
