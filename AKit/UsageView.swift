@@ -1,4 +1,6 @@
 import AKitCore
+import AppKit
+import Charts
 import SwiftUI
 
 /// How far back the Usage screen looks.
@@ -35,15 +37,33 @@ enum UsagePeriod: String, CaseIterable, Identifiable {
 struct UsageView: View {
     @Environment(AppModel.self) private var model
     @State private var period = DebugSnapshot.options?.query.flatMap(UsagePeriod.init(rawValue:)) ?? .month
+    /// nil = all harnesses.
+    @State private var harness: HarnessID? = DebugSnapshot.options?.harness.map { HarnessID($0, displayName: $0) }
+    @State private var showEmptyDays = false
+    /// Everything read for the period; the harness filter is applied on top.
+    @State private var records: [UsageRecord]?
+    @State private var range: ClosedRange<Date>?
+    /// The report for the chosen harness, rebuilt from `records` when the filter changes.
     @State private var report: DailyUsageReport?
     @State private var error: String?
     @State private var isLoading = false
+    @State private var updated: Date?
+
+    /// While the screen is open, sessions are read again this often, so new usage shows up by itself.
+    private static let autoRefresh: Duration = .seconds(60)
 
     var body: some View {
         content
             .navigationTitle("Usage")
             .navigationSubtitle(subtitle)
             .toolbar {
+                ToolbarItem {
+                    Picker("Harness", selection: $harness) {
+                        Text("All harnesses").tag(HarnessID?.none)
+                        ForEach(harnesses, id: \.self) { Text($0.displayName).tag(HarnessID?.some($0)) }
+                    }
+                    .help("Show the usage of one harness")
+                }
                 ToolbarItem {
                     Picker("Period", selection: $period) {
                         ForEach(UsagePeriod.allCases) { Text($0.title).tag($0) }
@@ -56,8 +76,30 @@ struct UsageView: View {
                         .help("Read the session files again (⌘R)")
                 }
             }
-            // Reload when the period changes and after every scan (new sessions, harnesses).
-            .task(id: "\(period.rawValue)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") { await load() }
+            // Reload when the period changes, after every scan (new sessions, harnesses) and
+            // every minute while the screen is open. Leaving the screen cancels the loop.
+            .task(id: "\(period.rawValue)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") {
+                while !Task.isCancelled {
+                    await load()
+                    try? await Task.sleep(for: Self.autoRefresh)
+                }
+            }
+            .onChange(of: harness) { rebuildReport() }
+    }
+
+    /// Built from memory, so switching harnesses is instant.
+    private func rebuildReport() {
+        guard let records, let range else { return report = nil }
+        let shown = harness.map { id in records.filter { $0.harness == id } } ?? records
+        report = DailyUsageReport(records: shown, from: range.lowerBound, to: range.upperBound)
+    }
+
+    /// Harnesses that recorded something in the period.
+    private var harnesses: [HarnessID] {
+        var seen = Set<HarnessID>()
+        let found = (records ?? []).map(\.harness).filter { seen.insert($0).inserted }
+        // Keep the chosen one in the menu even when it has nothing in this period.
+        return (found + [harness].compactMap(\.self)).reduce(into: []) { if !$0.contains($1) { $0.append($1) } }.sorted()
     }
 
     @ViewBuilder
@@ -65,43 +107,48 @@ struct UsageView: View {
         if let error {
             ContentUnavailableView("Couldn't read usage", systemImage: "exclamationmark.triangle", description: Text(error))
         } else if let report, !report.isEmpty {
-            GeometryReader { geometry in
-                ScrollView([.horizontal, .vertical]) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        UsageTable(report: report)
-                        Text(note(report))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: 640, alignment: .leading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    UsageSummary(report: report)
+                    UsageCard(title: "Tokens per day") { UsageChart(report: report) }
+                    UsageCard(title: "By day", accessory: {
+                        Toggle("Show days without usage", isOn: $showEmptyDays)
+                            .toggleStyle(.checkbox)
+                            .font(.callout)
+                    }) {
+                        UsageTable(report: report, showEmptyDays: showEmptyDays)
                     }
-                    .padding(20)
-                    // A table narrower than the window stays at the top left, not in the middle.
-                    .frame(minWidth: geometry.size.width, minHeight: geometry.size.height, alignment: .topLeading)
+                    Text(note(report))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: 720, alignment: .leading)
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-        } else if report == nil || isLoading {
+        } else if records == nil || isLoading {
             ProgressView("Reading sessions…").frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ContentUnavailableView("No usage in this period", systemImage: "chart.bar.xaxis",
-                                   description: Text("The installed harnesses recorded no model responses here."))
+            ContentUnavailableView(harness == nil ? "No usage in this period" : "No \(harness!.displayName) usage in this period",
+                                   systemImage: "chart.bar.xaxis",
+                                   description: Text("No model responses were recorded here. Try a longer period."))
         }
     }
 
     private var subtitle: String {
         guard let report, !report.isEmpty else { return "" }
-        var parts = ["\(UsageText.short(report.grandTotal.tokens.total)) tokens",
-                     "\(UsageText.full(report.grandTotal.requests)) responses"]
-        if let cost = report.grandTotal.cost { parts.append("\(UsageText.dollars(cost)) recorded") }
-        return parts.joined(separator: " · ")
+        let parts = ["\(report.days.count) days", "\(report.subscriptions.count) subscriptions",
+                     updated.map { "updated \($0.formatted(date: .omitted, time: .shortened))" }]
+        return parts.compactMap(\.self).joined(separator: " · ")
     }
 
     private func note(_ report: DailyUsageReport) -> String {
         var text = "Numbers come straight from the harnesses' session files. Tokens include cache reads and writes. "
-            + "Cost is shown only where the harness recorded it (Pi and OpenCode do, Claude Code and Codex don't)."
+            + "Cost is shown only where the harness recorded it: Pi and OpenCode do, Claude Code and Codex don't."
         if report.grandTotal.unpricedRequests > 0 && report.grandTotal.cost != nil {
             text += " \"≥\" marks a cost that leaves out responses without a recorded cost."
         }
-        return text + " Hover a cell for the harnesses and models behind it."
+        return text + " Hover a bar or a cell for the harnesses and models behind it."
     }
 
     private func load() async {
@@ -111,9 +158,12 @@ struct UsageView: View {
         defer { isLoading = false }
         let start = period.start()
         do {
-            let records = try await model.usage(since: start ?? .distantPast)
-            let from = start ?? records.map(\.time).min() ?? .now
-            report = DailyUsageReport(records: records, from: from, to: .now)
+            let loaded = try await model.usage(since: start ?? .distantPast)
+            let now = Date.now
+            range = (start ?? loaded.map(\.time).min() ?? now)...now
+            records = loaded
+            rebuildReport()
+            updated = now
             error = nil
         } catch is CancellationError {
             return
@@ -123,57 +173,317 @@ struct UsageView: View {
     }
 }
 
-/// Days down, subscriptions across, totals in the first row and the last column.
-private struct UsageTable: View {
+// MARK: - Colors
+
+/// A fixed color per subscription, so filtering never repaints the rest.
+/// The eight hues and their order come from a palette checked for color-blind readers.
+enum SubscriptionColor {
+    private static let slots: [(light: UInt32, dark: UInt32)] = [
+        (0x2A78D6, 0x3987E5), // blue
+        (0xEB6834, 0xD95926), // orange
+        (0x1BAF7A, 0x199E70), // aqua
+        (0xEDA100, 0xC98500), // yellow
+        (0xE87BA4, 0xD55181), // magenta
+        (0x008300, 0x008300), // green
+        (0x4A3AA7, 0x9085E9), // violet
+        (0xE34948, 0xE66767), // red
+    ]
+
+    /// Known subscriptions keep their slot; others get a stable one from their id.
+    private static let known = ["anthropic", "openai", "opencode-go", "minimax", "google-antigravity",
+                                "github-copilot", "google", "opencode"]
+
+    static func color(for subscription: Subscription) -> Color {
+        let index = known.firstIndex(of: subscription.id)
+            ?? subscription.id.unicodeScalars.reduce(0) { $0 + Int($1.value) } % slots.count
+        let slot = slots[index % slots.count]
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(hex: dark ? slot.dark : slot.light)
+        })
+    }
+}
+
+private extension NSColor {
+    convenience init(hex: UInt32) {
+        self.init(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                  blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+    }
+}
+
+// MARK: - Pieces
+
+/// Rounded panel with a title, like the grouped sections of System Settings.
+private struct UsageCard<Content: View, Accessory: View>: View {
+    let title: String
+    @ViewBuilder var accessory: Accessory
+    @ViewBuilder var content: Content
+
+    init(title: String, @ViewBuilder accessory: () -> Accessory = { EmptyView() }, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.accessory = accessory()
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+                accessory
+            }
+            content
+        }
+        .padding(16)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5)))
+    }
+}
+
+/// Headline numbers of the period.
+private struct UsageSummary: View {
     let report: DailyUsageReport
 
     var body: some View {
-        Grid(alignment: .trailing, horizontalSpacing: 20, verticalSpacing: 6) {
-            GridRow {
-                Text("Day").gridColumnAlignment(.leading)
-                ForEach(report.subscriptions) { Text($0.name) }
-                Text("Total")
+        let total = report.grandTotal
+        let active = report.days.filter { report.total(ofDay: $0) != nil }
+        let busiest = active.max { (report.total(ofDay: $0)?.tokens.total ?? 0) < (report.total(ofDay: $1)?.tokens.total ?? 0) }
+        HStack(alignment: .top, spacing: 12) {
+            tile("Tokens", UsageText.short(total.tokens.total),
+                 "\(UsageText.short(total.tokens.output)) output · \(UsageText.full(total.requests)) responses")
+            tile("Recorded cost", total.cost.map { (total.unpricedRequests > 0 ? "≥ " : "") + UsageText.dollars($0) } ?? "–",
+                 total.cost == nil ? "These harnesses don't record cost" : costDetail(total))
+            tile("Active days", "\(active.count)", "of \(report.days.count) days in the period")
+            if let busiest, let busiestTotal = report.total(ofDay: busiest) {
+                tile("Busiest day", UsageText.short(busiestTotal.tokens.total),
+                     busiest.formatted(.dateTime.weekday(.wide).day().month(.wide)))
             }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            Divider()
-            GridRow {
-                Text("Total").gridColumnAlignment(.leading)
-                ForEach(report.subscriptions) { cell(report.total(of: $0), title: "\($0.name), whole period") }
-                cell(report.grandTotal, title: "Whole period")
-            }
-            .fontWeight(.semibold)
-            Divider()
-            ForEach(report.days, id: \.self) { day in
-                GridRow {
-                    Text(day.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)))
-                    ForEach(report.subscriptions) { subscription in
-                        cell(report.cell(day, subscription), title: "\(subscription.name), \(day.formatted(date: .abbreviated, time: .omitted))")
-                    }
-                    cell(report.total(ofDay: day), title: day.formatted(date: .abbreviated, time: .omitted))
-                        .fontWeight(.medium)
+        }
+    }
+
+    private func costDetail(_ total: UsageTotal) -> String {
+        let priced = total.requests - total.unpricedRequests
+        return total.unpricedRequests > 0 ? "\(UsageText.full(priced)) of \(UsageText.full(total.requests)) responses have a cost"
+            : "All responses have a cost"
+    }
+
+    private func tile(_ title: String, _ value: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 26, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5)))
+    }
+}
+
+/// Stacked bars: tokens per day, one color per subscription. Hovering a day shows its numbers.
+private struct UsageChart: View {
+    let report: DailyUsageReport
+    @State private var hovered: Date?
+
+    private struct Bar: Identifiable {
+        let id: String
+        let day: Date
+        let subscription: Subscription
+        let tokens: Int
+    }
+
+    private var bars: [Bar] {
+        report.days.flatMap { day in
+            report.subscriptions.compactMap { subscription in
+                report.cell(day, subscription).map {
+                    Bar(id: "\(day.timeIntervalSince1970)|\(subscription.id)", day: day, subscription: subscription,
+                        tokens: $0.tokens.total)
                 }
             }
         }
-        .monospacedDigit()
-        .textSelection(.enabled)
     }
 
-    /// Tokens, and the recorded cost under them.
+    var body: some View {
+        let hoveredDay = hovered.map { Calendar.current.startOfDay(for: $0) }
+        Chart {
+            ForEach(bars) { bar in
+                BarMark(x: .value("Day", bar.day, unit: .day), y: .value("Tokens", bar.tokens))
+                    .foregroundStyle(by: .value("Subscription", bar.subscription.name))
+                    .opacity(hoveredDay == nil || hoveredDay == bar.day ? 1 : 0.35)
+            }
+            if let hoveredDay, let total = report.total(ofDay: hoveredDay) {
+                RuleMark(x: .value("Day", hoveredDay, unit: .day))
+                    .foregroundStyle(.clear)
+                    .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit(to: .plot), y: .fit(to: .plot))) {
+                        DayPopover(report: report, day: hoveredDay, total: total)
+                    }
+            }
+        }
+        .chartForegroundStyleScale(domain: report.subscriptions.map(\.name),
+                                   range: report.subscriptions.map(SubscriptionColor.color(for:)))
+        .chartYAxis {
+            AxisMarks { value in
+                AxisGridLine().foregroundStyle(.separator.opacity(0.6))
+                AxisValueLabel { Text(UsageText.short(value.as(Int.self) ?? 0)) }
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: 8)) { _ in
+                AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+            }
+        }
+        .chartLegend(position: .top, alignment: .leading, spacing: 12)
+        .chartXSelection(value: $hovered)
+        .frame(height: 240)
+    }
+}
+
+/// Numbers of one day, shown over the chart.
+private struct DayPopover: View {
+    let report: DailyUsageReport
+    let day: Date
+    let total: UsageTotal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(day.formatted(.dateTime.weekday(.wide).day().month(.wide))).font(.caption.weight(.semibold))
+            ForEach(report.subscriptions) { subscription in
+                if let cell = report.cell(day, subscription) {
+                    HStack(spacing: 6) {
+                        Circle().fill(SubscriptionColor.color(for: subscription)).frame(width: 7, height: 7)
+                        Text(subscription.name)
+                        Spacer(minLength: 12)
+                        Text(UsageText.short(cell.tokens.total)).monospacedDigit()
+                        if let cost = cell.cost { Text(UsageText.dollars(cost)).monospacedDigit().foregroundStyle(.secondary) }
+                    }
+                }
+            }
+            Divider()
+            HStack {
+                Text("Total")
+                Spacer(minLength: 12)
+                Text(UsageText.short(total.tokens.total)).monospacedDigit()
+                if let cost = total.cost { Text(UsageText.dollars(cost)).monospacedDigit().foregroundStyle(.secondary) }
+            }
+            .fontWeight(.semibold)
+        }
+        .font(.caption)
+        .padding(10)
+        .frame(minWidth: 200)
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+    }
+}
+
+/// Days down, subscriptions across, the period total in the first row.
+/// Each cell has a small bar: its share of the column's busiest day.
+private struct UsageTable: View {
+    let report: DailyUsageReport
+    let showEmptyDays: Bool
+
+    private let dayWidth: CGFloat = 150
+    private let columnWidth: CGFloat = 116
+
+    /// Largest day of each subscription, for the cell bars.
+    private var peaks: [String: Int] {
+        var result: [String: Int] = [:]
+        for day in report.days {
+            for subscription in report.subscriptions {
+                if let tokens = report.cell(day, subscription)?.tokens.total {
+                    result[subscription.id] = max(result[subscription.id] ?? 0, tokens)
+                }
+            }
+        }
+        return result
+    }
+
+    private var days: [Date] {
+        showEmptyDays ? report.days : report.days.filter { report.total(ofDay: $0) != nil }
+    }
+
+    /// Year only when the period isn't all in the current year.
+    private var showsYear: Bool {
+        let calendar = Calendar.current
+        return report.days.contains { !calendar.isDate($0, equalTo: .now, toGranularity: .year) }
+    }
+
+    var body: some View {
+        let peaks = peaks
+        ScrollView(.horizontal) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                header
+                Divider()
+                row(title: "Total", cells: report.subscriptions.map { report.total(of: $0) }, total: report.grandTotal,
+                    tooltip: "Whole period", peaks: [:], bold: true)
+                Divider()
+                ForEach(Array(days.enumerated()), id: \.element) { index, day in
+                    row(title: day.formatted(showsYear ? .dateTime.weekday(.abbreviated).day().month(.abbreviated).year()
+                                                       : .dateTime.weekday(.abbreviated).day().month(.abbreviated)),
+                        cells: report.subscriptions.map { report.cell(day, $0) }, total: report.total(ofDay: day),
+                        tooltip: day.formatted(date: .complete, time: .omitted), peaks: peaks)
+                        .background(index.isMultiple(of: 2) ? Color.clear : Color.primary.opacity(0.04))
+                }
+            }
+            .textSelection(.enabled)
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("Day").frame(width: dayWidth, alignment: .leading)
+            ForEach(report.subscriptions) { subscription in
+                HStack(spacing: 5) {
+                    Circle().fill(SubscriptionColor.color(for: subscription)).frame(width: 8, height: 8)
+                    Text(subscription.name).lineLimit(1)
+                }
+                .frame(width: columnWidth, alignment: .trailing)
+            }
+            Text("Total").frame(width: columnWidth, alignment: .trailing)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
+    }
+
+    private func row(title: String, cells: [UsageTotal?], total: UsageTotal?, tooltip: String, peaks: [String: Int],
+                     bold: Bool = false) -> some View {
+        HStack(spacing: 0) {
+            Text(title).frame(width: dayWidth, alignment: .leading)
+            ForEach(Array(zip(report.subscriptions, cells)), id: \.0.id) { subscription, cell in
+                cellView(cell, color: SubscriptionColor.color(for: subscription),
+                         peak: peaks[subscription.id], tooltip: "\(subscription.name) · \(tooltip)")
+                    .frame(width: columnWidth, alignment: .trailing)
+            }
+            cellView(total, color: nil, peak: nil, tooltip: tooltip)
+                .fontWeight(.semibold)
+                .frame(width: columnWidth, alignment: .trailing)
+        }
+        .fontWeight(bold ? .semibold : .regular)
+        .monospacedDigit()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+
     @ViewBuilder
-    private func cell(_ total: UsageTotal?, title: String) -> some View {
+    private func cellView(_ total: UsageTotal?, color: Color?, peak: Int?, tooltip: String) -> some View {
         if let total, total.requests > 0 {
-            VStack(alignment: .trailing, spacing: 1) {
+            VStack(alignment: .trailing, spacing: 2) {
                 Text(UsageText.short(total.tokens.total))
                 if let cost = total.cost {
                     Text((total.unpricedRequests > 0 ? "≥ " : "") + UsageText.dollars(cost))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if let color, let peak, peak > 0 {
+                    Capsule().fill(color)
+                        .frame(width: max(3, 56 * CGFloat(total.tokens.total) / CGFloat(peak)), height: 3)
+                }
             }
-            .help(Self.details(total, title: title))
+            .help(Self.details(total, title: tooltip))
         } else {
-            Text("–").foregroundStyle(.tertiary)
+            Text("–").foregroundStyle(.quaternary)
         }
     }
 

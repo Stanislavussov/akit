@@ -82,7 +82,11 @@ struct UsageTests {
             shared,
             piAnswer(id: "a2", ms: ms + 1000, provider: "minimax", model: "MiniMax-M2.7", cost: 0.01),
         ])
-        try write(".pi/agent/sessions/--work-app--/2_y.jsonl", lines: [shared]) // a fork copies the entry
+        var failed = piAnswer(id: "a3", ms: ms + 2000, provider: "minimax", model: "MiniMax-M2.7", cost: 0)
+        var message = failed["message"] as! [String: Any]
+        message["usage"] = ["input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "cost": ["total": 0]]
+        failed["message"] = message
+        try write(".pi/agent/sessions/--work-app--/2_y.jsonl", lines: [shared, failed]) // a fork copies the entry
 
         let records = PiAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
         #expect(records.count == 2)

@@ -64,6 +64,8 @@ extension PiSessions {
                 let tokens = TokenCounts(input: count("input"), output: count("output"),
                                          cacheRead: count("cacheRead"), cacheWrite: count("cacheWrite"))
                 let cost = ((usage["cost"] as? JSONLines.Object)?["total"] as? NSNumber)?.doubleValue
+                // Failed requests are saved with all counts at zero.
+                guard tokens.total > 0 || (cost ?? 0) > 0 else { return nil }
                 let record = UsageRecord(time: time, harness: .pi, provider: message["provider"] as? String ?? "unknown",
                                          model: message["model"] as? String ?? "unknown", tokens: tokens, cost: cost)
                 let key = (entry["id"] as? String).map { "\($0)|\(time.timeIntervalSince1970)" }

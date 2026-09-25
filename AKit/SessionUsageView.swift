@@ -16,9 +16,11 @@ enum UsageText {
 
     static func short(_ value: Int) -> String { value.formatted(.number.notation(.compactName)) }
     static func full(_ value: Int) -> String { value.formatted(.number) }
-    static func money(_ value: Double) -> String { value.formatted(.currency(code: "USD").precision(.fractionLength(2...4))) }
-    /// Whole cents, for totals.
-    static func dollars(_ value: Double) -> String { value.formatted(.currency(code: "USD").precision(.fractionLength(2))) }
+    /// "$0.0123": dollar sign first and a decimal point, whatever the system region.
+    static func money(_ value: Double) -> String { value.formatted(dollarStyle.precision(.fractionLength(2...4))) }
+    /// Whole cents, for totals: "$1,234.56".
+    static func dollars(_ value: Double) -> String { value.formatted(dollarStyle.precision(.fractionLength(2))) }
+    private static let dollarStyle = FloatingPointFormatStyle<Double>.Currency(code: "USD", locale: Locale(identifier: "en_US"))
 
     static func duration(_ seconds: TimeInterval) -> String {
         Duration.seconds(seconds.rounded()).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
