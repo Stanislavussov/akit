@@ -100,7 +100,8 @@ struct SkillsShView: View {
     }
 
     private func isInstalled(_ remote: RemoteSkill) -> Bool {
-        let origins: Set<String> = [remote.source, "skills.sh · \(remote.source)", "skills.sh · \(remote.source) (edited)"]
+        let published = InstalledSkillLock.publishedOrigin(remote.source)
+        let origins: Set<String> = [remote.source, published, published + " (renamed)"]
         return model.skills.contains { $0.name == remote.name && $0.origin.map(origins.contains) == true }
     }
 }
@@ -146,8 +147,8 @@ private struct RemoteSkillDetailView: View {
     @State private var harnesses: Set<HarnessID> = []
     @State private var scope: InstallScope = .global
     @State private var name = ""
-    @State private var keepSource = true
-    @State private var isEditing = false
+    @State private var mode: InstallRequest.Mode = DebugSnapshot.options?.ownCopy == true ? .ownCopy : .published
+    /// Your version of SKILL.md for "My own copy".
     @State private var editedText = ""
 
     // Planned install, recomputed only when the options change (it reads harness files).
@@ -230,6 +231,24 @@ private struct RemoteSkillDetailView: View {
         GroupBox {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
                 GridRow {
+                    label("Install as")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("Install as", selection: $mode) {
+                            Text("Author's version").tag(InstallRequest.Mode.published)
+                            Text("My own copy").tag(InstallRequest.Mode.ownCopy)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                        Text(mode == .published
+                             ? "Installed exactly as published, linked to \(remote.source)."
+                             : "Change SKILL.md below and save it as your skill. AKit remembers it was based on \(remote.source), but it is yours.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                GridRow {
                     label("For")
                     HStack(spacing: 14) {
                         ForEach(model.installations) { harness in
@@ -264,14 +283,6 @@ private struct RemoteSkillDetailView: View {
                         .frame(maxWidth: 280)
                 }
                 GridRow {
-                    label("Options")
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Keep link to skills.sh", isOn: $keepSource)
-                            .help("Off: save it as your own skill; AKit won't track where it came from.")
-                        Toggle("Edit SKILL.md before installing", isOn: $isEditing)
-                    }
-                }
-                GridRow {
                     label("Copies to")
                     VStack(alignment: .leading, spacing: 4) {
                         if targets.isEmpty {
@@ -302,13 +313,19 @@ private struct RemoteSkillDetailView: View {
 
             HStack {
                 if !installed.isEmpty {
-                    Label("Installed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    Label(mode == .ownCopy ? "Saved" : "Installed", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(installed) }
                         .buttonStyle(.link)
+                    if ExternalEditor.appURL != nil, let first = installed.first {
+                        Button("Open in \(ExternalEditor.name)") { ExternalEditor.open(first) }
+                            .buttonStyle(.link)
+                            .help("Keep changing your copy, including its other files")
+                    }
                 }
                 Spacer()
                 if isInstalling { ProgressView().controlSize(.small) }
-                Button(conflicts.isEmpty ? "Install" : "Replace…") {
+                Button(conflicts.isEmpty ? (mode == .ownCopy ? "Save as My Skill" : "Install") : "Replace…") {
                     if conflicts.isEmpty { install(replace: false) } else { confirmReplace = true }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -380,14 +397,26 @@ private struct RemoteSkillDetailView: View {
                     .textSelection(.enabled)
                 }
             }
-            GroupBox(isEditing ? "SKILL.md — editing" : "SKILL.md") {
-                if isEditing {
+            if mode == .ownCopy {
+                GroupBox {
                     TextEditor(text: $editedText)
                         .font(.system(.callout, design: .monospaced))
                         .frame(minHeight: 360)
                         .scrollContentBackground(.hidden)
-                } else {
-                    Text(editedText)
+                } label: {
+                    HStack {
+                        Text("SKILL.md — your version")
+                        if editedText != fetched.skillText {
+                            Text("changed").font(.caption).foregroundStyle(.orange)
+                            Button("Reset to Original") { editedText = fetched.skillText }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                        }
+                    }
+                }
+            } else {
+                GroupBox("SKILL.md") {
+                    Text(fetched.skillText)
                         .font(.system(.callout, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(4)
@@ -423,7 +452,7 @@ private struct RemoteSkillDetailView: View {
 
     private func install(replace: Bool) {
         guard let fetched else { return }
-        let request = InstallRequest(skill: fetched, name: name, skillText: editedText, keepSource: keepSource)
+        let request = InstallRequest(skill: fetched, name: name, mode: mode, editedText: editedText)
         let targets = targets
         isInstalling = true
         Task {

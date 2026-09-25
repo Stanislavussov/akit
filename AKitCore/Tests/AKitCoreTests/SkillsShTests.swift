@@ -155,7 +155,7 @@ struct SkillsShTests {
         try fm.createSymbolicLink(at: repo.appending(path: "skills/tdd/escape"), withDestinationURL: home)
         let found = try fetched("tdd")
 
-        let request = InstallRequest(skill: found, name: "tdd", skillText: found.skillText, keepSource: true)
+        let request = InstallRequest(skill: found, name: "tdd", mode: .published)
         let folders = try SkillInstaller.install(request, into: claudeGlobal(), replace: false, in: env)
         let folder = try #require(folders.first)
         #expect(folder.path == home.appending(path: ".claude/skills/tdd").path)
@@ -178,13 +178,33 @@ struct SkillsShTests {
         let found = try fetched("tdd")
         let edited = found.skillText + "\nMy rule.\n"
 
-        let request = InstallRequest(skill: found, name: "my-tdd", skillText: edited, keepSource: false)
+        let request = InstallRequest(skill: found, name: "my-tdd", mode: .ownCopy, editedText: edited)
         #expect(request.isModified)
         let folder = try #require(try SkillInstaller.install(request, into: claudeGlobal(), replace: false, in: env).first)
         let text = try String(contentsOf: folder.appending(path: "SKILL.md"), encoding: .utf8)
         #expect(Frontmatter.parse(text)["name"] == "my-tdd")
         #expect(text.hasSuffix("My rule.\n"))
-        #expect(try InstalledSkillLock.load(in: env).entries.isEmpty) // your own: no link back
+
+        // Yours, but you can see what it was based on.
+        let lock = try InstalledSkillLock.load(in: env)
+        #expect(lock.entries.map(\.ownCopy) == [true])
+        let skills = SkillScanner.scan(installations: HarnessCatalog.detectAll(in: env), in: env)
+        #expect(skills.first { $0.name == "my-tdd" }?.origin == "Your copy of me/repo")
+    }
+
+    @Test func publishedModeIgnoresEdits() throws {
+        try write(repo.appending(path: "tdd/SKILL.md"), skill("tdd"))
+        let found = try fetched("tdd")
+        let request = InstallRequest(skill: found, name: "tdd", mode: .published, editedText: "changed")
+        #expect(request.finalText == found.skillText)
+        #expect(!request.isModified)
+    }
+
+    @Test func lockFromBeforeOwnCopiesStillLoads() throws {
+        let old = #"{"version":1,"entries":[{"path":"/x","source":"a/b","skillId":"s","pathInRepo":"","modified":false,"installedAt":"t"}]}"#
+        try write(InstalledSkillLock.url(in: env), old)
+        let lock = try InstalledSkillLock.load(in: env)
+        #expect(lock.entries.first?.ownCopy == nil)
     }
 
     @Test func existingSkillBlocksUnlessReplacedThroughTheTrash() throws {
@@ -192,7 +212,7 @@ struct SkillsShTests {
         try write(home.appending(path: ".claude/skills/tdd/SKILL.md"), skill("old"))
         let found = try fetched("tdd")
         let targets = claudeGlobal()
-        let request = InstallRequest(skill: found, name: "tdd", skillText: found.skillText, keepSource: true)
+        let request = InstallRequest(skill: found, name: "tdd", mode: .published)
 
         #expect(SkillInstaller.conflicts(name: "tdd", targets: targets).count == 1)
         #expect(throws: SkillInstaller.Failure.self) {
@@ -217,7 +237,7 @@ struct SkillsShTests {
         try write(repo.appending(path: "tdd/SKILL.md"), skill("tdd"))
         try write(InstalledSkillLock.url(in: env), "{ not json")
         let found = try fetched("tdd")
-        let request = InstallRequest(skill: found, name: "tdd", skillText: found.skillText, keepSource: true)
+        let request = InstallRequest(skill: found, name: "tdd", mode: .published)
         #expect(throws: InstalledSkillLock.Failure.self) {
             try SkillInstaller.install(request, into: claudeGlobal(), replace: false, in: env)
         }
@@ -256,7 +276,7 @@ struct SkillsShTests {
         try write(repo.appending(path: "synced/SKILL.md"), skill("synced"))
         try write(home.appending(path: ".claude/skills/synced/bucket/x/SKILL.md"), skill("x"))
         let found = try fetched("synced")
-        let request = InstallRequest(skill: found, name: "synced", skillText: found.skillText, keepSource: true)
+        let request = InstallRequest(skill: found, name: "synced", mode: .published)
         #expect(throws: SkillInstaller.Failure.self) {
             try SkillInstaller.install(request, into: claudeGlobal(), replace: true, in: env) { _ in
                 Issue.record("nothing may be trashed")
@@ -280,7 +300,7 @@ struct SkillsShTests {
         let trashFolder = home.appending(path: "Trash")
         try fm.createDirectory(at: trashFolder, withIntermediateDirectories: true)
         var calls = 0
-        let request = InstallRequest(skill: found, name: "tdd", skillText: found.skillText, keepSource: true)
+        let request = InstallRequest(skill: found, name: "tdd", mode: .published)
         #expect(throws: (any Error).self) {
             try SkillInstaller.install(request, into: targets, replace: true, in: env) { url in
                 calls += 1
@@ -305,7 +325,7 @@ struct SkillsShTests {
         try write(repo.appending(path: "tdd/refs.md"), "r")
         let found = try fetched("tdd")
         try fm.removeItem(at: repo.appending(path: "tdd/refs.md"))
-        let request = InstallRequest(skill: found, name: "tdd", skillText: found.skillText, keepSource: true)
+        let request = InstallRequest(skill: found, name: "tdd", mode: .published)
         #expect(throws: SkillInstaller.Failure.self) {
             try SkillInstaller.install(request, into: claudeGlobal(), replace: false, in: env)
         }

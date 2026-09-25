@@ -22,23 +22,31 @@ public struct InstallTarget: Hashable, Sendable, Identifiable {
 
 /// What to install and how.
 public struct InstallRequest: Sendable {
+    public enum Mode: Hashable, Sendable {
+        /// Exactly as the author published it, linked to its skills.sh source.
+        case published
+        /// Your own skill, based on this one: your edited SKILL.md, possibly another name.
+        case ownCopy
+    }
+
     public let skill: FetchedSkill
     /// Folder name and `name:` in SKILL.md.
     public let name: String
-    /// SKILL.md to write: the original text, or the user's edited version.
-    public let skillText: String
-    /// false = "save as my own": no link back to skills.sh is recorded.
-    public let keepSource: Bool
+    public let mode: Mode
+    /// Your SKILL.md text; used for `.ownCopy` only.
+    public let editedText: String
 
-    public init(skill: FetchedSkill, name: String, skillText: String, keepSource: Bool) {
+    public init(skill: FetchedSkill, name: String, mode: Mode, editedText: String? = nil) {
         self.skill = skill
         self.name = name
-        self.skillText = skillText
-        self.keepSource = keepSource
+        self.mode = mode
+        self.editedText = editedText ?? skill.skillText
     }
 
-    /// The SKILL.md text with `name:` set to the chosen name.
-    public var finalText: String { SkillText.settingName(name, in: skillText) }
+    /// The SKILL.md to write, with `name:` set to the chosen name.
+    public var finalText: String {
+        SkillText.settingName(name, in: mode == .ownCopy ? editedText : skill.skillText)
+    }
     public var isModified: Bool { finalText != skill.skillText }
 }
 
@@ -180,12 +188,11 @@ public enum SkillInstaller {
             for folder in installed {
                 let path = folder.resolvingSymlinksInPath().path
                 lock.entries.removeAll { $0.path == path }
-                if request.keepSource {
-                    lock.entries.append(.init(path: path, source: request.skill.remote.source,
-                                              skillId: request.skill.remote.skillId,
-                                              pathInRepo: request.skill.pathInRepo,
-                                              modified: request.isModified, installedAt: date))
-                }
+                lock.entries.append(.init(path: path, source: request.skill.remote.source,
+                                          skillId: request.skill.remote.skillId,
+                                          pathInRepo: request.skill.pathInRepo,
+                                          modified: request.isModified, installedAt: date,
+                                          ownCopy: request.mode == .ownCopy))
             }
             try InstalledSkillLock.save(lock, in: env)
         } catch {
