@@ -9,6 +9,8 @@ final class AppModel {
     private(set) var installations: [HarnessInstallation] = []
     private(set) var versions: [HarnessID: String] = [:]
     private(set) var skills: [Skill] = []
+    /// Project folders the harnesses know about plus those found in `projectRoots`.
+    private(set) var projects: [URL] = []
     private(set) var isScanning = false
     private(set) var lastScan: Date?
 
@@ -54,6 +56,24 @@ final class AppModel {
         await refresh()
     }
 
+    /// Built-in and custom adapters, for planning installs.
+    var adapters: [any HarnessAdapter] { HarnessCatalog.allAdapters(custom: customHarnesses) }
+
+    /// Where a skill would be copied for these harnesses and scope.
+    func installTargets(for harnesses: [HarnessID], scope: InstallScope) -> [InstallTarget] {
+        SkillInstaller.targets(for: harnesses, scope: scope, adapters: adapters,
+                               installed: installations.map(\.id), in: .current)
+    }
+
+    /// Installs a skill from skills.sh, then rescans. Returns the new skill folders.
+    func install(_ request: InstallRequest, into targets: [InstallTarget], replace: Bool) async throws -> [URL] {
+        let folders = try await Task.detached {
+            try SkillInstaller.install(request, into: targets, replace: replace, in: .current)
+        }.value
+        await refresh()
+        return folders
+    }
+
     /// Adds or replaces (same id) a custom harness and saves the file.
     func saveCustomHarness(_ harness: CustomHarness) throws {
         var list = customHarnesses
@@ -89,13 +109,15 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills) = await Task.detached {
+        let (found, skills, projects) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
-            let projects = ProjectFinder.projects(inRoots: roots)
-            return (found, SkillScanner.scan(installations: found, extraProjects: projects, adapters: adapters, in: env))
+            let extra = ProjectFinder.projects(inRoots: roots)
+            let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
+            return (found, SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env), projects)
         }.value
         installations = found
         self.skills = skills
+        self.projects = projects
         lastScan = .now
 
         var newVersions: [HarnessID: String] = [:]

@@ -4,7 +4,9 @@ import SwiftUI
 /// Debug mode: AKit renders its own window to a PNG and quits.
 /// No Screen Recording permission needed — the app only draws its own window.
 ///
-///   AKit.app/Contents/MacOS/AKit --snapshot /tmp/shot.png [--section overview] [--delay 2]
+///   AKit.app/Contents/MacOS/AKit --snapshot /tmp/shot.png [--section overview] [--delay 2] [--query tdd]
+///
+/// `--query` fills the search field of the section (skills.sh selects the first result).
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens.
 enum DebugSnapshot {
@@ -12,6 +14,7 @@ enum DebugSnapshot {
         var output: URL
         var section: SidebarSection?
         var delay: Double
+        var query: String?
     }
 
     static let options: Options? = {
@@ -24,7 +27,8 @@ enum DebugSnapshot {
         return Options(
             output: URL(filePath: path),
             section: value("--section").flatMap(SidebarSection.init(rawValue:)),
-            delay: value("--delay").flatMap(Double.init) ?? 2
+            delay: value("--delay").flatMap(Double.init) ?? 2,
+            query: value("--query")
         )
     }()
 
