@@ -97,18 +97,6 @@ final class AppModel {
         return try await Self.background { try adapter.recordedPrompt(in: session) }
     }
 
-    /// The newest saved system prompt among this harness's sessions in `project`.
-    func latestRecordedPrompt(harness: HarnessID, project: URL) async throws -> (PromptSnapshot, SessionSummary)? {
-        guard let adapter = adapter(for: harness) else { return nil }
-        let candidates = sessions.filter { $0.harness == harness && $0.project?.standardizedFileURL == project.standardizedFileURL }
-        return try await Self.background {
-            for session in candidates {
-                if let prompt = try adapter.recordedPrompt(in: session) { return (prompt, session) }
-            }
-            return nil
-        }
-    }
-
     func capturedPrompt(harness: HarnessID, project: URL) -> PromptSnapshot? {
         capturedPrompts[Self.promptKey(harness, project)]
     }

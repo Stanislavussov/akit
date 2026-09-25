@@ -9,7 +9,7 @@ struct SessionsView: View {
     @State private var selection: SessionSummary.ID?
     @State private var query = ""
     /// nil = all harnesses.
-    @State private var harness: HarnessID?
+    @State private var harness: HarnessID? = DebugSnapshot.options?.harness.map { HarnessID($0, displayName: $0) }
 
     var body: some View {
         HSplitView {
