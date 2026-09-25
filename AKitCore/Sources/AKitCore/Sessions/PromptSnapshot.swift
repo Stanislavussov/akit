@@ -13,7 +13,8 @@ public struct PromptSnapshot: Sendable, Hashable {
 
     public let harness: HarnessID
     public let source: Source
-    /// System prompt blocks as sent (Claude sends several, Pi one).
+    /// System prompt blocks as sent (Claude sends several, Pi one), with token-like
+    /// values masked: the text includes CLAUDE.md / AGENTS.md, which may hold one.
     public let sections: [String]
     public let tools: [PromptTool]
     public let context: [PromptContextPart]

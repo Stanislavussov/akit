@@ -8,8 +8,8 @@ public enum SecretFilter {
     public static let hiddenOutput = "[Hidden by AKit: this output comes from a file that usually holds secrets.]"
     static let mask = "[secret hidden]"
 
-    /// Whether a tool call reads a file that usually holds secrets: its `file_path`/`path`
-    /// names one, or the first line of its shell `command` (before any heredoc) has one
+    /// Whether a tool call reads or writes a file that usually holds secrets: its
+    /// `file_path`/`path` names one, or its shell `command` (up to any heredoc) has one
     /// as a word. Merely mentioning such a file in a prompt or file content doesn't count.
     public static func readsSecretFile(_ input: Any?) -> Bool {
         guard let input = input as? [String: Any] else { return false }
@@ -20,23 +20,49 @@ public enum SecretFilter {
         return false
     }
 
+    /// Heredoc bodies are file content, not commands, so the text after `<<` is ignored.
     public static func commandReadsSecretFile(_ command: String) -> Bool {
-        let firstLine = command.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        let beforeHeredoc = firstLine.components(separatedBy: "<<").first ?? ""
-        let separators = CharacterSet.whitespaces.union(CharacterSet(charactersIn: ";|&()<>\"'`=,"))
+        let beforeHeredoc = command.components(separatedBy: "<<").first ?? ""
+        let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ";|&()<>\"'`=,"))
         return beforeHeredoc.components(separatedBy: separators).contains(where: isSecretFile)
+    }
+
+    /// The tool input with the file content replaced when the call writes a secret file
+    /// (Write/Edit fields, or the heredoc body of a shell command like `cat > .env <<EOF`).
+    public static func redactedInput(_ input: Any?) -> Any? {
+        guard readsSecretFile(input), var fields = input as? [String: Any] else { return input }
+        for key in ["content", "new_string", "old_string", "edits", "text", "newText", "oldText"] where fields[key] != nil {
+            fields[key] = hiddenOutput
+        }
+        if let command = fields["command"] as? String, let heredoc = command.range(of: "<<") {
+            let lineEnd = command[heredoc.upperBound...].firstIndex(where: \.isNewline) ?? command.endIndex
+            if lineEnd < command.endIndex {
+                fields["command"] = String(command[..<lineEnd]) + "\n" + hiddenOutput
+            }
+        }
+        return fields
     }
 
     static func isSecretFile(_ path: String) -> Bool {
         let parts = path.split(separator: "/")
         guard let name = parts.last.map(String.init) else { return false }
-        if secretFileNames.contains(name) || name == ".env" || name.hasPrefix(".env.") { return true }
-        if name.hasPrefix("id_"), parts.dropLast().last == ".ssh", !name.hasSuffix(".pub") { return true }
-        return name == "credentials" && parts.dropLast().last == ".aws"
+        let parent = parts.dropLast().last.map(String.init)
+        if secretFileNames.contains(name) { return true }
+        // .env, .env.local, .env* (glob), .envrc; not .envelope.ts
+        if name == ".env" || name == ".envrc" || name.hasPrefix(".env.") || name.hasPrefix(".env*") { return true }
+        if name.hasPrefix("id_"), parent == ".ssh", !name.hasSuffix(".pub") { return true }
+        switch (parent, name) {
+        case (".aws", "credentials"), (".docker", "config.json"), (".kube", "config"): return true
+        // Pi's MCP file; other mcp.json files are usually project config without env.
+        case ("agent", "mcp.json"): return parts.dropLast(2).last == ".pi"
+        default: return false
+        }
     }
 
+    /// Credential stores and files that hold MCP server env/headers.
     private static let secretFileNames: Set<String> = [
         "auth.json", "settings.local.json", "models-store.json", "github-token", ".netrc", ".npmrc", ".pypirc",
+        ".git-credentials", ".credentials.json", ".claude.json", ".mcp.json",
     ]
 
     /// Masks token-like values. Keys and surrounding text stay readable.
@@ -59,8 +85,9 @@ public enum SecretFilter {
         (regex(#"\bAIza[0-9A-Za-z_-]{35}\b"#), mask),
         (regex(#"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"#), mask), // JWT
         (regex(#"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}"#), "$1 \(mask)"),
-        // Environment style: DB_PASSWORD=…, GITHUB_TOKEN="…" (upper-case names only).
-        (regex(#"\b([A-Z][A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)\s*=\s*["']?)[^\s"']{8,}"#),
+        // Environment style: DB_PASSWORD=…, GITHUB_TOKEN="…" (upper-case names, no spaces around =,
+        // so code like `API_KEY = os.environ["X"]` stays readable).
+        (regex(#"\b([A-Z][A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)=["']?)[^\s"'\[\]()]{8,}"#),
          "$1\(mask)"),
         // JSON style: "access_token": "…" (quoted string values only, so "max_tokens": 4096 stays).
         (regex(#"(?i)("[\w-]*(api[_-]?key|token|secret|password|passwd|credential)[\w-]*"\s*:\s*")[^"]{8,}""#),

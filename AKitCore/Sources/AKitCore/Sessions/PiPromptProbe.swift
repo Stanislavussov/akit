@@ -100,7 +100,7 @@ enum PiPromptProbe {
         if let skills = json["skills"] as? [String], !skills.isEmpty {
             context.append(PromptContextPart(id: 1, title: "Skills (\(skills.count))", text: skills.joined(separator: "\n")))
         }
-        return PromptSnapshot(harness: .pi, source: .captured(project: project, at: date), sections: [prompt],
+        return PromptSnapshot(harness: .pi, source: .captured(project: project, at: date), sections: [SecretFilter.masked(prompt)],
                               tools: PromptTool.list(json["tools"]), context: context)
     }
 

@@ -130,7 +130,8 @@ enum PiSessions {
                     builder.add(.thinking, stripANSI(block["thinking"] as? String ?? ""), at: time)
                 case "toolCall":
                     if let id = block["id"] as? String, SecretFilter.readsSecretFile(block["arguments"]) { secretCalls.insert(id) }
-                    builder.add(.toolCall(name: block["name"] as? String ?? "tool"), JSONLines.pretty(block["arguments"]), at: time)
+                    builder.add(.toolCall(name: block["name"] as? String ?? "tool"),
+                                JSONLines.pretty(SecretFilter.redactedInput(block["arguments"])), at: time)
                 default:
                     break
                 }

@@ -74,12 +74,13 @@ enum ClaudeSessions {
         let data = try Data(contentsOf: file)
         var builder = TranscriptBuilder()
         var tools: [String: ToolCall] = [:]
+        var shellReadsSecret = false // the last `!` shell command read a secret file
 
         for entry in try JSONLines.objects(in: data) where !isSidechain(entry) {
             let time = JSONLines.date(entry["timestamp"])
             switch entry["type"] as? String {
             case "user":
-                addUser(entry, at: time, tools: tools, to: &builder)
+                addUser(entry, at: time, tools: tools, shellReadsSecret: &shellReadsSecret, to: &builder)
             case "assistant":
                 guard let message = entry["message"] as? Object else { continue }
                 builder.noteModel((message["model"] as? String).flatMap { $0 == "<synthetic>" ? nil : $0 })
@@ -91,7 +92,7 @@ enum ClaudeSessions {
                         builder.add(.thinking, block["thinking"] as? String ?? "", at: time)
                     case "tool_use":
                         let name = block["name"] as? String ?? "tool"
-                        let input = JSONLines.pretty(block["input"])
+                        let input = JSONLines.pretty(SecretFilter.redactedInput(block["input"]))
                         if let id = block["id"] as? String {
                             tools[id] = ToolCall(name: name, readsSecretFile: SecretFilter.readsSecretFile(block["input"]))
                         }
@@ -119,7 +120,7 @@ enum ClaudeSessions {
     }
 
     private static func addUser(_ entry: Object, at time: Date?, tools: [String: ToolCall],
-                                to builder: inout TranscriptBuilder) {
+                                shellReadsSecret: inout Bool, to builder: inout TranscriptBuilder) {
         guard entry["isMeta"] as? Bool != true, let message = entry["message"] as? Object else { return }
         let content = message["content"]
         if entry["isCompactSummary"] as? Bool == true {
@@ -134,14 +135,22 @@ enum ClaudeSessions {
                                       readSecretFile: call?.readsSecretFile ?? false, at: time)
             }
             let text = JSONLines.text(of: blocks.filter { $0["type"] as? String != "tool_result" })
-            addPrompt(text, at: time, to: &builder)
+            addPrompt(text, at: time, shellReadsSecret: &shellReadsSecret, to: &builder)
         } else {
-            addPrompt(JSONLines.text(of: content), at: time, to: &builder)
+            addPrompt(JSONLines.text(of: content), at: time, shellReadsSecret: &shellReadsSecret, to: &builder)
         }
     }
 
-    private static func addPrompt(_ text: String, at time: Date?, to builder: inout TranscriptBuilder) {
-        if text.hasPrefix("<command-name>") || text.hasPrefix("<command-message>") {
+    private static func addPrompt(_ text: String, at time: Date?, shellReadsSecret: inout Bool,
+                                  to builder: inout TranscriptBuilder) {
+        if text.hasPrefix("<bash-input>") {
+            // `!` shell mode: the command, then its output in a separate entry.
+            let command = stripTags(text)
+            shellReadsSecret = SecretFilter.commandReadsSecretFile(command)
+            builder.add(.event("Shell"), "$ \(command)", at: time)
+        } else if text.hasPrefix("<bash-stdout>") || text.hasPrefix("<bash-stderr>") {
+            builder.addToolOutput(.event("Shell output"), stripTags(text), readSecretFile: shellReadsSecret, at: time)
+        } else if text.hasPrefix("<command-name>") || text.hasPrefix("<command-message>") {
             builder.add(.event("Command"), commandLine(text), at: time)
         } else if text.hasPrefix("<local-command-stdout>") || text.hasPrefix("<local-command-stderr>") {
             builder.add(.event("Command output"), stripTags(text), at: time)
@@ -197,7 +206,7 @@ extension ClaudeSessions {
             guard entry["type"] as? String == "attachment", let attachment = entry["attachment"] as? Object else { continue }
             if attachment["type"] as? String == "prompt_snapshot" {
                 let prompt = attachment["systemPrompt"]
-                sections = (prompt as? [String]) ?? (prompt as? String).map { [$0] } ?? sections
+                sections = ((prompt as? [String]) ?? (prompt as? String).map { [$0] })?.map(SecretFilter.masked) ?? sections
                 // Some snapshots carry only the prompt; keep the last tool list seen.
                 let listed = PromptTool.list(attachment["tools"])
                 if !listed.isEmpty { tools = listed }

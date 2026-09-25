@@ -31,6 +31,7 @@ struct SecretFilterTests {
             "Never display or copy secrets: auth.json files, tokens, MCP env/headers",
             "const schema = z.object({ maxTokens: z.number().int().positive() })",
             "private static let secretFileNames: Set<String> = []",
+            #"API_KEY = os.environ["X"]"#,
         ] {
             #expect(SecretFilter.masked(text) == text)
         }
@@ -48,6 +49,22 @@ struct SecretFilterTests {
         // Mentions are not reads.
         #expect(!SecretFilter.readsSecretFile(["prompt": "never show auth.json"]))
         #expect(!SecretFilter.readsSecretFile(["command": "cat > notes.md <<'EOF' auth.json\nnever show auth.json\nEOF"]))
-        #expect(!SecretFilter.readsSecretFile(["command": "cd app && swift test\ncat auth.json"]))
+        #expect(SecretFilter.readsSecretFile(["command": "cd app\ncat .env"])) // any line before a heredoc
+        #expect(SecretFilter.readsSecretFile(["command": "grep KEY .env*"]))
+        #expect(SecretFilter.readsSecretFile(["file_path": "/p/.mcp.json"]))
+        #expect(SecretFilter.readsSecretFile(["file_path": "/Users/me/.claude.json"]))
+        #expect(SecretFilter.readsSecretFile(["path": "/Users/me/.pi/agent/mcp.json"]))
+        #expect(SecretFilter.readsSecretFile(["command": "cat ~/.docker/config.json ~/.git-credentials"]))
+        #expect(!SecretFilter.readsSecretFile(["path": "/app/tools/mcp.json"]))
+    }
+
+    @Test func writesToSecretFilesHideTheContent() throws {
+        let write = try #require(SecretFilter.redactedInput(["file_path": "/app/.env", "content": "A=1"]) as? [String: String])
+        #expect(write["content"] == SecretFilter.hiddenOutput)
+        #expect(write["file_path"] == "/app/.env")
+        let shell = try #require(SecretFilter.redactedInput(["command": "cat > .env <<'EOF'\nDB=secret\nEOF"]) as? [String: String])
+        #expect(shell["command"] == "cat > .env <<'EOF'\n" + SecretFilter.hiddenOutput)
+        let other = try #require(SecretFilter.redactedInput(["file_path": "/app/main.swift", "content": "x"]) as? [String: String])
+        #expect(other["content"] == "x")
     }
 }

@@ -56,7 +56,7 @@ enum JSONLines {
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return [] }
         var window = UInt64(bytes)
-        while true {
+        while !Task.isCancelled {
             let start = size > window ? size - window : 0
             guard (try? handle.seek(toOffset: start)) != nil, var data = try? handle.readToEnd() else { return [] }
             if start > 0 {
@@ -71,6 +71,7 @@ enum JSONLines {
             if !objects.isEmpty || start == 0 || window >= UInt64(maxBytes) { return objects }
             window *= 4
         }
+        return []
     }
 
     static func date(_ value: Any?) -> Date? {

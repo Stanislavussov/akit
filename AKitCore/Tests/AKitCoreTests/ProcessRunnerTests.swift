@@ -3,13 +3,17 @@ import Testing
 @testable import AKitCore
 
 /// ProcessRunner with small shell scripts in a temporary folder.
-struct ProcessRunnerTests {
+final class ProcessRunnerTests {
     let folder: URL
     let fm = FileManager.default
 
     init() throws {
         folder = fm.temporaryDirectory.appending(path: "akit-process-\(UUID().uuidString)")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        try? fm.removeItem(at: folder)
     }
 
     func script(_ body: String) throws -> URL {

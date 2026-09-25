@@ -107,6 +107,21 @@ struct SessionTests {
         #expect(!items.contains { $0.text.contains("hunter2") || $0.text.contains("sk-ant-api03") })
     }
 
+    @Test func claudeShellModeOutputOfSecretFileIsHidden() throws {
+        var lines = claudeSession()
+        lines += [
+            ["type": "user", "message": ["role": "user", "content": "<bash-input>cat .env</bash-input>"]],
+            ["type": "user", "message": ["role": "user", "content": "<bash-stdout>DB=hunter2</bash-stdout><bash-stderr></bash-stderr>"]],
+            ["type": "user", "message": ["role": "user", "content": "<bash-input>ls</bash-input>"]],
+            ["type": "user", "message": ["role": "user", "content": "<bash-stdout>README.md</bash-stdout>"]],
+        ]
+        try write(claudeFile, lines: lines)
+        let adapter = ClaudeCodeAdapter()
+        let items = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).items.suffix(4)
+        #expect(items.map(\.kind) == [.event("Shell"), .event("Shell output"), .event("Shell"), .event("Shell output")])
+        #expect(items.map(\.text) == ["$ cat .env", SecretFilter.hiddenOutput, "$ ls", "README.md"])
+    }
+
     @Test func claudeFileWithoutConversationIsSkipped() throws {
         try write(claudeFile, lines: [["type": "permission-mode", "permissionMode": "default", "sessionId": "1111"]])
         #expect(ClaudeCodeAdapter().sessions(in: env).isEmpty)

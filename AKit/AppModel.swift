@@ -138,7 +138,6 @@ final class AppModel {
         adapters.first { $0.id == harness }
     }
 
-
     /// Adds or replaces (same id) a custom harness. The file is re-read right before
     /// saving, so hand edits made meanwhile are kept, and a broken file is never overwritten.
     func saveCustomHarness(_ harness: CustomHarness) throws {
