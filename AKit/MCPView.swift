@@ -245,13 +245,14 @@ struct MCPView: View {
 }
 
 private struct MCPServerRow: View {
+    @Environment(AppModel.self) private var model
     let server: MCPServer
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 Text(server.name).fontWeight(.medium)
-                if !server.warnings.isEmpty {
+                if !model.warnings(of: server).isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .font(.caption)
@@ -291,7 +292,7 @@ private struct MCPServerDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 info
-                if !server.warnings.isEmpty { warnings }
+                if !model.warnings(of: server).isEmpty { warnings }
                 harnesses
                 if !server.environment.isEmpty { settings("Environment", server.environment) }
                 if !server.headers.isEmpty { settings("Headers", server.headers) }
@@ -457,7 +458,7 @@ private struct MCPServerDetailView: View {
 
     private var warnings: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(server.warnings, id: \.self) { warning in
+            ForEach(model.warnings(of: server), id: \.self) { warning in
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .font(.callout)
@@ -467,6 +468,24 @@ private struct MCPServerDetailView: View {
 
     private func label(_ text: String) -> some View {
         Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+    }
+}
+
+extension AppModel {
+    /// The scan's warnings plus variables an active server needs that AKit doesn't provide:
+    /// not in its Keychain, or in it but ~/.akit/env.sh isn't sourced from ~/.zshrc.
+    func warnings(of server: MCPServer) -> [String] {
+        guard server.uses.contains(where: \.state.isActive) else { return server.warnings }
+        let missing = server.variables.filter { !isInKeychain($0) }
+        let unexported = envFileSourced ? [] : server.variables.filter { !missing.contains($0) }
+        var result = server.warnings
+        if !missing.isEmpty {
+            result.append("Needs \(missing.joined(separator: ", ")): not in AKit's Keychain, so the harness must get it from its environment")
+        }
+        if !unexported.isEmpty {
+            result.append("\(unexported.joined(separator: ", ")) is in the Keychain, but ~/.zshrc doesn't source ~/.akit/env.sh yet")
+        }
+        return result
     }
 }
 

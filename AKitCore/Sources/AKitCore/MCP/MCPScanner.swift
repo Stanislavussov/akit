@@ -39,12 +39,8 @@ public enum MCPScanner {
         var servers = order.compactMap { byID[$0] }
         markShadowed(&servers, home: home)
         for index in servers.indices {
+            // Missing variables are checked by the app: it knows the Keychain and ~/.akit/env.sh.
             servers[index].uses.sort { $0.harness < $1.harness }
-            let server = servers[index]
-            if !server.variables.isEmpty, server.uses.contains(where: \.state.isActive) {
-                servers[index].warnings.append(
-                    "Needs \(server.variables.joined(separator: ", ")) in the environment the harness starts in")
-            }
         }
         result.servers = servers
         return result
