@@ -7,6 +7,8 @@ struct BrainView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: Item?
     @State private var query = DebugSnapshot.options?.query ?? ""
+    @State private var creating = false
+    @State private var createError: String?
 
     enum Item: Hashable {
         case layer(String)
@@ -21,9 +23,18 @@ struct BrainView: View {
                 ContentUnavailableView {
                     Label("No brain repo", systemImage: "brain")
                 } description: {
-                    Text("AKit looks for it in \(model.brainPath). Pick another folder in Settings (⌘,).")
+                    Text("AKit looks for it in \(model.brainPath). Create one there, or pick another folder in Settings (⌘,).")
+                } actions: {
+                    Button(creating ? "Creating…" : "Create Brain Repo", action: create)
+                        .disabled(creating)
+                        .help("Creates skills/, layers/core, projects/ and machines/ and makes a first git commit")
                 }
             }
+        }
+        .alert("Couldn't create the brain", isPresented: Binding(get: { createError != nil }, set: { if !$0 { createError = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(createError ?? "")
         }
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
@@ -32,6 +43,18 @@ struct BrainView: View {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .disabled(model.isScanning)
                     .help("Read the brain repo again (⌘R)")
+            }
+        }
+    }
+
+    private func create() {
+        creating = true
+        Task {
+            defer { creating = false }
+            do {
+                try await model.createBrain()
+            } catch {
+                createError = error.localizedDescription
             }
         }
     }

@@ -280,3 +280,46 @@ struct BrainTests {
         #expect(messages(brain).filter { $0.contains("circle") }.count == 1)
     }
 }
+
+/// Creating a brain repo in a temporary folder, with a throwaway git identity.
+struct BrainSetupTests {
+    let home: URL
+    let fm = FileManager.default
+
+    init() throws {
+        home = fm.temporaryDirectory.appending(path: "akit-brain-setup-\(UUID().uuidString)")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+    }
+
+    var env: HarnessEnvironment {
+        HarnessEnvironment(homeDirectory: home, variables: [
+            "HOME": home.path, "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
+        ], executableSearchPaths: [URL(filePath: "/usr/bin")])
+    }
+
+    @Test func createsALoadableBrainWithOneCommit() async throws {
+        let root = Brain.defaultRoot(home: home)
+        try await BrainSetup.create(at: root, env: env)
+
+        let brain = try #require(Brain.load(from: root))
+        #expect(brain.layers.map(\.name) == ["core"])
+        #expect(brain.problems.isEmpty, "\(brain.problems)")
+        #expect(fm.fileExists(atPath: root.appending(path: "projects").path))
+
+        let log = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["log", "--oneline"],
+                                                        directory: root, environment: env.variables, timeout: 10))
+        #expect(log.succeeded)
+        #expect(log.output.contains("Create brain repo"))
+    }
+
+    @Test func refusesAFolderWithFiles() async throws {
+        let root = home.appending(path: "busy")
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("mine".utf8).write(to: root.appending(path: "notes.md"))
+
+        await #expect(throws: BrainSetup.Failure.self) { try await BrainSetup.create(at: root, env: env) }
+        #expect(try fm.contentsOfDirectory(atPath: root.path) == ["notes.md"])
+    }
+}

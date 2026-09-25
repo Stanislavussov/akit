@@ -60,6 +60,12 @@ final class AppModel {
     /// The brain repo from the last scan; nil when there is no folder at `brainPath`.
     private(set) var brain: Brain?
 
+    /// Creates an empty brain repo at `brainPath` (folder layout, `core` layer, first commit).
+    func createBrain() async throws {
+        try await BrainSetup.create(at: brainRoot, env: .current)
+        await refresh()
+    }
+
     /// Harnesses described by the user in `~/.akit/harnesses.json`.
     private(set) var customHarnesses: [CustomHarness] = []
     /// Set when `~/.akit/harnesses.json` can't be read; AKit then refuses to overwrite it.
