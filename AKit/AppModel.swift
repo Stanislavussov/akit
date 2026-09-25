@@ -18,10 +18,17 @@ final class AppModel {
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
     /// A skill the Skills screen should select when it appears (set by "Show in Skills").
     var revealSkill: Skill.ID?
+    /// Which skills the Skills screen lists: all, only global ones, or what one project sees.
+    var skillsFilter: SkillsFilter = .initial
 
     /// Opens the Skills screen on the skill in this folder.
     func showSkill(inFolder folder: URL) {
         guard let skill = skill(inFolder: folder) else { return }
+        if case .project(let url) = skill.scope {
+            skillsFilter = .project(url)
+        } else if skillsFilter == .global, skill.scope != .global {
+            skillsFilter = .all
+        }
         revealSkill = skill.id
         section = .skills
     }

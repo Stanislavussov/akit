@@ -12,6 +12,7 @@ struct SkillsView: View {
     @State private var deleteError: String?
 
     var body: some View {
+        @Bindable var model = model
         HSplitView {
             list
                 .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
@@ -28,6 +29,28 @@ struct SkillsView: View {
         .navigationSubtitle(subtitle)
         .searchable(text: $query, placement: .toolbar, prompt: "Name or description")
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Menu {
+                    Picker("Show", selection: $model.skillsFilter) {
+                        Text("All Skills").tag(SkillsFilter.all)
+                        Text("Global Only").tag(SkillsFilter.global)
+                    }
+                    .pickerStyle(.inline)
+                    if !projects.isEmpty {
+                        Picker("Project", selection: $model.skillsFilter) {
+                            ForEach(projects, id: \.url) { project in
+                                Text("\(project.url.lastPathComponent)  (\(project.count))").tag(SkillsFilter.project(project.url))
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    }
+                } label: {
+                    Label(filterTitle, systemImage: filterIcon)
+                        .labelStyle(.titleAndIcon)
+                }
+                .fixedSize()
+                .help(filterHelp)
+            }
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .disabled(model.isScanning)
@@ -51,9 +74,17 @@ struct SkillsView: View {
             Text(deleteError ?? "")
         }
         .onAppear {
+            // Use the menu's own URL for the chosen project, so the picker shows it as selected.
+            if case .project(let chosen) = model.skillsFilter,
+               let match = projects.first(where: { $0.url.standardizedFileURL.path == chosen.standardizedFileURL.path }) {
+                model.skillsFilter = .project(match.url)
+            }
             if !reveal() { selection = selection ?? filtered.first?.id }
         }
         .onChange(of: model.revealSkill) { reveal() }
+        .onChange(of: model.skillsFilter) {
+            if selection.flatMap({ id in filtered.first { $0.id == id } }) == nil { selection = filtered.first?.id }
+        }
         .onChange(of: model.skills) { if selection.flatMap({ id in model.skills.first { $0.id == id } }) == nil { selection = filtered.first?.id } }
     }
 
@@ -130,21 +161,74 @@ struct SkillsView: View {
     }
 
     private var subtitle: String {
-        filtered.count == model.skills.count ? "\(model.skills.count) skills" : "\(filtered.count) of \(model.skills.count)"
+        let shown = scoped.count
+        let base = shown == model.skills.count ? "\(shown) skills" : "\(shown) of \(model.skills.count) skills"
+        return filtered.count == shown ? base : "\(filtered.count) found · " + base
     }
+
+    /// Skills for the chosen project filter, before the search text.
+    private var scoped: [Skill] { model.skills.filter { model.skillsFilter.includes($0.scope) } }
 
     private var filtered: [Skill] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return model.skills }
-        return model.skills.filter {
+        guard !q.isEmpty else { return scoped }
+        return scoped.filter {
             $0.name.localizedCaseInsensitiveContains(q) || $0.description.localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    /// Projects for the filter menu: the known ones plus any that have skills, with their own skill count.
+    private var projects: [(url: URL, count: Int)] {
+        var urls: [String: URL] = [:]
+        var counts: [String: Int] = [:]
+        for url in model.projects {
+            urls[url.standardizedFileURL.path] = url
+            counts[url.standardizedFileURL.path, default: 0] += 0
+        }
+        for skill in model.skills {
+            guard case .project(let url) = skill.scope else { continue }
+            let key = url.standardizedFileURL.path
+            urls[key] = urls[key] ?? url
+            counts[key, default: 0] += 1
+        }
+        return counts.compactMap { key, count in urls[key].map { (url: $0, count: count) } }
+            .sorted { $0.url.lastPathComponent.localizedStandardCompare($1.url.lastPathComponent) == .orderedAscending }
+    }
+
+    private var filterTitle: String {
+        switch model.skillsFilter {
+        case .all: "All Skills"
+        case .global: "Global Only"
+        case .project(let url): "Project · \(url.lastPathComponent)"
+        }
+    }
+
+    private var filterIcon: String {
+        switch model.skillsFilter {
+        case .all: "square.stack.3d.up"
+        case .global: "globe"
+        case .project: "folder"
+        }
+    }
+
+    private var filterHelp: String {
+        switch model.skillsFilter {
+        case .all: "Showing every skill, from all projects"
+        case .global: "Showing only skills that every project sees"
+        case .project(let url): "Showing what a session in \(url.tildePath) sees: its own skills plus global ones"
         }
     }
 
     private var groups: [(scope: SkillScope, skills: [Skill])] {
         Dictionary(grouping: filtered, by: \.scope)
             .map { (scope: $0.key, skills: $0.value.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) }
-            .sorted { ($0.scope.sortRank, $0.scope.title) < ($1.scope.sortRank, $1.scope.title) }
+            .sorted { (rank($0.scope), $0.scope.title) < (rank($1.scope), $1.scope.title) }
+    }
+
+    /// Group order; with a project chosen, its own skills come first.
+    private func rank(_ scope: SkillScope) -> Int {
+        if case .project = model.skillsFilter, case .project = scope { return -1 }
+        return scope.sortRank
     }
 
     private func projectPath(_ scope: SkillScope) -> String? {
@@ -307,6 +391,31 @@ private struct SkillDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(4)
                 .textSelection(.enabled)
+        }
+    }
+}
+
+/// Which skills the Skills screen lists.
+enum SkillsFilter: Hashable {
+    case all
+    /// Skills every project sees (global, claude.ai, plugins, built-in).
+    case global
+    /// What a session in this project sees: its own skills plus the global ones.
+    case project(URL)
+
+    /// `--project <folder name>` in snapshot mode picks that project.
+    static var initial: SkillsFilter {
+        guard let name = DebugSnapshot.options?.project else { return .all }
+        let root = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Projects/\(name)")
+        return .project(root)
+    }
+
+    func includes(_ scope: SkillScope) -> Bool {
+        switch (self, scope) {
+        case (.all, _): true
+        case (_, .project(let url)):
+            if case .project(let chosen) = self { url.standardizedFileURL.path == chosen.standardizedFileURL.path } else { false }
+        default: true
         }
     }
 }
