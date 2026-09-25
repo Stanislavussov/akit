@@ -8,16 +8,16 @@ import Foundation
 /// SIGTERM, then SIGKILL after a short grace period. Output is drained while the
 /// program runs and reading stops soon after it exits, even if a child it left
 /// behind still holds the pipe open. Leftover children are terminated.
-enum ProcessRunner {
-    struct Result: Sendable {
-        let exitedNormally: Bool
-        let status: Int32
-        let timedOut: Bool
-        let output: String
-        var succeeded: Bool { exitedNormally && status == 0 && !timedOut }
+public enum ProcessRunner {
+    public struct Result: Sendable {
+        public let exitedNormally: Bool
+        public let status: Int32
+        public let timedOut: Bool
+        public let output: String
+        public var succeeded: Bool { exitedNormally && status == 0 && !timedOut }
     }
 
-    static func run(_ executable: URL, arguments: [String], directory: URL? = nil,
+    public static func run(_ executable: URL, arguments: [String], directory: URL? = nil,
                     environment: [String: String], timeout: TimeInterval,
                     killGrace: TimeInterval = 2) async -> Result? {
         await withCheckedContinuation { continuation in

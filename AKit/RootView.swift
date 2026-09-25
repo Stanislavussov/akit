@@ -32,6 +32,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(SelfRebuild.self) private var rebuild
     @State private var selection: SidebarSection? = DebugSnapshot.options?.section ?? .overview
 
     var body: some View {
@@ -50,5 +51,28 @@ struct RootView: View {
             case .systemPrompt: SystemPromptView()
             }
         }
+        .overlay(alignment: .bottom) {
+            if rebuild.state == .building {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Rebuilding AKit… It restarts when the build is done.")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.bottom, 16)
+            }
+        }
+        .alert("Couldn't rebuild AKit", isPresented: Binding(get: { rebuildError != nil },
+                                                             set: { if !$0 { rebuild.dismissError() } })) {
+            Button("OK") { rebuild.dismissError() }
+        } message: {
+            Text(rebuildError ?? "")
+        }
+    }
+
+    private var rebuildError: String? {
+        if case .failed(let message) = rebuild.state { return message }
+        return nil
     }
 }
