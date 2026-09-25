@@ -39,6 +39,7 @@ struct RootView: View {
                     .badge(section == .skills ? model.skills.count : 0)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200)
+            .safeAreaInset(edge: .bottom) { BuildBadge(info: .current) }
         } detail: {
             switch selection ?? .overview {
             case .overview: OverviewView()

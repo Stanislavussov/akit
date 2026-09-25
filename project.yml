@@ -14,6 +14,21 @@ targets:
     sources: [AKit]
     dependencies:
       - package: AKitCore
+    postBuildScripts:
+      # Records where this build comes from; shown at the bottom of the sidebar.
+      - name: Stamp build source
+        basedOnDependencyAnalysis: false
+        script: |
+          # A file of its own: Info.plist is written later in the build and would drop these keys.
+          plist="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/BuildInfo.plist"
+          mkdir -p "$(dirname "$plist")"
+          /usr/bin/plutil -create xml1 "$plist"
+          stamp() { /usr/bin/plutil -replace "$1" -string "$2" "$plist"; }
+          stamp AKitSourcePath "$SRCROOT"
+          stamp AKitGitBranch "$(git -C "$SRCROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+          stamp AKitGitCommit "$(git -C "$SRCROOT" rev-parse --short HEAD 2>/dev/null)"
+          stamp AKitGitDirty "$(git -C "$SRCROOT" status --porcelain --untracked-files=no 2>/dev/null | head -1 | grep -q . && echo yes || echo no)"
+          stamp AKitBuildDate "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     settings:
       base:
         PRODUCT_NAME: AKit
@@ -31,6 +46,8 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
+        # The build stamp script reads the git repository.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
 schemes:
   AKit:
     build:

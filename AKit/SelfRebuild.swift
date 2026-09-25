@@ -17,7 +17,7 @@ final class SelfRebuild {
 
     /// The repository this binary was compiled from (known at compile time).
     /// nil when it no longer has a Makefile, e.g. the app was copied elsewhere.
-    static let sourceRoot: URL? = {
+    nonisolated static let sourceRoot: URL? = {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         return FileManager.default.fileExists(atPath: root.appending(path: "Makefile").path) ? root : nil
     }()

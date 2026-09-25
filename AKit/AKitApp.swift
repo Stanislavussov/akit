@@ -33,6 +33,13 @@ struct AKitApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(!rebuild.isAvailable || rebuild.state == .building)
+                Divider()
+                if let revision = BuildInfo.current.revision {
+                    Text("\(BuildInfo.current.isProduction ? "Production" : "Development"): \(revision)")
+                }
+                if let path = BuildInfo.current.sourceURL?.tildePath {
+                    Text("Built from \(path)")
+                }
             }
         }
 
