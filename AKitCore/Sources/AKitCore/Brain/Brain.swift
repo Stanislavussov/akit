@@ -80,20 +80,27 @@ public struct Brain: Sendable {
 
             for name in layer.requires where byName[name] == nil { add("Requires “\(name)”, which doesn't exist.") }
             for name in layer.conflicts where byName[name] == nil { add("Conflicts with “\(name)”, which doesn't exist.") }
-            for name in layer.requires where layer.conflicts.contains(name) { add("Both requires and conflicts with “\(name)”.") }
+            // Everything this layer pulls in must be selectable together.
+            let closure = requiredClosure(of: layer.name, in: byName)
+            for member in closure.sorted() {
+                for name in byName[member]?.conflicts ?? [] where closure.contains(name) {
+                    add(member == layer.name ? "Conflicts with “\(name)”, which it requires itself."
+                        : name == layer.name ? "Requires “\(member)”, which conflicts with this layer."
+                        : "Requires “\(member)”, which conflicts with “\(name)” that this layer also needs.")
+                }
+            }
 
             for id in duplicates(layer.fields.map(\.id)) { add("Field “\(id)” is declared twice.") }
             for id in layer.fields.map(\.id) where builtInFields.contains(id) { add("Field “\(id)” is built in; pick another id.") }
             for name in duplicates(layer.skills.map(\.name)) { add("Skill “\(name)” is listed twice.") }
             for skill in layer.skills where !skills.contains(skill.name) { add("Skill “\(skill.name)” is not in skills/.") }
 
-            let fm = FileManager.default
-            for file in layer.files where !fm.fileExists(atPath: layer.templates.appending(path: file.template).path) {
-                add("Template “\(file.template)” is missing in templates/.")
+            for file in layer.files {
+                if let problem = templateProblem(file.template, in: layer) { add(problem) }
             }
 
             // A `when` may use this layer's fields, fields of layers it requires, and built-ins.
-            let visible = builtInFields.union(requiredClosure(of: layer.name, in: byName).flatMap { byName[$0]?.fields.map(\.id) ?? [] })
+            let visible = builtInFields.union(closure.flatMap { byName[$0]?.fields.map(\.id) ?? [] })
             let conditions = layer.skills.flatMap(\.when) + layer.files.flatMap(\.when)
             for field in Set(conditions.map(\.field)).sorted() where !visible.contains(field) {
                 add("when uses “\(field)”, which is not a field of this layer or the layers it requires.")
@@ -117,20 +124,43 @@ public struct Brain: Sendable {
         return seen
     }
 
-    /// Each `requires` cycle once, starting from its alphabetically first layer.
+    /// `requires` cycles, each starting from its alphabetically first layer. Every layer
+    /// is walked once, so a cycle is reported through the first path that reaches it.
     static func cycles(in layers: [String: Layer]) -> [[String]] {
+        var done: Set<String> = []
+        var path: [String] = []
         var found: Set<[String]> = []
-        func walk(_ name: String, _ path: [String]) {
+        func walk(_ name: String) {
             if let start = path.firstIndex(of: name) {
                 let cycle = Array(path[start...])
-                let first = cycle.firstIndex(of: cycle.min()!)!
+                let first = cycle.indices.min { cycle[$0] < cycle[$1] } ?? 0
                 found.insert(Array(cycle[first...] + cycle[..<first]))
                 return
             }
-            for next in layers[name]?.requires ?? [] where layers[next] != nil { walk(next, path + [name]) }
+            guard !done.contains(name) else { return }
+            path.append(name)
+            for next in layers[name]?.requires ?? [] where layers[next] != nil { walk(next) }
+            path.removeLast()
+            done.insert(name)
         }
-        for name in layers.keys { walk(name, []) }
+        for name in layers.keys.sorted() { walk(name) }
         return found.sorted { $0.joined() < $1.joined() }
+    }
+
+    /// A template must be a regular file inside the layer's `templates/`, also after
+    /// following symlinks, so a render never copies files from elsewhere.
+    static func templateProblem(_ template: String, in layer: Layer) -> String? {
+        let url = layer.templates.appending(path: template)
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) else {
+            return "Template “\(template)” is missing in templates/."
+        }
+        if isFolder.boolValue { return "Template “\(template)” is a folder, not a file." }
+        let real = url.resolvingSymlinksInPath().path
+        guard real.hasPrefix(layer.templates.resolvingSymlinksInPath().path + "/") else {
+            return "Template “\(template)” points outside templates/."
+        }
+        return nil
     }
 
     private static func duplicates(_ items: [String]) -> [String] {

@@ -103,6 +103,102 @@ struct BrainTests {
         #expect(Condition(parsing: "a ==") == nil)
         #expect(Condition(parsing: "a b") == nil)
         #expect(Condition(parsing: "a == b == c") == nil)
+        #expect(Condition(parsing: "a == x!=y") == nil)
+        #expect(Condition(parsing: "a == \"b != c\"") == Condition(field: "a", test: .equals("b != c")))
+        #expect(Condition(parsing: "a != 'x == y'") == Condition(field: "a", test: .notEquals("x == y")))
+    }
+
+    @Test func nullAndWrongTypesAreNotSilent() throws {
+        try write("layers/x/templates/t.md")
+        try write("layers/x/layer.yaml", """
+            name: ~
+            description:
+            fields:
+              - id: plain
+                type:
+                required: "true"
+              - id: my field
+              - id: many
+                type: multi
+                options: [a, b]
+                default: [a, {b: c}]
+            requires: [{x: y}]
+            skills:
+              - name: s
+                mode:
+                override: 1
+            files:
+              - template: t.md
+                to:
+                when:
+                  - target: claude
+              - template: t.md
+                to: .
+              - template: t.md
+                to: t2.md
+                when: !flag
+            """)
+
+        let brain = try load()
+        let layer = try #require(brain.layers.first)
+        #expect(layer.description == "")
+        #expect(layer.fields.map(\.id) == ["plain", "many"])
+        #expect(layer.fields[0].kind == .text)
+        #expect(layer.fields[1].defaultValue == nil)
+        #expect(layer.skills.first?.mode == .auto)
+        #expect(layer.files.map(\.to) == ["t.md", "t2.md"])
+
+        let problems = messages(brain, "x")
+        #expect(!problems.contains { $0.hasPrefix("name ") })
+        #expect(problems.contains("Field “plain”: required must be true or false."))
+        #expect(problems.contains("Field “my field”: an id may use only letters, digits, _ and -."))
+        #expect(problems.contains("Field “many”: default doesn't fit type multi."))
+        #expect(problems.contains("“requires” must be a list of names."))
+        #expect(problems.contains("Skill “s”: override must be true or false."))
+        #expect(problems.contains("File “t.md”: “.” must be a relative file path inside the folder."))
+        #expect(problems.contains { $0.hasPrefix("File “t.md”: can't read when “target: claude") })
+        #expect(problems.contains { $0.hasPrefix("File “t.md”: can't read when “!flag") }, "\(problems)")
+    }
+
+    @Test func conflictsThroughRequires() throws {
+        try write("layers/a/layer.yaml", "requires: [b]\nconflicts: [c]\n")
+        try write("layers/b/layer.yaml", "requires: [c]\n")
+        try write("layers/c/layer.yaml", "")
+        try write("layers/d/layer.yaml", "requires: [b, e]\n")
+        try write("layers/e/layer.yaml", "conflicts: [c]\n")
+
+        let brain = try load()
+        #expect(messages(brain, "a").contains("Conflicts with “c”, which it requires itself."))
+        #expect(messages(brain, "d").contains("Requires “e”, which conflicts with “c” that this layer also needs."))
+        #expect(messages(brain, "b").isEmpty)
+    }
+
+    @Test func manyRedundantRequiresLoadFast() throws {
+        // Each layer requires every earlier one: walking every path would take minutes.
+        for i in 0..<40 {
+            let requires = (0..<i).map { "l\($0)" }.joined(separator: ", ")
+            try write("layers/l\(i)/layer.yaml", "requires: [\(requires)]\n")
+        }
+        let start = Date()
+        let brain = try load()
+        #expect(Date().timeIntervalSince(start) < 2)
+        #expect(brain.problems.isEmpty)
+    }
+
+    @Test func templatesMustBeFilesInsideTemplates() throws {
+        try write("layers/x/templates/folder/inner.md")
+        try write("secret.txt", "token")
+        try fm.createSymbolicLink(at: root.appending(path: "layers/x/templates/link.md"),
+                                  withDestinationURL: root.appending(path: "secret.txt"))
+        try write("layers/x/layer.yaml", """
+            files:
+              - template: folder
+              - template: link.md
+            """)
+
+        let problems = messages(try load(), "x")
+        #expect(problems.contains("Template “folder” is a folder, not a file."))
+        #expect(problems.contains("Template “link.md” points outside templates/."))
     }
 
     @Test func brokenYamlIsReportedAndOtherLayersStillLoad() throws {
@@ -150,7 +246,7 @@ struct BrainTests {
         #expect(problems.contains("A field has no id."))
         #expect(problems.contains("Field “target” is built in; pick another id."))
         #expect(problems.contains("Skill “s”: unknown mode “sometimes” (auto, manual or off)."))
-        #expect(problems.contains("File “../outside.md”: “../outside.md” must be a relative path inside the folder."))
+        #expect(problems.contains("File “../outside.md”: “../outside.md” must be a relative file path inside the folder."))
         #expect(problems.contains("File “ok.md”: can't read when “a ==” (use field == value, field != value or field)."))
         #expect(problems.contains("Template “ok.md” is missing in templates/."))
     }
@@ -174,7 +270,8 @@ struct BrainTests {
         let brain = try load()
         let a = messages(brain, "a")
         #expect(a.contains("Requires “ghost”, which doesn't exist."))
-        #expect(a.contains("Both requires and conflicts with “b”."))
+        #expect(a.contains("Conflicts with “b”, which it requires itself."))
+        #expect(messages(brain, "b").contains("Requires “a”, which conflicts with this layer."))
         #expect(a.contains("Skill “tdd” is listed twice."))
         #expect(a.contains("Skill “missing” is not in skills/."))
         #expect(a.contains("when uses “from_c”, which is not a field of this layer or the layers it requires."))

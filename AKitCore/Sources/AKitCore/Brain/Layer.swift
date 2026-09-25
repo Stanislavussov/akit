@@ -98,21 +98,24 @@ public struct Condition: Hashable, Sendable, CustomStringConvertible {
     /// nil when the text is not one of the three forms.
     public init?(parsing text: String) {
         let text = text.trimmingCharacters(in: .whitespaces)
-        for (op, make) in [("!=", Test.notEquals), ("==", Test.equals)] {
-            let parts = text.components(separatedBy: op)
-            guard parts.count == 2 else { continue }
-            let field = parts[0].trimmingCharacters(in: .whitespaces)
-            guard Self.isIdentifier(field) else { return nil }
-            var value = parts[1].trimmingCharacters(in: .whitespaces)
-            if value.count >= 2, let quote = value.first, quote == "\"" || quote == "'", value.last == quote {
-                value = String(value.dropFirst().dropLast())
-            }
-            guard !value.isEmpty else { return nil }
-            self.init(field: field, test: make(value))
+        // Split at the first operator; a quoted value may contain one itself.
+        let found = [("!=", Test.notEquals), ("==", Test.equals)]
+            .compactMap { op, make in text.range(of: op).map { (range: $0, make: make) } }
+            .min { $0.range.lowerBound < $1.range.lowerBound }
+        guard let found else {
+            guard Self.isIdentifier(text) else { return nil }
+            self.init(field: text, test: .isSet)
             return
         }
-        guard Self.isIdentifier(text) else { return nil }
-        self.init(field: text, test: .isSet)
+        let field = text[..<found.range.lowerBound].trimmingCharacters(in: .whitespaces)
+        var value = text[found.range.upperBound...].trimmingCharacters(in: .whitespaces)
+        if value.count >= 2, let quote = value.first, quote == "\"" || quote == "'", value.last == quote {
+            value = String(value.dropFirst().dropLast())
+        } else if value.contains("==") || value.contains("!=") {
+            return nil
+        }
+        guard Self.isIdentifier(field), !value.isEmpty else { return nil }
+        self.init(field: field, test: found.make(value))
     }
 
     public var description: String {
