@@ -8,7 +8,7 @@ public struct SessionSummary: Identifiable, Hashable, Sendable {
 
     public let harness: HarnessID
     public let file: URL
-    /// Name set by the user or the harness, else the first prompt.
+    /// Name set by the user or the harness, else the first prompt. Token-like values are masked.
     public let title: String
     /// Folder the harness was started in.
     public let project: URL?
@@ -23,7 +23,7 @@ public struct SessionSummary: Identifiable, Hashable, Sendable {
                 size: Int, harnessVersion: String? = nil) {
         self.harness = harness
         self.file = file
-        self.title = title
+        self.title = SecretFilter.masked(title)
         self.project = project
         self.started = started
         self.modified = modified

@@ -131,6 +131,7 @@ private struct SessionDetailView: View {
     let session: SessionSummary
     @State private var transcript: SessionTranscript?
     @State private var error: String?
+    @State private var copied = false
     @State private var tab = DebugSnapshot.options?.tab.flatMap(SessionDetailTab.init(rawValue:)) ?? .conversation
 
     var body: some View {
@@ -164,6 +165,7 @@ private struct SessionDetailView: View {
                 Text(session.title).font(.title2.bold()).textSelection(.enabled).lineLimit(3)
                 Spacer()
                 HarnessBadge(harness: session.harness)
+                copyMenu
                 if ExternalEditor.appURL != nil {
                     Button("Open in \(ExternalEditor.name)", systemImage: "square.and.pencil") {
                         ExternalEditor.open(session.file)
@@ -202,6 +204,33 @@ private struct SessionDetailView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+        }
+    }
+
+    /// The whole conversation, secrets masked as shown, for other agents and evals.
+    private var copyMenu: some View {
+        Menu {
+            Button("Copy as Markdown") { copy(SessionExport.markdown) }
+            Button("Copy as JSON") { copy(SessionExport.json) }
+        } label: {
+            Label(copied ? "Copied" : "Copy Session", systemImage: copied ? "checkmark" : "doc.on.doc")
+        } primaryAction: {
+            copy(SessionExport.markdown)
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .disabled(transcript?.items.isEmpty ?? true)
+        .help("Copy the whole conversation as Markdown; the arrow also offers JSON. Secrets stay masked.")
+    }
+
+    private func copy(_ format: (SessionSummary, SessionTranscript) -> String) {
+        guard let transcript else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(format(session, transcript), forType: .string)
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
         }
     }
 

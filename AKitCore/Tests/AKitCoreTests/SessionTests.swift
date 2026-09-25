@@ -294,4 +294,62 @@ struct SessionTests {
     @Test func piCaptureWithoutExecutableIsNil() async throws {
         #expect(try await PiAdapter().capturePrompt(in: home, env: env) == nil)
     }
+
+    // MARK: Export
+
+    @Test func exportHasEveryItemAndNoSecrets() throws {
+        var lines = claudeSession()
+        lines.append(["type": "assistant", "message": ["role": "assistant", "content": [
+            ["type": "tool_use", "id": "t2", "name": "Bash", "input": ["command": "cat .env"]],
+        ]]])
+        lines.append(["type": "user", "message": ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "t2", "content": "DB_PASSWORD=hunter2hunter2"],
+        ]]])
+        lines.append(["type": "assistant", "message": ["role": "assistant", "content": [
+            ["type": "text", "text": "Done:\n```swift\nlet key = \"sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123\"\n```"],
+        ]]])
+        try write(claudeFile, lines: lines)
+        let adapter = ClaudeCodeAdapter()
+        let session = try #require(adapter.sessions(in: env).first)
+        let transcript = try adapter.transcript(of: session)
+
+        let markdown = SessionExport.markdown(session, transcript)
+        #expect(markdown.hasPrefix("# \(session.title)\n"))
+        #expect(markdown.contains("## User"))
+        #expect(markdown.contains("### Tool call: Read"))
+        #expect(markdown.contains("### Tool result: Bash\n\n```\n\(SecretFilter.hiddenOutput)\n```"))
+        #expect(markdown.contains("### Tool call: Bash"))
+
+        let json = SessionExport.json(session, transcript)
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let items = try #require(object["items"] as? [[String: Any]])
+        #expect(items.count == transcript.items.count)
+        #expect(items.map { $0["type"] as? String } == transcript.items.map { item in
+            switch item.kind {
+            case .user: "user"
+            case .assistant: "assistant"
+            case .thinking: "thinking"
+            case .toolCall: "tool_call"
+            case .toolResult: "tool_result"
+            case .event: "event"
+            }
+        })
+        #expect(object["project"] as? String == "/work/app")
+
+        for text in [markdown, json] {
+            #expect(!text.contains("hunter2"))
+            #expect(!text.contains("sk-ant-api03"))
+        }
+    }
+
+    @Test func fenceIsLongerThanBackticksInText() {
+        #expect(SessionExport.fenced("plain") == ["```", "plain", "```"])
+        #expect(SessionExport.fenced("a ```` b").first == "`````")
+    }
+
+    @Test func sessionTitleIsMasked() {
+        let session = SessionSummary(harness: .claudeCode, file: home, title: "use sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123",
+                                     project: nil, started: nil, modified: .now, size: 0)
+        #expect(!session.title.contains("sk-ant-api03"))
+    }
 }
