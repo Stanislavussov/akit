@@ -43,8 +43,17 @@ brain/
   projects/<id>/
     answers.json               # layers + field values
     lock.json                  # brain commit each file was rendered from
+    usage/<machine id>.json    # this project's skill use per day, one file per Mac
+    dismissed.json             # recommendations dismissed for this project
   machines/<name>.yaml         # which harnesses and core layer per machine
+  plugins/                     # local Claude marketplace with the akit plugin (session hook)
+  insights/
+    machines/<file>.json       # skill use per day per Mac (<id>, or <pseudonym> on a work Mac)
+    dismissed.json             # global recommendations dismissed
 ```
+
+On a work Mac the `projects/` files (answers, lock, usage, dismissed) live in the
+local store, `~/.akit/local/projects/<id>/`, and never reach the brain.
 
 Project `<id>` is the `origin` remote as `host/owner/repo` (lowercase, no
 credentials, no `.git`), e.g. `projects/github.com/me/app/`. Projects without a
