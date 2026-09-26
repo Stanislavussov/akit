@@ -4,8 +4,10 @@ import Foundation
 public struct UsageTotal: Sendable, Hashable {
     public var requests = 0
     public var tokens = TokenCounts()
-    /// Sum of the recorded costs; nil when no response here has one.
+    /// Sum of the known costs, recorded and estimated; nil when no response here has one.
     public var cost: Double?
+    /// The estimated part of `cost`.
+    public var estimatedCost = 0.0
     /// Responses without a recorded cost (their harness doesn't write it).
     public var unpricedRequests = 0
     /// By harness and model, most tokens first.
@@ -16,8 +18,9 @@ public struct UsageTotal: Sendable, Hashable {
     mutating func add(_ record: UsageRecord) {
         requests += 1
         tokens = tokens + record.tokens
-        if let recorded = record.cost {
-            cost = (cost ?? 0) + recorded
+        if let known = record.cost {
+            cost = (cost ?? 0) + known
+            if record.costIsEstimated { estimatedCost += known }
         } else {
             unpricedRequests += 1
         }
@@ -42,11 +45,16 @@ public struct UsagePart: Sendable, Hashable, Identifiable {
     public var requests = 0
     public var tokens = TokenCounts()
     public var cost: Double?
+    /// The estimated part of `cost`.
+    public var estimatedCost = 0.0
 
     mutating func add(_ record: UsageRecord) {
         requests += 1
         tokens = tokens + record.tokens
-        if let recorded = record.cost { cost = (cost ?? 0) + recorded }
+        if let known = record.cost {
+            cost = (cost ?? 0) + known
+            if record.costIsEstimated { estimatedCost += known }
+        }
     }
 }
 

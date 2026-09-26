@@ -137,10 +137,14 @@ struct UsageView: View {
 
     private func note(_ report: DailyUsageReport) -> String {
         var text = "Numbers come straight from the harnesses' session files. Tokens include cache reads and writes. "
-            + "Cost is shown only where the harness recorded it: Pi and OpenCode for each response; Claude Code once per "
-            + "session when it ends (the /cost total), spread over the session's days by tokens; Codex never."
+            + "Cost comes from the harnesses too: Pi and OpenCode record it for each response, Claude Code once per "
+            + "session when it ends normally (the /cost total), spread over the session's days by tokens. Codex records none."
+        if report.grandTotal.estimatedCost > 0 {
+            text += " \"≈\": Claude Code sessions that ended without saving a cost (closed terminal, still running) are "
+                + "estimated with the per-token rates learned from the sessions that did save one. No price lists are used."
+        }
         if report.grandTotal.unpricedRequests > 0 && report.grandTotal.cost != nil {
-            text += " \"≥\" marks a cost that leaves out responses without a recorded cost."
+            text += " \"≥\" marks a cost that leaves out responses without one."
         }
         return text + " Hover a bar or a cell for the harnesses and models behind it."
     }
@@ -164,6 +168,25 @@ struct UsageView: View {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+// MARK: - Cost text
+
+extension UsageText {
+    /// "$12.30", "≈ $12.30" when part of it is estimated, "≥ …" when some responses have no cost.
+    static func cost(of total: UsageTotal) -> String? {
+        guard let cost = total.cost else { return nil }
+        return (total.unpricedRequests > 0 ? "≥ " : "") + (total.estimatedCost > 0 ? "≈ " : "") + dollars(cost)
+    }
+
+    /// "$378.26 recorded · $1,092.41 estimated"
+    static func costSplit(of total: UsageTotal) -> String? {
+        guard let cost = total.cost else { return nil }
+        let recorded = cost - total.estimatedCost
+        guard total.estimatedCost > 0 else { return "\(dollars(recorded)) recorded" }
+        return recorded > 0.005 ? "\(dollars(recorded)) recorded · \(dollars(total.estimatedCost)) estimated"
+            : "\(dollars(total.estimatedCost)) estimated"
     }
 }
 
@@ -245,7 +268,7 @@ private struct UsageSummary: View {
         HStack(alignment: .top, spacing: 12) {
             tile("Tokens", UsageText.short(total.tokens.total),
                  "\(UsageText.short(total.tokens.output)) output · \(UsageText.full(total.requests)) responses")
-            tile("Recorded cost", total.cost.map { (total.unpricedRequests > 0 ? "≥ " : "") + UsageText.dollars($0) } ?? "–",
+            tile("Cost", UsageText.cost(of: total) ?? "–",
                  total.cost == nil ? "These harnesses don't record cost" : costDetail(total))
             tile("Active days", "\(active.count)", "of \(report.days.count) days in the period")
             if let busiest, let busiestTotal = report.total(ofDay: busiest) {
@@ -255,10 +278,11 @@ private struct UsageSummary: View {
         }
     }
 
+    /// "$378.26 recorded · $1,092.41 estimated", or how many responses have a cost at all.
     private func costDetail(_ total: UsageTotal) -> String {
+        guard total.unpricedRequests > 0, total.estimatedCost == 0 else { return UsageText.costSplit(of: total) ?? "" }
         let priced = total.requests - total.unpricedRequests
-        return total.unpricedRequests > 0 ? "\(UsageText.full(priced)) of \(UsageText.full(total.requests)) responses have a cost"
-            : "All responses have a cost"
+        return "\(UsageText.full(priced)) of \(UsageText.full(total.requests)) responses have a cost"
     }
 
     private func tile(_ title: String, _ value: String, _ detail: String) -> some View {
@@ -348,7 +372,7 @@ private struct DayPopover: View {
                         Text(subscription.name)
                         Spacer(minLength: 12)
                         Text(UsageText.short(cell.tokens.total)).monospacedDigit()
-                        if let cost = cell.cost { Text(UsageText.dollars(cost)).monospacedDigit().foregroundStyle(.secondary) }
+                        if let cost = UsageText.cost(of: cell) { Text(cost).monospacedDigit().foregroundStyle(.secondary) }
                     }
                 }
             }
@@ -357,7 +381,7 @@ private struct DayPopover: View {
                 Text("Total")
                 Spacer(minLength: 12)
                 Text(UsageText.short(total.tokens.total)).monospacedDigit()
-                if let cost = total.cost { Text(UsageText.dollars(cost)).monospacedDigit().foregroundStyle(.secondary) }
+                if let cost = UsageText.cost(of: total) { Text(cost).monospacedDigit().foregroundStyle(.secondary) }
             }
             .fontWeight(.semibold)
         }
@@ -465,8 +489,8 @@ private struct UsageTable: View {
         if let total, total.requests > 0 {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(UsageText.short(total.tokens.total))
-                if let cost = total.cost {
-                    Text((total.unpricedRequests > 0 ? "≥ " : "") + UsageText.dollars(cost))
+                if let cost = UsageText.cost(of: total) {
+                    Text(cost)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -486,12 +510,13 @@ private struct UsageTable: View {
         let lines = total.parts.map { part in
             var line = "\(part.harness.displayName) · \(part.model): \(UsageText.short(part.tokens.total)) tokens "
                 + "(\(UsageText.short(part.tokens.output)) output), \(UsageText.full(part.requests)) responses"
-            if let cost = part.cost { line += ", \(UsageText.dollars(cost))" }
+            if let cost = part.cost { line += ", " + (part.estimatedCost > 0 ? "≈ " : "") + UsageText.dollars(cost) }
             return line
         }
         let tokens = total.tokens
         let summary = "Input \(UsageText.short(tokens.input)) · output \(UsageText.short(tokens.output)) · "
             + "cache read \(UsageText.short(tokens.cacheRead)) · cache write \(UsageText.short(tokens.cacheWrite))"
-        return ([title, summary] + lines).joined(separator: "\n")
+        return ([title, summary, UsageText.costSplit(of: total).map { "Cost: \($0)" }].compactMap(\.self) + lines)
+            .joined(separator: "\n")
     }
 }

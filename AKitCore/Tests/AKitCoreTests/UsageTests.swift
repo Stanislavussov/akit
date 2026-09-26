@@ -81,6 +81,57 @@ struct UsageTests {
         #expect(costs == [0.271, 0.529, 0.3, nil])
     }
 
+    /// A cost-state as Claude Code saves it, priced at opus-like rates.
+    func costState(input: Int, output: Int, cacheRead: Int, cacheWrite: Int) -> [String: Any] {
+        let dollars = (Double(input) * 5 + Double(output) * 25 + Double(cacheRead) * 0.5 + Double(cacheWrite) * 6.25) / 1_000_000
+        return ["type": "cost-state", "totalCostUSD": dollars,
+                "modelUsage": ["claude-opus-5[1m]": ["inputTokens": input, "outputTokens": output,
+                                                      "cacheReadInputTokens": cacheRead,
+                                                      "cacheCreationInputTokens": cacheWrite, "costUSD": dollars]]]
+    }
+
+    @Test func claudeSessionsWithoutCostAreEstimatedFromSavedOnes() throws {
+        // Old sessions (outside the period) that saved their cost teach the rates.
+        let mixes = [(1000, 20_000, 5_000_000, 100_000), (5000, 8000, 900_000, 40_000), (200, 60_000, 12_000_000, 300_000),
+                     (800, 15_000, 2_000_000, 250_000), (12_000, 30_000, 7_000_000, 20_000), (300, 2000, 400_000, 90_000),
+                     (4000, 45_000, 3_000_000, 60_000), (700, 11_000, 9_500_000, 150_000)]
+        for (index, mix) in mixes.prefix(ClaudeCostRates.minimumSessions).enumerated() {
+            let file = ".claude/projects/-work-old/old-\(index).jsonl"
+            try write(file, lines: [costState(input: mix.0, output: mix.1, cacheRead: mix.2, cacheWrite: mix.3)])
+            try fm.setAttributes([.modificationDate: JSONLines.date("2026-08-01T00:00:00.000Z")!],
+                                 ofItemAtPath: home.appending(path: file).path)
+        }
+        // This session was killed: no cost-state. 1M cache read + 10K output = $0.50 + $0.25.
+        try write(".claude/projects/-work-app/killed.jsonl", lines: [
+            ["type": "assistant", "timestamp": "2026-09-21T10:00:00.000Z",
+             "message": ["id": "k1", "role": "assistant", "model": "claude-opus-5", "content": [],
+                         "usage": ["input_tokens": 0, "output_tokens": 10_000, "cache_read_input_tokens": 1_000_000,
+                                   "cache_creation_input_tokens": 0]]],
+            // No saved cost for haiku anywhere: it stays unknown.
+            claudeAnswer(id: "k2", time: "2026-09-21T10:01:00.000Z", model: "claude-haiku-4-5", input: 1, output: 1),
+        ])
+
+        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        #expect(records.count == 2)
+        let opus = try #require(records.first)
+        #expect(opus.costIsEstimated)
+        #expect(abs((opus.cost ?? 0) - 0.75) < 0.0001)
+        #expect(records.last?.cost == nil)
+        #expect(records.last?.costIsEstimated == false)
+
+        let report = DailyUsageReport(records: records, from: since, to: JSONLines.date("2026-09-22T00:00:00.000Z")!)
+        #expect(abs(report.grandTotal.estimatedCost - 0.75) < 0.0001)
+        #expect(report.grandTotal.unpricedRequests == 1)
+    }
+
+    @Test func fewSavedSessionsUseTheAverageRate() {
+        let part = ClaudeSessions.CostState.Part(tokens: TokenCounts(output: 1_000_000, cacheRead: 3_000_000), cost: 8)
+        let rates = ClaudeCostRates(costStates: [ClaudeSessions.CostState(total: 8, byModel: ["claude-sonnet-5": part])])
+        // $8 for 4M tokens: $2 per million, whatever the kind.
+        #expect(rates.cost(of: TokenCounts(input: 500_000, output: 500_000), model: "claude-sonnet-5") == 2)
+        #expect(rates.cost(of: TokenCounts(input: 1), model: "claude-opus-5") == nil)
+    }
+
     @Test func oldFilesAreNotRead() throws {
         try write(".claude/projects/-work-app/a.jsonl", lines: [
             claudeAnswer(id: "msg_1", time: "2026-09-20T10:00:00.000Z", input: 5, output: 50),

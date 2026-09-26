@@ -1,7 +1,8 @@
 import Foundation
 
 /// One model response as a harness recorded it: when, through which provider, how many
-/// tokens and, if the harness writes it down, what it cost. Nothing is estimated.
+/// tokens and, if the harness writes it down, what it cost. The only estimate is Claude Code
+/// cost for sessions that saved none, worked out from Claude Code's own saved costs.
 public struct UsageRecord: Sendable, Hashable {
     public let time: Date
     public let harness: HarnessID
@@ -9,16 +10,21 @@ public struct UsageRecord: Sendable, Hashable {
     public let provider: String
     public let model: String
     public let tokens: TokenCounts
-    /// US dollars recorded by the harness (Pi and OpenCode do; Claude Code and Codex don't).
+    /// US dollars recorded by the harness (Pi and OpenCode per response, Claude Code per
+    /// session), or estimated when `costIsEstimated`. nil = unknown (Codex never records it).
     public let cost: Double?
+    /// `cost` was worked out, not recorded: see `ClaudeCostRates`.
+    public let costIsEstimated: Bool
 
-    public init(time: Date, harness: HarnessID, provider: String, model: String, tokens: TokenCounts, cost: Double?) {
+    public init(time: Date, harness: HarnessID, provider: String, model: String, tokens: TokenCounts, cost: Double?,
+                costIsEstimated: Bool = false) {
         self.time = time
         self.harness = harness
         self.provider = provider
         self.model = model
         self.tokens = tokens
         self.cost = cost
+        self.costIsEstimated = cost != nil && costIsEstimated
     }
 
     public var subscription: Subscription { Subscription(provider: provider) }
