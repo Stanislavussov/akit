@@ -130,7 +130,7 @@ struct AKitCLITests {
     }
 
     @Test func homeIDs() {
-        #expect(ProjectSetup.homeID(hostName: "Stanislavs-MacBook-Pro.local") == "home/stanislavs-macbook-pro")
+        #expect(ProjectSetup.homeID(hostName: "Example-Mac.local") == "home/example-mac")
         #expect(ProjectSetup.homeID(hostName: "") == "home/mac")
     }
 
@@ -146,4 +146,20 @@ struct AKitCLITests {
         #expect(read("CLAUDE.md") == "@AGENTS.md\n")
         #expect(included.out.contains("Backup: "))
     }
+
+    @Test func initCreatesABrainWithTheAkitSkillInCore() async throws {
+        let created = await akit("init")
+        #expect(created.code == 0 && created.out.contains("akit apply --home"))
+        let brain = try #require(Brain.load(from: Brain.defaultRoot(home: home)))
+        #expect(brain.problems.isEmpty)
+        #expect(brain.skills.map(\.name) == ["akit"])
+        #expect(brain.layers.first { $0.name == "core" }?.skills.map { "\($0.name):\($0.mode)" } == ["akit:manual"])
+        #expect(await akit("init").code == 2)  // not over an existing brain
+
+        let home = await akit("apply", "--home")
+        #expect(home.code == 0)
+        let skill = try String(contentsOf: self.home.appending(path: ".agents/skills/akit/SKILL.md"), encoding: .utf8)
+        #expect(skill.contains("disable-model-invocation: true") && skill.contains("akit sync"))
+    }
+
 }

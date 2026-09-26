@@ -7,6 +7,7 @@ public enum AKitCLI {
         akit — harness layers from your brain repo (~/.akit/registry)
 
         Brain:
+          akit init                       Create a brain: core layer with the /akit skill, git repo
           akit check                      Read every layer and skill; list problems (exit 1 if any)
           akit layers [--json]            Layers with their fields, skills and files
           akit skills                     Skills in the brain
@@ -42,6 +43,8 @@ public enum AKitCLI {
 
         Options:
           --brain DIR           Brain folder (default: ~/.akit/registry)
+          AKIT_PROJECTS_ROOT    Projects folder for ids of projects without a git remote
+                                (default: the app's setting, else ~/Projects)
           --help
         """
 
@@ -77,6 +80,21 @@ public enum AKitCLI {
             let projectArgument = args.positional()
             try args.finish()
             let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+            if command == "init" {
+                if projectArgument != nil { throw Failure(message: "akit init takes no folder; use --brain DIR.") }
+                do {
+                    try await BrainSetup.create(at: brainRoot, env: env)
+                } catch {
+                    throw Failure(message: error.message)
+                }
+                out("""
+                    Created a brain in \(brainRoot.path): the core layer with the /akit skill, committed.
+                    Put core into this Mac's home folder: akit apply --home
+                    To share it between Macs, push it to a private repo:
+                      git -C \(brainRoot.path) remote add origin <url> && git -C \(brainRoot.path) push -u origin main
+                    """)
+                return 0
+            }
             guard let brain = Brain.load(from: brainRoot) else {
                 throw Failure(message: "No brain repo at \(brainRoot.path). Create it in AKit (Brain → Create Brain Repo) or pass --brain.")
             }

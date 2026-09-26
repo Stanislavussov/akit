@@ -1,7 +1,7 @@
 import Foundation
 
-/// Creates a new brain repo: the folder layout from docs/design/layers.md, an
-/// empty `core` layer, and a git repo with a first commit.
+/// Creates a new brain repo: the folder layout from docs/design/layers.md, a `core`
+/// layer with the `/akit` skill, and a git repo with a first commit.
 public enum BrainSetup {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -28,10 +28,12 @@ public enum BrainSetup {
         "layers/core/layer.yaml": """
             name: core
             description: Applied to the home folder on every machine. Keep it small; prefer manual skills.
-            skills: []
+            skills:
+              - name: akit
+                mode: manual
 
             """,
-        "skills/.gitkeep": "",
+        "skills/akit/SKILL.md": AKitSkill.text,
         "projects/.gitkeep": "",
         "machines/.gitkeep": "",
     ]
