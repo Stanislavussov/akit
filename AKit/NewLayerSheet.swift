@@ -7,7 +7,8 @@ struct NewLayerSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
 
-    @State private var name = ""
+    /// Snapshot `--tab layer --query <name>` fills the name.
+    @State private var name = DebugSnapshot.options?.tab == "layer" ? DebugSnapshot.options?.query ?? "" : ""
     @State private var description = ""
     @State private var requires: [String] = []
     @State private var modes: [String: LayerSkill.Mode] = [:]
@@ -65,7 +66,8 @@ struct NewLayerSheet: View {
     }
 
     private var nameProblem: String? {
-        brain.flatMap { LayerWriter.nameProblem(name, in: $0) } ?? "The brain is not loaded."
+        guard let brain else { return "The brain is not loaded." }
+        return LayerWriter.nameProblem(name, in: brain)
     }
 
     private var skills: some View {
