@@ -342,7 +342,7 @@ struct MCPServerEditor: View {
             }
             targetID = target.id
             do {
-                plan = try MCPWriter.removalPlan(server.name, from: target, home: FileManager.default.homeDirectoryForCurrentUser)
+                plan = try MCPWriter.removalPlan(server.name, from: target, home: HarnessEnvironment.current.homeDirectory)
             } catch {
                 self.error = error.localizedDescription
             }
@@ -388,7 +388,7 @@ struct MCPServerEditor: View {
         do {
             plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode, replacing: editing?.name,
                                       openedText: openedText, keychain: KeychainSecretStore(),
-                                      home: FileManager.default.homeDirectoryForCurrentUser)
+                                      home: HarnessEnvironment.current.homeDirectory)
             error = nil
         } catch {
             self.error = error.localizedDescription

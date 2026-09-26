@@ -5,7 +5,7 @@ import SwiftUI
 extension URL {
     /// `/Users/name/.claude` → `~/.claude`
     var tildePath: String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let home = HarnessEnvironment.current.homeDirectory.path
         if path == home { return "~" }
         return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }

@@ -62,4 +62,10 @@ release: generate   ## dist/AKit.zip: universal AKit.app + akit, for GitHub Rele
 	cd dist && ditto -c -k --norsrc --noextattr --keepParent AKit AKit.zip && rm -rf AKit
 	@echo "Built dist/AKit.zip. Publish: gh release create v$$(date +%Y.%m.%d-%H%M) dist/AKit.zip --generate-notes"
 
-.PHONY: generate open build run restart test snapshot install install-cli icon release
+banner:   ## redraw the README banner (docs/assets/banner.png)
+	swift tools/make-banner.swift && sips -Z 1920 docs/assets/banner.png >/dev/null
+
+screenshots: build   ## README screenshots (light and dark) from a made-up home: tools/demo-home.sh
+	tools/screenshots.sh
+
+.PHONY: generate open build run restart test snapshot install install-cli icon release screenshots banner

@@ -289,7 +289,7 @@ private struct SessionPromptView: View {
         switch model.promptAccess(session.harness) {
         case .recorded: recorded
         case .captured:
-            let project = session.project ?? FileManager.default.homeDirectoryForCurrentUser
+            let project = session.project ?? HarnessEnvironment.current.homeDirectory
             CapturedPromptView(harness: session.harness, project: project)
                 .id(project)
         case .unavailable:
