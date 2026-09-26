@@ -20,6 +20,15 @@ public enum AKitCLI {
                                           by hand since, are skipped unless --include PATH
                                           (--include-unmanaged: every file AKit didn't write).
 
+        Remove (shows what happens; add --yes to do it; folders go to the Trash, one commit each):
+          akit remove layer NAME              refused while other layers require it; dropped from
+                                              saved project answers (re-apply those projects)
+          akit remove skill NAME              refused while a layer lists it
+          akit remove skill NAME --from LAYER only from that layer's skills list
+          akit remove project [PROJECT|--home] [--keep-files]
+                                              trashes the files AKit wrote there (not hand-edited
+                                              ones), then forgets the project in the brain
+
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
 
@@ -55,8 +64,15 @@ public enum AKitCLI {
                                   layers: args.value("--layers"), targets: args.value("--targets"),
                                   set: args.values("--set"), unset: args.values("--unset"),
                                   include: args.values("--include"), exclude: args.values("--exclude"),
-                                  home: args.flag("--home"), includeUnmanaged: args.flag("--include-unmanaged"))
+                                  home: args.flag("--home"), includeUnmanaged: args.flag("--include-unmanaged"),
+                                  yes: args.flag("--yes"), keepFiles: args.flag("--keep-files"), from: args.value("--from"))
             let command = args.positional()
+            if command == "remove" {
+                let kind = args.positional(), name = args.positional()
+                try args.finish()
+                return try await remove(kind: kind, name: name, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot,
+                                        hostName: hostName, installedTargets: installedTargets, out: out, trash: trash)
+            }
             let projectArgument = args.positional()
             try args.finish()
             let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
@@ -183,6 +199,86 @@ public enum AKitCLI {
         return encode(infos)
     }
 
+    // MARK: - Remove
+
+    private static func remove(kind: String?, name: String?, options: Options, env: HarnessEnvironment, cwd: URL,
+                               projectsRoot: URL?, hostName: String, installedTargets: [String],
+                               out: (String) -> Void, trash: (URL) throws -> URL?) async throws -> Int32 {
+        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        guard let brain = Brain.load(from: brainRoot) else { throw Failure(message: "No brain repo at \(brainRoot.path).") }
+        let confirm = "Run again with --yes to do it."
+        do {
+            switch (kind, name) {
+            case ("layer", let name?):
+                let impact = BrainRemove.layerImpact(name, in: brain)
+                if !impact.requiredBy.isEmpty {
+                    out("Can't remove \(name): required by \(impact.requiredBy.joined(separator: ", ")).")
+                    return 1
+                }
+                var lines = ["Remove layer \(name): layers/\(name) goes to the Trash."]
+                if !impact.projects.isEmpty {
+                    lines.append("It is dropped from the answers of: \(impact.projects.joined(separator: ", ")). Re-apply those to take its files out.")
+                }
+                guard options.yes else { out((lines + [confirm]).joined(separator: "\n")); return 0 }
+                try await BrainRemove.removeLayer(name, in: brain, env: env, trash: trash)
+                out((lines + ["Done."]).joined(separator: "\n"))
+            case ("skill", let name?):
+                if let layer = options.from {
+                    guard let found = brain.layers.first(where: { $0.name == layer }) else { throw Failure(message: "No layer named \(layer).") }
+                    let edit = try BrainRemove.layerWithoutSkill(name, in: found)
+                    out((["Remove \(name) from layers/\(layer)/layer.yaml:"] + unifiedDiff(TextDiff.lines(from: edit.before, to: edit.after))).joined(separator: "\n"))
+                    guard options.yes else { out(confirm); return 0 }
+                    try await BrainRemove.removeSkill(name, fromLayer: layer, in: brain, env: env)
+                    out("Done. Projects using \(layer) lose it on their next apply\(layer == "core" ? "; the home folder on akit apply --home" : "").")
+                } else {
+                    let users = BrainRemove.skillUsers(name, in: brain)
+                    if !users.isEmpty {
+                        out("Can't remove \(name): listed in \(users.joined(separator: ", ")). First: \(users.map { "akit remove skill \(name) --from \($0)" }.joined(separator: "; ")).")
+                        return 1
+                    }
+                    guard options.yes else { out("Remove skill \(name): skills/\(name) goes to the Trash. \(confirm)"); return 0 }
+                    try await BrainRemove.removeSkill(name, in: brain, env: env, trash: trash)
+                    out("Done.")
+                }
+            case ("project", _):
+                if options.home, name != nil { throw Failure(message: "--home and a project folder don't go together.") }
+                let project = options.home ? env.homeDirectory : resolve(name ?? ".", cwd: cwd, env: env)
+                let id = options.home ? ProjectSetup.homeID(hostName: hostName)
+                    : await ProjectSetup.projectID(for: project, projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), env: env)
+                guard let saved = ProjectSetup.savedAnswers(id: id, brain: brain.root) else {
+                    out("The brain has nothing for \(id).")
+                    return 1
+                }
+                var lines = ["Forget \(id) in the brain (projects/\(id) goes to the Trash)."]
+                var empty = saved
+                empty.layers = []
+                let plan = ProjectSetup.plan(project: project, id: id, answers: empty, brain: brain, forHome: options.home)
+                let removals = plan.changes.filter { $0.kind == .remove }
+                if !options.keepFiles {
+                    lines.append(removals.isEmpty ? "No files AKit wrote are left there."
+                                 : "Files AKit wrote go to the Trash: \(removals.map(\.path).joined(separator: ", ")).")
+                    let kept = plan.changes.filter { $0.kind == .keepEdited }.map(\.path)
+                    if !kept.isEmpty { lines.append("Kept (edited by hand): \(kept.joined(separator: ", ")).") }
+                }
+                guard options.yes else { out((lines + [confirm]).joined(separator: "\n")); return 0 }
+                if !options.keepFiles, !removals.isEmpty {
+                    _ = try await ProjectSetup.apply(plan, brain: brain, home: env.homeDirectory, env: env, trash: trash)
+                }
+                // Apply saved a lock again; load the brain afresh and forget the project.
+                guard let fresh = Brain.load(from: brain.root) else { throw Failure(message: "The brain went away.") }
+                try await BrainRemove.forgetProject(id, in: fresh, env: env, trash: trash)
+                out((lines + ["Done."]).joined(separator: "\n"))
+            default:
+                throw Failure(message: "Use: akit remove layer NAME | skill NAME [--from LAYER] | project [PROJECT|--home] [--keep-files]")
+            }
+        } catch let failure as BrainRemove.Failure {
+            throw Failure(message: failure.message)
+        } catch let failure as ProjectSetup.Failure {
+            throw Failure(message: failure.message)
+        }
+        return 0
+    }
+
     // MARK: - Answers
 
     struct Options {
@@ -197,6 +293,9 @@ public enum AKitCLI {
         var exclude: [String]
         var home: Bool
         var includeUnmanaged: Bool
+        var yes: Bool
+        var keepFiles: Bool
+        var from: String?
     }
 
     private static func readAnswers(_ options: Options, id: String, brain: Brain, cwd: URL, env: HarnessEnvironment,
