@@ -57,11 +57,16 @@ enum JSONLines {
                       _ visit: (Data, UInt64) throws -> Void) throws -> (offset: UInt64, tailHash: String?) {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
+        // Only what the file holds now: a log still being written is read on the next run.
+        let end = try handle.seekToEnd()
+        guard end > offset else { return (offset, nil) }
         try handle.seek(toOffset: offset)
         var pending = Data()
         var consumed = offset
+        var remaining = end - offset
         var lastLine: Data?
-        while let data = try handle.read(upToCount: chunk), !data.isEmpty {
+        while remaining > 0, let data = try handle.read(upToCount: Int(min(UInt64(chunk), remaining))), !data.isEmpty {
+            remaining -= UInt64(data.count)
             pending.append(data)
             var start = pending.startIndex
             while let newline = pending[start...].firstIndex(of: UInt8(ascii: "\n")) {

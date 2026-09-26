@@ -144,9 +144,10 @@ public struct PiAdapter: HarnessAdapter {
             if dir.path == homePath { break }
             dirs.append(dir)
             if fm.fileExists(atPath: dir.appending(path: ".git").path) { break }
-            let parent = dir.deletingLastPathComponent()
-            if parent.path == dir.path { break }
-            dir = parent
+            // String parents: URL's parent of `/` is `/..`, which would never end the walk.
+            let parent = (dir.path as NSString).deletingLastPathComponent
+            if parent == dir.path || parent.isEmpty || dirs.count >= 256 { break }
+            dir = URL(filePath: parent, directoryHint: .isDirectory)
         }
         return dirs
     }
