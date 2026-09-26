@@ -10,6 +10,25 @@ struct BrainView: View {
     @State private var importing = false
     @State private var settingUp = false
     @State private var creatingLayer = false
+    @State private var pendingRemoval: Removal?
+    @State private var removalMessage: (title: String, text: String)?
+
+    /// Something the user asked to remove, waiting for confirmation.
+    enum Removal: Identifiable {
+        var isFromLayer: Bool { if case .skillFromLayer = self { true } else { false } }
+
+        case layer(String)
+        case skill(String)
+        case skillFromLayer(skill: String, layer: String)
+
+        var id: String {
+            switch self {
+            case .layer(let name): "layer:\(name)"
+            case .skill(let name): "skill:\(name)"
+            case .skillFromLayer(let skill, let layer): "\(layer):\(skill)"
+            }
+        }
+    }
     @State private var creating = false
     @State private var createError: String?
 
@@ -47,6 +66,20 @@ struct BrainView: View {
             guard model.brain != nil, let options = DebugSnapshot.options else { return }
             if options.tab == "setup" { settingUp = true } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
         }
+        .confirmationDialog(removalTitle, isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
+                            titleVisibility: .visible, presenting: pendingRemoval) { removal in
+            if removalBlocker(removal) == nil {
+                Button(removal.isFromLayer ? "Remove from Layer" : "Move to Trash", role: .destructive) { remove(removal) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { removal in
+            Text(removalBlocker(removal) ?? removalDetails(removal))
+        }
+        .alert(removalMessage?.title ?? "", isPresented: Binding(get: { removalMessage != nil }, set: { if !$0 { removalMessage = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(removalMessage?.text ?? "")
+        }
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
         .toolbar {
@@ -76,6 +109,66 @@ struct BrainView: View {
         }
     }
 
+    private var removalTitle: String {
+        switch pendingRemoval {
+        case .layer(let name): "Remove layer “\(name)”?"
+        case .skill(let name): "Remove skill “\(name)”?"
+        case .skillFromLayer(let skill, let layer): "Remove “\(skill)” from \(layer)?"
+        case nil: ""
+        }
+    }
+
+    /// Why this can't be removed now, or nil.
+    private func removalBlocker(_ removal: Removal) -> String? {
+        guard let brain = model.brain else { return "The brain is not loaded." }
+        switch removal {
+        case .layer(let name):
+            let requiredBy = BrainRemove.layerImpact(name, in: brain).requiredBy
+            return requiredBy.isEmpty ? nil : "It is required by \(requiredBy.joined(separator: ", ")). Remove it from their requires first."
+        case .skill(let name):
+            let users = BrainRemove.skillUsers(name, in: brain)
+            return users.isEmpty ? nil : "It is used by \(users.joined(separator: ", ")). Remove it from \(users.count == 1 ? "that layer" : "those layers") first (right-click the skill in the layer)."
+        case .skillFromLayer(let skill, let layer):
+            guard let found = brain.layers.first(where: { $0.name == layer }) else { return "The layer is gone." }
+            do { _ = try BrainRemove.layerWithoutSkill(skill, in: found) } catch { return error.localizedDescription }
+            return nil
+        }
+    }
+
+    private func removalDetails(_ removal: Removal) -> String {
+        switch removal {
+        case .layer(let name):
+            let projects = model.brain.map { BrainRemove.layerImpact(name, in: $0).projects } ?? []
+            return "layers/\(name) goes to the Trash and the brain gets a commit."
+                + (projects.isEmpty ? "" : " It is dropped from the saved answers of \(projects.joined(separator: ", ")); set those projects up again to take its files out.")
+        case .skill(let name):
+            return "skills/\(name) goes to the Trash and the brain gets a commit. Copies already rendered into projects stay until they are set up again."
+        case .skillFromLayer(let skill, let layer):
+            return "\(skill) is taken out of layers/\(layer)/layer.yaml (committed). "
+                + (layer == "core" ? "Run akit apply --home to take it out of your home folder." : "Projects using \(layer) lose it when they are set up again.")
+        }
+    }
+
+    private func remove(_ removal: Removal) {
+        Task {
+            do {
+                switch removal {
+                case .layer(let name):
+                    let projects = try await model.removeLayer(name)
+                    if !projects.isEmpty {
+                        removalMessage = ("Layer removed", "Set these projects up again to take its files out: \(projects.joined(separator: ", ")).")
+                    }
+                case .skill(let name):
+                    try await model.removeSkill(name)
+                case .skillFromLayer(let skill, let layer):
+                    try await model.removeSkill(skill, fromLayer: layer)
+                }
+            } catch {
+                removalMessage = ("Couldn't remove it", error.localizedDescription)
+            }
+        }
+    }
+
     private func create() {
         creating = true
         Task {
@@ -96,11 +189,14 @@ struct BrainView: View {
                 switch selection {
                 case .layer(let name):
                     if let layer = brain.layers.first(where: { $0.name == name }) {
-                        LayerDetailView(layer: layer, problems: brain.problems(of: name).map(\.message))
+                        LayerDetailView(layer: layer, problems: brain.problems(of: name).map(\.message),
+                                        onRemoveSkill: { pendingRemoval = .skillFromLayer(skill: $0, layer: layer.name) },
+                                        onRemove: layer.name == "core" ? nil : { pendingRemoval = .layer(layer.name) })
                     }
                 case .skill(let name):
                     if let skill = brain.skills.first(where: { $0.name == name }) {
-                        BrainSkillDetailView(skill: skill, usedBy: usage(of: name, in: brain))
+                        BrainSkillDetailView(skill: skill, usedBy: usage(of: name, in: brain),
+                                             onRemove: { pendingRemoval = .skill(skill.name) })
                     }
                 case nil:
                     ContentUnavailableView("Select a layer or skill", systemImage: "square.stack.3d.up")
@@ -132,7 +228,12 @@ struct BrainView: View {
                 ForEach(layers(brain)) { layer in
                     LayerRow(layer: layer, problemCount: brain.problems(of: layer.name).count)
                         .tag(Item.layer(layer.name))
-                        .contextMenu { fileMenu(layer.folder, reveal: layer.manifest) }
+                        .contextMenu {
+                            fileMenu(layer.folder, reveal: layer.manifest)
+                            Divider()
+                            Button("Move to Trash…", role: .destructive) { pendingRemoval = .layer(layer.name) }
+                                .disabled(layer.name == "core")
+                        }
                 }
             } header: {
                 Text("Layers")
@@ -153,7 +254,11 @@ struct BrainView: View {
                     }
                     .padding(.vertical, 2)
                     .tag(Item.skill(skill.name))
-                    .contextMenu { fileMenu(skill.folder, reveal: skill.file) }
+                    .contextMenu {
+                        fileMenu(skill.folder, reveal: skill.file)
+                        Divider()
+                        Button("Move to Trash…", role: .destructive) { pendingRemoval = .skill(skill.name) }
+                    }
                 }
             } }
         }
@@ -249,12 +354,16 @@ private struct LayerDetailView: View {
     @Environment(AppModel.self) private var model
     let layer: Layer
     let problems: [String]
+    let onRemoveSkill: (String) -> Void
+    /// nil for the core layer, which can't be removed.
+    let onRemove: (() -> Void)?
     @State private var manifest: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                DetailHeader(title: layer.name, description: layer.description, folder: layer.folder, file: layer.manifest)
+                DetailHeader(title: layer.name, description: layer.description, folder: layer.folder, file: layer.manifest,
+                             onRemove: onRemove)
                 if !problems.isEmpty { ProblemList(problems: problems) }
                 info
                 if !layer.fields.isEmpty { fields }
@@ -329,6 +438,11 @@ private struct LayerDetailView: View {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(layer.skills, id: \.name) { skill in
                     HStack(spacing: 8) {
+                        Button("Remove from Layer…", systemImage: "minus.circle") { onRemoveSkill(skill.name) }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .help("Remove \(skill.name) from \(layer.name)")
                         Text(skill.name).fontWeight(.medium)
                         ModeTag(mode: skill.mode)
                         if skill.override { Tag(text: "override", tint: .purple) }
@@ -369,12 +483,14 @@ private struct BrainSkillDetailView: View {
     @Environment(AppModel.self) private var model
     let skill: Brain.Skill
     let usedBy: [(layer: String, mode: LayerSkill.Mode)]
+    let onRemove: () -> Void
     @State private var text: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                DetailHeader(title: skill.name, description: skill.description, folder: skill.folder, file: skill.file)
+                DetailHeader(title: skill.name, description: skill.description, folder: skill.folder, file: skill.file,
+                             onRemove: onRemove)
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
                     GridRow {
                         GridLabel("Location")
@@ -425,6 +541,7 @@ private struct DetailHeader: View {
     let description: String
     let folder: URL
     let file: URL
+    var onRemove: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -437,6 +554,11 @@ private struct DetailHeader: View {
                 Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
                     .labelStyle(.iconOnly)
                     .help("Show in Finder")
+                if let onRemove {
+                    Button("Move to Trash…", systemImage: "trash", role: .destructive, action: onRemove)
+                        .labelStyle(.iconOnly)
+                        .help("Remove from the brain")
+                }
             }
             if !description.isEmpty {
                 Text(description).foregroundStyle(.secondary).textSelection(.enabled)

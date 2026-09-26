@@ -90,6 +90,29 @@ final class AppModel {
         try await LayerWriter.create(draft, in: brain, env: .current)
     }
 
+    /// Removes a layer (to the Trash, committed); returns the projects to re-apply.
+    func removeLayer(_ name: String) async throws -> [String] {
+        guard let brain else { throw Self.noBrain }
+        defer { Task { await refresh() } }
+        return try await BrainRemove.removeLayer(name, in: brain, env: .current)
+    }
+
+    /// Removes a skill from the brain's library (to the Trash, committed).
+    func removeSkill(_ name: String) async throws {
+        guard let brain else { throw Self.noBrain }
+        defer { Task { await refresh() } }
+        try await BrainRemove.removeSkill(name, in: brain, env: .current)
+    }
+
+    /// Takes a skill out of one layer's skills list (committed).
+    func removeSkill(_ skill: String, fromLayer layer: String) async throws {
+        guard let brain else { throw Self.noBrain }
+        defer { Task { await refresh() } }
+        try await BrainRemove.removeSkill(skill, fromLayer: layer, in: brain, env: .current)
+    }
+
+    private static let noBrain = NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded."])
+
     // MARK: Project setup
 
     /// Render targets for the harnesses installed on this Mac (`claude`, `pi`, …).
