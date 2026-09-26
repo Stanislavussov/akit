@@ -100,7 +100,7 @@ struct ProjectSetupSheet: View {
             Spacer()
             if let project {
                 Text(projectID ?? "…").font(.caption.monospaced()).foregroundStyle(.secondary)
-                    .help("\(project.tildePath)\nAnswers are kept in the brain under projects/\(projectID ?? "…")")
+                    .help("\(project.tildePath)\nAnswers are kept \(model.projectStore.isLocal ? "on this Mac only, in" : "in the brain under") \(model.projectStore.describe(id: projectID ?? "…"))")
             }
         }
     }
@@ -227,16 +227,16 @@ struct ProjectSetupSheet: View {
         Task { await choose(url) }
     }
 
-    /// Picks the project and prefills the form from the answers saved in the brain.
+    /// Picks the project and prefills the form from its saved answers.
     private func choose(_ url: URL?) async {
         project = url
         projectID = nil
         error = nil
-        guard let url, let brain else { return }
+        guard let url, brain != nil else { return }
         let id = await model.projectID(for: url)
         guard project == url else { return }
         projectID = id
-        answers = ProjectSetup.savedAnswers(id: id, brain: brain.root)
+        answers = ProjectSetup.savedAnswers(id: id, in: model.projectStore)
             ?? ProjectAnswers(layers: [], values: [:], targets: model.installedTargets)
     }
 
@@ -391,8 +391,10 @@ struct ProjectSetupSheet: View {
                 }
                 ForEach(outcome.notes, id: \.self) { Label($0, systemImage: "info.circle") }
             }
-            Text("Answers are saved in the brain under projects/\(plan?.id ?? ""). Review and commit the new harness files in the project yourself.")
-                .foregroundStyle(.secondary)
+            if let plan {
+                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)). Review and commit the new harness files in the project yourself.")
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             HStack {
                 if let project = plan?.project {

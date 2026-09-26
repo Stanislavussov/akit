@@ -29,6 +29,10 @@ git -C ~/.akit/registry remote add origin git@github.com:<you>/brain.git
 git -C ~/.akit/registry push -u origin main
 ```
 
+On a work Mac, add `AKIT_MACHINE=work` (or run `akit machine work`, or Settings → This Mac):
+answers and locks of its projects then stay in `~/.akit/local/projects` and never reach the
+brain, so no work repo names or field values end up in your personal remote.
+
 On another Mac, `AKIT_BRAIN_REPO=<you>/brain` before the install command clones it and
 renders its core layer into `~` (skills for every harness; replaced files are backed up in
 `~/.akit/backups`; `AKIT_SKIP_HOME=1` skips that). Afterwards `akit sync` (or Sync on the
@@ -44,6 +48,7 @@ akit plan  [PROJECT] --layers a,b --set field=value --targets claude,pi
 akit apply [PROJECT] ...                    # backup first, removals to the Trash
 akit plan --home / akit apply --home        # the core layer into ~ for every harness
 akit sync                                   # pull and push the brain
+akit machine [work|personal]                # a work Mac keeps project records out of the brain
 akit --help
 ```
 

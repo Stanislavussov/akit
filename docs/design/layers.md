@@ -51,17 +51,29 @@ credentials, no `.git`), e.g. `projects/github.com/me/app/`. Projects without a
 remote use `local/<path relative to the projects root>`; a folder outside the
 root gets `local/<name>-<short hash of its path>`.
 
-### Work machines (decided 2026-09-26, not implemented)
+### Work machines (implemented 2026-09-26)
 
 A machine can be marked **work** (per-machine setting, not in the brain). A work
 machine must not push anything about work projects to the brain's remote:
 project ids, paths, answers and locks name the employer's repos.
 
+- The role is `~/.akit/machine.json` (`akit machine work|personal`, Settings → This Mac,
+  `AKIT_MACHINE=work` in install.sh). `ProjectStore` picks the folder from it.
 - On a work machine `projects/<id>/` lives in `~/.akit/local/projects/<id>/` (same
-  format), outside the brain's git. Plan, apply and updates work the same.
-- The `home` entry uses a pseudonym chosen by the user (e.g. `work`), never the hostname.
+  format), outside the brain's git. Plan, apply, removals work the same; nothing is committed.
+- The `home` entry uses a name chosen by the user (default `work`), not the host name.
+  Switching copies this Mac's home record from the brain so `apply --home` still knows
+  its files, and lists the records the brain already has; removing work ones from the
+  brain (and its remote's history) is left to the user.
 - Skills and layers still come from the brain; the only things a work machine
   commits to it are skill and layer edits the user makes on purpose.
+- Fails closed: a `machine.json` that can't be read counts as work (with a warning);
+  install.sh stops if `AKIT_MACHINE` can't be applied; Apply refuses a preview made
+  before the role changed. The app asks before going from work back to personal.
+- On a work Mac the brain's older records are read (never written) when the local
+  store has none, so projects rendered before the switch keep their lock and answers.
+- Skill and layer commits still happen on a work Mac; switching warns when the brain
+  has no git identity of its own (the global one may be the work email).
 - Masking is not enough: it hides tokens, not repo names, paths or field text.
 
 ## layer.yaml

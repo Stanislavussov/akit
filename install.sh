@@ -12,6 +12,8 @@
 #                    if that is missing, else updated. Unset: keep or create a brain yourself
 #                    (akit init, or Brain → Create Brain Repo in the app).
 #   AKIT_SKIP_HOME=1 don't render the brain's core layer into ~ after installing
+#   AKIT_MACHINE=work  a work Mac: project answers and locks stay on it, never in the brain
+#                    (akit machine work; set it on the first install, before anything is saved)
 set -euo pipefail
 
 AKIT_REPO="${AKIT_REPO:-Stanislavussov/akit}"
@@ -72,6 +74,17 @@ elif [[ -d "$BRAIN_DIR/.git" ]]; then
         git -C "$BRAIN_DIR" pull --ff-only || echo "The brain couldn't be updated (diverged?); left as it is."
     else
         echo "The brain has local changes or no remote; not updated."
+    fi
+fi
+
+# A work Mac is marked before the home render, so its record never lands in the brain.
+# If that fails, stop: a Mac meant to be a work Mac must not render as a personal one.
+if [[ -n "${AKIT_MACHINE:-}" ]]; then
+    machine="$(printf '%s' "$AKIT_MACHINE" | tr '[:upper:]' '[:lower:]')"
+    if ! "$HOME/.local/bin/akit" machine "$machine"; then
+        echo "akit machine $machine failed, so the core layer was not rendered into ~ (nothing reached the brain)." >&2
+        echo "Fix it (akit machine work|personal), then run: akit apply --home --include-unmanaged" >&2
+        exit 1
     fi
 fi
 

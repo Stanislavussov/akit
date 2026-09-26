@@ -169,7 +169,7 @@ struct BrainView: View {
         guard let brain = model.brain else { return "The brain is not loaded." }
         switch removal {
         case .layer(let name):
-            let requiredBy = BrainRemove.layerImpact(name, in: brain).requiredBy
+            let requiredBy = BrainRemove.layerImpact(name, in: brain, home: HarnessEnvironment.current.homeDirectory).requiredBy
             return requiredBy.isEmpty ? nil : "It is required by \(requiredBy.joined(separator: ", ")). Remove it from their requires first."
         case .skill(let name):
             let users = BrainRemove.skillUsers(name, in: brain)
@@ -184,7 +184,7 @@ struct BrainView: View {
     private func removalDetails(_ removal: Removal) -> String {
         switch removal {
         case .layer(let name):
-            let projects = model.brain.map { BrainRemove.layerImpact(name, in: $0).projects } ?? []
+            let projects = model.brain.map { BrainRemove.layerImpact(name, in: $0, home: HarnessEnvironment.current.homeDirectory).projects } ?? []
             return "layers/\(name) goes to the Trash and the brain gets a commit."
                 + (projects.isEmpty ? "" : " It is dropped from the saved answers of \(projects.joined(separator: ", ")); set those projects up again to take its files out.")
         case .skill(let name):

@@ -22,7 +22,7 @@ restart: build   ## quit this checkout's AKit, rebuild and start it again (in th
 test:   ## core tests (no UI)
 	cd AKitCore && swift test
 
-snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1]
+snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1] [SETTINGS=1]
 	# Ignore saved window state: a running AKit (or one closed without windows) must not
 	# stop the snapshot from opening its window. The running app is left alone.
 	# Flags without a value go last: Cocoa reads launch arguments as "-key value" pairs, so
@@ -31,7 +31,7 @@ snapshot: build   ## window snapshot without screen recording: make snapshot OUT
 	$(DERIVED)/Build/Products/Debug/AKit.app/Contents/MacOS/AKit -ApplePersistenceIgnoreState YES --snapshot $(or $(OUT),/tmp/akit.png) \
 	  $(if $(SECTION),--section $(SECTION)) $(if $(QUERY),--query "$(QUERY)") $(if $(DELAY),--delay $(DELAY)) $(if $(PROJECT),--project $(PROJECT)) \
 	  $(if $(HARNESS),--harness $(HARNESS)) $(if $(BRAIN),--brain "$(BRAIN)") $(if $(TAB),--tab $(TAB)) \
-	  $(if $(OWN),--own-copy) $(if $(ADD),--add) $(if $(CAPTURE),--capture)
+	  $(if $(OWN),--own-copy) $(if $(ADD),--add) $(if $(CAPTURE),--capture) $(if $(SETTINGS),--settings)
 
 install: generate   ## release build: AKit.app into ~/Applications, the akit command into ~/.local/bin
 	xcodebuild -project AKit.xcodeproj -scheme AKit -configuration Release \

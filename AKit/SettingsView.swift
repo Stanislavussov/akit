@@ -5,6 +5,10 @@ import SwiftUI
 /// AKit settings (⌘,). Stored on this machine only.
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
+    @State private var machineName = ""
+    @State private var machineError: String?
+    @State private var machineNotes: [String] = []
+    @State private var confirmPersonal = false
 
     var body: some View {
         Form {
@@ -32,6 +36,42 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Picker("This Mac is", selection: Binding(get: { model.machine.kind }, set: { kind in
+                    // Leaving work mode starts sending project records to the brain: ask first.
+                    if kind == .personal, model.machine.isWork { confirmPersonal = true } else { saveMachine(kind: kind) }
+                })) {
+                    Text("Personal").tag(MachineProfile.Kind.personal)
+                    Text("Work").tag(MachineProfile.Kind.work)
+                }
+                .pickerStyle(.segmented)
+                if model.machine.isWork {
+                    TextField("Name of this Mac", text: $machineName, prompt: Text("work"))
+                        .onSubmit { saveMachine(kind: .work) }
+                }
+                if let problem = model.machine.problem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                ForEach(machineNotes, id: \.self) { note in
+                    Label(note, systemImage: "info.circle").font(.callout).textSelection(.enabled)
+                }
+                if let machineError {
+                    Label(machineError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                }
+            } header: {
+                Text("This Mac")
+            } footer: {
+                Text(model.machine.isWork
+                     ? "Work Mac: answers and locks of projects stay in \(model.projectStore.root.tildePath) and never go into the brain, so nothing about work projects reaches its remote. Records saved in the brain before stay there; remove work ones by hand. Same setting as akit machine."
+                     : "Personal Mac: answers and locks of projects are saved and committed in the brain under projects/. Choose Work on a computer whose projects must not reach your brain's remote.")
+                    .foregroundStyle(.secondary)
+            }
+            .onAppear { machineName = model.machine.name ?? "" }
+            .confirmationDialog("Make this a personal Mac?", isPresented: $confirmPersonal) {
+                Button("Make Personal", role: .destructive) { saveMachine(kind: .personal) }
+            } message: {
+                Text("From now on project ids, answers and locks from this Mac are committed in the brain and reach its remote on the next sync. Records kept on this Mac so far are no longer read.")
+            }
+            Section {
                 HStack {
                     Image(systemName: "brain")
                     Text(model.brainPath).font(.system(.body, design: .monospaced))
@@ -50,6 +90,16 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 520)
         .frame(minHeight: 340)
+    }
+
+    private func saveMachine(kind: MachineProfile.Kind) {
+        let name = machineName.trimmingCharacters(in: .whitespaces)
+        do {
+            machineNotes = try model.setMachine(MachineProfile(kind: kind, name: kind == .work ? (name.isEmpty ? "work" : name) : nil))
+            machineError = nil
+        } catch {
+            machineError = "Couldn't save ~/.akit/machine.json: \(error.localizedDescription)"
+        }
     }
 
     private func addFolder() {
