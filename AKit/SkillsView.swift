@@ -436,7 +436,7 @@ enum SkillsFilter: Hashable {
     /// `--project <folder name>` in snapshot mode picks that project.
     static var initial: SkillsFilter {
         guard let name = DebugSnapshot.options?.project else { return .all }
-        let root = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Projects/\(name)")
+        let root = HarnessEnvironment.current.homeDirectory.appending(path: "Projects/\(name)")
         return .project(root)
     }
 

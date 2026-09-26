@@ -5,7 +5,8 @@ import SwiftUI
 /// Brain screen: layers and the skill library of the brain repo. Read-only.
 struct BrainView: View {
     @Environment(AppModel.self) private var model
-    @State private var selection: Item?
+    /// Snapshot `--select <layer>` picks that layer.
+    @State private var selection: Item? = DebugSnapshot.options?.select.map { .layer($0) }
     @State private var query = DebugSnapshot.options?.query ?? ""
     @State private var importing = false
     @State private var settingUp = false

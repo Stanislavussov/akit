@@ -158,7 +158,7 @@ private struct PathField: View {
         panel.canChooseFiles = !pickFolders
         panel.showsHiddenFiles = true
         panel.treatsFilePackagesAsDirectories = true
-        let current = FileManager.default.homeDirectoryForCurrentUser
+        let current = HarnessEnvironment.current.homeDirectory
         panel.directoryURL = text.hasPrefix("~/") ? current.appending(path: String(text.dropFirst(2))) : current
         guard panel.runModal() == .OK, let url = panel.url else { return }
         text = url.tildePath

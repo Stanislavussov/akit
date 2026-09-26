@@ -1,10 +1,34 @@
-# AKit
+<p align="center">
+  <img src="docs/assets/banner.png" alt="AKit: skills, MCP servers and project setup for your AI coding agents, on every Mac" width="100%">
+</p>
 
-A native macOS app and command line for people who work with several AI coding agents
-(Claude Code, Pi, Codex, OpenCode). It shows everything the agents are set up with in one
-place (skills, MCP servers, sessions, usage), and it sets up agents per project from
-your own **brain**: a private git repo of skills and composable layers that follows you
-to every Mac.
+<p align="center">
+  <img alt="macOS 15+" src="https://img.shields.io/badge/macOS-15%2B-111111?logo=apple&logoColor=white">
+  <img alt="Swift 6" src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white">
+  <img alt="SwiftUI" src="https://img.shields.io/badge/SwiftUI-native-0A84FF?logo=swift&logoColor=white">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-22C55E"></a>
+</p>
+
+<p align="center">
+  <a href="#install"><b>Install</b></a> ·
+  <a href="#the-app"><b>The app</b></a> ·
+  <a href="#the-brain"><b>The brain</b></a> ·
+  <a href="#everyday-use"><b>Everyday use</b></a> ·
+  <a href="#akit-reference"><b>akit reference</b></a>
+</p>
+
+AKit is a native macOS app and command line for people who work with several AI coding
+agents (Claude Code, Pi, Codex, OpenCode). It shows everything the agents are set up with in
+one place (skills, MCP servers, sessions, usage), and it sets up agents per project from
+your own **brain**: a private git repo of skills and composable layers that follows you to
+every Mac.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brain-dark.png">
+    <img src="docs/assets/brain-light.png" alt="The Brain screen: layers with their fields, skills and files" width="90%">
+  </picture>
+</p>
 
 - **See** what each agent loads: skills, MCP servers, sessions, tokens and cost.
 - **Set up a project in one step:** pick layers (`swiftui`, `take-home`, …), answer their
@@ -157,6 +181,13 @@ On another Mac, answer `you/brain` when the install asks.
 - `/akit add the tdd skill to the take-home layer`
 - `/akit remove the old-review skill from the brain`
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/setup-dark.png">
+    <img src="docs/assets/setup-light.png" alt="Set Up Project: pick agents and layers, answer the layers' questions" width="70%">
+  </picture>
+</p>
+
 **In the app:** Brain → Set Up Project… (pick a folder, tick layers, fill fields, see every
 change as a diff, Apply), New Layer…, Import Skills… (copies skills from `~/.agents/skills`
 into the brain), and the trash buttons on layers and skills.
@@ -221,6 +252,8 @@ make run                # debug build and launch
 make test               # core tests (Swift Testing, in a temporary fake home)
 make install-cli        # only the akit command
 make release            # dist/AKit.zip (universal app + akit) for a GitHub release
+make screenshots        # README screenshots from a made-up home (tools/demo-home.sh)
+make banner             # redraw docs/assets/banner.png
 ```
 
 The logic lives in the `AKitCore` Swift package; the app in `AKit/` is SwiftUI on top of

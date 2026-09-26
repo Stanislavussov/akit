@@ -11,7 +11,8 @@ import SwiftUI
 /// Usage takes it as the period: week, month, quarter, year, all);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
 /// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet;
-/// `--brain <folder>` reads the brain repo from there (not saved in Settings); on the Brain screen
+/// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
+/// `--size 1280x800` sets the window size; `--select <layer>` on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
@@ -35,6 +36,14 @@ enum DebugSnapshot {
         var add: Bool
         /// Brain repo folder for this run only.
         var brain: String?
+        /// README screenshots: no build badge in the sidebar.
+        var demo: Bool
+        /// `light` or `dark`; default: the system's.
+        var appearance: String?
+        /// Window content size in points, `1280x800`; default: as it opens.
+        var size: CGSize?
+        /// Brain screen: the layer to select.
+        var select: String?
     }
 
     static let options: Options? = {
@@ -55,13 +64,29 @@ enum DebugSnapshot {
             capture: args.contains("--capture"),
             tab: value("--tab"),
             add: args.contains("--add"),
-            brain: value("--brain")
+            brain: value("--brain"),
+            demo: args.contains("--demo"),
+            appearance: value("--appearance"),
+            size: value("--size").flatMap { text -> CGSize? in
+                let parts = text.split(separator: "x").compactMap { Double($0) }
+                return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : nil
+            },
+            select: value("--select")
         )
     }()
 
     /// Capture the main window and quit. Called after the screen has loaded its data.
     @MainActor
     static func captureAndQuit(_ options: Options) async {
+        switch options.appearance {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: break
+        }
+        if let size = options.size, let window = NSApp.windows.first(where: { $0.isVisible && $0.sheetParent == nil }) {
+            window.setContentSize(size)
+            window.center()
+        }
         try? await Task.sleep(for: .seconds(options.delay))
         // An open sheet (e.g. `--add`) is its own window: capture it instead.
         guard let main = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.sheetParent == nil }),
