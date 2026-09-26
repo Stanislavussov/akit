@@ -33,7 +33,7 @@ cross-session and cross-machine aggregation, recommendations.
 ### Storage
 
 - Local SQLite index in `~/.akit/index/` (system `SQLite3`, no new dependency). Not in git.
-- Stores facts, never message text: sessions, requests with recorded tokens, every
+- Stores facts, never message text (one opt-in exception, see Evals): sessions, requests with recorded tokens, every
   tool call with its output size, skill exposure and skill calls, machine label.
 - Import is incremental: remembers each file and the offset it read up to.
 - Every record keeps the parser version. Raw logs expire, so later parser fixes
@@ -146,6 +146,21 @@ Recommendations use exact and git bindings by default; sibling bindings behind a
 - Pi: an extension file in `~/.pi/agent/extensions/`, owned by AKit, same facts.
 - Safety net: launchd runs `akit sessions import` hourly (also parses the sessions).
 
+### Evals (later, but examples are kept from v1)
+
+- Not in v1: the auto → manual rule needs none (a manual skill is never model-called),
+  and the before/after measurement is its proof. Evals come when `recommend` shows
+  enough "rewrite the description" cases.
+- AKit has no own eval runner. Triggering evals and description tuning belong to
+  skill-creator; AKit's part is real examples, exported in skill-creator's eval format.
+- Positive example: a manual `/name` call means the model should have picked the
+  skill itself. Raw logs expire, so from v1 on an opt-in setting keeps, per manual
+  call, only the user's request that led to it (the `/name` arguments and the user
+  message right before). Masked with `SecretFilter`, local index only, never the brain.
+  This is the one exception to "no message text".
+- Negative examples can't come from passive data (no judge knows whether the skill
+  was needed), so v1 of the export takes a few hand-written ones.
+
 ### Interface
 
 - CLI first: `akit stats` (text, `--json`) and `akit recommend`
@@ -173,4 +188,5 @@ Recommendations use exact and git bindings by default; sibling bindings behind a
 5. Per-machine summaries in the brain.
 6. `akit recommend` + `dismiss`.
 7. Before/after measurement + calibration.
-8. Later: OpenCode, Codex, Insights screen, AGENTS.md size findings, behavior lessons.
+8. Later: OpenCode, Codex, Insights screen, AGENTS.md size findings, behavior lessons,
+   export of manual-call examples to skill-creator evals.
