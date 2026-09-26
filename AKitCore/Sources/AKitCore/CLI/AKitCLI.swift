@@ -6,6 +6,11 @@ public enum AKitCLI {
     public static let usage = """
         akit — harness layers from your brain repo (~/.akit/registry)
 
+        Setup (a new Mac; asks a few questions, Enter takes the default):
+          akit setup [--repo REPO] [--yes] [--skip-home]
+                                          Get your brain (clone REPO, or $AKIT_BRAIN_REPO) or create
+                                          one, remember the projects folder, put core into ~
+
         Brain:
           akit init                       Create a brain: core layer with the /akit skill, git repo
           akit check                      Read every layer and skill; list problems (exit 1 if any)
@@ -56,7 +61,8 @@ public enum AKitCLI {
     public static func run(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL? = nil,
                            hostName: String = ProcessInfo.processInfo.hostName,
                            installedTargets: [String] = [], out: (String) -> Void, err: (String) -> Void,
-                           trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async -> Int32 {
+                           trash: (URL) throws -> URL? = SkillRemover.defaultTrash,
+                           ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil) async -> Int32 {
         do {
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {
@@ -69,7 +75,8 @@ public enum AKitCLI {
                                   set: args.values("--set"), unset: args.values("--unset"),
                                   include: args.values("--include"), exclude: args.values("--exclude"),
                                   home: args.flag("--home"), includeUnmanaged: args.flag("--include-unmanaged"),
-                                  yes: args.flag("--yes"), keepFiles: args.flag("--keep-files"), from: args.value("--from"))
+                                  yes: args.flag("--yes"), keepFiles: args.flag("--keep-files"), from: args.value("--from"),
+                                  repo: args.value("--repo"), skipHome: args.flag("--skip-home"))
             let command = args.positional()
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -80,6 +87,23 @@ public enum AKitCLI {
             let projectArgument = args.positional()
             try args.finish()
             let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+            if command == "setup" {
+                if projectArgument != nil { throw Failure(message: "akit setup takes no folder; use --brain DIR.") }
+                let prefs = preferences ?? Onboarding.Preferences(projectsRoot: { nil }, setProjectsRoot: { _ in })
+                let repo = options.repo ?? env.variables["AKIT_BRAIN_REPO"].flatMap { $0.isEmpty ? nil : $0 }
+                let failure: String? = await withoutActuallyEscaping(out) { (say) async -> String? in
+                    do {
+                        try await Onboarding.run(.init(brainRepo: repo, skipHome: options.skipHome), root: brainRoot, env: env,
+                                                 io: .init(ask: options.yes ? nil : ask, say: say), preferences: prefs,
+                                                 hostName: hostName, installedTargets: installedTargets, trash: trash)
+                        return nil
+                    } catch {
+                        return error.localizedDescription
+                    }
+                }
+                if let failure { throw Failure(message: failure) }
+                return 0
+            }
             if command == "init" {
                 if projectArgument != nil { throw Failure(message: "akit init takes no folder; use --brain DIR.") }
                 do {
@@ -340,6 +364,8 @@ public enum AKitCLI {
         var yes: Bool
         var keepFiles: Bool
         var from: String?
+        var repo: String?
+        var skipHome: Bool
     }
 
     private static func readAnswers(_ options: Options, id: String, brain: Brain, cwd: URL, env: HarnessEnvironment,
