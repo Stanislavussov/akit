@@ -313,4 +313,99 @@ struct AKitCLITests {
         #expect(await akit("sessions", "export").code == 2)
         #expect(!fm.fileExists(atPath: home.appending(path: ".akit/index/index.sqlite").path))
     }
+
+    /// A Claude session s1 (listing, model and user skill calls, a subagent run) and s2, whose
+    /// version should have written a listing but didn't.
+    func writeStatsSessions() throws {
+        func line(_ object: [String: Any]) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object, options: .sortedKeys), as: UTF8.self)
+        }
+        func entry(_ type: String, _ uuid: String, _ time: String, session: String = "s1", _ fields: [String: Any]) -> [String: Any] {
+            fields.merging(["type": type, "uuid": uuid, "sessionId": session, "version": "2.1.283",
+                            "timestamp": "2026-09-20T10:00:\(time).000Z"]) { $1 }
+        }
+        let usage: [String: Any] = ["input_tokens": 3, "output_tokens": 1, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 20]
+        let s1: [[String: Any]] = [
+            entry("attachment", "L1", "00", ["attachment": ["type": "skill_listing", "isInitial": true, "names": ["tdd", "lint"],
+                                                            "content": "- tdd: Tests first\n- lint: Lint"]]),
+            entry("user", "U1", "01", ["message": ["role": "user", "content": "<command-message>tdd</command-message>\n<command-name>/tdd</command-name>"]]),
+            entry("assistant", "A1", "02", ["message": ["id": "m1", "model": "claude-opus-5-5", "usage": usage, "content": [
+                ["type": "tool_use", "id": "t1", "name": "Skill", "input": ["skill": "lint"]],
+                ["type": "tool_use", "id": "t2", "name": "Bash", "input": ["command": "ls"]],
+            ]]]),
+            entry("user", "U2", "03", ["message": ["role": "user", "content": [
+                ["type": "tool_result", "tool_use_id": "t2", "content": String(repeating: "x", count: 500)],
+            ]]]),
+        ]
+        let agent: [[String: Any]] = [
+            entry("assistant", "SA1", "04", ["isSidechain": true, "message": ["id": "sm1", "model": "claude-opus-5-5", "usage": usage, "content": [
+                ["type": "tool_use", "id": "st1", "name": "Skill", "input": ["skill": "tdd"]],
+            ]]]),
+        ]
+        let s2: [[String: Any]] = [
+            entry("assistant", "B1", "30", session: "s2", ["message": ["id": "n1", "model": "claude-opus-5-5", "usage": usage, "content": []]]),
+        ]
+        try write(".claude/projects/-work-app/s1.jsonl", try s1.map(line).joined(separator: "\n") + "\n")
+        try write(".claude/projects/-work-app/s1/subagents/agent-a1.jsonl", try agent.map(line).joined(separator: "\n") + "\n")
+        try write(".claude/projects/-work-app/s2.jsonl", try s2.map(line).joined(separator: "\n") + "\n")
+    }
+
+    func statsJSON(_ result: (code: Int32, out: String, err: String)) throws -> (sessions: [[String: Any]], notes: [String]) {
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(result.out.utf8)) as? [String: Any], "\(result)")
+        return (json["sessions"] as? [[String: Any]] ?? [], json["notes"] as? [String] ?? [])
+    }
+
+    @Test func statsDebugWorksWithoutBrain() async throws {
+        try writeStatsSessions()
+        let plain = await akit("stats")
+        #expect(plain.code == 0 && plain.out.contains("later version"), "\(plain)")
+
+        let all = try statsJSON(await akit("stats", "--debug", "--json"))
+        #expect(all.sessions.compactMap { $0["key"] as? String } == ["claude:s2", "claude:s1"])
+        // s2 has a version and requests but no listing: the parser may be out of date.
+        #expect(all.notes.contains { $0.contains("claude:s2") && $0.contains("no skill listing") }, "\(all.notes)")
+        #expect(!all.notes.contains { $0.contains("claude:s1") })
+
+        let s1 = try #require(all.sessions.last)
+        #expect(s1["harness"] as? String == "claude" && s1["started"] as? String == "2026-09-20T10:00:00Z")
+        #expect(s1["listings"] as? Int == 2 && s1["listedChars"] as? Int == "Tests first".count + "Lint".count)
+        #expect(s1["modelCalls"] as? Int == 1 && s1["userCalls"] as? Int == 1)
+        #expect(s1["subagentCalls"] as? Int == 1 && s1["subagentRuns"] as? Int == 1)
+        #expect(s1["firstRequestContext"] as? Int == 123)
+        let outputs = try #require(s1["largestToolOutputs"] as? [[String: Any]])
+        #expect(outputs.count == 1 && outputs[0]["name"] as? String == "Bash" && outputs[0]["bytes"] as? Int == 500)
+
+        let text = await akit("stats", "--debug")
+        #expect(text.code == 0 && text.out.contains("claude:s1") && text.out.contains("1 by the model"), "\(text)")
+        #expect(!fm.fileExists(atPath: home.appending(path: ".akit/registry").path))
+    }
+
+    @Test func statsFlagsBeforeSubcommandWord() async throws {
+        try writeStatsSessions()
+        for arguments in [["stats", "--session", "s1", "--debug", "--json"], ["--json", "stats", "--debug", "--session", "claude:s1"]] {
+            var out: [String] = []
+            let code = await AKitCLI.run(arguments, env: env, cwd: project, out: { out.append($0) }, err: { _ in })
+            let stats = try statsJSON((code, out.joined(separator: "\n"), ""))
+            #expect(code == 0 && stats.sessions.count == 1 && stats.sessions.first?["key"] as? String == "claude:s1", "\(arguments)")
+        }
+        let missing = await akit("stats", "--debug", "--session", "nope")
+        #expect(missing.code == 2 && missing.err.contains("No session “nope”"))
+    }
+
+    @Test func statsReadsTheIndexWhileAnImportRuns() async throws {
+        let held = try #require(try ImportLock.acquire(InsightsPaths(home: home).lock))
+        let stats = try statsJSON(await akit("stats", "--debug", "--json"))
+        #expect(stats.sessions.isEmpty && stats.notes == ["import running; data up to no import yet"])
+        withExtendedLifetime(held) {}
+    }
+
+    @Test func unknownStatsFlagFails() async throws {
+        let unknown = await akit("stats", "--debug", "--bogus")
+        #expect(unknown.code == 2 && unknown.err.contains("--bogus"))
+        let project = await akit("stats", "--debug", "--home")
+        #expect(project.code == 2 && project.err.contains("--home doesn't go with akit stats"))
+        #expect(await akit("stats", "--debug", "extra").code == 2)
+        #expect(await akit("stats", "--debug", "--session").code == 2)
+        #expect(!fm.fileExists(atPath: home.appending(path: ".akit/index/index.sqlite").path))
+    }
 }

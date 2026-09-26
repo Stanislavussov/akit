@@ -1,6 +1,7 @@
 import Foundation
 
-/// What a session log line says, reduced to facts: counts, sizes, ids, hashes. Never message text.
+/// What a session log line says, reduced to facts: counts, sizes, ids, hashes. Never message
+/// text, except `manualCallExample`, which the writer drops unless the user opted in.
 enum Fact {
     struct Session {
         var nativeID: String
@@ -60,6 +61,18 @@ enum Fact {
         let hasArgs: Bool
     }
 
+    /// What the user wrote around a `/name` skill call: the call's arguments and the prompt
+    /// before it (a positive example for the skill's description). Kept, masked, only when
+    /// `~/.akit/insights.json` asks for it on a personal Mac (see `SessionImporter`).
+    struct ManualCallExample {
+        /// The key of the user's skill call.
+        let key: String
+        let ts: Date?
+        let skill: String
+        let args: String
+        let request: String?
+    }
+
     case session(Session)
     case request(Request)
     case toolCall(ToolCall)
@@ -68,6 +81,7 @@ enum Fact {
     case skillCall(SkillCall)
     /// A slash command the user typed (`/model`, `/tdd`); stored as a user call.
     case command(SkillCall)
+    case manualCallExample(ManualCallExample)
 }
 
 /// Where facts come from: which harness, session, source row and parser.

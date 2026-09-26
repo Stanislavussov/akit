@@ -57,6 +57,7 @@ struct SessionImporter {
         try Self.checkKeyVersion(database)
         let before = try Self.counts(database)
         var report = ImportReport()
+        let keepExamples = Self.keepsManualCallExamples(home: env.homeDirectory)
         let files = discover().sorted { $0.modified < $1.modified }
         for (index, file) in files.enumerated() {
             if let budget, Date().timeIntervalSince(clock) > budget {
@@ -64,7 +65,7 @@ struct SessionImporter {
                 break
             }
             do {
-                if let bytes = try importFile(file, database: database, now: now) {
+                if let bytes = try importFile(file, database: database, now: now, keepExamples: keepExamples) {
                     report.sources += 1
                     report.newBytes += bytes
                 }
@@ -91,6 +92,17 @@ struct SessionImporter {
                 \(IndexSchema.keyVersion). Nothing was imported. Update akit.
                 """)
         }
+    }
+
+    /// Manual-call examples are the one kind of message text in the index: kept only when
+    /// `~/.akit/insights.json` says `"keepManualCallExamples": true`, and never on a work Mac
+    /// (or one whose machine.json can't be read).
+    static func keepsManualCallExamples(home: URL) -> Bool {
+        let machine = MachineProfile.load(home: home)
+        guard !machine.isWork, machine.problem == nil,
+              let data = try? Data(contentsOf: InsightsPaths(home: home).settings),
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return settings["keepManualCallExamples"] as? Bool == true
     }
 
     private static func counts(_ database: IndexDatabase) throws -> [Int] {
@@ -144,7 +156,7 @@ struct SessionImporter {
     private func parserVersion(_ harness: String) -> Int { harness == "pi" ? piParser : claudeParser }
 
     /// Reads what's new in one file. Returns the bytes read, nil when nothing changed.
-    private func importFile(_ file: LogFile, database: IndexDatabase, now: Date) throws -> UInt64? {
+    private func importFile(_ file: LogFile, database: IndexDatabase, now: Date, keepExamples: Bool) throws -> UInt64? {
         let parser = parserVersion(file.harness)
         let latest = try database.rows("""
             SELECT id, generation, inode, offset, tail_hash, parser_version, state, imported_at, session_key
@@ -204,6 +216,7 @@ struct SessionImporter {
             var writer = FactWriter(database: database, context: FactContext(
                 harness: file.harness, sessionKey: reader.sessionKey, sourceID: sourceID,
                 isSubagent: file.kind == "subagent", parserVersion: parser))
+            writer.keepManualCallExamples = keepExamples
             let read = try JSONLines.lines(of: file.url, from: start) { line, offset in
                 guard let entry = JSONLines.decode(line) else { return }
                 let facts = reader.facts(from: entry, offset: offset)
@@ -264,6 +277,8 @@ struct FactReader {
 struct FactWriter {
     let database: IndexDatabase
     var context: FactContext
+    /// Off unless the user opted in; then examples are stored masked.
+    var keepManualCallExamples = false
     /// Event keys of the calls read in this run, by the harness's call id.
     private var callKeys: [String: String] = [:]
 
@@ -316,6 +331,11 @@ struct FactWriter {
             try database.run(Self.skillCallSQL, c.harness, call.key, c.sessionKey, call.ts?.timeIntervalSince1970,
                              call.isSubagent, call.skill, call.by.rawValue, call.hasArgs, String?.none, c.sourceID,
                              c.parserVersion)
+        case .manualCallExample(let example):
+            guard keepManualCallExamples else { return }
+            let args = SecretFilter.masked(example.args)
+            try database.run(Self.exampleSQL, c.harness, example.key, example.skill, example.ts?.timeIntervalSince1970,
+                             args.isEmpty ? nil : args, example.request.map(SecretFilter.masked), c.sourceID)
         }
     }
 
@@ -356,6 +376,12 @@ struct FactWriter {
                                    identity: ["session_key", "ts", "is_subagent"], values: ["is_initial", "desc_hash", "desc_chars"])
     static let skillCallSQL = upsert("skill_calls", key: ["harness", "event_key"], identity: ["session_key", "ts", "is_subagent"],
                                      values: ["skill", "by", "has_args", "extra"])
+
+    /// An example is written once; copies of its line (resumed sessions, forks) keep the first.
+    static let exampleSQL = """
+        INSERT INTO manual_call_examples(harness, event_key, skill, ts, args_masked, request_masked, source_id)
+        VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(harness, event_key) DO NOTHING
+        """
 
     /// A session row grows with its file: `started`/`last_activity` only widen and empty
     /// fields fill in; a newer parser replaces the fields it has.

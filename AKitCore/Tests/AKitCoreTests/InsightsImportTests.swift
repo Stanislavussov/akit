@@ -411,6 +411,71 @@ struct InsightsImportTests {
         #expect(checked > 20)
     }
 
+    // MARK: Manual-call examples
+
+    static let token = "sk-ant-api03-" + String(repeating: "Ab1", count: 12)
+
+    func keepExamples() throws {
+        try Data(#"{"keepManualCallExamples": true}"#.utf8).write(to: paths.settings)
+    }
+
+    func examples() throws -> [[SQLValue]] {
+        try database().rows("SELECT harness, event_key, skill, args_masked, request_masked FROM manual_call_examples ORDER BY harness, ts")
+    }
+
+    func sessionsWithManualCalls() throws {
+        try write(claudeFile, lines: claudeSession() + [
+            Self.user("U5", "20", "Deploy with \(Self.token)"),
+            Self.user("U6", "21", "<command-message>ship</command-message>\n<command-name>/ship</command-name>\n<command-args>use \(Self.token)</command-args>"),
+        ])
+        try write(subagentFile, lines: subagentRun())
+        try write(piFile("sa"), lines: piParent() + [
+            Self.piMessage("a5", "a4", "05", ["role": "user", "content": "<skill name=\"tdd\" location=\"/x\">Body \(Self.sentinel)</skill>\n\nGo \(Self.token)"]),
+        ])
+    }
+
+    @Test func manualExamplesNotStoredByDefault() throws {
+        try sessionsWithManualCalls()
+        try runImport()
+        #expect(try count("SELECT COUNT(*) FROM skill_calls WHERE by = 'user'") == 4)
+        #expect(try count("SELECT COUNT(*) FROM manual_call_examples") == 0)
+    }
+
+    @Test func manualExamplesStoredMaskedWhenOn() throws {
+        try fm.createDirectory(at: home.appending(path: ".akit"), withIntermediateDirectories: true)
+        try keepExamples()
+        try sessionsWithManualCalls()
+        try runImport()
+        let s = Self.sentinel, hidden = SecretFilter.mask
+        // Skills only: `/model` is a built-in command; the skill body in Pi is not the request.
+        #expect(try examples() == [
+            [.text("claude"), .text("U4"), .text("tdd"), .text("write tests \(s)"), .text("Fix the login bug \(s)")],
+            [.text("claude"), .text("U6"), .text("ship"), .text("use \(hidden)"), .text("Deploy with \(hidden)")],
+            [.text("pi"), .text("a5@2026-09-20T10:00:05.000Z"), .text("tdd"), .text("Go \(hidden)"), .text("Add tests \(s)")],
+        ])
+        // Read again from the start: still one row per call.
+        try runImport(SessionImporter(env: env, claudeParser: ClaudeFacts.parserVersion + 1, piParser: PiFacts.parserVersion + 1))
+        #expect(try count("SELECT COUNT(*) FROM manual_call_examples") == 3)
+        for row in try examples() {
+            #expect(!row.contains { $0.text?.contains(Self.token) == true })
+        }
+    }
+
+    @Test func manualExamplesNeverOnWorkMac() throws {
+        try fm.createDirectory(at: home.appending(path: ".akit"), withIntermediateDirectories: true)
+        try keepExamples()
+        try Data(#"{"kind":"work"}"#.utf8).write(to: MachineProfile.file(home: home))
+        try sessionsWithManualCalls()
+        try runImport()
+        #expect(try count("SELECT COUNT(*) FROM skill_calls WHERE by = 'user'") == 4)
+        #expect(try count("SELECT COUNT(*) FROM manual_call_examples") == 0)
+        // A machine.json that can't be read counts as a work Mac.
+        try Data("{".utf8).write(to: MachineProfile.file(home: home))
+        #expect(!SessionImporter.keepsManualCallExamples(home: home))
+        try Data(#"{"kind":"personal"}"#.utf8).write(to: MachineProfile.file(home: home))
+        #expect(SessionImporter.keepsManualCallExamples(home: home))
+    }
+
     // MARK: Pi
 
     func piFile(_ name: String) -> String { ".pi/agent/sessions/--work-app--/2026-09-20T10-00-00-000Z_\(name).jsonl" }

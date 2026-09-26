@@ -44,6 +44,10 @@ public enum AKitCLI {
           akit sessions import [--json] [--quiet]
                                           Read new Claude Code and Pi session lines into the index:
                                           counts, sizes and skill use, never message text
+          akit stats --debug [--session ID] [--json]
+                                          Per session (default: the latest 20): skills listed, skill
+                                          calls by the model, the user and subagents, largest tool
+                                          outputs, first-request context. Imports new lines first
 
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
@@ -94,6 +98,10 @@ public enum AKitCLI {
             if command == "sessions" {
                 try refuseProjectOptions(options, command: "sessions")
                 return try sessions(&args, options: options, env: env, out: out)
+            }
+            if command == "stats" {
+                try refuseProjectOptions(options, command: "stats")
+                return try stats(&args, options: options, env: env, out: out, err: err)
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -374,6 +382,51 @@ public enum AKitCLI {
         }
         if report.pending > 0 { lines.append("\(count(report.pending, "file")) left for the next run.") }
         lines += report.skipped.map { "Skipped \($0.path): \($0.reason)" }
+        return lines.joined(separator: "\n")
+    }
+
+    /// `akit stats --debug`: what the index recorded per session, to check the parsers. Full
+    /// stats come later.
+    private static func stats(_ args: inout Arguments, options: Options, env: HarnessEnvironment,
+                              out: (String) -> Void, err: (String) -> Void) throws -> Int32 {
+        let session = args.value("--session")
+        let debug = args.flag("--debug")
+        try args.finish()
+        if let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
+        guard debug else {
+            out("Full stats come in a later version. For now: akit stats --debug [--session ID] [--json]")
+            return 0
+        }
+        let database = try IndexSchema.open(InsightsPaths(env: env).database)
+        let notes = try QuickImport.run(env: env, database: database)
+        let sessions = try IndexQueries.debugStats(database, session: session)
+        if let session, sessions.isEmpty { throw Failure(message: "No session “\(session)” in the index.") }
+        let report = DebugStats(sessions: sessions, notes: notes + (try IndexQueries.debugNotes(database, sessions: sessions)))
+        out(options.json ? encode(report) : debugStatsText(report))
+        return 0
+    }
+
+    struct DebugStats: Encodable {
+        let sessions: [IndexQueries.SessionDebug]
+        let notes: [String]
+    }
+
+    static func debugStatsText(_ report: DebugStats) -> String {
+        func size(_ bytes: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file) }
+        var lines: [String] = []
+        if report.sessions.isEmpty { lines.append("No sessions in the index yet.") }
+        for session in report.sessions {
+            let version = session.harnessVersion.map { " (\(session.harness) \($0))" } ?? ""
+            lines.append("\(session.key)  \(session.started ?? "no date")\(version)")
+            lines.append("  \(session.requests) requests; first request context: \(session.firstRequestContext.map { "\($0) tokens" } ?? "none")")
+            lines.append("  listed: \(session.listings) skills, ≈ \(session.listedChars) description chars")
+            lines.append("  skill calls: \(session.modelCalls) by the model, \(session.userCalls) by the user (/commands), "
+                         + "\(session.subagentCalls) in \(session.subagentRuns) subagent runs")
+            if !session.largestToolOutputs.isEmpty {
+                lines.append("  largest tool outputs: " + session.largestToolOutputs.map { "\($0.name) \(size($0.bytes))" }.joined(separator: ", "))
+            }
+        }
+        lines += report.notes.map { "note: \($0)" }
         return lines.joined(separator: "\n")
     }
 

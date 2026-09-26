@@ -5,7 +5,8 @@ import Foundation
 /// - an assistant message with `usage` → request; `toolCall` blocks → tool calls,
 ///   `toolResult` messages → their output size and error;
 /// - a `read` of `…/SKILL.md` under an installed skill root → model call of that skill;
-/// - a user message starting `<skill name="x"` → user call. Pi records no skill listing.
+/// - a user message starting `<skill name="x"` → user call, and a manual-call example (the text
+///   after `</skill>` and the user's prompt before it). Pi records no skill listing.
 /// Event keys are `<entry id>@<entry timestamp>` (+ `#<block index>`): a fork copies entries
 /// with both, so copies dedupe, while an unrelated session reusing an 8-hex id doesn't collide.
 struct PiFacts {
@@ -15,6 +16,8 @@ struct PiFacts {
     private(set) var sessionKey: String
     private(set) var session: Fact.Session?
     private var skillPaths: PiSkillPaths
+    /// The user's last prompt that wasn't a skill call, for manual-call examples.
+    private var lastPrompt: String?
 
     /// `sessionKey` / `cwd`: what an earlier run read from the header, for reads from an offset.
     init(file: URL, sessionKey: String?, cwd: String?, env: HarnessEnvironment) {
@@ -43,9 +46,13 @@ struct PiFacts {
         switch message["role"] as? String {
         case "user":
             let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let skill = PiSessions.skillPrefixName(text) else { return [] }
+            guard let skill = PiSessions.skillPrefixName(text) else {
+                if !text.isEmpty { lastPrompt = text }
+                return []
+            }
             let args = PiSessions.promptTitle(text) == text ? "" : PiSessions.promptTitle(text)
-            return [.skillCall(.init(key: key, ts: time, skill: skill, by: .user, isSubagent: false, hasArgs: !args.isEmpty))]
+            return [.skillCall(.init(key: key, ts: time, skill: skill, by: .user, isSubagent: false, hasArgs: !args.isEmpty)),
+                    .manualCallExample(.init(key: key, ts: time, skill: skill, args: args, request: lastPrompt))]
         case "assistant":
             return assistantFacts(message, key: key, at: time)
         case "toolResult":

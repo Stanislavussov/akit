@@ -4,7 +4,9 @@ import Foundation
 /// - `usage` of an assistant entry → request keyed by `message.id` (lines of one response repeat it);
 /// - `tool_use` → tool call keyed by its id, `tool_result` → its output size and error;
 ///   a `Skill` tool_use is also a model call of that skill;
-/// - `<command-name>/x` in a user entry → a command typed by the user;
+/// - `<command-name>/x` in a user entry → a command typed by the user; when the entry starts
+///   with `<command-message>` it is a skill (built-ins like `/model` start with `<command-name>`)
+///   and also yields a manual-call example (its arguments and the prompt before it);
 /// - a `skill_listing` attachment → one listing keyed by the entry's uuid;
 /// - subagent runs (`<session>/subagents/*.jsonl`, or `isSidechain` lines of older versions)
 ///   belong to the parent session and are marked as subagent facts.
@@ -15,6 +17,8 @@ struct ClaudeFacts {
     let sessionKey: String
     let isSubagentFile: Bool
     private(set) var session: Fact.Session?
+    /// The user's last typed prompt in this read, for manual-call examples.
+    private var lastPrompt: String?
 
     init(file: URL) {
         isSubagentFile = Self.isSubagentFile(file)
@@ -43,7 +47,9 @@ struct ClaudeFacts {
         case "assistant":
             return assistantFacts(entry, at: ts, isSubagent: isSubagent)
         case "user":
-            return userFacts(entry, at: ts, isSubagent: isSubagent)
+            let facts = userFacts(entry, at: ts, isSubagent: isSubagent)
+            if !isSubagent, let prompt = ClaudeSessions.promptText(entry) { lastPrompt = prompt }
+            return facts
         case "attachment":
             guard let attachment = entry["attachment"] as? JSONLines.Object,
                   attachment["type"] as? String == "skill_listing", let key = entry["uuid"] as? String else { return [] }
@@ -109,8 +115,11 @@ struct ClaudeFacts {
                   let command = ClaudeSessions.tag("command-name", in: text), command.hasPrefix("/"), command.count > 1
             else { return facts }
             let args = ClaudeSessions.tag("command-args", in: text) ?? ""
-            facts.append(.command(.init(key: key, ts: ts, skill: String(command.dropFirst()), by: .user, isSubagent: isSubagent,
-                                        hasArgs: !args.isEmpty)))
+            let skill = String(command.dropFirst())
+            facts.append(.command(.init(key: key, ts: ts, skill: skill, by: .user, isSubagent: isSubagent, hasArgs: !args.isEmpty)))
+            if text.hasPrefix("<command-message>"), !isSubagent {
+                facts.append(.manualCallExample(.init(key: key, ts: ts, skill: skill, args: args, request: lastPrompt)))
+            }
         }
         return facts
     }
