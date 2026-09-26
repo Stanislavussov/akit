@@ -9,8 +9,8 @@
 #   AKIT_REPO        GitHub repo of AKit (owner/repo or a git URL; default Stanislavussov/akit)
 #   AKIT_DIR         where the source lives (default ~/Projects/akit)
 #   AKIT_BRAIN_REPO  your brain repo (owner/repo or a git URL), cloned into ~/.akit/registry
-#                    if that is missing, else updated. Unset: keep or create a brain yourself
-#                    (akit init, or Brain → Create Brain Repo in the app).
+#                    if that is missing, else updated. Unset: a new brain is created there
+#                    (akit init) unless one exists.
 #   AKIT_SKIP_HOME=1 don't render the brain's core layer into ~ after installing
 set -euo pipefail
 
@@ -64,7 +64,11 @@ make -C "$AKIT_DIR" install
 if [[ -n "$AKIT_BRAIN_REPO" && ! -e "$BRAIN_DIR" ]]; then
     say "Downloading your brain $AKIT_BRAIN_REPO into $BRAIN_DIR"
     mkdir -p "$(dirname "$BRAIN_DIR")"
-    clone "$AKIT_BRAIN_REPO" "$BRAIN_DIR" || echo "Couldn't clone $AKIT_BRAIN_REPO; AKit works without it (akit init creates a new one)."
+    clone "$AKIT_BRAIN_REPO" "$BRAIN_DIR" || fail "Couldn't clone $AKIT_BRAIN_REPO. Check the name and your access, or leave AKIT_BRAIN_REPO unset for a new brain."
+elif [[ ! -e "$BRAIN_DIR" ]]; then
+    say "Creating your brain in $BRAIN_DIR"
+    "$HOME/.local/bin/akit" init >/dev/null
+    echo "A new brain with the core layer and the /akit skill. Keep it in a private git repo to share it between Macs (see the README)."
 elif [[ -d "$BRAIN_DIR/.git" ]]; then
     # Bring in changes pushed from the other Mac; never over local edits.
     if [[ -z "$(git -C "$BRAIN_DIR" status --porcelain)" ]] && git -C "$BRAIN_DIR" remote get-url origin >/dev/null 2>&1; then
@@ -94,4 +98,5 @@ esac
 say "Done"
 echo "  App:     ~/Applications/AKit.app"
 echo "  Command: akit --help"
-[[ -e "$BRAIN_DIR" ]] && echo "  Brain:   $BRAIN_DIR" || echo "  Brain:   none yet; create one with: akit init  (or Brain → Create Brain Repo in the app)"
+echo "  Brain:   $BRAIN_DIR"
+echo "  Next:    in a project, ask your agent: /akit set up this project"
