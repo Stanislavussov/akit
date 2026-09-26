@@ -61,6 +61,15 @@ enum PiSessions {
         return rest.isEmpty ? text : rest
     }
 
+    /// `x` for a prompt that starts with an expanded skill `<skill name="x" …>`.
+    static func skillPrefixName(_ text: String) -> String? {
+        let start = "<skill name=\""
+        guard text.hasPrefix(start) else { return nil }
+        let rest = text.dropFirst(start.count)
+        guard let quote = rest.firstIndex(of: "\""), quote > rest.startIndex else { return nil }
+        return String(rest[..<quote])
+    }
+
     // MARK: - Transcript
 
     static func transcript(of file: URL) throws -> SessionTranscript {

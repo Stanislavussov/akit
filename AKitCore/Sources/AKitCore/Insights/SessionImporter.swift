@@ -35,6 +35,7 @@ struct ImportReport: Encodable, Equatable {
 struct SessionImporter {
     let env: HarnessEnvironment
     var claudeParser = ClaudeFacts.parserVersion
+    var piParser = PiFacts.parserVersion
 
     /// A log file found on disk.
     struct LogFile {
@@ -100,7 +101,7 @@ struct SessionImporter {
 
     // MARK: - Files
 
-    /// Claude `projects/*/*.jsonl` and `projects/*/<session>/subagents/*.jsonl`.
+    /// Claude `projects/*/*.jsonl` and `projects/*/<session>/subagents/*.jsonl`; Pi `<sessions>/*/*.jsonl`.
     func discover() -> [LogFile] {
         var found: [LogFile] = []
         let projects = ClaudeCodeAdapter().configRoot(in: env).appending(path: "projects")
@@ -113,6 +114,12 @@ struct SessionImporter {
                         found += Self.logFile(agent, harness: "claude", kind: "subagent").map { [$0] } ?? []
                     }
                 }
+            }
+        }
+        let pi = PiSessions.folder(configRoot: PiAdapter().configRoot(in: env), in: env)
+        for folder in SkillScanner.children(of: pi) where SkillScanner.isDirectory(folder) {
+            for item in SkillScanner.children(of: folder) where item.pathExtension == "jsonl" {
+                found += Self.logFile(item, harness: "pi", kind: "session").map { [$0] } ?? []
             }
         }
         return found
@@ -134,7 +141,7 @@ struct SessionImporter {
         }
     }
 
-    private func parserVersion(_ harness: String) -> Int { claudeParser }
+    private func parserVersion(_ harness: String) -> Int { harness == "pi" ? piParser : claudeParser }
 
     /// Reads what's new in one file. Returns the bytes read, nil when nothing changed.
     private func importFile(_ file: LogFile, database: IndexDatabase, now: Date) throws -> UInt64? {
@@ -171,12 +178,11 @@ struct SessionImporter {
 
         return try database.transaction {
             let sourceID: Int64
-            var sessionKey = latest?[8].text
+            let sessionKey = latest?[8].text
             if newGeneration {
                 if let row = latest, row[6].text == "active" {
                     try database.run("UPDATE sources SET state = 'replaced' WHERE id = ?", row[0])
                 }
-                sessionKey = sessionKey ?? defaultSessionKey(file)
                 try database.run("""
                     INSERT INTO sources(path, generation, harness, kind, session_key, inode, size, offset, parser_version, state)
                     VALUES(?, ?, ?, ?, ?, ?, ?, 0, ?, 'active')
@@ -192,13 +198,15 @@ struct SessionImporter {
                 }
             }
 
-            var reader = FactReader(file: file.url, harness: file.harness)
+            // A read from an offset has no header: the session and its cwd come from the earlier run.
+            let cwd = start > 0 ? try sessionKey.flatMap { try database.value("SELECT cwd FROM sessions WHERE key = ?", $0)?.text } : nil
+            var reader = FactReader(file: file.url, harness: file.harness, sessionKey: sessionKey, cwd: cwd, env: env)
             var writer = FactWriter(database: database, context: FactContext(
                 harness: file.harness, sessionKey: reader.sessionKey, sourceID: sourceID,
                 isSubagent: file.kind == "subagent", parserVersion: parser))
-            let read = try JSONLines.lines(of: file.url, from: start) { line, _ in
+            let read = try JSONLines.lines(of: file.url, from: start) { line, offset in
                 guard let entry = JSONLines.decode(line) else { return }
-                let facts = reader.facts(from: entry)
+                let facts = reader.facts(from: entry, offset: offset)
                 writer.context.sessionKey = reader.sessionKey
                 for fact in facts { try writer.write(fact) }
             }
@@ -211,24 +219,45 @@ struct SessionImporter {
             return read.offset - start
         }
     }
-
-    private func defaultSessionKey(_ file: LogFile) -> String {
-        "claude:" + ClaudeFacts.sessionID(of: file.url)
-    }
 }
 
 /// The parser for one file's harness.
 struct FactReader {
-    private var claude: ClaudeFacts
-
-    init(file: URL, harness: String) {
-        claude = ClaudeFacts(file: file)
+    private enum Parser {
+        case claude(ClaudeFacts)
+        case pi(PiFacts)
     }
 
-    var sessionKey: String { claude.sessionKey }
-    var sessionFact: Fact? { claude.sessionFact }
+    private var parser: Parser
 
-    mutating func facts(from entry: JSONLines.Object) -> [Fact] { claude.facts(from: entry) }
+    init(file: URL, harness: String, sessionKey: String?, cwd: String?, env: HarnessEnvironment) {
+        parser = harness == "pi" ? .pi(PiFacts(file: file, sessionKey: sessionKey, cwd: cwd, env: env)) : .claude(ClaudeFacts(file: file))
+    }
+
+    var sessionKey: String {
+        switch parser {
+        case .claude(let claude): claude.sessionKey
+        case .pi(let pi): pi.sessionKey
+        }
+    }
+
+    var sessionFact: Fact? {
+        switch parser {
+        case .claude(let claude): claude.sessionFact
+        case .pi(let pi): pi.sessionFact
+        }
+    }
+
+    mutating func facts(from entry: JSONLines.Object, offset: UInt64) -> [Fact] {
+        switch parser {
+        case .claude(var claude):
+            defer { parser = .claude(claude) }
+            return claude.facts(from: entry)
+        case .pi(var pi):
+            defer { parser = .pi(pi) }
+            return pi.facts(from: entry, offset: offset)
+        }
+    }
 }
 
 /// Writes facts with the upsert rule (see SessionImporter).

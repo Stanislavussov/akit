@@ -391,6 +391,9 @@ struct InsightsImportTests {
     @Test func noMessageTextStored() throws {
         try write(claudeFile, lines: claudeSession())
         try write(subagentFile, lines: subagentRun())
+        try write(piFile("sa"), lines: piParent() + [
+            Self.piMessage("a5", "a4", "05", ["role": "user", "content": "<skill name=\"tdd\" location=\"/x\">\(Self.sentinel)</skill>\n\nGo \(Self.sentinel)"]),
+        ])
         try runImport()
         let db = try database()
         let tables = try db.rows("SELECT name FROM sqlite_master WHERE type = 'table'").compactMap { $0[0].text }
@@ -406,6 +409,183 @@ struct InsightsImportTests {
             }
         }
         #expect(checked > 20)
+    }
+
+    // MARK: Pi
+
+    func piFile(_ name: String) -> String { ".pi/agent/sessions/--work-app--/2026-09-20T10-00-00-000Z_\(name).jsonl" }
+
+    static func piHeader(_ id: String, cwd: String = "/work/app") -> [String: Any] {
+        ["type": "session", "version": 3, "id": id, "timestamp": "2026-09-20T10:00:00.000Z", "cwd": cwd]
+    }
+
+    static func piMessage(_ id: String, _ parent: String?, _ time: String, _ message: [String: Any]) -> [String: Any] {
+        ["type": "message", "id": id, "parentId": parent ?? NSNull(), "timestamp": "2026-09-20T10:00:\(time).000Z", "message": message]
+    }
+
+    static func piAssistant(_ content: [[String: Any]], input: Int = 100, output: Int = 5, cost: Double = 0.25,
+                            model: String = "claude-opus-5-5") -> [String: Any] {
+        ["role": "assistant", "provider": "anthropic", "model": model, "content": content,
+         "usage": ["input": input, "output": output, "cacheRead": 10, "cacheWrite": 5, "totalTokens": 0, "cost": ["total": cost]]]
+    }
+
+    static func read(_ path: String, id: String = UUID().uuidString) -> [String: Any] {
+        ["type": "toolCall", "id": id, "name": "read", "arguments": ["path": path]]
+    }
+
+    func piParent() -> [[String: Any]] {
+        let s = Self.sentinel
+        return [
+            Self.piHeader("sa"),
+            Self.piMessage("a1", nil, "01", ["role": "user", "content": [["type": "text", "text": "Add tests \(s)"]]]),
+            Self.piMessage("a2", "a1", "02", Self.piAssistant([
+                ["type": "thinking", "thinking": "Plan \(s)"],
+                ["type": "toolCall", "id": "c1", "name": "bash", "arguments": ["command": "swift test \(s)"]],
+            ])),
+            Self.piMessage("a3", "a2", "03", ["role": "toolResult", "toolCallId": "c1", "toolName": "bash",
+                                              "content": [["type": "text", "text": "1 failure \(s)"]], "isError": true]),
+            Self.piMessage("a4", "a3", "04", Self.piAssistant([["type": "text", "text": "Fixed \(s)"]], input: 200, output: 7, cost: 0.5)),
+        ]
+    }
+
+    func piSession(_ id: String, cwd: String, _ entries: [[String: Any]]) -> [[String: Any]] {
+        [Self.piHeader(id, cwd: cwd)] + entries
+    }
+
+    func modelCalls() throws -> [String] {
+        try database().rows("SELECT skill FROM skill_calls WHERE by = 'model' ORDER BY skill").compactMap { $0[0].text }
+    }
+
+    func mkdir(_ path: String) throws -> URL {
+        let url = home.appending(path: path)
+        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    func skillFile(_ folder: String) throws {
+        try Data("---\nname: x\n---\n".utf8).write(to: try mkdir(folder).appending(path: "SKILL.md"))
+    }
+
+    @Test func piForkCopiesDedupeButUnrelatedSameIdDoesNot() throws {
+        try write(piFile("sa"), lines: piParent())
+        try setModified(piFile("sa"), Date(timeIntervalSinceNow: -7200))
+        // A fork copies the parent's entries (same ids and times) into a new session file.
+        try write(piFile("sb"), lines: [Self.piHeader("sb")] + piParent().dropFirst()
+                  + [Self.piMessage("b1", "a4", "20", Self.piAssistant([], input: 1, output: 1))])
+        try setModified(piFile("sb"), Date(timeIntervalSinceNow: -3600))
+        // Another session happens to reuse the 8-hex id a2, at another time.
+        try write(piFile("sc"), lines: [Self.piHeader("sc"), Self.piMessage("a2", nil, "40", Self.piAssistant([], input: 3, output: 3))])
+        try runImport()
+
+        #expect(try count("SELECT COUNT(*) FROM requests WHERE harness = 'pi'") == 4)
+        #expect(try count("SELECT COUNT(*) FROM tool_calls WHERE harness = 'pi'") == 1)
+        #expect(try database().rows("SELECT session_key FROM requests WHERE event_key LIKE 'a2@%' ORDER BY ts")
+                == [[.text("pi:sa")], [.text("pi:sc")]])
+        #expect(try count("SELECT COUNT(*) FROM sessions WHERE harness = 'pi'") == 3)
+    }
+
+    @Test func piForkKeepsParentSessionRequests() throws {
+        try write(piFile("sa"), lines: piParent())
+        try runImport()
+        let parentSource = try count("SELECT id FROM sources")
+        let first = try database().rows("SELECT event_key, input + cache_read + cache_write FROM requests WHERE session_key = 'pi:sa' ORDER BY ts LIMIT 1")
+
+        try write(piFile("sb"), lines: [Self.piHeader("sb")] + piParent().dropFirst()
+                  + [Self.piMessage("b1", "a4", "20", Self.piAssistant([], input: 1, output: 1))])
+        try runImport()
+        #expect(try database().rows("SELECT DISTINCT session_key, source_id FROM requests WHERE event_key IN ('a2@2026-09-20T10:00:02.000Z', 'a4@2026-09-20T10:00:04.000Z')")
+                == [[.text("pi:sa"), .int(Int64(parentSource))]])
+        #expect(try database().rows("SELECT event_key, input + cache_read + cache_write FROM requests WHERE session_key = 'pi:sa' ORDER BY ts LIMIT 1") == first)
+        #expect(first.first?[1] == .int(115))
+        #expect(try text("SELECT session_key FROM requests WHERE event_key LIKE 'b1@%'") == "pi:sb")
+        #expect(try count("SELECT output_bytes FROM tool_calls WHERE source_id = ?", parentSource) == "1 failure \(Self.sentinel)".utf8.count)
+    }
+
+    @Test func piReadOfInstalledSkillCountsButRegistryAndTmpDoNot() throws {
+        try skillFile(".agents/skills/tdd")
+        try skillFile(".akit/registry/skills/lint")
+        try fm.createSymbolicLink(at: home.appending(path: ".agents/skills/lint"), withDestinationURL: home.appending(path: ".akit/registry/skills/lint"))
+        let project = try mkdir("tmpdir/proj")
+        try skillFile("tmpdir/proj/.agents/skills/scratch")
+        let tmpEnv = HarnessEnvironment(homeDirectory: home, variables: ["TMPDIR": home.appending(path: "tmpdir").path + "/"])
+        try write(piFile("sa"), lines: piSession("sa", cwd: project.path, [
+            Self.piMessage("a1", nil, "01", Self.piAssistant([
+                Self.read("~/.agents/skills/tdd/SKILL.md"),
+                Self.read(home.appending(path: ".agents/skills/lint/SKILL.md").path), // a brain skill linked into the root
+                Self.read(home.appending(path: ".akit/registry/skills/lint/SKILL.md").path), // editing it in the brain
+                Self.read(".agents/skills/scratch/SKILL.md"), // a project in a temp folder
+                Self.read("/tmp/x/.agents/skills/y/SKILL.md"),
+                Self.read("~/.agents/skills/tdd/README.md"),
+            ])),
+        ]))
+        try runImport(SessionImporter(env: tmpEnv))
+        #expect(try modelCalls() == ["lint", "tdd"])
+        #expect(try count("SELECT COUNT(*) FROM tool_calls WHERE name = 'read'") == 6)
+    }
+
+    @Test func piRelativeSkillPathResolvesAgainstCwd() throws {
+        let app = try mkdir("work/app")
+        try skillFile("work/app/.agents/skills/fmt")
+        try skillFile("work/.agents/skills/up")
+        try write(piFile("sa"), lines: piSession("sa", cwd: app.path, [
+            Self.piMessage("a1", nil, "01", Self.piAssistant([
+                Self.read(".agents/skills/fmt/SKILL.md"), Self.read("../.agents/skills/up/SKILL.md"),
+            ])),
+        ]))
+        try runImport()
+        #expect(try modelCalls() == ["fmt", "up"])
+
+        // A later run starts after the header; the cwd comes from the index.
+        try append(piFile("sa"), lines: [Self.piMessage("a2", "a1", "05", Self.piAssistant([Self.read("./.agents/skills/fmt/SKILL.md")]))])
+        try runImport()
+        #expect(try modelCalls() == ["fmt", "fmt", "up"])
+    }
+
+    @Test func piSymlinkedAndTildeSkillRootsMatch() throws {
+        try skillFile("shared/pi-skills/a")
+        try skillFile("shared/pi-skills/b")
+        _ = try mkdir(".pi/agent")
+        try fm.createSymbolicLink(at: home.appending(path: ".pi/agent/skills"), withDestinationURL: home.appending(path: "shared/pi-skills"))
+        try write(piFile("sa"), lines: piSession("sa", cwd: home.appending(path: "work/app").path, [
+            Self.piMessage("a1", nil, "01", Self.piAssistant([
+                Self.read("~/.pi/agent/skills/a/SKILL.md"),
+                Self.read(home.appending(path: "shared/pi-skills/b/SKILL.md").path), // the link's target
+                Self.read("~/.pi/skills/c/SKILL.md"),
+                Self.read(home.appending(path: "shared/elsewhere/d/SKILL.md").path),
+            ])),
+        ]))
+        try runImport()
+        #expect(try modelCalls() == ["a", "b", "c"])
+    }
+
+    @Test func piSkillPrefixIsUserCall() throws {
+        try write(piFile("sa"), lines: [
+            Self.piHeader("sa"),
+            Self.piMessage("a1", nil, "01", ["role": "user", "content": [["type": "text", "text": "<skill name=\"tdd\" location=\"/s/tdd/SKILL.md\">body</skill>\n\nAdd tests"]]]),
+            Self.piMessage("a2", "a1", "02", ["role": "user", "content": "<skill name=\"lint\" location=\"/s/lint/SKILL.md\">body</skill>"]),
+            Self.piMessage("a3", "a2", "03", ["role": "user", "content": "Mention <skill name=\"x\"> later"]),
+        ])
+        try runImport()
+        #expect(try database().rows("SELECT skill, by, has_args FROM skill_calls ORDER BY ts")
+                == [[.text("tdd"), .text("user"), .int(1)], [.text("lint"), .text("user"), .int(0)]])
+        #expect(try count("SELECT COUNT(*) FROM skill_listings") == 0)
+    }
+
+    @Test func parityWithSessionUsagePi() throws {
+        var lines = piParent()
+        // An abandoned branch was paid for too.
+        lines.append(Self.piMessage("b1", "a2", "09", Self.piAssistant([], input: 40, output: 2, cost: 0.1, model: "old")))
+        lines.append(Self.piMessage("b2", "b1", "10", ["role": "assistant", "content": [], "usage": ["input": 0, "output": 0]]))
+        try write(piFile("sa"), lines: lines)
+        try runImport()
+        let usage = try PiSessions.transcript(of: home.appending(path: piFile("sa"))).usage
+        let row = try #require(try database().rows("""
+            SELECT SUM(input), SUM(output), SUM(cache_read), SUM(cache_write), SUM(reasoning), COUNT(*), SUM(cost) FROM requests
+            """).first)
+        #expect(TokenCounts(input: row[0].int ?? 0, output: row[1].int ?? 0, cacheRead: row[2].int ?? 0,
+                            cacheWrite: row[3].int ?? 0, reasoning: row[4].int ?? 0) == usage.tokens)
+        #expect(row[5].int == usage.requests)
+        #expect(abs((row[6].double ?? 0) - (usage.cost ?? -1)) < 1e-9)
     }
 
     @Test func concurrentImportSkips() throws {
