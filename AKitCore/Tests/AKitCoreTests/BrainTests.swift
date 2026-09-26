@@ -173,6 +173,25 @@ struct BrainTests {
         #expect(messages(brain, "b").isEmpty)
     }
 
+    @Test func projectsAndTheLayersTheyGet() throws {
+        try write("layers/base/layer.yaml", "")
+        try write("layers/web/layer.yaml", "requires: [base]\n")
+        try write("layers/core/layer.yaml", "")
+        try write("projects/github.com/me/site/answers.json", #"{"layers": ["web"], "values": {}, "targets": ["claude"]}"#)
+        try write("projects/github.com/me/site/lock.json", #"{"brainCommit": "abc1234", "brainDirty": false, "files": {}}"#)
+        try write("projects/home/mac/answers.json", #"{"layers": ["core"], "values": {}, "targets": []}"#)
+        try write("projects/local/broken/answers.json", "not json")
+
+        let brain = try load()
+        #expect(brain.projects.map(\.id) == ["github.com/me/site", "home/mac"])
+        let site = try #require(brain.projects.first)
+        #expect(site.name == "site" && !site.isHome && site.brainCommit == "abc1234")
+        #expect(brain.layers(of: site) == ["web", "base"])
+        #expect(brain.projects(using: "base").map(\.id) == ["github.com/me/site"])
+        #expect(brain.projects(using: "core").map(\.isHome) == [true])
+        #expect(brain.projects(using: "missing").isEmpty)
+    }
+
     @Test func manyRedundantRequiresLoadFast() throws {
         // Each layer requires every earlier one: walking every path would take minutes.
         for i in 0..<40 {

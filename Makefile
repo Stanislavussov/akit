@@ -22,7 +22,7 @@ restart: build   ## quit this checkout's AKit, rebuild and start it again (in th
 test:   ## core tests (no UI)
 	cd AKitCore && swift test
 
-snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1] [SETTINGS=1]
+snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1] [SELECT=<layer>|project:<id>] [SETTINGS=1]
 	# Ignore saved window state: a running AKit (or one closed without windows) must not
 	# stop the snapshot from opening its window. The running app is left alone.
 	# Flags without a value go last: Cocoa reads launch arguments as "-key value" pairs, so
@@ -30,7 +30,7 @@ snapshot: build   ## window snapshot without screen recording: make snapshot OUT
 	# alert then keeps the window from ever appearing.
 	$(DERIVED)/Build/Products/Debug/AKit.app/Contents/MacOS/AKit -ApplePersistenceIgnoreState YES --snapshot $(or $(OUT),/tmp/akit.png) \
 	  $(if $(SECTION),--section $(SECTION)) $(if $(QUERY),--query "$(QUERY)") $(if $(DELAY),--delay $(DELAY)) $(if $(PROJECT),--project $(PROJECT)) \
-	  $(if $(HARNESS),--harness $(HARNESS)) $(if $(BRAIN),--brain "$(BRAIN)") $(if $(TAB),--tab $(TAB)) \
+	  $(if $(HARNESS),--harness $(HARNESS)) $(if $(BRAIN),--brain "$(BRAIN)") $(if $(TAB),--tab $(TAB)) $(if $(SELECT),--select "$(SELECT)") \
 	  $(if $(OWN),--own-copy) $(if $(ADD),--add) $(if $(CAPTURE),--capture) $(if $(SETTINGS),--settings)
 
 install: generate   ## release build: AKit.app into ~/Applications, the akit command into ~/.local/bin
@@ -52,4 +52,20 @@ install-cli:   ## only the akit command, into ~/.local/bin
 icon:   ## redraw the app icon
 	swift tools/make-icon.swift
 
-.PHONY: generate open build run restart test snapshot install install-cli icon
+release: generate   ## dist/AKit.zip: universal AKit.app + akit, for GitHub Releases (install.sh downloads it)
+	rm -rf dist && mkdir -p dist/AKit
+	xcodebuild -project AKit.xcodeproj -scheme AKit -configuration Release \
+	  -derivedDataPath $(DERIVED)/universal ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO AKIT_DIST=1 -quiet build
+	cp -R $(DERIVED)/universal/Build/Products/Release/AKit.app dist/AKit/
+	cd AKitCore && swift build -c release --product akit --arch arm64 --arch x86_64
+	cp AKitCore/.build/apple/Products/Release/akit dist/AKit/
+	cd dist && ditto -c -k --norsrc --noextattr --keepParent AKit AKit.zip && rm -rf AKit
+	@echo "Built dist/AKit.zip. Publish: gh release create v$$(date +%Y.%m.%d-%H%M) dist/AKit.zip --generate-notes"
+
+banner:   ## redraw the README banner (docs/assets/banner.png)
+	swift tools/make-banner.swift && sips -Z 1920 docs/assets/banner.png >/dev/null
+
+screenshots: build   ## README screenshots (light and dark) from a made-up home: tools/demo-home.sh
+	tools/screenshots.sh
+
+.PHONY: generate open build run restart test snapshot install install-cli icon release screenshots banner

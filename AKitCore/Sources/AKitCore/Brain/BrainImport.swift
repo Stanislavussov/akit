@@ -1,15 +1,15 @@
 import Foundation
 import Yams
 
-/// Copies global skills (`~/.agents/skills`) into the brain library and lists them in
-/// the `core` layer. The originals stay where they are: harnesses keep reading them
-/// until the core layer is rendered into the home folder.
+/// Copies skills (global `~/.agents/skills` by default, or a project's skills folder) into
+/// the brain library and lists them in a layer, `core` by default. The originals stay where
+/// they are: harnesses keep reading them until the layer is rendered.
 public enum BrainImport {
     public struct Candidate: Identifiable, Hashable, Sendable {
         public enum State: Hashable, Sendable {
             /// Not in the brain yet: copied.
             case new
-            /// The brain has the same files: only listed in core.
+            /// The brain has the same files: only listed in the layer.
             case same
             /// The brain has a different skill with this name: left alone.
             case different
@@ -22,13 +22,13 @@ public enum BrainImport {
         public let state: State
         /// Where it was installed from (`npx skills` or AKit lock), e.g. `mattpocock/skills`.
         public let source: String?
-        /// Already listed in the core layer.
-        public let inCore: Bool
+        /// Already listed in the layer.
+        public let inLayer: Bool
         /// Files that are not copied, with the reason, e.g. `.env (may hold secrets)`.
         public let skipped: [String]
 
         /// Nothing to copy and nothing to list.
-        public var isDone: Bool { state == .same && inCore }
+        public var isDone: Bool { state == .same && inLayer }
     }
 
     public struct Plan: Sendable {
@@ -36,8 +36,12 @@ public enum BrainImport {
         /// The brain the plan was made for; apply writes only there.
         public let brainRoot: URL
         public let candidates: [Candidate]
-        /// Current `layers/core/layer.yaml`, empty when the file doesn't exist.
-        public let coreBefore: String
+        /// The layer the skills are listed in.
+        public let layer: String
+        /// How they are listed: manual for core, which every project sees.
+        public let mode: LayerSkill.Mode
+        /// Current `layers/<layer>/layer.yaml`, empty when the file doesn't exist.
+        public let layerBefore: String
     }
 
     public struct Failure: Error, LocalizedError {
@@ -49,15 +53,16 @@ public enum BrainImport {
         home.appending(path: ".agents/skills", directoryHint: .isDirectory)
     }
 
-    static func coreFile(in root: URL) -> URL { root.appending(path: "layers/core/layer.yaml") }
+    static func layerFile(_ layer: String, in root: URL) -> URL { root.appending(path: "layers/\(layer)/layer.yaml") }
 
-    /// What an import from `source` would do. Only reads.
-    public static func plan(from source: URL, into brainRoot: URL, env: HarnessEnvironment) -> Plan {
+    /// What an import from `source` into `layer` would do. Only reads.
+    public static func plan(from source: URL, into brainRoot: URL, layer: String = "core", mode: LayerSkill.Mode = .manual,
+                            env: HarnessEnvironment) -> Plan {
         let fm = FileManager.default
         let lock = SkillLock.read(in: env)
-        let before = (try? String(contentsOf: coreFile(in: brainRoot), encoding: .utf8)) ?? ""
+        let before = (try? String(contentsOf: layerFile(layer, in: brainRoot), encoding: .utf8)) ?? ""
         // From the file itself, not the last scan: it may have been edited since.
-        let inCore = Set((try? LayerManifest.parse(before, folder: URL(filePath: "/core")))?.layer.skills.map(\.name) ?? [])
+        let inLayer = Set((try? LayerManifest.parse(before, folder: URL(filePath: "/\(layer)")))?.layer.skills.map(\.name) ?? [])
         let items = (try? fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
 
         let candidates = items.compactMap { item -> Candidate? in
@@ -71,36 +76,37 @@ public enum BrainImport {
             let state: Candidate.State = !fm.fileExists(atPath: existing.path) ? .new
                 : sameFiles(contents.files, copyable(existing).files) ? .same : .different
             return Candidate(name: name, folder: folder, state: state, source: lock.source(forSkillFolder: folder),
-                             inCore: inCore.contains(name), skipped: contents.skipped)
+                             inLayer: inLayer.contains(name), skipped: contents.skipped)
         }
         .sorted { $0.name < $1.name }
-        return Plan(source: source, brainRoot: brainRoot, candidates: candidates, coreBefore: before)
+        return Plan(source: source, brainRoot: brainRoot, candidates: candidates, layer: layer, mode: mode, layerBefore: before)
     }
 
-    /// The core layer after listing these skills as `manual`.
-    public static func coreAfter(_ plan: Plan, importing names: [String]) throws(Failure) -> String {
-        let add = plan.candidates.filter { names.contains($0.name) && $0.state != .different && !$0.inCore }.map(\.name)
-        return try addSkills(add, mode: .manual, to: plan.coreBefore)
+    /// The layer after listing these skills in the plan's mode.
+    public static func layerAfter(_ plan: Plan, importing names: [String]) throws(Failure) -> String {
+        let add = plan.candidates.filter { names.contains($0.name) && $0.state != .different && !$0.inLayer }.map(\.name)
+        return try addSkills(add, mode: plan.mode, to: plan.layerBefore, layer: plan.layer)
     }
 
-    /// Copies the chosen skills, updates the core layer and commits both, if the brain is a git repo.
+    /// Copies the chosen skills, updates the layer and commits both, if the brain is a git repo.
     /// Returns the names that were copied.
     @discardableResult
     public static func apply(_ plan: Plan, importing names: [String], env: HarnessEnvironment) async throws(Failure) -> [String] {
         let root = plan.brainRoot
         let chosen = plan.candidates.filter { names.contains($0.name) && $0.state != .different }
-        let after = try coreAfter(plan, importing: names)
-        let coreChanges = after != plan.coreBefore
+        let after = try layerAfter(plan, importing: names)
+        let layerChanges = after != plan.layerBefore
+        let file = layerFile(plan.layer, in: root), filePath = "layers/\(plan.layer)/layer.yaml"
         let fm = FileManager.default
         let isRepo = fm.fileExists(atPath: root.appending(path: ".git").path)
 
-        // The core layer may have changed since the plan was made.
-        let current = (try? String(contentsOf: coreFile(in: root), encoding: .utf8)) ?? ""
-        guard current == plan.coreBefore else {
-            throw Failure(message: "layers/core/layer.yaml changed since the preview. Open the import again.")
+        // The layer may have changed since the plan was made.
+        let current = (try? String(contentsOf: file, encoding: .utf8)) ?? ""
+        guard current == plan.layerBefore else {
+            throw Failure(message: "\(filePath) changed since the preview. Open the import again.")
         }
         let toCopy = chosen.filter { $0.state == .new }
-        let paths = toCopy.map { "skills/\($0.name)" } + (coreChanges ? ["layers/core/layer.yaml"] : [])
+        let paths = toCopy.map { "skills/\($0.name)" } + (layerChanges ? [filePath] : [])
         // The import commit must hold only the import, not earlier edits to these paths.
         if isRepo, !paths.isEmpty {
             let status = try await git(["status", "--porcelain", "--"] + paths, in: root, env: env)
@@ -124,16 +130,16 @@ public enum BrainImport {
                 }
                 copied.append(candidate.name)
             }
-            if coreChanges {
-                try fm.createDirectory(at: coreFile(in: root).deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Data(after.utf8).write(to: coreFile(in: root), options: .atomic)
+            if layerChanges {
+                try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(after.utf8).write(to: file, options: .atomic)
             }
         } catch {
-            throw Failure(message: "The import stopped: \(error.localizedDescription) Copied: \(copied.isEmpty ? "nothing" : copied.joined(separator: ", ")); the core layer was not changed.")
+            throw Failure(message: "The import stopped: \(error.localizedDescription) Copied: \(copied.isEmpty ? "nothing" : copied.joined(separator: ", ")); the \(plan.layer) layer was not changed.")
         }
 
         guard isRepo, !paths.isEmpty else { return copied }
-        let message = "Import \(chosen.count) skill\(chosen.count == 1 ? "" : "s") into the core layer"
+        let message = "Import \(chosen.count) skill\(chosen.count == 1 ? "" : "s") into the \(plan.layer) layer"
         _ = try await git(["add", "--"] + paths, in: root, env: env)
         // Only these paths: whatever else is staged in the brain stays staged.
         _ = try await git(["commit", "--quiet", "-m", message, "--"] + paths, in: root, env: env)
@@ -226,7 +232,7 @@ public enum BrainImport {
 
     /// Adds `- name: x / mode: m` entries to the top-level `skills:` list, keeping the
     /// rest of the file (comments, order, line endings) as it is.
-    static func addSkills(_ names: [String], mode: LayerSkill.Mode, to text: String) throws(Failure) -> String {
+    static func addSkills(_ names: [String], mode: LayerSkill.Mode, to text: String, layer: String = "core") throws(Failure) -> String {
         guard !names.isEmpty else { return text }
         let newline = text.contains("\r\n") ? "\r\n" : "\n"
         var lines = text.isEmpty ? [] : text.components(separatedBy: newline)
@@ -239,7 +245,7 @@ public enum BrainImport {
                 rest = rest[..<comment.lowerBound].trimmingCharacters(in: .whitespaces)
             }
             guard ["", "[]", "~", "null"].contains(rest) else {
-                throw Failure(message: "The core layer's “skills:” line has “\(rest)” after it. Write skills as a block list (one “- name” per line) and try again.")
+                throw Failure(message: "The \(layer) layer's “skills:” line has “\(rest)” after it. Write skills as a block list (one “- name” per line) and try again.")
             }
             // Block list (or empty): append after its last item, with the same indent.
             var end = key + 1
@@ -256,7 +262,7 @@ public enum BrainImport {
 
         // Check the edit: the old skills are all still there unchanged, the new ones were
         // added once, and nothing else in the layer moved.
-        let folder = URL(filePath: "/core")
+        let folder = URL(filePath: "/\(layer)")
         let old = try? LayerManifest.parse(text, folder: folder).layer
         let oldSkills = old?.skills ?? []
         guard let new = try? LayerManifest.parse(result, folder: folder).layer, old != nil || text.isEmpty,
@@ -266,7 +272,7 @@ public enum BrainImport {
               new.fields == old?.fields ?? [], new.files == old?.files ?? [],
               new.description == old?.description ?? "", new.requires == old?.requires ?? [],
               new.conflicts == old?.conflicts ?? [] else {
-            throw Failure(message: "AKit couldn't add skills to layers/core/layer.yaml safely. Add them by hand.")
+            throw Failure(message: "AKit couldn't add skills to layers/\(layer)/layer.yaml safely. Add them by hand.")
         }
         return result
     }

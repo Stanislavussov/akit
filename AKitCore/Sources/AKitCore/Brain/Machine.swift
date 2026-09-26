@@ -30,6 +30,9 @@ public struct MachineProfile: Codable, Hashable, Sendable {
 
     public var isWork: Bool { kind == .work }
 
+    /// Name for this Mac's home record: the chosen name; on a work Mac never the host name.
+    public var homeName: String? { name ?? (isWork ? "work" : nil) }
+
     public static func file(home: URL) -> URL { home.appending(path: ".akit/machine.json") }
 
     /// No file means a personal Mac, as before this setting existed. A file that can't be
@@ -63,9 +66,9 @@ public struct MachineProfile: Codable, Hashable, Sendable {
         let old = load(home: home)
         // A broken file says nothing about where records were kept; assume the brain, as before the file.
         let oldStore = old.problem == nil ? ProjectStore.current(brain: brainRoot, home: home, machine: old) : .brain(brainRoot)
-        let oldHome = ProjectSetup.homeID(hostName: hostName, machineName: old.name)
+        let oldHome = ProjectSetup.homeID(hostName: hostName, machineName: old.homeName)
         try profile.save(home: home)
-        let newHome = ProjectSetup.homeID(hostName: hostName, machineName: profile.name)
+        let newHome = ProjectSetup.homeID(hostName: hostName, machineName: profile.homeName)
         let local = ProjectStore.local(home: home)
 
         guard profile.isWork else {

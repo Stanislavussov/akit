@@ -48,7 +48,9 @@ struct RootView: View {
                     .badge(section == .skills ? model.skills.count : section == .mcp ? model.mcpServers.count : 0)
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200)
-            .safeAreaInset(edge: .bottom) { BuildBadge(info: .current) }
+            .safeAreaInset(edge: .bottom) {
+                if DebugSnapshot.options?.demo != true { BuildBadge(info: .current) }
+            }
         } detail: {
             switch model.section ?? .overview {
             case .overview: OverviewView()

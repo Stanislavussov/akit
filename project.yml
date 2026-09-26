@@ -24,7 +24,8 @@ targets:
           mkdir -p "$(dirname "$plist")"
           /usr/bin/plutil -create xml1 "$plist"
           stamp() { /usr/bin/plutil -replace "$1" -string "$2" "$plist"; }
-          stamp AKitSourcePath "$SRCROOT"
+          # Not in release zips (make release): the maintainer's source folder means nothing elsewhere.
+          [ "${AKIT_DIST:-}" = 1 ] || stamp AKitSourcePath "$SRCROOT"
           stamp AKitGitBranch "$(git -C "$SRCROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
           stamp AKitGitCommit "$(git -C "$SRCROOT" rev-parse --short HEAD 2>/dev/null)"
           stamp AKitGitDirty "$(git -C "$SRCROOT" status --porcelain --untracked-files=no 2>/dev/null | head -1 | grep -q . && echo yes || echo no)"
@@ -48,6 +49,10 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         # The build stamp script reads the git repository.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+      configs:
+        # Orange icon for dev builds, so they are easy to tell from the installed app in the Dock.
+        Debug:
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
 schemes:
   AKit:
     build:
