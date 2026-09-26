@@ -293,12 +293,16 @@ public enum ProjectSetup {
         }
 
         // Lock: what AKit now owns in the project. Excluded paths keep their old entry, if any.
+        // A file that was already there with the same content stays the user's: AKit never
+        // wrote it, so a later render or removal must not trash it.
+        let kinds = Dictionary(plan.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         var lock = Lock(brainCommit: nil, brainDirty: false, files: [:])
         for output in plan.render.outputs {
             if excluded.contains(output.path) {
                 if let old = plan.previous?.files[output.path] { lock.files[output.path] = old }
                 continue
             }
+            if let change = kinds[output.path], change.kind == .same, change.replacesUnmanaged { continue }
             lock.files[output.path] = entry(for: output)
         }
         for change in plan.changes where change.kind == .keepEdited || (change.kind == .remove && excluded.contains(change.path)) {
