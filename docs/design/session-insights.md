@@ -36,6 +36,11 @@ cross-session and cross-machine aggregation, recommendations.
 - Stores facts, never message text: sessions, requests with recorded tokens, every
   tool call with its output size, skill exposure and skill calls, machine label.
 - Import is incremental: remembers each file and the offset it read up to.
+- Every record keeps the parser version. Raw logs expire, so later parser fixes
+  migrate the index itself; store facts generously from the start.
+- Hooks never open SQLite: they append one line to `~/.akit/index/spool.jsonl`
+  and the import moves the lines into the database. Parallel session starts and a
+  running import can't block or slow each other.
 - Why a durable index: Claude Code deletes logs after `cleanupPeriodDays` (default 30).
   Before/after comparisons and observation windows need longer history.
 - Brain gets small per-project summaries with a machine label,
@@ -60,6 +65,17 @@ cross-session and cross-machine aggregation, recommendations.
   `systemPromptOptions.skills`, the same hook `PiPromptProbe` already uses) into
   AKit's own file, and Pi joins the denominator.
 
+Manual really removes the description (checked 2026-09-26): the three
+`disable-model-invocation: true` skills in `~/.claude/skills` (`akit`, `zoom-out`,
+`setup-matt-pocock-skills`) are absent from a live Claude `skill_listing`, auto
+skills are present. For Pi only the docs say so; step 1 confirms it with
+`PiPromptProbe` on a project with a manual skill. If a harness keeps the
+description, the rule saves nothing there and must not recommend for it.
+
+Subagents: their transcripts (`<session>/subagents/*.jsonl`) carry their own
+`skill_listing` (19 of the last 20 checked). A subagent run is not a session in
+the denominator; its model calls do count as calls (they protect the skill).
+
 ### Rule: auto → manual
 
 - Only calls by the model count. A skill called only via `/name` still works in
@@ -68,7 +84,13 @@ cross-session and cross-machine aggregation, recommendations.
   machines and the model called it 0 times. Proposed defaults: N = 20, D = 14.
 - Count only sessions where the skill was actually listed.
 - A new or changed skill (description changed) starts its window again.
+- The window is also per project: when a layer is added to a project, its skills
+  start counting there from that `apply` (date from the project's lock history in the brain).
 - `keep_auto: true` on the skill in `layer.yaml` pins it; `dismiss` sets it.
+- Dismissed advice outside layers (plugins, hand-installed skills) is stored in the
+  brain: `insights/dismissed.json` for global advice, `projects/<id>/dismissed.json`
+  for per-project advice. A dismissed advice returns only if its evidence grows
+  a lot (e.g. twice the context space).
 - Output is sorted by ≈ context space (description tokens × requests in the window),
   with the call rate next to it, so almost-dead skills show up too.
 
@@ -119,7 +141,8 @@ Recommendations use exact and git bindings by default; sibling bindings behind a
   the current Claude Code), so AKit writes only its own files. Later the same
   plugin is the adapter for memory injection.
 - The hook prints nothing (SessionStart output lands in the agent's context),
-  reads `session_id`, `cwd`, `transcript_path` from stdin, is fast and always exits 0.
+  reads `session_id`, `cwd`, `transcript_path` from stdin, only appends to the
+  spool file, and always exits 0.
 - Pi: an extension file in `~/.pi/agent/extensions/`, owned by AKit, same facts.
 - Safety net: launchd runs `akit sessions import` hourly (also parses the sessions).
 
@@ -137,9 +160,13 @@ Recommendations use exact and git bindings by default; sibling bindings behind a
 
 ## Order
 
-0. By hand, today: raise `cleanupPeriodDays` in `~/.claude/settings.json`.
+0. By hand, today: `"cleanupPeriodDays": 365` in `~/.claude/settings.json`.
+   Optionally disable the `marketing` and `customer-support` plugins where they
+   aren't needed (≈ 1.1k tokens per request); note the date, it is the first
+   before/after pair for calibration.
 1. SQLite index + incremental import (Claude, Pi) + debug `stats` to check the
-   parser on real logs (model vs. `/name` calls, sizes).
+   parser on real logs (model vs. `/name` calls, sizes, subagents). Confirm that
+   manual hides the skill in Pi.
 2. Claude plugin with the hook (`cwd`, `gitdir`, remote) + Pi extension + hourly launchd.
 3. Project binding chain with confidence levels.
 4. Full `akit stats`.
