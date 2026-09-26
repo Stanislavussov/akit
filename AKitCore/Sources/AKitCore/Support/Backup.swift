@@ -17,15 +17,21 @@ enum Backup {
         return folder
     }
 
-    /// Copies `file` (its content, if it is a link) into `folder`, keeping its path under home.
+    /// Copies `file` into `folder`, keeping its path under home. `keepLink`: a link is
+    /// backed up as the same link (the thing replaced), otherwise as the content it points to.
     @discardableResult
-    static func copy(_ file: URL, into folder: URL, home: URL) throws -> URL {
+    static func copy(_ file: URL, into folder: URL, home: URL, keepLink: Bool = false) throws -> URL {
+        let fm = FileManager.default
         var relative = file.standardizedFileURL.path
         let homePath = home.standardizedFileURL.path
         if relative.hasPrefix(homePath + "/") { relative = String(relative.dropFirst(homePath.count + 1)) }
         let backup = folder.appending(path: relative)
-        try FileManager.default.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: file.resolvingSymlinksInPath(), to: backup)
+        try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if keepLink, let destination = try? fm.destinationOfSymbolicLink(atPath: file.path) {
+            try fm.createSymbolicLink(atPath: backup.path, withDestinationPath: destination)
+        } else {
+            try fm.copyItem(at: file.resolvingSymlinksInPath(), to: backup)
+        }
         return backup
     }
 }

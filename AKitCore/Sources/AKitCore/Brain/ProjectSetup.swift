@@ -40,6 +40,8 @@ public enum ProjectSetup {
         /// The project has this file, but AKit didn't write it (not in the last lock).
         public let replacesUnmanaged: Bool
         public let layers: [String]
+        /// AKit wrote it, but it was edited by hand since (hash differs from the lock).
+        public var editedSinceRender = false
     }
 
     public struct Plan: Sendable {
@@ -82,8 +84,9 @@ public enum ProjectSetup {
             return id
         }
         let path = project.standardizedFileURL.path, root = projectsRoot.standardizedFileURL.path
-        let relative = path.hasPrefix(root + "/") ? String(path.dropFirst(root.count + 1)) : project.lastPathComponent
-        return "local/" + cleanPath(relative)
+        if path.hasPrefix(root + "/") { return "local/" + cleanPath(String(path.dropFirst(root.count + 1))) }
+        // Outside the projects root: the folder name plus a short hash, so two "app" folders differ.
+        return "local/" + cleanPath(project.lastPathComponent) + "-" + sha256(Data(path.utf8)).prefix(8)
     }
 
     /// `git@github.com:Owner/Repo.git`, `https://user@github.com/owner/repo`, `ssh://git@host:22/o/r.git`
@@ -96,7 +99,8 @@ public enum ProjectSetup {
         } else if let colon = text.firstIndex(of: ":"), !text[..<colon].contains("/") {
             text.replaceSubrange(colon...colon, with: "/")  // scp form host:path
         }
-        if let at = text.firstIndex(of: "@"), !text[..<at].contains("/") { text = String(text[text.index(after: at)...]) }
+        // user[:password]@ before the host; a password may itself hold "/", so cut at the last "@".
+        if let at = text.lastIndex(of: "@") { text = String(text[text.index(after: at)...]) }
         var parts = text.split(separator: "/").map(String.init)
         guard parts.count >= 2 else { return nil }
         if let colon = parts[0].firstIndex(of: ":") { parts[0] = String(parts[0][..<colon]) }  // port
@@ -111,7 +115,7 @@ public enum ProjectSetup {
             .map { component in
                 String(component.map { $0.isLetter || $0.isNumber || "._-".contains($0) ? $0 : "-" })
             }
-            .filter { $0 != "." && $0 != ".." && !$0.isEmpty }
+            .filter { $0 != "." && $0 != ".." && $0 != ".git" && !$0.isEmpty }
             .joined(separator: "/")
     }
 
@@ -163,18 +167,28 @@ public enum ProjectSetup {
                     changes.append(Change(path: output.path, kind: .create, oldText: nil, newText: "→ \(destination)",
                                           replacesUnmanaged: false, layers: output.layers))
                 }
-                snapshot[output.path] = linkSnapshot(url)
+                snapshot[output.path] = state(url)
             case .data(let data):
-                let current = try? Data(contentsOf: url)
                 var isFolder: ObjCBool = false
-                if fm.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue {
+                if isLink(url) == false, fm.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue {
                     blockers.append("\(output.path) is a folder in the project; AKit wants to write a file there.")
                     continue
                 }
-                let kind: Change.Kind = current == nil ? .create : current == data ? .same : .update
-                changes.append(Change(path: output.path, kind: kind, oldText: current.flatMap { String(data: $0, encoding: .utf8) },
-                                      newText: output.text, replacesUnmanaged: current != nil && !managed, layers: output.layers))
-                snapshot[output.path] = linkSnapshot(url)
+                if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) {
+                    // A link (e.g. CLAUDE.md -> AGENTS.md) is replaced by a file; say so.
+                    changes.append(Change(path: output.path, kind: .update, oldText: "→ \(destination) (a link)", newText: output.text,
+                                          replacesUnmanaged: true, layers: output.layers))
+                } else {
+                    let current = try? Data(contentsOf: url)
+                    let kind: Change.Kind = current == nil ? .create : current == data ? .same : .update
+                    var change = Change(path: output.path, kind: kind, oldText: current.flatMap { String(data: $0, encoding: .utf8) },
+                                        newText: output.text, replacesUnmanaged: current != nil && !managed, layers: output.layers)
+                    if kind == .update, let current, let entry = previous?.files[output.path], entry.sha256 != sha256(current) {
+                        change.editedSinceRender = true
+                    }
+                    changes.append(change)
+                }
+                snapshot[output.path] = state(url)
             }
         }
 
@@ -184,12 +198,12 @@ public enum ProjectSetup {
             if let link = entry.link {
                 guard (try? fm.destinationOfSymbolicLink(atPath: url.path)) == link else { continue }
                 changes.append(Change(path: path, kind: .remove, oldText: "→ \(link)", newText: nil, replacesUnmanaged: false, layers: entry.layers))
-                snapshot[path] = linkSnapshot(url)
-            } else if let data = try? Data(contentsOf: url) {
+                snapshot[path] = state(url)
+            } else if !isLink(url), let data = try? Data(contentsOf: url) {
                 let edited = entry.sha256 != sha256(data)
                 changes.append(Change(path: path, kind: edited ? .keepEdited : .remove, oldText: String(data: data, encoding: .utf8),
                                       newText: nil, replacesUnmanaged: false, layers: entry.layers))
-                snapshot[path] = linkSnapshot(url)
+                snapshot[path] = state(url)
             }
         }
 
@@ -211,10 +225,12 @@ public enum ProjectSetup {
         let outputs = Dictionary(plan.render.outputs.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let todo = plan.changes.filter { !excluded.contains($0.path) && [.create, .update, .remove].contains($0.kind) }
 
-        // Stop if the project changed since the preview.
+        // Stop if the project changed since the preview (a file, link or folder, or a parent
+        // that became a link out of the project).
         for change in todo {
             let url = plan.project.appending(path: change.path)
-            if linkSnapshot(url) != (plan.snapshot[change.path] ?? nil) {
+            if let problem = escapes(change.path, project: plan.project) { throw Failure(message: problem) }
+            if state(url) != (plan.snapshot[change.path] ?? nil) {
                 throw Failure(message: "\(change.path) changed since the preview. Look at the preview again.")
             }
         }
@@ -224,9 +240,9 @@ public enum ProjectSetup {
         do {
             for change in todo where change.kind != .create {
                 let url = plan.project.appending(path: change.path)
-                guard (try? fm.destinationOfSymbolicLink(atPath: url.path)) == nil, fm.fileExists(atPath: url.path) else { continue }
+                guard isLink(url) || fm.fileExists(atPath: url.path) else { continue }
                 if backup == nil { backup = try Backup.newFolder(home: home) }
-                try Backup.copy(url, into: backup!, home: home)
+                try Backup.copy(url, into: backup!, home: home, keepLink: true)
             }
             for change in todo {
                 let url = plan.project.appending(path: change.path)
@@ -238,19 +254,32 @@ public enum ProjectSetup {
                 }
                 guard let output = outputs[change.path] else { continue }
                 try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                // Whatever is there must go first: a link is only a link (backed up above);
+                // a folder goes to the Trash and only when it is empty.
+                if isLink(url) {
+                    try fm.removeItem(at: url)
+                } else if case .link = output.content, fm.fileExists(atPath: url.path) {
+                    guard isEmptyFolder(url) else {
+                        throw Failure(message: "\(change.path) is no longer an empty folder; nothing replaced it.")
+                    }
+                    _ = try trash(url)
+                }
                 switch output.content {
                 case .data(let data):
                     try data.write(to: url, options: .atomic)
                 case .link(let destination):
-                    if (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil || fm.fileExists(atPath: url.path) {
-                        try fm.removeItem(at: url)  // a link or an empty folder, checked in the plan
-                    }
                     try fm.createSymbolicLink(atPath: url.path, withDestinationPath: destination)
                 }
                 written.append(change.path)
             }
         } catch {
-            throw Failure(message: "Writing the project stopped: \(error.localizedDescription) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")")
+            // Record what did happen, so the next preview knows which files AKit wrote.
+            var partial = plan.previous ?? Lock(brainCommit: nil, brainDirty: false, files: [:])
+            for path in removed { partial.files[path] = nil }
+            for path in written { if let output = outputs[path] { partial.files[path] = entry(for: output) } }
+            try? save(partial, answers: nil, id: plan.id, brain: brain.root)
+            let reason = (error as? Failure)?.message ?? error.localizedDescription
+            throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")")
         }
 
         // Lock: what AKit now owns in the project. Excluded paths keep their old entry, if any.
@@ -260,10 +289,7 @@ public enum ProjectSetup {
                 if let old = plan.previous?.files[output.path] { lock.files[output.path] = old }
                 continue
             }
-            switch output.content {
-            case .data(let data): lock.files[output.path] = .init(sha256: sha256(data), link: nil, layers: output.layers)
-            case .link(let destination): lock.files[output.path] = .init(sha256: nil, link: destination, layers: output.layers)
-            }
+            lock.files[output.path] = entry(for: output)
         }
         for change in plan.changes where change.kind == .keepEdited || (change.kind == .remove && excluded.contains(change.path)) {
             if let old = plan.previous?.files[change.path] { lock.files[change.path] = old }
@@ -275,13 +301,8 @@ public enum ProjectSetup {
             let dirty = (try? await git(["status", "--porcelain", "--", "skills", "layers"], in: brain.root, env: env)) ?? ""
             lock.brainDirty = !dirty.isEmpty
         }
-        let folder = metadataFolder(id: plan.id, brain: brain.root)
         do {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            try encoder.encode(plan.answers).write(to: folder.appending(path: "answers.json"), options: .atomic)
-            try encoder.encode(lock).write(to: folder.appending(path: "lock.json"), options: .atomic)
+            try save(lock, answers: plan.answers, id: plan.id, brain: brain.root)
         } catch {
             throw Failure(message: "The project was written, but the answers couldn't be saved in the brain: \(error.localizedDescription)")
         }
@@ -303,6 +324,31 @@ public enum ProjectSetup {
 
     // MARK: - Helpers
 
+    private static func entry(for output: Render.Output) -> Lock.Entry {
+        switch output.content {
+        case .data(let data): .init(sha256: sha256(data), link: nil, layers: output.layers)
+        case .link(let destination): .init(sha256: nil, link: destination, layers: output.layers)
+        }
+    }
+
+    /// Writes lock.json (and answers.json, when given) under `projects/<id>`.
+    private static func save(_ lock: Lock, answers: ProjectAnswers?, id: String, brain root: URL) throws {
+        let folder = metadataFolder(id: id, brain: root)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        if let answers { try encoder.encode(answers).write(to: folder.appending(path: "answers.json"), options: .atomic) }
+        try encoder.encode(lock).write(to: folder.appending(path: "lock.json"), options: .atomic)
+    }
+
+    private static func isLink(_ url: URL) -> Bool {
+        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+    }
+
+    private static func isEmptyFolder(_ url: URL) -> Bool {
+        (try? FileManager.default.contentsOfDirectory(atPath: url.path))?.allSatisfy { $0 == ".DS_Store" } ?? false
+    }
+
     static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -310,17 +356,33 @@ public enum ProjectSetup {
     /// A path that would leave the project folder through `..` or a symlinked parent.
     private static func escapes(_ path: String, project: URL) -> String? {
         let base = project.resolvingSymlinksInPath().standardizedFileURL.path
-        let parent = project.appending(path: path).deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
-        guard parent == base || parent.hasPrefix(base + "/") else {
+        // resolvingSymlinksInPath leaves a missing path alone, so resolve the nearest folder
+        // that exists (e.g. a linked .agents above a skill folder not created yet).
+        var existing = project.appending(path: path).deletingLastPathComponent().standardizedFileURL
+        var rest: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path), existing.path.count > 1 {
+            rest.insert(existing.lastPathComponent, at: 0)
+            existing = existing.deletingLastPathComponent()
+        }
+        let parent = rest.reduce(existing.resolvingSymlinksInPath()) { $0.appending(path: $1) }.standardizedFileURL.path
+        guard !path.split(separator: "/").contains(".."), parent == base || parent.hasPrefix(base + "/") else {
             return "\(path) would be written outside the project (through a link). AKit won't write it."
         }
         return nil
     }
 
-    /// What is at a path now: a link's destination or a file's bytes, compared before writing.
-    private static func linkSnapshot(_ url: URL) -> Data? {
-        (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)).map { Data("link:\($0)".utf8) }
-            ?? (try? Data(contentsOf: url))
+    /// What is at a path now, compared before writing: a link's destination, a folder's
+    /// listing, or a file's bytes; nil when nothing is there.
+    private static func state(_ url: URL) -> Data? {
+        let fm = FileManager.default
+        if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) { return Data("link:\(destination)".utf8) }
+        var isFolder: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isFolder) else { return nil }
+        if isFolder.boolValue {
+            let items = (try? fm.contentsOfDirectory(atPath: url.path))?.filter { $0 != ".DS_Store" }.sorted() ?? []
+            return Data("folder:\(items.joined(separator: "/"))".utf8)
+        }
+        return (try? Data(contentsOf: url)) ?? Data("unreadable".utf8)
     }
 
     private static func removeEmptyFolders(from folder: URL, upTo project: URL) {

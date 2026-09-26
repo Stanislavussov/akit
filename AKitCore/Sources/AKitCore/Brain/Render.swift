@@ -121,17 +121,20 @@ public enum Render {
         var outputs: [Output] = []
         var skillOwner: [String: (layer: String, override: Bool)] = [:]
         var skills: [(skill: LayerSkill, layer: String)] = []
+        // The same skill from two layers: the one with override: true wins (its mode too,
+        // so `mode: off` + override removes a skill an earlier layer brings).
         for layer in layers {
-            for skill in layer.skills where skill.mode != .off && matches(skill.when, values) {
+            for skill in layer.skills where matches(skill.when, values) {
                 if let owner = skillOwner[skill.name] {
-                    guard skill.override else {
+                    guard skill.override || owner.override else {
                         errors.append("Skill “\(skill.name)” comes from both \(owner.layer) and \(layer.name). Set override: true in the layer that should win.")
                         continue
                     }
+                    if owner.override && !skill.override { continue }
                     skills.removeAll { $0.skill.name == skill.name }
                 }
                 skillOwner[skill.name] = (layer.name, skill.override)
-                skills.append((skill, layer.name))
+                if skill.mode != .off { skills.append((skill, layer.name)) }
             }
         }
         for (skill, layer) in skills {
@@ -145,7 +148,8 @@ public enum Render {
                     errors.append("Couldn't read skills/\(skill.name)/\(relative).")
                     continue
                 }
-                if let text = String(data: data, encoding: .utf8) {
+                // Fields only in Markdown: a skill's scripts may use {{…}} for other tools.
+                if relative.lowercased().hasSuffix(".md"), let text = String(data: data, encoding: .utf8) {
                     var rendered = substitute(text, values).text
                     if relative == "SKILL.md", skill.mode == .manual {
                         guard let manual = manualOnly(rendered) else {
@@ -189,11 +193,11 @@ public enum Render {
                 let texts = parts.map { String(decoding: $0.data, as: UTF8.self).trimmingCharacters(in: .newlines) }
                 outputs.append(Output(path: path, content: .data(Data((texts.joined(separator: "\n\n") + "\n").utf8)),
                                       layers: parts.map(\.layer)))
-            } else if let last = parts.last {
-                if parts.count > 1, !last.override {
+            } else if let winner = parts.last(where: \.override) ?? parts.last {
+                if parts.count > 1, !parts.contains(where: \.override) {
                     errors.append("\(path) comes from \(parts.map(\.layer).joined(separator: " and ")). Set override: true in the layer that should win.")
                 }
-                outputs.append(Output(path: path, content: .data(last.data), layers: [last.layer]))
+                outputs.append(Output(path: path, content: .data(winner.data), layers: [winner.layer]))
             }
         }
 
@@ -210,6 +214,15 @@ public enum Render {
                     outputs.append(Output(path: ".claude/skills", content: .link("../.agents/skills"), layers: []))
                 }
             }
+        }
+
+        // Every path once, and never inside .git (a layer could plant a hook).
+        var seen: Set<String> = []
+        for output in outputs where !seen.insert(output.path).inserted {
+            errors.append("\(output.path) is written twice (a template and a skill or the Claude link). Rename one.")
+        }
+        for output in outputs where output.path.split(separator: "/").contains(".git") {
+            errors.append("\(output.path) is inside .git; layers can't write there.")
         }
 
         return Result(layers: order, outputs: outputs.sorted { $0.path < $1.path }, errors: errors, warnings: warnings)
@@ -274,16 +287,18 @@ public enum Render {
     /// SKILL.md with `disable-model-invocation: true` in its header; nil without a header.
     static func manualOnly(_ text: String) -> String? {
         let newline = text.contains("\r\n") ? "\r\n" : "\n"
-        var lines = text.components(separatedBy: newline)
+        let bom = text.hasPrefix("\u{FEFF}")
+        var lines = String(text.dropFirst(bom ? 1 : 0)).components(separatedBy: newline)
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---",
               let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) else { return nil }
-        let key = "disable-model-invocation:"
-        if let existing = lines[1..<end].firstIndex(where: { $0.hasPrefix(key) }) {
-            lines[existing] = "\(key) true"
-        } else {
-            lines.insert("\(key) true", at: end)
+        let line = "disable-model-invocation: true"
+        // The key as written: bare or quoted, with or without a space before the colon.
+        let existing = lines[1..<end].firstIndex { raw in
+            let key = raw.split(separator: ":", maxSplits: 1).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+            return !raw.hasPrefix(" ") && key.trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) == "disable-model-invocation"
         }
-        return lines.joined(separator: newline)
+        if let existing { lines[existing] = line } else { lines.insert(line, at: end) }
+        return (bom ? "\u{FEFF}" : "") + lines.joined(separator: newline)
     }
 
     private static func isMarkdown(_ path: String) -> Bool { path.lowercased().hasSuffix(".md") }

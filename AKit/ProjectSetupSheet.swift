@@ -247,8 +247,8 @@ struct ProjectSetupSheet: View {
                 return
             }
             plan = made
-            // Files AKit didn't write are left out until you tick them.
-            excluded = Set(made.changes.filter { $0.replacesUnmanaged && $0.kind == .update }.map(\.path))
+            // Files AKit didn't write, or edited by hand since, are left out until you tick them.
+            excluded = Set(made.changes.filter { $0.kind == .update && ($0.replacesUnmanaged || $0.editedSinceRender) }.map(\.path))
             selectedChange = made.changes.first { $0.kind != .same }?.path
             page = .preview
         }
@@ -300,6 +300,8 @@ struct ProjectSetupSheet: View {
                             Text(label(change.kind)).foregroundStyle(tint(change.kind))
                             if change.replacesUnmanaged && change.kind == .update {
                                 Text("· replaces a file AKit didn't write").foregroundStyle(.orange)
+                            } else if change.editedSinceRender {
+                                Text("· edited by hand since the last render").foregroundStyle(.orange)
                             }
                         }
                         .font(.caption)

@@ -134,7 +134,37 @@ struct RenderTests {
         #expect(text(result, "a.md") == "Note: .\n")
     }
 
+    @Test func overrideWinsFromEitherSideAndOffRemoves() throws {
+        try write("skills/tdd/SKILL.md", "---\nname: tdd\n---\n")
+        try write("skills/tdd/run.sh", "echo {{project_name}}\n")
+        try write("layers/a/layer.yaml", "skills:\n  - name: tdd\n    override: true\nfiles:\n  - template: x.json\n    override: true\n")
+        try write("layers/a/templates/x.json", "a")
+        try write("layers/b/layer.yaml", "skills:\n  - name: tdd\n    mode: manual\nfiles:\n  - template: x.json\n")
+        try write("layers/b/templates/x.json", "b")
+        try write("layers/off/layer.yaml", "skills:\n  - name: tdd\n    mode: off\n    override: true\n")
+
+        let earlier = Render.render(ProjectAnswers(layers: ["a", "b"]), brain: try brain(), projectName: "p")
+        #expect(earlier.errors.isEmpty, "\(earlier.errors)")
+        #expect(text(earlier, "x.json") == "a")
+        #expect(text(earlier, ".agents/skills/tdd/SKILL.md")?.contains("disable-model-invocation") == false)
+        #expect(text(earlier, ".agents/skills/tdd/run.sh") == "echo {{project_name}}\n")  // only Markdown is filled
+
+        let off = Render.render(ProjectAnswers(layers: ["b", "off"]), brain: try brain(), projectName: "p")
+        #expect(off.errors.isEmpty, "\(off.errors)")
+        #expect(!off.outputs.contains { $0.path.contains("tdd") })
+    }
+
+    @Test func pathsAreUniqueAndStayOutOfGit() throws {
+        try write("skills/tdd/SKILL.md", "---\nname: tdd\n---\n")
+        try write("layers/x/layer.yaml", "skills: [tdd]\nfiles:\n  - template: s.md\n    to: .agents/skills/tdd/SKILL.md\n  - template: s.md\n    to: .git/hooks/post-checkout\n")
+        try write("layers/x/templates/s.md", "x")
+        let result = Render.render(ProjectAnswers(layers: ["x"]), brain: try brain(), projectName: "p")
+        #expect(result.errors.contains { $0.hasPrefix(".agents/skills/tdd/SKILL.md is written twice") })
+        #expect(result.errors.contains(".git/hooks/post-checkout is inside .git; layers can't write there."))
+    }
+
     @Test func pieces() {
+        #expect(Render.manualOnly("\u{FEFF}---\n\"disable-model-invocation\" : false\n---\n") == "\u{FEFF}---\ndisable-model-invocation: true\n---\n")
         #expect(Render.substitute("{{a}} {{ b }} {{c}} {{", ["a": .text("1"), "b": .list(["x", "y"])])
                 == ("1 x, y {{c}} {{", ["c"]))
         #expect(Render.manualOnly("---\nname: x\ndisable-model-invocation: false\n---\nbody") == "---\nname: x\ndisable-model-invocation: true\n---\nbody")

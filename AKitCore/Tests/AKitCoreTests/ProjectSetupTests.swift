@@ -82,6 +82,73 @@ struct ProjectSetupTests {
         #expect(ProjectSetup.normalizedRemote("ssh://git@gitlab.example.com:2222/group/sub/proj.git") == "gitlab.example.com/group/sub/proj")
         #expect(ProjectSetup.normalizedRemote("https://github.com/../../etc") == "github.com/etc")
         #expect(ProjectSetup.normalizedRemote("") == nil)
+        #expect(ProjectSetup.normalizedRemote("https://me:p/ss@github.com/o/r.git") == "github.com/o/r")
+        #expect(ProjectSetup.normalizedRemote("https://host/.git/x/y") == "host/x/y")
+    }
+
+    @Test func projectOutsideTheRootGetsAHashedID() async throws {
+        let other = home.appending(path: "Elsewhere/app")
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        let id = await ProjectSetup.projectID(for: other, projectsRoot: home.appending(path: "Projects"), env: env)
+        #expect(id.hasPrefix("local/app-") && id.count == "local/app-".count + 8)
+    }
+
+    @Test func changesAfterThePreviewAreNeverOverwritten() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+
+        // A real .claude/skills folder appears after the preview.
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        try write("Projects/task/.claude/skills/mine/SKILL.md", "mine")
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        }
+        #expect(read(".claude/skills/mine/SKILL.md") == "mine")
+        try fm.removeItem(at: project.appending(path: ".claude"))
+
+        // .agents becomes a link out of the project after the preview.
+        let second = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        try fm.createDirectory(at: home.appending(path: "outside"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: project.appending(path: ".agents"), withDestinationURL: home.appending(path: "outside"))
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(second, brain: brain, home: home, env: env, trash: trash)
+        }
+        #expect(try fm.contentsOfDirectory(atPath: home.appending(path: "outside").path).isEmpty)
+    }
+
+    @Test func aLinkedFileIsShownAndBackedUpAsALink() async throws {
+        let brain = try await setUpBrain()
+        try write("Projects/task/NOTES.md", "notes")
+        try fm.createSymbolicLink(atPath: project.appending(path: "CLAUDE.md").path, withDestinationPath: "NOTES.md")
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        let change = try #require(plan.changes.first { $0.path == "CLAUDE.md" })
+        #expect(change.kind == .update && change.replacesUnmanaged && change.oldText == "→ NOTES.md (a link)")
+
+        let outcome = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        #expect(read("CLAUDE.md") == "@AGENTS.md\n")
+        #expect(read("NOTES.md") == "notes")
+        let backup = try #require(outcome.backup).appending(path: "Projects/task/CLAUDE.md")
+        #expect(try fm.destinationOfSymbolicLink(atPath: backup.path) == "NOTES.md")
+    }
+
+    @Test func handEditsAreFlaggedAndAFailedApplyStillRecordsWhatItWrote() async throws {
+        let brain = try await setUpBrain()
+        _ = try await ProjectSetup.apply(ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain),
+                                         brain: brain, home: home, env: env, trash: trash)
+        try write("Projects/task/AGENTS.md", "hand edit")
+        var next = answers
+        next.values["company"] = .text("Beta")
+        next.values["review"] = .bool(false)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: next, brain: brain)
+        #expect(plan.changes.first { $0.path == "AGENTS.md" }?.editedSinceRender == true)
+
+        // The Trash fails on REVIEW.md: AGENTS.md was already written and must be in the lock.
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(plan, brain: brain, home: home, env: env,
+                                         trash: { _ in throw CocoaError(.fileWriteNoPermission) })
+        }
+        let lock = try #require(ProjectSetup.savedLock(id: "local/task", brain: brainRoot))
+        #expect(lock.files["AGENTS.md"]?.sha256 == ProjectSetup.sha256(Data("# Task for Beta\n".utf8)))
     }
 
     @Test func projectWithoutRemoteUsesItsPath() async throws {
