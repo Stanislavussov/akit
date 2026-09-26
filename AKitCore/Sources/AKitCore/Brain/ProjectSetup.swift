@@ -72,6 +72,16 @@ public enum ProjectSetup {
         public var errorDescription: String? { message }
     }
 
+    // MARK: - Home
+
+    /// The brain id of this machine's home folder: `home/<host name>`, one lock per Mac.
+    public static func homeID(hostName: String = ProcessInfo.processInfo.hostName) -> String {
+        var host = hostName.lowercased()
+        if host.hasSuffix(".local") { host.removeLast(".local".count) }
+        let name = cleanPath(host.replacingOccurrences(of: "/", with: "-"))
+        return "home/" + (name.isEmpty ? "mac" : name)
+    }
+
     // MARK: - Project id
 
     /// `github.com/owner/repo` from the `origin` remote, else `local/<path under the projects root>`.
@@ -134,9 +144,9 @@ public enum ProjectSetup {
 
     // MARK: - Plan
 
-    public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain) -> Plan {
+    public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, forHome: Bool = false) -> Plan {
         let fm = FileManager.default
-        let render = Render.render(answers, brain: brain, projectName: project.lastPathComponent)
+        let render = Render.render(answers, brain: brain, projectName: project.lastPathComponent, forHome: forHome)
         let previous = savedLock(id: id, brain: brain.root)
         var changes: [Change] = []
         var blockers: [String] = []
