@@ -15,9 +15,10 @@ bash <(gh api repos/Stanislavussov/akit/contents/install.sh --jq .content | base
 
 It clones the source into `~/Projects/akit` (or updates it), builds a release, and
 installs `~/Applications/AKit.app` and `~/.local/bin/akit`. Run it again to update.
-To bring your brain along: `AKIT_BRAIN_REPO=<owner>/<repo>` before the command; when a
-brain is there, its core layer is rendered into `~` (skills for every harness; replaced
-files are backed up in `~/.akit/backups`). `AKIT_SKIP_HOME=1` skips that.
+It also clones your brain (`Stanislavussov/brain`, or `AKIT_BRAIN_REPO=<owner>/<repo>`,
+empty for none) into `~/.akit/registry`, or pulls it when it is already there and clean,
+then renders its core layer into `~` (skills for every harness; replaced files are backed
+up in `~/.akit/backups`). `AKIT_SKIP_HOME=1` skips that.
 
 From a checkout: `./install.sh`, or `make install` (both) / `make install-cli` (only `akit`).
 

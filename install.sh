@@ -8,13 +8,14 @@
 # Settings (environment variables):
 #   AKIT_REPO        GitHub repo of AKit           (default Stanislavussov/akit)
 #   AKIT_DIR         where the source lives         (default ~/Projects/akit)
-#   AKIT_BRAIN_REPO  your brain repo, cloned into ~/.akit/registry if that is missing
-#                    (e.g. Stanislavussov/brain; optional)
+#   AKIT_BRAIN_REPO  your brain repo, cloned into ~/.akit/registry if that is missing, else
+#                    updated (default Stanislavussov/brain; empty = don't fetch a brain)
 #   AKIT_SKIP_HOME=1 don't render the brain's core layer into ~ after installing
 set -euo pipefail
 
 AKIT_REPO="${AKIT_REPO:-Stanislavussov/akit}"
 AKIT_DIR="${AKIT_DIR:-$HOME/Projects/akit}"
+AKIT_BRAIN_REPO="${AKIT_BRAIN_REPO-Stanislavussov/brain}"
 BRAIN_DIR="$HOME/.akit/registry"
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
@@ -55,10 +56,18 @@ fi
 say "Building and installing (a few minutes the first time)"
 make -C "$AKIT_DIR" install
 
-if [[ -n "${AKIT_BRAIN_REPO:-}" && ! -e "$BRAIN_DIR" ]]; then
+if [[ -n "$AKIT_BRAIN_REPO" && ! -e "$BRAIN_DIR" ]]; then
     say "Downloading your brain $AKIT_BRAIN_REPO into $BRAIN_DIR"
     mkdir -p "$(dirname "$BRAIN_DIR")"
-    clone "$AKIT_BRAIN_REPO" "$BRAIN_DIR"
+    clone "$AKIT_BRAIN_REPO" "$BRAIN_DIR" || echo "Couldn't clone $AKIT_BRAIN_REPO; AKit works without it (Brain → Create Brain Repo)."
+elif [[ -d "$BRAIN_DIR/.git" ]]; then
+    # Bring in changes pushed from the other Mac; never over local edits.
+    if [[ -z "$(git -C "$BRAIN_DIR" status --porcelain)" ]] && git -C "$BRAIN_DIR" remote get-url origin >/dev/null 2>&1; then
+        say "Updating your brain"
+        git -C "$BRAIN_DIR" pull --ff-only || echo "The brain couldn't be updated (diverged?); left as it is."
+    else
+        echo "The brain has local changes or no remote; not updated."
+    fi
 fi
 
 # The core layer into ~ (skills for every harness), unless AKIT_SKIP_HOME=1. Replaced files
