@@ -40,7 +40,7 @@ targets:
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 1
         SWIFT_VERSION: "6.0"
-        # Personal app: ad-hoc "Sign to Run Locally", no App Sandbox,
+        # Ad-hoc signed ("Sign to Run Locally"), no App Sandbox,
         # so it can access ~/.claude, ~/.pi and project folders.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"

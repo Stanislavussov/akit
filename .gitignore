@@ -5,3 +5,8 @@ AKit.xcodeproj/
 xcuserdata/
 *.xcuserstate
 .omc/
+
+# Harness files rendered from your own brain (akit apply)
+.agents/
+.claude/skills
+.claude/settings.local.json

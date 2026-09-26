@@ -2,20 +2,21 @@
 # One-step AKit install on a Mac: fetches (or updates) the source, builds it, and installs
 # AKit.app into ~/Applications and the `akit` command into ~/.local/bin.
 #
-#   bash <(gh api repos/Stanislavussov/akit/contents/install.sh --jq .content | base64 -d)
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Stanislavussov/akit/master/install.sh)"
 #   or, from a checkout:  ./install.sh
 #
 # Settings (environment variables):
-#   AKIT_REPO        GitHub repo of AKit           (default Stanislavussov/akit)
-#   AKIT_DIR         where the source lives         (default ~/Projects/akit)
-#   AKIT_BRAIN_REPO  your brain repo, cloned into ~/.akit/registry if that is missing, else
-#                    updated (default Stanislavussov/brain; empty = don't fetch a brain)
+#   AKIT_REPO        GitHub repo of AKit (owner/repo or a git URL; default Stanislavussov/akit)
+#   AKIT_DIR         where the source lives (default ~/Projects/akit)
+#   AKIT_BRAIN_REPO  your brain repo (owner/repo or a git URL), cloned into ~/.akit/registry
+#                    if that is missing, else updated. Unset: keep or create a brain yourself
+#                    (akit init, or Brain → Create Brain Repo in the app).
 #   AKIT_SKIP_HOME=1 don't render the brain's core layer into ~ after installing
 set -euo pipefail
 
 AKIT_REPO="${AKIT_REPO:-Stanislavussov/akit}"
 AKIT_DIR="${AKIT_DIR:-$HOME/Projects/akit}"
-AKIT_BRAIN_REPO="${AKIT_BRAIN_REPO-Stanislavussov/brain}"
+AKIT_BRAIN_REPO="${AKIT_BRAIN_REPO:-}"
 BRAIN_DIR="$HOME/.akit/registry"
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
@@ -30,13 +31,17 @@ if ! command -v xcodegen >/dev/null; then
     brew install xcodegen
 fi
 
-# Clone with gh when it is there (works for private repos), else over SSH.
+# Clone a git URL as is; owner/repo with gh when it is signed in (private repos), else over
+# HTTPS (public repos), else over SSH.
 clone() {
     local repo="$1" dir="$2"
-    if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
+    if [[ "$repo" == *:* ]]; then
+        git clone "$repo" "$dir"
+    elif command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
         gh repo clone "$repo" "$dir"
     else
-        git clone "git@github.com:$repo.git" "$dir"
+        GIT_TERMINAL_PROMPT=0 git clone "https://github.com/$repo.git" "$dir" 2>/dev/null \
+            || git clone "git@github.com:$repo.git" "$dir"
     fi
 }
 
@@ -59,7 +64,7 @@ make -C "$AKIT_DIR" install
 if [[ -n "$AKIT_BRAIN_REPO" && ! -e "$BRAIN_DIR" ]]; then
     say "Downloading your brain $AKIT_BRAIN_REPO into $BRAIN_DIR"
     mkdir -p "$(dirname "$BRAIN_DIR")"
-    clone "$AKIT_BRAIN_REPO" "$BRAIN_DIR" || echo "Couldn't clone $AKIT_BRAIN_REPO; AKit works without it (Brain → Create Brain Repo)."
+    clone "$AKIT_BRAIN_REPO" "$BRAIN_DIR" || echo "Couldn't clone $AKIT_BRAIN_REPO; AKit works without it (akit init creates a new one)."
 elif [[ -d "$BRAIN_DIR/.git" ]]; then
     # Bring in changes pushed from the other Mac; never over local edits.
     if [[ -z "$(git -C "$BRAIN_DIR" status --porcelain)" ]] && git -C "$BRAIN_DIR" remote get-url origin >/dev/null 2>&1; then
@@ -89,4 +94,4 @@ esac
 say "Done"
 echo "  App:     ~/Applications/AKit.app"
 echo "  Command: akit --help"
-[[ -e "$BRAIN_DIR" ]] && echo "  Brain:   $BRAIN_DIR" || echo "  Brain:   none yet; create it in AKit (Brain → Create Brain Repo) or set AKIT_BRAIN_REPO"
+[[ -e "$BRAIN_DIR" ]] && echo "  Brain:   $BRAIN_DIR" || echo "  Brain:   none yet; create one with: akit init  (or Brain → Create Brain Repo in the app)"
