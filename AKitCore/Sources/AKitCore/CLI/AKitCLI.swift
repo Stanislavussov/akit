@@ -14,10 +14,14 @@ public enum AKitCLI {
         Projects (PROJECT is a folder; default: the current one):
           akit answers [PROJECT]          Saved answers for the project (JSON)
           akit plan [PROJECT] [ANSWERS]   What would change, with diffs (exit 1 if it can't apply)
-          akit apply [PROJECT] [ANSWERS] [--include PATH]... [--exclude PATH]...
+          akit apply [PROJECT] [ANSWERS] [--include PATH]... [--exclude PATH]... [--include-unmanaged]
                                           Write it: backup first, removals to the Trash, answers
                                           saved in the brain. Files AKit didn't write, or edited
-                                          by hand since, are skipped unless --include PATH.
+                                          by hand since, are skipped unless --include PATH
+                                          (--include-unmanaged: every file AKit didn't write).
+
+        Home (the core layer into ~, for every harness on this Mac):
+          akit plan --home  /  akit apply --home [--include-unmanaged]
 
         ANSWERS (start from the saved answers, or empty):
           --layers a,b          Layers to use (replaces the list)
@@ -37,6 +41,7 @@ public enum AKitCLI {
 
     /// Runs one command. `out`/`err` receive text; returns the exit code.
     public static func run(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL? = nil,
+                           hostName: String = ProcessInfo.processInfo.hostName,
                            installedTargets: [String] = [], out: (String) -> Void, err: (String) -> Void,
                            trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async -> Int32 {
         do {
@@ -49,7 +54,8 @@ public enum AKitCLI {
             let options = Options(brain: args.value("--brain"), json: args.flag("--json"), answersFile: args.value("--answers"),
                                   layers: args.value("--layers"), targets: args.value("--targets"),
                                   set: args.values("--set"), unset: args.values("--unset"),
-                                  include: args.values("--include"), exclude: args.values("--exclude"))
+                                  include: args.values("--include"), exclude: args.values("--exclude"),
+                                  home: args.flag("--home"), includeUnmanaged: args.flag("--include-unmanaged"))
             let command = args.positional()
             let projectArgument = args.positional()
             try args.finish()
@@ -68,23 +74,33 @@ public enum AKitCLI {
                 out(brain.skills.map { "\($0.name)\t\($0.description)" }.joined(separator: "\n"))
                 return 0
             case "answers", "plan", "apply":
-                let project = resolve(projectArgument ?? ".", cwd: cwd, env: env)
+                if options.home, projectArgument != nil { throw Failure(message: "--home and a project folder don't go together.") }
+                let project = options.home ? env.homeDirectory : resolve(projectArgument ?? ".", cwd: cwd, env: env)
                 guard FileManager.default.fileExists(atPath: project.path) else { throw Failure(message: "No folder at \(project.path).") }
                 let root = projectsRoot ?? env.homeDirectory.appending(path: "Projects")
-                let id = await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
+                let id = options.home ? ProjectSetup.homeID(hostName: hostName)
+                    : await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
                 if command == "answers" {
                     let saved = ProjectSetup.savedAnswers(id: id, brain: brain.root)
                     out(saved.map(encode) ?? "No saved answers for \(id).")
                     return saved == nil ? 1 : 0
                 }
-                let answers = try readAnswers(options, id: id, brain: brain, cwd: cwd, env: env, installedTargets: installedTargets)
+                if options.home, options.layers != nil || options.answersFile != nil {
+                    throw Failure(message: "The home folder always gets the core layer; --layers and --answers don't apply.")
+                }
+                var answers = try readAnswers(options, id: id, brain: brain, cwd: cwd, env: env, installedTargets: installedTargets)
+                if options.home {
+                    guard brain.layers.contains(where: { $0.name == "core" }) else { throw Failure(message: "The brain has no core layer.") }
+                    answers.layers = ["core"]
+                }
                 let include = Set(options.include), exclude = Set(options.exclude)
-                let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain)
+                let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, forHome: options.home)
                 out(planText(plan))
                 guard plan.canApply else { return 1 }
                 guard command == "apply" else { return 0 }
-                let skipped = Set(plan.changes.filter { $0.kind == .update && ($0.replacesUnmanaged || $0.editedSinceRender) }.map(\.path))
-                    .subtracting(include).union(exclude)
+                let skipped = Set(plan.changes.filter { change in
+                    change.kind == .update && (change.editedSinceRender || (change.replacesUnmanaged && !options.includeUnmanaged))
+                }.map(\.path)).subtracting(include).union(exclude)
                 let outcome: ProjectSetup.Outcome
                 do {
                     outcome = try await ProjectSetup.apply(plan, excluding: skipped, brain: brain, home: env.homeDirectory, env: env, trash: trash)
@@ -179,6 +195,8 @@ public enum AKitCLI {
         var unset: [String]
         var include: [String]
         var exclude: [String]
+        var home: Bool
+        var includeUnmanaged: Bool
     }
 
     private static func readAnswers(_ options: Options, id: String, brain: Brain, cwd: URL, env: HarnessEnvironment,

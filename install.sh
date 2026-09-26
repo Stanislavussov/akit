@@ -10,6 +10,7 @@
 #   AKIT_DIR         where the source lives         (default ~/Projects/akit)
 #   AKIT_BRAIN_REPO  your brain repo, cloned into ~/.akit/registry if that is missing
 #                    (e.g. Stanislavussov/brain; optional)
+#   AKIT_SKIP_HOME=1 don't render the brain's core layer into ~ after installing
 set -euo pipefail
 
 AKIT_REPO="${AKIT_REPO:-Stanislavussov/akit}"
@@ -58,6 +59,13 @@ if [[ -n "${AKIT_BRAIN_REPO:-}" && ! -e "$BRAIN_DIR" ]]; then
     say "Downloading your brain $AKIT_BRAIN_REPO into $BRAIN_DIR"
     mkdir -p "$(dirname "$BRAIN_DIR")"
     clone "$AKIT_BRAIN_REPO" "$BRAIN_DIR"
+fi
+
+# The core layer into ~ (skills for every harness), unless AKIT_SKIP_HOME=1. Replaced files
+# are backed up in ~/.akit/backups.
+if [[ -e "$BRAIN_DIR" && "${AKIT_SKIP_HOME:-}" != 1 ]]; then
+    say "Rendering the core layer into your home folder"
+    "$HOME/.local/bin/akit" apply --home --include-unmanaged || echo "akit apply --home failed; run it again after fixing the problems above."
 fi
 
 case ":$PATH:" in

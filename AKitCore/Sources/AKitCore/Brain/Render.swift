@@ -74,7 +74,9 @@ public enum Render {
 
     public static let skillsFolder = ".agents/skills"
 
-    public static func render(_ answers: ProjectAnswers, brain: Brain, projectName: String) -> Result {
+    /// `forHome`: rendering the core layer into the home folder, where no harness reads
+    /// ~/AGENTS.md, so there is no CLAUDE.md shim (the .claude/skills link still applies).
+    public static func render(_ answers: ProjectAnswers, brain: Brain, projectName: String, forHome: Bool = false) -> Result {
         var errors: [String] = []
         var warnings: [String] = []
         let byName = Dictionary(brain.layers.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
@@ -204,7 +206,7 @@ public enum Render {
         // 5. Claude reads CLAUDE.md and .claude/skills; point them at the shared files.
         let paths = Set(outputs.map(\.path))
         if answers.targets.contains("claude") {
-            if paths.contains("AGENTS.md"), !paths.contains("CLAUDE.md") {
+            if !forHome, paths.contains("AGENTS.md"), !paths.contains("CLAUDE.md") {
                 outputs.append(Output(path: "CLAUDE.md", content: .data(Data("@AGENTS.md\n".utf8)), layers: []))
             }
             if !skills.isEmpty {

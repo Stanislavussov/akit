@@ -33,7 +33,7 @@ struct AKitCLITests {
     /// Runs `akit` with these arguments from the project folder; returns (exit code, stdout, stderr).
     func akit(_ arguments: String...) async -> (code: Int32, out: String, err: String) {
         var out: [String] = [], err: [String] = []
-        let code = await AKitCLI.run(arguments, env: env, cwd: project, projectsRoot: home.appending(path: "Projects"),
+        let code = await AKitCLI.run(arguments, env: env, cwd: project, projectsRoot: home.appending(path: "Projects"), hostName: "TestMac.local",
                                      installedTargets: ["claude"], out: { out.append($0) }, err: { err.append($0) },
                                      trash: { url in
                                          let target = home.appending(path: "Trash/\(UUID().uuidString)")
@@ -101,6 +101,37 @@ struct AKitCLITests {
         #expect(answers.out.contains("\"company\" : \"Acme\""))
         let again = await akit("plan", "--set", "company=Beta")
         #expect(again.out.contains("CHANGED AGENTS.md") && again.out.contains("+ # Beta in swift"))
+    }
+
+    @Test func homeGetsTheCoreLayerAndTakesOverOldCopiesOnlyWhenAsked() async throws {
+        try await setUp()
+        try write(".akit/registry/layers/core/layer.yaml", "name: core\nskills:\n  - name: tdd\n    mode: manual\n")
+        // The old global copy (same file as the brain's) and Claude's link to the shared folder.
+        try write(".agents/skills/tdd/SKILL.md", "---\nname: tdd\ndescription: Tests first\n---\n")
+        try fm.createDirectory(at: home.appending(path: ".claude"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: home.appending(path: ".claude/skills").path, withDestinationPath: "../.agents/skills")
+
+        let plan = await akit("plan", "--home")
+        #expect(plan.code == 0, "\(plan)")
+        #expect(plan.out.contains("CHANGED .agents/skills/tdd/SKILL.md  (AKit didn't write it"))
+        #expect(!plan.out.contains("CLAUDE.md") && !plan.out.contains("AGENTS.md"))
+        #expect(plan.out.contains("(brain: projects/home/testmac)"))
+        #expect(await akit("plan", "--home", "--layers", "task").code == 2)
+
+        let skipped = await akit("apply", "--home")
+        #expect(skipped.out.contains("Skipped: .agents/skills/tdd/SKILL.md"))
+        let taken = await akit("apply", "--home", "--include-unmanaged")
+        #expect(taken.code == 0, "\(taken)")
+        let skill = try String(contentsOf: home.appending(path: ".agents/skills/tdd/SKILL.md"), encoding: .utf8)
+        #expect(skill.contains("disable-model-invocation: true"))
+        #expect(try fm.destinationOfSymbolicLink(atPath: home.appending(path: ".claude/skills").path) == "../.agents/skills")
+        #expect(taken.out.contains("Backup: "))
+        #expect(ProjectSetup.savedAnswers(id: "home/testmac", brain: Brain.defaultRoot(home: home))?.layers == ["core"])
+    }
+
+    @Test func homeIDs() {
+        #expect(ProjectSetup.homeID(hostName: "Stanislavs-MacBook-Pro.local") == "home/stanislavs-macbook-pro")
+        #expect(ProjectSetup.homeID(hostName: "") == "home/mac")
     }
 
     @Test func applySkipsForeignFilesUnlessIncluded() async throws {
