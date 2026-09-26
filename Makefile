@@ -33,7 +33,23 @@ snapshot: build   ## window snapshot without screen recording: make snapshot OUT
 	  $(if $(HARNESS),--harness $(HARNESS)) $(if $(BRAIN),--brain "$(BRAIN)") $(if $(TAB),--tab $(TAB)) \
 	  $(if $(OWN),--own-copy) $(if $(ADD),--add) $(if $(CAPTURE),--capture)
 
+install: generate   ## release build: AKit.app into ~/Applications, the akit command into ~/.local/bin
+	xcodebuild -project AKit.xcodeproj -scheme AKit -configuration Release \
+	  -derivedDataPath $(DERIVED)/release -quiet build
+	mkdir -p $(HOME)/Applications
+	rm -rf $(HOME)/Applications/AKit.app
+	cp -R $(DERIVED)/release/Build/Products/Release/AKit.app $(HOME)/Applications/
+	$(MAKE) install-cli
+	@echo "Installed ~/Applications/AKit.app"
+
+install-cli:   ## only the akit command, into ~/.local/bin
+	cd AKitCore && swift build -c release --product akit
+	mkdir -p $(HOME)/.local/bin
+	install -m 755 AKitCore/.build/release/akit $(HOME)/.local/bin/akit
+	@echo "Installed ~/.local/bin/akit"
+	@case ":$$PATH:" in *":$(HOME)/.local/bin:"*) ;; *) echo "Add ~/.local/bin to PATH: echo 'export PATH=\"\$$HOME/.local/bin:\$$PATH\"' >> ~/.zprofile";; esac
+
 icon:   ## redraw the app icon
 	swift tools/make-icon.swift
 
-.PHONY: generate open build run restart test snapshot icon
+.PHONY: generate open build run restart test snapshot install install-cli icon
