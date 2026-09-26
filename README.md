@@ -6,37 +6,35 @@ of skills and layers. Comes with the `akit` command for agents and terminals.
 
 ## Install (one step)
 
-Needs macOS 15+ and Xcode (opened once); the script installs `xcodegen` with Homebrew
-if it is missing.
-
 ```sh
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Stanislavussov/akit/master/install.sh)"
 ```
 
-It clones the source into `~/Projects/akit` (or updates it), builds a release, and
-installs `~/Applications/AKit.app` and `~/.local/bin/akit`. Run it again to update.
-From a checkout: `./install.sh`, or `make install` (both) / `make install-cli` (only `akit`).
+It downloads the latest release into `~/Applications/AKit.app` and `~/.local/bin/akit`
+(macOS 15+, no Xcode needed), then `akit setup` asks three things, each with a default
+(Enter):
 
-## Your brain
+1. **Your brain.** The brain is your own git repo of skills and layers in
+   `~/.akit/registry`; nothing in it ships with AKit. Give the repo you use on your other
+   Macs (`you/brain`), or press Enter for a new one: it starts with a `core` layer holding
+   the `/akit` skill, and with the GitHub CLI signed in, setup offers to keep it in a
+   private repo so your other Macs can use it.
+2. **Your projects folder** (`~/Projects`), shared with the app's Settings.
+3. **Skills you already have in `~`** that differ from the brain's: kept unless you say
+   replace (the old files are backed up in `~/.akit/backups`).
 
-The brain is your own git repo of skills and layers in `~/.akit/registry`; nothing in it
-ships with AKit. Create one with `akit init` (or Brain → Create Brain Repo): it starts with
-a `core` layer holding the `/akit` skill, so an agent can build layers and set up projects
-for you. Keep it in a private repo to share it between Macs:
+The core layer then goes into your home folder for every harness on the Mac. Run the
+install again to update, or `akit setup` to answer again. `akit sync` (or Sync on the
+Brain screen) pulls and pushes the brain afterwards.
 
-```sh
-git -C ~/.akit/registry remote add origin git@github.com:<you>/brain.git
-git -C ~/.akit/registry push -u origin main
-```
-
-On another Mac, `AKIT_BRAIN_REPO=<you>/brain` before the install command clones it and
-renders its core layer into `~` (skills for every harness; replaced files are backed up in
-`~/.akit/backups`; `AKIT_SKIP_HOME=1` skips that). Afterwards `akit sync` (or Sync on the
-Brain screen) pulls and pushes changes.
+Without a release, or run from a checkout (`./install.sh`), it builds from source
+(needs Xcode; `make install` / `make install-cli` do the same by hand). `make release`
+builds `dist/AKit.zip` for a GitHub release.
 
 ## akit
 
 ```sh
+akit setup                                  # the install questions again
 akit init                                   # create a brain
 akit check                                  # brain problems
 akit layers [--json]                        # layers, fields, skills, files
