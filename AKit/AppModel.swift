@@ -81,6 +81,15 @@ final class AppModel {
         try await BrainImport.apply(plan, importing: names, env: .current)
     }
 
+    /// Adds a layer to the brain from the New Layer form and commits it, then rescans.
+    func createLayer(_ draft: LayerWriter.Draft) async throws {
+        guard let brain else {
+            throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded."])
+        }
+        defer { Task { await refresh() } }
+        try await LayerWriter.create(draft, in: brain, env: .current)
+    }
+
     // MARK: Project setup
 
     /// Render targets for the harnesses installed on this Mac (`claude`, `pi`, …).

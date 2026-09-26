@@ -9,6 +9,7 @@ struct BrainView: View {
     @State private var query = DebugSnapshot.options?.query ?? ""
     @State private var importing = false
     @State private var settingUp = false
+    @State private var creatingLayer = false
     @State private var creating = false
     @State private var createError: String?
 
@@ -40,23 +41,32 @@ struct BrainView: View {
         }
         .sheet(isPresented: $importing) { BrainImportSheet() }
         .sheet(isPresented: $settingUp) { ProjectSetupSheet() }
+        .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         // Snapshot `--add`: open the import sheet once the brain is loaded.
         .onChange(of: model.brain?.root) {
             guard model.brain != nil, let options = DebugSnapshot.options else { return }
-            if options.tab == "setup" { settingUp = true } else if options.add { importing = true }
+            if options.tab == "setup" { settingUp = true } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
         }
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
         .toolbar {
             ToolbarItem {
-                Button("Set Up Project…", systemImage: "folder.badge.gearshape") { settingUp = true }
+                Button("New Layer…", systemImage: "plus") { creatingLayer = true }
+                    .labelStyle(.titleAndIcon)
                     .disabled(model.brain == nil)
-                    .help("Render layers from the brain into a project")
+                    .help("Create a layer: skills and an AGENTS.md section for projects")
             }
             ToolbarItem {
                 Button("Import Skills…", systemImage: "square.and.arrow.down") { importing = true }
+                    .labelStyle(.titleAndIcon)
                     .disabled(model.brain == nil)
                     .help("Copy global skills from ~/.agents/skills into the brain and the core layer")
+            }
+            ToolbarItem {
+                Button("Set Up Project…", systemImage: "folder.badge.gearshape") { settingUp = true }
+                    .labelStyle(.titleAndIcon)
+                    .disabled(model.brain == nil)
+                    .help("Render layers from the brain into a project")
             }
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
@@ -118,11 +128,19 @@ struct BrainView: View {
                     }
                 }
             }
-            if !layers(brain).isEmpty { Section("Layers") {
+            if !layers(brain).isEmpty { Section {
                 ForEach(layers(brain)) { layer in
                     LayerRow(layer: layer, problemCount: brain.problems(of: layer.name).count)
                         .tag(Item.layer(layer.name))
                         .contextMenu { fileMenu(layer.folder, reveal: layer.manifest) }
+                }
+            } header: {
+                Text("Layers")
+            } footer: {
+                if brain.layers.allSatisfy({ $0.name == "core" }) {
+                    Text("core is for the home folder. For projects, create a layer with New Layer… (after Import Skills…, so it can pick skills).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             } }
             if !skills(brain).isEmpty { Section("Skills") {
