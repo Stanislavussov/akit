@@ -20,10 +20,26 @@ public struct Brain: Sendable {
         public let message: String
     }
 
+    /// A project set up from the brain: `projects/<id>/answers.json` and its lock.
+    /// The id comes from the git remote, so it is the same on every Mac.
+    public struct Project: Identifiable, Hashable, Sendable {
+        /// `github.com/owner/repo`, `local/<path>` or `home/<host>`.
+        public let id: String
+        public let answers: ProjectAnswers
+        /// The brain commit the last Apply rendered from.
+        public let brainCommit: String?
+
+        /// A machine's home folder, which gets the core layer.
+        public var isHome: Bool { id.hasPrefix("home/") }
+        /// The repo or folder name; the host for a home folder.
+        public var name: String { id.split(separator: "/").last.map(String.init) ?? id }
+    }
+
     public let root: URL
     public let skills: [Skill]
     public let layers: [Layer]
     public let problems: [Problem]
+    public var projects: [Project] = []
 
     /// Default location; overridable in Settings.
     public static func defaultRoot(home: URL) -> URL {
@@ -34,6 +50,24 @@ public struct Brain: Sendable {
     public static let builtInFields: Set = ["project_name", "target"]
 
     public func problems(of layer: String) -> [Problem] { problems.filter { $0.layer == layer } }
+
+    /// Projects that get this layer: picked, or required by a picked layer.
+    public func projects(using layer: String) -> [Project] {
+        projects.filter { layers(of: $0).contains(layer) }
+    }
+
+    /// The project's picked layers and everything they require.
+    public func layers(of project: Project) -> [String] {
+        let byName = Dictionary(layers.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        var order: [String] = []
+        func visit(_ name: String) {
+            guard !order.contains(name) else { return }
+            order.append(name)  // before its requires, so a cycle stops here
+            for required in byName[name]?.requires ?? [] { visit(required) }
+        }
+        project.answers.layers.forEach(visit)
+        return order
+    }
 
     /// nil when there is no folder at `root`.
     public static func load(from root: URL) -> Brain? {
@@ -66,7 +100,11 @@ public struct Brain: Sendable {
         }
 
         problems += validate(layers, skills: Set(skills.map(\.name)))
-        return Brain(root: root, skills: skills, layers: layers, problems: problems)
+        let projects = BrainRemove.savedAnswers(in: root).map { saved in
+            Project(id: saved.id, answers: saved.answers,
+                    brainCommit: ProjectSetup.savedLock(id: saved.id, brain: root)?.brainCommit)
+        }
+        return Brain(root: root, skills: skills, layers: layers, problems: problems, projects: projects)
     }
 
     // MARK: - Checks across layers

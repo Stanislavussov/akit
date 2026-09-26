@@ -6,6 +6,10 @@ import SwiftUI
 struct ProjectSetupSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// Opened for this project (from the Brain's project list).
+    var initialProject: URL?
+    /// Ticked on top of the project's saved answers (Apply to Project on a layer).
+    var initialLayers: [String] = []
 
     private enum Page { case form, preview, done }
 
@@ -33,6 +37,7 @@ struct ProjectSetupSheet: View {
         .frame(width: 760, height: 640)
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         .task {
+            if project == nil, let initialProject { await choose(initialProject) }
             // Snapshot: `--project <folder>` picks it, `--query a,b` ticks layers, `--capture` opens the preview.
             if project == nil, let options = DebugSnapshot.options, let name = options.project,
                let match = model.projects.first(where: { $0.lastPathComponent == name }) {
@@ -57,7 +62,7 @@ struct ProjectSetupSheet: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Set Up a Project").font(.title2.bold())
+            Text(initialLayers.isEmpty ? "Set Up a Project" : "Apply \(initialLayers.joined(separator: ", ")) to a Project").font(.title2.bold())
             projectPicker
             if project != nil {
                 ScrollView {
@@ -238,6 +243,7 @@ struct ProjectSetupSheet: View {
         projectID = id
         answers = ProjectSetup.savedAnswers(id: id, brain: brain.root)
             ?? ProjectAnswers(layers: [], values: [:], targets: model.installedTargets)
+        for name in initialLayers where !answers.layers.contains(name) { answers.layers.append(name) }
     }
 
     private func makePlan() {

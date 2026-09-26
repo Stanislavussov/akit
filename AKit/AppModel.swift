@@ -172,6 +172,19 @@ final class AppModel {
         return await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
     }
 
+    /// Brain project ids found on this Mac → their folders: the home folder and every known project.
+    func projectFolders() async -> [String: URL] {
+        let env = HarnessEnvironment.current
+        var folders = [ProjectSetup.homeID(): env.homeDirectory]
+        await withTaskGroup(of: (String, URL).self) { group in
+            for project in projects {
+                group.addTask { (await self.projectID(for: project), project) }
+            }
+            for await (id, folder) in group where folders[id] == nil { folders[id] = folder }
+        }
+        return folders
+    }
+
     /// What rendering these answers would change in the project. Only reads.
     func projectPlan(project: URL, id: String, answers: ProjectAnswers) async -> ProjectSetup.Plan? {
         guard let brain else { return nil }

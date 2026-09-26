@@ -5,11 +5,16 @@ import SwiftUI
 /// Brain screen: layers and the skill library of the brain repo. Read-only.
 struct BrainView: View {
     @Environment(AppModel.self) private var model
-    /// Snapshot `--select <layer>` picks that layer.
-    @State private var selection: Item? = DebugSnapshot.options?.select.map { .layer($0) }
+    /// Snapshot `--select <layer>` picks that layer, `--select project:<id>` that project.
+    @State private var selection: Item? = DebugSnapshot.options?.select.map {
+        $0.hasPrefix("project:") ? .project(String($0.dropFirst("project:".count))) : .layer($0)
+    }
     @State private var query = DebugSnapshot.options?.query ?? ""
     @State private var importing = false
-    @State private var settingUp = false
+    /// Set Up Project is open; it may come preset with a project or a layer.
+    @State private var setup: SetupRequest?
+    /// Brain project ids → their folders on this Mac.
+    @State private var folders: [String: URL] = [:]
     @State private var creatingLayer = false
     @State private var pendingRemoval: Removal?
     /// Result of a removal or a sync, shown in an alert.
@@ -36,7 +41,14 @@ struct BrainView: View {
 
     enum Item: Hashable {
         case layer(String)
+        case project(String)
         case skill(String)
+    }
+
+    struct SetupRequest: Identifiable {
+        let id = UUID()
+        var project: URL?
+        var layers: [String] = []
     }
 
     var body: some View {
@@ -61,12 +73,12 @@ struct BrainView: View {
             Text(createError ?? "")
         }
         .sheet(isPresented: $importing) { BrainImportSheet() }
-        .sheet(isPresented: $settingUp) { ProjectSetupSheet() }
+        .sheet(item: $setup) { ProjectSetupSheet(initialProject: $0.project, initialLayers: $0.layers) }
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         // Snapshot `--add`: open the import sheet once the brain is loaded.
         .onChange(of: model.brain?.root) {
             guard model.brain != nil, let options = DebugSnapshot.options else { return }
-            if options.tab == "setup" { settingUp = true } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
+            if options.tab == "setup" { setup = SetupRequest() } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
         }
         .confirmationDialog(removalTitle, isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
                             titleVisibility: .visible, presenting: pendingRemoval) { removal in
@@ -85,6 +97,7 @@ struct BrainView: View {
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
         .task(id: model.brain?.root) { await model.fetchBrainSync() }
+        .task(id: model.lastScan) { folders = await model.projectFolders() }
         .toolbar {
             ToolbarItem {
                 Button(syncTitle, systemImage: "arrow.triangle.2.circlepath", action: sync)
@@ -105,7 +118,7 @@ struct BrainView: View {
                     .help("Copy global skills from ~/.agents/skills into the brain and the core layer")
             }
             ToolbarItem {
-                Button("Set Up Project…", systemImage: "folder.badge.gearshape") { settingUp = true }
+                Button("Set Up Project…", systemImage: "folder.badge.gearshape") { setup = SetupRequest() }
                     .labelStyle(.titleAndIcon)
                     .disabled(model.brain == nil || model.isSyncingBrain)
                     .help("Render layers from the brain into a project")
@@ -237,8 +250,19 @@ struct BrainView: View {
                 case .layer(let name):
                     if let layer = brain.layers.first(where: { $0.name == name }) {
                         LayerDetailView(layer: layer, problems: brain.problems(of: name).map(\.message),
+                                        projects: brain.projects(using: name),
+                                        onSelectProject: { selection = .project($0) },
+                                        onApply: layer.name == "core" ? nil : { setup = SetupRequest(layers: [layer.name]) },
                                         onRemoveSkill: { pendingRemoval = .skillFromLayer(skill: $0, layer: layer.name) },
                                         onRemove: layer.name == "core" ? nil : { pendingRemoval = .layer(layer.name) })
+                    }
+                case .project(let id):
+                    if let project = brain.projects.first(where: { $0.id == id }) {
+                        let folder = folders[id]
+                        BrainProjectDetailView(project: project, layers: brain.layers(of: project), folder: folder,
+                                               brainFolder: brain.root.appending(path: "projects/\(id)"),
+                                               onSelectLayer: { selection = .layer($0) },
+                                               onChange: folder.map { folder in { setup = SetupRequest(project: folder) } })
                     }
                 case .skill(let name):
                     if let skill = brain.skills.first(where: { $0.name == name }) {
@@ -246,12 +270,12 @@ struct BrainView: View {
                                              onRemove: { pendingRemoval = .skill(skill.name) })
                     }
                 case nil:
-                    ContentUnavailableView("Select a layer or skill", systemImage: "square.stack.3d.up")
+                    ContentUnavailableView("Select a layer, project or skill", systemImage: "square.stack.3d.up")
                 }
             }
             .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .searchable(text: $query, placement: .toolbar, prompt: "Layer or skill")
+        .searchable(text: $query, placement: .toolbar, prompt: "Layer, project or skill")
         .onAppear { selection = selection ?? first(in: brain) }
         .onChange(of: model.lastScan) {
             if !exists(selection, in: brain) { selection = first(in: brain) }
@@ -291,6 +315,12 @@ struct BrainView: View {
                         .foregroundStyle(.secondary)
                 }
             } }
+            if !projects(brain).isEmpty { Section("Projects") {
+                ForEach(projects(brain)) { project in
+                    ProjectRow(project: project, layers: brain.layers(of: project), isOnThisMac: folders[project.id] != nil)
+                        .tag(Item.project(project.id))
+                }
+            } }
             if !skills(brain).isEmpty { Section("Skills") {
                 ForEach(skills(brain)) { skill in
                     VStack(alignment: .leading, spacing: 3) {
@@ -310,7 +340,7 @@ struct BrainView: View {
             } }
         }
         .overlay {
-            if !query.isEmpty && layers(brain).isEmpty && skills(brain).isEmpty {
+            if !query.isEmpty && layers(brain).isEmpty && projects(brain).isEmpty && skills(brain).isEmpty {
                 ContentUnavailableView.search(text: query)
             } else if brain.layers.isEmpty && brain.skills.isEmpty {
                 ContentUnavailableView("Empty brain", systemImage: "brain",
@@ -336,6 +366,13 @@ struct BrainView: View {
         }
     }
 
+    private func projects(_ brain: Brain) -> [Brain.Project] {
+        let q = trimmedQuery
+        return q.isEmpty ? brain.projects : brain.projects.filter { project in
+            project.id.localizedCaseInsensitiveContains(q) || brain.layers(of: project).contains { $0.localizedCaseInsensitiveContains(q) }
+        }
+    }
+
     private func skills(_ brain: Brain) -> [Brain.Skill] {
         let q = trimmedQuery
         return q.isEmpty ? brain.skills : brain.skills.filter {
@@ -356,6 +393,7 @@ struct BrainView: View {
     private func exists(_ item: Item?, in brain: Brain) -> Bool {
         switch item {
         case .layer(let name): brain.layers.contains { $0.name == name }
+        case .project(let id): brain.projects.contains { $0.id == id }
         case .skill(let name): brain.skills.contains { $0.name == name }
         case nil: false
         }
@@ -363,8 +401,8 @@ struct BrainView: View {
 
     private var subtitle: String {
         guard let brain = model.brain else { return "" }
-        let layers = brain.layers.count, skills = brain.skills.count
-        return "\(layers) layer\(layers == 1 ? "" : "s") · \(skills) skill\(skills == 1 ? "" : "s") · \(brain.root.tildePath)"
+        let layers = brain.layers.count, projects = brain.projects.count, skills = brain.skills.count
+        return "\(layers) layer\(layers == 1 ? "" : "s") · \(projects) project\(projects == 1 ? "" : "s") · \(skills) skill\(skills == 1 ? "" : "s") · \(brain.root.tildePath)"
     }
 }
 
@@ -397,10 +435,162 @@ private struct LayerRow: View {
     private func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
 }
 
+private struct ProjectRow: View {
+    let project: Brain.Project
+    let layers: [String]
+    let isOnThisMac: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: project.isHome ? "house" : "folder").foregroundStyle(.secondary)
+                Text(project.name).fontWeight(.medium)
+                Spacer()
+                if !isOnThisMac {
+                    Text("not on this Mac").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Text(layers.isEmpty ? "No layers" : layers.joined(separator: " · "))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 2)
+        .help(project.id)
+    }
+}
+
+private struct BrainProjectDetailView: View {
+    let project: Brain.Project
+    /// Picked layers and the ones they require.
+    let layers: [String]
+    /// The project on this Mac; nil when it is not among the known projects.
+    let folder: URL?
+    /// `projects/<id>` in the brain: answers.json and lock.json.
+    let brainFolder: URL
+    let onSelectLayer: (String) -> Void
+    /// Opens Set Up Project for it; nil when the folder is not on this Mac.
+    let onChange: (() -> Void)?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                info
+                if !project.answers.values.isEmpty { fields }
+                note
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Label(project.name, systemImage: project.isHome ? "house" : "folder")
+                    .font(.title2.bold())
+                    .textSelection(.enabled)
+                Spacer()
+                if let onChange, !project.isHome {
+                    Button("Change Layers…", systemImage: "square.stack.3d.up", action: onChange)
+                        .buttonStyle(.borderedProminent)
+                        .help("Pick layers and fields, preview the changes, apply")
+                }
+                if let folder {
+                    Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+                        .labelStyle(.iconOnly)
+                        .help("Show the project in Finder")
+                }
+            }
+            Text(project.id).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+        }
+    }
+
+    private var info: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+            GridRow {
+                GridLabel("Layers")
+                if layers.isEmpty {
+                    Text("None").foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 10) {
+                        ForEach(layers, id: \.self) { name in
+                            HStack(spacing: 4) {
+                                Button(name) { onSelectLayer(name) }
+                                    .buttonStyle(.link)
+                                    .help("Show the layer")
+                                if !project.answers.layers.contains(name) {
+                                    Tag(text: "required", tint: .secondary).help("Pulled in by another layer's requires")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            GridRow {
+                GridLabel("Harnesses")
+                Text(project.answers.targets.isEmpty ? "—" : project.answers.targets.joined(separator: ", "))
+            }
+            GridRow {
+                GridLabel("Folder")
+                if let folder {
+                    Text(folder.tildePath).monospaced()
+                } else {
+                    Text("Not on this Mac").foregroundStyle(.secondary)
+                }
+            }
+            GridRow {
+                GridLabel("Rendered from")
+                Text(project.brainCommit.map { "brain commit \($0)" } ?? "—")
+            }
+            GridRow {
+                GridLabel("Answers")
+                Text(brainFolder.tildePath).monospaced()
+            }
+        }
+        .font(.callout)
+        .textSelection(.enabled)
+    }
+
+    private var fields: some View {
+        GroupBox("Fields (\(project.answers.values.count))") {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+                ForEach(project.answers.values.keys.sorted(), id: \.self) { key in
+                    GridRow {
+                        Text(key).monospaced().fontWeight(.medium)
+                        Text(project.answers.values[key]?.display ?? "")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(4)
+        }
+        .font(.callout)
+        .textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private var note: some View {
+        if project.isHome {
+            Text("The home folder gets the core layer. Update it with: akit apply --home")
+                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        } else if folder == nil {
+            Text("Set up on another Mac, or its folder is outside the project folders in Settings. To change it here, use Set Up Project… → Other Folder….")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+}
+
 private struct LayerDetailView: View {
     @Environment(AppModel.self) private var model
     let layer: Layer
     let problems: [String]
+    /// Projects that get this layer, picked or through requires.
+    let projects: [Brain.Project]
+    let onSelectProject: (String) -> Void
+    /// Opens Set Up Project with this layer ticked; nil for core.
+    let onApply: (() -> Void)?
     let onRemoveSkill: (String) -> Void
     /// nil for the core layer, which can't be removed.
     let onRemove: (() -> Void)?
@@ -413,6 +603,7 @@ private struct LayerDetailView: View {
                              onRemove: onRemove)
                 if !problems.isEmpty { ProblemList(problems: problems) }
                 info
+                usedBy
                 if !layer.fields.isEmpty { fields }
                 if !layer.skills.isEmpty { skills }
                 if !layer.files.isEmpty { files }
@@ -448,6 +639,39 @@ private struct LayerDetailView: View {
         }
         .font(.callout)
         .textSelection(.enabled)
+    }
+
+    private var usedBy: some View {
+        GroupBox("Projects (\(projects.count))") {
+            VStack(alignment: .leading, spacing: 6) {
+                if projects.isEmpty {
+                    Text(onApply == nil ? "No home folder has it yet. Render it with: akit apply --home" : "No project uses this layer yet.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(projects) { project in
+                    HStack(spacing: 6) {
+                        Image(systemName: project.isHome ? "house" : "folder").foregroundStyle(.secondary)
+                        Button(project.name) { onSelectProject(project.id) }
+                            .buttonStyle(.link)
+                            .help("Show the project")
+                        Text(project.id).font(.caption.monospaced()).foregroundStyle(.secondary)
+                        if !project.answers.layers.contains(layer.name) {
+                            Tag(text: "required", tint: .secondary).help("Pulled in by another layer's requires")
+                        }
+                        Spacer()
+                    }
+                }
+                if let onApply {
+                    Button("Apply to Project…", systemImage: "folder.badge.plus", action: onApply)
+                        .buttonStyle(.borderedProminent)
+                        .help("Pick a project; this layer is ticked on top of its current layers")
+                        .padding(.top, 2)
+                }
+            }
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.callout)
     }
 
     private var fields: some View {

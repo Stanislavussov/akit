@@ -12,7 +12,7 @@ import SwiftUI
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
 /// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet;
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
-/// `--size 1280x800` sets the window size; `--select <layer>` on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
+/// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
