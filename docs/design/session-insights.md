@@ -48,6 +48,17 @@ cross-session and cross-machine aggregation, recommendations.
   with the skill listed, average first-request context. Recommendations sum them
   over all machines, so a skill used only on the work Mac is not demoted by the home Mac.
 
+### Work machines: nothing about work leaves the Mac
+
+Sessions and the index never leave any machine. On a machine marked **work**
+(see `layers.md`, "Work machines") the brain gets only one file,
+`insights/machines/<pseudonym>.json`: for each skill **that is in the brain**,
+sessions where it was listed and model / user calls, per day. No project ids,
+paths, branches, plugins, third-party skill names or prompt text; the opt-in
+eval examples stay off there. Work projects' per-project summaries stay local.
+So a skill needed at work is not demoted at home, and the brain learns nothing it
+didn't already hold except counts.
+
 ### Reading skill use from logs (verified on real sessions)
 
 | | Listed (denominator) | Called by the model | Called by the user |

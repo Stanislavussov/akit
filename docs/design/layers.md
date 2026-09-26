@@ -51,6 +51,19 @@ credentials, no `.git`), e.g. `projects/github.com/me/app/`. Projects without a
 remote use `local/<path relative to the projects root>`; a folder outside the
 root gets `local/<name>-<short hash of its path>`.
 
+### Work machines (decided 2026-09-26, not implemented)
+
+A machine can be marked **work** (per-machine setting, not in the brain). A work
+machine must not push anything about work projects to the brain's remote:
+project ids, paths, answers and locks name the employer's repos.
+
+- On a work machine `projects/<id>/` lives in `~/.akit/local/projects/<id>/` (same
+  format), outside the brain's git. Plan, apply and updates work the same.
+- The `home` entry uses a pseudonym chosen by the user (e.g. `work`), never the hostname.
+- Skills and layers still come from the brain; the only things a work machine
+  commits to it are skill and layer edits the user makes on purpose.
+- Masking is not enough: it hides tokens, not repo names, paths or field text.
+
 ## layer.yaml
 
 ```yaml
