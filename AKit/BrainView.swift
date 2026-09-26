@@ -13,8 +13,6 @@ struct BrainView: View {
     @State private var importing = false
     /// Set Up Project is open; it may come preset with a project or a layer.
     @State private var setup: SetupRequest?
-    /// Brain project ids → their folders on this Mac.
-    @State private var folders: [String: URL] = [:]
     @State private var creatingLayer = false
     @State private var pendingRemoval: Removal?
     /// Result of a removal or a sync, shown in an alert.
@@ -97,7 +95,6 @@ struct BrainView: View {
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
         .task(id: model.brain?.root) { await model.fetchBrainSync() }
-        .task(id: model.lastScan) { folders = await model.projectFolders() }
         .toolbar {
             ToolbarItem {
                 Button(syncTitle, systemImage: "arrow.triangle.2.circlepath", action: sync)
@@ -258,7 +255,7 @@ struct BrainView: View {
                     }
                 case .project(let id):
                     if let project = brain.projects.first(where: { $0.id == id }) {
-                        let folder = folders[id]
+                        let folder = model.brainProjectFolders[id]
                         BrainProjectDetailView(project: project, layers: brain.layers(of: project), folder: folder,
                                                brainFolder: brain.root.appending(path: "projects/\(id)"),
                                                onSelectLayer: { selection = .layer($0) },
@@ -276,10 +273,21 @@ struct BrainView: View {
             .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
         }
         .searchable(text: $query, placement: .toolbar, prompt: "Layer, project or skill")
-        .onAppear { selection = selection ?? first(in: brain) }
+        .onAppear { if !reveal() { selection = selection ?? first(in: brain) } }
+        .onChange(of: model.revealBrainSkill) { reveal() }
         .onChange(of: model.lastScan) {
             if !exists(selection, in: brain) { selection = first(in: brain) }
         }
+    }
+
+    /// Selects the brain skill another screen asked to show. Returns whether there was one.
+    @discardableResult
+    private func reveal() -> Bool {
+        guard let name = model.revealBrainSkill else { return false }
+        model.revealBrainSkill = nil
+        query = ""
+        selection = .skill(name)
+        return true
     }
 
     private func list(_ brain: Brain) -> some View {
@@ -317,10 +325,10 @@ struct BrainView: View {
             } }
             if !projects(brain).isEmpty { Section("Projects") {
                 ForEach(projects(brain)) { project in
-                    ProjectRow(project: project, layers: brain.layers(of: project), isOnThisMac: folders[project.id] != nil)
+                    ProjectRow(project: project, layers: brain.layers(of: project), isOnThisMac: model.brainProjectFolders[project.id] != nil)
                         .tag(Item.project(project.id))
                         .contextMenu {
-                            if let folder = folders[project.id] { fileMenu(folder, reveal: folder) }
+                            if let folder = model.brainProjectFolders[project.id] { fileMenu(folder, reveal: folder) }
                         }
                 }
             } }

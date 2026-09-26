@@ -10,6 +10,11 @@ struct SkillsView: View {
     @State private var query = ""
     @State private var pendingDelete: Skill?
     @State private var deleteError: String?
+    @State private var brainFilter = BrainFilter.any
+    /// A skill to import into the brain (sheet).
+    @State private var importing: Skill?
+
+    enum BrainFilter: Hashable { case any, fromBrain, notInBrain }
 
     var body: some View {
         @Bindable var model = model
@@ -18,7 +23,8 @@ struct SkillsView: View {
                 .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
             Group {
                 if let skill = model.skills.first(where: { $0.id == selection }) {
-                    SkillDetailView(skill: skill, onDelete: { pendingDelete = skill })
+                    SkillDetailView(skill: skill, link: model.brainLinks[skill.id],
+                                    onDelete: { pendingDelete = skill }, onImport: { importing = skill })
                 } else {
                     ContentUnavailableView("Select a skill", systemImage: "book.closed")
                 }
@@ -68,11 +74,33 @@ struct SkillsView: View {
                 .fixedSize()
                 .help(model.skillsHarness == nil ? "Showing skills of every harness" : "Showing only skills \(harnessTitle) sees")
             }
+            if model.brain != nil {
+                ToolbarItem(placement: .navigation) {
+                    Menu {
+                        Picker("Brain", selection: $brainFilter) {
+                            Text("Any Origin").tag(BrainFilter.any)
+                            Text("From Brain").tag(BrainFilter.fromBrain)
+                            Text("Not in Brain").tag(BrainFilter.notInBrain)
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Label(brainTitle, systemImage: "brain")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .fixedSize()
+                    .help("From Brain: copies AKit rendered from a layer. Not in Brain: your own skills the brain doesn't have yet.")
+                }
+            }
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .disabled(model.isScanning)
                     .help("Rescan skills (⌘R)")
             }
+        }
+        .sheet(item: $importing) { skill in
+            let layer = importLayer(for: skill)
+            BrainImportSheet(source: skill.folder.deletingLastPathComponent(), preselect: [skill.folder.lastPathComponent],
+                             layer: layer, mode: layer == "core" ? .manual : .auto)
         }
         .confirmationDialog(
             "Delete “\(pendingDelete?.name ?? "")”?",
@@ -102,6 +130,9 @@ struct SkillsView: View {
         .onChange(of: model.skillsHarness) {
             if selection.flatMap({ id in filtered.first { $0.id == id } }) == nil { selection = filtered.first?.id }
         }
+        .onChange(of: brainFilter) {
+            if selection.flatMap({ id in filtered.first { $0.id == id } }) == nil { selection = filtered.first?.id }
+        }
         .onChange(of: model.skillsFilter) {
             if selection.flatMap({ id in filtered.first { $0.id == id } }) == nil { selection = filtered.first?.id }
         }
@@ -113,17 +144,9 @@ struct SkillsView: View {
             ForEach(groups, id: \.scope) { group in
                 Section {
                     ForEach(group.skills) { skill in
-                        SkillRow(skill: skill)
+                        SkillRow(skill: skill, link: model.brainLinks[skill.id])
                             .tag(skill.id)
-                            .contextMenu {
-                                if ExternalEditor.appURL != nil {
-                                    Button("Open in \(ExternalEditor.name)") { ExternalEditor.open(skill.folder) }
-                                }
-                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
-                                Divider()
-                                Button("Move to Trash…", role: .destructive) { pendingDelete = skill }
-                                    .disabled(skill.isReadOnly)
-                            }
+                            .contextMenu { menu(for: skill) }
                     }
                 } header: {
                     Text(group.scope.title)
@@ -137,6 +160,43 @@ struct SkillsView: View {
             } else if model.skills.isEmpty && !model.isScanning {
                 ContentUnavailableView("No skills found", systemImage: "book.closed")
             }
+        }
+    }
+
+    @ViewBuilder
+    private func menu(for skill: Skill) -> some View {
+        let link = model.brainLinks[skill.id]
+        if case .rendered(let name, _, _) = link {
+            BrainSkillButtons(name: name)
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
+        } else {
+            if ExternalEditor.appURL != nil {
+                Button("Open in \(ExternalEditor.name)") { ExternalEditor.open(skill.folder) }
+            }
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
+            if link == .notInBrain && !skill.isSingleFile {
+                Button("Import to Brain…") { importing = skill }
+            }
+            Divider()
+            Button("Move to Trash…", role: .destructive) { pendingDelete = skill }
+                .disabled(skill.isReadOnly)
+        }
+    }
+
+    /// Where an imported skill is listed: core for a global skill; for a project skill,
+    /// the first other layer that project uses, so it stays out of every other project.
+    private func importLayer(for skill: Skill) -> String {
+        guard case .project(let url) = skill.scope, let brain = model.brain,
+              let id = model.brainProjectFolders.first(where: { $0.value.standardizedFileURL == url.standardizedFileURL })?.key,
+              let project = brain.projects.first(where: { $0.id == id }) else { return "core" }
+        return project.answers.layers.first { $0 != "core" } ?? "core"
+    }
+
+    private var brainTitle: String {
+        switch brainFilter {
+        case .any: "Any Origin"
+        case .fromBrain: "From Brain"
+        case .notInBrain: "Not in Brain"
         }
     }
 
@@ -191,6 +251,15 @@ struct SkillsView: View {
         model.skills.filter { skill in
             model.skillsFilter.includes(skill.scope)
                 && (model.skillsHarness.map { id in skill.visibleTo.contains { $0.rawValue == id } } ?? true)
+                && matchesBrainFilter(skill)
+        }
+    }
+
+    private func matchesBrainFilter(_ skill: Skill) -> Bool {
+        switch brainFilter {
+        case .any: true
+        case .fromBrain: model.brainLinks[skill.id]?.isRendered == true
+        case .notInBrain: model.brainLinks[skill.id] == .notInBrain
         }
     }
 
@@ -269,6 +338,7 @@ struct SkillsView: View {
 
 private struct SkillRow: View {
     let skill: Skill
+    let link: BrainLink?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -280,6 +350,7 @@ private struct SkillRow: View {
                         .font(.caption)
                 }
                 Spacer()
+                if let link { BrainLinkTag(link: link) }
                 ForEach(skill.visibleTo, id: \.self) { HarnessBadge(harness: $0) }
             }
             if !skill.description.isEmpty {
@@ -296,7 +367,9 @@ private struct SkillRow: View {
 private struct SkillDetailView: View {
     @Environment(AppModel.self) private var model
     let skill: Skill
+    let link: BrainLink?
     let onDelete: () -> Void
+    let onImport: () -> Void
     @State private var files: [String] = []
     @State private var text: String?
 
@@ -333,7 +406,9 @@ private struct SkillDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if ExternalEditor.appURL != nil {
+                if case .rendered(let name, _, _) = link {
+                    BrainSkillButtons(name: name)
+                } else if ExternalEditor.appURL != nil {
                     Button("Open in \(ExternalEditor.name)", systemImage: "square.and.pencil") {
                         ExternalEditor.open(skill.folder)
                     }
@@ -343,7 +418,7 @@ private struct SkillDetailView: View {
                 }
                 .labelStyle(.iconOnly)
                 .help("Show in Finder")
-                if !skill.isReadOnly {
+                if !skill.isReadOnly && link?.isRendered != true {
                     Button("Move to Trash…", systemImage: "trash", role: .destructive, action: onDelete)
                         .labelStyle(.iconOnly)
                         .help("Move this skill to the Trash")
@@ -382,9 +457,42 @@ private struct SkillDetailView: View {
                     Text(origin)
                 }
             }
+            if let link {
+                GridRow {
+                    label("Brain")
+                    brainInfo(link)
+                }
+            }
         }
         .font(.callout)
         .textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private func brainInfo(_ link: BrainLink) -> some View {
+        switch link {
+        case .rendered(_, let layers, let edited):
+            VStack(alignment: .leading, spacing: 2) {
+                Text("A copy AKit rendered from the \(layers.joined(separator: ", ")) layer\(layers.count == 1 ? "" : "s"). Edit it in the brain and apply again; to remove it, take it out of the layer.")
+                    .fixedSize(horizontal: false, vertical: true)
+                if edited {
+                    Label("Edited here since the render. The next apply asks before overwriting it.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+        case .sameName:
+            HStack(spacing: 8) {
+                Text("The brain has a skill with this name, but this copy wasn't rendered by AKit.")
+                Button("Show in Brain") { model.showBrainSkill(skill.name) }.buttonStyle(.link)
+            }
+        case .notInBrain:
+            HStack(spacing: 8) {
+                Text("Not in the brain.")
+                if !skill.isSingleFile {
+                    Button("Import to Brain…", action: onImport).buttonStyle(.link)
+                }
+            }
+        }
     }
 
     private func label(_ text: String) -> some View {
@@ -447,5 +555,47 @@ enum SkillsFilter: Hashable {
             if case .project(let chosen) = self { url.standardizedFileURL.path == chosen.standardizedFileURL.path } else { false }
         default: true
         }
+    }
+}
+
+/// "brain · core" for a rendered copy, "not in brain" for your own skill.
+private struct BrainLinkTag: View {
+    let link: BrainLink
+
+    var body: some View {
+        switch link {
+        case .rendered(_, let layers, let edited):
+            tag("brain · \(layers.joined(separator: ", "))", edited ? .orange : .purple)
+                .help(edited ? "Rendered from the brain, then edited here" : "Rendered from the brain by AKit")
+        case .sameName:
+            tag("in brain", .secondary).help("The brain has a skill with this name; this copy wasn't rendered by AKit")
+        case .notInBrain:
+            tag("not in brain", .secondary).help("Your own skill; the brain doesn't have it")
+        }
+    }
+
+    private func tag(_ text: String, _ tint: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .foregroundStyle(tint)
+            .background(tint.opacity(0.12), in: Capsule())
+    }
+}
+
+/// Edit in Brain / Show in Brain for a copy rendered from the brain skill `name`.
+private struct BrainSkillButtons: View {
+    @Environment(AppModel.self) private var model
+    let name: String
+
+    var body: some View {
+        if ExternalEditor.appURL != nil, let folder = model.brain?.skills.first(where: { $0.name == name })?.folder {
+            Button("Edit in Brain", systemImage: "square.and.pencil") { ExternalEditor.open(folder) }
+                .help("Open the brain's copy in \(ExternalEditor.name); apply the layer again to update this one")
+        }
+        Button("Show in Brain", systemImage: "brain") { model.showBrainSkill(name) }
+            .help("Show the skill on the Brain screen")
     }
 }
