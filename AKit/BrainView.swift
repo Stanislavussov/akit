@@ -11,7 +11,8 @@ struct BrainView: View {
     @State private var settingUp = false
     @State private var creatingLayer = false
     @State private var pendingRemoval: Removal?
-    @State private var removalMessage: (title: String, text: String)?
+    /// Result of a removal or a sync, shown in an alert.
+    @State private var message: (title: String, text: String)?
 
     /// Something the user asked to remove, waiting for confirmation.
     enum Removal: Identifiable {
@@ -75,14 +76,21 @@ struct BrainView: View {
         } message: { removal in
             Text(removalBlocker(removal) ?? removalDetails(removal))
         }
-        .alert(removalMessage?.title ?? "", isPresented: Binding(get: { removalMessage != nil }, set: { if !$0 { removalMessage = nil } })) {
+        .alert(message?.title ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK") {}
         } message: {
-            Text(removalMessage?.text ?? "")
+            Text(message?.text ?? "")
         }
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
+        .task(id: model.brain?.root) { await model.fetchBrainSync() }
         .toolbar {
+            ToolbarItem {
+                Button(syncTitle, systemImage: "arrow.triangle.2.circlepath", action: sync)
+                    .labelStyle(.titleAndIcon)
+                    .disabled(model.brainSync?.hasRemote != true || model.isSyncingBrain)
+                    .help(syncHelp)
+            }
             ToolbarItem {
                 Button("New Layer…", systemImage: "plus") { creatingLayer = true }
                     .labelStyle(.titleAndIcon)
@@ -105,6 +113,42 @@ struct BrainView: View {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .disabled(model.isScanning)
                     .help("Read the brain repo again (⌘R)")
+            }
+        }
+    }
+
+    private var syncTitle: String {
+        guard let status = model.brainSync, status.hasRemote else { return "Sync" }
+        if model.isSyncingBrain { return "Syncing…" }
+        let counts = [status.ahead > 0 ? "↑\(status.ahead)" : nil, status.behind > 0 ? "↓\(status.behind)" : nil].compactMap(\.self)
+        return counts.isEmpty ? "Sync" : "Sync \(counts.joined(separator: " "))"
+    }
+
+    private var syncHelp: String {
+        guard let status = model.brainSync else { return "The brain is not a git repo, so there is nothing to sync." }
+        guard status.hasRemote else { return "The brain has no remote. Add one: git remote add origin <url>, then git push -u origin HEAD." }
+        var parts = ["Pull the other Macs' changes to the brain and push this Mac's."]
+        if status.ahead > 0 { parts.append("\(status.ahead) commit\(status.ahead == 1 ? "" : "s") to push.") }
+        if status.behind > 0 { parts.append("\(status.behind) commit\(status.behind == 1 ? "" : "s") to pull.") }
+        if status.isInSync { parts.append("Up to date.") }
+        if !status.changed.isEmpty { parts.append("Not committed, so not synced: \(status.changed.joined(separator: ", ")).") }
+        return parts.joined(separator: " ")
+    }
+
+    private func sync() {
+        Task {
+            do {
+                let outcome = try await model.syncBrain()
+                var lines: [String] = []
+                if outcome.pulled > 0 { lines.append("Pulled \(outcome.pulled) commit\(outcome.pulled == 1 ? "" : "s").") }
+                if outcome.pushed > 0 { lines.append("Pushed \(outcome.pushed) commit\(outcome.pushed == 1 ? "" : "s").") }
+                if outcome.changesCore(in: model.brain) {
+                    lines.append("The core layer changed. Update this Mac's home folder with: akit apply --home")
+                }
+                if lines.isEmpty { lines.append("Nothing new on either side.") }
+                message = ("Brain synced", lines.joined(separator: "\n"))
+            } catch {
+                message = ("Couldn't sync the brain", error.localizedDescription)
             }
         }
     }
@@ -156,7 +200,7 @@ struct BrainView: View {
                 case .layer(let name):
                     let projects = try await model.removeLayer(name)
                     if !projects.isEmpty {
-                        removalMessage = ("Layer removed", "Set these projects up again to take its files out: \(projects.joined(separator: ", ")).")
+                        message = ("Layer removed", "Set these projects up again to take its files out: \(projects.joined(separator: ", ")).")
                     }
                 case .skill(let name):
                     try await model.removeSkill(name)
@@ -164,7 +208,7 @@ struct BrainView: View {
                     try await model.removeSkill(skill, fromLayer: layer)
                 }
             } catch {
-                removalMessage = ("Couldn't remove it", error.localizedDescription)
+                message = ("Couldn't remove it", error.localizedDescription)
             }
         }
     }

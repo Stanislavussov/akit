@@ -111,6 +111,29 @@ final class AppModel {
         try await BrainRemove.removeSkill(skill, fromLayer: layer, in: brain, env: .current)
     }
 
+    /// The brain against its git remote; nil when it isn't a git repo.
+    private(set) var brainSync: BrainSync.Status?
+    private(set) var isSyncingBrain = false
+
+    /// Asks the remote what's new (network), then updates `brainSync`.
+    func fetchBrainSync() async {
+        guard brain != nil, !isSyncingBrain else { return }
+        let root = brainRoot
+        let status = await BrainSync.status(of: root, env: .current, fetch: true)
+        if root == brainRoot { brainSync = status }
+    }
+
+    /// Pulls the other Macs' commits and pushes this one's, then rescans.
+    func syncBrain() async throws -> BrainSync.Outcome {
+        guard brain != nil else { throw Self.noBrain }
+        isSyncingBrain = true
+        defer {
+            isSyncingBrain = false
+            Task { await refresh() }
+        }
+        return try await BrainSync.sync(brainRoot, env: .current)
+    }
+
     private static let noBrain = NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded."])
 
     // MARK: Project setup
@@ -391,6 +414,7 @@ final class AppModel {
             return (found, await skills, projects, await sessions, await mcp, await targets, await brain)
         }.value
         self.brain = brain
+        brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
         installations = found
         self.skills = skills
         self.projects = projects
