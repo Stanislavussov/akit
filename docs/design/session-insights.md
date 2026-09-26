@@ -79,9 +79,14 @@ didn't already hold except counts.
 Manual really removes the description (checked 2026-09-26): the three
 `disable-model-invocation: true` skills in `~/.claude/skills` (`akit`, `zoom-out`,
 `setup-matt-pocock-skills`) are absent from a live Claude `skill_listing`, auto
-skills are present. For Pi only the docs say so; step 1 confirms it with
-`PiPromptProbe` on a project with a manual skill. If a harness keeps the
-description, the rule saves nothing there and must not recommend for it.
+skills are present. Pi too (checked 2026-09-27, Pi 0.84.2, with the
+`PiPromptProbe` extension in a project with one manual and one auto skill in
+`.agents/skills`): the manual skill is still in `systemPromptOptions.skills`, but
+neither its name nor its description is in the final system prompt; the auto
+skill's description is. So the later Pi denominator (`before_agent_start` skills)
+must drop manual skills. Pi loads project skills only in trusted folders
+(`~/.pi/agent/trust.json`). If a harness keeps the description, the rule saves
+nothing there and must not recommend for it.
 
 Subagents: their transcripts (`<session>/subagents/*.jsonl`) carry their own
 `skill_listing` (19 of the last 20 checked). A subagent run is not a session in
