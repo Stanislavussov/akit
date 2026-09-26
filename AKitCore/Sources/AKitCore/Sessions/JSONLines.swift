@@ -71,7 +71,7 @@ enum JSONLines {
             var start = pending.startIndex
             while let newline = pending[start...].firstIndex(of: UInt8(ascii: "\n")) {
                 let line = pending[start..<newline]
-                if !line.isEmpty { try visit(Data(line), consumed) }
+                if !line.isEmpty { try autoreleasepool { try visit(Data(line), consumed) } }
                 lastLine = line
                 consumed += UInt64(newline - start + 1)
                 start = pending.index(after: newline)

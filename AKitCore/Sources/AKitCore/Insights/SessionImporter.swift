@@ -65,7 +65,10 @@ struct SessionImporter {
                 break
             }
             do {
-                if let bytes = try importFile(file, database: database, now: now, keepExamples: keepExamples) {
+                // Decoded JSON objects are autoreleased; drain them per file, or a long run holds them all.
+                if let bytes = try autoreleasepool(invoking: {
+                    try importFile(file, database: database, now: now, keepExamples: keepExamples)
+                }) {
                     report.sources += 1
                     report.newBytes += bytes
                 }
