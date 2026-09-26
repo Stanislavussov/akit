@@ -319,6 +319,9 @@ struct BrainView: View {
                 ForEach(projects(brain)) { project in
                     ProjectRow(project: project, layers: brain.layers(of: project), isOnThisMac: folders[project.id] != nil)
                         .tag(Item.project(project.id))
+                        .contextMenu {
+                            if let folder = folders[project.id] { fileMenu(folder, reveal: folder) }
+                        }
                 }
             } }
             if !skills(brain).isEmpty { Section("Skills") {
@@ -498,6 +501,10 @@ private struct BrainProjectDetailView: View {
                         .help("Pick layers and fields, preview the changes, apply")
                 }
                 if let folder {
+                    if ExternalEditor.appURL != nil {
+                        Button("Open in \(ExternalEditor.name)", systemImage: "square.and.pencil") { ExternalEditor.open(folder) }
+                            .help("Open the project folder in \(ExternalEditor.name)")
+                    }
                     Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
                         .labelStyle(.iconOnly)
                         .help("Show the project in Finder")
