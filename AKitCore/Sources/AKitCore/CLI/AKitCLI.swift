@@ -306,7 +306,8 @@ public enum AKitCLI {
         if !skipped.isEmpty { lines.append("Skipped: \(skipped.sorted().joined(separator: ", "))") }
         if let backup = outcome.backup { lines.append("Backup: \(backup.path)") }
         lines += outcome.notes.map { "Note: \($0)" }
-        lines.append("Answers saved in the brain under projects/\(id). Commit the harness files in the project.")
+        lines.append(id.hasPrefix("home/") ? "Saved in the brain under projects/\(id). Reload skills in your harness (e.g. /reload-skills)."
+                     : "Answers saved in the brain under projects/\(id). Commit the harness files in the project.")
         return lines.joined(separator: "\n")
     }
 

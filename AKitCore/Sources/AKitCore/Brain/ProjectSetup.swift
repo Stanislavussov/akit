@@ -323,7 +323,7 @@ public enum ProjectSetup {
                 _ = try await git(["add", "--", path], in: brain.root, env: env)
                 let staged = try await git(["diff", "--cached", "--name-only", "--", path], in: brain.root, env: env)
                 if !staged.isEmpty {
-                    _ = try await git(["commit", "--quiet", "-m", "Render \(plan.project.lastPathComponent)", "--", path], in: brain.root, env: env)
+                    _ = try await git(["commit", "--quiet", "-m", plan.id.hasPrefix("home/") ? "Render the core layer into \(plan.id)" : "Render \(plan.project.lastPathComponent)", "--", path], in: brain.root, env: env)
                 }
             } catch {
                 notes.append("The answers are saved in the brain but not committed: \(error.message)")
