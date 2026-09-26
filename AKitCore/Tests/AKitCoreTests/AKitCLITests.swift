@@ -274,4 +274,43 @@ struct AKitCLITests {
         #expect(skill.contains("disable-model-invocation: true") && skill.contains("akit sync"))
     }
 
+    // MARK: Session insights
+
+    @Test func sessionsImportNeedsNoBrain() async throws {
+        try write(".claude/projects/-work-app/s1.jsonl", """
+            {"type":"assistant","uuid":"a","timestamp":"2026-09-20T10:00:00.000Z","message":{"id":"m1","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":3,"output_tokens":1}}}
+
+            """)
+        let first = await akit("sessions", "import", "--json")
+        #expect(first.code == 0, "\(first)")
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(first.out.utf8)) as? [String: Any])
+        for key in ["sources", "newBytes", "sessions", "requests", "toolCalls", "skillCalls", "spoolLines", "skipped", "ms"] {
+            #expect(json[key] != nil, "\(key)")
+        }
+        #expect(json["sources"] as? Int == 1 && json["requests"] as? Int == 1)
+        #expect(fm.fileExists(atPath: home.appending(path: ".akit/index/index.sqlite").path))
+
+        let again = await akit("sessions", "import")
+        #expect(again.code == 0 && again.out.contains("Nothing new"))
+        let quiet = await akit("sessions", "import", "--quiet")
+        #expect(quiet.code == 0 && quiet.out.isEmpty)
+    }
+
+    @Test func secondImporterSkips() async throws {
+        let held = try #require(try ImportLock.acquire(InsightsPaths(home: home).lock))
+        let result = await akit("sessions", "import")
+        #expect(result.code == 0 && result.out == "Import already running.")
+        #expect(await akit("sessions", "import", "--quiet").out.isEmpty)
+        withExtendedLifetime(held) {}
+    }
+
+    @Test func unknownInsightsFlagFails() async throws {
+        let unknown = await akit("sessions", "import", "--bogus")
+        #expect(unknown.code == 2 && unknown.err.contains("--bogus"))
+        let project = await akit("sessions", "import", "--home")
+        #expect(project.code == 2 && project.err.contains("--home doesn't go with akit sessions"))
+        #expect(await akit("sessions", "--layers", "a", "import").code == 2)
+        #expect(await akit("sessions", "export").code == 2)
+        #expect(!fm.fileExists(atPath: home.appending(path: ".akit/index/index.sqlite").path))
+    }
 }

@@ -40,6 +40,11 @@ public enum AKitCLI {
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
 
+        Sessions (a local index in ~/.akit/index; never in the brain, works without one):
+          akit sessions import [--json] [--quiet]
+                                          Read new Claude Code and Pi session lines into the index:
+                                          counts, sizes and skill use, never message text
+
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
           akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
@@ -86,6 +91,10 @@ public enum AKitCLI {
                                   yes: args.flag("--yes"), keepFiles: args.flag("--keep-files"), from: args.value("--from"),
                                   repo: args.value("--repo"), skipHome: args.flag("--skip-home"), name: args.value("--name"))
             let command = args.positional()
+            if command == "sessions" {
+                try refuseProjectOptions(options, command: "sessions")
+                return try sessions(&args, options: options, env: env, out: out)
+            }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
                 try args.finish()
@@ -314,6 +323,58 @@ public enum AKitCLI {
                       folder: layer.folder.path, problems: brain.problems(of: layer.name).map(\.message))
         }
         return encode(infos)
+    }
+
+    // MARK: - Session insights
+
+    /// Options read before the command that only mean something for brain and project commands.
+    private static func refuseProjectOptions(_ options: Options, command: String) throws {
+        let given: [(set: Bool, flag: String)] = [
+            (options.home, "--home"), (options.layers != nil, "--layers"), (options.from != nil, "--from"),
+            (options.answersFile != nil, "--answers"), (options.targets != nil, "--targets"), (!options.set.isEmpty, "--set"),
+            (!options.unset.isEmpty, "--unset"), (!options.include.isEmpty, "--include"), (!options.exclude.isEmpty, "--exclude"),
+            (options.includeUnmanaged, "--include-unmanaged"), (options.keepFiles, "--keep-files"), (options.repo != nil, "--repo"),
+            (options.skipHome, "--skip-home"), (options.name != nil, "--name"),
+        ]
+        if let flag = given.first(where: \.set)?.flag { throw Failure(message: "\(flag) doesn't go with akit \(command).") }
+    }
+
+    /// `akit sessions import`: one importer at a time; a second one exits quietly.
+    private static func sessions(_ args: inout Arguments, options: Options, env: HarnessEnvironment,
+                                 out: (String) -> Void) throws -> Int32 {
+        let quiet = args.flag("--quiet")
+        let subcommand = args.positional()
+        try args.finish()
+        guard subcommand == "import" else { throw Failure(message: "Use: akit sessions import [--json] [--quiet]") }
+        let paths = InsightsPaths(env: env)
+        guard let lock = try ImportLock.acquire(paths.lock) else {
+            if !quiet { out("Import already running.") }
+            return 0
+        }
+        let report = try withExtendedLifetime(lock) {
+            try SessionImporter.import(env: env, database: try IndexSchema.open(paths.database))
+        }
+        if options.json {
+            out(encode(report))
+        } else if !quiet {
+            out(importText(report))
+        }
+        return 0
+    }
+
+    static func importText(_ report: ImportReport) -> String {
+        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        var lines: [String] = []
+        if report.sources == 0 {
+            lines.append("Nothing new in the session logs (\(report.ms) ms).")
+        } else {
+            let bytes = ByteCountFormatter.string(fromByteCount: Int64(report.newBytes), countStyle: .file)
+            lines.append("Read \(count(report.sources, "file")) (\(bytes)) in \(report.ms) ms. Added \(count(report.sessions, "session")), "
+                         + "\(count(report.requests, "request")), \(count(report.toolCalls, "tool call")), \(count(report.skillCalls, "skill call")).")
+        }
+        if report.pending > 0 { lines.append("\(count(report.pending, "file")) left for the next run.") }
+        lines += report.skipped.map { "Skipped \($0.path): \($0.reason)" }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Remove

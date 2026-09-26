@@ -145,13 +145,18 @@ enum ClaudeSessions {
     private static func recordUsage(_ entry: Object, in counter: inout UsageCounter) {
         guard entry["type"] as? String == "assistant", let message = entry["message"] as? Object,
               let usage = message["usage"] as? Object else { return }
-        func count(_ key: String, in object: Object? = usage) -> Int { (object?[key] as? NSNumber)?.intValue ?? 0 }
-        let tokens = TokenCounts(input: count("input_tokens"), output: count("output_tokens"),
-                                 cacheRead: count("cache_read_input_tokens"),
-                                 cacheWrite: count("cache_creation_input_tokens"),
-                                 reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? Object))
         counter.record(id: message["id"] as? String ?? entry["requestId"] as? String,
-                       model: message["model"] as? String, tokens: tokens)
+                       model: message["model"] as? String, tokens: tokens(fromClaudeUsage: usage))
+    }
+
+    /// Claude's `message.usage`: input_tokens, output_tokens, cache_read_input_tokens,
+    /// cache_creation_input_tokens, output_tokens_details.thinking_tokens.
+    static func tokens(fromClaudeUsage usage: Object) -> TokenCounts {
+        func count(_ key: String, in object: Object? = usage) -> Int { (object?[key] as? NSNumber)?.intValue ?? 0 }
+        return TokenCounts(input: count("input_tokens"), output: count("output_tokens"),
+                           cacheRead: count("cache_read_input_tokens"),
+                           cacheWrite: count("cache_creation_input_tokens"),
+                           reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? Object))
     }
 
     struct ToolCall {
@@ -203,14 +208,16 @@ enum ClaudeSessions {
 
     /// `<command-name>/model</command-name><command-args>opus</command-args>` → `/model opus`.
     static func commandLine(_ text: String) -> String {
-        func tag(_ name: String) -> String? {
-            guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex)
-            else { return nil }
-            return String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        let name = tag("command-name") ?? tag("command-message") ?? ""
-        let args = tag("command-args") ?? ""
+        let name = tag("command-name", in: text) ?? tag("command-message", in: text) ?? ""
+        let args = tag("command-args", in: text) ?? ""
         return args.isEmpty ? name : "\(name) \(args)"
+    }
+
+    /// Trimmed text between `<name>` and `</name>`.
+    static func tag(_ name: String, in text: String) -> String? {
+        guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex)
+        else { return nil }
+        return String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func stripTags(_ text: String) -> String {

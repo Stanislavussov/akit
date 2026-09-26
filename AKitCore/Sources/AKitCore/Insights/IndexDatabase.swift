@@ -110,6 +110,10 @@ final class IndexDatabase {
 
     /// Every row of a query, columns in order.
     func rows(_ sql: String, _ values: any SQLBindable...) throws -> [[SQLValue]] {
+        try rows(sql, values)
+    }
+
+    func rows(_ sql: String, _ values: [any SQLBindable]) throws -> [[SQLValue]] {
         let statement = try prepare(sql, values)
         defer { sqlite3_reset(statement) }
         var result: [[SQLValue]] = []

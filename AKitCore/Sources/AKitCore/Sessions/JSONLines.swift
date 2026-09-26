@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Reading JSONL session files: one JSON object per line. Broken lines are skipped,
@@ -47,6 +48,57 @@ enum JSONLines {
         }
         if let object = decode(pending), visit(object) { return true }
         return false
+    }
+
+    /// Complete lines from byte `offset` on, each with the offset it starts at. Stops after
+    /// the last complete line, so a line being written is read next time. Returns the offset
+    /// after that line and the SHA-256 of it (nil when no complete line was read).
+    static func lines(of url: URL, from offset: UInt64, chunk: Int = 1 << 20,
+                      _ visit: (Data, UInt64) throws -> Void) throws -> (offset: UInt64, tailHash: String?) {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: offset)
+        var pending = Data()
+        var consumed = offset
+        var lastLine: Data?
+        while let data = try handle.read(upToCount: chunk), !data.isEmpty {
+            pending.append(data)
+            var start = pending.startIndex
+            while let newline = pending[start...].firstIndex(of: UInt8(ascii: "\n")) {
+                let line = pending[start..<newline]
+                if !line.isEmpty { try visit(Data(line), consumed) }
+                lastLine = line
+                consumed += UInt64(newline - start + 1)
+                start = pending.index(after: newline)
+            }
+            pending = Data(pending[start...])
+        }
+        return (consumed, lastLine.map(hash))
+    }
+
+    /// SHA-256 of the line that ends right before `offset` (its newline is byte `offset - 1`).
+    /// nil at the start of the file or when that byte isn't a line end.
+    static func tailHash(of url: URL, endingAt offset: UInt64, maxBytes: UInt64 = 64 << 20) -> String? {
+        guard offset > 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var window: UInt64 = 64 << 10
+        while true {
+            let start = offset > window ? offset - window : 0
+            guard (try? handle.seek(toOffset: start)) != nil,
+                  let data = try? handle.read(upToCount: Int(offset - start)), UInt64(data.count) == offset - start,
+                  data.last == UInt8(ascii: "\n") else { return nil }
+            let body = data.dropLast()
+            if let newline = body.lastIndex(of: UInt8(ascii: "\n")) {
+                return hash(body[body.index(after: newline)...])
+            }
+            if start == 0 { return hash(body) }
+            guard window < maxBytes else { return nil }
+            window *= 4
+        }
+    }
+
+    static func hash(_ data: some DataProtocol) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Complete lines from the last `bytes` of the file. If the last line alone is longer,
