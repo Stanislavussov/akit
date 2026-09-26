@@ -19,6 +19,7 @@ struct ProjectSetupSheet: View {
     @State private var outcome: ProjectSetup.Outcome?
     @State private var isWorking = false
     @State private var error: String?
+    @State private var creatingLayer = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -30,6 +31,7 @@ struct ProjectSetupSheet: View {
         }
         .padding(16)
         .frame(width: 760, height: 640)
+        .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         .task {
             // Snapshot: `--project <folder>` picks it, `--query a,b` ticks layers, `--capture` opens the preview.
             if project == nil, let options = DebugSnapshot.options, let name = options.project,
@@ -120,7 +122,7 @@ struct ProjectSetupSheet: View {
         GroupBox("Layers") {
             VStack(alignment: .leading, spacing: 6) {
                 if offered.isEmpty {
-                    Text("The brain has no layers besides core. Add layers/<name>/layer.yaml.").foregroundStyle(.secondary)
+                    Text("No layers for projects yet (core is for the home folder).").foregroundStyle(.secondary)
                 }
                 let pulledIn = Set(render?.layers ?? []).subtracting(answers.layers)
                 ForEach(offered) { layer in
@@ -138,6 +140,8 @@ struct ProjectSetupSheet: View {
                     }
                     .disabled(pulledIn.contains(layer.name))
                 }
+                Button("New Layer…", systemImage: "plus") { creatingLayer = true }
+                    .help("Create a layer; it shows up here right away")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(4)
