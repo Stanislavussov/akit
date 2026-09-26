@@ -32,6 +32,15 @@ final class AppModel {
     var mcpFilter: SkillsFilter = .initial
     var mcpHarness: String? = DebugSnapshot.options?.harness
 
+    /// A brain skill the Brain screen should select when it appears (set by "Show in Brain").
+    var revealBrainSkill: String?
+
+    /// Opens the Brain screen on this brain skill.
+    func showBrainSkill(_ name: String) {
+        revealBrainSkill = name
+        section = .brain
+    }
+
     /// Opens the Skills screen on the skill in this folder.
     func showSkill(inFolder folder: URL) {
         guard let skill = skill(inFolder: folder) else { return }
@@ -59,6 +68,10 @@ final class AppModel {
     var brainRoot: URL { HarnessEnvironment.current.expand(brainPath) }
     /// The brain repo from the last scan; nil when there is no folder at `brainPath`.
     private(set) var brain: Brain?
+    /// Brain project ids → their folders on this Mac (from the last scan).
+    private(set) var brainProjectFolders: [String: URL] = [:]
+    /// How each of your skills relates to the brain: rendered copy, same name, or not in it.
+    private(set) var brainLinks: [Skill.ID: BrainLink] = [:]
 
     /// Creates an empty brain repo at `brainPath` (folder layout, `core` layer, first commit).
     func createBrain() async throws {
@@ -66,12 +79,13 @@ final class AppModel {
         await refresh()
     }
 
-    /// What importing `~/.agents/skills` into the brain would do. Only reads.
-    func brainImportPlan() async -> BrainImport.Plan? {
+    /// What importing skills from `source` (default `~/.agents/skills`) into a brain layer would do. Only reads.
+    func brainImportPlan(from source: URL? = nil, layer: String = "core", mode: LayerSkill.Mode = .manual) async -> BrainImport.Plan? {
         guard let brain else { return nil }
         let env = HarnessEnvironment.current
         return await Task.detached {
-            BrainImport.plan(from: BrainImport.defaultSource(home: env.homeDirectory), into: brain.root, env: env)
+            BrainImport.plan(from: source ?? BrainImport.defaultSource(home: env.homeDirectory), into: brain.root,
+                             layer: layer, mode: mode, env: env)
         }.value
     }
 
@@ -452,6 +466,13 @@ final class AppModel {
         installations = found
         self.skills = skills
         self.projects = projects
+        if let brain {
+            brainProjectFolders = await projectFolders()
+            brainLinks = BrainLinks.links(for: skills, brain: brain, folders: brainProjectFolders)
+        } else {
+            brainProjectFolders = [:]
+            brainLinks = [:]
+        }
         self.sessions = sessions
         mcpServers = mcp.servers
         mcpProblems = mcp.problems

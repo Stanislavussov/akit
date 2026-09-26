@@ -95,6 +95,23 @@ struct BrainImportTests {
         #expect(try await git("status", "--porcelain") == "A  machines/work.yaml\n")
     }
 
+    @Test func importsIntoAnotherLayer() async throws {
+        _ = try await setUp()
+        try write(".akit/registry/layers/web/layer.yaml", "description: Web apps\n")
+        _ = try await git("add", "-A")
+        _ = try await git("commit", "-qm", "Add web")
+        let plan = BrainImport.plan(from: source, into: brainRoot, layer: "web", mode: .auto, env: env)
+        #expect(plan.candidates.first { $0.name == "same" }?.isDone == false)
+
+        try await BrainImport.apply(plan, importing: ["fresh", "same"], env: env)
+        let brain = try #require(Brain.load(from: brainRoot))
+        let web = try #require(brain.layers.first { $0.name == "web" })
+        #expect(web.skills.map(\.name) == ["fresh", "same"])
+        #expect(web.skills.map(\.mode) == [.auto, .auto])
+        #expect(brain.layers.first { $0.name == "core" }?.skills.map(\.name) == ["same"])
+        #expect(try await git("log", "-1", "--format=%s") == "Import 2 skills into the web layer\n")
+    }
+
     @Test func refusesWhenCoreChangedAfterThePreview() async throws {
         let plan = try await setUp()
         try write(".akit/registry/layers/core/layer.yaml", "skills: []\n")
@@ -143,9 +160,9 @@ struct BrainImportTests {
         _ = try await setUp()
         try write(".akit/registry/layers/core/layer.yaml", "skills:\n  - name: fresh\n")
         let plan = BrainImport.plan(from: source, into: brainRoot, env: env)
-        #expect(plan.candidates.first { $0.name == "fresh" }?.inCore == true)
-        #expect(try BrainImport.coreAfter(plan, importing: ["fresh"]) == plan.coreBefore)
-        #expect(throws: BrainImport.Failure.self) { try BrainImport.addSkills(["fresh"], mode: .manual, to: plan.coreBefore) }
+        #expect(plan.candidates.first { $0.name == "fresh" }?.inLayer == true)
+        #expect(try BrainImport.layerAfter(plan, importing: ["fresh"]) == plan.layerBefore)
+        #expect(throws: BrainImport.Failure.self) { try BrainImport.addSkills(["fresh"], mode: .manual, to: plan.layerBefore) }
     }
 
     @Test func addSkillsKeepsTheRestOfTheFile() throws {
