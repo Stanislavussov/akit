@@ -79,6 +79,17 @@ struct OnboardingTests {
         #expect(again.out.contains("nothing new"))
     }
 
+    @Test func onAWorkMacTheHomeRecordStaysOffTheBrain() async throws {
+        try MachineProfile(kind: .work).save(home: home)
+        let result = await setup()
+        #expect(result.code == 0, "\(result.out)")
+        #expect(read(".agents/skills/akit/SKILL.md") != nil)
+        #expect(ProjectSetup.savedAnswers(id: "home/work", in: .local(home: home))?.layers == ["core"])
+        #expect(!fm.fileExists(atPath: brain.appending(path: "projects/home").path))
+        let again = await setup(answers: [], session: result.session)
+        #expect(again.code == 0 && again.out.contains("nothing new"), "\(again.out)")
+    }
+
     @Test func clonesTheBrainFromAnotherMacAndAsksForTheProjectsFolder() async throws {
         let other = home.appending(path: "other/registry")
         try await BrainSetup.create(at: other, env: env)

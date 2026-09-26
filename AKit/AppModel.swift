@@ -73,6 +73,23 @@ final class AppModel {
     /// How each of your skills relates to the brain: rendered copy, same name, or not in it.
     private(set) var brainLinks: [Skill.ID: BrainLink] = [:]
 
+    /// This Mac's role, from `~/.akit/machine.json` (shared with the `akit` command); reread on refresh.
+    private(set) var machine = MachineProfile.load(home: HarnessEnvironment.current.homeDirectory)
+
+    /// Saves this Mac's role and returns notes for the user; the file, not this copy,
+    /// decides where answers go.
+    func setMachine(_ profile: MachineProfile) throws -> [String] {
+        let notes = try MachineProfile.change(to: profile, brain: brainRoot, home: HarnessEnvironment.current.homeDirectory)
+        machine = profile
+        return notes
+    }
+
+    /// Where project answers and locks are kept on this Mac: the brain, or a local folder on a work Mac.
+    /// Apply checks the file again, so a role changed by `akit machine` meanwhile can't slip through.
+    var projectStore: ProjectStore {
+        ProjectStore.current(brain: brainRoot, home: HarnessEnvironment.current.homeDirectory, machine: machine)
+    }
+
     /// Creates an empty brain repo at `brainPath` (folder layout, `core` layer, first commit).
     func createBrain() async throws {
         try await BrainSetup.create(at: brainRoot, env: .current)
@@ -189,7 +206,7 @@ final class AppModel {
     /// Brain project ids found on this Mac → their folders: the home folder and every known project.
     func projectFolders() async -> [String: URL] {
         let env = HarnessEnvironment.current
-        var folders = [ProjectSetup.homeID(): env.homeDirectory]
+        var folders = [ProjectSetup.homeID(machineName: machine.homeName): env.homeDirectory]
         await withTaskGroup(of: (String, URL).self) { group in
             for project in projects {
                 group.addTask { (await self.projectID(for: project), project) }
@@ -202,10 +219,11 @@ final class AppModel {
     /// What rendering these answers would change in the project. Only reads.
     func projectPlan(project: URL, id: String, answers: ProjectAnswers) async -> ProjectSetup.Plan? {
         guard let brain else { return nil }
-        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain) }.value
+        let store = projectStore
+        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store) }.value
     }
 
-    /// Writes the project files (backup first), saves answers in the brain, then rescans.
+    /// Writes the project files (backup first), saves answers in the plan's store, then rescans.
     func applyProject(_ plan: ProjectSetup.Plan, excluding: Set<String>) async throws -> ProjectSetup.Outcome {
         guard let brain else {
             throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
@@ -241,6 +259,7 @@ final class AppModel {
             return
         }
         isScanning = true
+        machine = MachineProfile.load(home: HarnessEnvironment.current.homeDirectory)
         repeat {
             rescanRequested = false
             await scan()
@@ -468,7 +487,7 @@ final class AppModel {
         self.projects = projects
         if let brain {
             brainProjectFolders = await projectFolders()
-            brainLinks = BrainLinks.links(for: skills, brain: brain, folders: brainProjectFolders)
+            brainLinks = BrainLinks.links(for: skills, brain: brain, folders: brainProjectFolders, store: projectStore)
         } else {
             brainProjectFolders = [:]
             brainLinks = [:]

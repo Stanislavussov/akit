@@ -76,6 +76,20 @@ struct ProjectSetupTests {
         ProjectAnswers(layers: ["task"], values: ["company": .text("Acme")], targets: ["claude", "pi"])
     }
 
+    @Test func applyRefusesAPlanMadeBeforeTheMacBecameAWorkMac() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain,
+                                     store: .current(brain: brainRoot, home: home))
+        #expect(!plan.store.isLocal)
+        try MachineProfile(kind: .work).save(home: home)
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        }
+        #expect(read("AGENTS.md") == nil)
+        #expect(!fm.fileExists(atPath: brainRoot.appending(path: "projects/local").path))
+    }
+
     @Test func remoteURLsBecomeIDs() {
         #expect(ProjectSetup.normalizedRemote("git@github.com:Owner/Repo.git\n") == "github.com/owner/repo")
         #expect(ProjectSetup.normalizedRemote("https://user@github.com/owner/repo") == "github.com/owner/repo")
@@ -98,7 +112,7 @@ struct ProjectSetupTests {
         try fm.createDirectory(at: project, withIntermediateDirectories: true)
 
         // A real .claude/skills folder appears after the preview.
-        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         try write("Projects/task/.claude/skills/mine/SKILL.md", "mine")
         await #expect(throws: ProjectSetup.Failure.self) {
             try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
@@ -107,7 +121,7 @@ struct ProjectSetupTests {
         try fm.removeItem(at: project.appending(path: ".claude"))
 
         // .agents becomes a link out of the project after the preview.
-        let second = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        let second = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         try fm.createDirectory(at: home.appending(path: "outside"), withIntermediateDirectories: true)
         try fm.createSymbolicLink(at: project.appending(path: ".agents"), withDestinationURL: home.appending(path: "outside"))
         await #expect(throws: ProjectSetup.Failure.self) {
@@ -120,7 +134,7 @@ struct ProjectSetupTests {
         let brain = try await setUpBrain()
         try write("Projects/task/NOTES.md", "notes")
         try fm.createSymbolicLink(atPath: project.appending(path: "CLAUDE.md").path, withDestinationPath: "NOTES.md")
-        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         let change = try #require(plan.changes.first { $0.path == "CLAUDE.md" })
         #expect(change.kind == .update && change.replacesUnmanaged && change.oldText == "→ NOTES.md (a link)")
 
@@ -133,13 +147,13 @@ struct ProjectSetupTests {
 
     @Test func handEditsAreFlaggedAndAFailedApplyStillRecordsWhatItWrote() async throws {
         let brain = try await setUpBrain()
-        _ = try await ProjectSetup.apply(ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain),
+        _ = try await ProjectSetup.apply(ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot)),
                                          brain: brain, home: home, env: env, trash: trash)
         try write("Projects/task/AGENTS.md", "hand edit")
         var next = answers
         next.values["company"] = .text("Beta")
         next.values["review"] = .bool(false)
-        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: next, brain: brain)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: next, brain: brain, store: .brain(brainRoot))
         #expect(plan.changes.first { $0.path == "AGENTS.md" }?.editedSinceRender == true)
 
         // The Trash fails on REVIEW.md: AGENTS.md was already written and must be in the lock.
@@ -147,7 +161,7 @@ struct ProjectSetupTests {
             try await ProjectSetup.apply(plan, brain: brain, home: home, env: env,
                                          trash: { _ in throw CocoaError(.fileWriteNoPermission) })
         }
-        let lock = try #require(ProjectSetup.savedLock(id: "local/task", brain: brainRoot))
+        let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot)))
         #expect(lock.files["AGENTS.md"]?.sha256 == ProjectSetup.sha256(Data("# Task for Beta\n".utf8)))
     }
 
@@ -160,7 +174,7 @@ struct ProjectSetupTests {
         let brain = try await setUpBrain()
         try write("Projects/task/CLAUDE.md", "# My own rules\n")
 
-        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         #expect(plan.canApply, "\(plan.render.errors) \(plan.blockers)")
         let kinds = Dictionary(uniqueKeysWithValues: plan.changes.map { ($0.path, $0.kind) })
         #expect(kinds == ["AGENTS.md": .create, "CLAUDE.md": .update, "REVIEW.md": .create,
@@ -174,8 +188,8 @@ struct ProjectSetupTests {
         let backup = try #require(outcome.backup)
         #expect(try String(contentsOf: backup.appending(path: "Projects/task/CLAUDE.md"), encoding: .utf8) == "# My own rules\n")
 
-        #expect(ProjectSetup.savedAnswers(id: "local/task", brain: brainRoot) == answers)
-        let lock = try #require(ProjectSetup.savedLock(id: "local/task", brain: brainRoot))
+        #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(brainRoot)) == answers)
+        let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot)))
         #expect(lock.files.keys.sorted() == [".agents/skills/tdd/SKILL.md", ".claude/skills", "AGENTS.md", "CLAUDE.md", "REVIEW.md"])
         #expect(lock.brainCommit?.isEmpty == false)
         #expect(!lock.brainDirty)
@@ -186,14 +200,14 @@ struct ProjectSetupTests {
 
     @Test func secondRenderRemovesDroppedFilesButKeepsEditedOnes() async throws {
         let brain = try await setUpBrain()
-        _ = try await ProjectSetup.apply(ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain),
+        _ = try await ProjectSetup.apply(ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot)),
                                          brain: brain, home: home, env: env, trash: trash)
         try write("Projects/task/AGENTS.md", "# Task for Acme\n\nMy note.\n")
 
         var next = answers
         next.values["review"] = .bool(false)
         next.targets = ["pi"]
-        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: next, brain: brain)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: next, brain: brain, store: .brain(brainRoot))
         let kinds = Dictionary(uniqueKeysWithValues: plan.changes.map { ($0.path, $0.kind) })
         #expect(kinds["REVIEW.md"] == .remove)
         #expect(kinds["CLAUDE.md"] == .remove)
@@ -207,18 +221,18 @@ struct ProjectSetupTests {
         #expect(!fm.fileExists(atPath: project.appending(path: ".claude").path))
         #expect(fm.fileExists(atPath: project.appending(path: ".agents/skills/tdd/SKILL.md").path))
         // An excluded file keeps its old lock entry, so the next plan still knows AKit wrote it.
-        #expect(ProjectSetup.savedLock(id: "local/task", brain: brainRoot)?.files["AGENTS.md"] != nil)
+        #expect(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot))?.files["AGENTS.md"] != nil)
 
         // Edited after a render and then dropped: left alone.
         try write("Projects/task/.agents/skills/tdd/SKILL.md", "mine")
-        let dropped = ProjectSetup.plan(project: project, id: "local/task", answers: ProjectAnswers(layers: []), brain: brain)
+        let dropped = ProjectSetup.plan(project: project, id: "local/task", answers: ProjectAnswers(layers: []), brain: brain, store: .brain(brainRoot))
         #expect(dropped.changes.first { $0.path == ".agents/skills/tdd/SKILL.md" }?.kind == .keepEdited)
     }
 
     @Test func blockersAndStalePreviews() async throws {
         let brain = try await setUpBrain()
         try write("Projects/task/.claude/skills/own/SKILL.md", "x")
-        let blocked = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        let blocked = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         #expect(!blocked.canApply)
         #expect(blocked.blockers.first?.hasPrefix(".claude/skills is a folder with 1 item (own).") == true)
         await #expect(throws: ProjectSetup.Failure.self) {
@@ -226,7 +240,7 @@ struct ProjectSetupTests {
         }
 
         try fm.removeItem(at: project.appending(path: ".claude"))
-        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         try write("Projects/task/AGENTS.md", "written meanwhile")
         await #expect(throws: ProjectSetup.Failure.self) {
             try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)

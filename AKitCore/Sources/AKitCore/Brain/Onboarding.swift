@@ -157,13 +157,15 @@ public enum Onboarding {
         guard let brain = Brain.load(from: root), brain.layers.contains(where: { $0.name == "core" }) else {
             return io.say("Home folder: the brain has no core layer; nothing to put there.")
         }
-        let id = ProjectSetup.homeID(hostName: hostName)
-        var answers = ProjectSetup.savedAnswers(id: id, brain: root) ?? ProjectAnswers()
+        // A work Mac keeps its home record locally (see ProjectStore), under its machine name.
+        let store = ProjectStore.current(brain: root, home: env.homeDirectory)
+        let id = ProjectSetup.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
+        var answers = ProjectSetup.savedAnswers(id: id, in: store) ?? ProjectAnswers()
         answers.layers = ["core"]
         // Harnesses installed since the last setup join in.
         answers.targets += installedTargets.filter { !answers.targets.contains($0) }
         if answers.targets.isEmpty { answers.targets = ["claude"] }
-        var plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, forHome: true)
+        var plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true)
 
         // Claude's own skills folder has to become a link to ~/.agents/skills.
         let claudeSkills = env.homeDirectory.appending(path: ".claude/skills")
@@ -173,7 +175,7 @@ public enum Onboarding {
             // Asked only: without a terminal they stay where they are.
             if let ask = io.ask, yes(ask("Move them to ~/.agents/skills and link ~/.claude/skills there? A backup is kept. [Y/n]"), default: true) {
                 try moveClaudeSkills(claudeSkills, home: env.homeDirectory, io: io)
-                plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, forHome: true)
+                plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true)
             }
         }
         guard plan.canApply else {

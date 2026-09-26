@@ -11,12 +11,13 @@ import SwiftUI
 /// Usage takes it as the period: week, month, quarter, year, all);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
 /// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet;
+/// `--settings` shows the Settings view in the main window;
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
-/// a value (`--add`, `--capture`, `--own-copy`) last: Cocoa pairs arguments as "-key value", and a
+/// a value (`--add`, `--capture`, `--own-copy`, `--settings`) last: Cocoa pairs arguments as "-key value", and a
 /// word left over is opened as a document, whose error alert keeps the window from appearing.
 enum DebugSnapshot {
     struct Options {
@@ -36,6 +37,8 @@ enum DebugSnapshot {
         var add: Bool
         /// Brain repo folder for this run only.
         var brain: String?
+        /// Show the Settings view instead of the sidebar window.
+        var settings: Bool
         /// README screenshots: no build badge in the sidebar.
         var demo: Bool
         /// `light` or `dark`; default: the system's.
@@ -65,6 +68,7 @@ enum DebugSnapshot {
             tab: value("--tab"),
             add: args.contains("--add"),
             brain: value("--brain"),
+            settings: args.contains("--settings"),
             demo: args.contains("--demo"),
             appearance: value("--appearance"),
             size: value("--size").flatMap { text -> CGSize? in

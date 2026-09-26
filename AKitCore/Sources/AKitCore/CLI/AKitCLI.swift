@@ -1,7 +1,8 @@
 import Foundation
 
 /// The `akit` command: the brain and project setup for agents and terminals. Same rules
-/// as the app: checks before writing, backups, the Trash for removals, answers in the brain.
+/// as the app: checks before writing, backups, the Trash for removals, answers in the brain
+/// (or, on a work Mac, in a local folder that never reaches the brain).
 public enum AKitCLI {
     public static let usage = """
         akit — harness layers from your brain repo (~/.akit/registry)
@@ -23,7 +24,7 @@ public enum AKitCLI {
           akit plan [PROJECT] [ANSWERS]   What would change, with diffs (exit 1 if it can't apply)
           akit apply [PROJECT] [ANSWERS] [--include PATH]... [--exclude PATH]... [--include-unmanaged]
                                           Write it: backup first, removals to the Trash, answers
-                                          saved in the brain. Files AKit didn't write, or edited
+                                          saved in the brain (work Mac: locally). Files AKit didn't write, or edited
                                           by hand since, are skipped unless --include PATH
                                           (--include-unmanaged: every file AKit didn't write).
 
@@ -38,6 +39,13 @@ public enum AKitCLI {
 
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
+
+        This Mac (~/.akit/machine.json, never in the brain):
+          akit machine                    Show whether this is a personal or a work Mac
+          akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
+                                          ~/.akit/local/projects, nothing about them reaches the
+                                          brain. NAME replaces the host name (default: work)
+          akit machine personal           Back to keeping answers in the brain
 
         ANSWERS (start from the saved answers, or empty):
           --layers a,b          Layers to use (replaces the list)
@@ -76,7 +84,7 @@ public enum AKitCLI {
                                   include: args.values("--include"), exclude: args.values("--exclude"),
                                   home: args.flag("--home"), includeUnmanaged: args.flag("--include-unmanaged"),
                                   yes: args.flag("--yes"), keepFiles: args.flag("--keep-files"), from: args.value("--from"),
-                                  repo: args.value("--repo"), skipHome: args.flag("--skip-home"))
+                                  repo: args.value("--repo"), skipHome: args.flag("--skip-home"), name: args.value("--name"))
             let command = args.positional()
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -87,6 +95,11 @@ public enum AKitCLI {
             let projectArgument = args.positional()
             try args.finish()
             let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+            if options.name != nil, command != "machine" { throw Failure(message: "--name only goes with akit machine.") }
+            if command != "machine", let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
+            if command == "machine" {
+                return try machine(projectArgument, options: options, brainRoot: brainRoot, env: env, hostName: hostName, out: out)
+            }
             if command == "setup" {
                 if projectArgument != nil { throw Failure(message: "akit setup takes no folder; use --brain DIR.") }
                 let prefs = preferences ?? Onboarding.Preferences(projectsRoot: { nil }, setProjectsRoot: { _ in })
@@ -148,23 +161,25 @@ public enum AKitCLI {
                 let project = options.home ? env.homeDirectory : resolve(projectArgument ?? ".", cwd: cwd, env: env)
                 guard FileManager.default.fileExists(atPath: project.path) else { throw Failure(message: "No folder at \(project.path).") }
                 let root = projectsRoot ?? env.homeDirectory.appending(path: "Projects")
-                let id = options.home ? ProjectSetup.homeID(hostName: hostName)
+                let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
+                let id = options.home ? homeID(hostName: hostName, env: env)
                     : await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
                 if command == "answers" {
-                    let saved = ProjectSetup.savedAnswers(id: id, brain: brain.root)
+                    let saved = ProjectSetup.savedAnswers(id: id, in: store)
                     out(saved.map(encode) ?? "No saved answers for \(id).")
                     return saved == nil ? 1 : 0
                 }
                 if options.home, options.layers != nil || options.answersFile != nil {
                     throw Failure(message: "The home folder always gets the core layer; --layers and --answers don't apply.")
                 }
-                var answers = try readAnswers(options, id: id, brain: brain, cwd: cwd, env: env, installedTargets: installedTargets)
+                var answers = try readAnswers(options, id: id, brain: brain, store: store, cwd: cwd, env: env,
+                                              installedTargets: installedTargets)
                 if options.home {
                     guard brain.layers.contains(where: { $0.name == "core" }) else { throw Failure(message: "The brain has no core layer.") }
                     answers.layers = ["core"]
                 }
                 let include = Set(options.include), exclude = Set(options.exclude)
-                let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, forHome: options.home)
+                let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: options.home)
                 out(planText(plan))
                 guard plan.canApply else { return 1 }
                 guard command == "apply" else { return 0 }
@@ -177,7 +192,7 @@ public enum AKitCLI {
                 } catch {
                     throw Failure(message: error.message)
                 }
-                out(outcomeText(outcome, skipped: skipped.intersection(plan.changes.filter { $0.kind != .same }.map(\.path)), id: id))
+                out(outcomeText(outcome, skipped: skipped.intersection(plan.changes.filter { $0.kind != .same }.map(\.path)), plan: plan))
                 return 0
             default:
                 throw Failure(message: "Unknown command “\(command ?? "")”. Run akit --help.")
@@ -189,6 +204,40 @@ public enum AKitCLI {
             err("akit: \(error.localizedDescription)")
             return 2
         }
+    }
+
+    // MARK: - Machine
+
+    /// This Mac's home id: the machine name when set, else the host name.
+    private static func homeID(hostName: String, env: HarnessEnvironment) -> String {
+        ProjectSetup.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
+    }
+
+    private static func machine(_ kind: String?, options: Options, brainRoot: URL, env: HarnessEnvironment, hostName: String,
+                                out: (String) -> Void) throws -> Int32 {
+        let home = env.homeDirectory
+        var profile = MachineProfile.load(home: home)
+        guard let kind else {
+            let store = ProjectStore.current(brain: brainRoot, home: home)
+            let named = profile.name.map { " “\($0)”" } ?? ""
+            var lines = [profile.isWork
+                ? "Work Mac\(named). Answers and locks of projects stay in \(store.root.path); nothing about them goes into the brain."
+                : "Personal Mac\(named). Answers and locks of projects are saved and committed in the brain under projects/."]
+            if let problem = profile.problem { lines.append(problem) }
+            out(lines.joined(separator: "\n"))
+            return 0
+        }
+        guard let chosen = MachineProfile.Kind(name: kind) else { throw Failure(message: "Use: akit machine [work [--name NAME] | personal]") }
+        // A new name when given; switching kind drops the old one (work defaults to "work").
+        let given = options.name.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+        let name = given ?? (chosen == profile.kind && profile.problem == nil ? profile.name : nil)
+        profile = MachineProfile(kind: chosen, name: chosen == .work ? (name ?? "work") : name)
+        do {
+            out(try MachineProfile.change(to: profile, brain: brainRoot, home: home, hostName: hostName).joined(separator: "\n"))
+        } catch {
+            throw Failure(message: "Couldn't save \(MachineProfile.file(home: home).path): \(error.localizedDescription)")
+        }
+        return 0
     }
 
     // MARK: - Brain
@@ -278,7 +327,7 @@ public enum AKitCLI {
         do {
             switch (kind, name) {
             case ("layer", let name?):
-                let impact = BrainRemove.layerImpact(name, in: brain)
+                let impact = BrainRemove.layerImpact(name, in: brain, home: env.homeDirectory)
                 if !impact.requiredBy.isEmpty {
                     out("Can't remove \(name): required by \(impact.requiredBy.joined(separator: ", ")).")
                     return 1
@@ -311,16 +360,18 @@ public enum AKitCLI {
             case ("project", _):
                 if options.home, name != nil { throw Failure(message: "--home and a project folder don't go together.") }
                 let project = options.home ? env.homeDirectory : resolve(name ?? ".", cwd: cwd, env: env)
-                let id = options.home ? ProjectSetup.homeID(hostName: hostName)
+                let id = options.home ? homeID(hostName: hostName, env: env)
                     : await ProjectSetup.projectID(for: project, projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), env: env)
-                guard let saved = ProjectSetup.savedAnswers(id: id, brain: brain.root) else {
-                    out("The brain has nothing for \(id).")
+                let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
+                guard let saved = ProjectSetup.savedAnswers(id: id, in: store) else {
+                    out("Nothing is saved for \(id).")
                     return 1
                 }
-                var lines = ["Forget \(id) in the brain (projects/\(id) goes to the Trash)."]
+                let ownRecord = !store.isLocal || FileManager.default.fileExists(atPath: store.folder(id: id).path)
+                var lines = [ownRecord ? "Forget \(id) (\(store.describe(id: id)) goes to the Trash)." : "Forget \(id) on this Mac."]
                 var empty = saved
                 empty.layers = []
-                let plan = ProjectSetup.plan(project: project, id: id, answers: empty, brain: brain, forHome: options.home)
+                let plan = ProjectSetup.plan(project: project, id: id, answers: empty, brain: brain, store: store, forHome: options.home)
                 let removals = plan.changes.filter { $0.kind == .remove }
                 if !options.keepFiles {
                     lines.append(removals.isEmpty ? "No files AKit wrote are left there."
@@ -332,9 +383,13 @@ public enum AKitCLI {
                 if !options.keepFiles, !removals.isEmpty {
                     _ = try await ProjectSetup.apply(plan, brain: brain, home: env.homeDirectory, env: env, trash: trash)
                 }
-                // Apply saved a lock again; load the brain afresh and forget the project.
-                guard let fresh = Brain.load(from: brain.root) else { throw Failure(message: "The brain went away.") }
-                try await BrainRemove.forgetProject(id, in: fresh, env: env, trash: trash)
+                // Apply saved a lock again; forget the project with it.
+                if !store.isLocal || FileManager.default.fileExists(atPath: store.folder(id: id).path) {
+                    try await BrainRemove.forgetProject(id, in: store, env: env, trash: trash)
+                }
+                if store.isLocal, let fallback = store.readFallback, FileManager.default.fileExists(atPath: fallback.appending(path: id).path) {
+                    lines.append("The brain still has projects/\(id) from before this became a work Mac; remove it by hand: git -C \(brain.root.path) rm -r projects/\(id), then commit.")
+                }
                 out((lines + ["Done."]).joined(separator: "\n"))
             default:
                 throw Failure(message: "Use: akit remove layer NAME | skill NAME [--from LAYER] | project [PROJECT|--home] [--keep-files]")
@@ -366,10 +421,11 @@ public enum AKitCLI {
         var from: String?
         var repo: String?
         var skipHome: Bool
+        var name: String?
     }
 
-    private static func readAnswers(_ options: Options, id: String, brain: Brain, cwd: URL, env: HarnessEnvironment,
-                                    installedTargets: [String]) throws -> ProjectAnswers {
+    private static func readAnswers(_ options: Options, id: String, brain: Brain, store: ProjectStore, cwd: URL,
+                                    env: HarnessEnvironment, installedTargets: [String]) throws -> ProjectAnswers {
         if let file = options.answersFile {
             let url = resolve(file, cwd: cwd, env: env)
             do {
@@ -378,7 +434,7 @@ public enum AKitCLI {
                 throw Failure(message: "Can't read answers from \(url.path): \(error.localizedDescription)")
             }
         }
-        var answers = ProjectSetup.savedAnswers(id: id, brain: brain.root)
+        var answers = ProjectSetup.savedAnswers(id: id, in: store)
             ?? ProjectAnswers(layers: [], values: [:], targets: installedTargets)
         if let layers = options.layers { answers.layers = list(layers) }
         if let targets = options.targets {
@@ -420,7 +476,7 @@ public enum AKitCLI {
     // MARK: - Output
 
     static func planText(_ plan: ProjectSetup.Plan) -> String {
-        var lines = ["Project \(plan.project.path) (brain: projects/\(plan.id))",
+        var lines = ["Project \(plan.project.path) (\(plan.store.isLocal ? "saved locally" : "brain"): \(plan.store.describe(id: plan.id)))",
                      "Layers: \(plan.render.layers.isEmpty ? "none" : plan.render.layers.joined(separator: ", ")) · targets: \(plan.answers.targets.joined(separator: ", "))"]
         for error in plan.render.errors { lines.append("ERROR: \(error)") }
         for blocker in plan.blockers { lines.append("BLOCKED: \(blocker)") }
@@ -470,13 +526,14 @@ public enum AKitCLI {
         return result
     }
 
-    private static func outcomeText(_ outcome: ProjectSetup.Outcome, skipped: Set<String>, id: String) -> String {
+    private static func outcomeText(_ outcome: ProjectSetup.Outcome, skipped: Set<String>, plan: ProjectSetup.Plan) -> String {
         var lines = ["", "Applied: \(outcome.written.count) written, \(outcome.removed.count) moved to the Trash."]
         if !skipped.isEmpty { lines.append("Skipped: \(skipped.sorted().joined(separator: ", "))") }
         if let backup = outcome.backup { lines.append("Backup: \(backup.path)") }
         lines += outcome.notes.map { "Note: \($0)" }
-        lines.append(id.hasPrefix("home/") ? "Saved in the brain under projects/\(id). Reload skills in your harness (e.g. /reload-skills)."
-                     : "Answers saved in the brain under projects/\(id). Commit the harness files in the project.")
+        let place = plan.store.isLocal ? "on this Mac only, in \(plan.store.describe(id: plan.id))" : "in the brain under \(plan.store.describe(id: plan.id))"
+        lines.append(plan.id.hasPrefix("home/") ? "Saved \(place). Reload skills in your harness (e.g. /reload-skills)."
+                     : "Answers saved \(place). Commit the harness files in the project.")
         return lines.joined(separator: "\n")
     }
 

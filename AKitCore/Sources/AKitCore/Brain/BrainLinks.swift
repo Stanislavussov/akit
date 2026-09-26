@@ -15,14 +15,17 @@ public enum BrainLink: Hashable, Sendable {
 
 public enum BrainLinks {
     /// Links for your own skills (global and project ones). Plugin, synced and bundled skills
-    /// are managed elsewhere and get none. `folders`: brain project id → its folder on this Mac.
-    public static func links(for skills: [Skill], brain: Brain, folders: [String: URL]) -> [Skill.ID: BrainLink] {
+    /// are managed elsewhere and get none. `folders`: project id → its folder on this Mac.
+    /// `store`: where this Mac keeps its locks (a work Mac's local store); default the brain's.
+    public static func links(for skills: [Skill], brain: Brain, folders: [String: URL],
+                             store: ProjectStore? = nil) -> [Skill.ID: BrainLink] {
+        let store = store ?? .brain(brain.root)
         struct Rendered { let skill: String, layers: [String], sha256: String? }
         var rendered: [String: Rendered] = [:]
         let prefix = Render.skillsFolder + "/"
-        for project in brain.projects {
-            guard let folder = folders[project.id],
-                  let lock = ProjectSetup.savedLock(id: project.id, brain: brain.root) else { continue }
+        let ids = Set(brain.projects.map(\.id) + BrainRemove.savedAnswers(in: store).map(\.id))
+        for id in ids.sorted() {
+            guard let folder = folders[id], let lock = ProjectSetup.savedLock(id: id, in: store) else { continue }
             for (path, entry) in lock.files where path.hasPrefix(prefix) && path.hasSuffix("/SKILL.md") {
                 let parts = path.dropFirst(prefix.count).split(separator: "/")
                 guard parts.count == 2 else { continue }

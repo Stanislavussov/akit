@@ -2,9 +2,10 @@ import CryptoKit
 import Foundation
 
 /// Applies a render to a project folder: what would change, then backup + write +
-/// answers and lock in the brain (`projects/<id>/`). Nothing from AKit lands in the project.
+/// answers and lock in the project store (the brain's `projects/<id>/`, or a local
+/// folder on a work Mac, see `ProjectStore`). Nothing from AKit lands in the project.
 public enum ProjectSetup {
-    /// What AKit wrote into a project, stored in `brain/projects/<id>/lock.json`.
+    /// What AKit wrote into a project, stored in `<project store>/<id>/lock.json`.
     public struct Lock: Codable, Hashable, Sendable {
         public struct Entry: Codable, Hashable, Sendable {
             /// Content hash of a written file; nil for a link.
@@ -53,6 +54,8 @@ public enum ProjectSetup {
         public let changes: [Change]
         /// Things in the project that stop Apply.
         public let blockers: [String]
+        /// Where the answers and lock are read from and saved to.
+        public let store: ProjectStore
         let previous: Lock?
         /// Current bytes of the paths the plan changes, to spot edits made after the preview.
         let snapshot: [String: Data?]
@@ -74,9 +77,9 @@ public enum ProjectSetup {
 
     // MARK: - Home
 
-    /// The brain id of this machine's home folder: `home/<host name>`, one lock per Mac.
-    public static func homeID(hostName: String = ProcessInfo.processInfo.hostName) -> String {
-        var host = hostName.lowercased()
+    /// The id of this machine's home folder: `home/<machine name or host name>`, one lock per Mac.
+    public static func homeID(hostName: String = ProcessInfo.processInfo.hostName, machineName: String? = nil) -> String {
+        var host = (machineName.flatMap { $0.isEmpty ? nil : $0 } ?? hostName).lowercased()
         if host.hasSuffix(".local") { host.removeLast(".local".count) }
         let name = cleanPath(host.replacingOccurrences(of: "/", with: "-"))
         return "home/" + (name.isEmpty ? "mac" : name)
@@ -129,25 +132,24 @@ public enum ProjectSetup {
             .joined(separator: "/")
     }
 
-    static func metadataFolder(id: String, brain root: URL) -> URL { root.appending(path: "projects/\(id)") }
-
     /// Answers saved by the last Apply, to prefill the form.
-    public static func savedAnswers(id: String, brain root: URL) -> ProjectAnswers? {
-        let url = metadataFolder(id: id, brain: root).appending(path: "answers.json")
-        return (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(ProjectAnswers.self, from: $0) }
+    public static func savedAnswers(id: String, in store: ProjectStore) -> ProjectAnswers? {
+        store.savedFile(id: id, "answers.json").flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? JSONDecoder().decode(ProjectAnswers.self, from: $0) }
     }
 
-    static func savedLock(id: String, brain root: URL) -> Lock? {
-        let url = metadataFolder(id: id, brain: root).appending(path: "lock.json")
-        return (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Lock.self, from: $0) }
+    static func savedLock(id: String, in store: ProjectStore) -> Lock? {
+        store.savedFile(id: id, "lock.json").flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? JSONDecoder().decode(Lock.self, from: $0) }
     }
 
     // MARK: - Plan
 
-    public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, forHome: Bool = false) -> Plan {
+    public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
+                            forHome: Bool = false) -> Plan {
         let fm = FileManager.default
         let render = Render.render(answers, brain: brain, projectName: project.lastPathComponent, forHome: forHome)
-        let previous = savedLock(id: id, brain: brain.root)
+        let previous = savedLock(id: id, in: store)
         var changes: [Change] = []
         var blockers: [String] = []
         var snapshot: [String: Data?] = [:]
@@ -218,18 +220,23 @@ public enum ProjectSetup {
         }
 
         return Plan(project: project, id: id, answers: answers, render: render,
-                    changes: changes.sorted { $0.path < $1.path }, blockers: blockers, previous: previous, snapshot: snapshot)
+                    changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
+                    snapshot: snapshot)
     }
 
     // MARK: - Apply
 
     /// Writes the plan into the project (skipping `excluded` paths), backs up what it
     /// replaces, trashes files an earlier render wrote and this one doesn't, then stores
-    /// answers and lock in the brain and commits them.
+    /// answers and lock in the plan's store and commits them when that store is the brain.
     public static func apply(_ plan: Plan, excluding excluded: Set<String> = [], brain: Brain, home: URL,
                              env: HarnessEnvironment, trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) -> Outcome {
         guard plan.canApply else {
             throw Failure(message: (plan.render.errors + plan.blockers).joined(separator: "\n"))
+        }
+        // The Mac may have become a work Mac (or stopped being one) since the preview.
+        guard plan.store.isSamePlace(as: .current(brain: plan.store.brain ?? brain.root, home: home)) else {
+            throw Failure(message: "This Mac's role (akit machine) changed since the preview; preview again.")
         }
         let fm = FileManager.default
         let outputs = Dictionary(plan.render.outputs.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
@@ -287,7 +294,7 @@ public enum ProjectSetup {
             var partial = plan.previous ?? Lock(brainCommit: nil, brainDirty: false, files: [:])
             for path in removed { partial.files[path] = nil }
             for path in written { if let output = outputs[path] { partial.files[path] = entry(for: output) } }
-            try? save(partial, answers: nil, id: plan.id, brain: brain.root)
+            try? save(partial, answers: nil, id: plan.id, in: plan.store)
             let reason = (error as? Failure)?.message ?? error.localizedDescription
             throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")")
         }
@@ -316,18 +323,19 @@ public enum ProjectSetup {
             lock.brainDirty = !dirty.isEmpty
         }
         do {
-            try save(lock, answers: plan.answers, id: plan.id, brain: brain.root)
+            try save(lock, answers: plan.answers, id: plan.id, in: plan.store)
         } catch {
-            throw Failure(message: "The project was written, but the answers couldn't be saved in the brain: \(error.localizedDescription)")
+            throw Failure(message: "The project was written, but the answers couldn't be saved in \(plan.store.describe(id: plan.id)): \(error.localizedDescription)")
         }
         if lock.brainDirty { notes.append("The brain has uncommitted changes in skills/ or layers/; commit them so this render can be reproduced.") }
-        if isRepo {
+        // A local store (work Mac) is never committed: nothing about the project reaches the brain.
+        if let storeBrain = plan.store.brain, fm.fileExists(atPath: storeBrain.appending(path: ".git").path) {
             let path = "projects/\(plan.id)"
             do {
-                _ = try await git(["add", "--", path], in: brain.root, env: env)
-                let staged = try await git(["diff", "--cached", "--name-only", "--", path], in: brain.root, env: env)
+                _ = try await git(["add", "--", path], in: storeBrain, env: env)
+                let staged = try await git(["diff", "--cached", "--name-only", "--", path], in: storeBrain, env: env)
                 if !staged.isEmpty {
-                    _ = try await git(["commit", "--quiet", "-m", plan.id.hasPrefix("home/") ? "Render the core layer into \(plan.id)" : "Render \(plan.project.lastPathComponent)", "--", path], in: brain.root, env: env)
+                    _ = try await git(["commit", "--quiet", "-m", plan.id.hasPrefix("home/") ? "Render the core layer into \(plan.id)" : "Render \(plan.project.lastPathComponent)", "--", path], in: storeBrain, env: env)
                 }
             } catch {
                 notes.append("The answers are saved in the brain but not committed: \(error.message)")
@@ -345,9 +353,9 @@ public enum ProjectSetup {
         }
     }
 
-    /// Writes lock.json (and answers.json, when given) under `projects/<id>`.
-    private static func save(_ lock: Lock, answers: ProjectAnswers?, id: String, brain root: URL) throws {
-        let folder = metadataFolder(id: id, brain: root)
+    /// Writes lock.json (and answers.json, when given) under `<store>/<id>`.
+    private static func save(_ lock: Lock, answers: ProjectAnswers?, id: String, in store: ProjectStore) throws {
+        let folder = store.folder(id: id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

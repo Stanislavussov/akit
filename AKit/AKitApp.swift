@@ -8,7 +8,10 @@ struct AKitApp: App {
 
     var body: some Scene {
         WindowGroup("AKit") {
-            RootView()
+            Group {
+                // The Settings window can't be captured; `--settings` shows its view in the main one.
+                if DebugSnapshot.options?.settings == true { SettingsView() } else { RootView() }
+            }
                 .environment(model)
                 .environment(rebuild)
                 .frame(minWidth: 820, minHeight: 520)

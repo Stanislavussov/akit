@@ -100,9 +100,10 @@ public struct Brain: Sendable {
         }
 
         problems += validate(layers, skills: Set(skills.map(\.name)))
-        let projects = BrainRemove.savedAnswers(in: root).map { saved in
+        // The brain's own records; a work Mac's local ones are not part of the brain.
+        let projects = BrainRemove.savedAnswers(in: .brain(root)).map { saved in
             Project(id: saved.id, answers: saved.answers,
-                    brainCommit: ProjectSetup.savedLock(id: saved.id, brain: root)?.brainCommit)
+                    brainCommit: ProjectSetup.savedLock(id: saved.id, in: .brain(root))?.brainCommit)
         }
         return Brain(root: root, skills: skills, layers: layers, problems: problems, projects: projects)
     }
