@@ -2,6 +2,10 @@
 import AKitCore
 import Foundation
 
+if getuid() == 0 {
+    FileHandle.standardError.write(Data("akit: don't run akit with sudo; it works in your own home folder.\n".utf8))
+    exit(2)
+}
 let env = HarnessEnvironment.current
 let installed = HarnessCatalog.detectAll(in: env).map { $0.id == .claudeCode ? "claude" : $0.id.rawValue }
     .filter(ProjectAnswers.knownTargets.contains)
@@ -14,7 +18,11 @@ let projectsRoot = env.expand(projectsOverride
     ?? ProjectFinder.defaultRoots[0])
 let preferences = Onboarding.Preferences(
     projectsRoot: { projectsOverride ?? appDefaults?.stringArray(forKey: "projectRoots")?.first },
-    setProjectsRoot: { appDefaults?.set([$0], forKey: "projectRoots") })
+    // The app's settings belong to the real home; a script with another $HOME doesn't change them.
+    setProjectsRoot: { folder in
+        guard env.homeDirectory.standardizedFileURL == FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL else { return }
+        appDefaults?.set([folder], forKey: "projectRoots")
+    })
 // Questions only when a person is typing (not in scripts or CI).
 let ask: ((String) -> String?)? = isatty(0) != 0 ? { question in
     print(question, terminator: " ")

@@ -55,11 +55,11 @@ icon:   ## redraw the app icon
 release: generate   ## dist/AKit.zip: universal AKit.app + akit, for GitHub Releases (install.sh downloads it)
 	rm -rf dist && mkdir -p dist/AKit
 	xcodebuild -project AKit.xcodeproj -scheme AKit -configuration Release \
-	  -derivedDataPath $(DERIVED)/universal ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO -quiet build
+	  -derivedDataPath $(DERIVED)/universal ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO AKIT_DIST=1 -quiet build
 	cp -R $(DERIVED)/universal/Build/Products/Release/AKit.app dist/AKit/
 	cd AKitCore && swift build -c release --product akit --arch arm64 --arch x86_64
 	cp AKitCore/.build/apple/Products/Release/akit dist/AKit/
 	cd dist && ditto -c -k --norsrc --noextattr --keepParent AKit AKit.zip && rm -rf AKit
-	@echo "Built dist/AKit.zip. Publish: gh release create v$$(date +%Y.%m.%d) dist/AKit.zip --generate-notes"
+	@echo "Built dist/AKit.zip. Publish: gh release create v$$(date +%Y.%m.%d-%H%M) dist/AKit.zip --generate-notes"
 
 .PHONY: generate open build run restart test snapshot install install-cli icon release

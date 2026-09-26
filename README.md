@@ -18,13 +18,15 @@ It downloads the latest release into `~/Applications/AKit.app` and `~/.local/bin
    `~/.akit/registry`; nothing in it ships with AKit. Give the repo you use on your other
    Macs (`you/brain`), or press Enter for a new one: it starts with a `core` layer holding
    the `/akit` skill, and with the GitHub CLI signed in, setup offers to keep it in a
-   private repo so your other Macs can use it.
+   private repo so your other Macs can use it. Or push it yourself:
+   `git -C ~/.akit/registry remote add origin <url> && git -C ~/.akit/registry push -u origin HEAD`.
 2. **Your projects folder** (`~/Projects`), shared with the app's Settings.
 3. **Skills you already have in `~`** that differ from the brain's: kept unless you say
    replace (the old files are backed up in `~/.akit/backups`).
 
 The core layer then goes into your home folder for every harness on the Mac. Run the
-install again to update, or `akit setup` to answer again. `akit sync` (or Sync on the
+install again to update; `akit setup` is safe to run again (it syncs the brain and puts
+new core skills into `~`). `akit sync` (or Sync on the
 Brain screen) pulls and pushes the brain afterwards.
 
 Without a release, or run from a checkout (`./install.sh`), it builds from source

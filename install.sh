@@ -24,26 +24,29 @@ say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 fail() { printf '\033[31mError: %s\033[0m\n' "$*" >&2; exit 1; }
 
 [[ "$(uname)" == "Darwin" ]] || fail "AKit is a macOS app."
+[[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 15 ]] || fail "AKit needs macOS 15 or later (this Mac has $(sw_vers -productVersion))."
 git --version >/dev/null 2>&1 || fail "git is missing (AKit keeps your brain in git). Run: xcode-select --install"
 
 # The latest release's AKit.zip: over HTTPS for a public repo, with gh for a private one.
+# Returns 1 when there is none; stops the install when one was found but couldn't be put in place.
 install_release() {
-    local tmp url="${AKIT_RELEASE_URL:-https://github.com/$AKIT_REPO/releases/latest/download/AKit.zip}"
+    local url="${AKIT_RELEASE_URL:-https://github.com/$AKIT_REPO/releases/latest/download/AKit.zip}"
     [[ -n "${AKIT_RELEASE_URL:-}" || "$AKIT_REPO" != *:* ]] || return 1
     tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
     if ! curl -fsSL -o "$tmp/AKit.zip" "$url" 2>/dev/null; then
-        [[ -z "${AKIT_RELEASE_URL:-}" ]] || return 1
+        [[ -z "${AKIT_RELEASE_URL:-}" ]] || fail "Couldn't download $AKIT_RELEASE_URL"
+        rm -f "$tmp/AKit.zip"
         command -v gh >/dev/null && gh auth status >/dev/null 2>&1 || return 1
         gh release download --repo "$AKIT_REPO" --pattern AKit.zip --dir "$tmp" >/dev/null 2>&1 || return 1
     fi
-    ditto -x -k "$tmp/AKit.zip" "$tmp" || return 1
-    [[ -d "$tmp/AKit/AKit.app" && -f "$tmp/AKit/akit" ]] || return 1
-    mkdir -p "$HOME/Applications" "$HOME/.local/bin"
-    rm -rf "$HOME/Applications/AKit.app"
-    cp -R "$tmp/AKit/AKit.app" "$HOME/Applications/"
-    install -m 755 "$tmp/AKit/akit" "$HOME/.local/bin/akit"
+    ditto -x -k "$tmp/AKit.zip" "$tmp" && [[ -d "$tmp/AKit/AKit.app" && -f "$tmp/AKit/akit" ]] \
+        || fail "The downloaded AKit.zip is damaged; run the install again."
+    mkdir -p "$HOME/Applications" "$HOME/.local/bin" || fail "Couldn't create ~/Applications or ~/.local/bin."
+    rm -rf "$HOME/Applications/AKit.app" && cp -R "$tmp/AKit/AKit.app" "$HOME/Applications/" \
+        || fail "Couldn't put AKit.app into ~/Applications."
+    install -m 755 "$tmp/AKit/akit" "$HOME/.local/bin/akit" || fail "Couldn't put akit into ~/.local/bin (owned by root? then: sudo chown -R \"$USER\" ~/.local)."
     xattr -dr com.apple.quarantine "$HOME/Applications/AKit.app" "$HOME/.local/bin/akit" 2>/dev/null || true
-    rm -rf "$tmp"
 }
 
 # Clone a git URL as is; owner/repo with gh when it is signed in (private repos), else over
@@ -96,11 +99,14 @@ else
     build_from_source
 fi
 
+path_line='export PATH="$HOME/.local/bin:$PATH"'
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;
     *)
-        say "Adding ~/.local/bin to PATH in ~/.zprofile"
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zprofile"
+        if ! grep -qsF "$path_line" "$HOME/.zprofile"; then
+            say "Adding ~/.local/bin to PATH in ~/.zprofile"
+            echo "$path_line" >> "$HOME/.zprofile"
+        fi
         echo "Open a new terminal (or run: source ~/.zprofile) to use akit."
         ;;
 esac
@@ -109,13 +115,15 @@ esac
 say "Setting up"
 setup=("$HOME/.local/bin/akit" setup)
 if [[ "${AKIT_SKIP_HOME:-}" == 1 ]]; then setup+=(--skip-home); fi
+grep -q "akit setup" <<<"$("$HOME/.local/bin/akit" --help)" || fail "This akit is older than the install script; run the install again later, or with AKIT_FROM_SOURCE=1."
 if [[ -t 0 ]]; then
-    "${setup[@]}"
+    "${setup[@]}" || setup_failed=1
 elif (exec </dev/tty) 2>/dev/null; then
-    "${setup[@]}" </dev/tty
+    "${setup[@]}" </dev/tty || setup_failed=1
 else
-    "${setup[@]}" --yes
+    "${setup[@]}" --yes || setup_failed=1
 fi
+[[ -z "${setup_failed:-}" ]] || echo "Setup didn't finish (see above). AKit is installed; run akit setup again after fixing it."
 
 echo "  App:     ~/Applications/AKit.app"
 echo "  Command: akit --help"

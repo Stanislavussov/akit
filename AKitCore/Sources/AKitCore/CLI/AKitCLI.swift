@@ -93,7 +93,7 @@ public enum AKitCLI {
                 let repo = options.repo ?? env.variables["AKIT_BRAIN_REPO"].flatMap { $0.isEmpty ? nil : $0 }
                 let failure: String? = await withoutActuallyEscaping(out) { (say) async -> String? in
                     do {
-                        try await Onboarding.run(.init(brainRepo: repo, skipHome: options.skipHome), root: brainRoot, env: env,
+                        try await Onboarding.run(.init(brainRepo: repo, skipHome: options.skipHome, cwd: cwd), root: brainRoot, env: env,
                                                  io: .init(ask: options.yes ? nil : ask, say: say), preferences: prefs,
                                                  hostName: hostName, installedTargets: installedTargets, trash: trash)
                         return nil

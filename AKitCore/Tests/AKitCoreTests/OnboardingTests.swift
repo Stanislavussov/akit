@@ -53,6 +53,12 @@ struct OnboardingTests {
 
     func read(_ path: String) -> String? { try? String(contentsOf: home.appending(path: path), encoding: .utf8) }
 
+    func write(_ path: String, _ text: String) throws {
+        let url = home.appending(path: path)
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+    }
+
     func git(_ directory: URL, _ args: String...) async throws {
         let result = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: args, directory: directory,
                                                            environment: env.variables, timeout: 10))
@@ -70,7 +76,7 @@ struct OnboardingTests {
         // Again: nothing to do, nothing asked.
         let again = await setup(answers: [], session: result.session)
         #expect(again.code == 0 && again.session.questions.isEmpty, "\(again.session.questions) \(again.out)")
-        #expect(again.out.contains("up to date"))
+        #expect(again.out.contains("nothing new"))
     }
 
     @Test func clonesTheBrainFromAnotherMacAndAsksForTheProjectsFolder() async throws {
@@ -117,4 +123,40 @@ struct OnboardingTests {
         #expect(result.code == 0 && result.session.questions.isEmpty)
         #expect(!fm.fileExists(atPath: home.appending(path: ".agents").path))
     }
+
+    @Test func claudesOwnSkillsFolderIsMovedOnlyAfterAYes() async throws {
+        try write(".claude/skills/mine/SKILL.md", "mine\n")
+        try write(".claude/skills/akit/SKILL.md", "old akit\n")
+
+        let quiet = await setup()
+        #expect(quiet.code == 0, "\(quiet.out)")
+        #expect(quiet.out.contains("Home folder: skipped"))
+        #expect(read(".claude/skills/mine/SKILL.md") == "mine\n")
+
+        let moved = await setup(answers: ["y"], session: quiet.session)
+        #expect(moved.code == 0, "\(moved.out)")
+        #expect(try fm.destinationOfSymbolicLink(atPath: home.appending(path: ".claude/skills").path) == "../.agents/skills")
+        #expect(read(".agents/skills/mine/SKILL.md") == "mine\n")
+        #expect(read(".agents/skills/akit/SKILL.md") == "old akit\n")  // theirs, not replaced without a yes
+        let backups = try fm.contentsOfDirectory(atPath: home.appending(path: ".akit/backups").path)
+        #expect(backups.contains { read(".akit/backups/\($0)/.claude/skills/akit/SKILL.md") == "old akit\n" })
+    }
+
+    @Test func aFolderThatIsNotABrainStopsSetupAndAnEmptyOneIsFilled() async throws {
+        try write(".akit/registry/notes.txt", "mine\n")
+        let refused = await setup()
+        #expect(refused.code == 2 && refused.out.contains("isn't a brain"))
+        #expect(read(".akit/registry/notes.txt") == "mine\n")
+
+        try fm.removeItem(at: brain)
+        try fm.createDirectory(at: brain, withIntermediateDirectories: true)
+        #expect(await setup().code == 0)
+        #expect(Brain.load(from: brain)?.skills.map(\.name) == ["akit"])
+    }
+
+    @Test func aBareProjectsFolderNameMeansOneInHome() async throws {
+        let result = await setup(["--skip-home"], answers: ["", "Code/"])
+        #expect(result.session.projectsRoot == "~/Code")
+    }
+
 }
