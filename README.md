@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.png" alt="AKit: skills, MCP servers and project setup for your AI coding agents, on every Mac" width="100%">
+  <img src="docs/assets/banner.png" alt="AKit (Agent Kit): skills, MCP servers and project setup for your AI coding agents, on every Mac" width="100%">
 </p>
 
 <p align="center">
