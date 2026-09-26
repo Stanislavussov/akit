@@ -19,8 +19,10 @@ public struct HarnessEnvironment: Sendable {
     /// from Finder/Dock gets a minimal PATH (`/usr/bin:/bin:...`), so common CLI
     /// install locations are appended after it.
     public static var current: HarnessEnvironment {
-        let home = FileManager.default.homeDirectoryForCurrentUser
         let vars = ProcessInfo.processInfo.environment
+        // $HOME when it is set (like other command-line tools), so a script can point akit elsewhere.
+        let home = vars["HOME"].flatMap { $0.isEmpty ? nil : URL(filePath: $0, directoryHint: .isDirectory) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
         let fromPATH = (vars["PATH"] ?? "")
             .split(separator: ":")
             .map { URL(filePath: String($0), directoryHint: .isDirectory) }

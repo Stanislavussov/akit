@@ -191,7 +191,7 @@ public enum BrainSync {
     private static func sshVariables(in root: URL, env: HarnessEnvironment) async -> [String: String] {
         if env.variables["GIT_SSH_COMMAND"] != nil || env.variables["GIT_SSH"] != nil { return [:] }
         if let configured = try? await git(["config", "--get", "core.sshCommand"], in: root, env: env), !lastLine(configured).isEmpty { return [:] }
-        return ["GIT_SSH_COMMAND": "ssh -o BatchMode=yes"]
+        return ["GIT_SSH_COMMAND": "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"]
     }
 
     // git's stderr is mixed into the output: drop its warnings before parsing.
