@@ -88,44 +88,46 @@ struct BrainView: View {
             ToolbarItem {
                 Button(syncTitle, systemImage: "arrow.triangle.2.circlepath", action: sync)
                     .labelStyle(.titleAndIcon)
-                    .disabled(model.brainSync?.hasRemote != true || model.isSyncingBrain)
+                    .disabled(model.brainSync?.hasRemote != true && model.brainSync?.problem == nil || model.isSyncingBrain)
                     .help(syncHelp)
             }
             ToolbarItem {
                 Button("New Layer…", systemImage: "plus") { creatingLayer = true }
                     .labelStyle(.titleAndIcon)
-                    .disabled(model.brain == nil)
+                    .disabled(model.brain == nil || model.isSyncingBrain)
                     .help("Create a layer: skills and an AGENTS.md section for projects")
             }
             ToolbarItem {
                 Button("Import Skills…", systemImage: "square.and.arrow.down") { importing = true }
                     .labelStyle(.titleAndIcon)
-                    .disabled(model.brain == nil)
+                    .disabled(model.brain == nil || model.isSyncingBrain)
                     .help("Copy global skills from ~/.agents/skills into the brain and the core layer")
             }
             ToolbarItem {
                 Button("Set Up Project…", systemImage: "folder.badge.gearshape") { settingUp = true }
                     .labelStyle(.titleAndIcon)
-                    .disabled(model.brain == nil)
+                    .disabled(model.brain == nil || model.isSyncingBrain)
                     .help("Render layers from the brain into a project")
             }
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
-                    .disabled(model.isScanning)
+                    .disabled(model.isScanning || model.isSyncingBrain)
                     .help("Read the brain repo again (⌘R)")
             }
         }
     }
 
     private var syncTitle: String {
-        guard let status = model.brainSync, status.hasRemote else { return "Sync" }
+        guard let status = model.brainSync else { return "Sync" }
         if model.isSyncingBrain { return "Syncing…" }
+        if status.problem != nil { return "Sync ⚠︎" }
         let counts = [status.ahead > 0 ? "↑\(status.ahead)" : nil, status.behind > 0 ? "↓\(status.behind)" : nil].compactMap(\.self)
         return counts.isEmpty ? "Sync" : "Sync \(counts.joined(separator: " "))"
     }
 
     private var syncHelp: String {
-        guard let status = model.brainSync else { return "The brain is not a git repo, so there is nothing to sync." }
+        guard let status = model.brainSync else { return model.brain == nil ? "No brain yet." : "The brain is not a git repo, so there is nothing to sync." }
+        if let problem = status.problem { return problem }
         guard status.hasRemote else { return "The brain has no remote. Add one: git remote add origin <url>, then git push -u origin HEAD." }
         var parts = ["Pull the other Macs' changes to the brain and push this Mac's."]
         if status.ahead > 0 { parts.append("\(status.ahead) commit\(status.ahead == 1 ? "" : "s") to push.") }

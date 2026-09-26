@@ -144,6 +144,37 @@ struct BrainSyncTests {
         #expect(read(macB, "skills/a/SKILL.md") == nil)
     }
 
+    @Test func pushesToAnUpstreamWithAnotherName() async throws {
+        try await setUp()
+        try await git(macB, "branch", "--quiet", "-m", "main", "master")
+        try await git(macB, "branch", "--quiet", "--set-upstream-to=origin/main")
+        try await commit(macB, "skills/b/SKILL.md", "b\n")
+
+        #expect(try await BrainSync.sync(macB, env: env).pushed == 1)
+        #expect(try await BrainSync.sync(macA, env: env).pulled == 1)
+        #expect(read(macA, "skills/b/SKILL.md") == "b\n")
+    }
+
+    @Test func halfDoneGitStateBlocksSync() async throws {
+        try await setUp()
+        try await git(macB, "checkout", "--quiet", "--detach")
+        let detached = try #require(await BrainSync.status(of: macB, env: env, fetch: false))
+        #expect(detached.problem?.contains("detached") == true)
+        await #expect(throws: BrainSync.Failure.self) { try await BrainSync.sync(macB, env: env) }
+
+        try await git(macB, "checkout", "--quiet", "main")
+        try fm.createDirectory(at: macB.appending(path: ".git/rebase-merge"), withIntermediateDirectories: true)
+        #expect(await BrainSync.status(of: macB, env: env, fetch: false)?.problem?.contains("rebase") == true)
+    }
+
+    @Test func changedPathsHandleSpacesAndRenames() async throws {
+        try await setUp()
+        try write(macB, "skills/my skill/SKILL.md", "x\n")
+        try await git(macB, "mv", "README.md", "READ ME.md")
+        let changed = try #require(await BrainSync.status(of: macB, env: env, fetch: false)?.changed)
+        #expect(Set(changed) == ["READ ME.md", "skills/my skill/"])
+    }
+
     @Test func cliSyncReportsWhatHappened() async throws {
         try await setUp()
         try await commit(macA, "layers/core/layer.yaml", "name: core\nskills: []\n# changed\n")
