@@ -10,6 +10,7 @@ public enum AKitCLI {
           akit check                      Read every layer and skill; list problems (exit 1 if any)
           akit layers [--json]            Layers with their fields, skills and files
           akit skills                     Skills in the brain
+          akit sync                       Pull the other Macs' brain commits, push this one's
 
         Projects (PROJECT is a folder; default: the current one):
           akit answers [PROJECT]          Saved answers for the project (JSON)
@@ -89,6 +90,17 @@ public enum AKitCLI {
             case "skills":
                 out(brain.skills.map { "\($0.name)\t\($0.description)" }.joined(separator: "\n"))
                 return 0
+            case "sync":
+                if projectArgument != nil { throw Failure(message: "akit sync takes no folder; use --brain DIR.") }
+                let outcome: BrainSync.Outcome
+                do {
+                    outcome = try await BrainSync.sync(brain.root, env: env)
+                } catch {
+                    throw Failure(message: error.message)
+                }
+                let changed = await BrainSync.status(of: brain.root, env: env, fetch: false)?.changed ?? []
+                out(syncText(outcome, changed: changed, brain: Brain.load(from: brain.root)))
+                return 0
             case "answers", "plan", "apply":
                 if options.home, projectArgument != nil { throw Failure(message: "--home and a project folder don't go together.") }
                 let project = options.home ? env.homeDirectory : resolve(projectArgument ?? ".", cwd: cwd, env: env)
@@ -138,6 +150,20 @@ public enum AKitCLI {
     }
 
     // MARK: - Brain
+
+    static func syncText(_ outcome: BrainSync.Outcome, changed: [String], brain: Brain?) -> String {
+        func commits(_ n: Int) -> String { "\(n) commit\(n == 1 ? "" : "s")" }
+        var lines: [String] = []
+        switch (outcome.pulled, outcome.pushed) {
+        case (0, 0): lines.append("The brain is in sync with its remote.")
+        case (let pulled, 0): lines.append("Pulled \(commits(pulled)).")
+        case (0, let pushed): lines.append("Pushed \(commits(pushed)).")
+        case (let pulled, let pushed): lines.append("Pulled \(commits(pulled)), pushed \(commits(pushed)).")
+        }
+        if outcome.changesCore(in: brain) { lines.append("The core layer changed: run akit apply --home to update this Mac's home folder.") }
+        if !changed.isEmpty { lines.append("Not committed, so not synced: \(changed.joined(separator: ", "))") }
+        return lines.joined(separator: "\n")
+    }
 
     private static func check(_ brain: Brain, out: (String) -> Void) -> Int32 {
         var lines = ["Brain \(brain.root.path): \(brain.layers.count) layers, \(brain.skills.count) skills"]

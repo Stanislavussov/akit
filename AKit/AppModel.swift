@@ -111,6 +111,50 @@ final class AppModel {
         try await BrainRemove.removeSkill(skill, fromLayer: layer, in: brain, env: .current)
     }
 
+    /// The brain against its git remote; nil when it isn't a git repo.
+    private(set) var brainSync: BrainSync.Status?
+    private(set) var isSyncingBrain = false
+    /// Bumped by every sync, so a fetch that started earlier can't overwrite its result.
+    private var brainSyncGeneration = 0
+    private var brainFetch: Task<Void, Never>?
+
+    /// Asks the remote what's new (network), then updates `brainSync`.
+    func fetchBrainSync() async {
+        guard brain != nil, !isSyncingBrain else { return }
+        let root = brainRoot, generation = brainSyncGeneration
+        let task = Task {
+            let status = await BrainSync.status(of: root, env: .current, fetch: true)
+            if !Task.isCancelled, !isSyncingBrain, generation == brainSyncGeneration, root == brainRoot { brainSync = status }
+        }
+        brainFetch = task
+        await task.value
+    }
+
+    /// Pulls the other Macs' commits and pushes this one's, then rescans.
+    func syncBrain() async throws -> BrainSync.Outcome {
+        guard brain != nil else { throw Self.noBrain }
+        guard !isSyncingBrain else {
+            throw NSError(domain: "AKit", code: 5, userInfo: [NSLocalizedDescriptionKey: "The brain is already syncing."])
+        }
+        isSyncingBrain = true
+        brainSyncGeneration += 1
+        // Let a running fetch finish first: two fetches at once can fail on git's ref locks.
+        brainFetch?.cancel()
+        await brainFetch?.value
+        let root = brainRoot
+        defer { Task { await refresh() } }
+        do {
+            let outcome = try await BrainSync.sync(root, env: .current)
+            brainSync = await BrainSync.status(of: root, env: .current, fetch: false)
+            isSyncingBrain = false
+            return outcome
+        } catch {
+            brainSync = await BrainSync.status(of: root, env: .current, fetch: false)
+            isSyncingBrain = false
+            throw error
+        }
+    }
+
     private static let noBrain = NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded."])
 
     // MARK: Project setup
@@ -391,6 +435,7 @@ final class AppModel {
             return (found, await skills, projects, await sessions, await mcp, await targets, await brain)
         }.value
         self.brain = brain
+        brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
         installations = found
         self.skills = skills
         self.projects = projects
