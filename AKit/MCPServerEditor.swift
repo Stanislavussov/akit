@@ -261,9 +261,7 @@ struct MCPServerEditor: View {
                     if plan.diff.isEmpty {
                         Text(plan.entryJSON).padding(.horizontal, 4)
                     } else {
-                        ForEach(Array(changedLines(plan.diff).enumerated()), id: \.offset) { _, line in
-                            diffLine(line)
-                        }
+                        DiffPreview(diff: plan.diff)
                     }
                 }
                 .font(.callout.monospaced())
@@ -292,29 +290,6 @@ struct MCPServerEditor: View {
             }
         }
         .padding(16)
-    }
-
-    /// Changed lines with 3 lines of context; long unchanged runs become "…".
-    private func changedLines(_ diff: [TextDiff.Line]) -> [TextDiff.Line?] {
-        let changed = diff.indices.filter { if case .same = diff[$0] { false } else { true } }
-        var result: [TextDiff.Line?] = []
-        var last = -1
-        for index in diff.indices where changed.contains(where: { abs($0 - index) <= 3 }) {
-            if last >= 0, index > last + 1 { result.append(nil) }
-            result.append(diff[index])
-            last = index
-        }
-        return result
-    }
-
-    @ViewBuilder
-    private func diffLine(_ line: TextDiff.Line?) -> some View {
-        switch line {
-        case .same(let text): Text("  " + text).foregroundStyle(.secondary)
-        case .added(let text): Text("+ " + text).foregroundStyle(.green).frame(maxWidth: .infinity, alignment: .leading).background(.green.opacity(0.1))
-        case .removed(let text): Text("- " + text).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).background(.red.opacity(0.1))
-        case nil: Text("  …").foregroundStyle(.tertiary)
-        }
     }
 
     private func finished(_ outcome: MCPWriter.Outcome) -> some View {

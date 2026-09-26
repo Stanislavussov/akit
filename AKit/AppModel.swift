@@ -66,6 +66,21 @@ final class AppModel {
         await refresh()
     }
 
+    /// What importing `~/.agents/skills` into the brain would do. Only reads.
+    func brainImportPlan() async -> BrainImport.Plan? {
+        guard let brain else { return nil }
+        let env = HarnessEnvironment.current
+        return await Task.detached {
+            BrainImport.plan(from: BrainImport.defaultSource(home: env.homeDirectory), into: brain.root, env: env)
+        }.value
+    }
+
+    /// Copies the chosen skills into the brain, lists them in core and commits, then rescans.
+    func importIntoBrain(_ plan: BrainImport.Plan, names: [String]) async throws {
+        defer { Task { await refresh() } }
+        try await BrainImport.apply(plan, importing: names, env: .current)
+    }
+
     /// Harnesses described by the user in `~/.akit/harnesses.json`.
     private(set) var customHarnesses: [CustomHarness] = []
     /// Set when `~/.akit/harnesses.json` can't be read; AKit then refuses to overwrite it.
