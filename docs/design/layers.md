@@ -1,6 +1,6 @@
 # Layers: per-project harness setup
 
-Status: design, agreed 2026-09-25. Roadmap step 2 (read-only brain) in progress.
+Status: design agreed 2026-09-25. Steps 2 (brain) and 3 (project form + render) are implemented.
 
 ## Goal
 
@@ -46,8 +46,10 @@ brain/
   machines/<name>.yaml         # which harnesses and core layer per machine
 ```
 
-Project `<id>` is the git remote URL, normalized to a folder name. Projects
-without a remote use their path relative to the projects root (`~/Projects`).
+Project `<id>` is the `origin` remote as `host/owner/repo` (lowercase, no
+credentials, no `.git`), e.g. `projects/github.com/me/app/`. Projects without a
+remote use `local/<path relative to the projects root>`; a folder outside the
+root gets `local/<name>-<short hash of its path>`.
 
 ## layer.yaml
 
@@ -95,7 +97,11 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 - Conditions only decide whether a whole file or skill is rendered: `when:`.
   A `when` is one comparison (`field == value`, `field != value`) or a bare
   field name (true when set). A list of `when` entries means all must match.
-- Built-in fields: `project_name`, `target` (harness being rendered for).
+- Built-in fields: `project_name`, `target` (the chosen harnesses: `claude`, `pi`,
+  `opencode`, `codex`; `target == claude` holds when claude is among them).
+- An unanswered field is empty (`false` for bool, no items for multi).
+- Skills fill `{{field}}` only in Markdown files; unknown names are left as is
+  (a warning for templates).
 - Fields never hold secrets. Secrets come from Keychain (see MCP below).
 
 ### Skill modes
@@ -125,12 +131,23 @@ profile. Differences per harness go through `when: target == "claude"`.
 
 ## Several layers, one file
 
-- Markdown (`AGENTS.md`): each layer adds a section; sections are glued in layer
-  order (`requires` first, then selection order).
+- Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;
+  sections are glued in layer order (`requires` first, then selection order).
 - JSON (later: `.mcp.json`, settings): deep merge of keys. Two layers setting the
   same key to different values is an error, shown in the form before Apply.
 - Whole files and skills: two layers bringing the same path is an error, unless
-  one of them sets `override: true`.
+  one of them sets `override: true` (that one wins; `mode: off` + override drops
+  a skill). Output paths must be unique and never inside `.git`.
+
+## Apply (implemented)
+
+Brain → Set Up Project… shows the form (the core layer is not offered; it is for
+the home folder), then every change with a diff. Files AKit didn't write, and
+files edited by hand since the last render, start unticked. Apply backs up what
+it replaces in `~/.akit/backups/`, moves files only an earlier render wrote to the
+Trash (not when edited since), refuses if the project changed after the preview,
+and commits `projects/<id>/` in the brain. A real `.claude/skills` folder with
+files blocks Apply until its skills move to the brain or `.agents/skills`.
 
 ## Updates
 
@@ -164,7 +181,7 @@ as `${VAR}` references; the real values come from Keychain.
 2. Brain repo + layers read-only in AKit (done: Brain screen, checks, Create Brain Repo); move the global skill library from
    `~/.agents/skills` into the brain; core layer with `manual` skills.
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
-   lock in the brain. The take-home flow works end to end.
+   lock in the brain. The take-home flow works end to end. (Done.)
 4. MCP in layers.
 5. `/akit-setup` agent draft.
 6. Updates: 3-way merge + publish back.
@@ -174,5 +191,6 @@ as `${VAR}` references; the real values come from Keychain.
 - Manual-only mode for OpenCode and Codex: equivalent of
   `disable-model-invocation` not verified yet.
 - Pi has no native MCP (only via `pi-mcp-adapter`).
-- Exact normalization of remote URLs into project ids.
 - Subagents in layers: low priority, format stays open for them.
+- Rendering the core layer into the home folder (then the old `~/.agents/skills`
+  copies can go).

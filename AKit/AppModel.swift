@@ -81,6 +81,37 @@ final class AppModel {
         try await BrainImport.apply(plan, importing: names, env: .current)
     }
 
+    // MARK: Project setup
+
+    /// Render targets for the harnesses installed on this Mac (`claude`, `pi`, …).
+    var installedTargets: [String] {
+        installations.map { $0.id == .claudeCode ? "claude" : $0.id.rawValue }
+            .filter(ProjectAnswers.knownTargets.contains)
+    }
+
+    /// The brain's id for a project folder (from its git remote).
+    func projectID(for project: URL) async -> String {
+        let env = HarnessEnvironment.current
+        let root = projectRoots.first.map(env.expand) ?? env.homeDirectory.appending(path: "Projects")
+        return await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
+    }
+
+    /// What rendering these answers would change in the project. Only reads.
+    func projectPlan(project: URL, id: String, answers: ProjectAnswers) async -> ProjectSetup.Plan? {
+        guard let brain else { return nil }
+        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain) }.value
+    }
+
+    /// Writes the project files (backup first), saves answers in the brain, then rescans.
+    func applyProject(_ plan: ProjectSetup.Plan, excluding: Set<String>) async throws -> ProjectSetup.Outcome {
+        guard let brain else {
+            throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
+        }
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current
+        return try await ProjectSetup.apply(plan, excluding: excluding, brain: brain, home: env.homeDirectory, env: env)
+    }
+
     /// Harnesses described by the user in `~/.akit/harnesses.json`.
     private(set) var customHarnesses: [CustomHarness] = []
     /// Set when `~/.akit/harnesses.json` can't be read; AKit then refuses to overwrite it.

@@ -462,23 +462,8 @@ public enum MCPWriter {
 
     /// Copies the file to `~/.akit/backups/<time>/<path>`; never overwrites an older backup.
     static func backUp(_ file: URL, home: URL) throws -> URL? {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: file.path) else { return nil }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HHmmss.SSS"
-        var folder = home.appending(path: ".akit/backups/\(formatter.string(from: .now))")
-        var counter = 1
-        while fm.fileExists(atPath: folder.path) {
-            folder = home.appending(path: ".akit/backups/\(formatter.string(from: .now))-\(counter)")
-            counter += 1
-        }
-        var relative = file.standardizedFileURL.path
-        let homePath = home.standardizedFileURL.path
-        if relative.hasPrefix(homePath + "/") { relative = String(relative.dropFirst(homePath.count + 1)) }
-        let backup = folder.appending(path: relative)
-        try fm.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try fm.copyItem(at: file.resolvingSymlinksInPath(), to: backup)
-        return backup
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        return try Backup.copy(file, into: try Backup.newFolder(home: home), home: home)
     }
 
     /// `~/.akit/env.sh`: one Keychain lookup per variable, no secret values. Only plain
