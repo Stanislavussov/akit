@@ -60,6 +60,14 @@ func text(_ string: String, size: CGFloat, weight: NSFont.Weight, color: CGColor
     CTLineDraw(line, ctx)
 }
 text("AKit", size: 250, weight: .heavy, color: rgb(0xFFFFFF), at: CGPoint(x: 860, y: 430), tracking: -4)
+
+// What the name stands for, in a pill next to it.
+let pill = CGRect(x: 1430, y: 452, width: 400, height: 100)
+ctx.addPath(CGPath(roundedRect: pill, cornerWidth: 50, cornerHeight: 50, transform: nil))
+ctx.setFillColor(rgb(0xFFFFFF, 0.14)); ctx.fillPath()
+ctx.addPath(CGPath(roundedRect: pill.insetBy(dx: 2, dy: 2), cornerWidth: 48, cornerHeight: 48, transform: nil))
+ctx.setStrokeColor(rgb(0xFFFFFF, 0.45)); ctx.setLineWidth(4); ctx.strokePath()
+text("AGENT KIT", size: 50, weight: .bold, color: rgb(0xFFFFFF, 0.95), at: CGPoint(x: 1480, y: 484), tracking: 8)
 text("Skills, MCP servers and project setup", size: 76, weight: .semibold, color: rgb(0xFFFFFF, 0.95), at: CGPoint(x: 868, y: 300))
 text("for your AI coding agents, on every Mac.", size: 76, weight: .semibold, color: rgb(0xFFFFFF, 0.95), at: CGPoint(x: 868, y: 205))
 text("CLAUDE CODE  ·  PI  ·  CODEX  ·  OPENCODE", size: 40, weight: .bold, color: rgb(0xFFFFFF, 0.6), at: CGPoint(x: 870, y: 105), tracking: 4)
