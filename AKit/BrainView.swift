@@ -7,6 +7,7 @@ struct BrainView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: Item?
     @State private var query = DebugSnapshot.options?.query ?? ""
+    @State private var importing = false
     @State private var creating = false
     @State private var createError: String?
 
@@ -36,9 +37,17 @@ struct BrainView: View {
         } message: {
             Text(createError ?? "")
         }
+        .sheet(isPresented: $importing) { BrainImportSheet() }
+        // Snapshot `--add`: open the import sheet once the brain is loaded.
+        .onChange(of: model.brain?.root) { if DebugSnapshot.options?.add == true, model.brain != nil { importing = true } }
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
         .toolbar {
+            ToolbarItem {
+                Button("Import Skills…", systemImage: "square.and.arrow.down") { importing = true }
+                    .disabled(model.brain == nil)
+                    .help("Copy global skills from ~/.agents/skills into the brain and the core layer")
+            }
             ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .disabled(model.isScanning)
