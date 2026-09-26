@@ -17,6 +17,10 @@
   <a href="#akit-reference"><b>akit reference</b></a>
 </p>
 
+**AKit** stands for **Agent Kit**: the kit your AI coding agents work with (their skills,
+MCP servers, rules and settings), kept in one place and packed the same way for every
+project and every Mac.
+
 AKit is a native macOS app and command line for people who work with several AI coding
 agents (Claude Code, Pi, Codex, OpenCode). It shows everything the agents are set up with in
 one place (skills, MCP servers, sessions, usage), and it sets up agents per project from
