@@ -11,7 +11,8 @@ import SwiftUI
 /// Usage takes it as the period: week, month, quarter, year, all);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
 /// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet;
-/// `--brain <folder>` reads the brain repo from there (not saved in Settings).
+/// `--brain <folder>` reads the brain repo from there (not saved in Settings); on the Brain screen
+/// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens.
 enum DebugSnapshot {

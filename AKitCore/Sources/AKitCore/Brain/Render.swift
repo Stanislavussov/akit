@@ -106,7 +106,9 @@ public enum Render {
         var values: [String: FieldValue] = [:]
         for layer in layers {
             for field in layer.fields {
-                if let value = answers.values[field.id] ?? field.defaultValue { values[field.id] = value }
+                // An unanswered field is empty (false, no items), so {{field}} and `when` still know it.
+                values[field.id] = answers.values[field.id] ?? field.defaultValue
+                    ?? (field.kind == .bool ? .bool(false) : field.kind == .multi ? .list([]) : .text(""))
                 if field.required, !isSet(values[field.id]) {
                     errors.append("“\(field.prompt)” (\(field.id)) is required by \(layer.name).")
                 }

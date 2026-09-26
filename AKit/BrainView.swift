@@ -8,6 +8,7 @@ struct BrainView: View {
     @State private var selection: Item?
     @State private var query = DebugSnapshot.options?.query ?? ""
     @State private var importing = false
+    @State private var settingUp = false
     @State private var creating = false
     @State private var createError: String?
 
@@ -38,11 +39,20 @@ struct BrainView: View {
             Text(createError ?? "")
         }
         .sheet(isPresented: $importing) { BrainImportSheet() }
+        .sheet(isPresented: $settingUp) { ProjectSetupSheet() }
         // Snapshot `--add`: open the import sheet once the brain is loaded.
-        .onChange(of: model.brain?.root) { if DebugSnapshot.options?.add == true, model.brain != nil { importing = true } }
+        .onChange(of: model.brain?.root) {
+            guard model.brain != nil, let options = DebugSnapshot.options else { return }
+            if options.tab == "setup" { settingUp = true } else if options.add { importing = true }
+        }
         .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
         .toolbar {
+            ToolbarItem {
+                Button("Set Up Project…", systemImage: "folder.badge.gearshape") { settingUp = true }
+                    .disabled(model.brain == nil)
+                    .help("Render layers from the brain into a project")
+            }
             ToolbarItem {
                 Button("Import Skills…", systemImage: "square.and.arrow.down") { importing = true }
                     .disabled(model.brain == nil)

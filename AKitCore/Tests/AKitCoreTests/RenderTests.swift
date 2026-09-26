@@ -126,6 +126,14 @@ struct RenderTests {
         #expect(Set(result.layers) == ["a", "b"])
     }
 
+    @Test func unansweredFieldsAreEmptyNotUnknown() throws {
+        try write("layers/x/layer.yaml", "fields:\n  - id: note\n  - id: flag\n    type: bool\nfiles:\n  - template: a.md\n    when: flag != true\n")
+        try write("layers/x/templates/a.md", "Note: {{note}}.\n")
+        let result = Render.render(ProjectAnswers(layers: ["x"]), brain: try brain(), projectName: "p")
+        #expect(result.warnings.isEmpty, "\(result.warnings)")
+        #expect(text(result, "a.md") == "Note: .\n")
+    }
+
     @Test func pieces() {
         #expect(Render.substitute("{{a}} {{ b }} {{c}} {{", ["a": .text("1"), "b": .list(["x", "y"])])
                 == ("1 x, y {{c}} {{", ["c"]))
