@@ -1,56 +1,231 @@
 # AKit
 
-Native macOS app for AI harnesses (Claude Code, Pi, Codex, OpenCode): skills, MCP
-servers, sessions, usage, and per-project harness setup from your own **brain** repo
-of skills and layers. Comes with the `akit` command for agents and terminals.
+A native macOS app and command line for people who work with several AI coding agents
+(Claude Code, Pi, Codex, OpenCode). It shows everything the agents are set up with in one
+place (skills, MCP servers, sessions, usage), and it sets up agents per project from
+your own **brain**: a private git repo of skills and composable layers that follows you
+to every Mac.
 
-## Install (one step)
+- **See** what each agent loads: skills, MCP servers, sessions, tokens and cost.
+- **Set up a project in one step:** pick layers (`swiftui`, `take-home`, …), answer their
+  questions, review the diff, apply. Every agent gets the same skills and `AGENTS.md`.
+- **Keep one setup on every Mac:** the brain is a git repo; `akit sync` or the Sync button
+  moves changes between Macs.
+- **Let your agent do it:** the `/akit` skill drives the `akit` command, so "set up this
+  project" or "make a layer for React Native apps" is one request.
+
+## Install
 
 ```sh
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Stanislavussov/akit/master/install.sh)"
 ```
 
-It downloads the latest release into `~/Applications/AKit.app` and `~/.local/bin/akit`
-(macOS 15+, no Xcode needed), then `akit setup` asks three things, each with a default
-(Enter):
+Needs macOS 15 or later and git (`xcode-select --install` if it's missing). The script
+downloads the latest release into `~/Applications/AKit.app` and `~/.local/bin/akit` (no
+Xcode needed), adds `~/.local/bin` to your PATH, and starts `akit setup`, which asks a few
+questions. Enter takes the default each time:
 
-1. **Your brain.** The brain is your own git repo of skills and layers in
-   `~/.akit/registry`; nothing in it ships with AKit. Give the repo you use on your other
-   Macs (`you/brain`), or press Enter for a new one: it starts with a `core` layer holding
-   the `/akit` skill, and with the GitHub CLI signed in, setup offers to keep it in a
-   private repo so your other Macs can use it. Or push it yourself:
-   `git -C ~/.akit/registry remote add origin <url> && git -C ~/.akit/registry push -u origin HEAD`.
-2. **Your projects folder** (`~/Projects`), shared with the app's Settings.
-3. **Skills you already have in `~`** that differ from the brain's: kept unless you say
-   replace (the old files are backed up in `~/.akit/backups`).
+1. **Your brain.** Type the repo you use on your other Macs (`you/brain` or a git URL),
+   or press Enter to start a new one. A new brain begins with a `core` layer holding the
+   `/akit` skill. With the GitHub CLI signed in (`gh auth login`), setup offers to put it
+   in a private GitHub repo right away.
+2. **Your projects folder** (default `~/Projects`), shared with the app's Settings.
+3. **A `~/.claude/skills` folder of your own**, if you have one: moved into
+   `~/.agents/skills` (backed up) so every agent reads the same skills. Asked, never
+   done silently.
+4. **Skills already in `~` that differ from the brain's:** kept unless you say replace
+   (the old files are backed up).
 
-The core layer then goes into your home folder for every harness on the Mac. Run the
-install again to update; `akit setup` is safe to run again (it syncs the brain and puts
-new core skills into `~`). `akit sync` (or Sync on the
-Brain screen) pulls and pushes the brain afterwards.
+Then the brain's core layer goes into your home folder for every agent on the Mac. That's
+it: open a project and ask your agent `/akit set up this project`.
 
-Without a release, or run from a checkout (`./install.sh`), it builds from source
-(needs Xcode; `make install` / `make install-cli` do the same by hand). `make release`
-builds `dist/AKit.zip` for a GitHub release.
+Run the install again to update. `akit setup` is safe to run again any time: it syncs the
+brain, adds agents installed since, and puts new core skills into `~`.
 
-## akit
+**Settings for scripts:** `AKIT_BRAIN_REPO=you/brain` answers the brain question,
+`AKIT_SKIP_HOME=1` leaves `~` alone, `AKIT_FROM_SOURCE=1` builds from source. Without a
+terminal (CI), every default is taken.
 
-```sh
-akit setup                                  # the install questions again
-akit init                                   # create a brain
-akit check                                  # brain problems
-akit layers [--json]                        # layers, fields, skills, files
-akit plan  [PROJECT] --layers a,b --set field=value --targets claude,pi
-akit apply [PROJECT] ...                    # backup first, removals to the Trash
-akit plan --home / akit apply --home        # the core layer into ~ for every harness
-akit sync                                   # pull and push the brain
-akit --help
+## The app
+
+| Screen | What it does |
+| --- | --- |
+| **Overview** | Which agents are installed, their versions and where their configs live. Agents AKit doesn't know yet can be described in a form. |
+| **Skills** | Every skill the agents can see, grouped by where it lives (global, per project, plugins, claude.ai), with filters by project and agent. |
+| **skills.sh** | Search the public [skills.sh](https://skills.sh) directory, preview a skill and install it into one folder you choose, as is or as your own copy. |
+| **MCP Servers** | Every configured MCP server per agent and project. Add one from a form or pasted JSON, edit or delete it; secret values go to the Keychain, never into config files and never on screen. |
+| **Sessions** | Saved conversations of every agent, newest first, with token use. Copy one as Markdown or JSON for evals or another agent. |
+| **Usage** | Tokens and cost per day and subscription, from the agents' own session files. Only what they recorded; the one exception, Claude Code sessions that saved no cost, is marked as an estimate. |
+| **Brain** | Your layers and skill library: create layers, import skills, set up a project, remove things, sync with the remote. |
+
+AKit only reads agent files unless you apply a change. Every change shows a diff first,
+replaced files are backed up in `~/.akit/backups`, and removed files go to the Trash.
+
+## The brain
+
+The brain is an ordinary git repo in `~/.akit/registry`. No agent reads it; AKit renders
+from it into projects and your home folder. Nothing in it ships with AKit: it's yours, and
+it should stay private (it records your projects).
+
+```
+skills/<name>/SKILL.md          skill library, one copy of each skill
+layers/<name>/layer.yaml        a layer: questions, skills, files
+layers/<name>/templates/        files a layer puts into projects (AGENTS.md sections, scripts, configs)
+projects/<id>/answers.json      what each project chose (written by akit)
+projects/<id>/lock.json         what was written there and from which brain commit
 ```
 
-## Develop
+### Layers
 
-`make build`, `make test`, `make run`; see `CLAUDE.md` for the rules and
-`docs/design/layers.md` for the brain and layers design.
+A layer is one reusable piece of setup. A project picks several; they add up.
+
+```yaml
+name: take-home
+description: Take-home assignment for a job application
+requires: [base]                # always comes with base, rendered after it
+conflicts: []
+fields:                         # questions asked when a project picks the layer
+  - id: company
+    prompt: Company name
+    type: text                  # text | bool | choice | multi
+    required: true
+  - id: stack
+    type: choice
+    options: [node, swift]
+    default: node
+skills:
+  - name: grilling
+    mode: manual                # manual: only when you type /grilling
+  - tdd                         # auto: the agent uses it when it fits
+files:
+  - template: agents.md
+    to: AGENTS.md               # sections from several layers are joined in layer order
+  - template: review.md
+    to: REVIEW.md
+    when: stack == node         # only for some answers
+```
+
+Templates can use `{{company}}`, `{{project_name}}` and `{{target}}`. Skills stay in
+`skills/`; a layer only lists them, so one skill can serve many layers.
+
+### What a project gets
+
+`akit apply` (or Set Up Project in the app, or `/akit`) writes:
+
+- `.agents/skills/<name>/`: the chosen skills, read by Pi, Codex and OpenCode;
+- `.claude/skills`: a link to `.agents/skills`, so Claude Code reads the same skills;
+- `AGENTS.md` from the layers' sections (when they have any), and a `CLAUDE.md` that points Claude Code at it;
+- any other files the layers bring.
+
+Applying again updates exactly what changed in the brain. Files you edited by hand, or that
+AKit didn't write, are left alone unless you say otherwise. Commit the result in the project,
+so it also works for people without AKit.
+
+### The core layer and your home folder
+
+`core` is the one layer that goes into `~` instead of a project, so its skills are there in
+every project on the Mac. Keep it small and prefer manual skills, so agents don't load
+what they don't need. `akit setup` or `akit apply --home` puts it in place.
+
+### More than one Mac
+
+```sh
+akit sync                        # or Sync on the Brain screen
+```
+
+Sync brings in the other Macs' commits and pushes this Mac's. If both sides changed the same
+lines, nothing is changed and you're told which files to merge. Uncommitted edits are never
+synced or lost. The Sync button shows what's waiting (`↑2` to push, `↓1` to pull). When
+the core layer changed, run `akit apply --home` (or `akit setup`).
+
+Created a brain without a remote? Push it to a private repo once:
+
+```sh
+git -C ~/.akit/registry remote add origin git@github.com:you/brain.git
+git -C ~/.akit/registry push -u origin HEAD
+```
+
+On another Mac, answer `you/brain` when the install asks.
+
+## Everyday use
+
+**With your agent** (Claude Code, Pi, …): `/akit` followed by what you want.
+
+- `/akit set up this project`: reads the project, suggests layers, asks what the layers
+  need to know, shows the plan and applies it after your yes.
+- `/akit make a layer for React Native apps with the vercel-react-native-skills skill`
+- `/akit add the tdd skill to the take-home layer`
+- `/akit remove the old-review skill from the brain`
+
+**In the app:** Brain → Set Up Project… (pick a folder, tick layers, fill fields, see every
+change as a diff, Apply), New Layer…, Import Skills… (copies skills from `~/.agents/skills`
+into the brain), and the trash buttons on layers and skills.
+
+**In a terminal:**
+
+```sh
+cd ~/Projects/my-app
+akit plan --layers swiftui               # what would change, with diffs; writes nothing
+akit apply --layers swiftui              # do it
+akit apply --set company=Acme            # change one answer, keep the rest
+```
+
+## akit reference
+
+```
+akit setup [--repo REPO] [--yes] [--skip-home]   the install questions (safe to rerun)
+akit init                                        create a brain
+akit sync                                        pull and push the brain
+
+akit check                                       problems in layers and skills (exit 1 if any)
+akit layers [--json]                             layers with their fields, skills and files
+akit skills                                      skills in the brain
+
+akit answers [PROJECT]                           a project's saved answers
+akit plan  [PROJECT] [ANSWERS]                   what would change, with diffs
+akit apply [PROJECT] [ANSWERS] [--include PATH] [--exclude PATH] [--include-unmanaged]
+akit plan --home / akit apply --home             the core layer into ~
+
+akit remove layer NAME                           refused while other layers require it
+akit remove skill NAME [--from LAYER]            from the brain, or only from one layer
+akit remove project [PROJECT|--home] [--keep-files]
+
+ANSWERS: --layers a,b  --set field=value  --unset field  --targets claude,pi  --answers FILE
+```
+
+`PROJECT` defaults to the current folder. `remove` shows what it would do and needs `--yes`
+to do it. `--brain DIR` uses another brain folder; `AKIT_PROJECTS_ROOT` overrides the
+projects folder. `akit --help` has the details.
+
+## Where things live
+
+| Path | What |
+| --- | --- |
+| `~/Applications/AKit.app`, `~/.local/bin/akit` | the app and the command |
+| `~/.akit/registry` | your brain |
+| `~/.akit/backups/<time>/` | every file AKit replaced, by path under `~` |
+| `~/.agents/skills`, `~/.claude/skills` | skills from the core layer (the second links to the first) |
+| Keychain | MCP secret values you entered in AKit |
+
+To uninstall, delete the app and `~/.local/bin/akit`. Your brain, backups and the skills
+already rendered stay where they are.
+
+## Build from source
+
+Needs Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+
+```sh
+git clone https://github.com/Stanislavussov/akit && cd akit
+./install.sh            # build and install, then akit setup
+make run                # debug build and launch
+make test               # core tests (Swift Testing, in a temporary fake home)
+make install-cli        # only the akit command
+make release            # dist/AKit.zip (universal app + akit) for a GitHub release
+```
+
+The logic lives in the `AKitCore` Swift package; the app in `AKit/` is SwiftUI on top of
+it. See `CLAUDE.md` for the project rules and `docs/design/layers.md` for the brain and
+layers design.
 
 ## License
 
