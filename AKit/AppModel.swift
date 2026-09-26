@@ -208,6 +208,15 @@ final class AppModel {
         }
     }
 
+    /// Subscription limit use (Codex: ChatGPT plan windows) from `since` on, read in the background.
+    func limits(since: Date) async throws -> [LimitSample] {
+        let installations = installations
+        let adapters = adapters
+        return try await Self.background {
+            UsageScanner.scanLimits(installations: installations, adapters: adapters, since: since, in: .current)
+        }
+    }
+
     // MARK: System prompt
 
     /// Prompts caught from harnesses in this run of AKit, by harness and project.

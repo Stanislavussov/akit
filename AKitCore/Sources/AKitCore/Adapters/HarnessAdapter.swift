@@ -29,6 +29,9 @@ public protocol HarnessAdapter: Sendable {
     /// sessions. Empty if the harness records none or AKit can't read it.
     func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord]
 
+    /// Subscription limit use recorded at or after `since` (Codex: ChatGPT plan windows).
+    func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample]
+
     /// The system prompt the harness saved inside this session, if it saves one.
     func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot?
 
@@ -53,6 +56,7 @@ extension HarnessAdapter {
     public func sessions(in env: HarnessEnvironment) -> [SessionSummary] { [] }
     public func transcript(of session: SessionSummary) throws -> SessionTranscript { SessionTranscript() }
     public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] { [] }
+    public func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample] { [] }
     public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? { nil }
     public var systemPromptAccess: SystemPromptAccess { .unavailable }
     public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? { nil }

@@ -220,6 +220,37 @@ struct UsageTests {
         #expect(records.allSatisfy { $0.provider == "openai" && $0.cost == nil })
     }
 
+    func limitEvent(_ time: String, fiveHour: Double, weekly: Double, limit: String = "codex") -> [String: Any] {
+        ["type": "event_msg", "timestamp": time,
+         "payload": ["type": "token_count", "info": NSNull(),
+                     "rate_limits": ["limit_id": limit, "plan_type": "plus",
+                                     "primary": ["used_percent": fiveHour, "window_minutes": 300, "resets_at": 1_790_000_000],
+                                     "secondary": ["used_percent": weekly, "window_minutes": 10_080, "resets_at": 1_790_500_000]]]]
+    }
+
+    @Test func codexLimitsGivePeaksPerDayAndTheLatestState() throws {
+        try write(".codex/sessions/2026/09/23/rollout-3.jsonl", lines: [
+            ["type": "session_meta", "timestamp": "2026-09-23T09:00:00.000Z", "payload": ["model_provider": "openai"]],
+            limitEvent("2026-09-23T09:00:01.000Z", fiveHour: 10, weekly: 3),
+            limitEvent("2026-09-23T12:00:00.000Z", fiveHour: 80, weekly: 9),
+            limitEvent("2026-09-23T12:00:01.000Z", fiveHour: 99, weekly: 99, limit: "premium"), // another limit: ignored
+            limitEvent("2026-09-24T08:00:00.000Z", fiveHour: 5, weekly: 11),
+        ])
+        let samples = CodexAdapter().limits(since: since, in: env)
+        #expect(samples.count == 6)
+        #expect(samples.first?.planName == "ChatGPT Plus")
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let report = SubscriptionLimitReport(samples: samples, from: since, to: JSONLines.date("2026-09-25T00:00:00.000Z")!,
+                                             calendar: calendar)
+        let openAI = Subscription(provider: "openai")
+        let day = calendar.startOfDay(for: JSONLines.date("2026-09-23T09:00:00.000Z")!)
+        #expect(report.peaks(day, openAI).map(\.usedPercent) == [80, 9])
+        #expect(report.peaks(day, openAI).map(\.windowName) == ["5-hour", "weekly"])
+        #expect(report.latest(of: openAI).map(\.usedPercent) == [5, 11])
+    }
+
     // MARK: OpenCode
 
     @Test func openCodeReadsAssistantRowsFromTheDatabase() throws {

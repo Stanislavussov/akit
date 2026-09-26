@@ -45,6 +45,9 @@ struct UsageView: View {
     @State private var range: ClosedRange<Date>?
     /// The report for the chosen harness, rebuilt from `records` when the filter changes.
     @State private var report: DailyUsageReport?
+    /// Subscription limits the harnesses saw (Codex), filtered like `report`.
+    @State private var limitSamples: [LimitSample] = []
+    @State private var limitReport: SubscriptionLimitReport?
     @State private var error: String?
     @State private var isLoading = false
     @State private var updated: Date?
@@ -85,6 +88,8 @@ struct UsageView: View {
         guard let records, let range else { return report = nil }
         let shown = harness.map { id in records.filter { $0.harness == id } } ?? records
         report = DailyUsageReport(records: shown, from: range.lowerBound, to: range.upperBound)
+        let samples = harness.map { id in limitSamples.filter { $0.harness == id } } ?? limitSamples
+        limitReport = samples.isEmpty ? nil : SubscriptionLimitReport(samples: samples, from: range.lowerBound, to: range.upperBound)
     }
 
     /// Harnesses that recorded something in the period.
@@ -103,13 +108,16 @@ struct UsageView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     UsageSummary(report: report)
-                    UsageCard(title: "Tokens per day") { UsageChart(report: report) }
+                    if let limitReport, !limitReport.isEmpty {
+                        UsageCard(title: "Subscription limits") { LimitsPanel(report: report, limits: limitReport) }
+                    }
+                    UsageCard(title: "Tokens per day") { UsageChart(report: report, limits: limitReport) }
                     UsageCard(title: "By day", accessory: {
                         Toggle("Show days without usage", isOn: $showEmptyDays)
                             .toggleStyle(.checkbox)
                             .font(.callout)
                     }) {
-                        UsageTable(report: report, showEmptyDays: showEmptyDays)
+                        UsageTable(report: report, limits: limitReport, showEmptyDays: showEmptyDays)
                     }
                     Text(note(report))
                         .font(.caption)
@@ -156,9 +164,12 @@ struct UsageView: View {
         defer { isLoading = false }
         let start = period.start()
         do {
-            let loaded = try await model.usage(since: start ?? .distantPast)
+            async let usage = model.usage(since: start ?? .distantPast)
+            async let limits = model.limits(since: start ?? .distantPast)
+            let loaded = try await usage
             let now = Date.now
             range = (start ?? loaded.map(\.time).min() ?? now)...now
+            limitSamples = try await limits
             records = loaded
             rebuildReport()
             updated = now
@@ -179,6 +190,18 @@ extension UsageText {
         guard let cost = total.cost else { return nil }
         return (total.unpricedRequests > 0 ? "≥ " : "") + (total.estimatedCost > 0 ? "≈ " : "") + dollars(cost)
     }
+
+    /// "5-hour 80% · weekly 9%", short: "5h 80% · week 9%". nil when there are none.
+    static func limits(_ peaks: [SubscriptionLimitReport.Peak], short: Bool = false) -> String? {
+        guard !peaks.isEmpty else { return nil }
+        return peaks.map { peak in
+            let name = short ? (peak.windowMinutes == 10_080 ? "week" : peak.windowMinutes % 60 == 0 ? "\(peak.windowMinutes / 60)h" : peak.windowName)
+                : peak.windowName
+            return "\(name) \(percent(peak.usedPercent))"
+        }.joined(separator: " · ")
+    }
+
+    static func percent(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0...1))) + "%" }
 
     /// "$378.26 recorded · $1,092.41 estimated"
     static func costSplit(of total: UsageTotal) -> String? {
@@ -278,6 +301,18 @@ private struct UsageSummary: View {
         }
     }
 
+    /// "5-hour 80% · weekly 9%", short: "5h 80% · week 9%". nil when there are none.
+    static func limits(_ peaks: [SubscriptionLimitReport.Peak], short: Bool = false) -> String? {
+        guard !peaks.isEmpty else { return nil }
+        return peaks.map { peak in
+            let name = short ? (peak.windowMinutes == 10_080 ? "week" : peak.windowMinutes % 60 == 0 ? "\(peak.windowMinutes / 60)h" : peak.windowName)
+                : peak.windowName
+            return "\(name) \(percent(peak.usedPercent))"
+        }.joined(separator: " · ")
+    }
+
+    static func percent(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0...1))) + "%" }
+
     /// "$378.26 recorded · $1,092.41 estimated", or how many responses have a cost at all.
     private func costDetail(_ total: UsageTotal) -> String {
         guard total.unpricedRequests > 0, total.estimatedCost == 0 else { return UsageText.costSplit(of: total) ?? "" }
@@ -298,9 +333,67 @@ private struct UsageSummary: View {
     }
 }
 
+/// The last limit state each subscription reported: plan, share used per window, reset time.
+/// Harnesses report it only after a response, so it is as fresh as the last use.
+private struct LimitsPanel: View {
+    let report: DailyUsageReport
+    let limits: SubscriptionLimitReport
+
+    private var subscriptions: [Subscription] {
+        let ids = limits.subscriptionIDs
+        return report.subscriptions.filter { ids.contains($0.id) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(subscriptions) { subscription in
+                let samples = limits.latest(of: subscription)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Circle().fill(SubscriptionColor.color(for: subscription)).frame(width: 8, height: 8)
+                        Text(subscription.name).fontWeight(.semibold)
+                        if let plan = samples.first?.planName { Text(plan).foregroundStyle(.secondary) }
+                        Spacer()
+                        if let seen = samples.map(\.time).max() {
+                            Text("as of \(seen.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    ForEach(samples, id: \.windowMinutes) { sample in
+                        HStack(spacing: 10) {
+                            Text(sample.windowName.prefix(1).uppercased() + sample.windowName.dropFirst())
+                                .frame(width: 70, alignment: .leading)
+                            ProgressView(value: min(max(sample.usedPercent, 0), 100), total: 100)
+                                .tint(sample.usedPercent >= 90 ? .red : SubscriptionColor.color(for: subscription))
+                                .frame(maxWidth: 320)
+                            Text("\(UsageText.percent(sample.usedPercent)) used")
+                                .monospacedDigit()
+                                .frame(width: 80, alignment: .trailing)
+                            Text(resetText(sample))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            Text("The table shows each day's peak use of these limits for subscriptions without a cost.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func resetText(_ sample: LimitSample) -> String {
+        guard let resets = sample.resetsAt else { return "" }
+        return resets > .now ? "resets \(resets.formatted(date: .abbreviated, time: .shortened))"
+            : "has reset since (\(resets.formatted(date: .abbreviated, time: .shortened)))"
+    }
+}
+
 /// Stacked bars: tokens per day, one color per subscription. Hovering a day shows its numbers.
 private struct UsageChart: View {
     let report: DailyUsageReport
+    let limits: SubscriptionLimitReport?
     @State private var hovered: Date?
 
     private struct Bar: Identifiable {
@@ -333,7 +426,7 @@ private struct UsageChart: View {
                 RuleMark(x: .value("Day", hoveredDay, unit: .day))
                     .foregroundStyle(.clear)
                     .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit(to: .plot), y: .fit(to: .plot))) {
-                        DayPopover(report: report, day: hoveredDay, total: total)
+                        DayPopover(report: report, limits: limits, day: hoveredDay, total: total)
                     }
             }
         }
@@ -359,6 +452,7 @@ private struct UsageChart: View {
 /// Numbers of one day, shown over the chart.
 private struct DayPopover: View {
     let report: DailyUsageReport
+    let limits: SubscriptionLimitReport?
     let day: Date
     let total: UsageTotal
 
@@ -373,6 +467,9 @@ private struct DayPopover: View {
                         Spacer(minLength: 12)
                         Text(UsageText.short(cell.tokens.total)).monospacedDigit()
                         if let cost = UsageText.cost(of: cell) { Text(cost).monospacedDigit().foregroundStyle(.secondary) }
+                    }
+                    if let text = UsageText.limits(limits?.peaks(day, subscription) ?? []) {
+                        Text("Limits used: \(text)").foregroundStyle(.secondary).padding(.leading, 13)
                     }
                 }
             }
@@ -398,6 +495,7 @@ private struct DayPopover: View {
 /// Each cell has a small bar: its share of the column's busiest day.
 private struct UsageTable: View {
     let report: DailyUsageReport
+    let limits: SubscriptionLimitReport?
     let showEmptyDays: Bool
 
     private let dayWidth: CGFloat = 150
@@ -438,7 +536,7 @@ private struct UsageTable: View {
                 ForEach(Array(days.enumerated()), id: \.element) { index, day in
                     row(title: day.formatted(showsYear ? .dateTime.weekday(.abbreviated).day().month(.abbreviated).year()
                                                        : .dateTime.weekday(.abbreviated).day().month(.abbreviated)),
-                        cells: report.subscriptions.map { report.cell(day, $0) }, total: report.total(ofDay: day),
+                        day: day, cells: report.subscriptions.map { report.cell(day, $0) }, total: report.total(ofDay: day),
                         tooltip: day.formatted(date: .complete, time: .omitted), peaks: peaks)
                         .background(index.isMultiple(of: 2) ? Color.clear : Color.primary.opacity(0.04))
                 }
@@ -465,16 +563,17 @@ private struct UsageTable: View {
         .padding(.bottom, 6)
     }
 
-    private func row(title: String, cells: [UsageTotal?], total: UsageTotal?, tooltip: String, peaks: [String: Int],
-                     bold: Bool = false) -> some View {
+    private func row(title: String, day: Date? = nil, cells: [UsageTotal?], total: UsageTotal?, tooltip: String,
+                     peaks: [String: Int], bold: Bool = false) -> some View {
         HStack(spacing: 0) {
             Text(title).frame(width: dayWidth, alignment: .leading)
             ForEach(Array(zip(report.subscriptions, cells)), id: \.0.id) { subscription, cell in
-                cellView(cell, color: SubscriptionColor.color(for: subscription),
-                         peak: peaks[subscription.id], tooltip: "\(subscription.name) · \(tooltip)")
+                cellView(cell, color: SubscriptionColor.color(for: subscription), peak: peaks[subscription.id],
+                         limits: day.flatMap { UsageText.limits(limits?.peaks($0, subscription) ?? [], short: true) },
+                         tooltip: "\(subscription.name) · \(tooltip)")
                     .frame(width: columnWidth, alignment: .trailing)
             }
-            cellView(total, color: nil, peak: nil, tooltip: tooltip)
+            cellView(total, color: nil, peak: nil, limits: nil, tooltip: tooltip)
                 .fontWeight(.semibold)
                 .frame(width: columnWidth, alignment: .trailing)
         }
@@ -485,12 +584,13 @@ private struct UsageTable: View {
     }
 
     @ViewBuilder
-    private func cellView(_ total: UsageTotal?, color: Color?, peak: Int?, tooltip: String) -> some View {
+    private func cellView(_ total: UsageTotal?, color: Color?, peak: Int?, limits: String?, tooltip: String) -> some View {
         if let total, total.requests > 0 {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(UsageText.short(total.tokens.total))
-                if let cost = UsageText.cost(of: total) {
-                    Text(cost)
+                // A subscription without a cost shows how much of its limits that day used.
+                if let text = UsageText.cost(of: total) ?? limits {
+                    Text(text)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -499,7 +599,7 @@ private struct UsageTable: View {
                         .frame(width: max(3, 56 * CGFloat(total.tokens.total) / CGFloat(peak)), height: 3)
                 }
             }
-            .help(Self.details(total, title: tooltip))
+            .help(Self.details(total, title: tooltip) + (limits.map { "\nLimits used (peak): \($0)" } ?? ""))
         } else {
             Text("–").foregroundStyle(.quaternary)
         }

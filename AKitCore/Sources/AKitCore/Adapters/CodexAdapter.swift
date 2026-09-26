@@ -41,6 +41,11 @@ public struct CodexAdapter: HarnessAdapter {
         CodexUsage.usage(codexHome: configRoot(in: env), since: since)
     }
 
+    /// ChatGPT plan limits Codex saw after each response.
+    public func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample] {
+        CodexUsage.limits(codexHome: configRoot(in: env), since: since)
+    }
+
     /// `[mcp_servers.<name>]` in `config.toml`, global and in a project's `.codex/config.toml`.
     /// Codex reads the project file only in projects the user trusted.
     public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {
