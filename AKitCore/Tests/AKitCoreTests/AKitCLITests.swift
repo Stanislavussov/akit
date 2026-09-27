@@ -411,6 +411,49 @@ struct AKitCLITests {
         #expect(missing.code == 2 && missing.err.contains("No session “nope”"))
     }
 
+    @Test func statsBindingsWorksWithoutBrain() async throws {
+        // Two recent sessions: one in the project folder (a plain folder under the projects root), one gone.
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let yesterday = Date().addingTimeInterval(-86_400).formatted(.iso8601)
+        for (id, cwd) in [("b1", project.path), ("b2", home.appending(path: "gone/wt").path)] {
+            let line = try JSONSerialization.data(withJSONObject: [
+                "type": "assistant", "uuid": "u-\(id)", "sessionId": id, "cwd": cwd, "gitBranch": "feature", "timestamp": yesterday,
+                "message": ["id": "m-\(id)", "model": "claude-opus-5-5", "content": [], "usage": ["input_tokens": 1, "output_tokens": 1]],
+            ] as [String: Any], options: .sortedKeys)
+            try write(".claude/projects/-work-\(id)/\(id).jsonl", String(decoding: line, as: UTF8.self) + "\n")
+        }
+        let result = await akit("stats", "bindings", "--json")
+        #expect(result.code == 0, "\(result)")
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(result.out.utf8)) as? [String: Any], "\(result)")
+        #expect(json["bindingSet"] as? [String] == ["exact", "high", "medium"])
+        let byMethod = try #require(json["byMethod"] as? [String: Int])
+        #expect(byMethod["live"] == 1 && byMethod["none"] == 1 && json["undecided"] as? Int == 0, "\(json)")
+        let recent = try #require(json["recent"] as? [String: Any])
+        #expect(recent["days"] as? Int == 30 && recent["sessions"] as? Int == 2 && recent["bound"] as? Int == 1)
+        #expect(json["unboundFolders"] as? [String] == [home.appending(path: "gone/wt").path])
+        #expect(json["byConfidence"] != nil && json["notes"] != nil)
+        #expect(!fm.fileExists(atPath: Brain.defaultRoot(home: home).path))
+
+        let text = await akit("stats", "bindings")
+        #expect(text.code == 0 && text.out.contains("Last 30 days: 1 of 2 main sessions bound at exact, high, medium (50%)."), "\(text)")
+        #expect(text.out.contains("by method: hook 0, live 1,") && text.out.contains(home.appending(path: "gone/wt").path))
+
+        // Flags before the subcommand word; low counts only when asked for.
+        for arguments in [["--json", "stats", "bindings"], ["stats", "--bindings", "exact,low", "--json", "bindings"]] {
+            var out: [String] = []
+            let code = await AKitCLI.run(arguments, env: env, cwd: project, projectsRoot: home.appending(path: "Projects"),
+                                         out: { out.append($0) }, err: { _ in })
+            let json = try #require(try JSONSerialization.jsonObject(with: Data(out.joined().utf8)) as? [String: Any], "\(arguments)")
+            #expect(code == 0 && json["byMethod"] != nil, "\(arguments)")
+        }
+        let bad = await akit("stats", "--bindings", "bogus", "bindings")
+        #expect(bad.code == 2 && bad.err.contains("bogus"))
+        #expect(await akit("stats", "--bindings", "low").code == 2)
+        #expect(await akit("stats", "bindings", "--debug").code == 2)
+        #expect(await akit("stats", "bindings", "extra").code == 2)
+        #expect(await akit("stats", "nope").code == 2)
+    }
+
     @Test func statsReadsTheIndexWhileAnImportRuns() async throws {
         let held = try #require(try ImportLock.acquire(InsightsPaths(home: home).lock))
         let stats = try statsJSON(await akit("stats", "--debug", "--json"))

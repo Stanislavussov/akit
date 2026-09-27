@@ -19,6 +19,9 @@ struct ImportReport: Encodable, Equatable {
     var skipped: [Skipped] = []
     /// Files left for the next run because the time budget ran out (one of them maybe half read).
     var pending = 0
+    /// Session bindings added or changed, and sessions left for the next run (see ProjectBinder).
+    var bindings = 0
+    var bindingsPending = 0
     var ms = 0
 }
 
@@ -61,6 +64,20 @@ struct SessionImporter {
     static func `import`(env: HarnessEnvironment, database: IndexDatabase, now: Date = Date(),
                          budget: TimeInterval? = nil) throws -> ImportReport {
         try SessionImporter(env: env).run(database: database, now: now, budget: budget)
+    }
+
+    /// An import, then project bindings for the sessions in the index (see ProjectBinder).
+    /// `budget` covers both: binding gets what the import left (and at most its own git budget).
+    static func importAndBind(env: HarnessEnvironment, projectsRoot: URL, database: IndexDatabase, now: Date = Date(),
+                              budget: TimeInterval? = nil, runner: CommandRunner? = nil) async throws -> ImportReport {
+        let clock = Date()
+        var report = try SessionImporter(env: env).run(database: database, now: now, budget: budget)
+        let binding = try await ProjectBinder(env: env, projectsRoot: projectsRoot, run: runner)
+            .bind(database: database, now: now, deadline: budget.map { clock.addingTimeInterval($0) })
+        report.bindings = binding.changed
+        report.bindingsPending = binding.pending
+        report.ms = Int(Date().timeIntervalSince(clock) * 1000)
+        return report
     }
 
     /// `budget`: stop at a line boundary once it is spent (the offset read so far is kept, the

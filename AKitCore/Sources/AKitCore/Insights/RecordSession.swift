@@ -149,7 +149,7 @@ public enum RecordSession {
     }
 
     /// A small text file (git metadata), or nil.
-    private static func small(_ path: String, limit: Int = 256 << 10) -> String? {
+    static func small(_ path: String, limit: Int = 256 << 10) -> String? {
         guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
         defer { try? handle.close() }
         return (try? handle.read(upToCount: limit)).map { String(decoding: $0, as: UTF8.self) }

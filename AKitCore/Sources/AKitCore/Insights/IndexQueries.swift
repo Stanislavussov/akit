@@ -18,6 +18,64 @@ enum IndexQueries {
         return result
     }
 
+    // MARK: - Bindings
+
+    /// How sessions are bound to projects (`akit stats bindings`).
+    struct BindingStats: Encodable, Equatable {
+        struct Recent: Encodable, Equatable {
+            let days: Int
+            /// Main sessions started in those days, and those bound at a confidence of the set.
+            let sessions: Int
+            let bound: Int
+            let share: Double?
+        }
+
+        /// The confidences that count as bound.
+        let bindingSet: [String]
+        /// Sessions per method and per confidence (`none`: no project).
+        let byMethod: [String: Int]
+        let byConfidence: [String: Int]
+        /// Sessions no import has bound yet.
+        let undecided: Int
+        let recent: Recent
+        /// Up to 10 folders of recent sessions not bound in the set, latest first. Local paths:
+        /// shown to the user only, never written anywhere else.
+        let unboundFolders: [String]
+        let notes: [String]
+    }
+
+    static func bindingStats(_ database: IndexDatabase, set: BindingSet, notes: [String] = [], days: Int = 30,
+                             now: Date = Date()) throws -> BindingStats {
+        var byMethod = Dictionary(uniqueKeysWithValues: BindingMethod.allCases.map { ($0.rawValue, 0) })
+        var byConfidence = Dictionary(uniqueKeysWithValues: (Confidence.allCases.map(\.rawValue) + ["none"]).map { ($0, 0) })
+        for row in try database.rows("""
+            SELECT b.method, COALESCE(b.confidence, 'none'), COUNT(*) FROM bindings b JOIN sessions s ON s.key = b.session_key
+            GROUP BY b.method, b.confidence
+            """) {
+            guard let method = row[0].text, let confidence = row[1].text, let count = row[2].int else { continue }
+            byMethod[method, default: 0] += count
+            byConfidence[confidence, default: 0] += count
+        }
+        let undecided = try database.value("""
+            SELECT COUNT(*) FROM sessions s WHERE NOT EXISTS(SELECT 1 FROM bindings b WHERE b.session_key = s.key)
+            """)?.int ?? 0
+        let since = now.addingTimeInterval(-Double(days) * 86_400).timeIntervalSince1970
+        let recent = try database.rows("""
+            SELECT COUNT(*), COALESCE(SUM(b.confidence IN \(set.sqlList)), 0) FROM sessions s
+            LEFT JOIN bindings b ON b.session_key = s.key WHERE s.started >= ?
+            """, since).first
+        let sessions = recent?[0].int ?? 0, bound = recent?[1].int ?? 0
+        let unbound = try database.rows("""
+            SELECT s.cwd, MAX(s.started) AS latest FROM sessions s LEFT JOIN bindings b ON b.session_key = s.key
+            WHERE s.started >= ? AND s.cwd IS NOT NULL AND (b.confidence IS NULL OR b.confidence NOT IN \(set.sqlList))
+            GROUP BY s.cwd ORDER BY latest DESC LIMIT 10
+            """, since).compactMap { $0[0].text }
+        return BindingStats(bindingSet: set.names, byMethod: byMethod, byConfidence: byConfidence, undecided: undecided,
+                            recent: .init(days: days, sessions: sessions, bound: bound,
+                                          share: sessions > 0 ? Double(bound) / Double(sessions) : nil),
+                            unboundFolders: unbound, notes: notes)
+    }
+
     // MARK: - Debug stats
 
     /// Recorded skill use and context of one session, to check the parsers on real logs.

@@ -68,6 +68,13 @@ enum IndexSchema {
         CREATE INDEX hook_events_source ON hook_events(source_id);
         CREATE INDEX applies_source ON applies(source_id);
         """,
+        // v3: which project each session belongs to (see ProjectBinder). Local paths: never serialized.
+        // Not facts of a source: decided after the facts, re-decided only while none/low or for a newer resolver.
+        """
+        CREATE TABLE bindings(session_key TEXT PRIMARY KEY, project_id TEXT, method TEXT NOT NULL, confidence TEXT,
+          repo_path TEXT, decided_at REAL NOT NULL, resolver_version INTEGER NOT NULL);
+        CREATE INDEX bindings_project ON bindings(project_id);
+        """,
     ]
 
     /// Brings the database to the latest version. Refuses an index written by a newer akit.

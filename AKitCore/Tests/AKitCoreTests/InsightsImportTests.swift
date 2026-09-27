@@ -399,7 +399,8 @@ struct InsightsImportTests {
         try runImport()
         let db = try database()
         let tables = try db.rows("SELECT name FROM sqlite_master WHERE type = 'table'").compactMap { $0[0].text }
-        #expect(tables.count == IndexSchema.factTables.count + 2)
+        // Fact tables, meta, sources, bindings: a new table must be added to this check.
+        #expect(tables.count == IndexSchema.factTables.count + 3)
         var checked = 0
         for table in tables {
             for row in try db.rows("SELECT * FROM \(table)") {

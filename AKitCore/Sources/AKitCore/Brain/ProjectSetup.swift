@@ -96,10 +96,14 @@ public enum ProjectSetup {
            result.succeeded, let id = normalizedRemote(result.output) {
             return id
         }
-        let path = project.standardizedFileURL.path, root = projectsRoot.standardizedFileURL.path
+        return localID(path: project.standardizedFileURL.path, projectsRoot: projectsRoot.standardizedFileURL.path)
+    }
+
+    /// `local/<path under the projects root>`, for a project without a git remote.
+    static func localID(path: String, projectsRoot root: String) -> String {
         if path.hasPrefix(root + "/") { return "local/" + cleanPath(String(path.dropFirst(root.count + 1))) }
         // Outside the projects root: the folder name plus a short hash, so two "app" folders differ.
-        return "local/" + cleanPath(project.lastPathComponent) + "-" + sha256(Data(path.utf8)).prefix(8)
+        return "local/" + cleanPath((path as NSString).lastPathComponent) + "-" + sha256(Data(path.utf8)).prefix(8)
     }
 
     /// `git@github.com:Owner/Repo.git`, `https://user@github.com/owner/repo`, `ssh://git@host:22/o/r.git`
