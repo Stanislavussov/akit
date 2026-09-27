@@ -376,7 +376,7 @@ struct AKitCLITests {
     @Test func statsDebugWorksWithoutBrain() async throws {
         try writeStatsSessions()
         let plain = await akit("stats")
-        #expect(plain.code == 0 && plain.out.contains("later version"), "\(plain)")
+        #expect(plain.code == 0 && plain.out.contains("note: \(InsightsStats.piNote)"), "\(plain)")
 
         let all = try statsJSON(await akit("stats", "--debug", "--json"))
         #expect(all.sessions.compactMap { $0["key"] as? String } == ["claude:s2", "claude:s1"])
@@ -409,6 +409,16 @@ struct AKitCLITests {
         }
         let missing = await akit("stats", "--debug", "--session", "nope")
         #expect(missing.code == 2 && missing.err.contains("No session “nope”"))
+
+        // A value flag before the subcommand word is never taken for it.
+        let bindings = await akit("stats", "--days", "30", "bindings", "--json")
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(bindings.out.utf8)) as? [String: Any], "\(bindings)")
+        #expect(bindings.code == 0 && (json["recent"] as? [String: Any])?["days"] as? Int == 30 && json["byMethod"] != nil)
+        let week = await akit("--json", "stats", "--days", "7", "bindings")
+        #expect(week.code == 0 && week.out.contains(#""days" : 7"#), "\(week)")
+        #expect(await akit("stats", "--days", "0").code == 2)
+        #expect(await akit("stats", "--top", "x").code == 2)
+        #expect(await akit("stats", "--session", "s1").code == 2, "--session goes with --debug")
     }
 
     @Test func statsBindingsWorksWithoutBrain() async throws {
@@ -448,7 +458,7 @@ struct AKitCLITests {
         }
         let bad = await akit("stats", "--bindings", "bogus", "bindings")
         #expect(bad.code == 2 && bad.err.contains("bogus"))
-        #expect(await akit("stats", "--bindings", "low").code == 2)
+        #expect(await akit("stats", "--debug", "--bindings", "low").code == 2)
         #expect(await akit("stats", "bindings", "--debug").code == 2)
         #expect(await akit("stats", "bindings", "extra").code == 2)
         #expect(await akit("stats", "nope").code == 2)
@@ -472,5 +482,79 @@ struct AKitCLITests {
         let swallowed = await akit("stats", "--session", "--debug")
         #expect(swallowed.code == 2 && swallowed.err.contains("--session"), "\(swallowed)")
         #expect(!fm.fileExists(atPath: home.appending(path: ".akit/index/index.sqlite").path))
+    }
+
+    /// A recent Claude session listing an own skill, a plugin skill and a built-in one, with a model call of the own skill.
+    func writeListedSkills() throws {
+        let time = Date().addingTimeInterval(-3600)
+        func line(_ object: [String: Any]) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: object, options: .sortedKeys), as: UTF8.self)
+        }
+        func entry(_ type: String, _ uuid: String, _ seconds: Double, _ fields: [String: Any]) -> [String: Any] {
+            fields.merging(["type": type, "uuid": uuid, "sessionId": "l1", "version": "2.1.283",
+                            "timestamp": time.addingTimeInterval(seconds).formatted(.iso8601)]) { $1 }
+        }
+        let usage: [String: Any] = ["input_tokens": 3, "output_tokens": 1, "cache_read_input_tokens": 100]
+        let lines: [[String: Any]] = [
+            entry("attachment", "L1", 0, ["attachment": ["type": "skill_listing", "isInitial": true,
+                                                         "names": ["mine", "marketing:seo-audit", "ghost"],
+                                                         "content": "- mine: Own skill\n- marketing:seo-audit: Audit a site\n- ghost: Built in"]]),
+            entry("assistant", "A1", 1, ["message": ["id": "m1", "model": "claude-opus-5-5", "usage": usage, "content": [
+                ["type": "tool_use", "id": "t1", "name": "Skill", "input": ["skill": "mine"]],
+            ]]]),
+        ]
+        try write(".claude/projects/-work-app/l1.jsonl", try lines.map(line).joined(separator: "\n") + "\n")
+        try write(".claude/skills/mine/SKILL.md", "---\nname: mine\ndescription: Own skill\n---\n")
+    }
+
+    func statsReport(_ result: (code: Int32, out: String, err: String)) throws -> (json: [String: Any], owners: [String: [String: Any]]) {
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(result.out.utf8)) as? [String: Any], "\(result)")
+        let skills = json["skills"] as? [[String: Any]] ?? []
+        return (json, Dictionary(uniqueKeysWithValues: skills.compactMap { skill in
+            (skill["name"] as? String).map { ($0, skill["owner"] as? [String: Any] ?? [:]) }
+        }))
+    }
+
+    @Test func statsWithoutBrainMarksLayerOwnersUnknown() async throws {
+        try writeListedSkills()
+        let blind = try statsReport(await akit("stats", "--json"))
+        #expect(blind.json["version"] as? Int == 1)
+        #expect(blind.owners["mine"]?["kind"] as? String == "unknown", "\(blind.owners)")
+        #expect(blind.owners["marketing:seo-audit"]?["kind"] as? String == "plugin"
+                && blind.owners["marketing:seo-audit"]?["name"] as? String == "marketing")
+        #expect(blind.owners["ghost"]?["kind"] as? String == "builtIn")
+        #expect((blind.json["notes"] as? [String])?.contains(InsightsStats.noBrainNote) == true, "\(blind.json)")
+        let mine = (blind.json["skills"] as? [[String: Any]])?.first { $0["name"] as? String == "mine" }
+        #expect(mine?["listedSessions"] as? Int == 1 && mine?["modelCalls"] as? Int == 1 && mine?["callRate"] as? Double == 1)
+        let text = await akit("stats")
+        #expect(text.code == 0 && text.out.contains("unknown: 1 skill") && text.out.contains("note: \(InsightsStats.noBrainNote)"), "\(text)")
+        #expect(!fm.fileExists(atPath: Brain.defaultRoot(home: home).path))
+
+        // With a brain, an own skill it doesn't hold is hand-installed.
+        try await setUp()
+        let known = try statsReport(await akit("stats", "--json"))
+        #expect(known.owners["mine"]?["kind"] as? String == "handInstalled"
+                && known.owners["mine"]?["name"] as? String == "~/.claude/skills/mine/SKILL.md", "\(known.owners)")
+        #expect((known.json["notes"] as? [String])?.contains(InsightsStats.noBrainNote) == false)
+    }
+
+    @Test func statsSubcommandWordsDontClashWithProject() async throws {
+        try writeListedSkills()
+        for word in ["bindings", "changes", "mark"] {
+            let result = await akit("stats", "--project", word, "--json")
+            let scope = try statsReport(result).json["scope"] as? [String: Any]
+            #expect(result.code == 0 && scope?["project"] as? String == word, "\(word): \(result)")
+        }
+        // A folder gives its project id; the default and --all cover every session.
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let here = try statsReport(await akit("stats", "--project", ".", "--json"))
+        #expect((here.json["scope"] as? [String: Any])?["project"] as? String == "local/task")
+        #expect((here.json["summary"] as? [String: Any])?["sessions"] as? Int == 0, "no session is bound to it")
+        let all = try statsReport(await akit("stats", "--all", "--json"))
+        #expect((all.json["scope"] as? [String: Any])?["project"] is NSNull && (all.json["summary"] as? [String: Any])?["sessions"] as? Int == 1)
+        #expect(await akit("stats", "--project", "x", "--all").code == 2)
+        #expect(await akit("stats", "bindings", "--project", "x").code == 2)
+        #expect(await akit("stats", "--debug", "--all").code == 2)
+        #expect(await akit("stats", "changes").code == 2)
     }
 }

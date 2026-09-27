@@ -45,9 +45,16 @@ public enum AKitCLI {
                                           Read new Claude Code and Pi session lines into the index:
                                           counts, sizes and skill use, never message text; then bind
                                           sessions to projects (hook, folder, git worktrees, siblings)
-          akit stats bindings [--bindings LIST] [--json]
+          akit stats [--project ID|PATH | --all] [--days N] [--top N] [--details] [--bindings LIST] [--json]
+                                          Every listed skill: its owner (layer, plugin, hand-installed,
+                                          built-in), ≈ tokens and ≈ context space (tokens × requests),
+                                          sessions and days listed, calls by the model and the user.
+                                          Default: all sessions on this Mac, last 30 days, top 10 (all
+                                          with --details). --project: the sessions bound to it at LIST
+                                          (default exact,high,medium). Imports new lines first
+          akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
-                                          confidence, the last 30 days' share bound in LIST (default
+                                          confidence, the last N (30) days' share bound in LIST (default
                                           exact,high,medium; add low for unconfirmed siblings and
                                           path templates), a sample of unbound folders. Templates go
                                           in ~/.akit/insights.json:
@@ -125,8 +132,9 @@ public enum AKitCLI {
             }
             if command == "stats" {
                 try refuseProjectOptions(options, command: "stats")
-                return try await stats(&args, options: options, env: env,
-                                       projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), out: out, err: err)
+                return try await stats(&args, options: options, env: env, cwd: cwd,
+                                       projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), hostName: hostName,
+                                       runner: runner, out: out, err: err)
             }
             if command == "insights" {
                 try refuseProjectOptions(options, command: "insights")
@@ -417,43 +425,130 @@ public enum AKitCLI {
         return lines.joined(separator: "\n")
     }
 
+    /// `akit stats`: owners, ≈ context space and calls of every listed skill.
     /// `akit stats --debug`: what the index recorded per session, to check the parsers.
-    /// `akit stats bindings`: how sessions are bound to projects. Full stats come later.
-    private static func stats(_ args: inout Arguments, options: Options, env: HarnessEnvironment, projectsRoot: URL,
-                              out: (String) -> Void, err: (String) -> Void) async throws -> Int32 {
-        // Value flags before the subcommand word, so a value is never taken for it.
+    /// `akit stats bindings`: how sessions are bound to projects.
+    private static func stats(_ args: inout Arguments, options: Options, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
+                              hostName: String, runner: CommandRunner?, out: (String) -> Void,
+                              err: (String) -> Void) async throws -> Int32 {
+        // Value flags before the subcommand word, so a value (`--project bindings`) is never taken for it.
         let session = args.value("--session")
         let bindingList = args.value("--bindings")
+        let projectArgument = args.value("--project")
+        let daysText = args.value("--days")
+        let topText = args.value("--top")
         let debug = args.flag("--debug")
+        let all = args.flag("--all")
+        let details = args.flag("--details")
         let subcommand = args.positional()
         try args.finish()
         if let subcommand, subcommand != "bindings" {
-            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats bindings, or akit stats --debug.")
+            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats bindings, or akit stats --debug.")
         }
-        if subcommand == "bindings", debug || session != nil {
-            throw Failure(message: "--debug and --session don't go with akit stats bindings.")
+        func number(_ text: String?, _ flag: String) throws -> Int? {
+            guard let text else { return nil }
+            guard let value = Int(text), value > 0 else { throw Failure(message: "\(flag) needs a whole number above 0.") }
+            return value
         }
-        if subcommand == nil, bindingList != nil { throw Failure(message: "--bindings goes with akit stats bindings.") }
+        let days = try number(daysText, "--days"), top = try number(topText, "--top")
+        func refuse(_ given: [(set: Bool, flag: String)], with: String) throws {
+            if let flag = given.first(where: \.set)?.flag { throw Failure(message: "\(flag) doesn't go with akit stats \(with).") }
+        }
+        if projectArgument != nil, all { throw Failure(message: "--project and --all don't go together.") }
+        if subcommand == "bindings" {
+            try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
+                        (top != nil, "--top"), (details, "--details")], with: "bindings")
+        } else if debug {
+            try refuse([(bindingList != nil, "--bindings"), (projectArgument != nil, "--project"), (all, "--all"),
+                        (days != nil, "--days"), (top != nil, "--top"), (details, "--details")], with: "--debug")
+        } else if session != nil {
+            throw Failure(message: "--session goes with akit stats --debug.")
+        }
         let bindingSet = try BindingSet.parse(bindingList)
         if let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
+        let database = try IndexSchema.open(InsightsPaths(env: env).database)
+        let imported = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
         if subcommand == "bindings" {
-            let database = try IndexSchema.open(InsightsPaths(env: env).database)
-            let notes = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
-            let report = try IndexQueries.bindingStats(database, set: bindingSet, notes: notes)
+            let report = try IndexQueries.bindingStats(database, set: bindingSet, notes: imported.notes, days: days ?? InsightsStats.defaultDays)
             out(options.json ? encode(report) : bindingStatsText(report))
             return 0
         }
-        guard debug else {
-            out("Full stats come in a later version. For now: akit stats --debug [--session ID] [--json], akit stats bindings [--json]")
+        if debug {
+            let sessions = try IndexQueries.debugStats(database, session: session)
+            if let session, sessions.isEmpty { throw Failure(message: "No session “\(session)” in the index.") }
+            let report = DebugStats(sessions: sessions, notes: imported.notes + (try IndexQueries.debugNotes(database, sessions: sessions)))
+            out(options.json ? encode(report) : debugStatsText(report))
             return 0
         }
-        let database = try IndexSchema.open(InsightsPaths(env: env).database)
-        let notes = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
-        let sessions = try IndexQueries.debugStats(database, session: session)
-        if let session, sessions.isEmpty { throw Failure(message: "No session “\(session)” in the index.") }
-        let report = DebugStats(sessions: sessions, notes: notes + (try IndexQueries.debugNotes(database, sessions: sessions)))
-        out(options.json ? encode(report) : debugStatsText(report))
+        // A folder gives its project id (as akit plan does); anything else is taken as an id.
+        var project: String?
+        if let projectArgument {
+            let folder = resolve(projectArgument, cwd: cwd, env: env)
+            project = SkillScanner.isDirectory(folder) ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env)
+                : projectArgument
+        }
+        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        var inputs = try await InsightsStats.inputs(env: env, database: database, brain: Brain.load(from: brainRoot),
+                                                    projectsRoot: projectsRoot, hostName: hostName, run: runner)
+        inputs.importNotes = imported.notes
+        inputs.importRunning = imported.running
+        let report = try InsightsStats.report(database, options: .init(days: days ?? InsightsStats.defaultDays, project: project,
+                                                                       bindings: bindingSet,
+                                                                       top: top ?? (details ? nil : InsightsStats.defaultTop)),
+                                              inputs: inputs)
+        out(options.json ? encode(report) : statsText(report, details: details))
         return 0
+    }
+
+    static func statsText(_ report: StatsReport, details: Bool) -> String {
+        func short(_ n: Int) -> String {
+            n < 1000 ? "\(n)" : n < 1_000_000 ? String(format: "%.1fk", Double(n) / 1000) : String(format: "%.1fM", Double(n) / 1_000_000)
+        }
+        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        func label(_ kind: String) -> String {
+            switch kind {
+            case SkillOwner.Kind.handInstalled.rawValue: "hand-installed"
+            case SkillOwner.Kind.builtIn.rawValue: "built-in"
+            default: kind
+            }
+        }
+        let summary = report.summary
+        let scope = report.scope.project.map { "project \($0) (sessions bound at \(report.scope.bindings.joined(separator: ", ")))" }
+            ?? "all sessions on this Mac"
+        var lines = ["Last \(report.window.days) days, \(scope): \(count(summary.sessions, "session")), \(count(summary.requests, "request"))."]
+        if summary.sessions > 0 {
+            lines.append("First-request context (recorded): median \(short(summary.firstRequestContext.median)) tokens, "
+                         + "p90 \(short(summary.firstRequestContext.p90)).")
+            lines.append("Skill listing: ≈ \(short(summary.approxListingTokensPerRequest)) tokens per request.")
+        }
+        let owners = summary.byOwner.filter { $0.skills > 0 }
+        if !owners.isEmpty {
+            lines.append("")
+            lines.append("By owner (skills, ≈ tokens per request when listed):")
+            lines += owners.map { "  \(label($0.owner)): \(count($0.skills, "skill")), ≈ \(short($0.approxTokens))" }
+        }
+        lines.append("")
+        if report.skills.isEmpty {
+            lines.append("No skill listings in this window.")
+        } else {
+            lines.append("\(details && report.omitted.skills == 0 ? "Skills" : "Top \(report.skills.count)") by ≈ context space (tokens × requests):")
+            for skill in report.skills {
+                let owner = [label(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " ")
+                var line = "  \(skill.name) (\(owner)): ≈ \(short(skill.approxContextSpace)) context space, "
+                    + "≈ \(short(skill.approxTokens)) tokens per request; "
+                    + "listed in \(count(skill.listedSessions, "session")) on \(count(skill.listedDays, "day")); "
+                    + "model calls \(skill.modelCalls) (\(Int((skill.callRate * 100).rounded()))% of sessions), user calls \(skill.userCalls)"
+                if skill.piModelCalls > 0 { line += ", in Pi \(skill.piModelCalls)" }
+                lines.append(line)
+                if details {
+                    let versions = skill.descriptionVersions > 1 ? ", \(skill.descriptionVersions) description texts seen" : ""
+                    lines.append("    counted since its description window start \(skill.windowStart)\(versions)")
+                }
+            }
+            if report.omitted.skills > 0 { lines.append("\(count(report.omitted.skills, "more skill")): --top N, or --details for all.") }
+        }
+        lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
     }
 
     struct DebugStats: Encodable {
@@ -805,7 +900,7 @@ public enum AKitCLI {
 
     // MARK: - Helpers
 
-    private static func encode<T: Encodable>(_ value: T) -> String {
+    static func encode<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return (try? encoder.encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"

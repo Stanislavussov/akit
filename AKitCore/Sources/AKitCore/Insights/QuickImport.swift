@@ -6,12 +6,19 @@ import Foundation
 enum QuickImport {
     static let budget: TimeInterval = 5
 
-    /// Notes for the reader: a running import, files left for later, files skipped.
+    struct Outcome: Equatable {
+        /// For the reader: a running import, files left for later, files skipped.
+        let notes: [String]
+        /// Another importer held the lock; the index was read as it was.
+        let running: Bool
+    }
+
     static func run(env: HarnessEnvironment, projectsRoot: URL, database: IndexDatabase, budget: TimeInterval = budget,
-                    now: Date = Date()) async throws -> [String] {
+                    now: Date = Date()) async throws -> Outcome {
         guard let lock = try ImportLock.acquire(InsightsPaths(env: env).lock) else {
             let last = try database.value("SELECT MAX(imported_at) FROM sources")?.double
-            return ["import running; data up to \(last.map { Date(timeIntervalSince1970: $0).formatted(.iso8601) } ?? "no import yet")"]
+            return Outcome(notes: ["import running; data up to \(last.map { Date(timeIntervalSince1970: $0).formatted(.iso8601) } ?? "no import yet")"],
+                           running: true)
         }
         defer { withExtendedLifetime(lock) {} }
         let report = try await SessionImporter.importAndBind(env: env, projectsRoot: projectsRoot, database: database, now: now,
@@ -24,6 +31,6 @@ enum QuickImport {
             notes.append("\(report.bindingsPending) sessions not bound to a project yet; run akit sessions import")
         }
         notes += report.skipped.map { "skipped \($0.path): \($0.reason)" }
-        return notes
+        return Outcome(notes: notes, running: false)
     }
 }
