@@ -3,14 +3,17 @@
 Native macOS SwiftUI admin app for AI harnesses (Claude Code, Pi, …).
 Pi and other harnesses read this file too.
 
-## Commit every iteration
+## Commits and versions
 
-- Every finished iteration ends with a git commit. An iteration is one small step
-  that builds, passes tests and was checked (a feature, a fix, a review round).
+- Commit medium-sized changes: one working, checked piece (a slice of a feature, a
+  fix with its tests, a review round), not every small step and not a whole feature
+  at once. Don't leave finished work uncommitted.
 - Before committing: `make build` and `make test` must pass. For UI changes, check
   the screen with `make snapshot OUT=<png> [SECTION=<section>]`.
-- One commit = one logical change. Don't pile several iterations into one commit,
-  and don't leave finished work uncommitted.
+- When a feature is finished and merged into master, tag the merge with an annotated
+  tag `vYYYY.MM.DD` (`-2`, `-3` … for more on the same day), message = what the
+  feature does:
+  `git tag -a v2026.09.27 -m "Session insights: stats and recommendations"`.
 - Message: imperative summary line in English (≤ 72 chars), optional body with the why.
   Example: `Add Trash-based skill deletion with confirmation`.
 - Never commit build output, `.omc/`, secrets or tokens (see .gitignore).
