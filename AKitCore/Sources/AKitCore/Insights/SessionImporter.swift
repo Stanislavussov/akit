@@ -17,12 +17,14 @@ struct ImportReport: Encodable, Equatable {
     var skillCalls = 0
     var spoolLines = 0
     var skipped: [Skipped] = []
-    /// Files left for the next run because the time budget ran out.
+    /// Files left for the next run because the time budget ran out (one of them maybe half read).
     var pending = 0
     var ms = 0
 }
 
-/// Reads new lines of Claude Code and Pi session logs into the index, oldest file first.
+/// Reads new lines of Claude Code and Pi session logs into the index, oldest file first: by
+/// the start in a Pi file's name, else the file's birth time (a parent is born before its
+/// fork or resumed copy, while it may be written to after them), then modification time.
 /// Per file (one transaction each):
 /// - appended bytes (same inode, not shorter, the line before the stored offset unchanged):
 ///   read from the offset;
@@ -34,7 +36,8 @@ struct ImportReport: Encodable, Equatable {
 /// in `sources.unknown_lines`, and a file is deleted (its row kept as `done`) only when fully
 /// read, two days old and without such lines.
 /// Facts are upserted: a row's identity never changes, it moves only to a newer generation of
-/// the same file, and its values change only for a newer parser (or its own file re-reading them).
+/// the same file, and its values change only for a newer parser (or its own file, or a newer
+/// generation of it, re-reading them).
 struct SessionImporter {
     let env: HarnessEnvironment
     var claudeParser = ClaudeFacts.parserVersion
@@ -51,6 +54,8 @@ struct SessionImporter {
         let inode: Int64
         let size: UInt64
         let modified: Date
+        /// When the file was started: the time in a Pi file's name, else its birth time.
+        let created: Date
     }
 
     static func `import`(env: HarnessEnvironment, database: IndexDatabase, now: Date = Date(),
@@ -58,30 +63,43 @@ struct SessionImporter {
         try SessionImporter(env: env).run(database: database, now: now, budget: budget)
     }
 
+    /// `budget`: stop at a line boundary once it is spent (the offset read so far is kept, the
+    /// next run goes on from there). It is checked only once this run has read something, so
+    /// every run reads at least one line when there is one. nil reads everything.
     func run(database: IndexDatabase, now: Date = Date(), budget: TimeInterval? = nil) throws -> ImportReport {
         let clock = Date()
+        let deadline = budget.map { clock.addingTimeInterval($0) }
         try Self.checkKeyVersion(database)
         let before = try Self.counts(database)
         var report = ImportReport()
         let keepExamples = Self.keepsManualCallExamples(home: env.homeDirectory)
-        let files = discover().sorted { $0.modified < $1.modified }
+        // Turning the setting off (or a Mac becoming a work Mac) drops what was kept.
+        if !keepExamples { try database.run("DELETE FROM manual_call_examples") }
+        let files = discover().sorted { ($0.created, $0.modified, $0.url.path) < ($1.created, $1.modified, $1.url.path) }
         for (index, file) in files.enumerated() {
-            if let budget, Date().timeIntervalSince(clock) > budget {
+            if let deadline, report.newBytes > 0, Date() >= deadline {
                 report.pending = files.count - index
                 break
             }
+            var stopped = false
             do {
                 // Decoded JSON objects are autoreleased; drain them per file, or a long run holds them all.
                 if let read = try autoreleasepool(invoking: {
-                    try importFile(file, database: database, now: now, keepExamples: keepExamples)
+                    try importFile(file, database: database, now: now, keepExamples: keepExamples, until: deadline)
                 }) {
-                    report.sources += 1
+                    // A line still being written reads nothing: not a file read.
+                    if read.bytes > 0 { report.sources += 1 }
                     report.newBytes += read.bytes
                     report.spoolLines += read.spoolLines
+                    stopped = read.stopped
                 }
-                if file.kind == "spool" { try retireSpool(file, database: database, now: now) }
+                if !stopped, file.kind == "spool" { try retireSpool(file, database: database, now: now) }
             } catch {
                 report.skipped.append(.init(path: file.url.path, reason: error.localizedDescription))
+            }
+            if stopped {
+                report.pending = files.count - index
+                break
             }
         }
         try markGone(database, found: Set(files.map(\.url.path)))
@@ -155,9 +173,31 @@ struct SessionImporter {
     static func logFile(_ url: URL, harness: String, kind: String) -> LogFile? {
         var info = stat()
         guard stat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
-        let modified = Date(timeIntervalSince1970: Double(info.st_mtimespec.tv_sec) + Double(info.st_mtimespec.tv_nsec) / 1e9)
+        func date(_ time: timespec) -> Date { Date(timeIntervalSince1970: Double(time.tv_sec) + Double(time.tv_nsec) / 1e9) }
+        let born = date(info.st_birthtimespec)
         return LogFile(url: url, harness: harness, kind: kind, inode: Int64(bitPattern: UInt64(info.st_ino)),
-                       size: UInt64(info.st_size), modified: modified)
+                       size: UInt64(info.st_size), modified: date(info.st_mtimespec),
+                       created: harness == "pi" ? piStart(ofFile: url.lastPathComponent) ?? born : born)
+    }
+
+    /// Pi names a session file after its start: `2026-09-20T10-00-00-000Z_<id>.jsonl`. Unlike the
+    /// birth time it survives copies (a restored backup, a new Mac).
+    static func piStart(ofFile name: String) -> Date? {
+        guard let stamp = name.split(separator: "_").first, stamp.count == 24 else { return nil }
+        var iso = Array(stamp)
+        iso[13] = ":"
+        iso[16] = ":"
+        iso[19] = "."
+        return JSONLines.date(String(iso))
+    }
+
+    /// The bounded tail hash of the line before `offset` when it is still `stored`, nil when the
+    /// file was rewritten. Hashes stored before the bound covered the whole line; for a line
+    /// longer than the bound that hash is accepted too (once: the bounded one is stored next).
+    static func tailHash(of url: URL, endingAt offset: UInt64, matching stored: String?) -> String? {
+        guard let stored, let tail = JSONLines.tailHash(of: url, endingAt: offset) else { return nil }
+        if tail.hash == stored { return tail.hash }
+        return !tail.whole && JSONLines.wholeLineHash(of: url, endingAt: offset) == stored ? tail.hash : nil
     }
 
     /// Active sources whose file is gone keep their facts; the row says so.
@@ -172,9 +212,10 @@ struct SessionImporter {
         file.kind == "spool" ? spoolParser : file.harness == "pi" ? piParser : claudeParser
     }
 
-    /// Reads what's new in one file. Returns the bytes (and spool lines) read, nil when nothing changed.
-    private func importFile(_ file: LogFile, database: IndexDatabase, now: Date,
-                            keepExamples: Bool) throws -> (bytes: UInt64, spoolLines: Int)? {
+    /// Reads what's new in one file. Returns the bytes (and spool lines) read and whether the
+    /// deadline stopped the read; nil when nothing changed.
+    private func importFile(_ file: LogFile, database: IndexDatabase, now: Date, keepExamples: Bool,
+                            until deadline: Date?) throws -> (bytes: UInt64, spoolLines: Int, stopped: Bool)? {
         let parser = parserVersion(file)
         let latest = try database.rows("""
             SELECT id, generation, inode, offset, tail_hash, parser_version, state, imported_at, session_key
@@ -191,14 +232,15 @@ struct SessionImporter {
                file.modified.timeIntervalSince1970 < at {
                 return nil
             }
-            let intact = sameInode && file.size >= offset
-                && (offset == 0 || JSONLines.tailHash(of: file.url, endingAt: offset) == row[4].text)
-            if intact {
+            let tail = sameInode && file.size >= offset && offset > 0
+                ? Self.tailHash(of: file.url, endingAt: offset, matching: row[4].text) : nil
+            if sameInode, file.size >= offset, offset == 0 || tail != nil {
                 newGeneration = false
                 if storedParser < parser {
                     reparse = true
                 } else if file.size == offset {
-                    try database.run("UPDATE sources SET imported_at = ? WHERE id = ?", now.timeIntervalSince1970, row[0])
+                    try database.run("UPDATE sources SET imported_at = ?, tail_hash = COALESCE(?, tail_hash) WHERE id = ?",
+                                     now.timeIntervalSince1970, tail, row[0])
                     return nil
                 } else {
                     start = offset
@@ -229,7 +271,8 @@ struct SessionImporter {
             }
 
             if file.kind == "spool" {
-                return try importSpool(file, from: start, sourceID: sourceID, parser: parser, database: database, now: now)
+                return try importSpool(file, from: start, sourceID: sourceID, parser: parser, database: database, now: now,
+                                       until: deadline)
             }
             // A read from an offset has no header: the session and its cwd come from the earlier run.
             let cwd = start > 0 ? try sessionKey.flatMap { try database.value("SELECT cwd FROM sessions WHERE key = ?", $0)?.text } : nil
@@ -238,7 +281,7 @@ struct SessionImporter {
                 harness: file.harness, sessionKey: reader.sessionKey, sourceID: sourceID,
                 isSubagent: file.kind == "subagent", parserVersion: parser))
             writer.keepManualCallExamples = keepExamples
-            let read = try JSONLines.lines(of: file.url, from: start) { line, offset in
+            let read = try JSONLines.lines(of: file.url, from: start, until: deadline) { line, offset in
                 guard let entry = JSONLines.decode(line) else { return }
                 let facts = reader.facts(from: entry, offset: offset)
                 writer.context.sessionKey = reader.sessionKey
@@ -248,17 +291,17 @@ struct SessionImporter {
             try database.run("""
                 UPDATE sources SET inode = ?, size = ?, offset = ?, tail_hash = COALESCE(?, tail_hash), parser_version = ?,
                   state = 'active', imported_at = ?, session_key = ? WHERE id = ?
-                """, file.inode, file.size, read.offset, read.tailHash, parser, now.timeIntervalSince1970,
+                """, file.inode, max(file.size, read.offset), read.offset, read.tailHash, parser, now.timeIntervalSince1970,
                 reader.sessionKey, sourceID)
-            return (read.offset - start, 0)
+            return (read.offset - start, 0, read.stopped)
         }
     }
 
     /// Spool lines from `start` into `hook_events` / `applies`, inside the caller's transaction.
     private func importSpool(_ file: LogFile, from start: UInt64, sourceID: Int64, parser: Int, database: IndexDatabase,
-                             now: Date) throws -> (bytes: UInt64, spoolLines: Int) {
+                             now: Date, until deadline: Date?) throws -> (bytes: UInt64, spoolLines: Int, stopped: Bool) {
         var lines = 0, unknown = 0
-        let read = try JSONLines.lines(of: file.url, from: start) { line, _ in
+        let read = try JSONLines.lines(of: file.url, from: start, until: deadline) { line, _ in
             lines += 1
             guard let entry = JSONLines.decode(line) else { return }
             let outcome = try SpoolFacts.write(entry, kinds: spoolKinds, database: database, sourceID: sourceID, parserVersion: parser)
@@ -268,8 +311,9 @@ struct SessionImporter {
         try database.run("""
             UPDATE sources SET inode = ?, size = ?, offset = ?, tail_hash = COALESCE(?, tail_hash), parser_version = ?,
               unknown_lines = CASE WHEN ? = 0 THEN ? ELSE unknown_lines + ? END, state = 'active', imported_at = ? WHERE id = ?
-            """, file.inode, file.size, read.offset, read.tailHash, parser, start, unknown, unknown, now.timeIntervalSince1970, sourceID)
-        return (read.offset - start, lines)
+            """, file.inode, max(file.size, read.offset), read.offset, read.tailHash, parser, start, unknown, unknown,
+            now.timeIntervalSince1970, sourceID)
+        return (read.offset - start, lines, read.stopped)
     }
 
     /// Deletes a spool day file no hook can still write to (its UTC day is at least two days
@@ -388,9 +432,12 @@ struct FactWriter {
                                  skill.descChars, c.sourceID, c.parserVersion)
             }
         case .skillCall(let call), .command(let call):
+            // A user call says whether it was a skill or a built-in command like `/model`.
+            var kind: String?
+            if case .command = fact { kind = "command" } else if call.by == .user { kind = "skill" }
             try database.run(Self.skillCallSQL, c.harness, call.key, c.sessionKey, call.ts?.timeIntervalSince1970,
-                             call.isSubagent, call.skill, call.by.rawValue, call.hasArgs, String?.none, c.sourceID,
-                             c.parserVersion)
+                             call.isSubagent, call.skill, call.by.rawValue, call.hasArgs, Self.json(kind.map { ["kind": $0] } ?? [:]),
+                             c.sourceID, c.parserVersion)
         case .manualCallExample(let example):
             guard keepManualCallExamples else { return }
             let args = SecretFilter.masked(example.args)
@@ -407,16 +454,17 @@ struct FactWriter {
     // MARK: - SQL
 
     /// `INSERT … ON CONFLICT DO UPDATE` with the upsert rule. Columns in the order
-    /// `key + identity + values + source_id, parser_version`.
+    /// `key + identity + values + source_id, parser_version`. SET expressions all see the old
+    /// row, so a row moving to a newer generation takes that line's values in the same statement.
     static func upsert(_ table: String, key: [String], identity: [String], values: [String]) -> String {
         let columns = key + identity + values + ["source_id", "parser_version"]
-        let newer = """
-            (excluded.parser_version > \(table).parser_version OR (excluded.parser_version = \(table).parser_version \
-            AND excluded.source_id = \(table).source_id))
-            """
         let moves = """
             EXISTS(SELECT 1 FROM sources old, sources new WHERE old.id = \(table).source_id AND new.id = excluded.source_id \
             AND new.path = old.path AND new.generation > old.generation)
+            """
+        let newer = """
+            (excluded.parser_version > \(table).parser_version OR (excluded.parser_version = \(table).parser_version \
+            AND excluded.source_id = \(table).source_id) OR (excluded.parser_version >= \(table).parser_version AND \(moves)))
             """
         let sets = values.map { "\($0) = CASE WHEN \(newer) THEN excluded.\($0) ELSE \(table).\($0) END" }
             + ["source_id = CASE WHEN \(moves) THEN excluded.source_id ELSE \(table).source_id END",

@@ -1,17 +1,19 @@
 import Foundation
 
 /// Facts from Pi session lines (see PiSessions for the format).
-/// - the `session` header → the session (id, cwd);
+/// - the `session` header → the session (id, cwd, `started`: copied fork entries are older
+///   than the fork, so only the header dates its start);
 /// - an assistant message with `usage` → request; `toolCall` blocks → tool calls,
 ///   `toolResult` messages → their output size and error;
-/// - a `read` of `…/SKILL.md` under an installed skill root → model call of that skill;
+/// - a `read` of `<root>/<skill>/SKILL.md` for an installed skill root → model call of that skill;
 /// - a user message starting `<skill name="x"` → user call, and a manual-call example (the text
 ///   after `</skill>` and the user's prompt before it). Pi records no skill listing.
 /// Event keys are `<entry id>@<entry timestamp>` (+ `#<block index>`): a fork copies entries
 /// with both, so copies dedupe, while an unrelated session reusing an 8-hex id doesn't collide.
 struct PiFacts {
     /// Bump when the facts read from a line change; files that still exist are re-read.
-    static let parserVersion = 1
+    /// 2: `started` only from the header, user calls say `extra.kind`, nested SKILL.md reads don't count.
+    static let parserVersion = 2
 
     private(set) var sessionKey: String
     private(set) var session: Fact.Session?
@@ -67,7 +69,6 @@ struct PiFacts {
     private mutating func note(_ ts: Date?) {
         guard let ts else { return }
         var info = session ?? Fact.Session(nativeID: String(sessionKey.dropFirst("pi:".count)))
-        info.started = min(info.started ?? ts, ts)
         info.lastActivity = max(info.lastActivity ?? ts, ts)
         session = info
     }
@@ -122,13 +123,15 @@ struct PiSkillPaths {
         excluded = candidates.filter { folder in !homePaths.contains { Self.isInside($0, folder) || $0 == folder } }
     }
 
-    /// The skill's folder name, or nil when this read is not a use of an installed skill.
+    /// The skill's folder name, or nil when this read is not a use of an installed skill: only
+    /// `<root>/<skill>/SKILL.md` counts, not a SKILL.md deeper inside a skill (examples, vendored copies).
     func skill(readAt raw: String) -> String? {
         guard !raw.isEmpty, let file = written(raw), file.lastPathComponent == "SKILL.md" else { return nil }
         let folder = file.deletingLastPathComponent().path
         guard !excluded.contains(where: { Self.isInside(folder, $0) || folder == $0 }) else { return nil }
         let real = Self.realPath(folder)
-        guard roots.contains(where: { Self.isInside(folder, $0.written) || Self.isInside(real, $0.real) }) else { return nil }
+        func parent(_ path: String) -> String { (path as NSString).deletingLastPathComponent }
+        guard roots.contains(where: { parent(folder) == $0.written || parent(real) == $0.real }) else { return nil }
         return file.deletingLastPathComponent().lastPathComponent
     }
 

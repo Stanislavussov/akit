@@ -1,7 +1,7 @@
 import Foundation
 
 /// `stats` and `recommend` first bring the index up to date: an import with a short time
-/// budget under the import lock. When another importer holds the lock, the index is read as
+/// budget under the import lock (checked between lines: a large file is read over several runs). When another importer holds the lock, the index is read as
 /// it is and a note says how old it is.
 enum QuickImport {
     static let budget: TimeInterval = 5

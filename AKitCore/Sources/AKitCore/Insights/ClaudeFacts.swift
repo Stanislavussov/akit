@@ -4,15 +4,19 @@ import Foundation
 /// - `usage` of an assistant entry → request keyed by `message.id` (lines of one response repeat it);
 /// - `tool_use` → tool call keyed by its id, `tool_result` → its output size and error;
 ///   a `Skill` tool_use is also a model call of that skill;
-/// - `<command-name>/x` in a user entry → a command typed by the user; when the entry starts
-///   with `<command-message>` it is a skill (built-ins like `/model` start with `<command-name>`)
-///   and also yields a manual-call example (its arguments and the prompt before it);
+/// - `<command-name>/x` in a user entry → a user call: a skill when the entry starts with
+///   `<command-message>` (then also a manual-call example: its arguments and the prompt before
+///   it), else a built-in command like `/model` (stored with `extra.kind` `skill` / `command`);
 /// - a `skill_listing` attachment → one listing keyed by the entry's uuid;
 /// - subagent runs (`<session>/subagents/*.jsonl`, or `isSidechain` lines of older versions)
-///   belong to the parent session and are marked as subagent facts.
+///   belong to the parent session and are marked as subagent facts;
+/// - the session's `started` is the first dated line of its file. Claude Code now resumes by
+///   appending to the same file; a file that copies an earlier session (older resumes, forks)
+///   starts at the first copied line, and the copied session's own row is never touched.
 struct ClaudeFacts {
     /// Bump when the facts read from a line change; files that still exist are re-read.
-    static let parserVersion = 1
+    /// 2: user calls say `extra.kind` (skill or built-in command).
+    static let parserVersion = 2
 
     let sessionKey: String
     let isSubagentFile: Bool
@@ -116,8 +120,10 @@ struct ClaudeFacts {
             else { return facts }
             let args = ClaudeSessions.tag("command-args", in: text) ?? ""
             let skill = String(command.dropFirst())
-            facts.append(.command(.init(key: key, ts: ts, skill: skill, by: .user, isSubagent: isSubagent, hasArgs: !args.isEmpty)))
-            if text.hasPrefix("<command-message>"), !isSubagent {
+            let call = Fact.SkillCall(key: key, ts: ts, skill: skill, by: .user, isSubagent: isSubagent, hasArgs: !args.isEmpty)
+            guard text.hasPrefix("<command-message>") else { return facts + [.command(call)] }
+            facts.append(.skillCall(call))
+            if !isSubagent {
                 facts.append(.manualCallExample(.init(key: key, ts: ts, skill: skill, args: args, request: lastPrompt)))
             }
         }

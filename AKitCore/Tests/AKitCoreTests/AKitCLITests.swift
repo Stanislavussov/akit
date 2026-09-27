@@ -331,7 +331,7 @@ struct AKitCLITests {
         #expect(!fm.fileExists(atPath: home.appending(path: ".akit/index/index.sqlite").path))
     }
 
-    /// A Claude session s1 (listing, model and user skill calls, a subagent run) and s2, whose
+    /// A Claude session s1 (listing, model and user skill calls, a built-in command, a subagent run) and s2, whose
     /// version should have written a listing but didn't.
     func writeStatsSessions() throws {
         func line(_ object: [String: Any]) throws -> String {
@@ -346,6 +346,7 @@ struct AKitCLITests {
             entry("attachment", "L1", "00", ["attachment": ["type": "skill_listing", "isInitial": true, "names": ["tdd", "lint"],
                                                             "content": "- tdd: Tests first\n- lint: Lint"]]),
             entry("user", "U1", "01", ["message": ["role": "user", "content": "<command-message>tdd</command-message>\n<command-name>/tdd</command-name>"]]),
+            entry("user", "U0", "01", ["message": ["role": "user", "content": "<command-name>/model</command-name>\n<command-args>opus</command-args>"]]),
             entry("assistant", "A1", "02", ["message": ["id": "m1", "model": "claude-opus-5-5", "usage": usage, "content": [
                 ["type": "tool_use", "id": "t1", "name": "Skill", "input": ["skill": "lint"]],
                 ["type": "tool_use", "id": "t2", "name": "Bash", "input": ["command": "ls"]],
@@ -386,14 +387,15 @@ struct AKitCLITests {
         let s1 = try #require(all.sessions.last)
         #expect(s1["harness"] as? String == "claude" && s1["started"] as? String == "2026-09-20T10:00:00Z")
         #expect(s1["listings"] as? Int == 2 && s1["listedChars"] as? Int == "Tests first".count + "Lint".count)
-        #expect(s1["modelCalls"] as? Int == 1 && s1["userCalls"] as? Int == 1)
+        #expect(s1["modelCalls"] as? Int == 1 && s1["userCalls"] as? Int == 1 && s1["userCommands"] as? Int == 1)
         #expect(s1["subagentCalls"] as? Int == 1 && s1["subagentRuns"] as? Int == 1)
         #expect(s1["firstRequestContext"] as? Int == 123)
         let outputs = try #require(s1["largestToolOutputs"] as? [[String: Any]])
         #expect(outputs.count == 1 && outputs[0]["name"] as? String == "Bash" && outputs[0]["bytes"] as? Int == 500)
 
         let text = await akit("stats", "--debug")
-        #expect(text.code == 0 && text.out.contains("claude:s1") && text.out.contains("1 by the model"), "\(text)")
+        #expect(text.code == 0 && text.out.contains("claude:s1") && text.out.contains("1 by the model, 1 by the user, "), "\(text)")
+        #expect(text.out.contains("; 1 built-in commands (/model, /clear …)"), "\(text)")
         #expect(!fm.fileExists(atPath: home.appending(path: ".akit/registry").path))
     }
 
@@ -423,6 +425,9 @@ struct AKitCLITests {
         #expect(project.code == 2 && project.err.contains("--home doesn't go with akit stats"))
         #expect(await akit("stats", "--debug", "extra").code == 2)
         #expect(await akit("stats", "--debug", "--session").code == 2)
+        // A value never starts with `--`: --debug is no session id.
+        let swallowed = await akit("stats", "--session", "--debug")
+        #expect(swallowed.code == 2 && swallowed.err.contains("--session"), "\(swallowed)")
         #expect(!fm.fileExists(atPath: home.appending(path: ".akit/index/index.sqlite").path))
     }
 }

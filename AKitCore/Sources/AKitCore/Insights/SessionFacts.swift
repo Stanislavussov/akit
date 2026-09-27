@@ -79,7 +79,8 @@ enum Fact {
     case toolResult(callID: String, bytes: Int, isError: Bool)
     case skillListing(Listing)
     case skillCall(SkillCall)
-    /// A slash command the user typed (`/model`, `/tdd`); stored as a user call.
+    /// A built-in slash command the user typed (`/model`, `/clear`); stored as a user call of
+    /// kind `command`. A `/name` skill the user called is a `skillCall` by the user.
     case command(SkillCall)
     case manualCallExample(ManualCallExample)
 }

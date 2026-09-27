@@ -252,6 +252,8 @@ struct InsightsImportTests {
         try append(claudeFile, text: String(next[..<cut]))
         try runImport()
         #expect(try count("SELECT COUNT(*) FROM requests") == 1)
+        // The unfinished line reads nothing: no file counts as read.
+        #expect(try runImport().sources == 0)
 
         try append(claudeFile, text: String(next[cut...]) + "\n")
         let report = try runImport()
@@ -478,10 +480,12 @@ struct InsightsImportTests {
 
     // MARK: Pi
 
-    func piFile(_ name: String) -> String { ".pi/agent/sessions/--work-app--/2026-09-20T10-00-00-000Z_\(name).jsonl" }
+    func piFile(_ name: String, started: String = "2026-09-20T10-00-00-000Z") -> String {
+        ".pi/agent/sessions/--work-app--/\(started)_\(name).jsonl"
+    }
 
-    static func piHeader(_ id: String, cwd: String = "/work/app") -> [String: Any] {
-        ["type": "session", "version": 3, "id": id, "timestamp": "2026-09-20T10:00:00.000Z", "cwd": cwd]
+    static func piHeader(_ id: String, cwd: String = "/work/app", at time: String = "2026-09-20T10:00:00.000Z") -> [String: Any] {
+        ["type": "session", "version": 3, "id": id, "timestamp": time, "cwd": cwd]
     }
 
     static func piMessage(_ id: String, _ parent: String?, _ time: String, _ message: [String: Any]) -> [String: Any] {
@@ -564,6 +568,53 @@ struct InsightsImportTests {
         #expect(first.first?[1] == .int(115))
         #expect(try text("SELECT session_key FROM requests WHERE event_key LIKE 'b1@%'") == "pi:sb")
         #expect(try count("SELECT output_bytes FROM tool_calls WHERE source_id = ?", parentSource) == "1 failure \(Self.sentinel)".utf8.count)
+    }
+
+    @Test func piParentContinuedAfterForkKeepsItsRows() throws {
+        // The fork's file is older on disk (copied from a backup, say), but its name and header
+        // say it started later; the parent was written to last.
+        let fork = piFile("sb", started: "2026-09-20T10-30-00-000Z")
+        try write(fork, lines: [Self.piHeader("sb", at: "2026-09-20T10:30:00.000Z")] + piParent().dropFirst()
+                  + [Self.piMessage("b1", "a4", "20", Self.piAssistant([], input: 1, output: 1))])
+        try fm.setAttributes([.creationDate: Date(timeIntervalSinceNow: -7200), .modificationDate: Date(timeIntervalSinceNow: -3600)],
+                             ofItemAtPath: home.appending(path: fork).path)
+        try write(piFile("sa"), lines: piParent() + [Self.piMessage("a5", "a4", "40", Self.piAssistant([], input: 2, output: 2))])
+        try runImport()
+
+        let parent = try count("SELECT id FROM sources WHERE path LIKE '%_sa.jsonl'")
+        #expect(try database().rows("SELECT DISTINCT session_key, source_id FROM requests WHERE event_key IN ('a2@2026-09-20T10:00:02.000Z', 'a4@2026-09-20T10:00:04.000Z')")
+                == [[.text("pi:sa"), .int(Int64(parent))]])
+        #expect(try count("SELECT COUNT(*) FROM requests WHERE session_key = 'pi:sa'") == 3)
+        let debug = try IndexQueries.debugStats(try database(), session: "pi:sa")
+        #expect(debug.first?.firstRequestContext == 115)
+        #expect(try count("SELECT COUNT(*) FROM tool_calls WHERE session_key = 'pi:sa'") == 1)
+    }
+
+    @Test func claudeParentWrittenAfterItsCopyKeepsItsRows() throws {
+        try write(claudeFile, lines: claudeSession())
+        try fm.setAttributes([.creationDate: Date(timeIntervalSinceNow: -7200)], ofItemAtPath: home.appending(path: claudeFile).path)
+        // An older Claude Code resumed s1 by copying it into s2; then s1 was written to again.
+        let copy = ".claude/projects/-work-app/s2.jsonl"
+        try write(copy, lines: claudeSession() + [Self.assistant("m9", "30", content: [], usage: Self.usage(1, 1))])
+        try fm.setAttributes([.creationDate: Date(timeIntervalSinceNow: -3600), .modificationDate: Date(timeIntervalSinceNow: -3600)],
+                             ofItemAtPath: home.appending(path: copy).path)
+        try runImport()
+        #expect(try database().rows("SELECT DISTINCT session_key FROM requests WHERE event_key IN ('m1', 'm2', 'm4')") == [[.text("claude:s1")]])
+        #expect(try database().rows("SELECT DISTINCT session_key FROM skill_calls WHERE event_key IN ('U1', 'U4', 't2')") == [[.text("claude:s1")]])
+        // Each file dates its own session from its first dated line; the copy never moves s1's.
+        let started = try database().rows("SELECT key, started FROM sessions ORDER BY key")
+        let first = try #require(JSONLines.date("2026-09-20T10:00:00.000Z")).timeIntervalSince1970
+        #expect(started == [[.text("claude:s1"), .double(first)], [.text("claude:s2"), .double(first)]])
+    }
+
+    @Test func piForkStartsAtItsHeader() throws {
+        try write(piFile("sa"), lines: piParent())
+        try write(piFile("sb", started: "2026-09-20T10-30-00-000Z"), lines: [Self.piHeader("sb", at: "2026-09-20T10:30:00.000Z")]
+                  + piParent().dropFirst())
+        try runImport()
+        let started = try database().rows("SELECT key, started FROM sessions ORDER BY key").map { $0[1].double }
+        #expect(started == [JSONLines.date("2026-09-20T10:00:00.000Z")?.timeIntervalSince1970,
+                            JSONLines.date("2026-09-20T10:30:00.000Z")?.timeIntervalSince1970])
     }
 
     @Test func piReadOfInstalledSkillCountsButRegistryAndTmpDoNot() throws {
@@ -651,6 +702,162 @@ struct InsightsImportTests {
                             cacheWrite: row[3].int ?? 0, reasoning: row[4].int ?? 0) == usage.tokens)
         #expect(row[5].int == usage.requests)
         #expect(abs((row[6].double ?? 0) - (usage.cost ?? -1)) < 1e-9)
+    }
+
+    // MARK: Import edge cases
+
+    @Test func userCallsSayWhetherSkillOrCommand() throws {
+        try write(claudeFile, lines: claudeSession())
+        try write(piFile("sa"), lines: [Self.piHeader("sa"),
+                                        Self.piMessage("a1", nil, "01", ["role": "user", "content": "<skill name=\"tdd\" location=\"/x\">b</skill>"])])
+        try runImport()
+        let kinds = { try self.database().rows("SELECT harness, event_key, by, json_extract(extra, '$.kind') FROM skill_calls ORDER BY harness, ts, event_key") }
+        let expected: [[SQLValue]] = [
+            [.text("claude"), .text("U1"), .text("user"), .text("command")], // /model
+            [.text("claude"), .text("t2"), .text("model"), .null],
+            [.text("claude"), .text("U4"), .text("user"), .text("skill")], // /tdd
+            [.text("claude"), .text("t3"), .text("model"), .null],
+            [.text("pi"), .text("a1@2026-09-20T10:00:01.000Z"), .text("user"), .text("skill")],
+        ]
+        #expect(try kinds() == expected)
+
+        // Rows of the parser before kinds: the bump re-reads the file, same keys, no double count.
+        let db = try database()
+        try db.run("UPDATE skill_calls SET extra = NULL, parser_version = 1")
+        try db.run("UPDATE sources SET parser_version = 1")
+        let report = try runImport()
+        #expect(report.sources == 2 && report.skillCalls == 0)
+        #expect(try kinds() == expected)
+        #expect(try count("SELECT COUNT(*) FROM skill_calls WHERE parser_version = 1") == 0)
+
+        let debug = try #require(try IndexQueries.debugStats(db, session: "claude:s1").first)
+        #expect(debug.userCalls == 1 && debug.userCommands == 1 && debug.modelCalls == 1)
+        // A row without a kind (a deleted log read before kinds) counts as a user call, as it did.
+        try db.run("UPDATE skill_calls SET extra = NULL WHERE event_key = 'U1'")
+        #expect(try IndexQueries.debugStats(db, session: "claude:s1").first?.userCalls == 2)
+    }
+
+    @Test func budgetStopsMidFileAndLaterRunsGoOn() throws {
+        try write(claudeFile, lines: claudeSession())
+        try write(subagentFile, lines: subagentRun())
+        let first = try SessionImporter(env: env).run(database: try database(), budget: 0)
+        #expect(first.pending == 2 && first.sources == 1)
+        let size = try #require(try fm.attributesOfItem(atPath: home.appending(path: claudeFile).path)[.size] as? Int)
+        let offset = try count("SELECT offset FROM sources")
+        #expect(offset > 0 && offset < size)
+
+        // Each run reads at least one line, so this ends.
+        var runs = 1
+        while runs < 100, try SessionImporter(env: env).run(database: try database(), budget: 0).pending > 0 { runs += 1 }
+        #expect(runs > 2 && runs < 100)
+
+        let whole = try IndexSchema.open(home.appending(path: "whole.sqlite"))
+        try SessionImporter(env: env).run(database: whole)
+        let facts = [
+            "SELECT key, cwd, git_branch, harness_version, started, last_activity FROM sessions ORDER BY key",
+            "SELECT event_key, session_key, ts, model, input, output, cache_read, cache_write, reasoning, is_subagent FROM requests ORDER BY event_key",
+            "SELECT event_key, name, input_bytes, output_bytes, is_error, extra FROM tool_calls ORDER BY event_key",
+            "SELECT event_key, skill, by, has_args, extra FROM skill_calls ORDER BY event_key",
+            "SELECT listing_key, skill, desc_hash, desc_chars, is_initial FROM skill_listings ORDER BY listing_key, skill",
+            "SELECT path, offset, tail_hash, state FROM sources ORDER BY path",
+        ]
+        for sql in facts {
+            let rows = try whole.rows(sql)
+            #expect(try database().rows(sql) == rows, "\(sql)")
+        }
+    }
+
+    @Test func turningExamplesOffDropsThem() throws {
+        try fm.createDirectory(at: home.appending(path: ".akit"), withIntermediateDirectories: true)
+        try keepExamples()
+        try sessionsWithManualCalls()
+        try runImport()
+        #expect(try count("SELECT COUNT(*) FROM manual_call_examples") == 3)
+        try Data(#"{"keepManualCallExamples": false}"#.utf8).write(to: paths.settings)
+        try runImport()
+        #expect(try count("SELECT COUNT(*) FROM manual_call_examples") == 0)
+        #expect(try count("SELECT COUNT(*) FROM skill_calls WHERE by = 'user'") == 4)
+    }
+
+    @Test func piNestedSkillFileIsNoSkillUse() throws {
+        try skillFile(".agents/skills/tdd")
+        try skillFile(".agents/skills/tdd/examples/demo")
+        try skillFile(".agents/skills/tdd/vendor/lint")
+        try write(piFile("sa"), lines: piSession("sa", cwd: home.appending(path: "work/app").path, [
+            Self.piMessage("a1", nil, "01", Self.piAssistant([
+                Self.read("~/.agents/skills/tdd/SKILL.md"),
+                Self.read("~/.agents/skills/tdd/examples/demo/SKILL.md"),
+                Self.read(home.appending(path: ".agents/skills/tdd/vendor/lint/SKILL.md").path),
+            ])),
+        ]))
+        try runImport()
+        #expect(try modelCalls() == ["tdd"])
+    }
+
+    @Test func longLastLineKeepsItsGeneration() throws {
+        let long = Self.assistant("m1", "01", content: [["type": "text", "text": String(repeating: "x", count: 100_000)]])
+        try write(claudeFile, lines: [long])
+        try runImport()
+        let url = home.appending(path: claudeFile)
+        let offset = UInt64(try count("SELECT offset FROM sources"))
+        let tail = try #require(JSONLines.tailHash(of: url, endingAt: offset))
+        let stored = try text("SELECT tail_hash FROM sources")
+        #expect(!tail.whole && tail.hash == stored)
+
+        try append(claudeFile, lines: [Self.assistant("m2", "02", content: [])])
+        #expect(try runImport().requests == 1)
+        #expect(try count("SELECT COUNT(*) FROM sources") == 1)
+
+        // A hash stored before the bound covered the whole line: accepted, then replaced.
+        try append(claudeFile, lines: [long])
+        try runImport()
+        let end = UInt64(try count("SELECT offset FROM sources"))
+        try database().run("UPDATE sources SET tail_hash = ?", JSONLines.wholeLineHash(of: url, endingAt: end))
+        try append(claudeFile, lines: [Self.assistant("m3", "03", content: [])])
+        #expect(try runImport().requests == 1)
+        #expect(try database().rows("SELECT generation, state FROM sources") == [[.int(1), .text("active")]])
+        let last = UInt64(try count("SELECT offset FROM sources"))
+        #expect(try text("SELECT tail_hash FROM sources") == JSONLines.tailHash(of: url, endingAt: last)?.hash)
+    }
+
+    @Test func linesAcrossSmallChunksKeepOffsets() throws {
+        let texts = ["a", "", String(repeating: "b", count: 50), "cc", String(repeating: "d", count: 23)]
+        let url = home.appending(path: "lines.jsonl")
+        try Data((texts.joined(separator: "\n") + "\n" + "partial").utf8).write(to: url)
+        var seen: [(String, UInt64)] = []
+        let read = try JSONLines.lines(of: url, from: 0, chunk: 7) { seen.append((String(decoding: $0, as: UTF8.self), $1)) }
+        var offsets: [UInt64] = [], at: UInt64 = 0
+        for text in texts {
+            if !text.isEmpty { offsets.append(at) }
+            at += UInt64(text.utf8.count + 1)
+        }
+        #expect(seen.map { $0.0 } == texts.filter { !$0.isEmpty } && seen.map { $0.1 } == offsets)
+        #expect(read.offset == at && !read.stopped)
+        #expect(read.tailHash == JSONLines.tailHash(of: url, endingAt: at)?.hash)
+    }
+
+    @Test func rewrittenLineTakesItsNewValues() throws {
+        try write(claudeFile, lines: [Self.assistant("m1", "01", content: [], usage: Self.usage(10, 5))])
+        try runImport()
+        try write(claudeFile, lines: [Self.assistant("m1", "01", content: [], usage: Self.usage(50, 9)),
+                                      Self.assistant("m2", "02", content: [])])
+        try runImport()
+        #expect(try database().rows("SELECT r.input, r.output, s.generation FROM requests r JOIN sources s ON s.id = r.source_id WHERE event_key = 'm1'")
+                == [[.int(50), .int(9), .int(2)]])
+    }
+
+    @Test func firstRequestContextSkipsUndatedRequests() throws {
+        var undated = Self.assistant("m0", "00", content: [], usage: Self.usage(900, 1))
+        undated["timestamp"] = nil
+        try write(claudeFile, lines: [undated, Self.assistant("m1", "01", content: [], usage: Self.usage(10, 5))])
+        try runImport()
+        #expect(try IndexQueries.debugStats(try database(), session: "claude:s1").first?.firstRequestContext == 130)
+    }
+
+    @Test func indexFolderIsPrivate() throws {
+        _ = try database()
+        _ = try ImportLock.acquire(paths.lock)
+        #expect(try fm.attributesOfItem(atPath: paths.folder.path)[.posixPermissions] as? Int == 0o700)
     }
 
     @Test func concurrentImportSkips() throws {

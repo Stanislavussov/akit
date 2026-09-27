@@ -440,8 +440,9 @@ public enum AKitCLI {
             lines.append("\(session.key)  \(session.started ?? "no date")\(version)")
             lines.append("  \(session.requests) requests; first request context: \(session.firstRequestContext.map { "\($0) tokens" } ?? "none")")
             lines.append("  listed: \(session.listings) skills, ≈ \(session.listedChars) description chars")
-            lines.append("  skill calls: \(session.modelCalls) by the model, \(session.userCalls) by the user (/commands), "
-                         + "\(session.subagentCalls) in \(session.subagentRuns) subagent runs")
+            lines.append("  skill calls: \(session.modelCalls) by the model, \(session.userCalls) by the user, "
+                         + "\(session.subagentCalls) in \(session.subagentRuns) subagent runs; "
+                         + "\(session.userCommands) built-in commands (/model, /clear …)")
             if !session.largestToolOutputs.isEmpty {
                 lines.append("  largest tool outputs: " + session.largestToolOutputs.map { "\($0.name) \(size($0.bytes))" }.joined(separator: ", "))
             }
@@ -783,9 +784,10 @@ public enum AKitCLI {
 
         mutating func value(_ name: String) -> String? { values(name).last }
 
+        /// A value never starts with `--`: `--session --debug` leaves `--session` for `finish` to refuse.
         mutating func values(_ name: String) -> [String] {
             var found: [String] = []
-            while let index = items.firstIndex(of: name), index + 1 < items.count {
+            while let index = items.firstIndex(of: name), index + 1 < items.count, !items[index + 1].hasPrefix("--") {
                 found.append(items[index + 1])
                 items.removeSubrange(index...index + 1)
             }

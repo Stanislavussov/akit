@@ -288,7 +288,10 @@ extension CaptureInstaller {
     func execute(_ plan: Plan, trash: (URL) throws -> URL?) async throws(Failure) -> [String] {
         let fm = FileManager.default
         do {
-            for folder in plan.folders { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+            // The only folder is the private index folder (launchd writes its log there).
+            for folder in plan.folders {
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            }
             var backup: URL?
             for write in plan.writes where write.backup {
                 if backup == nil { backup = try Backup.newFolder(home: env.homeDirectory) }

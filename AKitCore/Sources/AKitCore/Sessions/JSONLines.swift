@@ -51,39 +51,85 @@ enum JSONLines {
     }
 
     /// Complete lines from byte `offset` on, each with the offset it starts at. Stops after
-    /// the last complete line, so a line being written is read next time. Returns the offset
-    /// after that line and the SHA-256 of it (nil when no complete line was read).
-    static func lines(of url: URL, from offset: UInt64, chunk: Int = 1 << 20,
-                      _ visit: (Data, UInt64) throws -> Void) throws -> (offset: UInt64, tailHash: String?) {
+    /// the last complete line, so a line being written is read next time, or after the first
+    /// line that ends past `deadline` (`stopped`). Returns the offset after the last line read
+    /// and its `tailHash` (nil when no complete line was read).
+    static func lines(of url: URL, from offset: UInt64, chunk: Int = 1 << 20, until deadline: Date? = nil,
+                      _ visit: (Data, UInt64) throws -> Void) throws -> (offset: UInt64, tailHash: String?, stopped: Bool) {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         // Only what the file holds now: a log still being written is read on the next run.
         let end = try handle.seekToEnd()
-        guard end > offset else { return (offset, nil) }
+        guard end > offset else { return (offset, nil, false) }
         try handle.seek(toOffset: offset)
+        // `pending[lineStart...]` is the unfinished line; `searched` is where the newline search
+        // stopped, so a long line is scanned once, and read bytes are dropped only once they are
+        // most of the buffer: a line spanning many chunks costs linear time.
         var pending = Data()
+        var lineStart = 0, searched = 0
         var consumed = offset
         var remaining = end - offset
-        var lastLine: Data?
+        var lastTail: Data?
         while remaining > 0, let data = try handle.read(upToCount: Int(min(UInt64(chunk), remaining))), !data.isEmpty {
             remaining -= UInt64(data.count)
             pending.append(data)
-            var start = pending.startIndex
-            while let newline = pending[start...].firstIndex(of: UInt8(ascii: "\n")) {
-                let line = pending[start..<newline]
+            var lastLine: Range<Int>?
+            var stopped = false
+            while let newline = pending[searched...].firstIndex(of: UInt8(ascii: "\n")) {
+                let line = pending[lineStart..<newline]
                 if !line.isEmpty { try autoreleasepool { try visit(Data(line), consumed) } }
-                lastLine = line
-                consumed += UInt64(newline - start + 1)
-                start = pending.index(after: newline)
+                lastLine = lineStart..<newline
+                consumed += UInt64(newline - lineStart + 1)
+                lineStart = newline + 1
+                searched = lineStart
+                if let deadline, Date() >= deadline {
+                    stopped = true
+                    break
+                }
             }
-            pending = Data(pending[start...])
+            // An owned copy: a slice kept across `append` would copy the whole buffer each time.
+            if let lastLine { lastTail = Data(pending[lastLine].suffix(tailBytes)) }
+            if stopped {
+                let more = remaining > 0 || pending[lineStart...].contains(UInt8(ascii: "\n"))
+                return (consumed, lastTail.map(hash), more)
+            }
+            searched = pending.endIndex
+            if lineStart > pending.count / 2 {
+                pending = Data(pending[lineStart...])
+                searched -= lineStart
+                lineStart = 0
+            }
         }
-        return (consumed, lastLine.map(hash))
+        return (consumed, lastTail.map(hash), false)
     }
 
-    /// SHA-256 of the line that ends right before `offset` (its newline is byte `offset - 1`).
-    /// nil at the start of the file or when that byte isn't a line end.
-    static func tailHash(of url: URL, endingAt offset: UInt64, maxBytes: UInt64 = 64 << 20) -> String? {
+    /// How much of a line's end `tailHash` covers.
+    static let tailBytes = 64 << 10
+
+    /// SHA-256 of the last `tailBytes` of the line that ends right before `offset` (its newline
+    /// is byte `offset - 1`); the whole line when it is shorter, which is also the hash stored
+    /// before this bound existed. `whole` tells which. nil at the start of the file or when that
+    /// byte isn't a line end. Reads at most `tailBytes + 2` bytes, however long the line is.
+    static func tailHash(of url: URL, endingAt offset: UInt64) -> (hash: String, whole: Bool)? {
+        guard offset > 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        // The newline before a line of exactly `tailBytes` still fits.
+        let window = UInt64(tailBytes) + 2
+        let start = offset > window ? offset - window : 0
+        guard (try? handle.seek(toOffset: start)) != nil,
+              let data = try? handle.read(upToCount: Int(offset - start)), UInt64(data.count) == offset - start,
+              data.last == UInt8(ascii: "\n") else { return nil }
+        let body = data.dropLast()
+        if let newline = body.lastIndex(of: UInt8(ascii: "\n")) {
+            return (hash(body[body.index(after: newline)...]), true)
+        }
+        return (hash(body.suffix(tailBytes)), start == 0 && body.count <= tailBytes)
+    }
+
+    /// SHA-256 of the whole line that ends right before `offset`: the `tail_hash` stored before
+    /// it was bounded to `tailBytes`. Only asked for lines longer than that, to accept those
+    /// stored hashes once. nil past `maxBytes`.
+    static func wholeLineHash(of url: URL, endingAt offset: UInt64, maxBytes: UInt64 = 64 << 20) -> String? {
         guard offset > 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         var window: UInt64 = 64 << 10

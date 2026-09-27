@@ -9,7 +9,8 @@ final class ImportLock {
 
     /// nil when another importer holds the lock.
     static func acquire(_ url: URL) throws -> ImportLock? {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
         let fd = open(url.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
         guard fd >= 0 else {
             throw IndexDatabase.Failure(message: "Can't open \(url.path): \(String(cString: strerror(errno)))")

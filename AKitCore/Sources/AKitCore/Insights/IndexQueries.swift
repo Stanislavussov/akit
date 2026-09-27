@@ -37,8 +37,12 @@ enum IndexQueries {
         let listings: Int
         let listedChars: Int
         let modelCalls: Int
-        /// `/name` commands the user typed, built-ins like `/model` included.
+        /// Skills the user called (`/name` in Claude Code, `<skill>` in Pi). Rows without a kind
+        /// (read by a parser before kinds, from log files deleted since) count here as before,
+        /// built-in commands included.
         let userCalls: Int
+        /// Built-in commands the user typed, like `/model` or `/clear`.
+        let userCommands: Int
         let subagentCalls: Int
         /// Subagent log files of the session.
         let subagentRuns: Int
@@ -64,7 +68,7 @@ enum IndexQueries {
                 """, key).first
             let first = try database.value("""
                 SELECT COALESCE(input, 0) + COALESCE(cache_read, 0) + COALESCE(cache_write, 0) FROM requests
-                WHERE session_key = ? AND is_subagent = 0 ORDER BY ts LIMIT 1
+                WHERE session_key = ? AND is_subagent = 0 ORDER BY ts IS NULL, ts LIMIT 1
                 """, key)?.int
             let outputs = try database.rows("""
                 SELECT name, output_bytes FROM tool_calls WHERE session_key = ? AND is_subagent = 0 AND output_bytes IS NOT NULL
@@ -76,7 +80,14 @@ enum IndexQueries {
                 requests: try count("SELECT COUNT(*) FROM requests WHERE session_key = ? AND is_subagent = 0"),
                 listings: listed?[0].int ?? 0, listedChars: listed?[1].int ?? 0,
                 modelCalls: try count("SELECT COUNT(*) FROM skill_calls WHERE session_key = ? AND by = 'model' AND is_subagent = 0"),
-                userCalls: try count("SELECT COUNT(*) FROM skill_calls WHERE session_key = ? AND by = 'user' AND is_subagent = 0"),
+                userCalls: try count("""
+                    SELECT COUNT(*) FROM skill_calls WHERE session_key = ? AND by = 'user' AND is_subagent = 0
+                    AND COALESCE(json_extract(extra, '$.kind'), 'skill') = 'skill'
+                    """),
+                userCommands: try count("""
+                    SELECT COUNT(*) FROM skill_calls WHERE session_key = ? AND by = 'user' AND is_subagent = 0
+                    AND json_extract(extra, '$.kind') = 'command'
+                    """),
                 subagentCalls: try count("SELECT COUNT(*) FROM skill_calls WHERE session_key = ? AND is_subagent = 1"),
                 subagentRuns: try count("SELECT COUNT(DISTINCT path) FROM sources WHERE session_key = ? AND kind = 'subagent'"),
                 firstRequestContext: first, largestToolOutputs: outputs)
