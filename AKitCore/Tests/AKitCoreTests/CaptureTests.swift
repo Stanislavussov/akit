@@ -344,4 +344,208 @@ struct CaptureTests {
         try runImport(now: Date(timeIntervalSince1970: 1_789_900_100))
         #expect(try database().rows("SELECT ts FROM applies ORDER BY ts").map { $0[0].int } == [1_789_900_000_100, 1_789_900_000_900])
     }
+
+    // MARK: Installer
+
+    /// Stands in for `claude` and `launchctl`: records every call and answers queries; nothing
+    /// runs for real. `git` (only ever in the fake home's brain) runs for real.
+    final class FakeRunner: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls: [[String]] = []
+        let pluginList: String
+        let marketplaces: String
+        let gitEnvironment: [String: String]
+
+        init(pluginList: String = "[]", marketplaces: String = "[]", gitEnvironment: [String: String]) {
+            self.pluginList = pluginList
+            self.marketplaces = marketplaces
+            self.gitEnvironment = gitEnvironment
+        }
+
+        var commands: [String] { lock.withLock { calls.map { $0.joined(separator: " ") } } }
+        private func record(_ call: [String]) { lock.withLock { calls.append(call) } }
+
+        var runner: CommandRunner {
+            { executable, arguments, directory, timeout in
+                if executable.lastPathComponent == "git" {
+                    return await ProcessRunner.run(executable, arguments: arguments, directory: directory,
+                                                   environment: self.gitEnvironment, timeout: timeout)
+                }
+                self.record([executable.lastPathComponent] + arguments)
+                let output = switch arguments {
+                case ["plugin", "--help"]: "Commands:\n  install|i <plugin>\n  list\n  marketplace\n  uninstall\n"
+                case ["plugin", "list", "--json"]: self.pluginList
+                case ["plugin", "marketplace", "list", "--json"]: self.marketplaces
+                default: ""
+                }
+                return ProcessRunner.Result(exitedNormally: true, status: 0, timedOut: false, output: output)
+            }
+        }
+    }
+
+    /// Finds the fake `claude` (never run: the fake runner answers for it).
+    var installerEnv: HarnessEnvironment {
+        var environment = env
+        environment.executableSearchPaths = [home.appending(path: "bin"), URL(filePath: "/usr/bin")]
+        return environment
+    }
+
+    func fakeClaude() throws {
+        try write("bin/claude", "#!/bin/sh\nexit 99\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/claude").path)
+    }
+
+    /// A brain made before brains had plugins/, and Pi's config folder.
+    func oldBrain() async throws {
+        try await BrainSetup.create(at: brainRoot, env: env)
+        try fm.removeItem(at: brainRoot.appending(path: "plugins"))
+        let fake = FakeRunner(gitEnvironment: env.variables)
+        let git = URL(filePath: "/usr/bin/git")
+        for arguments in [["add", "-A"], ["commit", "-qm", "Before plugins"]] {
+            #expect(await fake.runner(git, arguments, brainRoot, 10)?.succeeded == true)
+        }
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+    }
+
+    func cli(_ arguments: String..., runner: FakeRunner) async -> (code: Int32, out: String, err: String) {
+        var out: [String] = [], err: [String] = []
+        let code = await AKitCLI.run(arguments, env: installerEnv, cwd: home, out: { out.append($0) }, err: { err.append($0) },
+                                     trash: trash, runner: runner.runner)
+        return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
+    }
+
+    var extensionFile: URL { home.appending(path: ".pi/agent/extensions/akit-record.ts") }
+
+    @Test func installerPlanListsEveryWriteAndCommand() async throws {
+        try await oldBrain()
+        try fakeClaude()
+        let fake = FakeRunner(gitEnvironment: env.variables)
+        for arguments in [["insights", "install"], ["insights", "install", "--dry-run", "--yes"]] {
+            var out: [String] = []
+            let code = await AKitCLI.run(arguments, env: installerEnv, cwd: home, out: { out.append($0) }, err: { _ in },
+                                         trash: trash, runner: fake.runner)
+            let text = out.joined(separator: "\n")
+            #expect(code == 0)
+            for file in CaptureInstaller.pluginFiles {
+                #expect(text.contains("NEW \(brainRoot.appending(path: file.path).path)"), "\(file.path)")
+            }
+            #expect(text.contains("COMMIT in the brain: Add the akit Claude plugin"))
+            #expect(text.contains("RUN claude plugin marketplace add \(brainRoot.appending(path: "plugins").path)"))
+            #expect(text.contains("RUN claude plugin install akit@akit-brain"))
+            #expect(text.contains("NEW \(extensionFile.path)"))
+            #expect(text.contains("Run again with --yes"))
+        }
+        // Nothing written, only read-only queries run.
+        #expect(!fm.fileExists(atPath: brainRoot.appending(path: "plugins").path))
+        #expect(!fm.fileExists(atPath: extensionFile.path))
+        #expect(fake.commands.allSatisfy { $0.hasSuffix("--help") || $0.hasSuffix("--json") }, "\(fake.commands)")
+        // Without a brain only the Pi part can be installed.
+        try fm.removeItem(at: brainRoot)
+        #expect(await cli("insights", "install", runner: fake).code == 2)
+        let pi = await cli("insights", "install", "--only", "pi", runner: fake)
+        #expect(pi.code == 0 && pi.out.contains("NEW \(extensionFile.path)") && !pi.out.contains("claude plugin"))
+        #expect(await cli("insights", "install", "--only", "codex", runner: fake).code == 2)
+        #expect(await cli("insights", "status", "--dry-run", runner: fake).code == 2)
+    }
+
+    @Test func installerWritesValidPluginWithVersion() async throws {
+        try await oldBrain()
+        try fakeClaude()
+        // Someone else's extension with AKit's file name: diffed, backed up, then replaced.
+        try write(".pi/agent/extensions/akit-record.ts", "// mine\n")
+        let fake = FakeRunner(gitEnvironment: env.variables)
+        let result = await cli("insights", "install", "--yes", runner: fake)
+        #expect(result.code == 0 && result.out.contains("Done."), "\(result)")
+        #expect(result.out.contains("BACK UP \(extensionFile.path)") && result.out.contains("- // mine"))
+
+        func json(_ path: String) throws -> [String: Any] {
+            try #require(JSONSerialization.jsonObject(with: Data(contentsOf: brainRoot.appending(path: path))) as? [String: Any])
+        }
+        #expect(try json("plugins/akit/.claude-plugin/plugin.json")["version"] as? String == CaptureInstaller.pluginVersion)
+        let marketplace = try json("plugins/.claude-plugin/marketplace.json")
+        let entry = try #require((marketplace["plugins"] as? [[String: Any]])?.first)
+        #expect(marketplace["name"] as? String == "akit-brain" && entry["name"] as? String == "akit" && entry["source"] as? String == "./akit")
+        let hooks = try #require(try json("plugins/akit/hooks/hooks.json")["hooks"] as? [String: Any])
+        let start = try #require((hooks["SessionStart"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])
+        #expect(start.first?["command"] as? String == #""${CLAUDE_PLUGIN_ROOT}/hooks/record-session.sh""#)
+        let script = brainRoot.appending(path: "plugins/akit/hooks/record-session.sh")
+        #expect(try fm.attributesOfItem(atPath: script.path)[.posixPermissions] as? Int == 0o755)
+
+        let log = try #require(await fake.runner(URL(filePath: "/usr/bin/git"), ["log", "-1", "--format=%s", "--name-only"], brainRoot, 10))
+        let logLines: [String] = log.output.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        let expected: [String] = ["Add the akit Claude plugin"] + CaptureInstaller.pluginFiles.map(\.path).sorted()
+        #expect(logLines == expected)
+        #expect(fake.commands.contains("claude plugin marketplace add \(brainRoot.appending(path: "plugins").path)"))
+        #expect(fake.commands.contains("claude plugin install akit@akit-brain"))
+        #expect(try String(contentsOf: extensionFile, encoding: .utf8) == CaptureInstaller.piExtensionText)
+        let backups = try #require(fm.enumerator(atPath: home.appending(path: ".akit/backups").path)?.allObjects as? [String])
+        #expect(backups.contains { $0.hasSuffix(".pi/agent/extensions/akit-record.ts") })
+
+        // The hook script: silent and 0 without akit; with akit, one spool line.
+        func hook(_ input: String) async throws -> ProcessRunner.Result {
+            try #require(await ProcessRunner.run(URL(filePath: "/bin/sh"), arguments: ["-c", #"printf '%s' "$IN" | "$HOOK""#],
+                                                 environment: ["HOME": home.path, "PATH": "/usr/bin:/bin", "IN": input, "HOOK": script.path],
+                                                 timeout: 20))
+        }
+        let missing = try await hook(#"{"session_id":"h0"}"#)
+        #expect(missing.succeeded && missing.output.isEmpty && !fm.fileExists(atPath: paths.spool.path))
+        let akit = try #require(Self.akitBinary)
+        try fm.createDirectory(at: home.appending(path: ".local/bin"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: home.appending(path: ".local/bin/akit"), withDestinationURL: akit)
+        let recorded = try await hook(#"{"session_id":"h1","cwd":"/work"}"#)
+        #expect(recorded.succeeded && recorded.output.isEmpty)
+        #expect(try runImport(now: Date()).spoolLines == 1)
+        #expect(try count("SELECT COUNT(*) FROM hook_events WHERE session_id = 'h1' AND harness = 'claude'") == 1)
+
+        // Installed and current: nothing more to do.
+        let installed = FakeRunner(pluginList: #"[{"id":"akit@akit-brain","version":"\#(CaptureInstaller.pluginVersion)","enabled":true}]"#,
+                                   marketplaces: #"[{"name":"akit-brain"}]"#, gitEnvironment: env.variables)
+        let again = await cli("insights", "install", runner: installed)
+        #expect(again.code == 0 && again.out.contains("Nothing to do."), "\(again)")
+    }
+
+    @Test func statusReportsNotInstalledAndVersionMismatch() async throws {
+        let none = await cli("insights", "status", "--json", runner: FakeRunner(gitEnvironment: env.variables))
+        let empty = try #require(JSONSerialization.jsonObject(with: Data(none.out.utf8)) as? [String: Any])
+        let claude = try #require(empty["claude"] as? [String: Any])
+        #expect(none.code == 0 && claude["claudeFound"] as? Bool == false && claude["installedVersion"] == nil)
+        #expect(claude["brainVersion"] == nil && claude["versionMismatch"] as? Bool == false)
+        #expect((empty["pi"] as? [String: Any])?["state"] as? String == "missing" && empty["lastImport"] == nil)
+        #expect(!fm.fileExists(atPath: paths.database.path))
+
+        try await BrainSetup.create(at: brainRoot, env: env)
+        try fakeClaude()
+        try write(".pi/agent/extensions/akit-record.ts", "// \(CaptureInstaller.marker)\n// an older one\n")
+        sessionStart("st", at: Self.day(0))
+        let old = FakeRunner(pluginList: #"[{"id":"other@x","version":"9"},{"id":"akit@akit-brain","version":"0.9.0","enabled":true}]"#,
+                             gitEnvironment: env.variables)
+        let result = await cli("insights", "status", runner: old)
+        #expect(result.out.contains("Claude plugin: brain \(CaptureInstaller.pluginVersion), installed 0.9.0"), "\(result)")
+        #expect(result.out.contains("Versions differ") && result.out.contains("Pi extension: outdated"))
+        #expect(result.out.contains("Last spool line: 2026-09-20T10:00:00Z"))
+        // Unreadable `claude plugin list` output: not installed, no crash.
+        let garbage = await cli("insights", "status", "--json", runner: FakeRunner(pluginList: "Error: nope", gitEnvironment: env.variables))
+        #expect(garbage.code == 0 && garbage.out.contains(#""claudeFound" : true"#))
+    }
+
+    @Test func uninstallUsesTrash() async throws {
+        try fakeClaude()
+        try write(".pi/agent/extensions/akit-record.ts", CaptureInstaller.piExtensionText)
+        let fake = FakeRunner(pluginList: #"[{"id":"akit@akit-brain","version":"1.0.0"}]"#, gitEnvironment: env.variables)
+        let preview = await cli("insights", "uninstall", runner: fake)
+        #expect(preview.out.contains("TRASH \(extensionFile.path)") && preview.out.contains("RUN claude plugin uninstall akit@akit-brain"))
+        #expect(fm.fileExists(atPath: extensionFile.path) && !fake.commands.contains { $0.contains("uninstall") })
+
+        let done = await cli("insights", "uninstall", "--yes", runner: fake)
+        #expect(done.code == 0, "\(done)")
+        #expect(!fm.fileExists(atPath: extensionFile.path))
+        let trashed = try fm.contentsOfDirectory(atPath: home.appending(path: "Trash").path)
+        #expect(trashed.contains { $0.hasSuffix("akit-record.ts") })
+        #expect(fake.commands.contains("claude plugin uninstall akit@akit-brain"))
+
+        // Someone else's file is never trashed.
+        try write(".pi/agent/extensions/akit-record.ts", "// mine\n")
+        let foreign = await cli("insights", "uninstall", "--yes", runner: FakeRunner(gitEnvironment: env.variables))
+        #expect(foreign.out.contains("was not written by AKit") && fm.fileExists(atPath: extensionFile.path))
+    }
 }

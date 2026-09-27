@@ -1,7 +1,7 @@
 import Foundation
 
 /// Creates a new brain repo: the folder layout from docs/design/layers.md, a `core`
-/// layer with the `/akit` skill, and a git repo with a first commit.
+/// layer with the `/akit` skill, the akit Claude plugin, and a git repo with a first commit.
 public enum BrainSetup {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -22,6 +22,7 @@ public enum BrainSetup {
             layers/<name>/templates/   files rendered into a project
             projects/<id>/             answers and lock per project (written by AKit)
             machines/<name>.yaml       harnesses and core layer per machine
+            plugins/                   the akit Claude plugin (akit insights install)
             ```
 
             """,
@@ -51,6 +52,13 @@ public enum BrainSetup {
                 let file = root.appending(path: path)
                 try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try Data(text.utf8).write(to: file, options: .withoutOverwriting)
+            }
+            // Session capture; each Mac installs it with akit insights install.
+            for plugin in CaptureInstaller.pluginFiles {
+                let file = root.appending(path: plugin.path)
+                try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(plugin.text.utf8).write(to: file, options: .withoutOverwriting)
+                if plugin.executable { try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path) }
             }
         } catch {
             throw Failure(message: "Couldn't create the brain in \(root.path): \(error.localizedDescription)")

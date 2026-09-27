@@ -48,6 +48,13 @@ public enum AKitCLI {
                                           Per session (default: the latest 20): skills listed, skill
                                           calls by the model, the user and subagents, largest tool
                                           outputs, first-request context. Imports new lines first
+          akit insights install [--only claude|pi] [--dry-run] [--yes]
+                                          Capture sessions as they start: the akit Claude plugin (in
+                                          the brain, installed by Claude Code) and a Pi extension.
+                                          Shows every write and command; --yes does it
+          akit insights status [--json]   Plugin versions (brain, installed, this akit), Pi extension,
+                                          last spool line, last import
+          akit insights uninstall [--yes] Uninstall the plugin on this Mac; extension to the Trash
 
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
@@ -80,7 +87,7 @@ public enum AKitCLI {
                            installedTargets: [String] = [], out: (String) -> Void, err: (String) -> Void,
                            trash: (URL) throws -> URL? = SkillRemover.defaultTrash,
                            ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil,
-                           input: () -> Data = { Data() }) async -> Int32 {
+                           input: () -> Data = { Data() }, runner: CommandRunner? = nil) async -> Int32 {
         // Hidden; the akit binary runs it before everything else (main.swift). Silent, exit 0.
         if arguments.first == "record-session" {
             RecordSession.run(harness: RecordSession.harness(in: arguments), stdin: input(), env: env)
@@ -108,6 +115,10 @@ public enum AKitCLI {
             if command == "stats" {
                 try refuseProjectOptions(options, command: "stats")
                 return try stats(&args, options: options, env: env, out: out, err: err)
+            }
+            if command == "insights" {
+                try refuseProjectOptions(options, command: "insights")
+                return try await insights(&args, options: options, env: env, cwd: cwd, out: out, trash: trash, runner: runner)
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -434,6 +445,83 @@ public enum AKitCLI {
             }
         }
         lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
+    }
+
+    /// `akit insights install|status|uninstall`. Without a brain only the Pi part and status work.
+    private static func insights(_ args: inout Arguments, options: Options, env: HarnessEnvironment, cwd: URL,
+                                 out: (String) -> Void, trash: (URL) throws -> URL?, runner: CommandRunner?) async throws -> Int32 {
+        let onlyName = args.value("--only")
+        let dryRun = args.flag("--dry-run")
+        let subcommand = args.positional()
+        try args.finish()
+        let usage = "Use: akit insights install [--only claude|pi] [--dry-run] [--yes] | status [--json] | uninstall [--yes]"
+        var only: CaptureInstaller.Part?
+        if let onlyName {
+            guard let part = CaptureInstaller.Part(rawValue: onlyName), subcommand == "install" else { throw Failure(message: usage) }
+            only = part
+        }
+        if dryRun, subcommand == "status" { throw Failure(message: usage) }
+        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        let brain = Brain.load(from: brainRoot)
+        let installer = CaptureInstaller(env: env, brainRoot: brain?.root, run: runner)
+        let plan: CaptureInstaller.Plan
+        switch subcommand {
+        case "status":
+            let status = await installer.status()
+            out(options.json ? encode(status) : insightsStatusText(status))
+            return 0
+        case "install":
+            if brain == nil, only != .pi {
+                throw Failure(message: "No brain repo at \(brainRoot.path); the Claude plugin lives there. Use --only pi, or create a brain first (akit init).")
+            }
+            plan = await installer.installPlan(only: only)
+        case "uninstall":
+            plan = await installer.uninstallPlan()
+        default:
+            throw Failure(message: usage)
+        }
+        out(insightsPlanText(plan))
+        guard !plan.isEmpty else { return 0 }
+        guard options.yes, !dryRun else {
+            out("Run again with --yes to do it.")
+            return 0
+        }
+        let failures: [String]
+        do {
+            failures = try await installer.execute(plan, trash: trash)
+        } catch {
+            throw Failure(message: error.message)
+        }
+        out((failures.isEmpty ? ["Done."] : failures).joined(separator: "\n"))
+        return failures.isEmpty ? 0 : 1
+    }
+
+    static func insightsPlanText(_ plan: CaptureInstaller.Plan) -> String {
+        var lines: [String] = []
+        for write in plan.writes {
+            if write.backup { lines.append("BACK UP \(write.url.path) (not written by AKit) into ~/.akit/backups") }
+            lines.append("\(write.old == nil ? "NEW" : "CHANGED") \(write.url.path)\(write.executable ? " (executable)" : "")")
+            if write.old != nil { lines += unifiedDiff(TextDiff.lines(from: write.old ?? "", to: write.text)) }
+        }
+        if !plan.commitPaths.isEmpty { lines.append("COMMIT in the brain: \(plan.commitMessage) (\(plan.commitPaths.joined(separator: ", ")))") }
+        lines += plan.trash.map { "TRASH \($0.path)" }
+        lines += plan.commands.map { "RUN \($0.display)" }
+        lines += plan.notes.map { "note: \($0)" }
+        if plan.isEmpty { lines.append("Nothing to do.") }
+        return lines.joined(separator: "\n")
+    }
+
+    static func insightsStatusText(_ status: CaptureInstaller.Status) -> String {
+        let claude = status.claude
+        var lines = [
+            "Claude plugin: brain \(claude.brainVersion ?? "none"), installed \(claude.installedVersion ?? (claude.claudeFound ? "no" : "no (Claude Code not found)")), this akit \(claude.akitVersion)"
+                + (claude.enabled == false ? " (disabled)" : ""),
+            "Pi extension: \(status.pi.state) (\(status.pi.path))",
+            "Last spool line: \(status.lastSpoolLine ?? "none")",
+            "Last import: \(status.lastImport ?? "none")",
+        ]
+        if claude.versionMismatch { lines.append("Versions differ: run akit insights install --yes (and akit sync on the other Macs).") }
         return lines.joined(separator: "\n")
     }
 
