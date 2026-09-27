@@ -355,10 +355,13 @@ struct CaptureTests {
         let pluginList: String
         let marketplaces: String
         let gitEnvironment: [String: String]
+        /// Whether `launchctl print` finds the agent.
+        let loaded: Bool
 
-        init(pluginList: String = "[]", marketplaces: String = "[]", gitEnvironment: [String: String]) {
+        init(pluginList: String = "[]", marketplaces: String = "[]", loaded: Bool = false, gitEnvironment: [String: String]) {
             self.pluginList = pluginList
             self.marketplaces = marketplaces
+            self.loaded = loaded
             self.gitEnvironment = gitEnvironment
         }
 
@@ -378,7 +381,8 @@ struct CaptureTests {
                 case ["plugin", "marketplace", "list", "--json"]: self.marketplaces
                 default: ""
                 }
-                return ProcessRunner.Result(exitedNormally: true, status: 0, timedOut: false, output: output)
+                let missing = arguments.first == "print" && !self.loaded
+                return ProcessRunner.Result(exitedNormally: true, status: missing ? 113 : 0, timedOut: false, output: output)
             }
         }
     }
@@ -407,6 +411,20 @@ struct CaptureTests {
         try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
     }
 
+    /// An installed akit (make install-cli) for the launchd agent; a stub unless `real`.
+    func installedAkit(real: Bool = false) throws {
+        let url = home.appending(path: ".local/bin/akit")
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if real {
+            try fm.createSymbolicLink(at: url, withDestinationURL: try #require(Self.akitBinary))
+        } else {
+            try write(".local/bin/akit", "#!/bin/sh\nexit 0\n")
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+    }
+
+    var plistFile: URL { home.appending(path: "Library/LaunchAgents/dev.ussov.akit.sessions-import.plist") }
+
     func cli(_ arguments: String..., runner: FakeRunner) async -> (code: Int32, out: String, err: String) {
         var out: [String] = [], err: [String] = []
         let code = await AKitCLI.run(arguments, env: installerEnv, cwd: home, out: { out.append($0) }, err: { err.append($0) },
@@ -419,6 +437,7 @@ struct CaptureTests {
     @Test func installerPlanListsEveryWriteAndCommand() async throws {
         try await oldBrain()
         try fakeClaude()
+        try installedAkit()
         let fake = FakeRunner(gitEnvironment: env.variables)
         for arguments in [["insights", "install"], ["insights", "install", "--dry-run", "--yes"]] {
             var out: [String] = []
@@ -433,24 +452,31 @@ struct CaptureTests {
             #expect(text.contains("RUN claude plugin marketplace add \(brainRoot.appending(path: "plugins").path)"))
             #expect(text.contains("RUN claude plugin install akit@akit-brain"))
             #expect(text.contains("NEW \(extensionFile.path)"))
+            #expect(text.contains("FOLDER \(paths.folder.path)") && text.contains("NEW \(plistFile.path)"))
+            #expect(text.contains("RUN launchctl bootstrap gui/\(getuid()) \(plistFile.path)"))
             #expect(text.contains("Run again with --yes"))
         }
         // Nothing written, only read-only queries run.
         #expect(!fm.fileExists(atPath: brainRoot.appending(path: "plugins").path))
-        #expect(!fm.fileExists(atPath: extensionFile.path))
-        #expect(fake.commands.allSatisfy { $0.hasSuffix("--help") || $0.hasSuffix("--json") }, "\(fake.commands)")
+        #expect(!fm.fileExists(atPath: extensionFile.path) && !fm.fileExists(atPath: plistFile.path))
+        #expect(!fm.fileExists(atPath: paths.folder.path))
+        #expect(fake.commands.allSatisfy { $0.hasSuffix("--help") || $0.hasSuffix("--json") || $0.hasPrefix("launchctl print") },
+                "\(fake.commands)")
         // Without a brain only the Pi part can be installed.
         try fm.removeItem(at: brainRoot)
         #expect(await cli("insights", "install", runner: fake).code == 2)
         let pi = await cli("insights", "install", "--only", "pi", runner: fake)
         #expect(pi.code == 0 && pi.out.contains("NEW \(extensionFile.path)") && !pi.out.contains("claude plugin"))
+        let launchd = await cli("insights", "install", "--only", "launchd", runner: fake)
+        #expect(launchd.code == 0 && launchd.out.contains("NEW \(plistFile.path)") && !launchd.out.contains("claude plugin"))
         #expect(await cli("insights", "install", "--only", "codex", runner: fake).code == 2)
         #expect(await cli("insights", "status", "--dry-run", runner: fake).code == 2)
     }
 
-    @Test func installerWritesValidPluginWithVersion() async throws {
+    @Test func installerWritesValidPluginWithVersionAndPlist() async throws {
         try await oldBrain()
         try fakeClaude()
+        try installedAkit(real: true)
         // Someone else's extension with AKit's file name: diffed, backed up, then replaced.
         try write(".pi/agent/extensions/akit-record.ts", "// mine\n")
         let fake = FakeRunner(gitEnvironment: env.variables)
@@ -481,25 +507,35 @@ struct CaptureTests {
         let backups = try #require(fm.enumerator(atPath: home.appending(path: ".akit/backups").path)?.allObjects as? [String])
         #expect(backups.contains { $0.hasSuffix(".pi/agent/extensions/akit-record.ts") })
 
+        // The launchd agent: hourly import with the installed akit, low priority, logging locally.
+        let plist = try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: plistFile), format: nil) as? [String: Any])
+        #expect(plist["Label"] as? String == "dev.ussov.akit.sessions-import")
+        #expect(plist["ProgramArguments"] as? [String] == [home.appending(path: ".local/bin/akit").path, "sessions", "import", "--quiet"])
+        #expect(plist["StartInterval"] as? Int == 3600 && plist["RunAtLoad"] as? Bool == true)
+        #expect(plist["LowPriorityIO"] as? Bool == true && plist["Nice"] as? Int == 10)
+        #expect(plist["StandardOutPath"] as? String == paths.log.path && plist["StandardErrorPath"] as? String == paths.log.path)
+        #expect(fake.commands.contains("launchctl bootstrap gui/\(getuid()) \(plistFile.path)"))
+        #expect(fm.fileExists(atPath: paths.folder.path))
+
         // The hook script: silent and 0 without akit; with akit, one spool line.
-        func hook(_ input: String) async throws -> ProcessRunner.Result {
+        func hook(_ input: String, home: URL) async throws -> ProcessRunner.Result {
             try #require(await ProcessRunner.run(URL(filePath: "/bin/sh"), arguments: ["-c", #"printf '%s' "$IN" | "$HOOK""#],
                                                  environment: ["HOME": home.path, "PATH": "/usr/bin:/bin", "IN": input, "HOOK": script.path],
                                                  timeout: 20))
         }
-        let missing = try await hook(#"{"session_id":"h0"}"#)
-        #expect(missing.succeeded && missing.output.isEmpty && !fm.fileExists(atPath: paths.spool.path))
-        let akit = try #require(Self.akitBinary)
-        try fm.createDirectory(at: home.appending(path: ".local/bin"), withIntermediateDirectories: true)
-        try fm.createSymbolicLink(at: home.appending(path: ".local/bin/akit"), withDestinationURL: akit)
-        let recorded = try await hook(#"{"session_id":"h1","cwd":"/work"}"#)
+        let bare = home.appending(path: "bare-home")
+        try fm.createDirectory(at: bare, withIntermediateDirectories: true)
+        let missing = try await hook(#"{"session_id":"h0"}"#, home: bare)
+        let bareItems = try fm.contentsOfDirectory(atPath: bare.path)
+        #expect(missing.succeeded && missing.output.isEmpty && bareItems.isEmpty)
+        let recorded = try await hook(#"{"session_id":"h1","cwd":"/work"}"#, home: home)
         #expect(recorded.succeeded && recorded.output.isEmpty)
         #expect(try runImport(now: Date()).spoolLines == 1)
         #expect(try count("SELECT COUNT(*) FROM hook_events WHERE session_id = 'h1' AND harness = 'claude'") == 1)
 
         // Installed and current: nothing more to do.
         let installed = FakeRunner(pluginList: #"[{"id":"akit@akit-brain","version":"\#(CaptureInstaller.pluginVersion)","enabled":true}]"#,
-                                   marketplaces: #"[{"name":"akit-brain"}]"#, gitEnvironment: env.variables)
+                                   marketplaces: #"[{"name":"akit-brain"}]"#, loaded: true, gitEnvironment: env.variables)
         let again = await cli("insights", "install", runner: installed)
         #expect(again.code == 0 && again.out.contains("Nothing to do."), "\(again)")
     }
@@ -511,6 +547,7 @@ struct CaptureTests {
         #expect(none.code == 0 && claude["claudeFound"] as? Bool == false && claude["installedVersion"] == nil)
         #expect(claude["brainVersion"] == nil && claude["versionMismatch"] as? Bool == false)
         #expect((empty["pi"] as? [String: Any])?["state"] as? String == "missing" && empty["lastImport"] == nil)
+        #expect((empty["launchd"] as? [String: Any])?["present"] as? Bool == false)
         #expect(!fm.fileExists(atPath: paths.database.path))
 
         try await BrainSetup.create(at: brainRoot, env: env)
@@ -531,7 +568,8 @@ struct CaptureTests {
     @Test func uninstallUsesTrash() async throws {
         try fakeClaude()
         try write(".pi/agent/extensions/akit-record.ts", CaptureInstaller.piExtensionText)
-        let fake = FakeRunner(pluginList: #"[{"id":"akit@akit-brain","version":"1.0.0"}]"#, gitEnvironment: env.variables)
+        try write("Library/LaunchAgents/dev.ussov.akit.sessions-import.plist", "<plist/>")
+        let fake = FakeRunner(pluginList: #"[{"id":"akit@akit-brain","version":"1.0.0"}]"#, loaded: true, gitEnvironment: env.variables)
         let preview = await cli("insights", "uninstall", runner: fake)
         #expect(preview.out.contains("TRASH \(extensionFile.path)") && preview.out.contains("RUN claude plugin uninstall akit@akit-brain"))
         #expect(fm.fileExists(atPath: extensionFile.path) && !fake.commands.contains { $0.contains("uninstall") })
@@ -542,10 +580,33 @@ struct CaptureTests {
         let trashed = try fm.contentsOfDirectory(atPath: home.appending(path: "Trash").path)
         #expect(trashed.contains { $0.hasSuffix("akit-record.ts") })
         #expect(fake.commands.contains("claude plugin uninstall akit@akit-brain"))
+        #expect(fake.commands.contains("launchctl bootout gui/\(getuid())/dev.ussov.akit.sessions-import"))
+        #expect(!fm.fileExists(atPath: plistFile.path) && trashed.contains { $0.hasSuffix("sessions-import.plist") })
 
         // Someone else's file is never trashed.
         try write(".pi/agent/extensions/akit-record.ts", "// mine\n")
         let foreign = await cli("insights", "uninstall", "--yes", runner: FakeRunner(gitEnvironment: env.variables))
         #expect(foreign.out.contains("was not written by AKit") && fm.fileExists(atPath: extensionFile.path))
+    }
+
+    @Test func launchdRefusesBuildFolderBinary() async throws {
+        let fake = FakeRunner(gitEnvironment: env.variables)
+        for path in ["/Users/me/akit/AKitCore/.build/release/akit", "/Users/me/Library/Developer/Xcode/DerivedData/AKit-x/Build/akit"] {
+            let installer = CaptureInstaller(env: env, brainRoot: nil, run: fake.runner, akitExecutable: URL(filePath: path))
+            let plan = await installer.installPlan(only: .launchd)
+            #expect(plan.isEmpty && plan.refused.count == 1 && plan.refused[0].contains("make install-cli"), "\(plan.refused)")
+        }
+        #expect(!fm.fileExists(atPath: plistFile.path) && fake.commands.isEmpty)
+
+        // Elsewhere the running binary is used, until make install-cli put one into ~/.local/bin.
+        let elsewhere = CaptureInstaller(env: env, brainRoot: nil, run: fake.runner, akitExecutable: URL(filePath: "/opt/tools/akit"))
+        #expect(try elsewhere.agentProgram().path == "/opt/tools/akit")
+        try installedAkit()
+        let installer = CaptureInstaller(env: env, brainRoot: nil, run: fake.runner,
+                                         akitExecutable: URL(filePath: "/Users/me/akit/AKitCore/.build/debug/akit"))
+        #expect(try installer.agentProgram() == home.appending(path: ".local/bin/akit"))
+        let plan = await installer.installPlan(only: .launchd)
+        #expect(plan.refused.isEmpty && plan.writes.map(\.url) == [plistFile])
+        #expect(plan.writes.first?.text.contains("/.build/") == false)
     }
 }

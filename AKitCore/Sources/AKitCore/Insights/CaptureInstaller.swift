@@ -11,9 +11,10 @@ public typealias CommandRunner = @Sendable (_ executable: URL, _ arguments: [Str
 /// - Claude: an `akit` plugin in a local marketplace inside the brain (`plugins/`), committed;
 ///   Claude itself installs it (`claude plugin marketplace add` + `claude plugin install`).
 /// - Pi: an AKit-owned extension file in `~/.pi/agent/extensions/`.
+/// - launchd: an agent that runs `akit sessions import --quiet` hourly (it never commits).
 struct CaptureInstaller {
     enum Part: String, CaseIterable {
-        case claude, pi
+        case claude, pi, launchd
     }
 
     struct Failure: Error, LocalizedError {
@@ -29,15 +30,22 @@ struct CaptureInstaller {
     /// First line of every file AKit owns here; a file without it is someone else's.
     static let marker = "akit-record: written by AKit"
 
+    static let agentLabel = "dev.ussov.akit.sessions-import"
+    static let launchctl = URL(filePath: "/bin/launchctl")
+
     let env: HarnessEnvironment
-    /// nil without a brain: only the Pi part (and status) work then.
+    /// nil without a brain: only the Pi and launchd parts (and status) work then.
     let brainRoot: URL?
     var run: CommandRunner
+    /// The akit binary running now; the agent's program when ~/.local/bin/akit is missing.
+    var akitExecutable: URL?
 
-    init(env: HarnessEnvironment, brainRoot: URL?, run: CommandRunner? = nil) {
+    init(env: HarnessEnvironment, brainRoot: URL?, run: CommandRunner? = nil,
+         akitExecutable: URL? = Bundle.main.executableURL?.resolvingSymlinksInPath()) {
         self.env = env
         self.brainRoot = brainRoot
         self.run = run ?? Self.liveRunner(env)
+        self.akitExecutable = akitExecutable
     }
 
     static func liveRunner(_ env: HarnessEnvironment) -> CommandRunner {
@@ -66,6 +74,8 @@ struct CaptureInstaller {
             var display: String { ([executable.lastPathComponent] + arguments).joined(separator: " ") }
         }
 
+        /// Created before the writes.
+        var folders: [URL] = []
         var writes: [Write] = []
         /// Brain paths committed after the writes, with this message.
         var commitPaths: [String] = []
@@ -74,6 +84,8 @@ struct CaptureInstaller {
         /// Moved to the Trash (uninstall).
         var trash: [URL] = []
         var notes: [String] = []
+        /// Parts that can't be set up as things are (nothing of them is in the plan).
+        var refused: [String] = []
 
         var isEmpty: Bool { writes.isEmpty && commitPaths.isEmpty && commands.isEmpty && trash.isEmpty }
     }
@@ -194,6 +206,7 @@ extension CaptureInstaller {
         var plan = Plan()
         if only == nil || only == .claude { await planClaude(into: &plan) }
         if only == nil || only == .pi { planPi(into: &plan) }
+        if only == nil || only == .launchd { await planLaunchd(into: &plan) }
         return plan
     }
 
@@ -275,6 +288,7 @@ extension CaptureInstaller {
     func execute(_ plan: Plan, trash: (URL) throws -> URL?) async throws(Failure) -> [String] {
         let fm = FileManager.default
         do {
+            for folder in plan.folders { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
             var backup: URL?
             for write in plan.writes where write.backup {
                 if backup == nil { backup = try Backup.newFolder(home: env.homeDirectory) }
@@ -331,6 +345,7 @@ extension CaptureInstaller {
                 plan.notes.append("\(piExtension.path) was not written by AKit; left alone.")
             }
         }
+        await planLaunchdRemoval(into: &plan)
         return plan
     }
 
@@ -353,8 +368,17 @@ extension CaptureInstaller {
             let state: String
         }
 
+        struct Launchd: Encodable {
+            let plist: String
+            let present: Bool
+            let loaded: Bool
+            /// The akit the agent runs.
+            let program: String?
+        }
+
         var claude: Claude
         var pi: Pi
+        var launchd: Launchd
         /// Time of the newest spool line.
         var lastSpoolLine: String?
         /// Time of the last import.
@@ -385,7 +409,9 @@ extension CaptureInstaller {
         case let text? where text.contains(Self.marker): "outdated"
         default: "foreign"
         }
-        return Status(claude: claudeStatus, pi: .init(path: piExtension.path, state: piState),
+        let launchd = Status.Launchd(plist: agentPlist.path, present: FileManager.default.fileExists(atPath: agentPlist.path),
+                                     loaded: await agentLoaded(), program: agentPlistProgram())
+        return Status(claude: claudeStatus, pi: .init(path: piExtension.path, state: piState), launchd: launchd,
                       lastSpoolLine: lastSpoolLine().map { $0.formatted(.iso8601) },
                       lastImport: lastImport().map { $0.formatted(.iso8601) })
     }
@@ -404,5 +430,85 @@ extension CaptureInstaller {
         guard FileManager.default.fileExists(atPath: url.path), let database = try? IndexDatabase(url: url),
               let seconds = try? database.value("SELECT MAX(imported_at) FROM sources")?.double else { return nil }
         return Date(timeIntervalSince1970: seconds)
+    }
+}
+
+// MARK: - launchd
+
+extension CaptureInstaller {
+    var agentPlist: URL { env.homeDirectory.appending(path: "Library/LaunchAgents/\(Self.agentLabel).plist") }
+    private var domain: String { "gui/\(getuid())" }
+
+    /// ~/.local/bin/akit (make install-cli) when it exists, else the running binary. A binary in
+    /// a build folder is refused: the next build or clean would pull it from under the agent.
+    func agentProgram() throws(Failure) -> URL {
+        let installed = env.homeDirectory.appending(path: ".local/bin/akit")
+        if FileManager.default.isExecutableFile(atPath: installed.path) { return installed }
+        guard let running = akitExecutable else { throw Failure(message: "Can't tell where akit is; run make install-cli first.") }
+        guard !running.path.contains("/.build/"), !running.path.contains("DerivedData") else {
+            throw Failure(message: "\(running.path) is a build folder binary; run make install-cli first (installs ~/.local/bin/akit).")
+        }
+        return running
+    }
+
+    /// The agent: `akit sessions import --quiet` at load and every hour, at low priority, output
+    /// into ~/.akit/index/import.log.
+    func agentPlistText(program: URL) -> String {
+        let log = InsightsPaths(env: env).log.path
+        let plist: [String: Any] = [
+            "Label": Self.agentLabel,
+            "ProgramArguments": [program.path, "sessions", "import", "--quiet"],
+            "StartInterval": 3600,
+            "RunAtLoad": true,
+            "LowPriorityIO": true,
+            "Nice": 10,
+            "StandardOutPath": log,
+            "StandardErrorPath": log,
+        ]
+        let data = (try? PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Whether launchd has the agent loaded (`launchctl print`, read-only).
+    func agentLoaded() async -> Bool {
+        await run(Self.launchctl, ["print", "\(domain)/\(Self.agentLabel)"], nil, 30)?.succeeded == true
+    }
+
+    fileprivate func planLaunchd(into plan: inout Plan) async {
+        let program: URL
+        do {
+            program = try agentProgram()
+        } catch {
+            plan.refused.append("Hourly import: \(error.message)")
+            return
+        }
+        let text = agentPlistText(program: program)
+        let old = try? String(contentsOf: agentPlist, encoding: .utf8)
+        let loaded = await agentLoaded()
+        if old != text {
+            plan.folders.append(InsightsPaths(env: env).folder)
+            plan.writes.append(.init(url: agentPlist, text: text, executable: false, old: old, backup: false))
+            if loaded { plan.commands.append(.init(executable: Self.launchctl, arguments: ["bootout", "\(domain)/\(Self.agentLabel)"])) }
+            plan.commands.append(.init(executable: Self.launchctl, arguments: ["bootstrap", domain, agentPlist.path]))
+        } else if !loaded {
+            plan.commands.append(.init(executable: Self.launchctl, arguments: ["bootstrap", domain, agentPlist.path]))
+        } else {
+            plan.notes.append("The hourly import is loaded (\(program.path)).")
+        }
+    }
+
+    /// Unloads the agent and trashes its plist.
+    func planLaunchdRemoval(into plan: inout Plan) async {
+        if await agentLoaded() {
+            plan.commands.append(.init(executable: Self.launchctl, arguments: ["bootout", "\(domain)/\(Self.agentLabel)"]))
+        }
+        if FileManager.default.fileExists(atPath: agentPlist.path) { plan.trash.append(agentPlist) }
+    }
+
+    /// The program the installed plist runs.
+    func agentPlistProgram() -> String? {
+        guard let data = try? Data(contentsOf: agentPlist),
+              let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else { return nil }
+        return (plist["ProgramArguments"] as? [String])?.first
     }
 }
