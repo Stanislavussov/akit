@@ -30,12 +30,18 @@ struct ImportReport: Encodable, Equatable {
 /// - replaced, shrunk or rewritten: the old generation stays as a tombstone with its facts,
 ///   a new generation reads from 0 and natural keys drop lines seen before;
 /// - vanished: `gone`, facts kept forever.
+/// Spool day files are read the same way; lines of a kind this akit doesn't know are counted
+/// in `sources.unknown_lines`, and a file is deleted (its row kept as `done`) only when fully
+/// read, two days old and without such lines.
 /// Facts are upserted: a row's identity never changes, it moves only to a newer generation of
 /// the same file, and its values change only for a newer parser (or its own file re-reading them).
 struct SessionImporter {
     let env: HarnessEnvironment
     var claudeParser = ClaudeFacts.parserVersion
     var piParser = PiFacts.parserVersion
+    var spoolParser = SpoolFacts.parserVersion
+    /// Spool line kinds this importer understands.
+    var spoolKinds = Spool.kinds
 
     /// A log file found on disk.
     struct LogFile {
@@ -66,12 +72,14 @@ struct SessionImporter {
             }
             do {
                 // Decoded JSON objects are autoreleased; drain them per file, or a long run holds them all.
-                if let bytes = try autoreleasepool(invoking: {
+                if let read = try autoreleasepool(invoking: {
                     try importFile(file, database: database, now: now, keepExamples: keepExamples)
                 }) {
                     report.sources += 1
-                    report.newBytes += bytes
+                    report.newBytes += read.bytes
+                    report.spoolLines += read.spoolLines
                 }
+                if file.kind == "spool" { try retireSpool(file, database: database, now: now) }
             } catch {
                 report.skipped.append(.init(path: file.url.path, reason: error.localizedDescription))
             }
@@ -116,7 +124,8 @@ struct SessionImporter {
 
     // MARK: - Files
 
-    /// Claude `projects/*/*.jsonl` and `projects/*/<session>/subagents/*.jsonl`; Pi `<sessions>/*/*.jsonl`.
+    /// Claude `projects/*/*.jsonl` and `projects/*/<session>/subagents/*.jsonl`; Pi `<sessions>/*/*.jsonl`;
+    /// spool day files.
     func discover() -> [LogFile] {
         var found: [LogFile] = []
         let projects = ClaudeCodeAdapter().configRoot(in: env).appending(path: "projects")
@@ -137,6 +146,9 @@ struct SessionImporter {
                 found += Self.logFile(item, harness: "pi", kind: "session").map { [$0] } ?? []
             }
         }
+        for item in SkillScanner.children(of: InsightsPaths(env: env).spool) where item.pathExtension == "jsonl" {
+            found += Self.logFile(item, harness: "akit", kind: "spool").map { [$0] } ?? []
+        }
         return found
     }
 
@@ -150,17 +162,20 @@ struct SessionImporter {
 
     /// Active sources whose file is gone keep their facts; the row says so.
     private func markGone(_ database: IndexDatabase, found: Set<String>) throws {
-        for row in try database.rows("SELECT id, path FROM sources WHERE state = 'active' AND kind != 'spool'") {
+        for row in try database.rows("SELECT id, path FROM sources WHERE state = 'active'") {
             guard let path = row[1].text, !found.contains(path), !FileManager.default.fileExists(atPath: path) else { continue }
             try database.run("UPDATE sources SET state = 'gone' WHERE id = ?", row[0])
         }
     }
 
-    private func parserVersion(_ harness: String) -> Int { harness == "pi" ? piParser : claudeParser }
+    private func parserVersion(_ file: LogFile) -> Int {
+        file.kind == "spool" ? spoolParser : file.harness == "pi" ? piParser : claudeParser
+    }
 
-    /// Reads what's new in one file. Returns the bytes read, nil when nothing changed.
-    private func importFile(_ file: LogFile, database: IndexDatabase, now: Date, keepExamples: Bool) throws -> UInt64? {
-        let parser = parserVersion(file.harness)
+    /// Reads what's new in one file. Returns the bytes (and spool lines) read, nil when nothing changed.
+    private func importFile(_ file: LogFile, database: IndexDatabase, now: Date,
+                            keepExamples: Bool) throws -> (bytes: UInt64, spoolLines: Int)? {
+        let parser = parserVersion(file)
         let latest = try database.rows("""
             SELECT id, generation, inode, offset, tail_hash, parser_version, state, imported_at, session_key
             FROM sources WHERE path = ? ORDER BY generation DESC LIMIT 1
@@ -213,6 +228,9 @@ struct SessionImporter {
                 }
             }
 
+            if file.kind == "spool" {
+                return try importSpool(file, from: start, sourceID: sourceID, parser: parser, database: database, now: now)
+            }
             // A read from an offset has no header: the session and its cwd come from the earlier run.
             let cwd = start > 0 ? try sessionKey.flatMap { try database.value("SELECT cwd FROM sessions WHERE key = ?", $0)?.text } : nil
             var reader = FactReader(file: file.url, harness: file.harness, sessionKey: sessionKey, cwd: cwd, env: env)
@@ -232,7 +250,46 @@ struct SessionImporter {
                   state = 'active', imported_at = ?, session_key = ? WHERE id = ?
                 """, file.inode, file.size, read.offset, read.tailHash, parser, now.timeIntervalSince1970,
                 reader.sessionKey, sourceID)
-            return read.offset - start
+            return (read.offset - start, 0)
+        }
+    }
+
+    /// Spool lines from `start` into `hook_events` / `applies`, inside the caller's transaction.
+    private func importSpool(_ file: LogFile, from start: UInt64, sourceID: Int64, parser: Int, database: IndexDatabase,
+                             now: Date) throws -> (bytes: UInt64, spoolLines: Int) {
+        var lines = 0, unknown = 0
+        let read = try JSONLines.lines(of: file.url, from: start) { line, _ in
+            lines += 1
+            guard let entry = JSONLines.decode(line) else { return }
+            let outcome = try SpoolFacts.write(entry, kinds: spoolKinds, database: database, sourceID: sourceID, parserVersion: parser)
+            if case .unknown = outcome { unknown += 1 }
+        }
+        // A read from 0 (new generation, parser bump) counts afresh.
+        try database.run("""
+            UPDATE sources SET inode = ?, size = ?, offset = ?, tail_hash = COALESCE(?, tail_hash), parser_version = ?,
+              unknown_lines = CASE WHEN ? = 0 THEN ? ELSE unknown_lines + ? END, state = 'active', imported_at = ? WHERE id = ?
+            """, file.inode, file.size, read.offset, read.tailHash, parser, start, unknown, unknown, now.timeIntervalSince1970, sourceID)
+        return (read.offset - start, lines)
+    }
+
+    /// Deletes a spool day file no hook can still write to (its UTC day is at least two days
+    /// back) once every line of it is in the index and understood. The row stays as `done`.
+    private func retireSpool(_ file: LogFile, database: IndexDatabase, now: Date) throws {
+        guard let day = Spool.dayStart(ofFile: file.url.lastPathComponent),
+              let today = Spool.dayStart(ofFile: Spool.fileName(for: now)),
+              day <= today.addingTimeInterval(-2 * 86_400),
+              let current = Self.logFile(file.url, harness: file.harness, kind: file.kind) else { return }
+        guard let row = try database.rows("""
+            SELECT id, inode, offset, unknown_lines, parser_version, state FROM sources WHERE path = ?
+            ORDER BY generation DESC LIMIT 1
+            """, file.url.path).first,
+              row[5].text == "active", row[3].int == 0, (row[4].int ?? 0) >= spoolParser,
+              row[1] == .int(current.inode), row[2].int.map(UInt64.init) == current.size else { return }
+        try database.transaction {
+            try database.run("UPDATE sources SET state = 'done' WHERE id = ?", row[0])
+            guard unlink(file.url.path) == 0 || errno == ENOENT else {
+                throw IndexDatabase.Failure(message: "Can't delete \(file.url.path): \(String(cString: strerror(errno)))")
+            }
         }
     }
 }

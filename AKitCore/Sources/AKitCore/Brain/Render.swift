@@ -70,6 +70,8 @@ public enum Render {
         public let errors: [String]
         /// Things worth a look that don't stop it (unknown `{{field}}` in a template).
         public let warnings: [String]
+        /// Rendered skills and their mode (auto or manual), by name.
+        public var skills: [String: LayerSkill.Mode] = [:]
     }
 
     public static let skillsFolder = ".agents/skills"
@@ -227,7 +229,8 @@ public enum Render {
             errors.append("\(output.path) is inside .git; layers can't write there.")
         }
 
-        return Result(layers: order, outputs: outputs.sorted { $0.path < $1.path }, errors: errors, warnings: warnings)
+        return Result(layers: order, outputs: outputs.sorted { $0.path < $1.path }, errors: errors, warnings: warnings,
+                      skills: Dictionary(skills.map { ($0.skill.name, $0.skill.mode) }, uniquingKeysWith: { _, last in last }))
     }
 
     // MARK: - Pieces

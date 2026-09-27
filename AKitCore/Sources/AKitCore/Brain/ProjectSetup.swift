@@ -327,6 +327,8 @@ public enum ProjectSetup {
         } catch {
             throw Failure(message: "The project was written, but the answers couldn't be saved in \(plan.store.describe(id: plan.id)): \(error.localizedDescription)")
         }
+        // For before/after measurements: a local spool line, never in the brain; can't fail the apply.
+        Spool.append(applyEvent(plan), home: home)
         if lock.brainDirty { notes.append("The brain has uncommitted changes in skills/ or layers/; commit them so this render can be reproduced.") }
         // A local store (work Mac) is never committed: nothing about the project reaches the brain.
         if let storeBrain = plan.store.brain, fm.fileExists(atPath: storeBrain.appending(path: ".git").path) {
@@ -342,6 +344,13 @@ public enum ProjectSetup {
             }
         }
         return Outcome(backup: backup, written: written, removed: removed, notes: notes)
+    }
+
+    /// The spool line an apply leaves: project, layers and skill modes, `ts` in Unix ms (two
+    /// applies within one second are both kept).
+    static func applyEvent(_ plan: Plan, now: Date = Date()) -> [String: Any] {
+        ["v": Spool.lineVersion, "kind": "apply", "project": plan.id, "layers": plan.render.layers,
+         "skills": plan.render.skills.mapValues(\.rawValue), "ts": Spool.milliseconds(now)]
     }
 
     // MARK: - Helpers

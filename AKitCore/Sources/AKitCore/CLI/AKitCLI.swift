@@ -79,7 +79,13 @@ public enum AKitCLI {
                            hostName: String = ProcessInfo.processInfo.hostName,
                            installedTargets: [String] = [], out: (String) -> Void, err: (String) -> Void,
                            trash: (URL) throws -> URL? = SkillRemover.defaultTrash,
-                           ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil) async -> Int32 {
+                           ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil,
+                           input: () -> Data = { Data() }) async -> Int32 {
+        // Hidden; the akit binary runs it before everything else (main.swift). Silent, exit 0.
+        if arguments.first == "record-session" {
+            RecordSession.run(harness: RecordSession.harness(in: arguments), stdin: input(), env: env)
+            return 0
+        }
         do {
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {
@@ -380,6 +386,7 @@ public enum AKitCLI {
             lines.append("Read \(count(report.sources, "file")) (\(bytes)) in \(report.ms) ms. Added \(count(report.sessions, "session")), "
                          + "\(count(report.requests, "request")), \(count(report.toolCalls, "tool call")), \(count(report.skillCalls, "skill call")).")
         }
+        if report.spoolLines > 0 { lines.append("Read \(count(report.spoolLines, "spool line")) (session starts, applies).") }
         if report.pending > 0 { lines.append("\(count(report.pending, "file")) left for the next run.") }
         lines += report.skipped.map { "Skipped \($0.path): \($0.reason)" }
         return lines.joined(separator: "\n")

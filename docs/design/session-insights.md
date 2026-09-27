@@ -161,6 +161,9 @@ Recommendations use exact and git bindings by default; sibling bindings behind a
   spool file, and always exits 0.
 - Pi: an extension file in `~/.pi/agent/extensions/`, owned by AKit, same facts.
 - Safety net: launchd runs `akit sessions import` hourly (also parses the sessions).
+- The spool is one file per UTC day in `~/.akit/index/spool/`; each line is appended with
+  one `O_APPEND` write and no lock. That keeps parallel sessions' lines whole on a local
+  APFS home; homes on NFS or SMB are not supported. `akit apply` appends an `apply` line too.
 
 ### Evals (later, but examples are kept from v1)
 

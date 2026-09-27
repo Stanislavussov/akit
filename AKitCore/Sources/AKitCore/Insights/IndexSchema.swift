@@ -9,7 +9,8 @@ enum IndexSchema {
     static let keyVersion = 1
 
     /// Fact tables: every row carries `source_id` (a `sources` row, which is never deleted).
-    static let factTables = ["sessions", "requests", "tool_calls", "skill_listings", "skill_calls", "manual_call_examples"]
+    static let factTables = ["sessions", "requests", "tool_calls", "skill_listings", "skill_calls", "manual_call_examples",
+                             "hook_events", "applies"]
 
     static let migrations: [String] = [
         // v1: facts of Claude Code and Pi sessions. No FOREIGN KEY from facts to sources, so
@@ -54,6 +55,18 @@ enum IndexSchema {
         CREATE INDEX skill_listings_source ON skill_listings(source_id);
         CREATE INDEX skill_calls_source ON skill_calls(source_id);
         CREATE INDEX manual_call_examples_source ON manual_call_examples(source_id);
+        """,
+        // v2: spool lines. Session starts from the hooks (local paths: never serialized anywhere)
+        // and applies. `ts` in Unix milliseconds, as in the spool line.
+        """
+        CREATE TABLE hook_events(harness TEXT NOT NULL, session_id TEXT NOT NULL, ts INTEGER NOT NULL, source TEXT,
+          cwd TEXT, gitdir TEXT, common_dir TEXT, remote_id TEXT, branch TEXT, transcript TEXT,
+          source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL, PRIMARY KEY(harness, session_id, ts));
+        CREATE TABLE applies(project_id TEXT NOT NULL, ts INTEGER NOT NULL, layers TEXT, skills TEXT,
+          source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL, PRIMARY KEY(project_id, ts));
+        CREATE INDEX hook_events_session ON hook_events(session_id);
+        CREATE INDEX hook_events_source ON hook_events(source_id);
+        CREATE INDEX applies_source ON applies(source_id);
         """,
     ]
 

@@ -296,6 +296,23 @@ struct AKitCLITests {
         #expect(quiet.code == 0 && quiet.out.isEmpty)
     }
 
+    @Test func recordSessionNeedsNoBrain() async throws {
+        var out: [String] = [], err: [String] = []
+        let input = Data(#"{"session_id":"r1","cwd":"/work/app"}"#.utf8)
+        let code = await AKitCLI.run(["record-session", "--harness", "pi", "--bogus"], env: env, cwd: home,
+                                     out: { out.append($0) }, err: { err.append($0) }, input: { input })
+        #expect(code == 0 && out.isEmpty && err.isEmpty)
+        let spool = InsightsPaths(home: home).spool
+        let files = try fm.contentsOfDirectory(atPath: spool.path)
+        let text = try String(contentsOf: spool.appending(path: try #require(files.first)), encoding: .utf8)
+        #expect(files.count == 1 && text.contains(#""session_id":"r1""#) && text.contains(#""harness":"pi""#))
+        #expect(!fm.fileExists(atPath: Brain.defaultRoot(home: home).path))
+        // Garbage: still silent and 0.
+        #expect(await AKitCLI.run(["record-session"], env: env, cwd: home, out: { out.append($0) }, err: { err.append($0) },
+                                  input: { Data("nope".utf8) }) == 0)
+        #expect(out.isEmpty && err.isEmpty)
+    }
+
     @Test func secondImporterSkips() async throws {
         let held = try #require(try ImportLock.acquire(InsightsPaths(home: home).lock))
         let result = await akit("sessions", "import")
