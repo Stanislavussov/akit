@@ -1,0 +1,279 @@
+# Lab: measuring how well agent sessions work
+
+Status: design proposal 2026-09-28, not implemented. Replaces the Session Insights
+decision "AKit has no own eval runner" (see [Relation to other designs](#relation-to-other-designs)).
+
+## Goal
+
+Answer "was this session efficient, and does setup A work better than setup B?" with
+numbers that come from recorded data, not from the agent's own story. Start runs from
+AKit with a button; watch them in the terminal tool you already use (Orca, herdr);
+read the result in AKit.
+
+Name: `akit check` already validates the brain, so this feature is **Lab**:
+`akit lab …`, `~/.akit/lab/`, a Lab screen.
+
+v1 scope: Claude Code only; Orca, herdr and background launchers; one run at a time.
+
+## What we learned first (2026-09-28, 21 AKit sessions)
+
+- Cache hit ratio is 93–98% in every session. It is a health check, not a quality signal.
+- About 95% of all tokens are cache reads. Total tokens ≈ calls × context size, so the
+  useful cost numbers are **fresh tokens** (input + cache creation + output) and **API calls**.
+- **Context rent** (each chunk's size × the number of later calls that re-read it) shows
+  where the cost goes: ~22% baseline context (median 41k per call: system prompt, tools,
+  CLAUDE.md, skill list), ~31% reading code (Bash `cat`/`grep`/`sed -n` 19%, Read 11%),
+  ~21% the agent's own output (heredoc file writes stay in context), ~15% harness and
+  plugin injections. The split inside one gap between calls is by characters, so it is
+  approximate. Only attachments the model sees count: `hook_success` and
+  `prompt_snapshot` records are log-only.
+- Friction numbers (calls, re-reads of unchanged files, interrupts, rejected tool calls,
+  commits that never reached master) clearly flagged the one bad session.
+- Write amplification from Edit/Write inputs can't be measured: in auto mode most files
+  are written through Bash.
+- Linking commits to a session by hashes in its output is noisy (`git log --oneline -3`
+  after a commit). Keep a hash only if its subject is in the commit command and its time
+  is inside the session. Lab avoids the problem by giving each run its own session id.
+- Survival of committed lines needs time (≈30 days) to mean anything.
+- Absolute numbers of one session say little. Comparisons of the same task under
+  different setups do. That is what replay tasks are for.
+
+## Flow
+
+```
+AKit UI ──(1) run spec──▶ ~/.akit/lab/<run-id>/run.json   (queued)
+   │
+   └─(2) launcher: "run this command in folder X, tab title Y", returns a handle
+          ├─ Orca        orca terminal create --worktree path:<X> --title <Y> --command <cmd> --json
+          ├─ herdr       herdr pane split … → herdr pane run <pane-id> <cmd>
+          └─ background  plain child process of AKit, no window
+                         │
+                         ▼
+   ~/.local/bin/akit lab run <run-id>   (visible in the tab; the terminal only hosts it)
+     1. prepare the work folder (replay: isolated clone at the base commit)
+     2. start the harness with a session id chosen by AKit
+     3. run checks (hidden tests under a memory watchdog)
+     4. compute metrics from the transcript and git
+     5. write result.json, state.json = finished
+                         │
+AKit UI ◀──(3) watches ~/.akit/lab/ and shows state and result
+```
+
+- One command for every environment: `akit lab run <run-id>`, called by absolute path
+  (`~/.local/bin/akit`), since a terminal tab's PATH is not AKit's. The same command works
+  from the CLI, an agent and the UI button (CLI first, the UI is a button on top).
+- A launcher knows one thing: run a command in a folder with a title, and return a handle
+  to bring that tab forward later. Launchers call their CLI with `--json` and store the
+  handle (Orca terminal handle; herdr workspace and pane id) in `run.json`.
+- AKit picks the session id (`claude --session-id <uuid> --name "Lab: …"`), so the
+  run's transcript is known exactly.
+- Terminal.app / iTerm are left out of v1: driving them needs the macOS Automation
+  permission prompt. Other tools can get an adapter later.
+
+## Kinds of runs
+
+| Kind | Agent | Where it runs | Result |
+|---|---|---|---|
+| **Session analysis** | no | inside AKit, instant | cost, friction and context rent of one recorded session |
+| **Session review** | yes | terminal | a skill reads the session and writes a qualitative review |
+| **Replay task** | yes | terminal, N repeats × setups | hidden tests passed or not, and what it cost |
+
+Session analysis is plain computation over the transcript and git; it needs no
+terminal, no run folder and should be the first thing built.
+
+## Where a run opens
+
+Picked from the target folder, same path templates as session binding in
+`session-insights.md`; the run sheet can override it.
+
+- `~/orca/workspaces/{repo}/*` → Orca, that worktree.
+- `~/.herdr/worktrees/{repo}/*` → herdr, that worktree.
+- Repository root → the root (Orca: `path:<root>`).
+- A session review opens where the reviewed session ran, if that folder still exists;
+  otherwise at the repository root.
+- A replay task runs in its own clone (see below), opened as a new tab in the tool of
+  the repository's usual environment.
+
+Commands checked against Orca 1.4.200, herdr 0.7.5 and Claude Code 2.1.283.
+
+## Run lifecycle
+
+`run.json` is written once by AKit. `state.json` is rewritten by `akit lab run` at every
+phase change:
+
+```json
+{ "status": "queued | running | finished | cancelled | error",
+  "phase": "prepare | agent | tests | metrics", "pid": 51234,
+  "startedAt": "2026-09-28T18:02:11Z", "updatedAt": "2026-09-28T18:14:40Z" }
+```
+
+- AKit shows `running` only while the pid is alive. A dead pid without `finished`
+  becomes `error` ("the run stopped: tab closed or crash").
+- Cancel in AKit sends SIGTERM to the pid; `akit lab run` stops the harness, kills its
+  test helpers and writes `cancelled`.
+- v1 runs one run at a time from a queue: parallel runs mean cold `swift build`s and
+  test helpers of up to 2 GB each. Repeats and setups are queued runs.
+
+## Run folder
+
+```
+~/.akit/lab/<run-id>/
+  run.json        by AKit before start: kind, target, harness, setup, environment +
+                  launcher handle, session id, transcript path, repeat index, base commit
+  state.json      by `akit lab run`, see lifecycle
+  result.json     by `akit lab run` at the end (schema below); the only writer
+  review.json     by the review skill only: { "findings": [ { "title", "detail" } ] }
+  summary.md      by the review skill only
+  agent.jsonl     raw stream-json of a headless run; the tab shows a readable version
+  check.log       hidden-test output, watchdog kills
+```
+
+`result.json`:
+
+```json
+{
+  "schema": 1,
+  "metrics": { "calls": 146, "freshTokens": 700000, "cacheReadTokens": 24900000,
+               "peakContext": 299000, "baselineContext": 41000,
+               "contextRent": { "baseline": 0.22, "readCode": 0.31, "ownOutput": 0.21,
+                                "injections": 0.15, "other": 0.11 },
+               "toolErrors": 5, "rereads": 0, "interrupts": 0, "rejected": 0,
+               "commits": 3, "wallSeconds": 1820 },
+  "tests": { "status": "passed | failed | not-run",
+             "failToPass": { "passed": 7, "total": 7 },
+             "passToPass": { "passed": 3, "total": 3 }, "timeouts": 0 },
+  "review": { "status": "ok | missing | invalid" }
+}
+```
+
+Who writes what:
+
+- **Numbers come from `akit lab run`**, never from the agent: tokens, calls, context
+  rent, tests, commits. An agent can't be trusted to report its own metrics.
+- **The review skill writes only `review.json` and `summary.md`**, into `AKIT_LAB_DIR`
+  (passed with `--add-dir "$AKIT_LAB_DIR"`, since it is outside the working folder).
+  `akit lab run` validates `review.json` and records the review status separately from
+  the test status; a missing or broken review never hides the numbers.
+- Summaries and findings pass through `SecretFilter` before AKit shows them.
+
+## Replay tasks
+
+A task is made from a commit:
+
+- **Prompt**: the commit message (subject and body) plus a fixed line: "Implement this
+  in the repository. Build and tests must pass. Commit when done."
+- **Base**: the commit's parent.
+- **Hidden tests**: the commit's test files, copied into the work folder after the agent
+  finishes.
+- **Validation before use**: run the hidden tests on the base and on the commit itself.
+  Tests that fail on the base and pass on the commit are *fail-to-pass*; tests that pass
+  on both are *pass-to-pass*. A task needs at least one fail-to-pass test. Tests must use
+  API that exists at the base, so good tasks are review rounds and fixes of existing
+  code, not brand-new API.
+
+Pilot (2026-09-28): `1c9cf65` "Report layer.yaml mistakes instead of dropping them
+silently". On the commit 10/10 hidden tests pass. On the base 3 pass, 6 fail and 1 hangs
+forever: 7 fail-to-pass, 3 pass-to-pass.
+
+### Isolation: the answer must not be reachable
+
+A git worktree shares refs and objects with its repository, so `git log master` or
+`git show <sha>` would show the solution. Replay therefore runs in a fresh repository
+that holds only the base commit's history: `git init work`, `git fetch --no-tags <repo>
+<base-sha>`, `git checkout --detach FETCH_HEAD`. Checked on the pilot: no refs, no
+remote, the answer commit is not among the objects. The original session transcripts are the
+other leak (Claude's own history search, OMC `session_search` in the full setup):
+after the run, Lab flags a replay whose transcript mentions the target sha, its subject
+line or a path under `~/.claude/projects`, and leaves it out of comparisons.
+
+The clone lives in `~/.akit/lab/<run-id>/work` and is moved to the Trash when the run
+ends, unless "keep" is ticked; no branch is left in the real repository.
+
+### Test runner
+
+Rules learned in the pilot:
+
+- One test per process with a 30 s limit; on timeout kill the whole process group and
+  any leftover `swiftpm-testing-helper` of that folder (it outlives `swift test`).
+- `--filter 'Suite/name\('`; a run with 0 tests is "not run", not "pass".
+- A watchdog kills test helpers above 2 GB (see the memory note about the 35 GB test).
+
+### Setups to compare (Claude Code)
+
+| Setup | Flags |
+|---|---|
+| full | your normal setup |
+| lean | `--setting-sources project`: no user plugins or hooks (OMC, LSP, akit) |
+| model / effort | `--model …`, `--effort …` |
+
+Measured 2026-09-28 with a one-line prompt: first-call context 31k (full) vs 21.8k
+(lean). Asked in both setups whether its instructions mention oh-my-claudecode and
+whether `swiftui-expert-skill` is available, the model said yes to both in lean too, so
+`~/.claude/CLAUDE.md` and `~/.claude/skills` still load. A fully clean setup would need
+`--bare`, which only works with an API key (no OAuth); a separate `CLAUDE_CONFIG_DIR`
+loses the login. Every setup pins model and effort explicitly, since `lean` doesn't read
+the user settings that set them.
+
+Every replay run gets the same safety flags:
+
+```
+claude -p --verbose --output-format stream-json --session-id <uuid> --name "Lab: …"
+       --permission-mode auto --permission-prompts none
+       --disallowedTools "Bash(git push:*)"
+```
+
+`--permission-prompts none` denies anything that would ask (there is nobody to answer in
+headless mode); those denials count as `rejected`. Replay runs are headless so typing
+into the run is impossible and setups stay comparable; the tab shows the stream in a
+readable form. LLM runs vary, so a comparison needs at least 3 repeats per setup; the
+Lab screen shows the spread, not only the mean.
+
+## UI
+
+- **Sessions → "Analyze"**: session analysis, shown in place.
+- **Sessions → "Review in terminal…"** and **Lab → "New run…"**: kind, target (session,
+  commit, task set), setup, repeats, environment (prefilled from the path). Harness is
+  Claude Code only in v1, so the sheet doesn't offer a choice yet.
+- **Lab screen**: the queue and past runs with status, environment, target, time and key
+  numbers. A run shows its summary, metrics, test results, Cancel while running and
+  "Show in Orca/herdr" (`orca terminal switch --terminal <handle>` /
+  `herdr pane` focus by the stored id). Runs of the same task line up as a setup
+  comparison.
+
+## Safety
+
+- Replay runs in an isolated clone, never in the real repository; `git push` is denied;
+  anything that would ask for permission is denied. `make install` and anything touching
+  `~/Applications` stays with the user.
+- Clones and run folders go to the Trash, like every other delete in AKit.
+- Test runs always go through the watchdog.
+- Lab reads transcripts; it never shows secrets (auth files, tokens, MCP env/headers,
+  `settings.local.json`), same rules as everywhere else.
+
+## Relation to other designs
+
+- **Session Insights** (`session-insights.md`, branch `session-insights`): this replaces
+  "AKit has no own eval runner". Skill-trigger evals still belong to skill-creator; Lab
+  measures whole sessions and setups. Update that doc when both are on master. Lab reuses
+  its path templates for picking the environment and, once merged, its SQLite index for
+  session analysis.
+- **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
+  launchers live inside it.
+
+## Roadmap
+
+1. Session analysis in AKit: metrics and context rent for one session, shown on the
+   Sessions screen. No agent, no terminal.
+2. `akit lab run`, run folder and lifecycle, the queue, Orca / herdr / background
+   launchers and the Lab screen.
+3. Replay tasks: task from a commit with fail-to-pass validation, isolated clone,
+   setups, repeats, leak flag, comparison view.
+4. Session review skill as its own kind.
+
+## Open questions
+
+- Which few numbers belong on a run's card, and which only in details.
+- herdr: focusing a pane that runs a headless `claude -p` (no agent detected) needs a
+  check against the real tool before step 2.
+- Whether task sets live in the brain repo (shared between Macs) or only in `~/.akit/lab`.
+- Pi and other harnesses after v1: session id and headless flags differ.
