@@ -68,12 +68,15 @@ public enum BrainSync {
         return status
     }
 
-    /// Fetches, brings in remote commits, pushes local ones.
+    /// Fetches, brings in remote commits, pushes local ones. On a work Mac (or with a broken
+    /// `machine.json`) the commits a rebase makes carry the brain's own git identity, never the
+    /// environment's or a global signing key, and it refuses to rebase without that identity.
     @discardableResult
     public static func sync(_ root: URL, env: HarnessEnvironment) async throws(Failure) -> Outcome {
         guard FileManager.default.fileExists(atPath: root.appending(path: ".git").path) else {
             throw Failure(message: "\(root.path) is not a git repo.")
         }
+        let work = MachineProfile.load(home: env.homeDirectory).isWork
         if let problem = await blocker(in: root, env: env) { throw Failure(message: problem) }
         guard let upstream = await upstream(in: root, env: env) else {
             throw Failure(message: "The brain has no remote to sync with. Add one: git -C \(root.path) remote add origin <url> && git -C \(root.path) push -u origin HEAD")
@@ -90,7 +93,7 @@ public enum BrainSync {
             let before = lastLine(try await git(["rev-parse", "HEAD"], in: root, env: env))
             if ahead == 0 {
                 // Uncommitted edits stay; git refuses only when the pull would touch them.
-                try await git(["merge", "--ff-only", "--quiet", "@{upstream}"], in: root, env: env, timeout: 120,
+                try await git(["merge", "--ff-only", "--quiet", "@{upstream}"], in: root, env: env, timeout: 120, work: work,
                               failure: "Couldn't bring in the remote changes (commit or undo your edits to those files first)")
             } else {
                 // Both Macs committed: put the local commits on top of the remote ones.
@@ -102,10 +105,17 @@ public enum BrainSync {
                 guard withoutWarnings(merges).isEmpty else {
                     throw Failure(message: "This Mac has merge commits the remote doesn't have. Merge by hand in \(root.path), then sync again.")
                 }
+                if work {
+                    do {
+                        try await WorkFilter.requireOwnIdentity(brain: root, env: env)
+                    } catch {
+                        throw Failure(message: "Both this Mac and the remote have new commits; putting this Mac's on top would re-stamp them. \(error.message). Nothing was changed.")
+                    }
+                }
                 do {
-                    try await git(["rebase", "--quiet", "@{upstream}"], in: root, env: env, timeout: 120)
+                    try await git(["rebase", "--quiet", "@{upstream}"], in: root, env: env, timeout: 120, work: work)
                 } catch {
-                    try await undoRebase(in: root, env: env, after: error)
+                    try await undoRebase(in: root, env: env, work: work, after: error)
                 }
             }
             let diff = try await git(["-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", "-z", before, "HEAD"], in: root, env: env)
@@ -114,15 +124,15 @@ public enum BrainSync {
         }
         if ahead > 0 {
             try await git(["push", "--quiet", upstream.remote, "HEAD:\(upstream.merge)"], in: root, env: env, timeout: 60,
-                          extra: ssh, failure: "Couldn't push")
+                          extra: ssh, work: work, failure: "Couldn't push")
         }
         return Outcome(pulled: behind, pushed: ahead, pulledPaths: pulledPaths)
     }
 
     /// A failed rebase: abort it and say why, or say plainly that it is still half done.
-    private static func undoRebase(in root: URL, env: HarnessEnvironment, after error: Failure) async throws(Failure) -> Never {
+    private static func undoRebase(in root: URL, env: HarnessEnvironment, work: Bool, after error: Failure) async throws(Failure) -> Never {
         let conflicts = records((try? await git(["-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=U", "-z"], in: root, env: env)) ?? "")
-        let aborted = (try? await git(["rebase", "--abort"], in: root, env: env, timeout: 60)) != nil
+        let aborted = (try? await git(["rebase", "--abort"], in: root, env: env, timeout: 60, work: work)) != nil
         let fm = FileManager.default
         guard aborted, !fm.fileExists(atPath: root.appending(path: ".git/rebase-merge").path),
               !fm.fileExists(atPath: root.appending(path: ".git/rebase-apply").path) else {
@@ -210,16 +220,19 @@ public enum BrainSync {
         withoutWarnings(output).split(separator: "\0").map(String.init).filter { !$0.trimmingCharacters(in: .newlines).isEmpty }
     }
 
-    /// Runs git in the brain; never waits for a password prompt.
+    /// Runs git in the brain; never waits for a password prompt. `work`: as `WorkFilter` commits,
+    /// without the identity variables and unsigned, so a work Mac's rebase carries the brain's identity.
     @discardableResult
     private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment, timeout: TimeInterval = 30,
-                            extra: [String: String] = [:], failure: String? = nil) async throws(Failure) -> String {
+                            extra: [String: String] = [:], work: Bool = false, failure: String? = nil) async throws(Failure) -> String {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found.") }
-        let environment = env.variables.merging(["PATH": env.pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
+        var environment = env.gitVariables
             .merging(extra) { $1 }
-        let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: environment, timeout: timeout)
+        if work { environment = WorkFilter.withoutIdentity(environment) }
+        let result = await ProcessRunner.run(git, arguments: (work ? WorkFilter.noSigning : []) + arguments, directory: root,
+                                             environment: environment, timeout: timeout)
         guard let result, result.succeeded else {
-            let output = result.map { $0.timedOut ? "timed out" : $0.output.trimmingCharacters(in: .whitespacesAndNewlines) } ?? "couldn't start git"
+            let output = result.map(\.failureText) ?? "couldn't start git"
             throw Failure(message: "\(failure ?? "git \(arguments.first { !$0.hasPrefix("-") } ?? "") failed"): \(output)")
         }
         return result.output

@@ -20,16 +20,46 @@ public enum ProcessRunner {
     public static func run(_ executable: URL, arguments: [String], directory: URL? = nil,
                     environment: [String: String], timeout: TimeInterval,
                     killGrace: TimeInterval = 2) async -> Result? {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+        // A bounded number of programs at once, so many parallel callers can't swamp the Mac.
+        await slots.acquire()
+        let result = await withCheckedContinuation { continuation in
+            // Its own thread, not a GCD worker: many parallel runs each block a thread, and a
+            // starved worker pool would never run the waiter below, so a run could wait forever.
+            Thread.detachNewThread {
                 continuation.resume(returning: runBlocking(executable, arguments: arguments, directory: directory,
                                                            environment: environment, timeout: timeout,
                                                            killGrace: killGrace))
             }
         }
+        await slots.release()
+        return result
     }
 
-    /// Blocking run; called only on a background queue. nil = could not start.
+    private static let slots = Slots(limit: 16)
+
+    /// At most `limit` holders at once; the others wait their turn, first come, first served.
+    private actor Slots {
+        private let limit: Int
+        private var used = 0
+        private var waiting: [CheckedContinuation<Void, Never>] = []
+
+        init(limit: Int) { self.limit = limit }
+
+        func acquire() async {
+            guard used >= limit else {
+                used += 1
+                return
+            }
+            await withCheckedContinuation { waiting.append($0) }
+        }
+
+        /// A waiter takes the slot over; otherwise it is freed.
+        func release() {
+            if waiting.isEmpty { used -= 1 } else { waiting.removeFirst().resume() }
+        }
+    }
+
+    /// Blocking run; called only on its own thread. nil = could not start.
     private static func runBlocking(_ executable: URL, arguments: [String], directory: URL?,
                                     environment: [String: String], timeout: TimeInterval,
                                     killGrace: TimeInterval) -> Result? {
@@ -60,7 +90,7 @@ public enum ProcessRunner {
 
         let exited = DispatchSemaphore(value: 0)
         let status = StatusBox()
-        DispatchQueue.global().async {
+        Thread.detachNewThread {
             var raw: Int32 = 0
             while waitpid(pid, &raw, 0) == -1 && errno == EINTR {}
             status.value = raw
@@ -128,6 +158,18 @@ public enum ProcessRunner {
         var pid: pid_t = 0
         guard posix_spawn(&pid, executable.path, &actions, &attributes, argv, envp) == 0 else { return nil }
         return pid
+    }
+}
+
+extension ProcessRunner.Result {
+    /// Why a run failed, for a message: `timed out`, else its trimmed output.
+    var failureText: String { timedOut ? "timed out" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+extension HarnessEnvironment {
+    /// The environment for git: the full PATH, and never a password prompt.
+    var gitVariables: [String: String] {
+        variables.merging(["PATH": pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
     }
 }
 

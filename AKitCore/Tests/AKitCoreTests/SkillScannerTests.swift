@@ -343,6 +343,14 @@ struct MoreHarnessTests {
 
     var env: HarnessEnvironment { HarnessEnvironment(homeDirectory: home) }
 
+    /// A folder outside home without a git repo walks up to `/` and stops there
+    /// (URL's parent of `/` is `/..`, which once looped forever).
+    @Test func piAncestorsStopAtRootOutsideHome() {
+        let dirs = PiAdapter.ancestorsToGitRoot(of: URL(filePath: "/nonexistent-akit/app", directoryHint: .isDirectory), home: home)
+        #expect(dirs.map(\.path) == ["/nonexistent-akit/app", "/nonexistent-akit", "/"])
+        #expect(PiSkillPaths.ancestors(of: "/a/b") == ["/a/b", "/a", "/"])
+    }
+
     func write(_ path: String, _ text: String = "---\nname: x\ndescription: d\n---\n") throws {
         let url = home.appending(path: path)
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)

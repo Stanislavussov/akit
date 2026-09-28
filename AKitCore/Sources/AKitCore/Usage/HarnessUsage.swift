@@ -103,13 +103,8 @@ extension ClaudeSessions {
                   let message = entry["message"] as? JSONLines.Object, let usage = message["usage"] as? JSONLines.Object,
                   let model = message["model"] as? String, model != "<synthetic>",
                   let time = JSONLines.date(entry["timestamp"]) else { continue }
-            func count(_ key: String, in object: JSONLines.Object? = usage) -> Int { (object?[key] as? NSNumber)?.intValue ?? 0 }
-            let tokens = TokenCounts(input: count("input_tokens"), output: count("output_tokens"),
-                                     cacheRead: count("cache_read_input_tokens"),
-                                     cacheWrite: count("cache_creation_input_tokens"),
-                                     reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? JSONLines.Object))
             let record = UsageRecord(time: time, harness: .claudeCode, provider: "anthropic", model: model,
-                                     tokens: tokens, cost: nil)
+                                     tokens: tokens(fromClaudeUsage: usage), cost: nil)
             let id = message["id"] as? String ?? entry["requestId"] as? String
             // The last line of a response carries its final usage.
             if let id, let index = byID[id] {
@@ -184,10 +179,7 @@ extension PiSessions {
                       message["role"] as? String == "assistant", let usage = message["usage"] as? JSONLines.Object,
                       let time = JSONLines.date(message["timestamp"]) ?? JSONLines.date(entry["timestamp"]),
                       time >= since else { return nil }
-                func count(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
-                let tokens = TokenCounts(input: count("input"), output: count("output"),
-                                         cacheRead: count("cacheRead"), cacheWrite: count("cacheWrite"))
-                let cost = ((usage["cost"] as? JSONLines.Object)?["total"] as? NSNumber)?.doubleValue
+                let tokens = tokens(fromPiUsage: usage), cost = cost(fromPiUsage: usage)
                 // Failed requests are saved with all counts at zero.
                 guard tokens.total > 0 || (cost ?? 0) > 0 else { return nil }
                 let record = UsageRecord(time: time, harness: .pi, provider: message["provider"] as? String ?? "unknown",

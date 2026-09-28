@@ -1,6 +1,11 @@
 # Session insights: trim the harness config from real usage
 
-Status: design agreed 2026-09-26 (grilling session). Nothing implemented yet.
+Status: design agreed 2026-09-26 (grilling session). Steps 0–7 of the Order are
+implemented: SQLite index and import, capture (Claude plugin, Pi extension, hourly
+import), project binding, `akit stats`, per-machine summaries, `akit recommend`
+(apply, dismiss), and before/after measurement with k calibration (`akit stats changes`,
+`akit stats mark`). Left (step 8): OpenCode, Codex, the Insights screen, AGENTS.md size
+findings, behavior lessons, export of manual-call examples to skill-creator evals.
 
 ## Goal
 
@@ -79,9 +84,14 @@ didn't already hold except counts.
 Manual really removes the description (checked 2026-09-26): the three
 `disable-model-invocation: true` skills in `~/.claude/skills` (`akit`, `zoom-out`,
 `setup-matt-pocock-skills`) are absent from a live Claude `skill_listing`, auto
-skills are present. For Pi only the docs say so; step 1 confirms it with
-`PiPromptProbe` on a project with a manual skill. If a harness keeps the
-description, the rule saves nothing there and must not recommend for it.
+skills are present. Pi too (checked 2026-09-27, Pi 0.84.2, with the
+`PiPromptProbe` extension in a project with one manual and one auto skill in
+`.agents/skills`): the manual skill is still in `systemPromptOptions.skills`, but
+neither its name nor its description is in the final system prompt; the auto
+skill's description is. So the later Pi denominator (`before_agent_start` skills)
+must drop manual skills. Pi loads project skills only in trusted folders
+(`~/.pi/agent/trust.json`). If a harness keeps the description, the rule saves
+nothing there and must not recommend for it.
 
 Subagents: their transcripts (`<session>/subagents/*.jsonl`) carry their own
 `skill_listing` (19 of the last 20 checked). A subagent run is not a session in
@@ -110,9 +120,13 @@ the denominator; its model calls do count as calls (they protect the skill).
 - Summary on top: ≈ context per request by owner (layers, plugins, hand-installed,
   built-in).
 - Layer skill → patch to `layer.yaml` (mode `manual`), applied through `plan`/`apply`.
-- Plugin → advice only: disable it in this project if other projects use it,
-  otherwise globally. Writing `enabledPlugins` waits for harness settings in layers.
+- Plugin → advice only, one per plugin: disable it in this project if other projects
+  use it, otherwise globally; only when the model calls none of its skills (see Interface). Writing `enabledPlugins` waits for harness settings in layers.
 - Hand-installed skill → advice: import into the brain in manual mode.
+- A layer lists it (e.g. as manual), but the installed copy is not one AKit wrote
+  (`akit apply` skips such files) → advice: `akit apply --home --include-unmanaged`
+  (or `--include PATH`) so the layer's mode takes effect. `akit stats` counts these as
+  owner `unknown`.
 - Built-in → cost only, collapsed.
 
 ### Cost metric
@@ -124,6 +138,15 @@ the denominator; its model calls do count as calls (they protect the skill).
   cache write) of sessions in the project before and after `apply`. Compare only
   sessions with the same harness version and model, close in time; otherwise
   "not enough data".
+- `akit stats changes`: anchors are applies and marks (`akit stats mark "<note>"
+  [--at DATE]` for changes made by hand). Sessions within 14 days on each side, at
+  least 5 per side in one (harness, version, model) group; a home apply or a mark
+  counts every session on the Mac, a project apply that project's sessions. The
+  listing's character delta comes from skills listed in most sessions on one side
+  and none on the other; k = characters / recorded token delta. A pair calibrates
+  when ≥ 400 characters changed and 1 ≤ k ≤ 10; each script's k is the median of
+  its pairs once it has two (else the default), saved in the index's `meta` by
+  `akit stats changes`.
 
 ### Binding a session to a project
 
@@ -133,8 +156,8 @@ keeps its method and confidence:
 
 1. SessionStart hook (while the folder exists): `cwd`, `gitdir` of a worktree
    (`.git` file → main repo), `origin` remote, session id.
-2. `git worktree list --porcelain` in known repos (lists deleted worktrees as
-   prunable until pruned).
+2. The worktree lists of known repos, read from `<common>/worktrees/*/gitdir` as
+   `git worktree list` does (deleted worktrees stay listed until pruned).
 3. `gitBranch` from Claude logs confirms a candidate repo.
 4. Siblings: a resolved folder with the same parent (`<root>/<repo>/<branch>`).
 5. Path templates / aliases in config, e.g. `~/orca/workspaces/{repo}/*`.
@@ -142,7 +165,13 @@ keeps its method and confidence:
 
 Not tied to any workspace tool (Orca, herdr, …). Tool-specific resolvers are
 optional plugins behind "path → repo or nothing", starting with path templates.
-Recommendations use exact and git bindings by default; sibling bindings behind a flag.
+Recommendations use exact, git and path-template bindings by default; sibling bindings
+behind a flag. A path template names the repository (`{repo}` in the path), so it counts
+like a git confirmation (decided 2026-09-28: most old sessions ran in deleted Orca and herdr
+worktrees whose branches were squash-merged and deleted, so git can't confirm them). Orca
+(`~/orca/workspaces/{repo}/*`) and herdr (`~/.herdr/worktrees/{repo}/*`) are built in; other
+tools go into `pathTemplates`, and `akit stats bindings` suggests templates from unbound
+folders that name a known repository.
 
 ### Capturing before the folder disappears
 
@@ -156,6 +185,9 @@ Recommendations use exact and git bindings by default; sibling bindings behind a
   spool file, and always exits 0.
 - Pi: an extension file in `~/.pi/agent/extensions/`, owned by AKit, same facts.
 - Safety net: launchd runs `akit sessions import` hourly (also parses the sessions).
+- The spool is one file per UTC day in `~/.akit/index/spool/`; each line is appended with
+  one `O_APPEND` write and no lock. That keeps parallel sessions' lines whole on a local
+  APFS home; homes on NFS or SMB are not supported. `akit apply` appends an `apply` line too.
 
 ### Evals (later, but examples are kept from v1)
 
@@ -183,6 +215,15 @@ Recommendations use exact and git bindings by default; sibling bindings behind a
 - Compact by default (summary + top N); details on request, since the agent pays
   tokens for what it reads.
 - Advice outside layers is in the same list, typed "advice", without `apply`.
+- A plugin is enabled or disabled as a whole, so its skills are judged together:
+  one advice per plugin and scope, with `"skill": "*"` and the skills it is about
+  in `evidence.skills` (only plugin advice has that field; JSON stays version 1).
+  `disablePluginInProject` / `disablePluginGlobally` when the model called none
+  of its listed skills in scope and the plugin as a whole meets N sessions / D days
+  (evidence summed over its skills; another Mac's day counts the most sessions any
+  one skill was listed in); otherwise at most one `unusedPluginSkills` note with
+  the never-called skills that meet the rule on their own. Ids hash
+  `rule|plugin|<name>|*|scope` (disable) and `rule|plugin|<name>|*unused|scope` (note).
 
 ## Order
 

@@ -43,8 +43,17 @@ brain/
   projects/<id>/
     answers.json               # layers + field values
     lock.json                  # brain commit each file was rendered from
+    usage/<machine id>.json    # this project's skill use per day, one file per Mac
+    dismissed.json             # recommendations dismissed for this project
   machines/<name>.yaml         # which harnesses and core layer per machine
+  plugins/                     # local Claude marketplace with the akit plugin (session hook)
+  insights/
+    machines/<file>.json       # skill use per day per Mac (<id>, or <pseudonym> on a work Mac)
+    dismissed.json             # global recommendations dismissed
 ```
+
+On a work Mac the `projects/` files (answers, lock, usage, dismissed) live in the
+local store, `~/.akit/local/projects/<id>/`, and never reach the brain.
 
 Project `<id>` is the `origin` remote as `host/owner/repo` (lowercase, no
 credentials, no `.git`), e.g. `projects/github.com/me/app/`. Projects without a
@@ -66,7 +75,12 @@ project ids, paths, answers and locks name the employer's repos.
   its files, and lists the records the brain already has; removing work ones from the
   brain (and its remote's history) is left to the user.
 - Skills and layers still come from the brain; the only things a work machine
-  commits to it are skill and layer edits the user makes on purpose.
+  commits to it are skill and layer edits the user makes on purpose, and its usage
+  summary `insights/machines/<pseudonym>.json` (counts of brain skills per day, under a
+  random pseudonym). `WorkFilter` checks that commit's paths, message and bytes and refuses
+  without a brain `user.email` and `user.name` of its own; per-project summaries stay in the
+  local store. `akit sync` rebases a work machine's commits with that identity too (never the
+  environment's or a global signing key), and refuses to rebase without it.
 - Fails closed: a `machine.json` that can't be read counts as work (with a warning);
   install.sh stops if `AKIT_MACHINE` can't be applied; Apply refuses a preview made
   before the role changed. The app asks before going from work back to personal.
@@ -138,6 +152,10 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 
 The mode belongs to the layer, not the skill, so the same skill can be
 `manual` in the core layer and `auto` in a project.
+
+`keep_auto: true` on a skill entry pins it to `auto`: `akit recommend` never proposes
+making it manual (`akit recommend dismiss` on a layer skill sets it). Older AKit
+ignores the key.
 
 ## What lands in the project
 

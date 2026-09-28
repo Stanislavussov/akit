@@ -106,10 +106,14 @@ public enum ProjectSetup {
            result.succeeded, let id = normalizedRemote(result.output) {
             return id
         }
-        let path = project.standardizedFileURL.path, root = projectsRoot.standardizedFileURL.path
+        return localID(path: project.standardizedFileURL.path, projectsRoot: projectsRoot.standardizedFileURL.path)
+    }
+
+    /// `local/<path under the projects root>`, for a project without a git remote.
+    static func localID(path: String, projectsRoot root: String) -> String {
         if path.hasPrefix(root + "/") { return "local/" + cleanPath(String(path.dropFirst(root.count + 1))) }
         // Outside the projects root: the folder name plus a short hash, so two "app" folders differ.
-        return "local/" + cleanPath(project.lastPathComponent) + "-" + sha256(Data(path.utf8)).prefix(8)
+        return "local/" + cleanPath((path as NSString).lastPathComponent) + "-" + sha256(Data(path.utf8)).prefix(8)
     }
 
     /// `git@github.com:Owner/Repo.git`, `https://user@github.com/owner/repo`, `ssh://git@host:22/o/r.git`
@@ -411,6 +415,8 @@ public enum ProjectSetup {
         } catch {
             throw Failure(message: "The project was written, but the answers couldn't be saved in \(plan.store.describe(id: plan.id)): \(error.localizedDescription)")
         }
+        // For before/after measurements: a local spool line, never in the brain; can't fail the apply.
+        Spool.append(applyEvent(plan), home: home)
         if lock.brainDirty { notes.append("The brain has uncommitted changes in skills/ or layers/; commit them so this render can be reproduced.") }
         // A local store (work Mac) is never committed: nothing about the project reaches the brain.
         if let storeBrain = plan.store.brain, fm.fileExists(atPath: storeBrain.appending(path: ".git").path) {
@@ -426,6 +432,13 @@ public enum ProjectSetup {
             }
         }
         return Outcome(backup: backup, written: written, removed: removed, notes: notes)
+    }
+
+    /// The spool line an apply leaves: project, layers and skill modes, `ts` in Unix ms (two
+    /// applies within one second are both kept).
+    static func applyEvent(_ plan: Plan, now: Date = Date()) -> [String: Any] {
+        ["v": Spool.lineVersion, "kind": "apply", "project": plan.id, "layers": plan.render.layers,
+         "skills": Dictionary(plan.render.skills.map { ($0.name, $0.mode.rawValue) }, uniquingKeysWith: { _, last in last }), "ts": Spool.milliseconds(now)]
     }
 
     // MARK: - Helpers

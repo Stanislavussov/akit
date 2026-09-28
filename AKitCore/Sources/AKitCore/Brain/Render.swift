@@ -182,7 +182,7 @@ public enum Render {
             let index = skills.firstIndex { $0.skill.name == chosen.name }
             if let index { skills.remove(at: index) }
             if chosen.mode != .off {
-                let skill = LayerSkill(name: chosen.name, mode: chosen.mode, when: [], override: false)
+                let skill = LayerSkill(name: chosen.name, mode: chosen.mode, when: [], override: false, keepAuto: false)
                 skills.insert((skill, projectSource), at: index ?? skills.endIndex)
             }
         }

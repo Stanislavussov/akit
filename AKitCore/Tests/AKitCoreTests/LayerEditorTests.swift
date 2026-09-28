@@ -112,6 +112,9 @@ struct LayerEditorTests {
         #expect(try LayerEditor.settingMode(.manual, of: "d", in: text)
                 == "name: x\n# skills\nskills:\n  - name: a\n    mode: manual\n  - b  # note\n  - mode: auto\n    name: c\n  - name: d\n    mode: manual\n    when: flag\nfiles: []\n")
         #expect(try LayerEditor.settingMode(.manual, of: "a", in: text) == text)
+        // keep_auto (akit recommend's pin) stays and doesn't make the edit look unsafe.
+        let pinned = "skills:\n  - name: e\n    mode: auto\n    keep_auto: true\n"
+        #expect(try LayerEditor.settingMode(.manual, of: "e", in: pinned) == "skills:\n  - name: e\n    mode: manual\n    keep_auto: true\n")
         #expect(throws: LayerEditor.Failure.self) { try LayerEditor.settingMode(.auto, of: "z", in: text) }
         #expect(throws: LayerEditor.Failure.self) { try LayerEditor.settingMode(.manual, of: "a", in: "skills: [a]\n") }
     }

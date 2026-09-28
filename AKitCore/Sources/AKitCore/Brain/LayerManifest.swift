@@ -77,7 +77,7 @@ enum LayerManifest {
 
     private static func skill(_ node: Node, _ problems: inout [String]) -> LayerSkill? {
         // A bare name is a skill with the default mode.
-        if let name = scalar(node), !name.isEmpty { return LayerSkill(name: name, mode: .auto, when: [], override: false) }
+        if let name = scalar(node), !name.isEmpty { return LayerSkill(name: name, mode: .auto, when: [], override: false, keepAuto: false) }
         guard let map = node.mapping, let name = scalar(map["name"]), !name.isEmpty else {
             problems.append("A skill has no name.")
             return nil
@@ -88,7 +88,8 @@ enum LayerManifest {
             return nil
         }
         return LayerSkill(name: name, mode: mode, when: conditions(map["when"], "skill “\(name)”", &problems),
-                          override: flag(map["override"], "Skill “\(name)”: override", &problems))
+                          override: flag(map["override"], "Skill “\(name)”: override", &problems),
+                          keepAuto: flag(map["keep_auto"], "Skill “\(name)”: keep_auto", &problems))
     }
 
     private static func file(_ node: Node, _ problems: inout [String]) -> LayerFile? {

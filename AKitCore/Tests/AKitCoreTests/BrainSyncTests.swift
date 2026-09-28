@@ -115,6 +115,32 @@ struct BrainSyncTests {
         }
     }
 
+    @Test func workMacRebaseCarriesTheBrainsOwnIdentityUnsigned() async throws {
+        try await setUp()
+        try await commit(macA, "skills/a/SKILL.md", "a\n")
+        try await BrainSync.sync(macA, env: env)
+        try await commit(macB, "skills/b/SKILL.md", "b\n")
+        try MachineProfile(kind: .work, name: "work").save(home: home)
+        // The work identity in the environment, and a global signing setting with a work key.
+        try write(home, ".gitconfig", "[user]\n\tname = Work Name\n\temail = work@corp.example\n\tsigningkey = WORKKEY\n[commit]\n\tgpgsign = true\n")
+        var work = env
+        work.variables.merge(["GIT_COMMITTER_NAME": "Work Name", "GIT_COMMITTER_EMAIL": "work@corp.example",
+                              "GIT_AUTHOR_NAME": "Work Name", "GIT_AUTHOR_EMAIL": "work@corp.example", "EMAIL": "work@corp.example"]) { $1 }
+
+        // Without a name and email of its own the rebase would take the global ones: refused, nothing changed.
+        let head = try await git(macB, "rev-parse", "HEAD")
+        await #expect(throws: BrainSync.Failure.self) { try await BrainSync.sync(macB, env: work) }
+        #expect(try await git(macB, "rev-parse", "HEAD") == head)
+        try await git(macB, "config", "--local", "user.email", "me@example.com")
+        await #expect(throws: BrainSync.Failure.self) { try await BrainSync.sync(macB, env: work) }
+        try await git(macB, "config", "--local", "user.name", "Me")
+
+        let outcome = try await BrainSync.sync(macB, env: work)
+        #expect(outcome.pulled == 1 && outcome.pushed == 1)
+        #expect(try await git(macB, "log", "-1", "--format=%an <%ae>|%cn <%ce>") == "Test <test@example.com>|Me <me@example.com>\n")
+        #expect(!(try await git(macB, "cat-file", "-p", "HEAD").contains("gpgsig")))
+    }
+
     @Test func conflictIsUndoneAndReported() async throws {
         try await setUp()
         try await commit(macA, "README.md", "from A\n")
@@ -182,7 +208,7 @@ struct BrainSyncTests {
         func akit(_ root: URL) async -> (code: Int32, out: String) {
             var out: [String] = []
             let code = await AKitCLI.run(["sync", "--brain", root.path], env: env, cwd: home,
-                                         out: { out.append($0) }, err: { out.append($0) })
+                                         out: { out.append($0) }, err: { out.append($0) }, hardwareHash: { "test-hardware" })
             return (code, out.joined(separator: "\n"))
         }
         #expect(await akit(macA) == (0, "Pushed 1 commit."))

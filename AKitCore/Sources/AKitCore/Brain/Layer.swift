@@ -66,6 +66,9 @@ public struct LayerSkill: Hashable, Sendable {
     public let mode: Mode
     public let when: [Condition]
     public let override: Bool
+    /// `keep_auto: true`: stays auto; `akit recommend` never proposes making it manual.
+    /// Older AKit ignores the key.
+    public let keepAuto: Bool
 }
 
 /// A template rendered into the project.

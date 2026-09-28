@@ -2,6 +2,12 @@
 import AKitCore
 import Foundation
 
+// Session hooks: first and alone, so a session start pays only for one appended line
+// (no harness detection, no warnings, no output), and always exit 0.
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "record-session" {
+    RecordSession.main(arguments: Array(CommandLine.arguments.dropFirst(2)))
+    exit(0)
+}
 if getuid() == 0 {
     FileHandle.standardError.write(Data("akit: don't run akit with sudo; it works in your own home folder.\n".utf8))
     exit(2)

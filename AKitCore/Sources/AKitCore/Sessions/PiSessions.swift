@@ -61,6 +61,15 @@ enum PiSessions {
         return rest.isEmpty ? text : rest
     }
 
+    /// `x` for a prompt that starts with an expanded skill `<skill name="x" …>`.
+    static func skillPrefixName(_ text: String) -> String? {
+        let start = "<skill name=\""
+        guard text.hasPrefix(start) else { return nil }
+        let rest = text.dropFirst(start.count)
+        guard let quote = rest.firstIndex(of: "\""), quote > rest.startIndex else { return nil }
+        return String(rest[..<quote])
+    }
+
     // MARK: - Transcript
 
     static func transcript(of file: URL) throws -> SessionTranscript {
@@ -81,12 +90,20 @@ enum PiSessions {
     private static func recordUsage(_ entry: Object, in counter: inout UsageCounter) {
         guard entry["type"] as? String == "message", let message = entry["message"] as? Object,
               message["role"] as? String == "assistant", let usage = message["usage"] as? Object else { return }
-        func count(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
-        let tokens = TokenCounts(input: count("input"), output: count("output"),
-                                 cacheRead: count("cacheRead"), cacheWrite: count("cacheWrite"))
-        let cost = ((usage["cost"] as? Object)?["total"] as? NSNumber)?.doubleValue
         counter.record(id: entry["id"] as? String, model: message["model"] as? String,
-                       provider: message["provider"] as? String, tokens: tokens, cost: cost)
+                       provider: message["provider"] as? String, tokens: tokens(fromPiUsage: usage), cost: cost(fromPiUsage: usage))
+    }
+
+    /// Pi's `message.usage`: input, output, cacheRead, cacheWrite.
+    static func tokens(fromPiUsage usage: Object) -> TokenCounts {
+        func count(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
+        return TokenCounts(input: count("input"), output: count("output"),
+                           cacheRead: count("cacheRead"), cacheWrite: count("cacheWrite"))
+    }
+
+    /// `usage.cost.total` in US dollars, when Pi recorded it.
+    static func cost(fromPiUsage usage: Object) -> Double? {
+        ((usage["cost"] as? Object)?["total"] as? NSNumber)?.doubleValue
     }
 
     /// Entries from the root to the current leaf (the last entry written).
