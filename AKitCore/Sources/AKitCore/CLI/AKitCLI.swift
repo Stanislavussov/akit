@@ -27,9 +27,9 @@ public enum AKitCLI {
                                           saved in the brain (work Mac: locally). Files AKit didn't write, or edited
                                           by hand since, are skipped unless --include PATH
                                           (--include-unmanaged: every file AKit didn't write).
-                                          AGENTS.md, CLAUDE.md and other layer templates are
-                                          written once, then belong to the project: a newer
-                                          layer version is taken only with --include PATH.
+                                          AGENTS.md, CLAUDE.md and other layer templates follow
+                                          the layers until the project edits them; after that a
+                                          newer layer version is taken only with --include PATH.
 
         Remove (shows what happens; add --yes to do it; folders go to the Trash, one commit each):
           akit remove layer NAME              refused while other layers require it; dropped from
