@@ -256,13 +256,13 @@ final class AppModel {
     }
 
     /// Writes the project files (backup first), saves answers in the plan's store, then rescans.
-    func applyProject(_ plan: ProjectSetup.Plan, excluding: Set<String>) async throws -> ProjectSetup.Outcome {
+    func applyProject(_ plan: ProjectSetup.Plan, excluding: Set<String>, accepting: Set<String> = []) async throws -> ProjectSetup.Outcome {
         guard let brain else {
             throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
         }
         defer { Task { await refresh() } }
         let env = HarnessEnvironment.current
-        return try await ProjectSetup.apply(plan, excluding: excluding, brain: brain, home: env.homeDirectory, env: env)
+        return try await ProjectSetup.apply(plan, excluding: excluding, accepting: accepting, brain: brain, home: env.homeDirectory, env: env)
     }
 
     /// Harnesses described by the user in `~/.akit/harnesses.json`.

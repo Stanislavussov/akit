@@ -147,7 +147,10 @@ Templates can use `{{company}}`, `{{project_name}}` and `{{target}}`. Skills sta
 - any other files the layers bring.
 
 Applying again updates exactly what changed in the brain. Files you edited by hand, or that
-AKit didn't write, are left alone unless you say otherwise. Commit the result in the project,
+AKit didn't write, are left alone unless you say otherwise. Layers are only a starting point:
+AGENTS.md and the other files they bring become the project's own once you edit them, and
+a newer layer version is only offered. A project can also take extra brain skills (or turn a
+layer's skill off) and keep skills of its own in `.agents/skills`, which AKit never overwrites. Commit the result in the project,
 so it also works for people without AKit.
 
 ### The core layer and your home folder
