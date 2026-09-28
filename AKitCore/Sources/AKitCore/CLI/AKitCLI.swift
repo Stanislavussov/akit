@@ -56,10 +56,10 @@ public enum AKitCLI {
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
-                                          exact,high,medium; add low for unconfirmed siblings and
-                                          path templates), a sample of unbound folders. Templates go
-                                          in ~/.akit/insights.json:
-                                          {"pathTemplates": ["~/orca/workspaces/{repo}/*"]}
+                                          exact,high,medium; add low for unconfirmed siblings), a
+                                          sample of unbound folders and suggested path templates.
+                                          Orca and herdr worktrees are built in; add others to
+                                          ~/.akit/insights.json: {"pathTemplates": ["~/.tool/trees/{repo}/*"]}
           akit stats --debug [--session ID] [--json]
                                           Per session (default: the latest 20): skills listed, skill
                                           calls by the model, the user and subagents, largest tool
@@ -498,7 +498,8 @@ public enum AKitCLI {
         let database = try IndexSchema.open(InsightsPaths(env: env).database)
         let imported = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
         if subcommand == "bindings" {
-            let report = try IndexQueries.bindingStats(database, set: bindingSet, notes: imported.notes, days: days ?? InsightsStats.defaultDays)
+            let report = try IndexQueries.bindingStats(database, set: bindingSet, notes: imported.notes, days: days ?? InsightsStats.defaultDays,
+                                                     home: env.homeDirectory.path, templates: ProjectBinder.pathTemplates(env: env))
             out(options.json ? encode(report) : bindingStatsText(report))
             return 0
         }
@@ -620,6 +621,10 @@ public enum AKitCLI {
         if !report.unboundFolders.isEmpty {
             lines.append("Unbound folders (latest first):")
             lines += report.unboundFolders.map { "  \($0)" }
+        }
+        if !report.suggestedTemplates.isEmpty {
+            lines.append("Path templates that would bind more sessions (add to \"pathTemplates\" in ~/.akit/insights.json):")
+            lines += report.suggestedTemplates.map { "  \($0.template)  \($0.sessions) sessions (\($0.repositories.joined(separator: ", ")))" }
         }
         lines += report.notes.map { "note: \($0)" }
         return lines.joined(separator: "\n")

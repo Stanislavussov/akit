@@ -147,7 +147,13 @@ keeps its method and confidence:
 
 Not tied to any workspace tool (Orca, herdr, …). Tool-specific resolvers are
 optional plugins behind "path → repo or nothing", starting with path templates.
-Recommendations use exact and git bindings by default; sibling bindings behind a flag.
+Recommendations use exact, git and path-template bindings by default; sibling bindings
+behind a flag. A path template names the repository (`{repo}` in the path), so it counts
+like a git confirmation (decided 2026-09-28: most old sessions ran in deleted Orca and herdr
+worktrees whose branches were squash-merged and deleted, so git can't confirm them). Orca
+(`~/orca/workspaces/{repo}/*`) and herdr (`~/.herdr/worktrees/{repo}/*`) are built in; other
+tools go into `pathTemplates`, and `akit stats bindings` suggests templates from unbound
+folders that name a known repository.
 
 ### Capturing before the folder disappears
 

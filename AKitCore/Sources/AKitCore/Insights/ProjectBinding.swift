@@ -8,11 +8,12 @@ enum BindingMethod: String, CaseIterable, Codable {
     case live
     /// `git worktree list` in a known repository still lists the folder (deleted ones until pruned).
     case worktree
-    /// A sibling or template candidate whose repository has the session's git branch.
+    /// A sibling candidate whose repository has the session's git branch.
     case branchConfirmed
     /// Same parent folder as a session bound to a worktree of the repository.
     case sibling
-    /// A path template in `~/.akit/insights.json` names the repository.
+    /// A path template (built in for Orca and herdr, or in `~/.akit/insights.json`) names the
+    /// repository: `{repo}` in the path is a deliberate statement, so medium like a git confirmation.
     case template
     /// No project.
     case none
@@ -21,8 +22,8 @@ enum BindingMethod: String, CaseIterable, Codable {
         switch self {
         case .hook, .live: .exact
         case .worktree: .high
-        case .branchConfirmed: .medium
-        case .sibling, .template: .low
+        case .branchConfirmed, .template: .medium
+        case .sibling: .low
         case .none: nil
         }
     }
@@ -44,8 +45,8 @@ enum Confidence: String, CaseIterable, Codable, Comparable {
 }
 
 /// The confidences that count as bound, for `stats`, `recommend` and the binding share.
-/// Default: exact, high and medium (medium is git-confirmed); unconfirmed siblings and
-/// templates (low) only with `--bindings exact,high,medium,low`.
+/// Default: exact, high and medium (git-confirmed or a path template); unconfirmed siblings
+/// (low) only with `--bindings exact,high,medium,low`.
 struct BindingSet: Equatable {
     struct Failure: Error, LocalizedError {
         let message: String
@@ -192,10 +193,13 @@ struct WorktreeListResolver: ProjectResolver {
     }
 }
 
-/// `"pathTemplates": ["~/orca/workspaces/{repo}/*"]` in `~/.akit/insights.json`: a folder
-/// matching a template belongs to the one known repository named `{repo}` (its folder name or
-/// the last part of its remote id). `*` is any one folder name; deeper folders match too.
+/// Worktree folders of agent workspaces: the built-in ones (Orca, herdr) plus
+/// `"pathTemplates": ["~/.tool/trees/{repo}/*"]` in `~/.akit/insights.json`. A folder matching a
+/// template belongs to the one known repository named `{repo}` (its folder name or the last part
+/// of its remote id). `*` is any one folder name; deeper folders match too.
 struct PathTemplateResolver: ProjectResolver {
+    static let builtIn = ["~/orca/workspaces/{repo}/*", "~/.herdr/worktrees/{repo}/*"]
+
     let method = BindingMethod.template
     /// Each template's path components, `~` expanded.
     let templates: [[String]]
@@ -303,9 +307,9 @@ enum BranchConfirmation {
 
 /// Binds sessions to projects after the facts of an import (`bindings`, local only). Resolvers
 /// in order, each with a fixed confidence: the session's hook event (exact), its folder when it
-/// still exists (exact), `git worktree list` in known repositories (high), then template and
-/// sibling candidates (low), raised to `branchConfirmed` (medium) when the candidate knows the
-/// session's git branch; otherwise no project.
+/// still exists (exact), `git worktree list` in known repositories (high), then a path template
+/// (medium) and sibling candidates (low, raised to `branchConfirmed`, medium, when the candidate
+/// knows the session's git branch); otherwise no project.
 ///
 /// Decided again only: sessions without a binding, bound none or low, bound by an older
 /// resolver, or with a hook event and another method. A new decision never lowers a
@@ -316,7 +320,7 @@ enum BranchConfirmation {
 /// and the next run goes on with the repositories this one didn't reach.
 struct ProjectBinder {
     /// Bump when a resolver decides differently; every binding is decided again (never lower).
-    static let resolverVersion = 1
+    static let resolverVersion = 2
     static let gitBudget: TimeInterval = 10
     static let callTimeout: TimeInterval = 5
     /// `meta` key: the first repository whose worktree list the last run didn't reach.
@@ -428,9 +432,10 @@ struct ProjectBinder {
             if let hook = try hookRepository(session, database: database) {
                 decisions.append(Decision(session: session, repository: hook, method: .hook))
             } else if let cwd = session.cwd, cwd.hasPrefix("/") {
-                if FileManager.default.fileExists(atPath: cwd) {
-                    let found = live.repository(for: cwd)
-                    decisions.append(Decision(session: session, repository: found, method: found == nil ? .none : .live))
+                // A folder left over without its repository (a removed worktree that kept tool
+                // files) goes on to the worktree lists, templates and siblings like a deleted one.
+                if FileManager.default.fileExists(atPath: cwd), let found = live.repository(for: cwd) {
+                    decisions.append(Decision(session: session, repository: found, method: .live))
                 } else {
                     waiting.append(session)
                 }
@@ -439,7 +444,8 @@ struct ProjectBinder {
             }
         }
 
-        // Deleted folders: worktree lists of known repositories, then low candidates.
+        // Deleted folders (and ones without a repository): worktree lists of known repositories,
+        // then template and sibling candidates.
         var cursor: String?
         if !waiting.isEmpty {
             let repositories = try knownRepositories(database, decided: decisions)
@@ -461,7 +467,7 @@ struct ProjectBinder {
             }
             let bound = try boundFolders(database, decided: decisions)
             let siblings = SiblingResolver(bound: bound, excluded: excluded)
-            let templates = PathTemplateResolver(templates: pathTemplates(), home: home, repositories: Array(repositories.values))
+            let templates = PathTemplateResolver(templates: Self.pathTemplates(env: env), home: home, repositories: Array(repositories.values))
             for session in waiting {
                 guard let cwd = session.cwd else { continue }
                 if let found = worktrees.repository(for: cwd) {
@@ -535,17 +541,20 @@ struct ProjectBinder {
         return bound
     }
 
-    /// `pathTemplates` of `~/.akit/insights.json`.
-    private func pathTemplates() -> [String] {
+    /// The built-in templates plus `pathTemplates` of `~/.akit/insights.json`.
+    static func pathTemplates(env: HarnessEnvironment) -> [String] {
         guard let data = try? Data(contentsOf: InsightsPaths(env: env).settings),
-              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
-        return settings["pathTemplates"] as? [String] ?? []
+              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return PathTemplateResolver.builtIn }
+        return PathTemplateResolver.builtIn + (settings["pathTemplates"] as? [String] ?? [])
     }
 
-    /// A template or sibling candidate: medium when its repository knows the session's branch,
-    /// else low; no candidate is no project.
+    /// A template match (medium) first; else a sibling candidate: medium when its repository
+    /// knows the session's branch, else low; no candidate is no project.
     private func candidate(_ session: Session, cwd: String, resolvers: [any ProjectResolver], git: Git) async throws -> Decision {
         let candidates = resolvers.compactMap { resolver in resolver.repository(for: cwd).map { (resolver.method, $0) } }
+        if let (method, repository) = candidates.first(where: { $0.0 == .template }) {
+            return Decision(session: session, repository: repository, method: method)
+        }
         if let branch = session.branch {
             for (_, repository) in candidates {
                 guard let common = repository.repoPath, BranchConfirmation.isTelling(branch, commonDir: common) else { continue }

@@ -174,7 +174,7 @@ struct ProjectBindingTests {
         try addSession("one", cwd: path("ws/app/one"), branch: "one", in: db)
     }
 
-    @Test func branchConfirmsSiblingOrTemplateToMedium() async throws {
+    @Test func branchConfirmsSiblingToMediumAndTemplateIsMedium() async throws {
         let db = try database()
         try await siblingsAndTemplate(db)
         try addSession("two", cwd: path("ws/app/two"), branch: "two", in: db)
@@ -182,10 +182,10 @@ struct ProjectBindingTests {
         _ = try await bind(db)
         #expect(try binding("one", in: db) == Bound(project: "github.com/me/app", method: "live", confidence: "exact"))
         #expect(try binding("two", in: db) == Bound(project: "github.com/me/app", method: "branchConfirmed", confidence: "medium"))
-        #expect(try binding("three", in: db) == Bound(project: "github.com/me/app", method: "branchConfirmed", confidence: "medium"))
+        #expect(try binding("three", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "medium"))
     }
 
-    @Test func unconfirmedSiblingAndTemplateAreLow() async throws {
+    @Test func unconfirmedSiblingIsLowAndTemplateIsMedium() async throws {
         let db = try database()
         try await siblingsAndTemplate(db)
         try addSession("sibling", cwd: path("ws/app/gone"), branch: "never-pushed", in: db)
@@ -196,7 +196,7 @@ struct ProjectBindingTests {
         try addSession("stranger", cwd: path("orca/stranger/x"), branch: "two", in: db)
         _ = try await bind(db)
         #expect(try binding("sibling", in: db) == Bound(project: "github.com/me/app", method: "sibling", confidence: "low"))
-        #expect(try binding("template", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "low"))
+        #expect(try binding("template", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "medium"))
         #expect(try binding("main", in: db) == Bound(project: "github.com/me/app", method: "sibling", confidence: "low"))
         #expect(try binding("stranger", in: db) == Bound(project: nil, method: "none", confidence: nil))
 
@@ -207,6 +207,37 @@ struct ProjectBindingTests {
         try addSession("ambiguous", cwd: path("ws/app/gone2"), in: db)
         _ = try await bind(db)
         #expect(try binding("ambiguous", in: db) == Bound(project: nil, method: "none", confidence: nil))
+    }
+
+    /// Orca and herdr worktrees bind without settings; folders of an unknown workspace tool
+    /// that name a bound repository come back as a suggested template.
+    @Test func builtInTemplatesBindAndUnknownWorkspacesAreSuggested() async throws {
+        let db = try database()
+        let app = try await repository("Projects/app", remote: "https://github.com/me/app.git")
+        try addSession("main", cwd: app.path, in: db)
+        try addSession("orca", cwd: path("orca/workspaces/app/pleco"), in: db)
+        try addSession("herdr", cwd: path(".herdr/worktrees/App/calm-forest"), in: db)
+        try addSession("tool1", cwd: path(".tool/trees/app/a"), in: db)
+        try addSession("tool2", cwd: path(".tool/trees/app/b/Sources"), in: db)
+        try addSession("once", cwd: path("elsewhere/app/c"), in: db)
+        // A removed worktree whose folder kept a tool's files: no repository, but the template knows it.
+        try fm.createDirectory(atPath: path(".herdr/worktrees/app/left-over/.omc"), withIntermediateDirectories: true)
+        try addSession("leftover", cwd: path(".herdr/worktrees/app/left-over"), in: db)
+        _ = try await bind(db)
+        #expect(try binding("orca", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "medium"))
+        #expect(try binding("herdr", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "medium"))
+        #expect(try binding("leftover", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "medium"))
+        #expect(try binding("tool1", in: db)?.method == "none")
+
+        let stats = try IndexQueries.bindingStats(db, set: .default, home: home.path, templates: ProjectBinder.pathTemplates(env: env))
+        #expect(stats.suggestedTemplates == [.init(template: "~/.tool/trees/{repo}/*", sessions: 2, repositories: ["app"])])
+
+        // Once added, the tool's folders bind and nothing is suggested.
+        try writeSettings(["pathTemplates": ["~/.tool/trees/{repo}/*"]])
+        _ = try await bind(db)
+        #expect(try binding("tool2", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "medium"))
+        #expect(try IndexQueries.bindingStats(db, set: .default, home: home.path,
+                                              templates: ProjectBinder.pathTemplates(env: env)).suggestedTemplates.isEmpty)
     }
 
     @Test func rebindUpgradesLowToExactWhenHookArrives() async throws {

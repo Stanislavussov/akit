@@ -41,11 +41,21 @@ enum IndexQueries {
         /// Up to 10 folders of recent sessions not bound in the set, latest first. Local paths:
         /// shown to the user only, never written anywhere else.
         let unboundFolders: [String]
+        /// Path templates that would bind sessions no binding covers yet, most sessions first.
+        let suggestedTemplates: [TemplateSuggestion]
         let notes: [String]
     }
 
+    /// `{repo}` where unbound session folders name a known repository, e.g. the worktrees
+    /// of an agent workspace this akit doesn't know.
+    struct TemplateSuggestion: Encodable, Equatable {
+        let template: String
+        let sessions: Int
+        let repositories: [String]
+    }
+
     static func bindingStats(_ database: IndexDatabase, set: BindingSet, notes: [String] = [], days: Int = 30,
-                             now: Date = Date()) throws -> BindingStats {
+                             home: String? = nil, templates: [String] = [], now: Date = Date()) throws -> BindingStats {
         var byMethod = Dictionary(uniqueKeysWithValues: BindingMethod.allCases.map { ($0.rawValue, 0) })
         var byConfidence = Dictionary(uniqueKeysWithValues: (Confidence.allCases.map(\.rawValue) + ["none"]).map { ($0, 0) })
         for row in try database.rows("""
@@ -73,7 +83,49 @@ enum IndexQueries {
         return BindingStats(bindingSet: set.names, byMethod: byMethod, byConfidence: byConfidence, undecided: undecided,
                             recent: .init(days: days, sessions: sessions, bound: bound,
                                           share: sessions > 0 ? Double(bound) / Double(sessions) : nil),
-                            unboundFolders: unbound, notes: notes)
+                            unboundFolders: unbound,
+                            suggestedTemplates: try suggestTemplates(database, set: set, home: home, templates: templates),
+                            notes: notes)
+    }
+
+    /// For every session folder not bound in the set: the first folder name (below the root)
+    /// that is a bound repository's name, with something below it, becomes `{repo}` of a template
+    /// `<parents>/{repo}/*`. Templates already in use and ones covering a single session are left out.
+    static func suggestTemplates(_ database: IndexDatabase, set: BindingSet, home: String?, templates: [String],
+                                 limit: Int = 3) throws -> [TemplateSuggestion] {
+        var names = Set<String>()
+        for row in try database.rows("""
+            SELECT DISTINCT project_id, repo_path FROM bindings WHERE confidence IN \(set.sqlList) AND project_id IS NOT NULL
+            """) {
+            if let id = row[0].text, !id.hasPrefix("local/"), let last = id.split(separator: "/").last { names.insert(last.lowercased()) }
+            if let repo = row[1].text {
+                names.insert((BindingPaths.mainFolder(ofCommonDir: repo) as NSString).lastPathComponent.lowercased())
+            }
+        }
+        let homePath = home.map(BindingPaths.canonical)
+        func tilde(_ path: String) -> String {
+            guard let homePath, path.hasPrefix(homePath + "/") else { return path }
+            return "~" + path.dropFirst(homePath.count)
+        }
+        let used = Set(templates)
+        var found: [String: (sessions: Int, repositories: Set<String>)] = [:]
+        for row in try database.rows("""
+            SELECT s.cwd, COUNT(*) FROM sessions s LEFT JOIN bindings b ON b.session_key = s.key
+            WHERE s.cwd IS NOT NULL AND (b.confidence IS NULL OR b.confidence NOT IN \(set.sqlList)) GROUP BY s.cwd
+            """) {
+            guard let cwd = row[0].text, let count = row[1].int else { continue }
+            let parts = BindingPaths.canonical(cwd).split(separator: "/").map(String.init)
+            guard parts.count >= 3,
+                  let index = (1..<(parts.count - 1)).first(where: { names.contains(parts[$0].lowercased()) }) else { continue }
+            let template = tilde("/" + parts[..<index].joined(separator: "/")) + "/{repo}/*"
+            guard !used.contains(template) else { continue }
+            found[template, default: (0, [])].sessions += count
+            found[template, default: (0, [])].repositories.insert(parts[index])
+        }
+        return found.filter { $0.value.sessions > 1 }
+            .map { TemplateSuggestion(template: $0.key, sessions: $0.value.sessions, repositories: $0.value.repositories.sorted()) }
+            .sorted { ($0.sessions, $1.template) > ($1.sessions, $0.template) }
+            .prefix(limit).map(\.self)
     }
 
     // MARK: - Debug stats
