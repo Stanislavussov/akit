@@ -19,6 +19,9 @@ enum ContextSize {
         let cyrillic: Double
         /// Before/after pairs the numbers come from; 0 for the defaults.
         let pairs: Int
+        /// Of those, each script's (nil: all of them); a script with fewer than two keeps its default k.
+        var latinPairs: Int?
+        var cyrillicPairs: Int?
 
         var isCalibrated: Bool { pairs >= ContextSize.minimumPairs }
 
@@ -31,9 +34,14 @@ enum ContextSize {
 
         /// Which k an output used.
         var describe: String {
-            let values = "k \(String(format: "%.1f", latin)) Latin, \(String(format: "%.1f", cyrillic)) Cyrillic"
-            return isCalibrated ? "\(values), calibrated from \(pairs) before/after pairs"
-                : "\(values), defaults until before/after measurements calibrate them"
+            guard isCalibrated else {
+                return "k \(String(format: "%.1f", latin)) Latin, \(String(format: "%.1f", cyrillic)) Cyrillic, "
+                    + "defaults until before/after measurements calibrate them"
+            }
+            func part(_ k: Double, _ script: String, _ pairs: Int) -> String {
+                "\(String(format: "%.1f", k)) \(script) (" + (pairs >= ContextSize.minimumPairs ? "calibrated from \(pairs) before/after pairs" : "default") + ")"
+            }
+            return "k " + part(latin, "Latin", latinPairs ?? pairs) + ", " + part(cyrillic, "Cyrillic", cyrillicPairs ?? pairs)
         }
     }
 
@@ -41,16 +49,20 @@ enum ContextSize {
     /// A calibration is used only when it rests on at least this many pairs.
     static let minimumPairs = 2
 
-    /// `meta` keys `k.latin`, `k.cyrillic`, `k.pairs` (written by the before/after calibration);
-    /// the defaults when missing, not positive or from fewer than two pairs.
+    /// `meta` keys `k.latin`, `k.cyrillic`, `k.pairs` and each script's pairs (`k.latin.pairs`,
+    /// `k.cyrillic.pairs`), written by `ContextCalibration`; the defaults when missing, not positive
+    /// or from fewer than two pairs.
     static func calibration(_ database: IndexDatabase) throws -> Calibration {
         var values: [String: Double] = [:]
-        for row in try database.rows("SELECT key, value FROM meta WHERE key IN ('k.latin', 'k.cyrillic', 'k.pairs')") {
+        for row in try database.rows("""
+            SELECT key, value FROM meta WHERE key IN ('k.latin', 'k.cyrillic', 'k.pairs', 'k.latin.pairs', 'k.cyrillic.pairs')
+            """) {
             if let key = row[0].text, let value = row[1].text.flatMap(Double.init) { values[key] = value }
         }
         guard let latin = values["k.latin"], let cyrillic = values["k.cyrillic"], let pairs = values["k.pairs"],
               latin > 0, cyrillic > 0, Int(pairs) >= minimumPairs else { return defaults }
-        return Calibration(latin: latin, cyrillic: cyrillic, pairs: Int(pairs))
+        return Calibration(latin: latin, cyrillic: cyrillic, pairs: Int(pairs), latinPairs: values["k.latin.pairs"].map { Int($0) },
+                           cyrillicPairs: values["k.cyrillic.pairs"].map { Int($0) })
     }
 
     /// Cyrillic when at least half of the letters are Cyrillic, else Latin.

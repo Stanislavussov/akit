@@ -60,6 +60,16 @@ public enum AKitCLI {
                                           sample of unbound folders and suggested path templates.
                                           Orca and herdr worktrees are built in; add others to
                                           ~/.akit/insights.json: {"pathTemplates": ["~/.tool/trees/{repo}/*"]}
+          akit stats changes [--project ID|PATH | --all] [--json]
+                                          First-request context (recorded tokens) 14 days before and
+                                          after each akit apply and mark, with the same harness version
+                                          and model (5 sessions a side), and the skill listing's change;
+                                          calibrates k (characters per token) for the ≈ sizes. A home
+                                          apply or a mark counts every session, a project apply the
+                                          project's. --project: that project's applies only
+          akit stats mark "<note>" [--at DATE]
+                                          Note a change made by hand (a plugin disabled, a setting) as a
+                                          before/after anchor. DATE: 2026-09-26 or 2026-09-26T14:30 (local)
           akit stats --debug [--session ID] [--json]
                                           Per session (default: the latest 20): skills listed, skill
                                           calls by the model, the user and subagents, largest tool
@@ -491,10 +501,13 @@ public enum AKitCLI {
         let debug = args.flag("--debug")
         let all = args.flag("--all")
         let details = args.flag("--details")
+        let atText = args.value("--at")
         let subcommand = args.positional()
+        let note = subcommand == "mark" ? args.positional() : nil
         try args.finish()
-        if let subcommand, subcommand != "bindings" {
-            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats bindings, or akit stats --debug.")
+        if let subcommand, !["bindings", "changes", "mark"].contains(subcommand) {
+            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats bindings, "
+                          + "akit stats changes, akit stats mark \"<note>\" [--at DATE], or akit stats --debug.")
         }
         func number(_ text: String?, _ flag: String) throws -> Int? {
             guard let text else { return nil }
@@ -506,7 +519,17 @@ public enum AKitCLI {
             if let flag = given.first(where: \.set)?.flag { throw Failure(message: "\(flag) doesn't go with akit stats \(with).") }
         }
         if projectArgument != nil, all { throw Failure(message: "--project and --all don't go together.") }
-        if subcommand == "bindings" {
+        if atText != nil, subcommand != "mark" { throw Failure(message: "--at goes with akit stats mark.") }
+        if subcommand == "mark" {
+            try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"),
+                        (projectArgument != nil, "--project"), (all, "--all"), (days != nil, "--days"), (top != nil, "--top"),
+                        (details, "--details"), (options.json, "--json")], with: "mark")
+            return try mark(note, at: atText, env: env, out: out)
+        }
+        if subcommand == "changes" {
+            try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"), (days != nil, "--days"),
+                        (top != nil, "--top"), (details, "--details")], with: "changes")
+        } else if subcommand == "bindings" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
                         (top != nil, "--top"), (details, "--details")], with: "bindings")
         } else if debug {
@@ -542,6 +565,26 @@ public enum AKitCLI {
         let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
         var inputs = try await InsightsStats.inputs(env: env, database: database, brain: Brain.load(from: brainRoot),
                                                     projectsRoot: projectsRoot, hostName: hostName, run: runner)
+        if subcommand == "changes" {
+            let changes = try BeforeAfter.changes(database, descriptions: inputs.descriptions)
+            // Every anchor calibrates, whatever the output shows. The index is written only under the import lock.
+            let calibration = ContextCalibration.calibration(from: changes)
+            var notes = imported.notes
+            if let lock = try ImportLock.acquire(InsightsPaths(env: env).lock) {
+                try withExtendedLifetime(lock) { try ContextCalibration.save(calibration, database: database) }
+            } else {
+                notes.append("calibration not saved: an import is running; run akit stats changes again later")
+            }
+            let report = ChangesReport(version: 1, changes: project.map { id in changes.filter { $0.project == id } } ?? changes,
+                                       calibration: ContextCalibration.summary(calibration), notes: notes)
+            if options.json {
+                out(encode(report))
+                for note in report.notes { err("note: \(note)") }
+            } else {
+                out(changesText(report, project: project))
+            }
+            return 0
+        }
         inputs.importNotes = imported.notes
         inputs.importRunning = imported.running
         let report = try InsightsStats.report(database, options: .init(days: days ?? InsightsStats.defaultDays, project: project,
@@ -550,6 +593,76 @@ public enum AKitCLI {
                                               inputs: inputs)
         out(options.json ? encode(report) : statsText(report, details: details))
         return 0
+    }
+
+    /// `akit stats mark "<note>" [--at DATE]`: a spool line the next import turns into a before/after anchor.
+    private static func mark(_ note: String?, at atText: String?, env: HarnessEnvironment, now: Date = Date(),
+                             out: (String) -> Void) throws -> Int32 {
+        let text = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !text.isEmpty else { throw Failure(message: "Use: akit stats mark \"<note>\" [--at DATE], e.g. akit stats mark \"Disabled the marketing plugin\".") }
+        guard text.count <= 500 else { throw Failure(message: "The note is longer than 500 characters.") }
+        var date = now
+        if let atText {
+            guard let parsed = BeforeAfter.date(from: atText) else {
+                throw Failure(message: "--at needs a date like 2026-09-26 or 2026-09-26T14:30 (local time).")
+            }
+            guard parsed <= now else { throw Failure(message: "--at is in the future.") }
+            date = parsed
+        }
+        Spool.append(["v": Spool.lineVersion, "kind": "mark", "note": text, "ts": Spool.milliseconds(date)], home: env.homeDirectory, now: now)
+        out("Marked \(date.formatted(date: .abbreviated, time: .shortened)): \(text). akit stats changes compares first-request context "
+            + "before and after it.")
+        return 0
+    }
+
+    static func changesText(_ report: ChangesReport, project: String?) -> String {
+        func short(_ n: Int) -> String {
+            let size = abs(n)
+            let text = size < 1000 ? "\(size)" : size < 1_000_000 ? String(format: "%.1fk", Double(size) / 1000)
+                : String(format: "%.1fM", Double(size) / 1_000_000)
+            return n < 0 ? "−" + text : text
+        }
+        func signed(_ n: Int) -> String { n > 0 ? "+" + short(n) : short(n) }
+        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        var lines = ["First-request context (recorded tokens) of sessions within \(Int(BeforeAfter.window / 86_400)) days before and "
+                     + "after each change, with the same harness version and model"
+                     + (project.map { ", applies of \($0)" } ?? "") + ":"]
+        if report.changes.isEmpty {
+            lines.append("No changes yet: akit apply records one, akit stats mark \"<note>\" [--at DATE] one made by hand.")
+        }
+        for change in report.changes {
+            let what = change.anchor == "mark" ? "mark “\(change.note ?? "")”" : "apply \(change.project ?? "")"
+            let scope = change.scope.project.map { "sessions of \($0)" } ?? "all sessions on this Mac"
+            lines.append("\(change.date.formatted(date: .abbreviated, time: .shortened))  \(what) (\(scope))")
+            guard change.isMeasured, let group = change.group, let before = change.before, let after = change.after else {
+                lines.append("  not enough data: \(change.reason ?? "")")
+                continue
+            }
+            lines.append("  \(group.harness) \(group.harnessVersion ?? "?"), \(group.model ?? "unknown model"): before "
+                         + "\(count(before.sessions, "session")), median \(short(before.median)); after \(count(after.sessions, "session")), "
+                         + "median \(short(after.median)); change \(signed(change.deltaTokens ?? 0)) tokens")
+            let left = change.left ?? [], joined = change.joined ?? []
+            if left.isEmpty, joined.isEmpty {
+                lines.append("  skill listing unchanged")
+            } else {
+                var parts: [String] = []
+                if !left.isEmpty { parts.append("\(count(left.count, "skill")) left") }
+                if !joined.isEmpty { parts.append("\(count(joined.count, "skill")) joined") }
+                lines.append("  skill listing: \(parts.joined(separator: ", ")), \(signed(change.deltaChars ?? 0)) description characters"
+                             + (change.k.map { "; k ≈ \(String(format: "%.1f", $0)) characters per token (\(change.script ?? "latin"))" } ?? ""))
+            }
+        }
+        let calibration = report.calibration
+        lines.append("")
+        func k(_ value: Double, _ script: String, _ pairs: Int) -> String {
+            let source = pairs >= ContextSize.minimumPairs ? "calibrated from \(count(pairs, "pair"))"
+                : "default; \(count(pairs, "accepted pair")), \(ContextSize.minimumPairs) needed"
+            return "\(String(format: "%.1f", value)) \(script) (\(source))"
+        }
+        lines.append("≈ sizes use k " + k(calibration.latin, "Latin", calibration.latinPairs) + ", "
+                     + k(calibration.cyrillic, "Cyrillic", calibration.cyrillicPairs) + ".")
+        lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
     }
 
     static func statsText(_ report: StatsReport, details: Bool) -> String {
@@ -877,6 +990,7 @@ public enum AKitCLI {
             lines.append("≈ Context per request by owner: "
                          + owners.map { "\(label($0.owner)) ≈ \(short($0.approxTokens)) (\(count($0.skills, "skill")))" }.joined(separator: ", ") + ".")
         }
+        lines.append("≈ tokens = description characters / k (\(report.calibration.describe)).")
         lines.append("")
         if report.recommendations.isEmpty { lines.append("Nothing to recommend.") }
         for item in report.recommendations {

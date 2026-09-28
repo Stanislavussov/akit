@@ -1,9 +1,11 @@
 import Foundation
 
 /// Spool lines (see `Spool`) as index rows: `session_start` → `hook_events`, `apply` →
-/// `applies`. Written with the same upsert rule as session facts (see `FactWriter`).
+/// `applies`, `mark` → `marks`. Written with the same upsert rule as session facts (see `FactWriter`).
 enum SpoolFacts {
-    static let parserVersion = 1
+    /// 2: `mark` lines. Spool files still on disk from parser 1 are read again, so marks an
+    /// older akit counted as unknown are picked up.
+    static let parserVersion = 2
 
     /// What one line did.
     enum Outcome {
@@ -31,6 +33,9 @@ enum SpoolFacts {
         case "apply":
             guard let project = text("project") else { return .malformed }
             try database.run(applySQL, project, ts, json(entry["layers"] ?? []), json(entry["skills"] ?? [:]), sourceID, parserVersion)
+        case "mark":
+            guard let note = text("note"), !note.isEmpty else { return .malformed }
+            try database.run(markSQL, ts, note, sourceID, parserVersion)
         default:
             return .unknown
         }
@@ -46,4 +51,5 @@ enum SpoolFacts {
     static let hookEventSQL = FactWriter.upsert("hook_events", key: ["harness", "session_id", "ts"], identity: [],
                                                 values: ["source", "cwd", "gitdir", "common_dir", "remote_id", "branch", "transcript"])
     static let applySQL = FactWriter.upsert("applies", key: ["project_id", "ts"], identity: [], values: ["layers", "skills"])
+    static let markSQL = FactWriter.upsert("marks", key: ["ts", "note"], identity: [], values: [])
 }

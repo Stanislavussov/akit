@@ -10,7 +10,7 @@ enum IndexSchema {
 
     /// Fact tables: every row carries `source_id` (a `sources` row, which is never deleted).
     static let factTables = ["sessions", "requests", "tool_calls", "skill_listings", "skill_calls", "manual_call_examples",
-                             "hook_events", "applies"]
+                             "hook_events", "applies", "marks"]
 
     static let migrations: [String] = [
         // v1: facts of Claude Code and Pi sessions. No FOREIGN KEY from facts to sources, so
@@ -74,6 +74,13 @@ enum IndexSchema {
         CREATE TABLE bindings(session_key TEXT PRIMARY KEY, project_id TEXT, method TEXT NOT NULL, confidence TEXT,
           repo_path TEXT, decided_at REAL NOT NULL, resolver_version INTEGER NOT NULL);
         CREATE INDEX bindings_project ON bindings(project_id);
+        """,
+        // v4: changes made by hand (`akit stats mark`), anchors of before/after measurements like
+        // applies. `ts` in Unix milliseconds, as in the spool line.
+        """
+        CREATE TABLE marks(ts INTEGER NOT NULL, note TEXT NOT NULL, source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL,
+          PRIMARY KEY(ts, note));
+        CREATE INDEX marks_source ON marks(source_id);
         """,
     ]
 

@@ -13,8 +13,9 @@ import Foundation
 enum Spool {
     /// Version of the line format (`"v"`); lines of a newer version are left for a newer akit.
     static let lineVersion = 1
-    /// Line kinds this akit writes and reads.
-    static let kinds: Set<String> = ["session_start", "apply"]
+    /// Line kinds this akit writes and reads. An older akit counts a kind it doesn't know (as
+    /// `mark` before spool parser 2) in `sources.unknown_lines` and keeps the file for a newer one.
+    static let kinds: Set<String> = ["session_start", "apply", "mark"]
     /// Lines longer than this drop their longest fields (`transcript`, `cwd`) first.
     static let maxLine = 4096
 

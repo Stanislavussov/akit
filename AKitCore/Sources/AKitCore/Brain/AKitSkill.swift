@@ -124,7 +124,10 @@ synced; commit them first.
 `akit stats [--project ID|PATH | --all] [--days N] [--json]` reads the harness session logs
 (imported into `~/.akit/index`): first-request context (recorded tokens) and which listed
 skills take ≈ context space (tokens × requests) and how often the model or the user calls
-them (`--details` for every skill). Sizes marked ≈ are estimates; never talk about money.
+them (`--details` for every skill). `akit stats changes [--project X|--all] [--json]`
+compares first-request context before and after each `akit apply` and each
+`akit stats mark "<note>" [--at DATE]` (a change made by hand, e.g. a plugin disabled; mark
+it when the user makes one). Sizes marked ≈ are estimates; never talk about money.
 
 ## Recommendations
 

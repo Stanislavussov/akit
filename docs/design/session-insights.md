@@ -1,6 +1,11 @@
 # Session insights: trim the harness config from real usage
 
-Status: design agreed 2026-09-26 (grilling session). Nothing implemented yet.
+Status: design agreed 2026-09-26 (grilling session). Steps 0–7 of the Order are
+implemented: SQLite index and import, capture (Claude plugin, Pi extension, hourly
+import), project binding, `akit stats`, per-machine summaries, `akit recommend`
+(apply, dismiss), and before/after measurement with k calibration (`akit stats changes`,
+`akit stats mark`). Left (step 8): OpenCode, Codex, the Insights screen, AGENTS.md size
+findings, behavior lessons, export of manual-call examples to skill-creator evals.
 
 ## Goal
 
@@ -133,6 +138,15 @@ the denominator; its model calls do count as calls (they protect the skill).
   cache write) of sessions in the project before and after `apply`. Compare only
   sessions with the same harness version and model, close in time; otherwise
   "not enough data".
+- `akit stats changes`: anchors are applies and marks (`akit stats mark "<note>"
+  [--at DATE]` for changes made by hand). Sessions within 14 days on each side, at
+  least 5 per side in one (harness, version, model) group; a home apply or a mark
+  counts every session on the Mac, a project apply that project's sessions. The
+  listing's character delta comes from skills listed in most sessions on one side
+  and none on the other; k = characters / recorded token delta. A pair calibrates
+  when ≥ 400 characters changed and 1 ≤ k ≤ 10; each script's k is the median of
+  its pairs once it has two (else the default), saved in the index's `meta` by
+  `akit stats changes`.
 
 ### Binding a session to a project
 

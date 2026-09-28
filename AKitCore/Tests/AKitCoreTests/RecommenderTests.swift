@@ -640,7 +640,9 @@ extension RecommenderTests {
                                        "userCalls", "callRate", "callRateUpperBound95"])
         #expect(evidence["binding"] is NSNull && keys((evidence["machines"] as? [[String: Any]])?.first) == ["name", "updated", "stale"])
         #expect((object["noData"] as? [[String: Any]])?.map { $0["skill"] as? String } == ["pi-helper", "pi-notes"])
-        let words = (text + AKitCLI.recommendText(try recommend(db, .init(top: nil), inputs), details: true)).lowercased()
+        let shown = AKitCLI.recommendText(try recommend(db, .init(top: nil), inputs), details: true)
+        #expect(shown.contains("≈ tokens = description characters / k (k 4.0 Latin, 2.5 Cyrillic, defaults until"), "\(shown)")
+        let words = (text + shown).lowercased()
         for money in ["$", "usd", "cost", "price", "dollar", "€"] { #expect(!words.contains(money), "\(money)") }
     }
 }

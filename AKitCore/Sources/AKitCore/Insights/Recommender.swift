@@ -172,6 +172,8 @@ struct RecommendReport: Encodable, Equatable {
     /// Not encoded: import notes, shown by the text output (and on stderr with --json), and the project in scope.
     var notes: [String] = []
     var project: String?
+    /// Not encoded: the k behind the ≈ sizes, for the text output.
+    var calibration = ContextSize.defaults
 
     private enum CodingKeys: String, CodingKey { case version, rule, summary, recommendations, noData, hiddenByDismissal, omitted }
 }
@@ -439,7 +441,7 @@ enum Recommender {
             recommendations: shown,
             noData: try noData(database, scope: scope, listed: names, piOnly: inputs.stats.piOnly),
             hiddenByDismissal: hidden, omitted: recommendations.count - shown.count, notes: inputs.stats.importNotes,
-            project: options.project)
+            project: options.project, calibration: calibration)
     }
 
     /// Everything `recommend` needs besides the index: owners and windows (as `akit stats`), the

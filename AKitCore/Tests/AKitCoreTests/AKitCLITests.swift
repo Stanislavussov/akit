@@ -556,6 +556,7 @@ struct AKitCLITests {
         #expect(await akit("stats", "--project", "x", "--all").code == 2)
         #expect(await akit("stats", "bindings", "--project", "x").code == 2)
         #expect(await akit("stats", "--debug", "--all").code == 2)
-        #expect(await akit("stats", "changes").code == 2)
+        #expect(await akit("stats", "trend").code == 2)
+        #expect(await akit("stats", "--project", "changes", "changes").code == 0)
     }
 }
