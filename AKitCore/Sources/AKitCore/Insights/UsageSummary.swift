@@ -266,8 +266,14 @@ enum UsageSummary {
         var copied: [String: String] = [:]
     }
 
-    static func ownership(_ database: IndexDatabase, machine: MachineProfile, calendar: Calendar = .current) -> Ownership {
+    /// `machine` is taken as the next publish will identify it (in memory, never saved, and not while
+    /// `machine.json` is broken): a Mac cloned since its last publish still carries the original's id
+    /// and hardware, so without this it would take the original's key for its own and hide that Mac's later days.
+    static func ownership(_ database: IndexDatabase, machine: MachineProfile, hardware: String?, now: Date = Date(),
+                          calendar: Calendar = .current) -> Ownership {
         let keys = ownKeys(database)
+        var machine = machine
+        if machine.problem == nil { _ = machine.identify(hardware: hardware, own: keys, now: now) }
         let own = keys.published(by: machine.hardwareHash, cloned: machine.idSince != nil).all
             .union([machine.id, machine.pseudonym].compactMap { $0 })
         let foreign = keys.all.subtracting(own)

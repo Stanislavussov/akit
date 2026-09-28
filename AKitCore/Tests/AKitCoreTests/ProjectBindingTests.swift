@@ -116,6 +116,21 @@ struct ProjectBindingTests {
         #expect(try await bind(db) == .init(changed: 0, pending: 0))
     }
 
+    /// With `worktree.useRelativePaths` (git 2.48+) a worktree's `gitdir` is relative to its entry in
+    /// `<common>/worktrees/`; written by hand, as the test Mac's git may be older.
+    @Test func relativeGitdirResolvesToTheWorktree() throws {
+        let common = path("app/.git")
+        try fm.createDirectory(atPath: common + "/worktrees/f", withIntermediateDirectories: true)
+        try Data("../../../../wt/f/.git\n".utf8).write(to: URL(filePath: common + "/worktrees/f/gitdir"))
+        let folders = WorktreeListResolver.folders(commonDir: common)
+        #expect(folders.map(BindingPaths.canonical) == [path("app"), path("wt/f")].map(BindingPaths.canonical))
+        var worktrees = WorktreeListResolver(excluded: [])
+        let repository = RepositoryMatch(projectID: "local/app", repoPath: common)
+        worktrees.add(folders: folders, repository: repository)
+        #expect(worktrees.repository(for: path("wt/f/Sources")) == repository)
+        #expect(worktrees.repository(for: path("wt/other")) == nil)
+    }
+
     @Test func deletedWorktreeResolvesViaWorktreeListUntilPruned() async throws {
         let app = try await repository("Projects/app")
         try await git("worktree", "add", "-q", "-b", "feature", path("wt/feature"), in: app)

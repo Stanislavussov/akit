@@ -447,16 +447,16 @@ enum Recommender {
     /// Everything `recommend` needs besides the index: owners and windows (as `akit stats`), the
     /// other Macs' summaries, the project's layer dates and the dismissals of the scope.
     static func inputs(env: HarnessEnvironment, database: IndexDatabase, brain: Brain?, project: String?, projectsRoot: URL,
-                       hostName: String, run: CommandRunner? = nil) async throws -> Inputs {
+                       hostName: String, hardware: String?, run: CommandRunner? = nil) async throws -> Inputs {
         let home = env.homeDirectory
         let machine = MachineProfile.load(home: home)
         let store = brain.map { ProjectStore.current(brain: $0.root, home: home, machine: machine) } ?? .local(home: home)
         var inputs = Inputs()
         inputs.stats = try await InsightsStats.inputs(env: env, database: database, brain: brain, projectsRoot: projectsRoot,
-                                                      hostName: hostName, run: run)
+                                                      hostName: hostName, hardware: hardware, run: run)
         inputs.brain = brain
         if let brain {
-            inputs.others = UsageSummary.load(brain: brain.root, store: store, ownership: UsageSummary.ownership(database, machine: machine))
+            inputs.others = UsageSummary.load(brain: brain.root, store: store, ownership: UsageSummary.ownership(database, machine: machine, hardware: hardware))
         }
         inputs.thisMac = machine.displayName(hostName: hostName)
         inputs.lastImport = try database.value("SELECT MAX(imported_at) FROM sources")?.double.map(Date.init(timeIntervalSince1970:))

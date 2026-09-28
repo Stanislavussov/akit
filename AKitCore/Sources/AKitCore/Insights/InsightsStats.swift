@@ -353,7 +353,7 @@ enum InsightsStats {
     /// Owners from the skills installed on this Mac and, with a brain, which of them AKit rendered
     /// from it (`BrainLinks`); window starts of layer skills from the brain's git history.
     static func inputs(env: HarnessEnvironment, database: IndexDatabase, brain: Brain?, projectsRoot: URL, hostName: String,
-                       run: CommandRunner? = nil) async throws -> Inputs {
+                       hardware: String?, run: CommandRunner? = nil) async throws -> Inputs {
         let names = try database.rows("SELECT DISTINCT skill FROM skill_listings").compactMap { $0[0].text }
         let installed = SkillScanner.scan(installations: HarnessCatalog.detectAll(in: env),
                                           extraProjects: ProjectFinder.projects(inRoots: [projectsRoot]), in: env)
@@ -379,7 +379,7 @@ enum InsightsStats {
         var otherMacHashes: [String: [DescriptionWindow.OtherMacHash]] = [:]
         if let brain {
             let machine = MachineProfile.load(home: env.homeDirectory)
-            otherMacHashes = UsageSummary.load(brain: brain.root, store: nil, ownership: UsageSummary.ownership(database, machine: machine))
+            otherMacHashes = UsageSummary.load(brain: brain.root, store: nil, ownership: UsageSummary.ownership(database, machine: machine, hardware: hardware))
                 .descHashes
         }
         return Inputs(owners: owners, descriptions: descriptions, brainStarts: brainStarts, otherMacHashes: otherMacHashes,

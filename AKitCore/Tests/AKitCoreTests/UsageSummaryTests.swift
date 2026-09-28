@@ -600,11 +600,43 @@ extension UsageSummaryTests {
         var file = try summary(originalFiles[0])
         file.days[day(-1)] = .init(sessions: 1, firstContextSum: 0, firstContextN: 0, skills: ["review": [1, 0, 0]])
         try write(".akit/registry/\(originalFiles[0])", String(decoding: UsageSummary.encode(file), as: UTF8.self))
-        let ownership = UsageSummary.ownership(db, machine: MachineProfile.load(home: home), calendar: calendar)
+        let ownership = UsageSummary.ownership(db, machine: MachineProfile.load(home: home), hardware: "hw-2", calendar: calendar)
         #expect(ownership == .init(own: [clone], copied: [original: day(0)]))
         let others = UsageSummary.load(brain: brainRoot, store: .brain(brainRoot), ownership: ownership, now: later, calendar: calendar)
         #expect(Array(others.machines.keys) == [original] && others.machines[original].map { Array($0.days.keys) } == [day(-1)])
         #expect(others.projects[Self.project]?[original]?.days.isEmpty == true)
+    }
+
+    @Test func cloneTellsTheOriginalApartBeforeItsFirstPublish() async throws {
+        let brain = try await setUpBrain()
+        let db = try database()
+        try writeFacts(db)
+        _ = try await publish(db)
+        let original = try #require(MachineProfile.load(home: home).id)
+        let profileBytes = try Data(contentsOf: MachineProfile.file(home: home))
+        // The original Mac publishes a day after the clone was made (after the real clock, so it is never too old to read).
+        let later = UsageSummary.day(Date().addingTimeInterval(2 * 86_400), calendar: calendar)
+        var file = try summary("insights/machines/\(original).json")
+        file.days[later] = .init(sessions: 1, firstContextSum: 0, firstContextN: 0, skills: ["review": [1, 0, 0]])
+        try write(".akit/registry/insights/machines/\(original).json", String(decoding: UsageSummary.encode(file), as: UTF8.self))
+        func others(hardware: String?) async throws -> UsageSummary.Others {
+            try await Recommender.inputs(env: env, database: db, brain: brain, project: nil, projectsRoot: home.appending(path: "Projects"),
+                                         hostName: "TestMac.local", hardware: hardware).others
+        }
+
+        // The Mac itself reads nothing of its own; a clone (other hardware, the same machine.json and
+        // index) that hasn't published yet reads the original's later days.
+        #expect(try await others(hardware: "hw-1").machines.isEmpty)
+        #expect(try await others(hardware: "hw-2").machines[original].map { Array($0.days.keys) } == [later])
+        let ownership = UsageSummary.ownership(db, machine: MachineProfile.load(home: home), hardware: "hw-2", now: now, calendar: calendar)
+        #expect(ownership.copied == [original: day(0)] && ownership.own.count == 1 && !ownership.own.contains(original))
+        // Identified in memory only.
+        #expect(try Data(contentsOf: MachineProfile.file(home: home)) == profileBytes)
+
+        // A broken machine.json identifies nothing: the index's keys stay left out.
+        try write(".akit/machine.json", "{")
+        let broken = UsageSummary.ownership(db, machine: MachineProfile.load(home: home), hardware: "hw-2", now: now, calendar: calendar)
+        #expect(broken == .init(own: [original]))
     }
 
     @Test func otherMacsOldDaysAreNotRead() async throws {
@@ -684,7 +716,7 @@ extension UsageSummaryTests {
 
         // Their description hashes feed the description window; this Mac's own file doesn't.
         let inputs = try await InsightsStats.inputs(env: env, database: db, brain: brain, projectsRoot: home.appending(path: "Projects"),
-                                                    hostName: "TestMac.local")
+                                                    hostName: "TestMac.local", hardware: "hw-1")
         #expect(inputs.otherMacHashes["tdd"] == [.init(fromDay: day(40), hash: "h-other")])
     }
 

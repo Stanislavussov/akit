@@ -166,7 +166,7 @@ public enum AKitCLI {
             if command == "stats" {
                 try refuseProjectOptions(options, command: "stats")
                 return try await stats(&args, options: options, env: env, cwd: cwd,
-                                       projectsRoot: projectsRoot, hostName: hostName,
+                                       projectsRoot: projectsRoot, hostName: hostName, hardwareHash: hardwareHash,
                                        runner: runner, out: out, err: err)
             }
             if command == "insights" {
@@ -178,7 +178,7 @@ public enum AKitCLI {
             if command == "recommend" {
                 try refuseProjectOptions(options, command: "recommend")
                 return try await recommend(&args, options: options, env: env, cwd: cwd,
-                                           projectsRoot: projectsRoot, hostName: hostName,
+                                           projectsRoot: projectsRoot, hostName: hostName, hardwareHash: hardwareHash,
                                            runner: runner, out: out, err: err)
             }
             if command == "remove" {
@@ -489,7 +489,7 @@ public enum AKitCLI {
     /// `akit stats --debug`: what the index recorded per session, to check the parsers.
     /// `akit stats bindings`: how sessions are bound to projects.
     private static func stats(_ args: inout Arguments, options: Options, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
-                              hostName: String, runner: CommandRunner?, out: (String) -> Void,
+                              hostName: String, hardwareHash: () -> String?, runner: CommandRunner?, out: (String) -> Void,
                               err: (String) -> Void) async throws -> Int32 {
         // Value flags before the subcommand word, so a value (`--project bindings`) is never taken for it.
         let session = args.value("--session")
@@ -550,7 +550,8 @@ public enum AKitCLI {
         if let projectArgument { project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env) }
         let brainRoot = brainRoot(options, cwd: cwd, env: env)
         var inputs = try await InsightsStats.inputs(env: env, database: database, brain: Brain.load(from: brainRoot),
-                                                    projectsRoot: projectsRoot, hostName: hostName, run: runner)
+                                                    projectsRoot: projectsRoot, hostName: hostName, hardware: hardwareHash(),
+                                                    run: runner)
         if subcommand == "changes" {
             let changes = try BeforeAfter.changes(database, descriptions: inputs.descriptions)
             // Every anchor calibrates, whatever the output shows. The index is written only under the import lock.
@@ -796,7 +797,7 @@ public enum AKitCLI {
 
     /// `akit recommend`, `akit recommend apply ID`, `akit recommend dismiss ID`.
     private static func recommend(_ args: inout Arguments, options: Options, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
-                                  hostName: String, runner: CommandRunner?, out: (String) -> Void,
+                                  hostName: String, hardwareHash: () -> String?, runner: CommandRunner?, out: (String) -> Void,
                                   err: (String) -> Void) async throws -> Int32 {
         // Value flags before the subcommand word, so a value (`--project apply`) is never taken for it.
         let bindingList = args.value("--bindings")
@@ -828,7 +829,8 @@ public enum AKitCLI {
         let brainRoot = brainRoot(options, cwd: cwd, env: env)
         let brain = Brain.load(from: brainRoot)
         var inputs = try await Recommender.inputs(env: env, database: database, brain: brain, project: recommendOptions.project,
-                                                  projectsRoot: projectsRoot, hostName: hostName, run: runner)
+                                                  projectsRoot: projectsRoot, hostName: hostName, hardware: hardwareHash(),
+                                                  run: runner)
         inputs.stats.importNotes = imported.notes
         guard let subcommand, let id else {
             let report = try Recommender.recommend(database, options: recommendOptions, inputs: inputs)
