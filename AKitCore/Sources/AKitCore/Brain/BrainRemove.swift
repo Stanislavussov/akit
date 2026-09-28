@@ -16,9 +16,10 @@ public enum BrainRemove {
         public let projects: [String]
     }
 
-    public static func layerImpact(_ name: String, in brain: Brain) -> LayerImpact {
+    /// `home` finds this Mac's local project store too (work Mac), besides the brain's.
+    public static func layerImpact(_ name: String, in brain: Brain, home: URL) -> LayerImpact {
         LayerImpact(requiredBy: brain.layers.filter { $0.requires.contains(name) }.map(\.name),
-                    projects: savedAnswers(in: brain.root).filter { $0.answers.layers.contains(name) }.map(\.id))
+                    projects: savedAnswers(brain: brain, home: home).filter { $0.answers.layers.contains(name) }.map(\.id))
     }
 
     /// Layers that list this skill: removal is refused while there are any.
@@ -33,20 +34,21 @@ public enum BrainRemove {
                                    trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) -> [String] {
         guard let layer = brain.layers.first(where: { $0.name == name }) else { throw Failure(message: "No layer named \(name).") }
         guard name != "core" else { throw Failure(message: "The core layer can't be removed; remove skills from it instead.") }
-        let impact = layerImpact(name, in: brain)
+        let impact = layerImpact(name, in: brain, home: env.homeDirectory)
         guard impact.requiredBy.isEmpty else {
             throw Failure(message: "\(name) is required by \(impact.requiredBy.joined(separator: ", ")). Remove it from their requires first.")
         }
         var paths = ["layers/\(name)"]
-        for saved in savedAnswers(in: brain.root) where saved.answers.layers.contains(name) {
+        for saved in savedAnswers(brain: brain, home: env.homeDirectory) where saved.answers.layers.contains(name) {
             var answers = saved.answers
             answers.layers.removeAll { $0 == name }
             do {
                 try encode(answers).write(to: saved.file, options: .atomic)
             } catch {
-                throw Failure(message: "Couldn't update projects/\(saved.id)/answers.json: \(error.localizedDescription)")
+                throw Failure(message: "Couldn't update \(saved.store.describe(id: saved.id))/answers.json: \(error.localizedDescription)")
             }
-            paths.append("projects/\(saved.id)/answers.json")
+            // Only the brain's own store is committed; a work Mac's local answers stay out of git.
+            if !saved.store.isLocal { paths.append("projects/\(saved.id)/answers.json") }
         }
         do {
             _ = try trash(layer.folder)
@@ -121,19 +123,21 @@ public enum BrainRemove {
 
     // MARK: - Projects
 
-    /// Removes a project's (or the home folder's) record from the brain: `projects/<id>` to
-    /// the Trash, committed. Its rendered files are left to `akit remove project`, which
-    /// first applies an empty render.
-    public static func forgetProject(_ id: String, in brain: Brain, env: HarnessEnvironment,
+    /// Removes a project's (or the home folder's) record from its store: `<store>/<id>` to
+    /// the Trash, committed when the store is the brain's. Its rendered files are left to
+    /// `akit remove project`, which first applies an empty render.
+    public static func forgetProject(_ id: String, in store: ProjectStore, env: HarnessEnvironment,
                                      trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) {
-        let folder = ProjectSetup.metadataFolder(id: id, brain: brain.root)
-        guard FileManager.default.fileExists(atPath: folder.path) else { throw Failure(message: "The brain has nothing for \(id).") }
+        let folder = store.folder(id: id)
+        guard FileManager.default.fileExists(atPath: folder.path) else { throw Failure(message: "Nothing is saved for \(id).") }
         do {
             _ = try trash(folder)
         } catch {
-            throw Failure(message: "Couldn't move projects/\(id) to the Trash: \(error.localizedDescription)")
+            throw Failure(message: "Couldn't move \(store.describe(id: id)) to the Trash: \(error.localizedDescription)")
         }
-        try await commit(["projects/\(id)"], "Forget \(id)", in: brain.root, env: env)
+        if let brainRoot = store.brain {
+            try await commit(["projects/\(id)"], "Forget \(id)", in: brainRoot, env: env)
+        }
     }
 
     // MARK: - Helpers
@@ -142,17 +146,23 @@ public enum BrainRemove {
         let id: String
         let file: URL
         let answers: ProjectAnswers
+        let store: ProjectStore
     }
 
-    /// Every `projects/**/answers.json` in the brain.
-    static func savedAnswers(in root: URL) -> [Saved] {
-        let base = root.appending(path: "projects").standardizedFileURL
+    /// Saved answers in the brain and in this Mac's local store.
+    static func savedAnswers(brain: Brain, home: URL) -> [Saved] {
+        savedAnswers(in: .brain(brain.root)) + savedAnswers(in: .local(home: home))
+    }
+
+    /// Every `**/answers.json` in a store.
+    static func savedAnswers(in store: ProjectStore) -> [Saved] {
+        let base = store.root.standardizedFileURL
         guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else { return [] }
         var found: [Saved] = []
         for case let url as URL in walker where url.lastPathComponent == "answers.json" {
             guard let data = try? Data(contentsOf: url), let answers = try? JSONDecoder().decode(ProjectAnswers.self, from: data) else { continue }
             let id = String(url.deletingLastPathComponent().standardizedFileURL.path.dropFirst(base.path.count + 1))
-            found.append(Saved(id: id, file: url, answers: answers))
+            found.append(Saved(id: id, file: url, answers: answers, store: store))
         }
         return found.sorted { $0.id < $1.id }
     }

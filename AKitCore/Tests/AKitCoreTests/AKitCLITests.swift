@@ -126,12 +126,124 @@ struct AKitCLITests {
         #expect(skill.contains("disable-model-invocation: true"))
         #expect(try fm.destinationOfSymbolicLink(atPath: home.appending(path: ".claude/skills").path) == "../.agents/skills")
         #expect(taken.out.contains("Backup: "))
-        #expect(ProjectSetup.savedAnswers(id: "home/testmac", brain: Brain.defaultRoot(home: home))?.layers == ["core"])
+        #expect(ProjectSetup.savedAnswers(id: "home/testmac", in: .brain(Brain.defaultRoot(home: home)))?.layers == ["core"])
     }
 
     @Test func homeIDs() {
         #expect(ProjectSetup.homeID(hostName: "Example-Mac.local") == "home/example-mac")
         #expect(ProjectSetup.homeID(hostName: "") == "home/mac")
+        #expect(ProjectSetup.homeID(hostName: "ACME-1234.local", machineName: "Work") == "home/work")
+        #expect(ProjectSetup.homeID(hostName: "ACME-1234.local", machineName: "") == "home/acme-1234")
+    }
+
+    func brainGit(_ args: String...) async throws -> String {
+        let result = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: args,
+                                                           directory: Brain.defaultRoot(home: home), environment: env.variables, timeout: 10))
+        #expect(result.succeeded, "\(result.output)")
+        return result.output
+    }
+
+    @Test func workMacKeepsProjectRecordsOutOfTheBrain() async throws {
+        try await setUp()
+        try write(".akit/registry/layers/core/layer.yaml", "name: core\nskills:\n  - name: tdd\n    mode: manual\n")
+        _ = try await brainGit("add", "-A")
+        _ = try await brainGit("commit", "-qm", "Layers")
+        #expect(await akit("apply", "--home").code == 0)  // saved as a personal Mac: projects/home/testmac
+        #expect(await akit("machine").out.hasPrefix("Personal Mac."))
+
+        let switched = await akit("machine", "work")
+        #expect(switched.code == 0, "\(switched)")
+        #expect(switched.out.contains("Copied this Mac's home record (projects/home/testmac)"))
+        #expect(switched.out.contains("The brain still has records saved before (by any Mac): home/testmac."))
+        #expect(await akit("machine").out.hasPrefix("Work Mac “work”."))
+        let local = ProjectStore.local(home: home)
+        let commits = try await brainGit("rev-list", "--count", "HEAD")
+
+        // The home render still knows its files (the lock was copied) and saves under the new name.
+        let homeAgain = await akit("apply", "--home")
+        #expect(homeAgain.code == 0 && !homeAgain.out.contains("Skipped"), "\(homeAgain)")
+        #expect(homeAgain.out.contains("on this Mac only"))
+        #expect(ProjectSetup.savedAnswers(id: "home/work", in: local)?.layers == ["core"])
+
+        let applied = await akit("apply", "--layers", "task", "--set", "company=Acme", "--set", "stack=swift")
+        #expect(applied.code == 0, "\(applied)")
+        #expect(applied.out.contains("(saved locally: \(local.folder(id: "local/task").path))"))
+        #expect(read("AGENTS.md") == "# Acme in swift\n")
+        #expect(ProjectSetup.savedAnswers(id: "local/task", in: local)?.values["company"] == .text("Acme"))
+        #expect(await akit("answers").out.contains("\"company\" : \"Acme\""))
+
+        // Nothing reached the brain: no new commit, no new files.
+        #expect(try await brainGit("rev-list", "--count", "HEAD") == commits)
+        #expect(try await brainGit("status", "--porcelain").isEmpty)
+        #expect(!fm.fileExists(atPath: Brain.defaultRoot(home: home).appending(path: "projects/local").path))
+
+        // Removing a layer updates local answers without committing them.
+        #expect(await akit("remove", "layer", "task", "--yes").code == 0)
+        #expect(ProjectSetup.savedAnswers(id: "local/task", in: local)?.layers == [])
+        #expect(try await brainGit("status", "--porcelain").isEmpty)
+
+        let forgot = await akit("remove", "project", "--yes")
+        #expect(forgot.code == 0, "\(forgot)")
+        #expect(!fm.fileExists(atPath: local.folder(id: "local/task").path))
+
+        let back = await akit("machine", "personal")
+        #expect(back.code == 0 && back.out.hasPrefix("Personal Mac:"))
+        #expect(MachineProfile.load(home: home) == MachineProfile())
+    }
+
+    @Test func workMacFailsClosedAndKeepsEarlierRendersKnown() async throws {
+        try await setUp()
+        _ = try await brainGit("add", "-A")
+        _ = try await brainGit("commit", "-qm", "Layers")
+        // Rendered while personal: the record is in the brain.
+        #expect(await akit("apply", "--layers", "task", "--set", "company=Acme", "--set", "stack=swift").code == 0)
+        let commits = try await brainGit("rev-list", "--count", "HEAD")
+
+        // A broken machine.json counts as a work Mac, with a warning.
+        try write(".akit/machine.json", "{ \"kind\": \"Work\", }")
+        #expect(MachineProfile.load(home: home).isWork)
+        let broken = await akit("plan")
+        #expect(broken.err.contains("can't be read, so this Mac counts as a work Mac"), "\(broken)")
+        #expect(broken.out.contains("saved locally"))
+        #expect(await akit("machine").out.contains("can't be read"))
+
+        // Case doesn't matter; --name belongs to akit machine only.
+        let switched = await akit("machine", "WORK")
+        #expect(switched.code == 0, "\(switched)")
+        #expect(switched.out.contains("git -C") && switched.out.contains("config user.email"))
+        #expect(await akit("apply", "--name", "x").code == 2)
+
+        // The brain's earlier record is read (answers prefilled, files known), never written.
+        let changed = await akit("apply", "--set", "company=Beta")
+        #expect(changed.code == 0, "\(changed)")
+        #expect(changed.out.contains("CHANGED AGENTS.md") && !changed.out.contains("Skipped"), "\(changed)")
+        #expect(read("AGENTS.md") == "# Beta in swift\n")
+        let local = ProjectStore.local(home: home)
+        #expect(fm.fileExists(atPath: local.folder(id: "local/task").appending(path: "lock.json").path))
+        #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(Brain.defaultRoot(home: home)))?.values["company"] == .text("Acme"))
+        #expect(try await brainGit("rev-list", "--count", "HEAD") == commits)
+        #expect(try await brainGit("status", "--porcelain").isEmpty)
+
+        // Forgetting it clears the local record and points at the brain's one.
+        let forgot = await akit("remove", "project", "--keep-files", "--yes")
+        #expect(forgot.code == 0 && forgot.out.contains("The brain still has projects/local/task"), "\(forgot)")
+        #expect(!fm.fileExists(atPath: local.folder(id: "local/task").path))
+    }
+
+    @Test func renamingAWorkMacMovesItsHomeRecord() async throws {
+        try await setUp()
+        try write(".akit/registry/layers/core/layer.yaml", "name: core\nskills:\n  - name: tdd\n    mode: manual\n")
+        #expect(await akit("machine", "work").code == 0)
+        #expect(await akit("apply", "--home").code == 0)
+        let local = ProjectStore.local(home: home)
+        #expect(fm.fileExists(atPath: local.folder(id: "home/work").path))
+
+        let renamed = await akit("machine", "work", "--name", "Laptop")
+        #expect(renamed.out.contains("Renamed this Mac's home record from home/work to home/laptop"), "\(renamed)")
+        #expect(!fm.fileExists(atPath: local.folder(id: "home/work").path))
+        let again = await akit("apply", "--home")
+        #expect(again.code == 0 && again.out.contains("No changes."), "\(again)")
+        #expect(await akit("machine").out.hasPrefix("Work Mac “Laptop”."))
     }
 
     @Test func applySkipsForeignFilesUnlessIncluded() async throws {

@@ -123,6 +123,8 @@ synced; commit them first.
 
 - Never put secrets in fields, templates or skills.
 - Never edit `projects/*/answers.json` or `lock.json` by hand; akit writes them.
+- On a work Mac (`akit machine` says so) answers and locks stay in `~/.akit/local/projects`;
+  never copy them, project names or work details into the brain.
 - Never delete skills or layers without asking; prefer changing a layer over copying it.
 """#
 }

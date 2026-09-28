@@ -15,6 +15,8 @@
 #   AKIT_RELEASE_URL   AKit.zip to install instead of the latest release (a mirror, or file://)
 #   AKIT_BRAIN_REPO    your brain repo (owner/repo or a git URL) instead of being asked
 #   AKIT_SKIP_HOME=1   don't put the brain's core layer into ~
+#   AKIT_MACHINE=work  a work Mac: project answers and locks stay on it, never in the brain
+#                      (akit machine work; set it on the first install, before anything is saved)
 set -euo pipefail
 
 AKIT_REPO="${AKIT_REPO:-Stanislavussov/akit}"
@@ -110,6 +112,14 @@ case ":$PATH:" in
         echo "Open a new terminal (or run: source ~/.zprofile) to use akit."
         ;;
 esac
+
+# A work Mac is marked before setup renders anything, so its records never land in the brain.
+# If that fails, stop: a Mac meant to be a work Mac must not be set up as a personal one.
+if [[ -n "${AKIT_MACHINE:-}" ]]; then
+    machine="$(printf '%s' "$AKIT_MACHINE" | tr '[:upper:]' '[:lower:]')"
+    "$HOME/.local/bin/akit" machine "$machine" \
+        || fail "akit machine $machine failed, so setup didn't run (nothing reached the brain). Fix it (akit machine work|personal), then run: akit setup"
+fi
 
 # The questions (brain, projects folder, skills in ~) with defaults; none without a terminal.
 say "Setting up"

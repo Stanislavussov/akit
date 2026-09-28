@@ -49,6 +49,10 @@ targets:
         ENABLE_HARDENED_RUNTIME: NO
         # The build stamp script reads the git repository.
         ENABLE_USER_SCRIPT_SANDBOXING: NO
+      configs:
+        # Orange icon for dev builds, so they are easy to tell from the installed app in the Dock.
+        Debug:
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
 schemes:
   AKit:
     build:

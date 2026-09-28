@@ -71,7 +71,8 @@ Run the install again to update. `akit setup` is safe to run again any time: it 
 brain, adds agents installed since, and puts new core skills into `~`.
 
 **Settings for scripts:** `AKIT_BRAIN_REPO=you/brain` answers the brain question,
-`AKIT_SKIP_HOME=1` leaves `~` alone, `AKIT_FROM_SOURCE=1` builds from source. Without a
+`AKIT_SKIP_HOME=1` leaves `~` alone, `AKIT_FROM_SOURCE=1` builds from source,
+`AKIT_MACHINE=work` marks a work Mac (see below). Without a
 terminal (CI), every default is taken.
 
 ## The app
@@ -175,6 +176,16 @@ git -C ~/.akit/registry push -u origin HEAD
 
 On another Mac, answer `you/brain` when the install asks.
 
+### A work Mac
+
+The brain goes to your personal remote, and `projects/` names every project you set up.
+On a computer whose projects must not end up there, run `akit machine work` (or Settings →
+This Mac → Work, or `AKIT_MACHINE=work` on install) before setting anything up. Answers and
+locks of its projects then stay in `~/.akit/local/projects` and are never committed; the
+home folder's record is named `work` instead of the host name. Skills and layers still come
+from the brain. `akit machine` shows the current role; a broken `~/.akit/machine.json`
+counts as work.
+
 ## Everyday use
 
 **With your agent** (Claude Code, Pi, …): `/akit` followed by what you want.
@@ -227,6 +238,8 @@ akit remove layer NAME                           refused while other layers requ
 akit remove skill NAME [--from LAYER]            from the brain, or only from one layer
 akit remove project [PROJECT|--home] [--keep-files]
 
+akit machine [work [--name NAME] | personal]     a work Mac keeps project records out of the brain
+
 ANSWERS: --layers a,b  --set field=value  --unset field  --targets claude,pi  --answers FILE
 ```
 
@@ -241,6 +254,7 @@ projects folder. `akit --help` has the details.
 | `~/Applications/AKit.app`, `~/.local/bin/akit` | the app and the command |
 | `~/.akit/registry` | your brain |
 | `~/.akit/backups/<time>/` | every file AKit replaced, by path under `~` |
+| `~/.akit/machine.json`, `~/.akit/local/projects/` | this Mac's role; on a work Mac, its project records |
 | `~/.agents/skills`, `~/.claude/skills` | skills from the core layer (the second links to the first) |
 | Keychain | MCP secret values you entered in AKit |
 

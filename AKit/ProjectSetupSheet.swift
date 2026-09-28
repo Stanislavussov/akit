@@ -6,6 +6,10 @@ import SwiftUI
 struct ProjectSetupSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// Opened for this project (from the Brain's project list).
+    var initialProject: URL?
+    /// Ticked on top of the project's saved answers (Apply to Project on a layer).
+    var initialLayers: [String] = []
 
     private enum Page { case form, preview, done }
 
@@ -33,6 +37,7 @@ struct ProjectSetupSheet: View {
         .frame(width: 760, height: 640)
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         .task {
+            if project == nil, let initialProject { await choose(initialProject) }
             // Snapshot: `--project <folder>` picks it, `--query a,b` ticks layers, `--capture` opens the preview.
             if project == nil, let options = DebugSnapshot.options, let name = options.project,
                let match = model.projects.first(where: { $0.lastPathComponent == name }) {
@@ -57,7 +62,7 @@ struct ProjectSetupSheet: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Set Up a Project").font(.title2.bold())
+            Text(initialLayers.isEmpty ? "Set Up a Project" : "Apply \(initialLayers.joined(separator: ", ")) to a Project").font(.title2.bold())
             projectPicker
             if project != nil {
                 ScrollView {
@@ -100,7 +105,7 @@ struct ProjectSetupSheet: View {
             Spacer()
             if let project {
                 Text(projectID ?? "…").font(.caption.monospaced()).foregroundStyle(.secondary)
-                    .help("\(project.tildePath)\nAnswers are kept in the brain under projects/\(projectID ?? "…")")
+                    .help("\(project.tildePath)\nAnswers are kept \(model.projectStore.isLocal ? "on this Mac only, in" : "in the brain under") \(model.projectStore.describe(id: projectID ?? "…"))")
             }
         }
     }
@@ -227,17 +232,18 @@ struct ProjectSetupSheet: View {
         Task { await choose(url) }
     }
 
-    /// Picks the project and prefills the form from the answers saved in the brain.
+    /// Picks the project and prefills the form from its saved answers.
     private func choose(_ url: URL?) async {
         project = url
         projectID = nil
         error = nil
-        guard let url, let brain else { return }
+        guard let url, brain != nil else { return }
         let id = await model.projectID(for: url)
         guard project == url else { return }
         projectID = id
-        answers = ProjectSetup.savedAnswers(id: id, brain: brain.root)
+        answers = ProjectSetup.savedAnswers(id: id, in: model.projectStore)
             ?? ProjectAnswers(layers: [], values: [:], targets: model.installedTargets)
+        for name in initialLayers where !answers.layers.contains(name) { answers.layers.append(name) }
     }
 
     private func makePlan() {
@@ -391,8 +397,10 @@ struct ProjectSetupSheet: View {
                 }
                 ForEach(outcome.notes, id: \.self) { Label($0, systemImage: "info.circle") }
             }
-            Text("Answers are saved in the brain under projects/\(plan?.id ?? ""). Review and commit the new harness files in the project yourself.")
-                .foregroundStyle(.secondary)
+            if let plan {
+                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)). Review and commit the new harness files in the project yourself.")
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             HStack {
                 if let project = plan?.project {

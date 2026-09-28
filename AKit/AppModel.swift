@@ -32,6 +32,15 @@ final class AppModel {
     var mcpFilter: SkillsFilter = .initial
     var mcpHarness: String? = DebugSnapshot.options?.harness
 
+    /// A brain skill the Brain screen should select when it appears (set by "Show in Brain").
+    var revealBrainSkill: String?
+
+    /// Opens the Brain screen on this brain skill.
+    func showBrainSkill(_ name: String) {
+        revealBrainSkill = name
+        section = .brain
+    }
+
     /// Opens the Skills screen on the skill in this folder.
     func showSkill(inFolder folder: URL) {
         guard let skill = skill(inFolder: folder) else { return }
@@ -59,6 +68,27 @@ final class AppModel {
     var brainRoot: URL { HarnessEnvironment.current.expand(brainPath) }
     /// The brain repo from the last scan; nil when there is no folder at `brainPath`.
     private(set) var brain: Brain?
+    /// Brain project ids → their folders on this Mac (from the last scan).
+    private(set) var brainProjectFolders: [String: URL] = [:]
+    /// How each of your skills relates to the brain: rendered copy, same name, or not in it.
+    private(set) var brainLinks: [Skill.ID: BrainLink] = [:]
+
+    /// This Mac's role, from `~/.akit/machine.json` (shared with the `akit` command); reread on refresh.
+    private(set) var machine = MachineProfile.load(home: HarnessEnvironment.current.homeDirectory)
+
+    /// Saves this Mac's role and returns notes for the user; the file, not this copy,
+    /// decides where answers go.
+    func setMachine(_ profile: MachineProfile) throws -> [String] {
+        let notes = try MachineProfile.change(to: profile, brain: brainRoot, home: HarnessEnvironment.current.homeDirectory)
+        machine = profile
+        return notes
+    }
+
+    /// Where project answers and locks are kept on this Mac: the brain, or a local folder on a work Mac.
+    /// Apply checks the file again, so a role changed by `akit machine` meanwhile can't slip through.
+    var projectStore: ProjectStore {
+        ProjectStore.current(brain: brainRoot, home: HarnessEnvironment.current.homeDirectory, machine: machine)
+    }
 
     /// Creates an empty brain repo at `brainPath` (folder layout, `core` layer, first commit).
     func createBrain() async throws {
@@ -66,12 +96,13 @@ final class AppModel {
         await refresh()
     }
 
-    /// What importing `~/.agents/skills` into the brain would do. Only reads.
-    func brainImportPlan() async -> BrainImport.Plan? {
+    /// What importing skills from `source` (default `~/.agents/skills`) into a brain layer would do. Only reads.
+    func brainImportPlan(from source: URL? = nil, layer: String = "core", mode: LayerSkill.Mode = .manual) async -> BrainImport.Plan? {
         guard let brain else { return nil }
         let env = HarnessEnvironment.current
         return await Task.detached {
-            BrainImport.plan(from: BrainImport.defaultSource(home: env.homeDirectory), into: brain.root, env: env)
+            BrainImport.plan(from: source ?? BrainImport.defaultSource(home: env.homeDirectory), into: brain.root,
+                             layer: layer, mode: mode, env: env)
         }.value
     }
 
@@ -204,13 +235,27 @@ final class AppModel {
         return await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
     }
 
+    /// Brain project ids found on this Mac → their folders: the home folder and every known project.
+    func projectFolders() async -> [String: URL] {
+        let env = HarnessEnvironment.current
+        var folders = [ProjectSetup.homeID(machineName: machine.homeName): env.homeDirectory]
+        await withTaskGroup(of: (String, URL).self) { group in
+            for project in projects {
+                group.addTask { (await self.projectID(for: project), project) }
+            }
+            for await (id, folder) in group where folders[id] == nil { folders[id] = folder }
+        }
+        return folders
+    }
+
     /// What rendering these answers would change in the project. Only reads.
     func projectPlan(project: URL, id: String, answers: ProjectAnswers) async -> ProjectSetup.Plan? {
         guard let brain else { return nil }
-        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain) }.value
+        let store = projectStore
+        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store) }.value
     }
 
-    /// Writes the project files (backup first), saves answers in the brain, then rescans.
+    /// Writes the project files (backup first), saves answers in the plan's store, then rescans.
     func applyProject(_ plan: ProjectSetup.Plan, excluding: Set<String>) async throws -> ProjectSetup.Outcome {
         guard let brain else {
             throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
@@ -246,6 +291,7 @@ final class AppModel {
             return
         }
         isScanning = true
+        machine = MachineProfile.load(home: HarnessEnvironment.current.homeDirectory)
         repeat {
             rescanRequested = false
             await scan()
@@ -471,6 +517,13 @@ final class AppModel {
         installations = found
         self.skills = skills
         self.projects = projects
+        if let brain {
+            brainProjectFolders = await projectFolders()
+            brainLinks = BrainLinks.links(for: skills, brain: brain, folders: brainProjectFolders, store: projectStore)
+        } else {
+            brainProjectFolders = [:]
+            brainLinks = [:]
+        }
         self.sessions = sessions
         mcpServers = mcp.servers
         mcpProblems = mcp.problems
