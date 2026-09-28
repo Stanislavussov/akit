@@ -53,7 +53,7 @@ public enum FieldValue: Hashable, Sendable {
 
 /// How a layer brings a skill from `brain/skills/`.
 public struct LayerSkill: Hashable, Sendable {
-    public enum Mode: String, Hashable, Sendable, CaseIterable {
+    public enum Mode: String, Codable, Hashable, Sendable, CaseIterable {
         /// Description in the agent's context; the agent may invoke it.
         case auto
         /// Runs only on an explicit `/name` (`disable-model-invocation: true`).

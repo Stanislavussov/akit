@@ -2,16 +2,42 @@ import Foundation
 
 /// Chosen layers and field values for one project.
 public struct ProjectAnswers: Codable, Hashable, Sendable {
+    /// A brain skill for this project only, or a new mode for one a layer brings
+    /// (`off` takes it out of this project).
+    public struct Skill: Codable, Hashable, Sendable {
+        public var name: String
+        public var mode: LayerSkill.Mode
+
+        public init(name: String, mode: LayerSkill.Mode) {
+            self.name = name
+            self.mode = mode
+        }
+    }
+
     /// Layers in the order they were picked; required layers are added by the render.
     public var layers: [String]
     public var values: [String: FieldValue]
     /// Harnesses rendered for: `claude`, `pi`, `opencode`, `codex`.
     public var targets: [String]
+    /// This project's own skills from the brain, after the layers' skills.
+    public var skills: [Skill]
 
-    public init(layers: [String] = [], values: [String: FieldValue] = [:], targets: [String] = []) {
+    public init(layers: [String] = [], values: [String: FieldValue] = [:], targets: [String] = [], skills: [Skill] = []) {
         self.layers = layers
         self.values = values
         self.targets = targets
+        self.skills = skills
+    }
+
+    private enum CodingKeys: String, CodingKey { case layers, values, targets, skills }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        layers = try container.decode([String].self, forKey: .layers)
+        values = try container.decode([String: FieldValue].self, forKey: .values)
+        targets = try container.decode([String].self, forKey: .targets)
+        // Answers saved before project skills existed have none.
+        skills = try container.decodeIfPresent([Skill].self, forKey: .skills) ?? []
     }
 
     /// Target names used in `when: target == …`.
@@ -62,6 +88,13 @@ public enum Render {
         }
     }
 
+    /// A skill the render brings, with where it comes from (a layer or `projectSource`).
+    public struct Skill: Hashable, Sendable {
+        public let name: String
+        public let mode: LayerSkill.Mode
+        public let source: String
+    }
+
     public struct Result: Sendable {
         /// Layers in render order: required ones first, then the selection order.
         public let layers: [String]
@@ -70,9 +103,14 @@ public enum Render {
         public let errors: [String]
         /// Things worth a look that don't stop it (unknown `{{field}}` in a template).
         public let warnings: [String]
+        /// The skills rendered, in order (`off` ones left out).
+        public var skills: [Skill] = []
     }
 
     public static let skillsFolder = ".agents/skills"
+    /// What `Output.layers` says for a skill the project picked itself (not a layer name:
+    /// layer names have no spaces).
+    public static let projectSource = "this project"
 
     /// `forHome`: rendering the core layer into the home folder, where no harness reads
     /// ~/AGENTS.md, so there is no CLAUDE.md shim (the .claude/skills link still applies).
@@ -139,9 +177,18 @@ public enum Render {
                 if skill.mode != .off { skills.append((skill, layer.name)) }
             }
         }
+        // This project's own choices come last and win over the layers' modes.
+        for chosen in answers.skills {
+            let index = skills.firstIndex { $0.skill.name == chosen.name }
+            if let index { skills.remove(at: index) }
+            if chosen.mode != .off {
+                let skill = LayerSkill(name: chosen.name, mode: chosen.mode, when: [], override: false)
+                skills.insert((skill, projectSource), at: index ?? skills.endIndex)
+            }
+        }
         for (skill, layer) in skills {
             guard let source = brain.skills.first(where: { $0.name == skill.name }) else {
-                errors.append("Skill “\(skill.name)” (layer \(layer)) is not in the brain's skills/.")
+                errors.append("Skill “\(skill.name)” (\(layer == projectSource ? layer : "layer \(layer)")) is not in the brain's skills/.")
                 continue
             }
             let files = BrainImport.copyable(source.folder).files
@@ -232,7 +279,8 @@ public enum Render {
             errors.append("\(output.path) is inside .git; layers can't write there.")
         }
 
-        return Result(layers: order, outputs: outputs.sorted { $0.path < $1.path }, errors: errors, warnings: warnings)
+        return Result(layers: order, outputs: outputs.sorted { $0.path < $1.path }, errors: errors, warnings: warnings,
+                      skills: skills.map { Skill(name: $0.skill.name, mode: $0.skill.mode, source: $0.layer) })
     }
 
     // MARK: - Pieces

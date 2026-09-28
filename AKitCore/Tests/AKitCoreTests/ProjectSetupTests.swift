@@ -136,9 +136,9 @@ struct ProjectSetupTests {
         try fm.createSymbolicLink(atPath: project.appending(path: "CLAUDE.md").path, withDestinationPath: "NOTES.md")
         let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         let change = try #require(plan.changes.first { $0.path == "CLAUDE.md" })
-        #expect(change.kind == .update && change.replacesUnmanaged && change.oldText == "→ NOTES.md (a link)")
+        #expect(change.kind == .suggest && change.replacesUnmanaged && change.oldText == "→ NOTES.md (a link)")
 
-        let outcome = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        let outcome = try await ProjectSetup.apply(plan, accepting: ["CLAUDE.md"], brain: brain, home: home, env: env, trash: trash)
         #expect(read("CLAUDE.md") == "@AGENTS.md\n")
         #expect(read("NOTES.md") == "notes")
         let backup = try #require(outcome.backup).appending(path: "Projects/task/CLAUDE.md")
@@ -154,11 +154,12 @@ struct ProjectSetupTests {
         next.values["company"] = .text("Beta")
         next.values["review"] = .bool(false)
         let plan = ProjectSetup.plan(project: project, id: "local/task", answers: next, brain: brain, store: .brain(brainRoot))
-        #expect(plan.changes.first { $0.path == "AGENTS.md" }?.editedSinceRender == true)
+        // Edited by the project, and the layers' version changed: offered, not written.
+        #expect(plan.changes.first { $0.path == "AGENTS.md" }?.kind == .suggest)
 
         // The Trash fails on REVIEW.md: AGENTS.md was already written and must be in the lock.
         await #expect(throws: ProjectSetup.Failure.self) {
-            try await ProjectSetup.apply(plan, brain: brain, home: home, env: env,
+            try await ProjectSetup.apply(plan, accepting: ["AGENTS.md"], brain: brain, home: home, env: env,
                                          trash: { _ in throw CocoaError(.fileWriteNoPermission) })
         }
         let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot)))
@@ -177,25 +178,33 @@ struct ProjectSetupTests {
         let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
         #expect(plan.canApply, "\(plan.render.errors) \(plan.blockers)")
         let kinds = Dictionary(uniqueKeysWithValues: plan.changes.map { ($0.path, $0.kind) })
-        #expect(kinds == ["AGENTS.md": .create, "CLAUDE.md": .update, "REVIEW.md": .create,
+        // The project's own CLAUDE.md is only offered the layers' version.
+        #expect(kinds == ["AGENTS.md": .create, "CLAUDE.md": .suggest, "REVIEW.md": .create,
                           ".agents/skills/tdd/SKILL.md": .create, ".claude/skills": .create])
         #expect(plan.changes.first { $0.path == "CLAUDE.md" }?.replacesUnmanaged == true)
 
         let outcome = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
         #expect(read("AGENTS.md") == "# Task for Acme\n")
-        #expect(read("CLAUDE.md") == "@AGENTS.md\n")
+        #expect(read("CLAUDE.md") == "# My own rules\n")
         #expect(read(".claude/skills/tdd/SKILL.md")?.contains("disable-model-invocation: true") == true)
-        let backup = try #require(outcome.backup)
-        #expect(try String(contentsOf: backup.appending(path: "Projects/task/CLAUDE.md"), encoding: .utf8) == "# My own rules\n")
+        #expect(outcome.backup == nil)
 
         #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(brainRoot)) == answers)
         let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot)))
-        #expect(lock.files.keys.sorted() == [".agents/skills/tdd/SKILL.md", ".claude/skills", "AGENTS.md", "CLAUDE.md", "REVIEW.md"])
+        #expect(lock.files.keys.sorted() == [".agents/skills/tdd/SKILL.md", ".claude/skills", "AGENTS.md", "REVIEW.md"])
+        #expect(lock.templates?.keys.sorted() == ["AGENTS.md", "CLAUDE.md", "REVIEW.md"])
         #expect(lock.brainCommit?.isEmpty == false)
         #expect(!lock.brainDirty)
         #expect(try await git("log", "-1", "--format=%s") == "Render task\n")
         // Nothing from AKit in the project.
         #expect(!fm.fileExists(atPath: project.appending(path: ".akit").path))
+
+        // Seen once: no longer pushed, but it can still be taken.
+        let again = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
+        #expect(again.changes.first { $0.path == "CLAUDE.md" }?.kind == .own)
+        let taken = try await ProjectSetup.apply(again, accepting: ["CLAUDE.md"], brain: brain, home: home, env: env, trash: trash)
+        #expect(read("CLAUDE.md") == "@AGENTS.md\n")
+        #expect(try String(contentsOf: try #require(taken.backup).appending(path: "Projects/task/CLAUDE.md"), encoding: .utf8) == "# My own rules\n")
     }
 
     @Test func secondRenderRemovesDroppedFilesButKeepsEditedOnes() async throws {
@@ -212,15 +221,16 @@ struct ProjectSetupTests {
         #expect(kinds["REVIEW.md"] == .remove)
         #expect(kinds["CLAUDE.md"] == .remove)
         #expect(kinds[".claude/skills"] == .remove)
-        #expect(kinds["AGENTS.md"] == .update)
+        // Edited by the project, and the layers' AGENTS.md is the same as last time: left alone.
+        #expect(kinds["AGENTS.md"] == .own)
         #expect(plan.changes.first { $0.path == "AGENTS.md" }?.replacesUnmanaged == false)
 
-        let outcome = try await ProjectSetup.apply(plan, excluding: ["AGENTS.md"], brain: brain, home: home, env: env, trash: trash)
+        let outcome = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
         #expect(outcome.removed.sorted() == [".claude/skills", "CLAUDE.md", "REVIEW.md"])
         #expect(read("AGENTS.md") == "# Task for Acme\n\nMy note.\n")
         #expect(!fm.fileExists(atPath: project.appending(path: ".claude").path))
         #expect(fm.fileExists(atPath: project.appending(path: ".agents/skills/tdd/SKILL.md").path))
-        // An excluded file keeps its old lock entry, so the next plan still knows AKit wrote it.
+        // A file left alone keeps its old lock entry, so the next plan still knows AKit wrote it.
         #expect(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot))?.files["AGENTS.md"] != nil)
 
         // Edited after a render and then dropped: left alone.
@@ -247,5 +257,74 @@ struct ProjectSetupTests {
         }
         #expect(read("AGENTS.md") == "written meanwhile")
         #expect(!fm.fileExists(atPath: project.appending(path: "REVIEW.md").path))
+    }
+
+    // MARK: - Project skills
+
+    @Test func projectSkillsAddToAndOverrideTheLayers() async throws {
+        let brain = try await setUpBrain()
+        try write(".akit/registry/skills/grill/SKILL.md", "---\nname: grill\ndescription: Ask\n---\n")
+        let withGrill = try #require(Brain.load(from: brainRoot))
+        var picked = answers
+        picked.skills = [.init(name: "grill", mode: .auto), .init(name: "tdd", mode: .auto)]
+        let render = Render.render(picked, brain: withGrill, projectName: "task")
+        let skill = { (name: String) in render.outputs.first { $0.path == ".agents/skills/\(name)/SKILL.md" } }
+        #expect(skill("grill")?.layers == [Render.projectSource])
+        // tdd is manual in the layer; the project makes it auto.
+        #expect(skill("tdd")?.text?.contains("disable-model-invocation") == false)
+        #expect(skill("tdd")?.layers == [Render.projectSource])
+
+        picked.skills = [.init(name: "tdd", mode: .off)]
+        #expect(!Render.render(picked, brain: brain, projectName: "task").outputs.contains { $0.path.hasPrefix(".agents/skills/tdd/") })
+
+        // Answers saved before project skills existed still read.
+        let old = try JSONDecoder().decode(ProjectAnswers.self, from: Data(#"{"layers":["task"],"values":{},"targets":["pi"]}"#.utf8))
+        #expect(old == ProjectAnswers(layers: ["task"], targets: ["pi"]))
+    }
+
+    @Test func theProjectsOwnSkillsAreNeverOverwritten() async throws {
+        let brain = try await setUpBrain()
+        // Set up once with nothing from the brain, so AKit has a lock for the project.
+        let empty = ProjectSetup.plan(project: project, id: "local/task", answers: ProjectAnswers(targets: ["claude"]), brain: brain, store: .brain(brainRoot))
+        _ = try await ProjectSetup.apply(empty, brain: brain, home: home, env: env, trash: trash)
+        try ProjectSkills.create("deploy", description: "Deploy: to staging", in: project)
+        try write("Projects/task/.agents/skills/tdd/SKILL.md", "our tdd\n")
+        #expect(ProjectSkills.nameProblem("deploy", in: project) != nil)
+        #expect(ProjectSkills.list(in: project, id: "local/task", store: .brain(brainRoot)).map(\.name) == ["deploy", "tdd"])
+        #expect(ProjectSkills.list(in: project, id: "local/task", store: .brain(brainRoot)).first?.description == "Deploy: to staging")
+
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
+        #expect(!plan.changes.contains { $0.path.hasPrefix(".agents/skills/") })
+        #expect(plan.render.warnings.contains { $0.hasPrefix("The project has its own tdd skill") })
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        #expect(read(".agents/skills/tdd/SKILL.md") == "our tdd\n")
+        #expect(read(".claude/skills/deploy/SKILL.md")?.hasPrefix("---\nname: deploy\ndescription: 'Deploy: to staging'\n---\n") == true)
+
+        try ProjectSkills.remove("deploy", in: project, id: "local/task", store: .brain(brainRoot), trash: trash)
+        #expect(!fm.fileExists(atPath: project.appending(path: ".agents/skills/deploy").path))
+        #expect(throws: ProjectSkills.Failure.self) {
+            try ProjectSkills.remove("deploy", in: project, id: "local/task", store: .brain(brainRoot), trash: trash)
+        }
+    }
+
+    @Test func withoutALockNothingIsTheProjectsOwnAndADeclinedFileComesBack() async throws {
+        let brain = try await setUpBrain()
+        // No lock yet (first set-up, or the project id changed): a brain skill already in
+        // the project is AKit's to update, not the project's own.
+        try write("Projects/task/.agents/skills/tdd/SKILL.md", "old copy\n")
+        let first = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
+        #expect(first.render.warnings.isEmpty)
+        #expect(first.changes.first { $0.path == ".agents/skills/tdd/SKILL.md" }.map { $0.kind == .update && $0.replacesUnmanaged } == true)
+
+        // Declining the first REVIEW.md doesn't make it "the project's": offered again.
+        _ = try await ProjectSetup.apply(first, excluding: ["REVIEW.md"], brain: brain, home: home, env: env, trash: trash)
+        let second = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
+        #expect(second.changes.first { $0.path == "REVIEW.md" }?.kind == .create)
+
+        // A folder that is exactly the brain's render is AKit's, even with a lock that lost it;
+        // plain files and folders without SKILL.md are no skills at all.
+        try write("Projects/task/.agents/skills/README.md", "notes")
+        try fm.createDirectory(at: project.appending(path: ".agents/skills/empty"), withIntermediateDirectories: true)
+        #expect(ProjectSkills.list(in: project, id: "local/task", store: .brain(brainRoot)).isEmpty)
     }
 }
