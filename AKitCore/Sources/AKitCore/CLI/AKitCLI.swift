@@ -610,18 +610,13 @@ public enum AKitCLI {
             date = parsed
         }
         Spool.append(["v": Spool.lineVersion, "kind": "mark", "note": text, "ts": Spool.milliseconds(date)], home: env.homeDirectory, now: now)
-        out("Marked \(date.formatted(date: .abbreviated, time: .shortened)): \(text). akit stats changes compares first-request context "
+        out("Marked \(localMinute(date)): \(text). akit stats changes compares first-request context "
             + "before and after it.")
         return 0
     }
 
     static func changesText(_ report: ChangesReport, project: String?) -> String {
-        func short(_ n: Int) -> String {
-            let size = abs(n)
-            let text = size < 1000 ? "\(size)" : size < 1_000_000 ? String(format: "%.1fk", Double(size) / 1000)
-                : String(format: "%.1fM", Double(size) / 1_000_000)
-            return n < 0 ? "−" + text : text
-        }
+        let short = ContextSize.short
         func signed(_ n: Int) -> String { n > 0 ? "+" + short(n) : short(n) }
         func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         var lines = ["First-request context (recorded tokens) of sessions within \(Int(BeforeAfter.window / 86_400)) days before and "
@@ -633,7 +628,7 @@ public enum AKitCLI {
         for change in report.changes {
             let what = change.anchor == "mark" ? "mark “\(change.note ?? "")”" : "apply \(change.project ?? "")"
             let scope = change.scope.project.map { "sessions of \($0)" } ?? "all sessions on this Mac"
-            lines.append("\(change.date.formatted(date: .abbreviated, time: .shortened))  \(what) (\(scope))")
+            lines.append("\(localMinute(change.date))  \(what) (\(scope))")
             guard change.isMeasured, let group = change.group, let before = change.before, let after = change.after else {
                 lines.append("  not enough data: \(change.reason ?? "")")
                 continue
@@ -666,9 +661,7 @@ public enum AKitCLI {
     }
 
     static func statsText(_ report: StatsReport, details: Bool) -> String {
-        func short(_ n: Int) -> String {
-            n < 1000 ? "\(n)" : n < 1_000_000 ? String(format: "%.1fk", Double(n) / 1000) : String(format: "%.1fM", Double(n) / 1_000_000)
-        }
+        let short = ContextSize.short
         func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         func label(_ kind: String) -> String {
             switch kind {
@@ -970,9 +963,7 @@ public enum AKitCLI {
     }
 
     static func recommendText(_ report: RecommendReport, details: Bool) -> String {
-        func short(_ n: Int) -> String {
-            n < 1000 ? "\(n)" : n < 1_000_000 ? String(format: "%.1fk", Double(n) / 1000) : String(format: "%.1fM", Double(n) / 1_000_000)
-        }
+        let short = ContextSize.short
         func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         func label(_ kind: String) -> String {
             switch kind {
@@ -1299,6 +1290,14 @@ public enum AKitCLI {
     }
 
     // MARK: - Helpers
+
+    /// `2026-09-28 13:09` in local time, the same on every Mac whatever its locale.
+    static func localMinute(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
 
     static func encode<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()

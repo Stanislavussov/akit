@@ -75,6 +75,14 @@ enum ContextSize {
         return letters > 0 && cyrillic * 2 >= letters ? .cyrillic : .latin
     }
 
+    /// `950`, `7.5k`, `8.3M`; negative numbers with a minus sign.
+    static func short(_ n: Int) -> String {
+        let size = abs(n)
+        let text = size < 1000 ? "\(size)" : size < 1_000_000 ? String(format: "%.1fk", Double(size) / 1000)
+            : String(format: "%.1fM", Double(size) / 1_000_000)
+        return n < 0 ? "−" + text : text
+    }
+
     static func approxTokens(chars: Int, script: Script, calibration: Calibration = defaults) -> Estimate {
         Estimate(tokens: chars <= 0 ? 0 : Int((Double(chars) / calibration.k(script)).rounded()))
     }

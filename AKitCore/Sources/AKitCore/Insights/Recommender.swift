@@ -416,7 +416,7 @@ enum Recommender {
                 guard !unused.isEmpty else { continue }
                 let space = unused.reduce(0) { $0 + $1.tally.contextSpace }
                 let text = "\(unused.count) of \(skills.count) listed skills of \(plugin) were never called by the model"
-                    + "\(options.project.map { " in \($0)" } ?? "") (≈ \(space) context space); a plugin is enabled or disabled as a whole, "
+                    + "\(options.project.map { " in \($0)" } ?? "") (≈ \(ContextSize.short(space)) context space); a plugin is enabled or disabled as a whole, "
                     + "and the model uses its other skills."
                 try add(unused, owner: owner, skill: wholePlugin, idSkill: wholePlugin + "unused",
                         action: .init(kind: "unusedPluginSkills", text: text), patch: nil, skills: unused.map(\.name))
