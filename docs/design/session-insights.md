@@ -115,8 +115,8 @@ the denominator; its model calls do count as calls (they protect the skill).
 - Summary on top: ≈ context per request by owner (layers, plugins, hand-installed,
   built-in).
 - Layer skill → patch to `layer.yaml` (mode `manual`), applied through `plan`/`apply`.
-- Plugin → advice only: disable it in this project if other projects use it,
-  otherwise globally. Writing `enabledPlugins` waits for harness settings in layers.
+- Plugin → advice only, one per plugin: disable it in this project if other projects
+  use it, otherwise globally; only when the model calls none of its skills (see Interface). Writing `enabledPlugins` waits for harness settings in layers.
 - Hand-installed skill → advice: import into the brain in manual mode.
 - A layer lists it (e.g. as manual), but the installed copy is not one AKit wrote
   (`akit apply` skips such files) → advice: `akit apply --home --include-unmanaged`
@@ -201,6 +201,15 @@ folders that name a known repository.
 - Compact by default (summary + top N); details on request, since the agent pays
   tokens for what it reads.
 - Advice outside layers is in the same list, typed "advice", without `apply`.
+- A plugin is enabled or disabled as a whole, so its skills are judged together:
+  one advice per plugin and scope, with `"skill": "*"` and the skills it is about
+  in `evidence.skills` (only plugin advice has that field; JSON stays version 1).
+  `disablePluginInProject` / `disablePluginGlobally` when the model called none
+  of its listed skills in scope and the plugin as a whole meets N sessions / D days
+  (evidence summed over its skills; another Mac's day counts the most sessions any
+  one skill was listed in); otherwise at most one `unusedPluginSkills` note with
+  the never-called skills that meet the rule on their own. Ids hash
+  `rule|plugin|<name>|*|scope` (disable) and `rule|plugin|<name>|*unused|scope` (note).
 
 ## Order
 

@@ -86,7 +86,9 @@ public enum AKitCLI {
                                           called by the model anywhere (other Macs, subagents, Pi), counted from
                                           their current description (and, in a project, from when their layer
                                           arrived there); sorted by ≈ context space. A layer skill gets a patch
-                                          (mode: manual), anything else advice. Imports new lines first
+                                          (mode: manual), anything else advice. A plugin is judged as a whole:
+                                          disable it when the model called none of its skills, else at most
+                                          one note on its unused ones. Imports new lines first
           akit recommend apply ID [--yes] Show the layer.yaml patch; --yes commits it in the brain. Then run
                                           akit plan/apply in the projects using the layer
           akit recommend dismiss ID [--yes]
@@ -787,7 +789,7 @@ public enum AKitCLI {
         }
         let confirm = "Run again with --yes to do it."
         if recommendation.stale {
-            out("Other Macs' summaries are old (\(recommendation.staleMachines.joined(separator: ", "))): run akit sync first, they may have called \(recommendation.skill) since.")
+            out("Other Macs' summaries are old (\(recommendation.staleMachines.joined(separator: ", "))): run akit sync first, they may have called \(recommendation.subject) since.")
         }
         if subcommand == "apply" {
             guard let patch = recommendation.patch, let layer = recommendation.action.layer, let brain else {
@@ -832,7 +834,7 @@ public enum AKitCLI {
             return 0
         }
         let space = recommendation.evidence.approxContextSpace
-        out("Dismiss \(id) (\(recommendation.skill)): hidden until its ≈ context space doubles (now ≈ \(space)).")
+        out("Dismiss \(id) (\(recommendation.subject)): hidden until its ≈ context space doubles (now ≈ \(space)).")
         guard options.yes else { out(confirm); return 0 }
         let entry = Dismissals.Entry(id: id, at: Date().formatted(.iso8601), approxContextSpace: space)
         let url: URL
@@ -880,12 +882,17 @@ public enum AKitCLI {
         for item in report.recommendations {
             let owner = [label(item.owner.kind), item.owner.name].compactMap { $0 }.joined(separator: " ")
             let evidence = item.evidence
-            lines.append("\(item.stale ? "[stale] " : "")\(item.id)  \(item.skill) (\(owner)): \(item.type)")
+            let subject = item.skill == Recommender.wholePlugin ? owner : "\(item.skill) (\(owner))"
+            lines.append("\(item.stale ? "[stale] " : "")\(item.id)  \(subject): \(item.type)")
             let period = evidence.from.map { from in " (\(from) … \(evidence.to ?? from))" } ?? ""
             let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
             lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed in \(count(evidence.sessions, "session")) on "
                          + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
                          + "at 95%), user calls \(evidence.userCalls)")
+            if let skills = evidence.skills {
+                let shown = details || skills.count <= 5 ? skills : Array(skills.prefix(5)) + ["… \(skills.count - 5) more"]
+                lines.append("  skills: \(shown.joined(separator: ", "))")
+            }
             if item.stale { lines.append("  other Macs' summaries are old (\(item.staleMachines.joined(separator: ", "))): run akit sync first") }
             if item.isPatch {
                 lines.append("  patch: \(item.action.layer.map(LayerPatch.path) ?? "") mode auto → manual; akit recommend apply \(item.id) "

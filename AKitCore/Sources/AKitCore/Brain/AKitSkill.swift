@@ -119,6 +119,27 @@ never forced) and pushes this Mac's. The app's Brain screen has the same Sync bu
 sync says the core layer changed, run `akit apply --home`. Uncommitted edits are never
 synced; commit them first.
 
+## Usage stats
+
+`akit stats [--project ID|PATH | --all] [--days N] [--json]` reads the harness session logs
+(imported into `~/.akit/index`): first-request context (recorded tokens) and which listed
+skills take ≈ context space (tokens × requests) and how often the model or the user calls
+them (`--details` for every skill). Sizes marked ≈ are estimates; never talk about money.
+
+## Recommendations
+
+`akit recommend [--project ID|PATH | --all] [--details] [--json]` lists auto skills listed
+in ≥ 20 sessions on ≥ 14 days that the model never called anywhere. Each entry has an id:
+
+- `patch` (layer skill): `akit recommend apply ID` shows the layer.yaml change; after a yes,
+  `--yes` commits it; then `akit plan`/`apply` the projects using the layer.
+- `advice` (plugin, hand-installed, …): tell the user what it says; nothing to apply. A
+  plugin (`skill` is `*`, its skills in `evidence.skills`) is enabled or disabled as a whole.
+- `akit recommend dismiss ID [--yes]`: a layer skill gets `keep_auto: true` in layer.yaml
+  (the rule skips it from then on); advice stays hidden until its ≈ context space doubles.
+
+Show the user the recommendations and ask before `apply` or `dismiss` with `--yes`.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

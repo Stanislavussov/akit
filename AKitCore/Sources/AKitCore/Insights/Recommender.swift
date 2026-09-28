@@ -43,8 +43,9 @@ struct RecommendReport: Encodable, Equatable {
     }
 
     struct Action: Encodable, Equatable {
-        /// `layerPatch`, or the advice: `disablePluginInProject`, `disablePluginGlobally`, `importManual`,
-        /// `applyUnmanaged`, `reapply`, `listInLayer`, `editByHand`.
+        /// `layerPatch`, or the advice: `disablePluginInProject`, `disablePluginGlobally`, `unusedPluginSkills`
+        /// (information: some of a plugin's skills are used), `importManual`, `applyUnmanaged`, `reapply`,
+        /// `listInLayer`, `editByHand`.
         let kind: String
         /// Patches: the layer and the diff of its layer.yaml.
         var layer: String?
@@ -101,6 +102,8 @@ struct RecommendReport: Encodable, Equatable {
         let callRate: Double
         /// With 0 model calls in n sessions the true rate is below 3/n (95 %).
         let callRateUpperBound95: Double
+        /// Plugin advice (`skill` is `*`): the plugin's skills it is about; not encoded otherwise.
+        var skills: [String]?
 
         func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
@@ -115,11 +118,12 @@ struct RecommendReport: Encodable, Equatable {
             try container.encode(userCalls, forKey: .userCalls)
             try container.encode(callRate, forKey: .callRate)
             try container.encode(callRateUpperBound95, forKey: .callRateUpperBound95)
+            try container.encodeIfPresent(skills, forKey: .skills)
         }
 
         private enum CodingKeys: String, CodingKey {
             case sessions, distinctDays, from, to, machines, binding, approxContextSpace, modelCalls, userCalls, callRate,
-                 callRateUpperBound95
+                 callRateUpperBound95, skills
         }
     }
 
@@ -130,6 +134,7 @@ struct RecommendReport: Encodable, Equatable {
         /// Another Mac's summary is older than `staleAfterDays`: it may have called the skill since.
         let stale: Bool
         let owner: Owner
+        /// The skill; `*` for plugin advice, which is about the whole plugin (its skills in `evidence.skills`).
         let skill: String
         let scope: Scope
         let action: Action
@@ -139,6 +144,8 @@ struct RecommendReport: Encodable, Equatable {
         var staleMachines: [String] = []
 
         var isPatch: Bool { type == "patch" }
+        /// What it is about, in words: the skill, or the plugin.
+        var subject: String { skill == Recommender.wholePlugin ? "plugin \(owner.name ?? "")" : skill }
 
         static func == (lhs: Recommendation, rhs: Recommendation) -> Bool {
             lhs.id == rhs.id && lhs.type == rhs.type && lhs.stale == rhs.stale && lhs.owner == rhs.owner && lhs.skill == rhs.skill
@@ -178,6 +185,8 @@ enum Recommender {
     static let defaultMinSessions = 20
     static let defaultMinDays = 14
     static let defaultTop = 10
+    /// The `skill` of plugin advice: it is about the whole plugin.
+    static let wholePlugin = "*"
 
     struct Options {
         /// A project id; nil: every session on every Mac.
@@ -293,57 +302,127 @@ enum Recommender {
         }
         func display(_ key: String) -> String { inputs.others.machines[key]?.name ?? key }
 
+        /// One listed skill's counts from its start: this Mac's, and the other Macs' in scope and anywhere.
+        struct Counted {
+            let name: String
+            let tally: InsightsStats.Tally
+            let startDay: String
+            let other: Elsewhere
+            let anywhere: Elsewhere
+            /// Model calls in scope, and anywhere.
+            let modelInScope: Int
+            let modelAnywhere: Int
+        }
+        /// Sessions and distinct days that listed any of the skills. Another Mac's day counts the
+        /// most sessions any one of them was listed in (its files count per skill, not per session).
+        func listed(_ covered: [Counted]) -> (here: Set<String>, sessions: Int, days: Set<String>) {
+            var here: Set<String> = [], days: Set<String> = []
+            for item in covered {
+                here.formUnion(item.tally.listedSessions)
+                days.formUnion(item.tally.listedDays.union(item.other.days))
+            }
+            var elsewhere = 0
+            for file in scoped.values {
+                for (date, entry) in file.days {
+                    elsewhere += covered.map { date >= $0.startDay ? (entry.skills[$0.name].flatMap { $0.count == 3 ? $0[0] : nil } ?? 0) : 0 }
+                        .max() ?? 0
+                }
+            }
+            return (here, here.count + elsewhere, days)
+        }
+        func enough(_ covered: [Counted]) -> Bool {
+            let counts = listed(covered)
+            return counts.sessions >= options.minSessions && counts.days.count >= options.minDays
+        }
+
         var recommendations: [RecommendReport.Recommendation] = []
         var hidden = 0
-        for name in names.sorted() {
-            guard let start = starts[name], let owner = owners[name] else { continue }
-            if case .builtIn = owner { continue }  // cost only (summary)
-            let tally = tallies[name] ?? InsightsStats.Tally()
-            let startDay = UsageSummary.day(start, calendar: calendar)
-            let other = sum(scoped, skill: name, from: startDay)
-            let sessions = tally.listedSessions.count + other.listed
-            let days = tally.listedDays.union(other.days)
-            guard sessions >= options.minSessions, days.count >= options.minDays else { continue }
-            // Any model call in scope blocks; one anywhere else too, except that a plugin can be
-            // disabled in one project.
-            guard (modelInScope[name] ?? 0) + other.model == 0 else { continue }
-            let anywhere = sum(everywhere, skill: name, from: UsageSummary.day(descriptionStarts[name] ?? epoch, calendar: calendar))
-            let calledElsewhere = (modelAnywhere[name] ?? 0) + anywhere.model > 0
-            if calledElsewhere, !(options.project != nil && owner.kind == .plugin) { continue }
-            let usedElsewhere = calledElsewhere || pluginsElsewhere.contains(owner.name ?? "")
-            guard let (recommendationOwner, action, patch) = self.action(for: name, owner: owner, brain: brain, hasBrain: inputs.stats.hasBrain,
-                                                                        project: options.project, pluginUsedElsewhere: usedElsewhere)
-            else { continue }
-
-            let id = id(owner: recommendationOwner, skill: name, project: options.project)
-            if let entry = inputs.dismissed[id], Dismissals.hides(entry, approxContextSpace: tally.contextSpace) {
+        func add(_ covered: [Counted], owner: RecommendReport.Owner, skill: String, idSkill: String, action: RecommendReport.Action,
+                 patch: (before: String, after: String)?, skills: [String]? = nil) throws {
+            let id = id(owner: owner, skill: idSkill, project: options.project)
+            let contextSpace = covered.reduce(0) { $0 + $1.tally.contextSpace }
+            if let entry = inputs.dismissed[id], Dismissals.hides(entry, approxContextSpace: contextSpace) {
                 hidden += 1
-                continue
+                return
             }
-            // Only Macs whose summary mentions the skill: a retired Mac that never saw it flags nothing.
-            let staleKeys = other.keys.filter { scoped[$0].map(isStale) ?? false }
-                .union(anywhere.keys.filter { everywhere[$0].map(isStale) ?? false })
+            let (here, sessions, days) = listed(covered)
+            // Only Macs whose summary mentions a skill: a retired Mac that never saw it flags nothing.
+            var staleKeys: Set<String> = [], listing: Set<String> = []
+            for item in covered {
+                staleKeys.formUnion(item.other.keys.filter { scoped[$0].map(isStale) ?? false })
+                staleKeys.formUnion(item.anywhere.keys.filter { everywhere[$0].map(isStale) ?? false })
+                listing.formUnion(item.other.listing)
+            }
             var machines: [RecommendReport.Machine] = []
-            if !tally.listedSessions.isEmpty {
+            if !here.isEmpty {
                 machines.append(.init(name: inputs.thisMac, updated: inputs.lastImport?.formatted(.iso8601), stale: false))
             }
-            for key in other.listing.union(staleKeys).sorted() {
+            for key in listing.union(staleKeys).sorted() {
                 let file = scoped[key] ?? everywhere[key]
                 machines.append(.init(name: display(key), updated: file?.updated, stale: staleKeys.contains(key)))
             }
             let sortedDays = days.sorted()
             let evidence = RecommendReport.Evidence(
                 sessions: sessions, distinctDays: days.count, from: sortedDays.first, to: sortedDays.last, machines: machines,
-                binding: options.project == nil ? nil : try binding(database, sessions: tally.listedSessions),
-                approxContextSpace: tally.contextSpace, modelCalls: 0, userCalls: tally.userCalls + other.user, callRate: 0,
-                callRateUpperBound95: min(1, (3 / Double(sessions) * 1000).rounded() / 1000))
+                binding: options.project == nil ? nil : try binding(database, sessions: here),
+                approxContextSpace: contextSpace, modelCalls: 0,
+                userCalls: covered.reduce(0) { $0 + $1.tally.userCalls + $1.other.user }, callRate: 0,
+                callRateUpperBound95: min(1, (3 / Double(max(sessions, 1)) * 1000).rounded() / 1000), skills: skills)
             recommendations.append(.init(
-                id: id, type: patch == nil ? "advice" : "patch", stale: !staleKeys.isEmpty, owner: recommendationOwner, skill: name,
+                id: id, type: patch == nil ? "advice" : "patch", stale: !staleKeys.isEmpty, owner: owner, skill: skill,
                 scope: .init(project: options.project), action: action, evidence: evidence, patch: patch,
                 staleMachines: staleKeys.sorted().map(display)))
         }
+
+        var byPlugin: [String: [Counted]] = [:]
+        for name in names.sorted() {
+            guard let start = starts[name], let owner = owners[name] else { continue }
+            if case .builtIn = owner { continue }  // cost only (summary)
+            let other = sum(scoped, skill: name, from: UsageSummary.day(start, calendar: calendar))
+            let anywhere = sum(everywhere, skill: name, from: UsageSummary.day(descriptionStarts[name] ?? epoch, calendar: calendar))
+            let counted = Counted(name: name, tally: tallies[name] ?? InsightsStats.Tally(), startDay: UsageSummary.day(start, calendar: calendar),
+                                  other: other, anywhere: anywhere, modelInScope: (modelInScope[name] ?? 0) + other.model,
+                                  modelAnywhere: (modelAnywhere[name] ?? 0) + anywhere.model)
+            // A plugin is enabled or disabled as a whole: its skills are judged together below.
+            if case .plugin(let plugin) = owner {
+                byPlugin[plugin, default: []].append(counted)
+                continue
+            }
+            guard enough([counted]) else { continue }
+            // Any model call blocks, in scope or anywhere else: the fix (a layer, an import) is shared.
+            guard counted.modelInScope == 0, counted.modelAnywhere == 0 else { continue }
+            guard let (recommendationOwner, action, patch) = self.action(for: name, owner: owner, brain: brain, hasBrain: inputs.stats.hasBrain,
+                                                                        project: options.project, pluginUsedElsewhere: false)
+            else { continue }
+            try add([counted], owner: recommendationOwner, skill: name, idSkill: name, action: action, patch: patch)
+        }
+
+        for (plugin, skills) in byPlugin.sorted(by: { $0.key < $1.key }) {
+            let owner = RecommendReport.Owner(kind: SkillOwner.Kind.plugin.rawValue, name: plugin)
+            if skills.allSatisfy({ $0.modelInScope == 0 }) {
+                // None of its skills called here: disable it, in this project when another one uses it.
+                guard enough(skills) else { continue }
+                let usedElsewhere = skills.contains { $0.modelAnywhere > 0 } || pluginsElsewhere.contains(plugin)
+                guard let (_, action, _) = self.action(for: wholePlugin, owner: .plugin(plugin), brain: brain, hasBrain: inputs.stats.hasBrain,
+                                                       project: options.project, pluginUsedElsewhere: usedElsewhere)
+                else { continue }
+                try add(skills, owner: owner, skill: wholePlugin, idSkill: wholePlugin, action: action, patch: nil,
+                        skills: skills.map(\.name))
+            } else {
+                // Some are used, so the plugin stays; say once how much its never-called skills take.
+                let unused = skills.filter { $0.modelInScope == 0 && enough([$0]) }
+                guard !unused.isEmpty else { continue }
+                let space = unused.reduce(0) { $0 + $1.tally.contextSpace }
+                let text = "\(unused.count) of \(skills.count) listed skills of \(plugin) were never called by the model"
+                    + "\(options.project.map { " in \($0)" } ?? "") (≈ \(space) context space); a plugin is enabled or disabled as a whole, "
+                    + "and the model uses its other skills."
+                try add(unused, owner: owner, skill: wholePlugin, idSkill: wholePlugin + "unused",
+                        action: .init(kind: "unusedPluginSkills", text: text), patch: nil, skills: unused.map(\.name))
+            }
+        }
         recommendations.sort {
-            ($0.stale ? 1 : 0, -$0.evidence.approxContextSpace, $0.skill) < ($1.stale ? 1 : 0, -$1.evidence.approxContextSpace, $1.skill)
+            ($0.stale ? 1 : 0, -$0.evidence.approxContextSpace, $0.skill, $0.owner.name ?? "")
+                < ($1.stale ? 1 : 0, -$1.evidence.approxContextSpace, $1.skill, $1.owner.name ?? "")
         }
         let shown = options.top.map { Array(recommendations.prefix(max(0, $0))) } ?? recommendations
 
@@ -521,15 +600,17 @@ enum Recommender {
                           + "but it is still listed: run akit plan/apply in the projects using \(layers.count == 1 ? "it" : "them") "
                           + "(akit apply --home for this Mac's home folder)."), nil)
         case .plugin(let plugin):
+            // `skill` is `*`: a plugin is enabled or disabled as a whole, and the model called none of its skills.
             let owner = RecommendReport.Owner(kind: SkillOwner.Kind.plugin.rawValue, name: plugin)
-            let why = "Claude Code can't make one plugin skill manual."
-            if let project, pluginUsedElsewhere {
+            let why = "The model called none of \(plugin)'s skills\(project.map { " in \($0)" } ?? ""), and a plugin is enabled or "
+                + "disabled as a whole."
+            if project != nil, pluginUsedElsewhere {
                 return (owner, .init(kind: "disablePluginInProject",
-                                     text: "\(why) If \(project) needs none of \(plugin)'s skills, disable the plugin there "
-                                         + "(enabledPlugins in the project's .claude/settings.json, or /plugin); other projects use it."), nil)
+                                     text: "\(why) Disable it there (enabledPlugins in the project's .claude/settings.json, or /plugin); "
+                                         + "other projects use it."), nil)
             }
             return (owner, .init(kind: "disablePluginGlobally",
-                                 text: "\(why) If none of \(plugin)'s skills is needed, disable the plugin (/plugin in Claude Code)"
+                                 text: "\(why) If you need none of them, disable it (/plugin in Claude Code)"
                                      + "\(project == nil ? "" : "; no other project uses it either")."), nil)
         case .handInstalled(let path):
             return (.init(kind: SkillOwner.Kind.handInstalled.rawValue, name: path),

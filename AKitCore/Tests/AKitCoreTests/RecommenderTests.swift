@@ -505,13 +505,84 @@ extension RecommenderTests {
         try call("other", "marketing:brand-review", at: at(2, 13), by: "user", in: db)
         #expect(try action(Self.project) == "disablePluginInProject" && action(nil) == "disablePluginGlobally")
         let item = try #require(try recommend(db, .init(project: Self.project, top: nil), inputs).recommendations.first)
-        #expect(item.owner == .init(kind: "plugin", name: "marketing") && item.action.text?.contains(Self.project) == true)
+        #expect(item.owner == .init(kind: "plugin", name: "marketing") && item.action.text?.contains(" in \(Self.project), ") == true,
+                "\(item.action.text ?? "")")
         // The model calls this very skill elsewhere: still advice for the project, nothing globally.
         try call("other", "marketing:seo-audit", at: at(2, 14), in: db)
         #expect(try action(Self.project) == "disablePluginInProject" && action(nil) == nil)
         // Once the model calls it in the project (here a subagent), nothing there either.
         try call("s0", "marketing:seo-audit", at: at(1, 15), subagent: true, in: db)
         #expect(try action(Self.project) == nil)
+    }
+
+    @Test func pluginWithAUsedSkillGetsOneNoteNotDisable() throws {
+        let db = try database()
+        let names = ["omc:ralph", "omc:plan", "omc:wiki", "omc:hud"]
+        try listedSessions(names, in: db)
+        try call("s2", "omc:ralph", at: at(3, 10), in: db)
+        let inputs = layerInputs(nil, owners: Dictionary(uniqueKeysWithValues: names.map { ($0, SkillOwner.plugin("omc")) }))
+        let report = try recommend(db, .init(top: nil), inputs)
+        #expect(report.recommendations.count == 1, "\(report.recommendations)")
+        let item = try #require(report.recommendations.first)
+        #expect(item.skill == "*" && item.owner == .init(kind: "plugin", name: "omc") && item.type == "advice")
+        #expect(item.action.kind == "unusedPluginSkills" && item.action.text?.hasPrefix("3 of 4 listed skills of omc") == true,
+                "\(item.action.text ?? "")")
+        #expect(item.evidence.skills == ["omc:hud", "omc:plan", "omc:wiki"] && item.evidence.approxContextSpace == 600)
+        #expect(item.evidence.sessions == 20 && item.evidence.distinctDays == 14 && item.evidence.modelCalls == 0)
+        #expect(item.id == "r-" + ProjectSetup.sha256(Data("auto-to-manual|plugin|omc|*unused|global".utf8)).prefix(10))
+        // Below the threshold on its own, an unused skill is left out; with none left, no note at all.
+        try call("s4", "omc:plan", at: at(5, 10), in: db)
+        try call("s5", "omc:wiki", at: at(6, 10), in: db)
+        try call("s6", "omc:hud", at: at(7, 10), in: db)
+        #expect(try recommend(db, .init(top: nil), inputs).recommendations.isEmpty)
+        // Dismissed like any advice.
+        var dismissed = inputs
+        dismissed.dismissed[item.id] = .init(id: item.id, at: "2026-09-01T00:00:00Z", approxContextSpace: 600)
+        try listedSessions(["omc:extra"], id: "x", in: db)
+        dismissed.stats.owners["omc:extra"] = .plugin("omc")
+        #expect(try recommend(db, .init(top: nil), dismissed).hiddenByDismissal == 1)
+    }
+
+    @Test func fullyUnusedPluginIsOneDisableAdviceWithSummedEvidence() throws {
+        let db = try database()
+        // Neither skill alone reaches 20 sessions on 14 days; the plugin as a whole does.
+        try listedSessions(["mkt:seo"], count: 10, days: 7, firstDay: 1, id: "a", in: db)
+        try listedSessions(["mkt:brand"], count: 10, days: 7, firstDay: 8, id: "b", in: db)
+        try listedSessions(["mkt:email"], count: 2, days: 2, firstDay: 1, id: "c", in: db)
+        let inputs = layerInputs(nil, owners: ["mkt:seo": .plugin("mkt"), "mkt:brand": .plugin("mkt"), "mkt:email": .plugin("mkt")])
+        let report = try recommend(db, .init(top: nil), inputs)
+        #expect(report.recommendations.count == 1, "\(report.recommendations)")
+        let item = try #require(report.recommendations.first)
+        #expect(item.skill == "*" && item.action.kind == "disablePluginGlobally" && item.owner == .init(kind: "plugin", name: "mkt"))
+        #expect(item.evidence.skills == ["mkt:brand", "mkt:email", "mkt:seo"])
+        #expect(item.evidence.sessions == 22 && item.evidence.distinctDays == 14 && item.evidence.from == day(14) && item.evidence.to == day(1))
+        #expect(item.evidence.approxContextSpace == 220, "22 sessions × 1 request × ≈ 10 tokens")
+        #expect(item.id == "r-" + ProjectSetup.sha256(Data("auto-to-manual|plugin|mkt|*|global".utf8)).prefix(10))
+        // Other Macs: a day counts the most sessions one of its skills was listed in, not their sum.
+        var others = inputs
+        others.others.machines["abcdef0123456789"] = otherMac(days: [day(3): ["mkt:seo": [3, 0, 0], "mkt:brand": [2, 0, 0]]])
+        let summed = try #require(try recommend(db, .init(top: nil), others).recommendations.first)
+        #expect(summed.evidence.sessions == 25 && summed.evidence.distinctDays == 14, "\(summed.evidence)")
+        // The text output names the plugin and its skills.
+        let text = AKitCLI.recommendText(report, details: false)
+        #expect(text.contains("\(item.id)  plugin mkt: advice") && text.contains("skills: mkt:brand, mkt:email, mkt:seo"), "\(text)")
+    }
+
+    @Test func pluginDisableProjectVsGlobalByModelCalls() throws {
+        let db = try database()
+        try listedSessions(["omc:ralph", "omc:hud"], project: Self.project, in: db)
+        let inputs = layerInputs(nil, owners: ["omc:ralph": .plugin("omc"), "omc:hud": .plugin("omc")])
+        func kinds(_ project: String?) throws -> [String] {
+            try recommend(db, .init(project: project, top: nil), inputs).recommendations.map(\.action.kind)
+        }
+        #expect(try kinds(Self.project) == ["disablePluginGlobally"] && kinds(nil) == ["disablePluginGlobally"])
+        // Another project's session: the model calls one of its skills there.
+        try session("other", started: at(2), in: db)
+        try call("other", "omc:ralph", at: at(2, 13), in: db)
+        #expect(try kinds(Self.project) == ["disablePluginInProject"])
+        // Globally one skill is used: only the note on the other one.
+        let global = try recommend(db, .init(top: nil), inputs).recommendations
+        #expect(global.map(\.action.kind) == ["unusedPluginSkills"] && global.first?.evidence.skills == ["omc:hud"])
     }
 
     @Test func staleOtherMacFlagsRecommendation() async throws {
@@ -621,8 +692,9 @@ extension RecommenderTests {
         let tdd = try #require(listed.first { $0["skill"] as? String == "tdd" })
         #expect((tdd["owner"] as? [String: Any])?["kind"] as? String == "unknown")
         #expect((tdd["action"] as? [String: Any])?["kind"] as? String == "editByHand")
-        let plugin = listed.first { $0["skill"] as? String == "marketing:seo-audit" }
+        let plugin = listed.first { $0["skill"] as? String == "*" }
         #expect((plugin?["action"] as? [String: Any])?["kind"] as? String == "disablePluginGlobally")
+        #expect((plugin?["evidence"] as? [String: Any])?["skills"] as? [String] == ["marketing:seo-audit"])
         let id = try #require(tdd["id"] as? String)
         let refused = await akit("recommend", "apply", id, "--yes")
         #expect(refused.code == 2 && refused.err.contains("is advice"), "\(refused)")
