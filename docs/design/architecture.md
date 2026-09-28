@@ -341,21 +341,23 @@ Risks:
 - **More modules make clean builds a little slower** and incremental builds
   faster. No effect on the release zip.
 
-Open questions:
+Decided (2026-09-28):
 
-1. One package with 12 targets (recommended) or literally one package per
-   module under `Packages/`? The same steps work for both. Packages add a
-   manifest per module and slower test runs.
-2. Is it OK that adapters shrink to "where things are" (detect, skill folders,
-   MCP files, projects), while "how to read sessions/usage" moves into the
-   Sessions and Usage modules? This makes Sessions and Usage swappable on their
-   own.
-3. rulesync at runtime needs its binary or Node on each Mac. Is that
-   acceptable, or should AKit's own renderer stay the default with rulesync
-   optional? Also to check against the rulesync docs: exact target ids for
-   Claude Code, Codex, OpenCode and Pi (Pi appears in its tool list); whether
-   it supports manual-only skills (`disable-model-invocation`); and how it
-   glues several rule files into one `AGENTS.md`.
-4. Keep the package folder name `AKitCore/` (recommended; renaming touches the
-   Makefile, `install.sh`, `tools/demo-home.sh`, `.gitignore`, `project.yml`,
-   README)?
+1. One package with 12 targets, not a package per module.
+2. Adapters shrink to "where things are"; reading sessions and usage moves
+   into the Sessions and Usage modules.
+3. The package folder stays `AKitCore/`.
+4. The split waits until `session-insights` and `skills-layer-add-button`
+   are merged into master, because both touch most of the files it moves.
+   Before starting, refresh this plan against the new master: add an
+   `AKitInsights` module for `Insights/`, place `LayerEditor` and the new CLI
+   commands, and recheck the couplings.
+
+Still open:
+
+- rulesync at runtime needs its binary or Node on each Mac. Is that
+  acceptable, or should AKit's own renderer stay the default with rulesync
+  optional? Also to check against the rulesync docs: exact target ids for
+  Claude Code, Codex, OpenCode and Pi (Pi appears in its tool list); whether
+  it supports manual-only skills (`disable-model-invocation`); and how it
+  glues several rule files into one `AGENTS.md`.
