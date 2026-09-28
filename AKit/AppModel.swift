@@ -106,9 +106,41 @@ final class AppModel {
 
     /// Takes a skill out of one layer's skills list (committed).
     func removeSkill(_ skill: String, fromLayer layer: String) async throws {
-        guard let brain else { throw Self.noBrain }
         defer { Task { await refresh() } }
-        try await BrainRemove.removeSkill(skill, fromLayer: layer, in: brain, env: .current)
+        try await oneLayerEditAtATime { brain in try await BrainRemove.removeSkill(skill, fromLayer: layer, in: brain, env: .current) }
+    }
+
+    /// Lists brain skills in a layer with one mode (committed).
+    func addSkills(_ names: [String], mode: LayerSkill.Mode, toLayer layer: String) async throws {
+        defer { Task { await refresh() } }
+        try await oneLayerEditAtATime { brain in try await LayerEditor.addSkills(names, mode: mode, toLayer: layer, in: brain, env: .current) }
+    }
+
+    /// Sets how a layer brings one of its skills (committed).
+    func setMode(_ mode: LayerSkill.Mode, ofSkill skill: String, inLayer layer: String) async throws {
+        defer { Task { await refresh() } }
+        try await oneLayerEditAtATime { brain in try await LayerEditor.setMode(mode, ofSkill: skill, inLayer: layer, in: brain, env: .current) }
+    }
+
+    /// Writes a layer's description, requires and AGENTS.md section (committed).
+    func updateLayer(_ name: String, to details: LayerEditor.Details) async throws {
+        defer { Task { await refresh() } }
+        try await oneLayerEditAtATime { brain in try await LayerEditor.update(name, to: details, in: brain, env: .current) }
+    }
+
+    private var lastLayerEdit: Task<Void, Never>?
+
+    /// Runs layer edits one after another: two edits of one layer.yaml (or two git commits)
+    /// at the same time could lose a change.
+    private func oneLayerEditAtATime(_ edit: @escaping @MainActor (Brain) async throws -> Void) async throws {
+        let previous = lastLayerEdit
+        let task = Task { @MainActor in
+            await previous?.value
+            guard let brain else { throw Self.noBrain }
+            try await edit(brain)
+        }
+        lastLayerEdit = Task { _ = try? await task.value }
+        try await task.value
     }
 
     /// The brain against its git remote; nil when it isn't a git repo.
