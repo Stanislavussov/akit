@@ -28,6 +28,9 @@ public enum AKitCLI {
                                           saved in the brain (work Mac: locally). Files AKit didn't write, or edited
                                           by hand since, are skipped unless --include PATH
                                           (--include-unmanaged: every file AKit didn't write).
+                                          AGENTS.md, CLAUDE.md and other layer templates are
+                                          written once, then belong to the project: a newer
+                                          layer version is taken only with --include PATH.
 
         Remove (shows what happens; add --yes to do it; folders go to the Trash, one commit each):
           akit remove layer NAME              refused while other layers require it; dropped from
@@ -292,13 +295,18 @@ public enum AKitCLI {
                 let skipped = Set(plan.changes.filter { change in
                     change.kind == .update && (change.editedSinceRender || (change.replacesUnmanaged && !options.includeUnmanaged))
                 }.map(\.path)).subtracting(include).union(exclude)
+                // The project's own files take the layers' version only when asked by path.
+                let suggested = Set(plan.changes.filter { $0.kind == .suggest }.map(\.path))
+                let own = Set(plan.changes.filter { $0.kind == .own }.map(\.path))
+                let taken = suggested.union(own).intersection(include).subtracting(exclude)
                 let outcome: ProjectSetup.Outcome
                 do {
-                    outcome = try await ProjectSetup.apply(plan, excluding: skipped, brain: brain, home: env.homeDirectory, env: env, trash: trash)
+                    outcome = try await ProjectSetup.apply(plan, excluding: skipped, accepting: taken, brain: brain, home: env.homeDirectory, env: env, trash: trash)
                 } catch {
                     throw Failure(message: error.message)
                 }
-                out(outcomeText(outcome, skipped: skipped.intersection(plan.changes.filter { $0.kind != .same }.map(\.path)), plan: plan))
+                out(outcomeText(outcome, skipped: skipped.intersection(plan.changes.filter { $0.kind != .same && $0.kind != .own }.map(\.path))
+                    .union(suggested.subtracting(taken)), plan: plan))
                 return 0
             default:
                 throw Failure(message: "Unknown command “\(command ?? "")”. Run akit --help.")
@@ -1063,6 +1071,7 @@ public enum AKitCLI {
                 var lines = [ownRecord ? "Forget \(id) (\(store.describe(id: id)) goes to the Trash)." : "Forget \(id) on this Mac."]
                 var empty = saved
                 empty.layers = []
+                empty.skills = []
                 let plan = ProjectSetup.plan(project: project, id: id, answers: empty, brain: brain, store: store, forHome: options.home)
                 let removals = plan.changes.filter { $0.kind == .remove }
                 if !options.keepFiles {
@@ -1173,7 +1182,7 @@ public enum AKitCLI {
         for error in plan.render.errors { lines.append("ERROR: \(error)") }
         for blocker in plan.blockers { lines.append("BLOCKED: \(blocker)") }
         for warning in plan.render.warnings { lines.append("warning: \(warning)") }
-        let changed = plan.changes.filter { $0.kind != .same }
+        let changed = plan.changes.filter { $0.kind != .same && $0.kind != .own }
         if changed.isEmpty { lines.append("No changes.") }
         for change in changed {
             var note = ""
@@ -1186,7 +1195,11 @@ public enum AKitCLI {
                 lines += unifiedDiff(TextDiff.lines(from: change.oldText ?? "", to: new))
             }
         }
-        let same = plan.changes.count - changed.count
+        let own = plan.changes.filter { $0.kind == .own }.map(\.path)
+        if !own.isEmpty {
+            lines.append("\nThe project's own version (take the layers' with --include PATH): \(own.joined(separator: ", "))")
+        }
+        let same = plan.changes.count - changed.count - own.count
         if same > 0 { lines.append("\n\(same) file\(same == 1 ? "" : "s") unchanged.") }
         return lines.joined(separator: "\n")
     }
@@ -1198,6 +1211,8 @@ public enum AKitCLI {
         case .same: "SAME"
         case .remove: "REMOVE (to the Trash)"
         case .keepEdited: "KEEP (no longer rendered, but edited by hand)"
+        case .suggest: "LAYERS CHANGED (the project's own file: kept unless --include)"
+        case .own: "OWN"
         }
     }
 

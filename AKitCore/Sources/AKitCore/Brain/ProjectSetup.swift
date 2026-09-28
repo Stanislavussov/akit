@@ -20,6 +20,9 @@ public enum ProjectSetup {
         /// The brain had uncommitted changes, so the commit alone doesn't reproduce the render.
         public var brainDirty: Bool
         public var files: [String: Entry]
+        /// Project-owned files (AGENTS.md, templates): hash of the layers' version when it
+        /// was last written or offered. A suggestion appears only when that version changes.
+        public var templates: [String: String]?
     }
 
     public struct Change: Identifiable, Hashable, Sendable {
@@ -29,6 +32,12 @@ public enum ProjectSetup {
             case remove
             /// Written by an earlier render, not by this one, but edited since: left alone.
             case keepEdited
+            /// The project's own file (AGENTS.md, a template); the layers' version changed since
+            /// it was last offered. Written only when taken (`accepting` in apply).
+            case suggest
+            /// The project's own file, different from the layers' version, which it has already
+            /// seen. Left alone; still written when taken (`accepting` in apply).
+            case own
         }
 
         public var id: String { path }
@@ -57,6 +66,7 @@ public enum ProjectSetup {
         /// Where the answers and lock are read from and saved to.
         public let store: ProjectStore
         let previous: Lock?
+        let forHome: Bool
         /// Current bytes of the paths the plan changes, to spot edits made after the preview.
         let snapshot: [String: Data?]
 
@@ -149,15 +159,58 @@ public enum ProjectSetup {
 
     // MARK: - Plan
 
+    /// In a project, AGENTS.md, CLAUDE.md and other template files are the layers' skeleton:
+    /// once the project edits one, it is the project's own and a newer layer version is only
+    /// offered. Skills (and the link to them) stay AKit's. The home folder follows the core
+    /// layer completely.
+    static func isProjectOwned(_ path: String, forHome: Bool) -> Bool {
+        !forHome && !path.hasPrefix(Render.skillsFolder + "/") && path != ".claude/skills"
+    }
+
+
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
                             forHome: Bool = false) -> Plan {
         let fm = FileManager.default
-        let render = Render.render(answers, brain: brain, projectName: project.lastPathComponent, forHome: forHome)
+        var render = Render.render(answers, brain: brain, projectName: project.lastPathComponent, forHome: forHome)
         let previous = savedLock(id: id, in: store)
+        // A skill the project has itself wins over the brain's copy with the same name. Only
+        // with a lock: without one AKit can't tell its own earlier copies from the project's.
+        // A folder that holds exactly what the brain renders is AKit's too.
+        var own: [String: String] = [:]  // lowercased → folder name (APFS ignores case)
+        if !forHome, previous != nil {
+            for name in ProjectSkills.names(in: project, lock: previous) { own[name.lowercased()] = name }
+        }
+        let skillPrefix = Render.skillsFolder + "/"
+        func skillName(_ path: String) -> String? {
+            path.hasPrefix(skillPrefix) ? path.dropFirst(skillPrefix.count).split(separator: "/").first.map(String.init) : nil
+        }
+        var shadowed: Set<String> = []
+        for output in render.outputs {
+            guard let name = skillName(output.path), let folder = own[name.lowercased()],
+                  output.path == "\(skillPrefix)\(name)/SKILL.md", case .data(let data) = output.content else { continue }
+            let current = try? Data(contentsOf: project.appending(path: "\(skillPrefix)\(folder)/SKILL.md"))
+            if current != data { shadowed.insert(name) }
+        }
+        var outputs = render.outputs.filter { output in skillName(output.path).map { !shadowed.contains($0) } ?? true }
+        var warnings = render.warnings + shadowed.sorted().map { "The project has its own \($0) skill in \(Render.skillsFolder); the brain's is not written." }
+        // Claude finds the project's own skills through the same link as the brain's, if
+        // nothing else is at .claude/skills.
+        if !forHome, !own.isEmpty, answers.targets.contains("claude"),
+           !outputs.contains(where: { $0.path == ".claude/skills" || $0.path.hasPrefix(".claude/skills/") }) {
+            let link = project.appending(path: ".claude/skills")
+            if isLink(link) || !fm.fileExists(atPath: link.path) || isEmptyFolder(link) {
+                outputs.append(Render.Output(path: ".claude/skills", content: .link("../\(Render.skillsFolder)"), layers: [Render.projectSource]))
+            } else {
+                warnings.append(".claude/skills is a folder, so Claude Code doesn't see the project's own skills in \(Render.skillsFolder).")
+            }
+        }
+        render = Render.Result(layers: render.layers, outputs: outputs.sorted { $0.path < $1.path }, errors: render.errors,
+                               warnings: warnings, skills: render.skills)
+        let rendered = Set(render.outputs.map(\.path))
+
         var changes: [Change] = []
         var blockers: [String] = []
         var snapshot: [String: Data?] = [:]
-        let rendered = Set(render.outputs.map(\.path))
 
         for output in render.outputs {
             let url = project.appending(path: output.path)
@@ -190,7 +243,27 @@ public enum ProjectSetup {
                     blockers.append("\(output.path) is a folder in the project; AKit wants to write a file there.")
                     continue
                 }
-                if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) {
+                if isProjectOwned(output.path, forHome: forHome) {
+                    let destination = try? fm.destinationOfSymbolicLink(atPath: url.path)
+                    let current = destination == nil ? try? Data(contentsOf: url) : nil
+                    let written = previous?.files[output.path]?.sha256
+                    let offered = previous?.templates?[output.path]
+                    let layersChanged = offered != sha256(data)
+                    let kind: Change.Kind = if destination == nil && current == nil {
+                        // Missing: the skeleton, unless the project deleted the file it had.
+                        written == nil && offered == nil ? .create : layersChanged ? .suggest : .own
+                    } else if current == data {
+                        .same
+                    } else if let current, written == sha256(current) {
+                        .update  // untouched since AKit wrote it: still the skeleton
+                    } else {
+                        layersChanged ? .suggest : .own
+                    }
+                    changes.append(Change(path: output.path, kind: kind,
+                                          oldText: destination.map { "→ \($0) (a link)" } ?? current.flatMap { String(data: $0, encoding: .utf8) },
+                                          newText: output.text, replacesUnmanaged: (destination != nil || current != nil) && !managed,
+                                          layers: output.layers))
+                } else if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) {
                     // A link (e.g. CLAUDE.md -> AGENTS.md) is replaced by a file; say so.
                     changes.append(Change(path: output.path, kind: .update, oldText: "→ \(destination) (a link)", newText: output.text,
                                           replacesUnmanaged: true, layers: output.layers))
@@ -225,15 +298,16 @@ public enum ProjectSetup {
 
         return Plan(project: project, id: id, answers: answers, render: render,
                     changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
-                    snapshot: snapshot)
+                    forHome: forHome, snapshot: snapshot)
     }
 
     // MARK: - Apply
 
-    /// Writes the plan into the project (skipping `excluded` paths), backs up what it
-    /// replaces, trashes files an earlier render wrote and this one doesn't, then stores
-    /// answers and lock in the plan's store and commits them when that store is the brain.
-    public static func apply(_ plan: Plan, excluding excluded: Set<String> = [], brain: Brain, home: URL,
+    /// Writes the plan into the project (skipping `excluded` paths; a suggestion only when
+    /// its path is in `accepting`), backs up what it replaces, trashes files an earlier
+    /// render wrote and this one doesn't, then stores answers and lock in the plan's store
+    /// and commits them when that store is the brain.
+    public static func apply(_ plan: Plan, excluding excluded: Set<String> = [], accepting: Set<String> = [], brain: Brain, home: URL,
                              env: HarnessEnvironment, trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) -> Outcome {
         guard plan.canApply else {
             throw Failure(message: (plan.render.errors + plan.blockers).joined(separator: "\n"))
@@ -244,7 +318,10 @@ public enum ProjectSetup {
         }
         let fm = FileManager.default
         let outputs = Dictionary(plan.render.outputs.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        let todo = plan.changes.filter { !excluded.contains($0.path) && [.create, .update, .remove].contains($0.kind) }
+        let todo = plan.changes.filter { change in
+            change.kind == .suggest || change.kind == .own ? accepting.contains(change.path) && !excluded.contains(change.path)
+                : !excluded.contains(change.path) && [.create, .update, .remove].contains(change.kind)
+        }
 
         // Stop if the project changed since the preview (a file, link or folder, or a parent
         // that became a link out of the project).
@@ -309,7 +386,14 @@ public enum ProjectSetup {
         let kinds = Dictionary(plan.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         var lock = Lock(brainCommit: nil, brainDirty: false, files: [:])
         for output in plan.render.outputs {
-            if excluded.contains(output.path) {
+            // Skeleton files: which layers' version the project has seen, so it is offered once.
+            // A declined first version isn't "seen": it is offered again next time.
+            if isProjectOwned(output.path, forHome: plan.forHome), case .data(let data) = output.content,
+               !(kinds[output.path]?.kind == .create && excluded.contains(output.path)) {
+                lock.templates = (lock.templates ?? [:]).merging([output.path: sha256(data)]) { $1 }
+            }
+            let kind = kinds[output.path]?.kind
+            if excluded.contains(output.path) || ((kind == .suggest || kind == .own) && !accepting.contains(output.path)) {
                 if let old = plan.previous?.files[output.path] { lock.files[output.path] = old }
                 continue
             }
@@ -354,7 +438,7 @@ public enum ProjectSetup {
     /// applies within one second are both kept).
     static func applyEvent(_ plan: Plan, now: Date = Date()) -> [String: Any] {
         ["v": Spool.lineVersion, "kind": "apply", "project": plan.id, "layers": plan.render.layers,
-         "skills": plan.render.skills.mapValues(\.rawValue), "ts": Spool.milliseconds(now)]
+         "skills": Dictionary(plan.render.skills.map { ($0.name, $0.mode.rawValue) }, uniquingKeysWith: { _, last in last }), "ts": Spool.milliseconds(now)]
     }
 
     // MARK: - Helpers

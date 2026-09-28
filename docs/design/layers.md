@@ -192,17 +192,27 @@ Trash (not when edited since), refuses if the project changed after the preview,
 and commits `projects/<id>/` in the brain. A real `.claude/skills` folder with
 files blocks Apply until its skills move to the brain or `.agents/skills`.
 
-## Updates
+## Updates: layers are a skeleton, the project owns its files (decided 2026-09-28)
 
-`lock.json` stores the brain commit each file was rendered from. On update:
+A layer is a shared starting point, not the owner of a project. Per project:
 
-- base = old template commit + answers, rendered again;
-- ours = the file in the project (maybe edited by hand);
-- theirs = new template + answers.
+- AGENTS.md, CLAUDE.md and other template files are written when missing. While
+  the project hasn't touched one, a new render updates it like before. Once the
+  project edits it, it is the project's own: AKit never writes over it or removes
+  it. When the layers' version changes, the preview offers it (unticked, "the
+  project's own · layers changed"); `lock.json` keeps a hash of the version last
+  offered (`templates`), so the same offer doesn't come back. It can still be
+  taken later (ticked in the preview, or `akit apply --include PATH`).
+- Skills from layers stay AKit's (updated, removed with the layer).
+- `answers.json` has `skills`: brain skills for this project only, or a different
+  mode for a layer's skill (`off` drops it here).
+- The project's own skills: folders in `.agents/skills` that AKit didn't write.
+  They win over a brain skill with the same name, are never overwritten, and get
+  the `.claude/skills` link when Claude is a target. The project page lists them
+  (New Skill…, Edit, Move to Trash).
+- The home folder follows the core layer completely (no ownership rules there).
 
-AKit runs `git merge-file` and shows the result in the diff viewer. A useful
-hand edit can be published back to the template. A single file can be detached
-so it is never updated again.
+This replaces the earlier plan of a 3-way merge and "detach".
 
 ## Agent draft
 
