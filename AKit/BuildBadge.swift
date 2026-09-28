@@ -1,28 +1,31 @@
 import AppKit
 import SwiftUI
 
-/// Bottom of the sidebar: Production (main branch) or Development, with branch,
-/// commit and source folder, so several running copies can be told apart.
+/// Bottom of the sidebar: Production (main branch) or Development, with the branch and
+/// the worktree folder it was built from, so several running copies can be told apart.
+/// The commit is in the tooltip.
 struct BuildBadge: View {
     let info: BuildInfo
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             Label(info.isProduction ? "Production" : "Development",
                   systemImage: info.isProduction ? "checkmark.seal.fill" : "hammer.fill")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(info.isProduction ? .green : .orange)
-            if let revision = info.revision {
-                Text(revision).monospaced()
+            Label {
+                Text(info.branch ?? info.commit.map { "detached at \($0)" } ?? "unknown branch")
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+            } icon: {
+                Image(systemName: "arrow.triangle.branch")
             }
             if let folder = info.sourceURL?.lastPathComponent {
-                Label(folder, systemImage: "folder")
+                Label(folder, systemImage: "folder").lineLimit(1).truncationMode(.middle)
             }
         }
         .font(.caption)
         .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
