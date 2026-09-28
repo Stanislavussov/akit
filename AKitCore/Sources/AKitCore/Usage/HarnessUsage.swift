@@ -9,35 +9,35 @@ extension ClaudeSessions {
     /// response is written as several lines with the same `message.id`, and resumed or
     /// forked sessions copy earlier lines, so responses are counted once per id.
     ///
-    /// Claude Code records no cost per response, but when a session ends normally it saves
-    /// a `cost-state` line: the session's total (what `/cost` shows) and each model's part.
-    /// Each model's part is spread over that model's responses by their share of its
-    /// tokens, so a session that ran over several days lands on each of them.
-    /// Sessions that never saved one (the process was killed, or still runs) get an
-    /// estimate from the rates in the saved ones (`ClaudeCostRates`), marked as such.
+    /// Claude Code records no cost per response, but when its process ends normally it saves
+    /// a `cost-state` line: what that process spent (what `/cost` shows) and each model's part.
+    /// It covers only that process, not earlier runs of a resumed session nor later ones, so
+    /// each process's cost is spread over its own responses by their share of the tokens,
+    /// and a process that ran over several days lands on each of them. Runs that never
+    /// saved a cost (killed, still running) get an estimate from the saved ones
+    /// (`ClaudeCostRates`), marked as such.
     static func usage(configRoot: URL, since: Date) -> [UsageRecord] {
         let projects = configRoot.appending(path: "projects")
-        func isSession(_ url: URL) -> Bool {
-            url.pathExtension == "jsonl" && url.deletingLastPathComponent().lastPathComponent != "subagents"
-        }
-        let rates = ClaudeCostRates(costStates: costStates(in: UsageScanner.files(in: [projects], since: .distantPast, where: isSession)))
+        let rates = ClaudeCostRates(runs: recordedRuns(in: UsageScanner.files(in: [projects], since: .distantPast, where: isSession)))
         let sessions = UsageScanner.files(in: [projects], since: since, where: isSession)
         return UsageScanner.read(sessions) { session in
-            var (responses, cost) = sessionUsage(in: session)
-            let subagents = session.deletingPathExtension().appending(path: "subagents")
-            for agent in SkillScanner.children(of: subagents) where agent.pathExtension == "jsonl" {
-                responses += sessionUsage(in: agent).responses
+            runs(of: session).flatMap { run in
+                var responses = run.responses
+                if let cost = run.cost {
+                    responses = spread(cost, over: responses, estimated: false)
+                } else if let estimate = rates.estimate(for: responses.map(\.record)) {
+                    responses = spread(estimate, over: responses, estimated: true)
+                }
+                return responses.filter { $0.record.time >= since }
             }
-            if let cost {
-                responses = spread(cost, over: responses, estimated: false)
-            } else if let estimate = rates.estimate(for: responses.map(\.record)) {
-                responses = spread(estimate, over: responses, estimated: true)
-            }
-            return responses.filter { $0.record.time >= since }
         }
     }
 
-    /// Cost Claude Code saved for a session, in US dollars.
+    static func isSession(_ url: URL) -> Bool {
+        url.pathExtension == "jsonl" && url.deletingLastPathComponent().lastPathComponent != "subagents"
+    }
+
+    /// Cost one Claude Code process saved for a session, in US dollars.
     struct CostState: Sendable {
         struct Part: Sendable {
             var tokens: TokenCounts
@@ -46,23 +46,70 @@ extension ClaudeSessions {
         var total: Double
         /// By model id without a context suffix such as `[1m]`.
         var byModel: [String: Part]
+        /// When the process started and ended; nil = unknown, covers the whole session.
+        var start: Date?
+        var end: Date?
+
+        func covers(_ time: Date) -> Bool {
+            // A second of slack: times are written in milliseconds by different clocks.
+            (start.map { time >= $0.addingTimeInterval(-1) } ?? true) && (end.map { time <= $0.addingTimeInterval(1) } ?? true)
+        }
     }
 
-    /// The last (largest) cost-state of every session file that has one.
-    static func costStates(in files: [URL]) -> [CostState] {
-        let marker = Data(#""cost-state""#.utf8)
-        let box = CostStateBox(count: files.count)
-        DispatchQueue.concurrentPerform(iterations: files.count) { index in
-            // Most files have none: look for the marker before splitting into lines.
-            guard let data = try? Data(contentsOf: files[index], options: .mappedIfSafe), data.range(of: marker) != nil,
-                  let entries = try? JSONLines.objects(in: data, where: { JSONLines.contains($0, marker) }) else { return }
-            var best: CostState?
-            for entry in entries {
-                if let state = costState(entry), state.total >= (best?.total ?? 0) { best = state }
-            }
-            box.set(index, best)
+    /// Responses of a session that one process made, and the cost it saved for them.
+    /// nil = none saved (the process was killed or still runs) or $0 saved for real tokens.
+    struct Run: Sendable {
+        var cost: CostState?
+        var responses: [(key: String?, record: UsageRecord)]
+    }
+
+    /// The session's responses, its subagents' included, split by the process that made them.
+    /// Responses no saved cost-state covers form one run without a cost.
+    static func runs(of session: URL) -> [Run] {
+        var (responses, states) = sessionUsage(in: session)
+        let subagents = session.deletingPathExtension().appending(path: "subagents")
+        for agent in SkillScanner.children(of: subagents) where agent.pathExtension == "jsonl" {
+            responses += sessionUsage(in: agent).responses
         }
-        return box.values.compactMap(\.self)
+        // A process saves again as it goes: per start time keep the largest total, and of
+        // equal ones the first, whose window ends nearest its last paid response.
+        var byStart: [Date?: CostState] = [:]
+        for state in states {
+            if let kept = byStart[state.start], kept.total >= state.total { continue }
+            byStart[state.start] = state
+        }
+        let processes = byStart.values.sorted { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
+
+        var covered = Array(repeating: [(key: String?, record: UsageRecord)](), count: processes.count)
+        var uncovered: [(key: String?, record: UsageRecord)] = []
+        for item in responses {
+            // Resumed runs may overlap in time: the latest one to start owns the response.
+            if let index = processes.lastIndex(where: { $0.covers(item.record.time) }) {
+                covered[index].append(item)
+            } else {
+                uncovered.append(item)
+            }
+        }
+        // A process whose responses a later one took, or that left none, is not shown.
+        var result: [Run] = []
+        for (index, process) in processes.enumerated() where !covered[index].isEmpty {
+            result.append(Run(cost: process.total > 0 ? process : nil, responses: covered[index]))
+        }
+        if !uncovered.isEmpty { result.append(Run(cost: nil, responses: uncovered)) }
+        return result
+    }
+
+    /// Runs with a saved cost in every session file that has a cost-state.
+    static func recordedRuns(in files: [URL]) -> [Run] {
+        let marker = Data(#""cost-state""#.utf8)
+        let box = RunBox(count: files.count)
+        DispatchQueue.concurrentPerform(iterations: files.count) { index in
+            // Most files have none: look for the marker before reading the responses.
+            guard let data = try? Data(contentsOf: files[index], options: .mappedIfSafe), data.range(of: marker) != nil
+            else { return }
+            box.set(index, runs(of: files[index]).filter { $0.cost != nil })
+        }
+        return box.values.flatMap(\.self)
     }
 
     static func costState(_ entry: JSONLines.Object) -> CostState? {
@@ -79,24 +126,27 @@ extension ClaudeSessions {
             part.cost += dollars
             byModel[baseModel(model)] = part
         }
-        return CostState(total: total, byModel: byModel)
+        let start = (entry["startTime"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
+        let end = (entry["totalDuration"] as? NSNumber).flatMap { duration in
+            start.map { $0.addingTimeInterval(duration.doubleValue / 1000) }
+        }
+        return CostState(total: total, byModel: byModel, start: start, end: end)
     }
 
-    static func sessionUsage(in file: URL) -> (responses: [(key: String?, record: UsageRecord)], cost: CostState?) {
+    static func sessionUsage(in file: URL) -> (responses: [(key: String?, record: UsageRecord)], costs: [CostState]) {
         let usageMarker = Data(#""usage""#.utf8)
         let assistantMarker = Data(#""type":"assistant""#.utf8)
         let costMarker = Data(#""cost-state""#.utf8)
         guard let data = try? Data(contentsOf: file, options: .mappedIfSafe),
               let entries = try? JSONLines.objects(in: data, where: {
                   (JSONLines.contains($0, assistantMarker) && JSONLines.contains($0, usageMarker)) || JSONLines.contains($0, costMarker)
-              }) else { return ([], nil) }
+              }) else { return ([], []) }
         var byID: [String: Int] = [:]
         var result: [(key: String?, record: UsageRecord)] = []
-        var cost: CostState?
+        var costs: [CostState] = []
         for entry in entries {
-            // A resumed session saves it again with the total so far: the largest wins.
             if let state = costState(entry) {
-                if state.total >= (cost?.total ?? 0) { cost = state }
+                costs.append(state)
                 continue
             }
             guard entry["type"] as? String == "assistant",
@@ -119,7 +169,7 @@ extension ClaudeSessions {
                 result.append((id, record))
             }
         }
-        return (result, cost)
+        return (result, costs)
     }
 
     /// `claude-opus-5[1m]` → `claude-opus-5`
@@ -127,9 +177,11 @@ extension ClaudeSessions {
         model.firstIndex(of: "[").map { String(model[..<$0]) } ?? model
     }
 
-    /// Gives each response its share of the session cost. With a saved cost, a model the
-    /// cost-state doesn't list shares what is left of the total with the other unlisted
-    /// ones; with an estimate, unlisted models stay without a cost.
+    /// Gives each response its share of the run's cost. With a saved cost, what the models
+    /// that answered here don't account for (models the cost-state doesn't list, or calls
+    /// it lists that left no response, such as a quick title) goes to the unlisted models,
+    /// or to all responses when every model is listed, so the run adds up to its total.
+    /// With an estimate, unlisted models stay without a cost.
     static func spread(_ cost: CostState, over responses: [(key: String?, record: UsageRecord)], estimated: Bool)
         -> [(key: String?, record: UsageRecord)] {
         var groups: [String: [Int]] = [:]
@@ -138,34 +190,39 @@ extension ClaudeSessions {
         let unlisted = groups.keys.filter { cost.byModel[$0] == nil }
         let leftover = max(cost.total - listed.reduce(0) { $0 + cost.byModel[$1]!.cost }, 0)
 
-        var result = responses
-        func give(_ dollars: Double, to indices: [Int]) {
+        var dollars = Array(repeating: 0.0, count: responses.count)
+        func give(_ amount: Double, to indices: [Int]) {
             let tokens = indices.reduce(0) { $0 + responses[$1].record.tokens.total }
             for index in indices {
-                let share = tokens > 0 ? Double(responses[index].record.tokens.total) / Double(tokens) : 1 / Double(indices.count)
-                let record = responses[index].record
-                result[index].record = UsageRecord(time: record.time, harness: record.harness, provider: record.provider,
-                                                   model: record.model, tokens: record.tokens, cost: dollars * share,
-                                                   costIsEstimated: estimated)
+                dollars[index] += amount * (tokens > 0 ? Double(responses[index].record.tokens.total) / Double(tokens) : 1 / Double(indices.count))
             }
         }
         for model in listed { give(cost.byModel[model]!.cost, to: groups[model]!) }
-        if !estimated, !unlisted.isEmpty { give(leftover, to: unlisted.flatMap { groups[$0]! }) }
+        if !estimated, leftover > 0 {
+            give(leftover, to: unlisted.isEmpty ? Array(responses.indices) : unlisted.flatMap { groups[$0]! })
+        }
+        var result = responses
+        for index in responses.indices where !estimated || cost.byModel[baseModel(responses[index].record.model)] != nil {
+            let record = responses[index].record
+            result[index].record = UsageRecord(time: record.time, harness: record.harness, provider: record.provider,
+                                               model: record.model, tokens: record.tokens, cost: dollars[index],
+                                               costIsEstimated: estimated)
+        }
         return result
     }
 }
 
-private final class CostStateBox: @unchecked Sendable {
+private final class RunBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var slots: [ClaudeSessions.CostState?]
+    private var slots: [[ClaudeSessions.Run]]
 
-    init(count: Int) { slots = Array(repeating: nil, count: count) }
+    init(count: Int) { slots = Array(repeating: [], count: count) }
 
-    func set(_ index: Int, _ value: ClaudeSessions.CostState?) {
+    func set(_ index: Int, _ value: [ClaudeSessions.Run]) {
         lock.withLock { slots[index] = value }
     }
 
-    var values: [ClaudeSessions.CostState?] { lock.withLock { slots } }
+    var values: [[ClaudeSessions.Run]] { lock.withLock { slots } }
 }
 
 extension PiSessions {

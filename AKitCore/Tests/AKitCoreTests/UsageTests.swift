@@ -61,7 +61,7 @@ struct UsageTests {
             claudeAnswer(id: "m2", time: "2026-09-21T09:00:00.000Z", model: "claude-opus-5[1m]", input: 300, output: 0),
             ["type": "cost-state", "sessionId": "s", "totalCostUSD": 1.0,
              "modelUsage": ["claude-opus-5[1m]": ["costUSD": 0.2], "claude-haiku-4-5-20251001": ["costUSD": 0.3]]],
-            // Saved again after a resume with the total so far.
+            // The same process saves again later with its total so far.
             ["type": "cost-state", "sessionId": "s", "totalCostUSD": 1.2,
              "modelUsage": ["claude-opus-5[1m]": ["costUSD": 0.8], "claude-haiku-4-5-20251001": ["costUSD": 0.3]]],
         ])
@@ -76,36 +76,78 @@ struct UsageTests {
         let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
         #expect(records.map(\.model) == ["claude-opus-5[1m]", "claude-opus-5[1m]", "claude-haiku-4-5-20251001", "claude-opus-5"])
         let costs = records.map { $0.cost.map { ($0 * 1000).rounded() / 1000 } }
-        // Opus: 210 and 410 tokens (with the cache) share $0.80; haiku gets its $0.30;
-        // the other session has no cost.
-        #expect(costs == [0.271, 0.529, 0.3, nil])
+        // Opus: 210 and 410 tokens (with the cache) share $0.80; haiku gets its $0.30; the
+        // $0.10 no model accounts for goes to all 740 tokens. The other session's 112
+        // tokens are estimated at the rate learned here: opus's $0.884 per 620 tokens.
+        #expect(costs == [0.299, 0.584, 0.316, 0.16])
+        #expect(records.map(\.costIsEstimated) == [false, false, false, true])
+        #expect(abs(records.prefix(3).reduce(0) { $0 + ($1.cost ?? 0) } - 1.2) < 0.0001)
     }
 
-    /// A cost-state as Claude Code saves it, priced at opus-like rates.
-    func costState(input: Int, output: Int, cacheRead: Int, cacheWrite: Int) -> [String: Any] {
-        let dollars = (Double(input) * 5 + Double(output) * 25 + Double(cacheRead) * 0.5 + Double(cacheWrite) * 6.25) / 1_000_000
-        return ["type": "cost-state", "totalCostUSD": dollars,
-                "modelUsage": ["claude-opus-5[1m]": ["inputTokens": input, "outputTokens": output,
-                                                      "cacheReadInputTokens": cacheRead,
-                                                      "cacheCreationInputTokens": cacheWrite, "costUSD": dollars]]]
+    func costState(total: Double, start: String, minutes: Double, opus: Double? = nil) -> [String: Any] {
+        ["type": "cost-state", "totalCostUSD": total,
+         "startTime": JSONLines.date(start)!.timeIntervalSince1970 * 1000, "totalDuration": minutes * 60_000,
+         "modelUsage": ["claude-opus-5[1m]": ["costUSD": opus ?? total]]]
     }
 
-    @Test func claudeSessionsWithoutCostAreEstimatedFromSavedOnes() throws {
-        // Old sessions (outside the period) that saved their cost teach the rates.
-        let mixes = [(1000, 20_000, 5_000_000, 100_000), (5000, 8000, 900_000, 40_000), (200, 60_000, 12_000_000, 300_000),
-                     (800, 15_000, 2_000_000, 250_000), (12_000, 30_000, 7_000_000, 20_000), (300, 2000, 400_000, 90_000),
-                     (4000, 45_000, 3_000_000, 60_000), (700, 11_000, 9_500_000, 150_000)]
-        for (index, mix) in mixes.prefix(ClaudeCostRates.minimumSessions).enumerated() {
-            let file = ".claude/projects/-work-old/old-\(index).jsonl"
-            try write(file, lines: [costState(input: mix.0, output: mix.1, cacheRead: mix.2, cacheWrite: mix.3)])
-            try fm.setAttributes([.modificationDate: JSONLines.date("2026-08-01T00:00:00.000Z")!],
-                                 ofItemAtPath: home.appending(path: file).path)
-        }
-        // This session was killed: no cost-state. 1M cache read + 10K output = $0.50 + $0.25.
+    @Test func claudeSavedCostCoversOnlyItsOwnProcess() throws {
+        try write(".claude/projects/-work-app/resumed.jsonl", lines: [
+            // First run, killed: saved nothing.
+            claudeAnswer(id: "r1", time: "2026-09-20T10:00:00.000Z", input: 0, output: 890),
+            // Second run (a resume) saved $2 for its own responses.
+            claudeAnswer(id: "r2", time: "2026-09-21T10:00:00.000Z", input: 0, output: 890),
+            costState(total: 2, start: "2026-09-21T09:59:00.000Z", minutes: 30),
+            // Third run saved $0 although it answered; fourth never saved.
+            claudeAnswer(id: "r3", time: "2026-09-22T10:00:00.000Z", input: 0, output: 890),
+            costState(total: 0, start: "2026-09-22T09:59:00.000Z", minutes: 30),
+            claudeAnswer(id: "r4", time: "2026-09-23T10:00:00.000Z", input: 0, output: 890),
+        ])
+        try write(".claude/projects/-work-app/resumed/subagents/agent-1.jsonl", lines: [
+            claudeAnswer(id: "r5", time: "2026-09-21T10:05:00.000Z", input: 0, output: 890), // in the second run
+        ])
+
+        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        #expect(records.map { $0.cost.map { ($0 * 1000).rounded() / 1000 } } == [1, 1, 1, 1, 1])
+        // Only the second run and its subagent carry the recorded $2.
+        #expect(records.map(\.costIsEstimated) == [true, false, false, true, true])
+    }
+
+    @Test func claudeIdleProcessKeepsItsFirstEqualSaveAndForksKeepTheRecordedCost() throws {
+        try write(".claude/projects/-work-app/b-original.jsonl", lines: [
+            claudeAnswer(id: "f1", time: "2026-09-21T10:00:00.000Z", input: 0, output: 890),
+            costState(total: 2, start: "2026-09-21T09:59:00.000Z", minutes: 30),
+            // The same process saved the same total again after idling for days.
+            costState(total: 2, start: "2026-09-21T09:59:00.000Z", minutes: 60 * 24 * 5),
+            // A later run inside that long window saved nothing: it is estimated.
+            claudeAnswer(id: "f2", time: "2026-09-23T10:00:00.000Z", input: 0, output: 890),
+        ])
+        // A fork sorted first copies f1; its copy has no saved cost of its own.
+        try write(".claude/projects/-work-app/a-fork.jsonl", lines: [
+            claudeAnswer(id: "f1", time: "2026-09-21T10:00:00.000Z", input: 0, output: 890),
+        ])
+
+        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        #expect(records.map(\.cost) == [2, 2])
+        #expect(records.map(\.costIsEstimated) == [false, true])
+    }
+
+    @Test func claudeEstimateCountsCallsTheTranscriptLeavesOut() throws {
+        // Claude Code saved $3 for a run whose transcript shows 1M tokens: the cost-state
+        // also counts calls it didn't write down, so the rate is $3 per transcript million.
+        try write(".claude/projects/-work-old/old.jsonl", lines: [
+            ["type": "assistant", "timestamp": "2026-08-01T10:00:00.000Z",
+             "message": ["id": "o1", "role": "assistant", "model": "claude-opus-5", "content": [],
+                         "usage": ["input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 1_000_000,
+                                   "cache_creation_input_tokens": 0]]],
+            costState(total: 3, start: "2026-08-01T09:00:00.000Z", minutes: 120),
+        ])
+        try fm.setAttributes([.modificationDate: JSONLines.date("2026-08-01T12:00:00.000Z")!],
+                             ofItemAtPath: home.appending(path: ".claude/projects/-work-old/old.jsonl").path)
+        // This session was killed: no cost-state.
         try write(".claude/projects/-work-app/killed.jsonl", lines: [
             ["type": "assistant", "timestamp": "2026-09-21T10:00:00.000Z",
-             "message": ["id": "k1", "role": "assistant", "model": "claude-opus-5", "content": [],
-                         "usage": ["input_tokens": 0, "output_tokens": 10_000, "cache_read_input_tokens": 1_000_000,
+             "message": ["id": "k1", "role": "assistant", "model": "claude-opus-5[1m]", "content": [],
+                         "usage": ["input_tokens": 0, "output_tokens": 10_000, "cache_read_input_tokens": 240_000,
                                    "cache_creation_input_tokens": 0]]],
             // No saved cost for haiku anywhere: it stays unknown.
             claudeAnswer(id: "k2", time: "2026-09-21T10:01:00.000Z", model: "claude-haiku-4-5", input: 1, output: 1),
@@ -122,14 +164,6 @@ struct UsageTests {
         let report = DailyUsageReport(records: records, from: since, to: JSONLines.date("2026-09-22T00:00:00.000Z")!)
         #expect(abs(report.grandTotal.estimatedCost - 0.75) < 0.0001)
         #expect(report.grandTotal.unpricedRequests == 1)
-    }
-
-    @Test func fewSavedSessionsUseTheAverageRate() {
-        let part = ClaudeSessions.CostState.Part(tokens: TokenCounts(output: 1_000_000, cacheRead: 3_000_000), cost: 8)
-        let rates = ClaudeCostRates(costStates: [ClaudeSessions.CostState(total: 8, byModel: ["claude-sonnet-5": part])])
-        // $8 for 4M tokens: $2 per million, whatever the kind.
-        #expect(rates.cost(of: TokenCounts(input: 500_000, output: 500_000), model: "claude-sonnet-5") == 2)
-        #expect(rates.cost(of: TokenCounts(input: 1), model: "claude-opus-5") == nil)
     }
 
     @Test func oldFilesAreNotRead() throws {

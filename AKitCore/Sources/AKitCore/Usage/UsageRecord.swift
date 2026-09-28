@@ -88,7 +88,8 @@ public enum UsageScanner {
 
     /// Reads files in parallel and keeps one record per key: harnesses copy earlier
     /// responses into a new file when a session is resumed or forked. A copy may have
-    /// been taken while the response was still streaming, so the largest one wins.
+    /// been taken while the response was still streaming, so the largest one wins; of
+    /// equal ones a recorded cost beats an estimated or missing one.
     static func read(_ files: [URL], _ read: @Sendable (URL) -> [(key: String?, record: UsageRecord)]) -> [UsageRecord] {
         let box = RecordBox(count: files.count)
         DispatchQueue.concurrentPerform(iterations: files.count) { index in
@@ -101,10 +102,14 @@ public enum UsageScanner {
                 unkeyed.append(item.record)
                 continue
             }
-            if let kept = byKey[key], kept.tokens.total >= item.record.tokens.total { continue }
+            if let kept = byKey[key], (kept.tokens.total, rank(kept)) >= (item.record.tokens.total, rank(item.record)) { continue }
             byKey[key] = item.record
         }
         return unkeyed + byKey.values
+    }
+
+    private static func rank(_ record: UsageRecord) -> Int {
+        record.cost == nil ? 0 : record.costIsEstimated ? 1 : 2
     }
 }
 
