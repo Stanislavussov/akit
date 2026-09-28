@@ -87,6 +87,11 @@ public struct MachineProfile: Codable, Hashable, Sendable {
     /// Name for this Mac's home record: the chosen name; on a work Mac never the host name.
     public var homeName: String? { name ?? (isWork ? "work" : nil) }
 
+    /// Name for this Mac in usage summaries and evidence: the chosen name, else the host name without `.local`.
+    func displayName(hostName: String) -> String {
+        name ?? (hostName.hasSuffix(".local") ? String(hostName.dropLast(".local".count)) : hostName)
+    }
+
     public static func file(home: URL) -> URL { home.appending(path: ".akit/machine.json") }
 
     /// No file means a personal Mac, as before this setting existed. A file that can't be

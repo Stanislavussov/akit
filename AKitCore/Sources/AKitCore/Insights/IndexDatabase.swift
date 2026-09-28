@@ -154,6 +154,15 @@ final class IndexDatabase {
         }
     }
 
+    /// A value of the `meta` table, nil when unset.
+    func meta(_ key: String) throws -> String? {
+        try value("SELECT value FROM meta WHERE key = ?", key)?.text
+    }
+
+    func setMeta(_ key: String, _ value: String) throws {
+        try run("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value)
+    }
+
     var userVersion: Int {
         get throws { try value("PRAGMA user_version")?.int ?? 0 }
     }

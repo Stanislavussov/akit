@@ -143,6 +143,7 @@ public enum AKitCLI {
             RecordSession.run(harness: RecordSession.harness(in: arguments), stdin: input(), env: env)
             return 0
         }
+        let projectsRoot = projectsRoot ?? env.homeDirectory.appending(path: "Projects")
         do {
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {
@@ -160,25 +161,24 @@ public enum AKitCLI {
             let command = args.positional()
             if command == "sessions" {
                 try refuseProjectOptions(options, command: "sessions")
-                return try await sessions(&args, options: options, env: env,
-                                          projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), out: out)
+                return try await sessions(&args, options: options, env: env, projectsRoot: projectsRoot, out: out)
             }
             if command == "stats" {
                 try refuseProjectOptions(options, command: "stats")
                 return try await stats(&args, options: options, env: env, cwd: cwd,
-                                       projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), hostName: hostName,
+                                       projectsRoot: projectsRoot, hostName: hostName,
                                        runner: runner, out: out, err: err)
             }
             if command == "insights" {
                 try refuseProjectOptions(options, command: "insights")
                 return try await insights(&args, options: options, env: env, cwd: cwd,
-                                          projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), hostName: hostName,
+                                          projectsRoot: projectsRoot, hostName: hostName,
                                           hardwareHash: hardwareHash, out: out, err: err, trash: trash, runner: runner)
             }
             if command == "recommend" {
                 try refuseProjectOptions(options, command: "recommend")
                 return try await recommend(&args, options: options, env: env, cwd: cwd,
-                                           projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), hostName: hostName,
+                                           projectsRoot: projectsRoot, hostName: hostName,
                                            runner: runner, out: out, err: err)
             }
             if command == "remove" {
@@ -189,7 +189,7 @@ public enum AKitCLI {
             }
             let projectArgument = args.positional()
             try args.finish()
-            let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+            let brainRoot = brainRoot(options, cwd: cwd, env: env)
             if options.name != nil, command != "machine" { throw Failure(message: "--name only goes with akit machine.") }
             if command != "machine", let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
             if command == "machine" {
@@ -247,13 +247,10 @@ public enum AKitCLI {
                 // refused (work Mac) is only a warning: the pull and push still run.
                 do {
                     let database = try IndexSchema.open(InsightsPaths(env: env).database)
-                    _ = try await QuickImport.run(env: env, projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"),
-                                                  database: database)
+                    _ = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
                     let published = try await SummaryPublisher.publish(env: env, brain: brain, database: database, hostName: hostName,
                                                                        hardware: hardwareHash())
                     if !published.committed.isEmpty || !published.notes.isEmpty { out(publishText(published)) }
-                } catch let failure as SummaryPublisher.Failure {
-                    err("akit: usage summaries not published: \(failure.message)")
                 } catch {
                     err("akit: usage summaries not published: \(error.localizedDescription)")
                 }
@@ -270,10 +267,9 @@ public enum AKitCLI {
                 if options.home, projectArgument != nil { throw Failure(message: "--home and a project folder don't go together.") }
                 let project = options.home ? env.homeDirectory : resolve(projectArgument ?? ".", cwd: cwd, env: env)
                 guard FileManager.default.fileExists(atPath: project.path) else { throw Failure(message: "No folder at \(project.path).") }
-                let root = projectsRoot ?? env.homeDirectory.appending(path: "Projects")
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
                 let id = options.home ? homeID(hostName: hostName, env: env)
-                    : await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
+                    : await ProjectSetup.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 if command == "answers" {
                     let saved = ProjectSetup.savedAnswers(id: id, in: store)
                     out(saved.map(encode) ?? "No saved answers for \(id).")
@@ -435,13 +431,17 @@ public enum AKitCLI {
 
     /// Options read before the command that only mean something for brain and project commands.
     private static func refuseProjectOptions(_ options: Options, command: String) throws {
-        let given: [(set: Bool, flag: String)] = [
+        try refuse([
             (options.home, "--home"), (options.layers != nil, "--layers"), (options.from != nil, "--from"),
             (options.answersFile != nil, "--answers"), (options.targets != nil, "--targets"), (!options.set.isEmpty, "--set"),
             (!options.unset.isEmpty, "--unset"), (!options.include.isEmpty, "--include"), (!options.exclude.isEmpty, "--exclude"),
             (options.includeUnmanaged, "--include-unmanaged"), (options.keepFiles, "--keep-files"), (options.repo != nil, "--repo"),
             (options.skipHome, "--skip-home"), (options.name != nil, "--name"),
-        ]
+        ], command: command)
+    }
+
+    /// The first of the given flags fails `akit <command>`.
+    private static func refuse(_ given: [(set: Bool, flag: String)], command: String) throws {
         if let flag = given.first(where: \.set)?.flag { throw Failure(message: "\(flag) doesn't go with akit \(command).") }
     }
 
@@ -469,7 +469,6 @@ public enum AKitCLI {
     }
 
     static func importText(_ report: ImportReport) -> String {
-        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         var lines: [String] = []
         if report.sources == 0 {
             lines.append("Nothing new in the session logs (\(report.ms) ms).")
@@ -509,32 +508,24 @@ public enum AKitCLI {
             throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats bindings, "
                           + "akit stats changes, akit stats mark \"<note>\" [--at DATE], or akit stats --debug.")
         }
-        func number(_ text: String?, _ flag: String) throws -> Int? {
-            guard let text else { return nil }
-            guard let value = Int(text), value > 0 else { throw Failure(message: "\(flag) needs a whole number above 0.") }
-            return value
-        }
-        let days = try number(daysText, "--days"), top = try number(topText, "--top")
-        func refuse(_ given: [(set: Bool, flag: String)], with: String) throws {
-            if let flag = given.first(where: \.set)?.flag { throw Failure(message: "\(flag) doesn't go with akit stats \(with).") }
-        }
+        let days = try positiveNumber(daysText, "--days"), top = try positiveNumber(topText, "--top")
         if projectArgument != nil, all { throw Failure(message: "--project and --all don't go together.") }
         if atText != nil, subcommand != "mark" { throw Failure(message: "--at goes with akit stats mark.") }
         if subcommand == "mark" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"),
                         (projectArgument != nil, "--project"), (all, "--all"), (days != nil, "--days"), (top != nil, "--top"),
-                        (details, "--details"), (options.json, "--json")], with: "mark")
+                        (details, "--details"), (options.json, "--json")], command: "stats mark")
             return try mark(note, at: atText, env: env, out: out)
         }
         if subcommand == "changes" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"), (days != nil, "--days"),
-                        (top != nil, "--top"), (details, "--details")], with: "changes")
+                        (top != nil, "--top"), (details, "--details")], command: "stats changes")
         } else if subcommand == "bindings" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
-                        (top != nil, "--top"), (details, "--details")], with: "bindings")
+                        (top != nil, "--top"), (details, "--details")], command: "stats bindings")
         } else if debug {
             try refuse([(bindingList != nil, "--bindings"), (projectArgument != nil, "--project"), (all, "--all"),
-                        (days != nil, "--days"), (top != nil, "--top"), (details, "--details")], with: "--debug")
+                        (days != nil, "--days"), (top != nil, "--top"), (details, "--details")], command: "stats --debug")
         } else if session != nil {
             throw Failure(message: "--session goes with akit stats --debug.")
         }
@@ -555,14 +546,9 @@ public enum AKitCLI {
             out(options.json ? encode(report) : debugStatsText(report))
             return 0
         }
-        // A folder gives its project id (as akit plan does); anything else is taken as an id.
         var project: String?
-        if let projectArgument {
-            let folder = resolve(projectArgument, cwd: cwd, env: env)
-            project = SkillScanner.isDirectory(folder) ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env)
-                : projectArgument
-        }
-        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        if let projectArgument { project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env) }
+        let brainRoot = brainRoot(options, cwd: cwd, env: env)
         var inputs = try await InsightsStats.inputs(env: env, database: database, brain: Brain.load(from: brainRoot),
                                                     projectsRoot: projectsRoot, hostName: hostName, run: runner)
         if subcommand == "changes" {
@@ -621,7 +607,6 @@ public enum AKitCLI {
     static func changesText(_ report: ChangesReport, project: String?) -> String {
         let short = ContextSize.short
         func signed(_ n: Int) -> String { n > 0 ? "+" + short(n) : short(n) }
-        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
         var lines = ["First-request context (recorded tokens) of sessions within \(Int(BeforeAfter.window / 86_400)) days before and "
                      + "after each change, with the same harness version and model"
                      + (project.map { ", applies of \($0)" } ?? "") + ":"]
@@ -665,14 +650,6 @@ public enum AKitCLI {
 
     static func statsText(_ report: StatsReport, details: Bool) -> String {
         let short = ContextSize.short
-        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
-        func label(_ kind: String) -> String {
-            switch kind {
-            case SkillOwner.Kind.handInstalled.rawValue: "hand-installed"
-            case SkillOwner.Kind.builtIn.rawValue: "built-in"
-            default: kind
-            }
-        }
         let summary = report.summary
         let scope = report.scope.project.map { "project \($0) (sessions bound at \(report.scope.bindings.joined(separator: ", ")))" }
             ?? "all sessions on this Mac"
@@ -686,7 +663,7 @@ public enum AKitCLI {
         if !owners.isEmpty {
             lines.append("")
             lines.append("By owner (skills, ≈ tokens per request when listed):")
-            lines += owners.map { "  \(label($0.owner)): \(count($0.skills, "skill")), ≈ \(short($0.approxTokens))" }
+            lines += owners.map { "  \(ownerLabel($0.owner)): \(count($0.skills, "skill")), ≈ \(short($0.approxTokens))" }
         }
         lines.append("")
         if report.skills.isEmpty {
@@ -694,7 +671,7 @@ public enum AKitCLI {
         } else {
             lines.append("\(details && report.omitted.skills == 0 ? "Skills" : "Top \(report.skills.count)") by ≈ context space (tokens × requests):")
             for skill in report.skills {
-                let owner = [label(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " ")
+                let owner = [ownerLabel(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " ")
                 var line = "  \(skill.name) (\(owner)): ≈ \(short(skill.approxContextSpace)) context space, "
                     + "≈ \(short(skill.approxTokens)) tokens per request; "
                     + "listed in \(count(skill.listedSessions, "session")) on \(count(skill.listedDays, "day")); "
@@ -776,20 +753,15 @@ public enum AKitCLI {
             only = part
         }
         if dryRun, subcommand == "status" { throw Failure(message: usage) }
-        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        let brainRoot = brainRoot(options, cwd: cwd, env: env)
         let brain = Brain.load(from: brainRoot)
         if subcommand == "publish" {
             guard let brain else { throw Failure(message: "No brain repo at \(brainRoot.path); usage summaries are published there.") }
             if let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
             let database = try IndexSchema.open(InsightsPaths(env: env).database)
             let imported = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
-            let outcome: SummaryPublisher.Outcome
-            do {
-                outcome = try await SummaryPublisher.publish(env: env, brain: brain, database: database, hostName: hostName,
+            let outcome = try await SummaryPublisher.publish(env: env, brain: brain, database: database, hostName: hostName,
                                                              hardware: hardwareHash(), dryRun: dryRun)
-            } catch {
-                throw Failure(message: error.message)
-            }
             out(([publishText(outcome)] + imported.notes.map { "note: \($0)" }).joined(separator: "\n"))
             return 0
         }
@@ -817,12 +789,7 @@ public enum AKitCLI {
             out("Run again with --yes to do it.")
             return refused
         }
-        let failures: [String]
-        do {
-            failures = try await installer.execute(plan, trash: trash)
-        } catch {
-            throw Failure(message: error.message)
-        }
+        let failures = try await installer.execute(plan, trash: trash)
         out((failures.isEmpty ? ["Done."] : failures).joined(separator: "\n"))
         return failures.isEmpty ? refused : 1
     }
@@ -847,26 +814,18 @@ public enum AKitCLI {
         if projectArgument != nil, all { throw Failure(message: "--project and --all don't go together.") }
         if subcommand == nil, options.yes { throw Failure(message: "--yes goes with akit recommend apply or dismiss.") }
         if subcommand != nil, options.json || details { throw Failure(message: "\(options.json ? "--json" : "--details") doesn't go with akit recommend \(subcommand ?? "").") }
-        func number(_ text: String?, _ flag: String) throws -> Int? {
-            guard let text else { return nil }
-            guard let value = Int(text), value > 0 else { throw Failure(message: "\(flag) needs a whole number above 0.") }
-            return value
-        }
         var recommendOptions = Recommender.Options(bindings: try BindingSet.parse(bindingList),
                                                    top: details || subcommand != nil ? nil : Recommender.defaultTop)
-        if let minSessions = try number(minSessionsText, "--min-sessions") { recommendOptions.minSessions = minSessions }
-        if let minDays = try number(minDaysText, "--min-days") { recommendOptions.minDays = minDays }
+        if let minSessions = try positiveNumber(minSessionsText, "--min-sessions") { recommendOptions.minSessions = minSessions }
+        if let minDays = try positiveNumber(minDaysText, "--min-days") { recommendOptions.minDays = minDays }
         let machine = MachineProfile.load(home: env.homeDirectory)
         if let problem = machine.problem { err("akit: \(problem)") }
         let database = try IndexSchema.open(InsightsPaths(env: env).database)
         let imported = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
-        // A folder gives its project id (as akit plan does); anything else is taken as an id.
         if let projectArgument {
-            let folder = resolve(projectArgument, cwd: cwd, env: env)
-            recommendOptions.project = SkillScanner.isDirectory(folder)
-                ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env) : projectArgument
+            recommendOptions.project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env)
         }
-        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        let brainRoot = brainRoot(options, cwd: cwd, env: env)
         let brain = Brain.load(from: brainRoot)
         var inputs = try await Recommender.inputs(env: env, database: database, brain: brain, project: recommendOptions.project,
                                                   projectsRoot: projectsRoot, hostName: hostName, run: runner)
@@ -908,12 +867,8 @@ public enum AKitCLI {
             out((["Set \(recommendation.skill) to manual in \(LayerPatch.path(layer: layer)):"]
                  + unifiedDiff(TextDiff.lines(from: patch.before, to: patch.after))).joined(separator: "\n"))
             guard options.yes else { out(confirm); return 0 }
-            do {
-                try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .manual, before: patch.before, after: patch.after,
-                                            brain: brain.root, machine: machine, env: env)
-            } catch {
-                throw Failure(message: error.message)
-            }
+            try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .manual, before: patch.before, after: patch.after,
+                                        brain: brain.root, machine: machine, env: env)
             var lines = ["Committed “\(LayerPatch.Change.manual.message(skill: recommendation.skill, layer: layer))”."]
             let projects = projectsUsing(layer, brain: brain, home: env.homeDirectory)
             if !projects.isEmpty { lines.append("Run akit plan/apply in: \(projects.joined(separator: ", ")).") }
@@ -924,21 +879,12 @@ public enum AKitCLI {
 
         // Dismiss: a layer skill is pinned in its layer.yaml; advice is remembered with its evidence.
         if let patch = recommendation.patch, let layer = recommendation.action.layer, let brain {
-            let after: String
-            do {
-                after = try LayerPatch.edit(patch.before, skill: recommendation.skill, layer: layer, change: .keepAuto)
-            } catch {
-                throw Failure(message: error.message)
-            }
+            let after = try LayerPatch.edit(patch.before, skill: recommendation.skill, layer: layer, change: .keepAuto)
             out((["Keep \(recommendation.skill) auto in \(LayerPatch.path(layer: layer)):"]
                  + unifiedDiff(TextDiff.lines(from: patch.before, to: after))).joined(separator: "\n"))
             guard options.yes else { out(confirm); return 0 }
-            do {
-                try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .keepAuto, before: patch.before, after: after,
-                                            brain: brain.root, machine: machine, env: env)
-            } catch {
-                throw Failure(message: error.message)
-            }
+            try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .keepAuto, before: patch.before, after: after,
+                                        brain: brain.root, machine: machine, env: env)
             out("Committed “\(LayerPatch.Change.keepAuto.message(skill: recommendation.skill, layer: layer))”.")
             return 0
         }
@@ -947,13 +893,8 @@ public enum AKitCLI {
             + "(twice now's ≈ \(space)).")
         guard options.yes else { out(confirm); return 0 }
         let entry = Dismissals.Entry(id: id, at: Date().formatted(.iso8601), approxContextSpace: space)
-        let url: URL
-        do {
-            url = try await Dismissals.dismiss(entry, project: recommendation.scope.project, brain: brain?.root, home: env.homeDirectory,
+        let url = try await Dismissals.dismiss(entry, project: recommendation.scope.project, brain: brain?.root, home: env.homeDirectory,
                                                machine: machine, env: env)
-        } catch {
-            throw Failure(message: error.message)
-        }
         out("Saved in \(url.path).")
         return 0
     }
@@ -968,14 +909,6 @@ public enum AKitCLI {
 
     static func recommendText(_ report: RecommendReport, details: Bool) -> String {
         let short = ContextSize.short
-        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
-        func label(_ kind: String) -> String {
-            switch kind {
-            case SkillOwner.Kind.handInstalled.rawValue: "hand-installed"
-            case SkillOwner.Kind.builtIn.rawValue: "built-in"
-            default: kind
-            }
-        }
         let rule = report.rule
         let scope = report.project.map { "project \($0), sessions bound at \(rule.bindings.joined(separator: ", "))" } ?? "all sessions"
         var lines = ["Auto skills the model never called: listed in ≥ \(count(rule.minSessions, "session")) on ≥ \(count(rule.minDistinctDays, "day")), "
@@ -983,13 +916,13 @@ public enum AKitCLI {
         let owners = report.summary.approxContextPerRequestByOwner.filter { $0.skills > 0 }
         if !owners.isEmpty {
             lines.append("≈ Context per request by owner: "
-                         + owners.map { "\(label($0.owner)) ≈ \(short($0.approxTokens)) (\(count($0.skills, "skill")))" }.joined(separator: ", ") + ".")
+                         + owners.map { "\(ownerLabel($0.owner)) ≈ \(short($0.approxTokens)) (\(count($0.skills, "skill")))" }.joined(separator: ", ") + ".")
         }
         lines.append("≈ tokens = description characters / k (\(report.calibration.describe)).")
         lines.append("")
         if report.recommendations.isEmpty { lines.append("Nothing to recommend.") }
         for item in report.recommendations {
-            let owner = [label(item.owner.kind), item.owner.name].compactMap { $0 }.joined(separator: " ")
+            let owner = [ownerLabel(item.owner.kind), item.owner.name].compactMap { $0 }.joined(separator: " ")
             let evidence = item.evidence
             let subject = item.skill == Recommender.wholePlugin ? owner : "\(item.skill) (\(owner))"
             lines.append("\(item.stale ? "[stale] " : "")\(item.id)  \(subject): \(item.type)")
@@ -1076,9 +1009,9 @@ public enum AKitCLI {
     // MARK: - Remove
 
     private static func remove(kind: String?, name: String?, options: Options, env: HarnessEnvironment, cwd: URL,
-                               projectsRoot: URL?, hostName: String, installedTargets: [String],
+                               projectsRoot: URL, hostName: String, installedTargets: [String],
                                out: (String) -> Void, trash: (URL) throws -> URL?) async throws -> Int32 {
-        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        let brainRoot = brainRoot(options, cwd: cwd, env: env)
         guard let brain = Brain.load(from: brainRoot) else { throw Failure(message: "No brain repo at \(brainRoot.path).") }
         let confirm = "Run again with --yes to do it."
         do {
@@ -1118,7 +1051,7 @@ public enum AKitCLI {
                 if options.home, name != nil { throw Failure(message: "--home and a project folder don't go together.") }
                 let project = options.home ? env.homeDirectory : resolve(name ?? ".", cwd: cwd, env: env)
                 let id = options.home ? homeID(hostName: hostName, env: env)
-                    : await ProjectSetup.projectID(for: project, projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), env: env)
+                    : await ProjectSetup.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
                 guard let saved = ProjectSetup.savedAnswers(id: id, in: store) else {
                     out("Nothing is saved for \(id).")
@@ -1317,6 +1250,36 @@ public enum AKitCLI {
     private static func resolve(_ path: String, cwd: URL, env: HarnessEnvironment) -> URL {
         if path.hasPrefix("~") || path.hasPrefix("/") { return env.expand(path).standardizedFileURL }
         return cwd.appending(path: path).standardizedFileURL
+    }
+
+    /// `--brain DIR`, else `~/.akit/registry`.
+    private static func brainRoot(_ options: Options, cwd: URL, env: HarnessEnvironment) -> URL {
+        options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+    }
+
+    /// `--project`: a folder gives its project id (as akit plan does); anything else is taken as an id.
+    private static func projectID(argument: String, cwd: URL, projectsRoot: URL, env: HarnessEnvironment) async -> String {
+        let folder = resolve(argument, cwd: cwd, env: env)
+        return SkillScanner.isDirectory(folder) ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env) : argument
+    }
+
+    /// `--days`, `--top`, `--min-sessions`, `--min-days`: nil when not given.
+    private static func positiveNumber(_ text: String?, _ flag: String) throws -> Int? {
+        guard let text else { return nil }
+        guard let value = Int(text), value > 0 else { throw Failure(message: "\(flag) needs a whole number above 0.") }
+        return value
+    }
+
+    /// `3 sessions`, `1 day`.
+    private static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+
+    /// An owner kind as the text output says it.
+    private static func ownerLabel(_ kind: String) -> String {
+        switch kind {
+        case SkillOwner.Kind.handInstalled.rawValue: "hand-installed"
+        case SkillOwner.Kind.builtIn.rawValue: "built-in"
+        default: kind
+        }
     }
 
     /// Minimal argument reader: flags and `--key value` anywhere, positionals in order.

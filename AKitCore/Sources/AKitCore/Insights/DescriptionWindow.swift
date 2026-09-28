@@ -88,7 +88,7 @@ enum DescriptionWindow {
         guard let head = await call(["rev-parse", "HEAD"])?.trimmingCharacters(in: .whitespacesAndNewlines), !head.isEmpty else {
             return [:]
         }
-        let stored = (try? database.value("SELECT value FROM meta WHERE key = ?", cacheKey))?.text
+        let stored = (try? database.meta(cacheKey))
             .flatMap { try? JSONDecoder().decode(Cache.self, from: Data($0.utf8)) }
         var cache = stored?.head == head ? stored ?? Cache(head: head, starts: [:]) : Cache(head: head, starts: [:])
         var changed = false
@@ -98,8 +98,7 @@ enum DescriptionWindow {
             changed = true
         }
         if changed, let data = try? JSONEncoder().encode(cache) {
-            _ = try? database.run("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                                  cacheKey, String(decoding: data, as: UTF8.self))
+            try? database.setMeta(cacheKey, String(decoding: data, as: UTF8.self))
         }
         return cache.starts.filter { skills.contains($0.key) }.mapValues(Date.init(timeIntervalSince1970:))
     }

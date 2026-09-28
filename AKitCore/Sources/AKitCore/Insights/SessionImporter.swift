@@ -131,7 +131,7 @@ struct SessionImporter {
 
     /// The index must derive keys the way this akit does; mixed keys would double-count.
     static func checkKeyVersion(_ database: IndexDatabase) throws {
-        let stored = try database.value("SELECT value FROM meta WHERE key = 'keyVersion'")?.text
+        let stored = try database.meta("keyVersion")
         guard stored == "\(IndexSchema.keyVersion)" else {
             throw IndexDatabase.Failure(message: """
                 The index at \(database.url.path) uses key version \(stored ?? "none"); this akit uses \
@@ -145,10 +145,8 @@ struct SessionImporter {
     /// (or one whose machine.json can't be read).
     static func keepsManualCallExamples(home: URL) -> Bool {
         let machine = MachineProfile.load(home: home)
-        guard !machine.isWork, machine.problem == nil,
-              let data = try? Data(contentsOf: InsightsPaths(home: home).settings),
-              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
-        return settings["keepManualCallExamples"] as? Bool == true
+        guard !machine.isWork, machine.problem == nil else { return false }
+        return InsightsPaths(home: home).readSettings()["keepManualCallExamples"] as? Bool == true
     }
 
     private static func counts(_ database: IndexDatabase) throws -> [Int] {

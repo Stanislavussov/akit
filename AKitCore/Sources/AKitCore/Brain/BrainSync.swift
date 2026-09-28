@@ -226,13 +226,13 @@ public enum BrainSync {
     private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment, timeout: TimeInterval = 30,
                             extra: [String: String] = [:], work: Bool = false, failure: String? = nil) async throws(Failure) -> String {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found.") }
-        var environment = env.variables.merging(["PATH": env.pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
+        var environment = env.gitVariables
             .merging(extra) { $1 }
         if work { environment = WorkFilter.withoutIdentity(environment) }
         let result = await ProcessRunner.run(git, arguments: (work ? WorkFilter.noSigning : []) + arguments, directory: root,
                                              environment: environment, timeout: timeout)
         guard let result, result.succeeded else {
-            let output = result.map { $0.timedOut ? "timed out" : $0.output.trimmingCharacters(in: .whitespacesAndNewlines) } ?? "couldn't start git"
+            let output = result.map(\.failureText) ?? "couldn't start git"
             throw Failure(message: "\(failure ?? "git \(arguments.first { !$0.hasPrefix("-") } ?? "") failed"): \(output)")
         }
         return result.output

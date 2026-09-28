@@ -197,7 +197,17 @@ enum InsightsStats {
             sql += " WHERE s.started >= ? AND s.started <= ?)"
             return (sql, values + [from.timeIntervalSince1970, to.timeIntervalSince1970])
         }
+
+        /// `cte` plus `starts(skill, start)`: each skill's start, for counting from it.
+        func cte(starts: [String: Date]) throws -> (sql: String, values: [any SQLBindable]) {
+            let json = String(decoding: try JSONEncoder().encode(starts.mapValues(\.timeIntervalSince1970)), as: UTF8.self)
+            let (sql, values) = cte
+            return (sql + ", starts AS (SELECT key AS skill, value AS start FROM json_each(?))", values + [json])
+        }
     }
+
+    /// Calls that count: every model call, and the user's skill calls (not built-in commands), of `skill_calls c`.
+    static let countedCallsSQL = "(c.by = 'model' OR COALESCE(json_extract(c.extra, '$.kind'), 'skill') = 'skill')"
 
     /// Skills listed in the scope's sessions (main or subagent).
     static func listedNames(_ database: IndexDatabase, scope: Scope) throws -> [String] {
@@ -212,10 +222,8 @@ enum InsightsStats {
     /// session's first listing; Pi lists nothing, so its calls count from the start on.
     static func tallies(_ database: IndexDatabase, scope: Scope, starts: [String: Date], descriptions: [String: String],
                         calibration: ContextSize.Calibration) throws -> [String: Tally] {
-        let (scoped, scopeValues) = scope.cte
-        let startsJSON = String(decoding: try JSONEncoder().encode(starts.mapValues(\.timeIntervalSince1970)), as: UTF8.self)
-        let with = "WITH \(scoped), starts AS (SELECT key AS skill, value AS start FROM json_each(?))"
-        let values = scopeValues + [startsJSON]
+        let (ctes, values) = try scope.cte(starts: starts)
+        let with = "WITH \(ctes)"
 
         var tallies: [String: Tally] = [:]
         // Main sessions: first listing, own description size, main requests from then on.
@@ -244,14 +252,13 @@ enum InsightsStats {
             tallies[skill, default: Tally()].listedDays.insert(day)
         }
         // Calls in sessions with a listing (main or subagent), from the first listing on.
-        let userSkill = "(c.by = 'model' OR COALESCE(json_extract(c.extra, '$.kind'), 'skill') = 'skill')"
         for row in try database.rows("""
             \(with), firsts AS (SELECT l.session_key, l.skill, MIN(l.ts) AS first
               FROM skill_listings l JOIN scoped s ON s.key = l.session_key JOIN starts st ON st.skill = l.skill
               WHERE l.ts >= st.start GROUP BY l.session_key, l.skill)
             SELECT c.skill, c.session_key, c.by, COUNT(*) FROM skill_calls c
             JOIN firsts f ON f.session_key = c.session_key AND f.skill = c.skill
-            WHERE c.harness != 'pi' AND c.ts >= f.first AND \(userSkill) GROUP BY c.skill, c.session_key, c.by
+            WHERE c.harness != 'pi' AND c.ts >= f.first AND \(countedCallsSQL) GROUP BY c.skill, c.session_key, c.by
             """, values) {
             guard let skill = row[0].text, let session = row[1].text, let count = row[3].int else { continue }
             var tally = tallies[skill] ?? Tally()
@@ -266,7 +273,7 @@ enum InsightsStats {
         // Pi: no listing, so every call from the start on.
         for row in try database.rows("""
             \(with) SELECT c.skill, c.by, COUNT(*) FROM skill_calls c JOIN scoped s ON s.key = c.session_key
-            JOIN starts st ON st.skill = c.skill WHERE c.harness = 'pi' AND c.ts >= st.start AND \(userSkill) GROUP BY c.skill, c.by
+            JOIN starts st ON st.skill = c.skill WHERE c.harness = 'pi' AND c.ts >= st.start AND \(countedCallsSQL) GROUP BY c.skill, c.by
             """, values) {
             guard let skill = row[0].text, let count = row[2].int else { continue }
             if row[1].text == "model" {

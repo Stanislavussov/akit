@@ -411,7 +411,7 @@ struct ProjectBinder {
     func bind(database: IndexDatabase, now: Date = Date(), deadline: Date? = nil) async throws -> Report {
         let templateList = Self.pathTemplates(env: env)
         let templatesHash = ProjectSetup.sha256(Data(templateList.joined(separator: "\n").utf8))
-        let sameTemplates = try database.value("SELECT value FROM meta WHERE key = ?", Self.templatesKey)?.text == templatesHash
+        let sameTemplates = try database.meta(Self.templatesKey) == templatesHash
         let sessions = try database.rows("""
             SELECT s.key, s.harness, s.native_id, s.cwd, s.git_branch, b.project_id, b.method, b.confidence, b.resolver_version,
               EXISTS(SELECT 1 FROM hook_events h WHERE h.session_id = s.native_id AND h.harness = s.harness
@@ -437,7 +437,7 @@ struct ProjectBinder {
             }
         var report = Report()
         guard !sessions.isEmpty else {
-            if !sameTemplates { try saveTemplatesHash(templatesHash, database: database) }
+            if !sameTemplates { try database.setMeta(Self.templatesKey, templatesHash) }
             return report
         }
         let home = BindingPaths.canonical(env.homeDirectory.path)
@@ -492,14 +492,9 @@ struct ProjectBinder {
         try database.transaction {
             for decision in decisions where try write(decision, database: database, now: now) { report.changed += 1 }
             // Every session was looked at with these templates unless the deadline cut the run.
-            if !sameTemplates, report.pending == 0 { try saveTemplatesHash(templatesHash, database: database) }
+            if !sameTemplates, report.pending == 0 { try database.setMeta(Self.templatesKey, templatesHash) }
         }
         return report
-    }
-
-    private func saveTemplatesHash(_ hash: String, database: IndexDatabase) throws {
-        try database.run("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                         Self.templatesKey, hash)
     }
 
     /// The first hook event of the session that saw a repository: its remote id, else the
@@ -553,9 +548,7 @@ struct ProjectBinder {
 
     /// The built-in templates plus `pathTemplates` of `~/.akit/insights.json`.
     static func pathTemplates(env: HarnessEnvironment) -> [String] {
-        guard let data = try? Data(contentsOf: InsightsPaths(env: env).settings),
-              let settings = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return PathTemplateResolver.builtIn }
-        return PathTemplateResolver.builtIn + (settings["pathTemplates"] as? [String] ?? [])
+        PathTemplateResolver.builtIn + (InsightsPaths(env: env).readSettings()["pathTemplates"] as? [String] ?? [])
     }
 
     /// A template match (medium) first; else a sibling candidate: medium when its repository

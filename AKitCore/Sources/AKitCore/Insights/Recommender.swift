@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// `akit recommend`: auto skills the model never calls. The JSON (`version` 1) is the contract for
@@ -459,9 +458,7 @@ enum Recommender {
         if let brain {
             inputs.others = UsageSummary.load(brain: brain.root, store: store, ownership: UsageSummary.ownership(database, machine: machine))
         }
-        var host = hostName
-        if host.hasSuffix(".local") { host.removeLast(".local".count) }
-        inputs.thisMac = machine.name ?? host
+        inputs.thisMac = machine.displayName(hostName: hostName)
         inputs.lastImport = try database.value("SELECT MAX(imported_at) FROM sources")?.double.map(Date.init(timeIntervalSince1970:))
         return try await scoped(inputs, to: project, env: env, database: database, run: run)
     }
@@ -498,14 +495,13 @@ enum Recommender {
     /// Model calls per skill in the scope's sessions from each skill's start: any harness, subagents
     /// included, in a session that listed it or not.
     static func modelCalls(_ database: IndexDatabase, scope: InsightsStats.Scope, starts: [String: Date]) throws -> [String: Int] {
-        let (scoped, values) = scope.cte
-        let startsJSON = String(decoding: try JSONEncoder().encode(starts.mapValues(\.timeIntervalSince1970)), as: UTF8.self)
+        let (ctes, values) = try scope.cte(starts: starts)
         var calls: [String: Int] = [:]
         for row in try database.rows("""
-            WITH \(scoped), starts AS (SELECT key AS skill, value AS start FROM json_each(?))
+            WITH \(ctes)
             SELECT c.skill, COUNT(*) FROM skill_calls c JOIN scoped s ON s.key = c.session_key JOIN starts st ON st.skill = c.skill
             WHERE c.by = 'model' AND c.ts >= st.start GROUP BY c.skill
-            """, values + [startsJSON]) {
+            """, values) {
             if let skill = row[0].text, let count = row[1].int { calls[skill] = count }
         }
         return calls
@@ -517,7 +513,7 @@ enum Recommender {
                             others: UsageSummary.Others) throws -> Set<String> {
         var used = Set(try database.rows("""
             SELECT DISTINCT substr(c.skill, 1, instr(c.skill, ':') - 1) FROM skill_calls c
-            WHERE instr(c.skill, ':') > 1 AND (c.by = 'model' OR COALESCE(json_extract(c.extra, '$.kind'), 'skill') = 'skill')
+            WHERE instr(c.skill, ':') > 1 AND \(InsightsStats.countedCallsSQL)
               AND NOT EXISTS(SELECT 1 FROM bindings b WHERE b.session_key = c.session_key AND b.project_id = ?
                              AND b.confidence IN \(bindings.sqlList))
             """, project).compactMap { $0[0].text })

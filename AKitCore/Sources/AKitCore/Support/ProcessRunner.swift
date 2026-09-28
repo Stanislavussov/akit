@@ -161,6 +161,18 @@ public enum ProcessRunner {
     }
 }
 
+extension ProcessRunner.Result {
+    /// Why a run failed, for a message: `timed out`, else its trimmed output.
+    var failureText: String { timedOut ? "timed out" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+extension HarnessEnvironment {
+    /// The environment for git: the full PATH, and never a password prompt.
+    var gitVariables: [String: String] {
+        variables.merging(["PATH": pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
+    }
+}
+
 /// Output collected on the reader's queue, read once at the end.
 private final class OutputBuffer: @unchecked Sendable {
     private let lock = NSLock()

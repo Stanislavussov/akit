@@ -106,7 +106,7 @@ enum UsageSummary {
         for row in try database.rows("""
             SELECT date(c.ts, \(local)), c.skill, c.by, COUNT(*) FROM skill_calls c \(join("c.session_key"))
             WHERE c.ts >= ? AND c.skill IS NOT NULL
-              AND (c.by = 'model' OR COALESCE(json_extract(c.extra, '$.kind'), 'skill') = 'skill')
+              AND \(InsightsStats.countedCallsSQL)
             GROUP BY 1, 2, 3
             """, values) {
             guard let skill = row[1].text, let count = row[3].int else { continue }
@@ -313,7 +313,7 @@ enum UsageSummary {
     // MARK: - Own keys
 
     static func ownKeys(_ database: IndexDatabase) -> MachineProfile.OwnKeys {
-        guard let text = (try? database.value("SELECT value FROM meta WHERE key = ?", ownKeysMeta))?.text,
+        guard let text = try? database.meta(ownKeysMeta),
               let keys = try? JSONDecoder().decode(MachineProfile.OwnKeys.self, from: Data(text.utf8)) else { return .init() }
         return keys
     }
@@ -340,7 +340,6 @@ enum UsageSummary {
             if let since { keys.since[key] = ISO8601DateFormatter().string(from: since) }
         }
         let text = String(decoding: try JSONEncoder().encode(keys), as: UTF8.self)
-        _ = try database.run("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                             ownKeysMeta, text)
+        try database.setMeta(ownKeysMeta, text)
     }
 }

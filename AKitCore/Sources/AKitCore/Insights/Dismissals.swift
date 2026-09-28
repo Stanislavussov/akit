@@ -111,11 +111,10 @@ enum Dismissals {
         guard let root = commitRoot, FileManager.default.fileExists(atPath: root.appending(path: ".git").path) else { return url }
         let path = String(url.standardizedFileURL.path.dropFirst(root.standardizedFileURL.path.count + 1))
         guard let git = env.findExecutable("git") else { throw Failure(message: "Saved, but git was not found, so nothing was committed.") }
-        let environment = env.variables.merging(["PATH": env.pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
         for arguments in [["add", "--", path], ["commit", "--quiet", "-m", "Dismiss recommendation \(entry.id)", "--", path]] {
-            let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: environment, timeout: 30)
+            let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: env.gitVariables, timeout: 30)
             guard let result, result.succeeded else {
-                throw Failure(message: "Saved, but git \(arguments[0]) failed: \(result?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "couldn't start")")
+                throw Failure(message: "Saved, but git \(arguments[0]) failed: \(result?.failureText ?? "couldn't start")")
             }
         }
         return url

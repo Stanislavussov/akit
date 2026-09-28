@@ -316,7 +316,7 @@ extension CaptureInstaller {
                 for arguments in [["add", "--"] + plan.commitPaths, ["commit", "--quiet", "-m", plan.commitMessage, "--"] + plan.commitPaths] {
                     let result = await run(git, arguments, brain, 30)
                     guard let result, result.succeeded else {
-                        let output = result.map { $0.timedOut ? "timed out" : $0.output.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        let output = result.map(\.failureText)
                             ?? "couldn't start git"
                         failures.append("The plugin files are written in the brain, but git \(arguments[0]) failed there (\(output)), so they "
                                         + "are not committed and the plugin was not installed in Claude Code. Fix that, then run akit insights install again.")

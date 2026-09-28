@@ -43,9 +43,7 @@ enum SummaryPublisher {
             }
         }
         guard let id = profile.id, let key = profile.summaryKey else { throw Failure(message: "This Mac has no summary key yet.") }
-        var host = hostName
-        if host.hasSuffix(".local") { host.removeLast(".local".count) }
-        let name = profile.name ?? host
+        let name = profile.displayName(hostName: hostName)
         var outcome = Outcome(key: key, isWork: profile.isWork, message: "Update usage summaries (\(profile.isWork ? key : name))",
                               dryRun: dryRun)
         if profile.isWork {
@@ -199,10 +197,9 @@ enum SummaryPublisher {
     @discardableResult
     private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment) async throws(Failure) -> String {
         guard let git = env.findExecutable("git") else { throw Failure(message: "Written, but git was not found, so nothing was committed.") }
-        let environment = env.variables.merging(["PATH": env.pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
-        let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: environment, timeout: 30)
+        let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: env.gitVariables, timeout: 30)
         guard let result, result.succeeded else {
-            let output = result.map { $0.timedOut ? "timed out" : $0.output.trimmingCharacters(in: .whitespacesAndNewlines) } ?? "couldn't start git"
+            let output = result.map(\.failureText) ?? "couldn't start git"
             throw Failure(message: "Written, but git \(arguments.first { !$0.hasPrefix("-") && !$0.contains("=") } ?? "") failed: \(output)")
         }
         return result.output
