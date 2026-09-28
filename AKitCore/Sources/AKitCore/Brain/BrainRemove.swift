@@ -99,36 +99,14 @@ public enum BrainRemove {
     static func dropSkill(_ skill: String, from text: String) throws(Failure) -> String {
         let newline = text.contains("\r\n") ? "\r\n" : "\n"
         var lines = text.components(separatedBy: newline)
-        guard let key = lines.firstIndex(where: { $0.hasPrefix("skills:") }) else {
+        guard LayerEditor.block("skills", in: lines) != nil else {
             throw Failure(message: "The layer has no skills list.")
         }
-        var end = key + 1
-        while end < lines.count, lines[end].isEmpty || lines[end].first == " " || lines[end].first == "-" { end += 1 }
-
-        // Item starts: lines whose first non-space character is "-" at the list's indent.
-        let items = (key + 1..<end).filter { lines[$0].trimmingCharacters(in: .whitespaces).hasPrefix("-") }
-        let indent = items.first.map { lines[$0].prefix { $0 == " " }.count } ?? 0
-        let starts = items.filter { lines[$0].prefix { $0 == " " }.count == indent }
-        func names(_ line: String) -> String {
-            var item = line.trimmingCharacters(in: .whitespaces).dropFirst().trimmingCharacters(in: .whitespaces)
-            if item.hasPrefix("name:") { item = item.dropFirst(5).trimmingCharacters(in: .whitespaces) }
-            if let comment = item.range(of: " #") { item = String(item[..<comment.lowerBound]) }
-            return item.trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
-        }
-        guard let start = starts.first(where: { index in
-            // "- name: x" on the dash line, or "- mode: …" first and "name: x" below it.
-            let blockEnd = starts.first { $0 > index } ?? end
-            return (index..<blockEnd).contains { i in
-                (i == index && names(lines[i]) == skill)
-                    || lines[i].trimmingCharacters(in: .whitespaces) == "name: \(skill)"
-            }
-        }) else {
+        guard let found = LayerEditor.skillItem(skill, in: lines) else {
             throw Failure(message: "\(skill) is not in the layer's skills list (or the list is written on one line; edit it by hand).")
         }
-        var blockEnd = starts.first { $0 > start } ?? end
-        while blockEnd > start + 1, lines[blockEnd - 1].trimmingCharacters(in: .whitespaces).isEmpty { blockEnd -= 1 }
-        lines.removeSubrange(start..<blockEnd)
-        if starts.count == 1 { lines[key] = "skills: []" }  // it was the only item
+        lines.removeSubrange(found.item)
+        if found.starts.count == 1 { lines[found.list.key] = "skills: []" }  // it was the only item
         let result = lines.joined(separator: newline)
 
         let folder = URL(filePath: "/layer")
@@ -186,7 +164,7 @@ public enum BrainRemove {
     }
 
     /// Stages these paths (removals included) and commits only them, if the brain is a git repo.
-    private static func commit(_ paths: [String], _ message: String, in root: URL, env: HarnessEnvironment) async throws(Failure) {
+    static func commit(_ paths: [String], _ message: String, in root: URL, env: HarnessEnvironment) async throws(Failure) {
         guard FileManager.default.fileExists(atPath: root.appending(path: ".git").path) else { return }
         guard let git = env.findExecutable("git") else { throw Failure(message: "Done, but git was not found, so nothing was committed.") }
         let environment = env.variables.merging(["PATH": env.pathForChildProcesses]) { $1 }

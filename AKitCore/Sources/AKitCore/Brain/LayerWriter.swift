@@ -63,7 +63,7 @@ public enum LayerWriter {
     }
 
     /// One YAML scalar, quoted by Yams when needed (`a: b`, `#x`, `yes`, …).
-    private static func scalar(_ text: String) throws(Failure) -> String {
+    static func scalar(_ text: String) throws(Failure) -> String {
         do {
             return try Yams.serialize(node: Node(text)).trimmingCharacters(in: .newlines)
         } catch {

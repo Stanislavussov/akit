@@ -227,47 +227,10 @@ public enum BrainImport {
     /// Adds `- name: x / mode: m` entries to the top-level `skills:` list, keeping the
     /// rest of the file (comments, order, line endings) as it is.
     static func addSkills(_ names: [String], mode: LayerSkill.Mode, to text: String) throws(Failure) -> String {
-        guard !names.isEmpty else { return text }
-        let newline = text.contains("\r\n") ? "\r\n" : "\n"
-        var lines = text.isEmpty ? [] : text.components(separatedBy: newline)
-        if lines.last == "" { lines.removeLast() }
-        let entries = { (indent: String) in names.flatMap { ["\(indent)- name: \($0)", "\(indent)  mode: \(mode.rawValue)"] } }
-
-        if let key = lines.firstIndex(where: { $0.hasPrefix("skills:") }) {
-            var rest = lines[key].dropFirst("skills:".count).trimmingCharacters(in: .whitespaces)
-            if let comment = rest.range(of: " #") ?? (rest.hasPrefix("#") ? rest.range(of: "#") : nil) {
-                rest = rest[..<comment.lowerBound].trimmingCharacters(in: .whitespaces)
-            }
-            guard ["", "[]", "~", "null"].contains(rest) else {
-                throw Failure(message: "The core layer's “skills:” line has “\(rest)” after it. Write skills as a block list (one “- name” per line) and try again.")
-            }
-            // Block list (or empty): append after its last item, with the same indent.
-            var end = key + 1
-            while end < lines.count, lines[end].isEmpty || lines[end].first == " " || lines[end].first == "-" { end += 1 }
-            while end > key + 1, lines[end - 1].trimmingCharacters(in: .whitespaces).isEmpty { end -= 1 }
-            let firstItem = lines[(key + 1)..<end].first { $0.trimmingCharacters(in: .whitespaces).hasPrefix("-") }
-            let indent = firstItem.map { String($0.prefix { $0 == " " }) } ?? "  "
-            if rest != "" { lines[key] = "skills:" }
-            lines.insert(contentsOf: entries(indent), at: end)
-        } else {
-            lines += ["skills:"] + entries("  ")
+        do {
+            return try LayerEditor.addingSkills(names, mode: mode, to: text)
+        } catch {
+            throw Failure(message: error.message)
         }
-        let result = lines.joined(separator: newline) + newline
-
-        // Check the edit: the old skills are all still there unchanged, the new ones were
-        // added once, and nothing else in the layer moved.
-        let folder = URL(filePath: "/core")
-        let old = try? LayerManifest.parse(text, folder: folder).layer
-        let oldSkills = old?.skills ?? []
-        guard let new = try? LayerManifest.parse(result, folder: folder).layer, old != nil || text.isEmpty,
-              Set(names).isDisjoint(with: oldSkills.map(\.name)), Set(names).count == names.count,
-              Array(new.skills.prefix(oldSkills.count)) == oldSkills,
-              new.skills.dropFirst(oldSkills.count).map(\.name) == names,
-              new.fields == old?.fields ?? [], new.files == old?.files ?? [],
-              new.description == old?.description ?? "", new.requires == old?.requires ?? [],
-              new.conflicts == old?.conflicts ?? [] else {
-            throw Failure(message: "AKit couldn't add skills to layers/core/layer.yaml safely. Add them by hand.")
-        }
-        return result
     }
 }
