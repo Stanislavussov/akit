@@ -3,8 +3,8 @@ import Foundation
 /// The last check before an insights commit from a work Mac. The brain is pushed to a personal
 /// remote, so each commit kind has an allow-list for what it may push: the staged paths, the
 /// commit message and the bytes of every staged file. Anything else and nothing is committed.
-/// It also refuses when `machine.json` is broken or the brain has no git email of its own
-/// (the global one may be the work email). Checked fail-closed: any git error refuses.
+/// It also refuses when `machine.json` is broken or the brain has no git name and email of its
+/// own (the global ones may be the work ones). Checked fail-closed: any git error refuses.
 enum WorkFilter {
     struct Failure: Error, LocalizedError {
         let message: String
@@ -60,18 +60,37 @@ enum WorkFilter {
         var needsHead: Bool { if case .layer = self { true } else { false } }
     }
 
-    /// Checks that don't need the files: a readable `machine.json`, the brain's own git email and
-    /// nothing staged already (so a refusal can reset the index without touching the user's work).
+    /// Variables that would win over the brain's configured identity in a commit git makes.
+    static let identityVariables = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"]
+
+    /// The environment without `identityVariables`, so commits (also a sync's rebase) carry the brain's own identity.
+    static func withoutIdentity(_ environment: [String: String]) -> [String: String] {
+        environment.filter { !identityVariables.contains($0.key) }
+    }
+
+    /// Keeps a global `commit.gpgsign` (maybe with a work key) from signing the brain's commits.
+    static let noSigning = ["-c", "commit.gpgsign=false"]
+
+    /// Checks that don't need the files: a readable `machine.json`, the brain's own git name and
+    /// email and nothing staged already (so a refusal can reset the index without touching the user's work).
     static func preflight(brain root: URL, machine: MachineProfile, env: HarnessEnvironment) async throws(Failure) {
         if let problem = machine.problem { throw Failure(message: "\(problem) Nothing is published from this Mac until then.") }
-        let email = try await git(["config", "--local", "--get", "user.email"], in: root, env: env,
-                                  failure: "The brain has no git email of its own, so a commit would carry the global one (maybe the work email)")
-        guard !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw Failure(message: "The brain's git email is empty. Set one: git -C \(root.path) config user.email <personal email>")
-        }
+        try await requireOwnIdentity(brain: root, env: env)
         let staged = try await git(["diff", "--cached", "--name-only", "-z"], in: root, env: env)
         guard staged.isEmpty else {
             throw Failure(message: "The brain has staged changes; commit or unstage them first (nothing was committed).")
+        }
+    }
+
+    /// The brain's own `user.email` and `user.name` (in its `.git/config`), checked fail-closed with
+    /// git: without them a commit would carry the global ones, maybe the work ones.
+    static func requireOwnIdentity(brain root: URL, env: HarnessEnvironment) async throws(Failure) {
+        for (key, what) in [("user.email", "email"), ("user.name", "name")] {
+            let value = try await git(["config", "--local", "--get", key], in: root, env: env,
+                                      failure: "The brain has no git \(what) of its own, so a commit would carry the global one (maybe the work \(what))")
+            guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw Failure(message: "The brain's git \(what) is empty. Set one: git -C \(root.path) config \(key) <personal \(what)>")
+            }
         }
     }
 
@@ -119,9 +138,22 @@ enum WorkFilter {
                 let head = kind.needsHead ? Data(try await git(["show", "HEAD:\(path)"], in: root, env: env).utf8) : nil
                 try kind.check(path: path, data: Data(blob.utf8), head: head)
             }
-            // No hooks (they could add files or change the message); the brain's own identity, not the environment's.
-            try await git(["-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--no-verify", "-m", message], in: root, env: env,
-                          identityFromConfig: true)
+            // No hooks (they could add files or change the message); the brain's own identity, not the
+            // environment's; never signed with a global key; only the checked paths.
+            let paths = staged.sorted()
+            var checked: [String: String] = [:]
+            for path in paths { checked[path] = try await git(["rev-parse", ":\(path)"], in: root, env: env) }
+            try await git(["-c", "core.hooksPath=/dev/null"] + noSigning + ["commit", "--quiet", "--no-verify", "-m", message, "--"] + paths,
+                          in: root, env: env, identityFromConfig: true)
+            // A path in the commit takes the file as it is on disk: it must still be the checked bytes.
+            let committed = Set(records(try await git(["diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", "HEAD"],
+                                                      in: root, env: env)))
+            var same = committed == staged
+            for path in paths where same { same = try await git(["rev-parse", "HEAD:\(path)"], in: root, env: env) == checked[path] }
+            guard same else {
+                _ = try? await git(["reset", "--quiet", "--soft", "HEAD~1"], in: root, env: env)
+                throw Failure(message: "Refused a commit from this work Mac: \(paths.joined(separator: ", ")) changed while it was checked.")
+            }
             return true
         } catch {
             await undo()
@@ -170,11 +202,7 @@ enum WorkFilter {
                             identityFromConfig: Bool = false) async throws(Failure) -> String {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found, so nothing was committed.") }
         var environment = env.variables.merging(["PATH": env.pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
-        if identityFromConfig {
-            for name in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"] {
-                environment[name] = nil
-            }
-        }
+        if identityFromConfig { environment = withoutIdentity(environment) }
         let result = await ProcessRunner.run(git, arguments: ["-C", root.path] + arguments, directory: root,
                                              environment: environment, timeout: 30)
         guard let result, result.succeeded else {

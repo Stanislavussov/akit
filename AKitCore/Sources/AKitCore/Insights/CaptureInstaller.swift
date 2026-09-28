@@ -24,7 +24,7 @@ struct CaptureInstaller {
 
     /// Version of the plugin files this akit writes; `insights status` compares it with the
     /// brain's and the installed one.
-    static let pluginVersion = "1.0.0"
+    static let pluginVersion = "1.0.1"
     static let marketplace = "akit-brain"
     static let pluginID = "akit@akit-brain"
     /// First line of every file AKit owns here; a file without it is someone else's.
@@ -148,7 +148,8 @@ struct CaptureInstaller {
             else
               exit 0
             fi
-            exec "$AKIT" record-session --harness claude >/dev/null 2>&1
+            "$AKIT" record-session --harness claude >/dev/null 2>&1
+            exit 0
 
             """, true),
     ]
@@ -306,16 +307,30 @@ extension CaptureInstaller {
         } catch {
             throw Failure(message: "Stopped: \(error.localizedDescription)")
         }
+        var failures: [String] = []
+        // Claude installs the plugin from the brain's commit: without it the Claude commands are skipped;
+        // the other parts (Pi, launchd) still go ahead.
+        var skipClaude = false
         if let brain = brainRoot, !plan.commitPaths.isEmpty {
-            guard let git = env.findExecutable("git") else { throw Failure(message: "Written, but git was not found, so nothing was committed.") }
-            for arguments in [["add", "--"] + plan.commitPaths, ["commit", "--quiet", "-m", plan.commitMessage, "--"] + plan.commitPaths] {
-                guard let result = await run(git, arguments, brain, 30), result.succeeded else {
-                    throw Failure(message: "Written, but git \(arguments[0]) failed in the brain; nothing was installed in Claude Code.")
+            if let git = env.findExecutable("git") {
+                for arguments in [["add", "--"] + plan.commitPaths, ["commit", "--quiet", "-m", plan.commitMessage, "--"] + plan.commitPaths] {
+                    let result = await run(git, arguments, brain, 30)
+                    guard let result, result.succeeded else {
+                        let output = result.map { $0.timedOut ? "timed out" : $0.output.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            ?? "couldn't start git"
+                        failures.append("The plugin files are written in the brain, but git \(arguments[0]) failed there (\(output)), so they "
+                                        + "are not committed and the plugin was not installed in Claude Code. Fix that, then run akit insights install again.")
+                        skipClaude = true
+                        break
+                    }
                 }
+            } else {
+                failures.append("The plugin files are written in the brain, but git was not found, so they are not committed and the "
+                                + "plugin was not installed in Claude Code.")
+                skipClaude = true
             }
         }
-        var failures: [String] = []
-        for command in plan.commands {
+        for command in plan.commands where !(skipClaude && command.executable.lastPathComponent == "claude") {
             let result = await run(command.executable, command.arguments, nil, 120)
             guard let result, result.succeeded else {
                 let output = result?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "couldn't start"

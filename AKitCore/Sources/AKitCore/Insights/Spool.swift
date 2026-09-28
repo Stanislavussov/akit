@@ -20,9 +20,11 @@ enum Spool {
     static let maxLine = 4096
 
     /// Appends one line to today's file. Never throws and never prints: a hook must not
-    /// break or slow down a harness, and an apply must not fail over it.
-    static func append(_ object: [String: Any], home: URL, now: Date = Date()) {
-        guard let line = line(object) else { return }
+    /// break or slow down a harness, and an apply must not fail over it. Returns whether the
+    /// whole line was written (for `akit stats mark`; hooks ignore it).
+    @discardableResult
+    static func append(_ object: [String: Any], home: URL, now: Date = Date()) -> Bool {
+        guard let line = line(object) else { return false }
         let folder = InsightsPaths(home: home).spool
         let path = folder.appending(path: fileName(for: now)).path
         var fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
@@ -31,14 +33,17 @@ enum Spool {
                                                      attributes: [.posixPermissions: 0o700])
             fd = open(path, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0o600)
         }
-        guard fd >= 0 else { return }
+        guard fd >= 0 else { return false }
         defer { close(fd) }
         // One write for the whole line; retried (a few times) only when a signal interrupted it
         // before anything was written.
-        line.withUnsafeBytes { bytes in
+        return line.withUnsafeBytes { bytes in
             for _ in 0..<8 {
-                if write(fd, bytes.baseAddress, bytes.count) >= 0 || errno != EINTR { break }
+                let written = write(fd, bytes.baseAddress, bytes.count)
+                if written >= 0 { return written == bytes.count }
+                if errno != EINTR { return false }
             }
+            return false
         }
     }
 

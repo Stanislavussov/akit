@@ -540,6 +540,37 @@ struct CaptureTests {
         #expect(again.code == 0 && again.out.contains("Nothing to do."), "\(again)")
     }
 
+    @Test func hookScriptExitsZeroWhenAkitFails() async throws {
+        let file = try #require(CaptureInstaller.pluginFiles.first { $0.path.hasSuffix("record-session.sh") })
+        let script = home.appending(path: "hook/record-session.sh")
+        try write("hook/record-session.sh", file.text)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        // An akit on PATH that reads the hook input, talks and fails.
+        try write("failing/akit", "#!/bin/sh\ncat > \"$HOME/hook-input\"\necho out\necho err >&2\nexit 3\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "failing/akit").path)
+        let input = #"{"session_id":"h9","cwd":"/work"}"#
+        let result = try #require(await ProcessRunner.run(URL(filePath: "/bin/sh"), arguments: ["-c", #"printf '%s' "$IN" | "$HOOK""#],
+                                                          environment: ["HOME": home.path, "PATH": home.appending(path: "failing").path + ":/usr/bin:/bin",
+                                                                        "IN": input, "HOOK": script.path], timeout: 20))
+        #expect(result.succeeded && result.status == 0 && result.output.isEmpty, "\(result)")
+        #expect(try String(contentsOf: home.appending(path: "hook-input"), encoding: .utf8) == input)
+    }
+
+    @Test func installerReportsAFailedBrainCommitAndStillLoadsTheAgent() async throws {
+        try await oldBrain()
+        try fakeClaude()
+        try installedAkit()
+        // Another git process holds the brain's index.
+        try write(".akit/registry/.git/index.lock", "")
+        let fake = FakeRunner(gitEnvironment: env.variables)
+        let result = await cli("insights", "install", "--yes", runner: fake)
+        #expect(result.code == 1 && result.out.contains("git add failed") && result.out.contains("not installed in Claude Code"), "\(result)")
+        #expect(!fake.commands.contains { $0.hasPrefix("claude plugin marketplace add") || $0.hasPrefix("claude plugin install") },
+                "\(fake.commands)")
+        #expect(fake.commands.contains("launchctl bootstrap gui/\(getuid()) \(plistFile.path)"))
+        #expect(fm.fileExists(atPath: plistFile.path) && fm.fileExists(atPath: extensionFile.path))
+    }
+
     @Test func statusReportsNotInstalledAndVersionMismatch() async throws {
         let none = await cli("insights", "status", "--json", runner: FakeRunner(gitEnvironment: env.variables))
         let empty = try #require(JSONSerialization.jsonObject(with: Data(none.out.utf8)) as? [String: Any])

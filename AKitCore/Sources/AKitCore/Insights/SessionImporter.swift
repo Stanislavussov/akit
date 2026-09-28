@@ -265,6 +265,9 @@ struct SessionImporter {
             }
         }
 
+        // A parser bump deleted the file's facts first: its re-read is never cut short, so the
+        // facts are whole again in the same transaction.
+        let deadline = reparse ? nil : deadline
         return try database.transaction {
             let sourceID: Int64
             let sessionKey = latest?[8].text

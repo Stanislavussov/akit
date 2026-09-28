@@ -156,8 +156,8 @@ keeps its method and confidence:
 
 1. SessionStart hook (while the folder exists): `cwd`, `gitdir` of a worktree
    (`.git` file → main repo), `origin` remote, session id.
-2. `git worktree list --porcelain` in known repos (lists deleted worktrees as
-   prunable until pruned).
+2. The worktree lists of known repos, read from `<common>/worktrees/*/gitdir` as
+   `git worktree list` does (deleted worktrees stay listed until pruned).
 3. `gitBranch` from Claude logs confirms a candidate repo.
 4. Siblings: a resolved folder with the same parent (`<root>/<repo>/<branch>`).
 5. Path templates / aliases in config, e.g. `~/orca/workspaces/{repo}/*`.

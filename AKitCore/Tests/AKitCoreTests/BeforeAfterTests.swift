@@ -253,6 +253,13 @@ extension BeforeAfterTests {
         #expect(await akit("stats", "changes", "--days", "3").err.contains("--days doesn't go with akit stats changes"))
         #expect(await akit("stats", "changes", "extra").code == 2)
         #expect(!FileManager.default.fileExists(atPath: InsightsPaths(home: home).spool.path), "nothing was marked")
+        // The spool can't be written (a file where its folder belongs): the mark fails and says so.
+        let spool = InsightsPaths(home: home).spool
+        try FileManager.default.createDirectory(at: spool.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: spool)
+        let failed = await akit("stats", "mark", "Lost")
+        #expect(failed.code != 0 && failed.err.contains("Couldn't write the mark") && !failed.out.contains("Marked"), "\(failed)")
+        try FileManager.default.removeItem(at: spool)
 
         #expect(await akit("stats", "mark", "Disabled marketing").code == 0)
         let result = await akit("stats", "--all", "changes", "--json")

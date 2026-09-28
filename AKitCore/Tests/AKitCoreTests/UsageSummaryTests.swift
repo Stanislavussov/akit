@@ -34,7 +34,7 @@ struct UsageSummaryTests {
 
     // MARK: Helpers
 
-    /// A brain with the skills `tdd` and `review`, committed, with its own git email unless nil.
+    /// A brain with the skills `tdd` and `review`, committed, with its own git email and name unless nil.
     @discardableResult
     func setUpBrain(email: String? = UsageSummaryTests.email) async throws -> Brain {
         try await BrainSetup.create(at: brainRoot, env: env)
@@ -43,7 +43,10 @@ struct UsageSummaryTests {
         }
         try await git("add", "--all")
         try await git("commit", "-qm", "Skills")
-        if let email { try await git("config", "--local", "user.email", email) }
+        if let email {
+            try await git("config", "--local", "user.email", email)
+            try await git("config", "--local", "user.name", "Me")
+        }
         return try #require(Brain.load(from: brainRoot))
     }
 
@@ -234,9 +237,13 @@ extension UsageSummaryTests {
         try saveWorkProfile()
         let db = try database()
         try writeFacts(db)
+        // A global signing setting with a work key: the brain's commits are never signed with it.
+        try write(".gitconfig", "[user]\n\tname = Work Name\n\tsigningkey = WORKKEY\n[commit]\n\tgpgsign = true\n")
         let before = try await commitCount()
         _ = try await publish(db)
         #expect(try await commitCount() == before + 1)
+        #expect(try await git("log", "-1", "--format=%an|%cn") == "Me|Me\n")
+        #expect(!(try await git("cat-file", "-p", "HEAD").contains("gpgsig")))
         #expect(try await git("log", "-1", "--format=%B", "--name-only")
                 == "Update usage summaries (work-abc123)\n\n\ninsights/machines/work-abc123.json\n")
         // The brain's own identity, not the environment's (which may be the work one).
@@ -297,8 +304,11 @@ extension UsageSummaryTests {
         try await git("config", "--local", "user.email", "")
         try await refused("empty email")
 
-        // An unreadable config: hasOwnGitIdentity would say yes, the filter says no.
         try await git("config", "--local", "user.email", Self.email)
+        try await refused("an email but no name of its own (the global one may be the work name)")
+        try await git("config", "--local", "user.name", "Me")
+
+        // An unreadable config: hasOwnGitIdentity would say yes, the filter says no.
         let config = brainRoot.appending(path: ".git/config")
         try fm.setAttributes([.posixPermissions: 0], ofItemAtPath: config.path)
         #expect(MachineProfile.hasOwnGitIdentity(brainRoot))

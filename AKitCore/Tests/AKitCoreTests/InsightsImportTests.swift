@@ -289,6 +289,20 @@ struct InsightsImportTests {
         #expect(try count("SELECT parser_version FROM sources") == bumped.claudeParser)
     }
 
+    @Test func parserBumpReReadIsNeverCutByTheBudget() throws {
+        try write(claudeFile, lines: claudeSession())
+        try runImport()
+        let requests = try count("SELECT COUNT(*) FROM requests"), listings = try count("SELECT COUNT(*) FROM skill_listings")
+        var bumped = SessionImporter(env: env)
+        bumped.claudeParser = ClaudeFacts.parserVersion + 1
+        // The bump deletes the file's facts first: a budget that is already spent still reads it whole.
+        let report = try bumped.run(database: try database(), budget: 0)
+        #expect(report.pending == 0)
+        #expect(try count("SELECT COUNT(*) FROM requests") == requests && count("SELECT COUNT(*) FROM skill_listings") == listings)
+        let size = try #require(try fm.attributesOfItem(atPath: home.appending(path: claudeFile).path)[.size] as? Int)
+        #expect(try count("SELECT offset FROM sources") == size)
+    }
+
     @Test func replacedLogKeepsOldFacts() throws {
         try write(claudeFile, lines: claudeSession())
         try runImport()

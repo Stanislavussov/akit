@@ -150,7 +150,7 @@ struct ProjectBindingTests {
         for id in ["gone", "nocwd", "home", "downloads"] {
             #expect(try binding(id, in: db) == Bound(project: nil, method: "none", confidence: nil), "\(id)")
         }
-        // Decided again each run (a hook may still come), but unchanged.
+        // Unchanged next run (the gone one is looked at again, the existing folders wait for a hook).
         #expect(try await bind(db) == .init(changed: 0, pending: 0))
         // A plain folder inside the projects root is a project, as for akit apply.
         try fm.createDirectory(at: root.appending(path: "notes"), withIntermediateDirectories: true)
@@ -288,37 +288,73 @@ struct ProjectBindingTests {
     }
 
     @Test func gitTimeBudgetIsRespected() async throws {
-        // Four repositories under the projects root (plain .git folders: git itself never runs).
-        for name in ["r0", "r1", "r2", "r3"] {
-            try fm.createDirectory(at: root.appending(path: "\(name)/.git"), withIntermediateDirectories: true)
-        }
+        // Worktree lists come from the repositories' files; git runs only to read a branch of a
+        // reftable repository for a sibling candidate. `.git/reftable` makes app one as far as that goes.
         let db = try database()
-        try addSession("s1", cwd: path("gone/wt"), in: db)
+        try await siblingsAndTemplate(db)
+        try fm.createDirectory(atPath: path("Projects/app/.git/reftable"), withIntermediateDirectories: true)
+        for index in 0..<4 {
+            try addSession("s\(index)", cwd: path("ws/app/gone\(index)"), branch: "b\(index)",
+                           started: Date(timeIntervalSince1970: 2_000_000 - Double(index)), in: db)
+        }
         let fake = FakeGit(duration: 4)
 
         let first = try await fake.binder(env: env, root: root, budget: 10).bind(database: db)
-        // 4 + 4 + 2 s: the third call gets only what is left, the fourth none.
-        #expect(fake.calls.map(\.folder) == ["r0", "r1", "r2"] && fake.calls.map(\.timeout) == [5, 5, 2])
-        #expect(first == .init(changed: 0, pending: 1))
-        #expect(try binding("s1", in: db) == nil)
-        #expect(try db.value("SELECT value FROM meta WHERE key = ?", ProjectBinder.cursorKey)?.text?.hasSuffix("/r3/.git") == true)
+        // 4 + 4 + 2 s: the third call gets only what is left, the fourth none (that candidate stays low).
+        #expect(fake.calls.map(\.folder) == ["app", "app", "app"] && fake.calls.map(\.timeout) == [5, 5, 2])
+        #expect(first == .init(changed: 5, pending: 0))
+        for id in ["s0", "s1", "s2"] { #expect(try binding(id, in: db)?.method == "branchConfirmed", "\(id)") }
+        #expect(try binding("s3", in: db) == Bound(project: "github.com/me/app", method: "sibling", confidence: "low"))
 
-        // The next run starts where this one stopped.
+        // The next run tries the low one again.
         fake.reset()
-        _ = try await fake.binder(env: env, root: root, budget: 10).bind(database: db)
-        #expect(fake.calls.map(\.folder) == ["r3", "r0", "r1"])
+        let second = try await fake.binder(env: env, root: root, budget: 10).bind(database: db)
+        #expect(fake.calls.count == 1 && second == .init(changed: 1, pending: 0))
+        #expect(try binding("s3", in: db)?.method == "branchConfirmed")
 
         // A deadline (the 5 s of akit stats) that has passed: no git at all, the session waits.
+        try addSession("s4", cwd: path("ws/app/gone4"), branch: "b4", started: Date(timeIntervalSince1970: 1_000_000), in: db)
         fake.reset()
         let late = try await fake.binder(env: env, root: root, budget: 10).bind(database: db, deadline: fake.now)
         #expect(fake.calls.isEmpty && late.pending == 1)
+        #expect(try binding("s4", in: db) == nil)
 
-        // Enough time: every list is read and the session decided.
+        // Enough time: decided.
         fake.reset()
         let done = try await fake.binder(env: env, root: root, budget: 100).bind(database: db)
-        #expect(fake.calls.count == 4 && done == .init(changed: 1, pending: 0))
-        #expect(try binding("s1", in: db)?.method == "none")
-        #expect(try db.value("SELECT value FROM meta WHERE key = ?", ProjectBinder.cursorKey) == nil)
+        #expect(fake.calls.count == 1 && done == .init(changed: 1, pending: 0))
+        #expect(try binding("s4", in: db)?.method == "branchConfirmed")
+    }
+
+    @Test func noneInAnExistingFolderWaitsForAHookOrATemplate() async throws {
+        let db = try database()
+        let app = try await repository("Projects/app", remote: "https://github.com/me/app.git")
+        try addSession("main", cwd: app.path, in: db)
+        try fm.createDirectory(atPath: path(".tool/trees/app/a"), withIntermediateDirectories: true)
+        try addSession("home", cwd: home.path, in: db)
+        try addSession("tool", cwd: path(".tool/trees/app/a"), in: db)
+        try addSession("gone", cwd: path("gone/somewhere"), in: db)
+        func decidedAt(_ id: String) throws -> Double? {
+            try db.value("SELECT decided_at FROM bindings WHERE session_key = ?", "claude:\(id)")?.double
+        }
+        let binder = ProjectBinder(env: env, projectsRoot: root)
+        _ = try await binder.bind(database: db, now: Date(timeIntervalSince1970: 1000))
+        #expect(try binding("tool", in: db)?.method == "none" && binding("home", in: db)?.method == "none")
+
+        // Folders that exist are not looked at again; a gone one is (a worktree list may still know it).
+        _ = try await binder.bind(database: db, now: Date(timeIntervalSince1970: 2000))
+        #expect(try decidedAt("home") == 1000 && decidedAt("tool") == 1000 && decidedAt("gone") == 2000)
+
+        // Another template list: all of them are decided again.
+        try writeSettings(["pathTemplates": ["~/.tool/trees/{repo}/*"]])
+        _ = try await binder.bind(database: db, now: Date(timeIntervalSince1970: 3000))
+        #expect(try binding("tool", in: db) == Bound(project: "github.com/me/app", method: "template", confidence: "medium"))
+        #expect(try decidedAt("home") == 3000)
+
+        // A hook event.
+        try addHook("home", cwd: home.path, commonDir: nil, remote: "github.com/me/dotfiles", in: db)
+        _ = try await binder.bind(database: db, now: Date(timeIntervalSince1970: 4000))
+        #expect(try binding("home", in: db) == Bound(project: "github.com/me/dotfiles", method: "hook", confidence: "exact"))
     }
 
     @Test func defaultBindingSetExcludesLow() async throws {

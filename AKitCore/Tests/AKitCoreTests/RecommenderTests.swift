@@ -139,6 +139,7 @@ struct RecommenderTests {
         try write(".akit/registry/layers/core/layer.yaml", layer + "\n")
         try await git("init", "-q", "-b", "main")
         try await git("config", "--local", "user.email", Self.email)
+        try await git("config", "--local", "user.name", "Me")
         try await git("add", "--all")
         let old = Date(timeIntervalSince1970: at(60)).formatted(.iso8601)
         try await git("commit", "-qm", "Brain", extra: ["GIT_AUTHOR_DATE": old, "GIT_COMMITTER_DATE": old])
@@ -475,6 +476,24 @@ extension RecommenderTests {
         report = try recommend(db, .init(top: nil), inputs)
         #expect(report.recommendations.first?.id == item.id && report.recommendations.first?.evidence.approxContextSpace == 400
                 && report.hiddenByDismissal == 0)
+    }
+
+    @Test func dismissedAtZeroContextSpaceReturnsOnceThereIsSome() {
+        let entry = Dismissals.Entry(id: "r-0123456789", at: "2026-09-01T00:00:00Z", approxContextSpace: 0)
+        #expect(Dismissals.hides(entry, approxContextSpace: 0) && Dismissals.hides(entry, approxContextSpace: 1))
+        #expect(!Dismissals.hides(entry, approxContextSpace: 2))
+        #expect(Dismissals.showsAgainAt(0) == 2 && Dismissals.showsAgainAt(1) == 2 && Dismissals.showsAgainAt(200) == 400)
+    }
+
+    @Test func handInstalledIdKeepsWhenTheFileMoves() throws {
+        let db = try database()
+        try listedSessions(["hand"], in: db)
+        func item(_ path: String) throws -> RecommendReport.Recommendation {
+            try #require(try recommend(db, .init(top: nil), layerInputs(nil, owners: ["hand": .handInstalled(path)])).recommendations.first)
+        }
+        let first = try item("~/.claude/skills/hand/SKILL.md"), moved = try item("~/.agents/skills/hand/SKILL.md")
+        #expect(first.id == moved.id && first.owner.name == "~/.claude/skills/hand/SKILL.md")
+        #expect(first.id == "r-" + ProjectSetup.sha256(Data("auto-to-manual|handInstalled|hand|hand|global".utf8)).prefix(10))
     }
 
     @Test func idStableAcrossRuns() async throws {

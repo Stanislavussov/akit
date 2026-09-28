@@ -6,7 +6,7 @@ enum BindingMethod: String, CaseIterable, Codable {
     case hook
     /// The session's folder still exists.
     case live
-    /// `git worktree list` in a known repository still lists the folder (deleted ones until pruned).
+    /// A known repository still lists the folder as a worktree (deleted ones until pruned).
     case worktree
     /// A sibling candidate whose repository has the session's git branch.
     case branchConfirmed
@@ -161,9 +161,9 @@ final class LiveFolderResolver: ProjectResolver {
     }
 }
 
-/// Folders `git worktree list --porcelain` printed in known repositories, deleted ones included
-/// until git prunes them. A folder inside a listed worktree belongs to that repository; the
-/// deepest listed folder wins.
+/// The worktrees known repositories list, as `git worktree list` would, deleted ones included
+/// until git prunes them, read from the repository's files (no git process). A folder inside a
+/// listed worktree belongs to that repository; the deepest listed folder wins.
 struct WorktreeListResolver: ProjectResolver {
     let method = BindingMethod.worktree
     /// Folders never taken as a worktree: the home folder, the projects root and everything above them.
@@ -172,19 +172,29 @@ struct WorktreeListResolver: ProjectResolver {
 
     init(excluded: [String]) { self.excluded = excluded }
 
-    mutating func add(porcelain: String, repository: RepositoryMatch) {
-        for path in Self.paths(inPorcelain: porcelain) {
+    mutating func add(folders: [String], repository: RepositoryMatch) {
+        for path in folders {
             let folder = BindingPaths.canonical(path)
             guard !excluded.contains(where: { BindingPaths.isInside($0, folder) }) else { continue }
             worktrees[folder] = repository
         }
     }
 
-    /// `worktree <path>` lines; `prunable` and other attribute lines don't matter here.
-    static func paths(inPorcelain text: String) -> [String] {
-        text.split(whereSeparator: \.isNewline).compactMap { line in
-            line.hasPrefix("worktree /") ? String(line.dropFirst("worktree ".count)) : nil
+    /// The main folder and every `<common>/worktrees/<name>/gitdir`: the path of that worktree's
+    /// `.git` file (relative to the entry with `worktree.useRelativePaths`). Kept by git until
+    /// `git worktree prune`, so deleted worktrees are listed too. The same for every ref format.
+    static func folders(commonDir: String) -> [String] {
+        var folders = [BindingPaths.mainFolder(ofCommonDir: commonDir)]
+        let entries = commonDir + "/worktrees"
+        for name in ((try? FileManager.default.contentsOfDirectory(atPath: entries)) ?? []).sorted() {
+            let entry = entries + "/" + name
+            guard let text = RecordSession.small(entry + "/gitdir")?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { continue }
+            let gitFile = text.hasPrefix("/") ? text : (entry as NSString).appendingPathComponent(text)
+            let folder = ((gitFile as NSString).standardizingPath as NSString)
+            folders.append(folder.lastPathComponent == ".git" ? folder.deletingLastPathComponent : folder as String)
         }
+        return folders
     }
 
     func repository(for path: String) -> RepositoryMatch? {
@@ -307,29 +317,29 @@ enum BranchConfirmation {
 
 /// Binds sessions to projects after the facts of an import (`bindings`, local only). Resolvers
 /// in order, each with a fixed confidence: the session's hook event (exact), its folder when it
-/// still exists (exact), `git worktree list` in known repositories (high), then a path template
+/// still exists (exact), the worktree lists of known repositories (high), then a path template
 /// (medium) and sibling candidates (low, raised to `branchConfirmed`, medium, when the candidate
 /// knows the session's git branch); otherwise no project.
 ///
-/// Decided again only: sessions without a binding, bound none or low, bound by an older
-/// resolver, or with a hook event and another method. A new decision never lowers a
-/// binding's confidence (a folder deleted since keeps its live binding).
+/// Decided again only: sessions without a binding, bound low, bound by an older resolver, or
+/// with a hook event and another method; bound none only when their folder is gone (a worktree
+/// list may know it) or the path templates changed. A new decision never lowers a binding's
+/// confidence (a folder deleted since keeps its live binding).
 ///
-/// Git costs at most `gitBudget` seconds per run (`callTimeout` per call, both cut to an
-/// optional deadline). Sessions that wait for a worktree list not read yet stay as they are,
-/// and the next run goes on with the repositories this one didn't reach.
+/// Git runs only to read a branch of a reftable repository: at most `gitBudget` seconds per run
+/// (`callTimeout` per call, both cut to an optional deadline); a candidate it didn't reach stays low.
 struct ProjectBinder {
     /// Bump when a resolver decides differently; every binding is decided again (never lower).
     static let resolverVersion = 2
     static let gitBudget: TimeInterval = 10
     static let callTimeout: TimeInterval = 5
-    /// `meta` key: the first repository whose worktree list the last run didn't reach.
-    static let cursorKey = "bindingWorktreeCursor"
+    /// `meta` key: hash of the path templates the `none` bindings were decided with.
+    static let templatesKey = "bindingTemplates"
 
     struct Report: Equatable {
         /// Bindings added or changed.
         var changed = 0
-        /// Sessions left for the next run (deadline or git budget).
+        /// Sessions left for the next run (deadline).
         var pending = 0
     }
 
@@ -361,6 +371,8 @@ struct ProjectBinder {
         let cwd: String?
         let branch: String?
         let old: (projectID: String?, method: String, confidence: Confidence?)?
+        let version: Int?
+        let hasHook: Bool
     }
 
     private struct Decision {
@@ -375,8 +387,6 @@ struct ProjectBinder {
         let executable: URL?
         let deadline: Date?
         var spent: TimeInterval = 0
-        /// A call was skipped for lack of time.
-        private(set) var exhausted = false
 
         init(binder: ProjectBinder, deadline: Date?) {
             self.binder = binder
@@ -389,10 +399,7 @@ struct ProjectBinder {
             guard let executable else { return nil }
             var left = binder.gitBudget - spent
             if let deadline { left = min(left, deadline.timeIntervalSince(binder.clock())) }
-            guard left > 0 else {
-                exhausted = true
-                return nil
-            }
+            guard left > 0 else { return nil }
             let start = binder.clock()
             let result = await binder.run(executable, arguments, URL(filePath: folder, directoryHint: .isDirectory),
                                           min(binder.callTimeout, left))
@@ -402,8 +409,13 @@ struct ProjectBinder {
     }
 
     func bind(database: IndexDatabase, now: Date = Date(), deadline: Date? = nil) async throws -> Report {
+        let templateList = Self.pathTemplates(env: env)
+        let templatesHash = ProjectSetup.sha256(Data(templateList.joined(separator: "\n").utf8))
+        let sameTemplates = try database.value("SELECT value FROM meta WHERE key = ?", Self.templatesKey)?.text == templatesHash
         let sessions = try database.rows("""
-            SELECT s.key, s.harness, s.native_id, s.cwd, s.git_branch, b.project_id, b.method, b.confidence
+            SELECT s.key, s.harness, s.native_id, s.cwd, s.git_branch, b.project_id, b.method, b.confidence, b.resolver_version,
+              EXISTS(SELECT 1 FROM hook_events h WHERE h.session_id = s.native_id AND h.harness = s.harness
+                AND (h.remote_id IS NOT NULL OR h.common_dir IS NOT NULL))
             FROM sessions s LEFT JOIN bindings b ON b.session_key = s.key
             WHERE b.session_key IS NULL OR b.method = 'none' OR b.confidence = 'low' OR b.resolver_version < ?
               OR (b.method != 'hook' AND EXISTS(SELECT 1 FROM hook_events h WHERE h.session_id = s.native_id
@@ -412,10 +424,22 @@ struct ProjectBinder {
             """, Self.resolverVersion).compactMap { row -> Session? in
                 guard let key = row[0].text, let harness = row[1].text, let native = row[2].text else { return nil }
                 return Session(key: key, harness: harness, nativeID: native, cwd: row[3].text, branch: row[4].text,
-                               old: row[6].text.map { (row[5].text, $0, row[7].text.flatMap(Confidence.init)) })
+                               old: row[6].text.map { (row[5].text, $0, row[7].text.flatMap(Confidence.init)) },
+                               version: row[8].int, hasHook: row[9].int == 1)
+            }.filter { session in
+                // No project for a folder that still exists (the home folder, ~/Desktop): nothing new to
+                // find there until a hook event or another template arrives.
+                guard sameTemplates, session.old?.method == BindingMethod.none.rawValue, session.version == Self.resolverVersion,
+                      !session.hasHook else { return true }
+                guard let cwd = session.cwd, cwd.hasPrefix("/") else { return false }
+                var isFolder: ObjCBool = false
+                return !(FileManager.default.fileExists(atPath: cwd, isDirectory: &isFolder) && isFolder.boolValue)
             }
         var report = Report()
-        guard !sessions.isEmpty else { return report }
+        guard !sessions.isEmpty else {
+            if !sameTemplates { try saveTemplatesHash(templatesHash, database: database) }
+            return report
+        }
         let home = BindingPaths.canonical(env.homeDirectory.path)
         let excluded = [home, projectsRoot]
         let git = Git(binder: self, deadline: deadline)
@@ -446,34 +470,19 @@ struct ProjectBinder {
 
         // Deleted folders (and ones without a repository): worktree lists of known repositories,
         // then template and sibling candidates.
-        var cursor: String?
         if !waiting.isEmpty {
             let repositories = try knownRepositories(database, decided: decisions)
             var worktrees = WorktreeListResolver(excluded: excluded)
-            let stored = try database.value("SELECT value FROM meta WHERE key = ?", Self.cursorKey)?.text
-            let ordered = repositories.keys.sorted()
-            // Start where the last run stopped, then wrap around.
-            let start = stored.flatMap { stored in ordered.firstIndex { $0 >= stored } } ?? 0
-            var complete = true
-            for path in ordered[start...] + ordered[..<start] {
-                guard let repository = repositories[path] else { continue }
-                let result = await git.run(["worktree", "list", "--porcelain"], in: BindingPaths.mainFolder(ofCommonDir: path))
-                if git.exhausted {
-                    complete = false
-                    cursor = path
-                    break
-                }
-                if let result, result.succeeded { worktrees.add(porcelain: result.output, repository: repository) }
+            for (path, repository) in repositories {
+                worktrees.add(folders: WorktreeListResolver.folders(commonDir: path), repository: repository)
             }
             let bound = try boundFolders(database, decided: decisions)
             let siblings = SiblingResolver(bound: bound, excluded: excluded)
-            let templates = PathTemplateResolver(templates: Self.pathTemplates(env: env), home: home, repositories: Array(repositories.values))
+            let templates = PathTemplateResolver(templates: templateList, home: home, repositories: Array(repositories.values))
             for session in waiting {
                 guard let cwd = session.cwd else { continue }
                 if let found = worktrees.repository(for: cwd) {
                     decisions.append(Decision(session: session, repository: found, method: .worktree))
-                } else if !complete {
-                    report.pending += 1
                 } else {
                     decisions.append(try await candidate(session, cwd: cwd, resolvers: [templates, siblings], git: git))
                 }
@@ -482,14 +491,15 @@ struct ProjectBinder {
 
         try database.transaction {
             for decision in decisions where try write(decision, database: database, now: now) { report.changed += 1 }
-            if let cursor {
-                try database.run("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                                 Self.cursorKey, cursor)
-            } else if !waiting.isEmpty {
-                try database.run("DELETE FROM meta WHERE key = ?", Self.cursorKey)
-            }
+            // Every session was looked at with these templates unless the deadline cut the run.
+            if !sameTemplates, report.pending == 0 { try saveTemplatesHash(templatesHash, database: database) }
         }
         return report
+    }
+
+    private func saveTemplatesHash(_ hash: String, database: IndexDatabase) throws {
+        try database.run("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                         Self.templatesKey, hash)
     }
 
     /// The first hook event of the session that saw a repository: its remote id, else the

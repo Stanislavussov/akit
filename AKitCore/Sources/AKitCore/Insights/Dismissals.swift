@@ -59,8 +59,12 @@ enum Dismissals {
 
     /// Hidden while the ≈ context space is under twice what it was when dismissed.
     static func hides(_ entry: Entry, approxContextSpace: Int) -> Bool {
-        approxContextSpace < 2 * max(entry.approxContextSpace, 1)
+        approxContextSpace < showsAgainAt(entry.approxContextSpace)
     }
+
+    /// The ≈ context space at which a recommendation dismissed at `space` shows again: twice it,
+    /// and at least 2 (one dismissed at 0 returns once any evidence has space).
+    static func showsAgainAt(_ space: Int) -> Int { 2 * max(space, 1) }
 
     static func read(_ url: URL) -> File {
         guard let data = try? Data(contentsOf: url), let file = try? JSONDecoder().decode(File.self, from: data) else { return File() }

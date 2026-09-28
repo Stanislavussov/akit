@@ -646,9 +646,11 @@ enum Recommender {
     }
 
     /// `"r-"` + the first 10 hex characters of SHA-256 over rule, owner, skill and scope: the same
-    /// recommendation keeps its id across runs and Macs.
+    /// recommendation keeps its id across runs and Macs. A hand-installed skill's owner is its file
+    /// path, which differs between Macs and moves: the skill's name stands for it.
     static func id(owner: RecommendReport.Owner, skill: String, project: String?) -> String {
-        let text = [rule, owner.kind, owner.name ?? "", skill, project ?? "global"].joined(separator: "|")
+        let name = owner.kind == SkillOwner.Kind.handInstalled.rawValue ? skill : owner.name ?? ""
+        let text = [rule, owner.kind, name, skill, project ?? "global"].joined(separator: "|")
         return "r-" + ProjectSetup.sha256(Data(text.utf8)).prefix(10)
     }
 }

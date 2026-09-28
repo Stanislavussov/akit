@@ -609,7 +609,10 @@ public enum AKitCLI {
             guard parsed <= now else { throw Failure(message: "--at is in the future.") }
             date = parsed
         }
-        Spool.append(["v": Spool.lineVersion, "kind": "mark", "note": text, "ts": Spool.milliseconds(date)], home: env.homeDirectory, now: now)
+        guard Spool.append(["v": Spool.lineVersion, "kind": "mark", "note": text, "ts": Spool.milliseconds(date)],
+                           home: env.homeDirectory, now: now) else {
+            throw Failure(message: "Couldn't write the mark into \(InsightsPaths(env: env).spool.path); nothing was marked.")
+        }
         out("Marked \(localMinute(date)): \(text). akit stats changes compares first-request context "
             + "before and after it.")
         return 0
@@ -940,7 +943,8 @@ public enum AKitCLI {
             return 0
         }
         let space = recommendation.evidence.approxContextSpace
-        out("Dismiss \(id) (\(recommendation.subject)): hidden until its ≈ context space doubles (now ≈ \(space)).")
+        out("Dismiss \(id) (\(recommendation.subject)): hidden until its ≈ context space reaches ≈ \(Dismissals.showsAgainAt(space)) "
+            + "(twice now's ≈ \(space)).")
         guard options.yes else { out(confirm); return 0 }
         let entry = Dismissals.Entry(id: id, at: Date().formatted(.iso8601), approxContextSpace: space)
         let url: URL
