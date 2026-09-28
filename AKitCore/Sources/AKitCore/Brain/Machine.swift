@@ -1,4 +1,5 @@
 import Foundation
+import IOKit
 
 /// This Mac's role, kept in `~/.akit/machine.json` and never in the brain.
 /// On a work Mac nothing about its projects goes into the brain, because the brain is
@@ -19,14 +20,54 @@ public struct MachineProfile: Codable, Hashable, Sendable {
     /// Set when `machine.json` exists but can't be read. Such a Mac counts as a work Mac
     /// (fail closed): a broken file must never send work projects to the brain.
     public private(set) var problem: String?
+    /// Random, 16 hex characters: the key of this Mac's usage summaries while it is personal.
+    public var id: String?
+    /// `work-` and 6 random hex characters, made on the first switch to work and kept forever:
+    /// the key of its usage summaries while it is a work Mac. Never derived from the host.
+    public var pseudonym: String?
+    /// When the kind last changed. A key's summary days start the local day after it, so a
+    /// switched Mac never counts a day under two keys.
+    public var kindSince: Date?
+    /// SHA-256 of the Mac's hardware UUID; never published. A different one means this file
+    /// was copied to another Mac (Migration Assistant, Time Machine), which gets its own keys.
+    public var hardwareHash: String?
 
-    private enum CodingKeys: String, CodingKey { case kind, name }
+    private enum CodingKeys: String, CodingKey { case kind, name, id, pseudonym, kindSince, hardwareHash }
 
     public init(kind: Kind = .personal, name: String? = nil) {
         self.kind = kind
         let trimmed = name?.trimmingCharacters(in: .whitespaces)
         self.name = trimmed?.isEmpty == false ? trimmed : nil
     }
+
+    // Files written before the keys existed have only kind and name.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        pseudonym = try container.decodeIfPresent(String.self, forKey: .pseudonym)
+        hardwareHash = try container.decodeIfPresent(String.self, forKey: .hardwareHash)
+        if let since = try container.decodeIfPresent(String.self, forKey: .kindSince) {
+            guard let date = ISO8601DateFormatter().date(from: since) else {
+                throw DecodingError.dataCorruptedError(forKey: .kindSince, in: container, debugDescription: "Not an ISO 8601 date: \(since)")
+            }
+            kindSince = date
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encodeIfPresent(name, forKey: .name)
+        try container.encodeIfPresent(id, forKey: .id)
+        try container.encodeIfPresent(pseudonym, forKey: .pseudonym)
+        try container.encodeIfPresent(kindSince.map { ISO8601DateFormatter().string(from: $0) }, forKey: .kindSince)
+        try container.encodeIfPresent(hardwareHash, forKey: .hardwareHash)
+    }
+
+    /// The key this Mac's machine summary is published under: the pseudonym on a work Mac, else the id.
+    public var summaryKey: String? { isWork ? pseudonym : id }
 
     public var isWork: Bool { kind == .work }
 
@@ -57,13 +98,77 @@ public struct MachineProfile: Codable, Hashable, Sendable {
         try encoder.encode(self).write(to: url, options: .atomic)
     }
 
+    /// Keys this Mac published usage summaries under, oldest first. Kept in the session index
+    /// (`meta.own_machine_keys`), so a lost `machine.json` gets its keys back.
+    public struct OwnKeys: Codable, Equatable, Sendable {
+        public var ids: [String] = []
+        public var pseudonyms: [String] = []
+
+        public init(ids: [String] = [], pseudonyms: [String] = []) {
+            self.ids = ids
+            self.pseudonyms = pseudonyms
+        }
+
+        public var all: Set<String> { Set(ids + pseudonyms) }
+    }
+
+    /// Fills in what the profile lacks: the hardware hash, an id (the last one this Mac published
+    /// under, else a new random one) and, on a work Mac, a pseudonym (likewise). A profile copied
+    /// from another Mac (another hardware hash) gets a new id and a new pseudonym: the keys it
+    /// carries belong to that Mac. Returns whether anything changed.
+    mutating func identify(hardware: String?, own: OwnKeys) -> Bool {
+        let before = self
+        if let hardware, let stored = hardwareHash, stored != hardware {
+            id = Self.newID()
+            pseudonym = Self.newPseudonym()
+        }
+        if let hardware { hardwareHash = hardware }
+        if id == nil { id = own.ids.last ?? Self.newID() }
+        if isWork, pseudonym == nil { pseudonym = own.pseudonyms.last ?? Self.newPseudonym() }
+        return self != before
+    }
+
+    static func newID() -> String { randomHex(16) }
+    static func newPseudonym() -> String { "work-" + randomHex(6) }
+
+    private static func randomHex(_ count: Int) -> String {
+        var generator = SystemRandomNumberGenerator()
+        return String((0..<count).map { _ in Array("0123456789abcdef")[Int.random(in: 0..<16, using: &generator)] })
+    }
+
+    /// SHA-256 of this Mac's `IOPlatformUUID`; nil when IOKit doesn't give it.
+    public static func currentHardwareHash() -> String? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        guard let uuid = IORegistryEntryCreateCFProperty(service, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? String, !uuid.isEmpty else { return nil }
+        return ProjectSetup.sha256(Data(uuid.utf8))
+    }
+
     /// Saves a new role for this Mac and says what that means. The home record follows
     /// the Mac: from the brain it is copied into the local store (a copy: the brain's one is
     /// history, maybe pushed already), inside the local store it is renamed, so
     /// `akit apply --home` still knows which files it wrote.
-    public static func change(to profile: MachineProfile, brain brainRoot: URL, home: URL,
-                              hostName: String = ProcessInfo.processInfo.hostName) throws -> [String] {
+    /// The id, pseudonym and hardware hash carry over from the old profile (the caller builds a
+    /// new one from kind and name); `kindSince` moves when the kind changes. `ownKeys` nil: read from the index.
+    public static func change(to newProfile: MachineProfile, brain brainRoot: URL, home: URL,
+                              hostName: String = ProcessInfo.processInfo.hostName,
+                              hardware: String? = currentHardwareHash(), ownKeys: OwnKeys? = nil,
+                              now: Date = Date()) throws -> [String] {
         let old = load(home: home)
+        var profile = newProfile
+        profile.problem = nil
+        if old.problem == nil {
+            profile.id = profile.id ?? old.id
+            profile.pseudonym = profile.pseudonym ?? old.pseudonym
+            profile.hardwareHash = profile.hardwareHash ?? old.hardwareHash
+            profile.kindSince = old.kind == profile.kind ? profile.kindSince ?? old.kindSince : now
+        } else {
+            // What the broken file said is unknown: count the summary days from today on.
+            profile.kindSince = now
+        }
+        _ = profile.identify(hardware: hardware, own: ownKeys ?? UsageSummary.ownKeys(home: home))
         // A broken file says nothing about where records were kept; assume the brain, as before the file.
         let oldStore = old.problem == nil ? ProjectStore.current(brain: brainRoot, home: home, machine: old) : .brain(brainRoot)
         let oldHome = ProjectSetup.homeID(hostName: hostName, machineName: old.homeName)
@@ -101,6 +206,16 @@ public struct MachineProfile: Codable, Hashable, Sendable {
                     AKit reads them here when this Mac has none of its own, but never writes them. \
                     Remove work ones before the next sync: git -C \(brainRoot.path) rm -r projects/<id>, then commit. \
                     Ones already pushed stay in the remote's history.
+                    """)
+            }
+        }
+        if let id = profile.id {
+            let published = UsageSummary.projectFiles(of: id, in: .brain(brainRoot))
+            if !published.isEmpty {
+                notes.append("""
+                    The brain has usage summaries this Mac published while personal; they name projects: \
+                    \(published.joined(separator: ", ")). Remove work ones before the next sync: \
+                    git -C \(brainRoot.path) rm <file>, then commit. Ones already pushed stay in the remote's history.
                     """)
             }
         }

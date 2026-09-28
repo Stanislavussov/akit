@@ -156,7 +156,7 @@ enum InsightsStats {
         var descriptions: [String: String] = [:]
         /// Window starts of brain skills (`DescriptionWindow.brainStarts`); win over the hash rule.
         var brainStarts: [String: Date] = [:]
-        /// Other Macs' description hashes per skill (their machine summaries); none yet.
+        /// Other Macs' description hashes per skill, from their machine summaries in the brain.
         var otherMacHashes: [String: [DescriptionWindow.OtherMacHash]] = [:]
         var hasBrain = true
         var importNotes: [String] = []
@@ -334,7 +334,14 @@ enum InsightsStats {
             brainStarts = await DescriptionWindow.brainStarts(brainRoot: brain.root, skills: layerSkills, database: database,
                                                               env: env, run: run)
         }
-        return Inputs(owners: owners, descriptions: descriptions, brainStarts: brainStarts, hasBrain: brain != nil)
+        var otherMacHashes: [String: [DescriptionWindow.OtherMacHash]] = [:]
+        if let brain {
+            let machine = MachineProfile.load(home: env.homeDirectory)
+            let own = UsageSummary.ownKeys(database).all.union([machine.id, machine.pseudonym].compactMap { $0 })
+            otherMacHashes = UsageSummary.load(brain: brain.root, store: nil, excludingOwn: own).descHashes
+        }
+        return Inputs(owners: owners, descriptions: descriptions, brainStarts: brainStarts, otherMacHashes: otherMacHashes,
+                      hasBrain: brain != nil)
     }
 
     /// Brain project ids → their folders on this Mac, without git: this Mac's home, the main

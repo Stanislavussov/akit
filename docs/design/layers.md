@@ -75,7 +75,10 @@ project ids, paths, answers and locks name the employer's repos.
   its files, and lists the records the brain already has; removing work ones from the
   brain (and its remote's history) is left to the user.
 - Skills and layers still come from the brain; the only things a work machine
-  commits to it are skill and layer edits the user makes on purpose.
+  commits to it are skill and layer edits the user makes on purpose, and its usage
+  summary `insights/machines/<pseudonym>.json` (counts of brain skills per day, under a
+  random pseudonym). `WorkFilter` checks that commit's paths, message and bytes and refuses
+  without a brain `user.email` of its own; per-project summaries stay in the local store.
 - Fails closed: a `machine.json` that can't be read counts as work (with a warning);
   install.sh stops if `AKIT_MACHINE` can't be applied; Apply refuses a preview made
   before the role changed. The app asks before going from work back to personal.

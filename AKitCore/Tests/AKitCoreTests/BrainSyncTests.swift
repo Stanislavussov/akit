@@ -182,7 +182,7 @@ struct BrainSyncTests {
         func akit(_ root: URL) async -> (code: Int32, out: String) {
             var out: [String] = []
             let code = await AKitCLI.run(["sync", "--brain", root.path], env: env, cwd: home,
-                                         out: { out.append($0) }, err: { out.append($0) })
+                                         out: { out.append($0) }, err: { out.append($0) }, hardwareHash: { "test-hardware" })
             return (code, out.joined(separator: "\n"))
         }
         #expect(await akit(macA) == (0, "Pushed 1 commit."))

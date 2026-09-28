@@ -17,7 +17,8 @@ public enum AKitCLI {
           akit check                      Read every layer and skill; list problems (exit 1 if any)
           akit layers [--json]            Layers with their fields, skills and files
           akit skills                     Skills in the brain
-          akit sync                       Pull the other Macs' brain commits, push this one's
+          akit sync                       Import sessions, publish this Mac's usage summaries, pull the
+                                          other Macs' brain commits, push this one's
 
         Projects (PROJECT is a folder; default: the current one):
           akit answers [PROJECT]          Saved answers for the project (JSON)
@@ -72,6 +73,12 @@ public enum AKitCLI {
                                           hourly import, last spool line, last import
           akit insights uninstall [--yes] Uninstall the plugin on this Mac, unload the hourly import;
                                           extension and agent to the Trash
+          akit insights publish [--dry-run]
+                                          Import, then commit this Mac's usage summaries to the brain
+                                          (counts per day, last 120 days): insights/machines/<id>.json
+                                          and projects/<project>/usage/<id>.json. A work Mac commits only
+                                          insights/machines/<pseudonym>.json with brain skills' counts;
+                                          its project summaries stay on it. akit sync does this too
 
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
@@ -104,7 +111,8 @@ public enum AKitCLI {
                            installedTargets: [String] = [], out: (String) -> Void, err: (String) -> Void,
                            trash: (URL) throws -> URL? = SkillRemover.defaultTrash,
                            ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil,
-                           input: () -> Data = { Data() }, runner: CommandRunner? = nil) async -> Int32 {
+                           input: () -> Data = { Data() }, runner: CommandRunner? = nil,
+                           hardwareHash: () -> String? = MachineProfile.currentHardwareHash) async -> Int32 {
         // Hidden; the akit binary runs it before everything else (main.swift). Silent, exit 0.
         if arguments.first == "record-session" {
             RecordSession.run(harness: RecordSession.harness(in: arguments), stdin: input(), env: env)
@@ -138,7 +146,9 @@ public enum AKitCLI {
             }
             if command == "insights" {
                 try refuseProjectOptions(options, command: "insights")
-                return try await insights(&args, options: options, env: env, cwd: cwd, out: out, trash: trash, runner: runner)
+                return try await insights(&args, options: options, env: env, cwd: cwd,
+                                          projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), hostName: hostName,
+                                          hardwareHash: hardwareHash, out: out, err: err, trash: trash, runner: runner)
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -152,7 +162,8 @@ public enum AKitCLI {
             if options.name != nil, command != "machine" { throw Failure(message: "--name only goes with akit machine.") }
             if command != "machine", let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
             if command == "machine" {
-                return try machine(projectArgument, options: options, brainRoot: brainRoot, env: env, hostName: hostName, out: out)
+                return try machine(projectArgument, options: options, brainRoot: brainRoot, env: env, hostName: hostName,
+                                   hardware: hardwareHash(), out: out)
             }
             if command == "setup" {
                 if projectArgument != nil { throw Failure(message: "akit setup takes no folder; use --brain DIR.") }
@@ -201,6 +212,20 @@ public enum AKitCLI {
                 return 0
             case "sync":
                 if projectArgument != nil { throw Failure(message: "akit sync takes no folder; use --brain DIR.") }
+                // Import, publish this Mac's summaries, then pull and push. A publish that fails or is
+                // refused (work Mac) is only a warning: the pull and push still run.
+                do {
+                    let database = try IndexSchema.open(InsightsPaths(env: env).database)
+                    _ = try await QuickImport.run(env: env, projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"),
+                                                  database: database)
+                    let published = try await SummaryPublisher.publish(env: env, brain: brain, database: database, hostName: hostName,
+                                                                       hardware: hardwareHash())
+                    if !published.committed.isEmpty { out(publishText(published)) }
+                } catch let failure as SummaryPublisher.Failure {
+                    err("akit: usage summaries not published: \(failure.message)")
+                } catch {
+                    err("akit: usage summaries not published: \(error.localizedDescription)")
+                }
                 let outcome: BrainSync.Outcome
                 do {
                     outcome = try await BrainSync.sync(brain.root, env: env)
@@ -268,7 +293,7 @@ public enum AKitCLI {
     }
 
     private static func machine(_ kind: String?, options: Options, brainRoot: URL, env: HarnessEnvironment, hostName: String,
-                                out: (String) -> Void) throws -> Int32 {
+                                hardware: String?, out: (String) -> Void) throws -> Int32 {
         let home = env.homeDirectory
         var profile = MachineProfile.load(home: home)
         guard let kind else {
@@ -277,6 +302,9 @@ public enum AKitCLI {
             var lines = [profile.isWork
                 ? "Work Mac\(named). Answers and locks of projects stay in \(store.root.path); nothing about them goes into the brain."
                 : "Personal Mac\(named). Answers and locks of projects are saved and committed in the brain under projects/."]
+            if profile.isWork, let pseudonym = profile.pseudonym {
+                lines.append("Its usage summaries go to the brain as \(pseudonym): counts of brain skills only.")
+            }
             if let problem = profile.problem { lines.append(problem) }
             out(lines.joined(separator: "\n"))
             return 0
@@ -287,7 +315,8 @@ public enum AKitCLI {
         let name = given ?? (chosen == profile.kind && profile.problem == nil ? profile.name : nil)
         profile = MachineProfile(kind: chosen, name: chosen == .work ? (name ?? "work") : name)
         do {
-            out(try MachineProfile.change(to: profile, brain: brainRoot, home: home, hostName: hostName).joined(separator: "\n"))
+            out(try MachineProfile.change(to: profile, brain: brainRoot, home: home, hostName: hostName, hardware: hardware)
+                .joined(separator: "\n"))
         } catch {
             throw Failure(message: "Couldn't save \(MachineProfile.file(home: home).path): \(error.localizedDescription)")
         }
@@ -596,14 +625,15 @@ public enum AKitCLI {
         return lines.joined(separator: "\n")
     }
 
-    /// `akit insights install|status|uninstall`. Without a brain only the Pi and launchd parts and status work.
-    private static func insights(_ args: inout Arguments, options: Options, env: HarnessEnvironment, cwd: URL,
-                                 out: (String) -> Void, trash: (URL) throws -> URL?, runner: CommandRunner?) async throws -> Int32 {
+    /// `akit insights install|status|uninstall|publish`. Without a brain only the Pi and launchd parts and status work.
+    private static func insights(_ args: inout Arguments, options: Options, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
+                                 hostName: String, hardwareHash: () -> String?, out: (String) -> Void, err: (String) -> Void,
+                                 trash: (URL) throws -> URL?, runner: CommandRunner?) async throws -> Int32 {
         let onlyName = args.value("--only")
         let dryRun = args.flag("--dry-run")
         let subcommand = args.positional()
         try args.finish()
-        let usage = "Use: akit insights install [--only claude|pi|launchd] [--dry-run] [--yes] | status [--json] | uninstall [--yes]"
+        let usage = "Use: akit insights install [--only claude|pi|launchd] [--dry-run] [--yes] | status [--json] | uninstall [--yes] | publish [--dry-run]"
         var only: CaptureInstaller.Part?
         if let onlyName {
             guard let part = CaptureInstaller.Part(rawValue: onlyName), subcommand == "install" else { throw Failure(message: usage) }
@@ -612,6 +642,21 @@ public enum AKitCLI {
         if dryRun, subcommand == "status" { throw Failure(message: usage) }
         let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
         let brain = Brain.load(from: brainRoot)
+        if subcommand == "publish" {
+            guard let brain else { throw Failure(message: "No brain repo at \(brainRoot.path); usage summaries are published there.") }
+            if let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
+            let database = try IndexSchema.open(InsightsPaths(env: env).database)
+            let imported = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
+            let outcome: SummaryPublisher.Outcome
+            do {
+                outcome = try await SummaryPublisher.publish(env: env, brain: brain, database: database, hostName: hostName,
+                                                             hardware: hardwareHash(), dryRun: dryRun)
+            } catch {
+                throw Failure(message: error.message)
+            }
+            out(([publishText(outcome)] + imported.notes.map { "note: \($0)" }).joined(separator: "\n"))
+            return 0
+        }
         let installer = CaptureInstaller(env: env, brainRoot: brain?.root, run: runner)
         let plan: CaptureInstaller.Plan
         switch subcommand {
@@ -644,6 +689,21 @@ public enum AKitCLI {
         }
         out((failures.isEmpty ? ["Done."] : failures).joined(separator: "\n"))
         return failures.isEmpty ? refused : 1
+    }
+
+    static func publishText(_ outcome: SummaryPublisher.Outcome) -> String {
+        let who = outcome.isWork ? "this work Mac's pseudonym \(outcome.key)" : "this Mac's id \(outcome.key)"
+        var lines: [String] = []
+        if outcome.dryRun {
+            lines.append(outcome.changed.isEmpty ? "Usage summaries are up to date (\(who)); nothing to commit."
+                         : "Would commit “\(outcome.message)”: \(outcome.changed.joined(separator: ", "))")
+            if !outcome.local.isEmpty { lines.append("Would write on this Mac only: \(outcome.local.joined(separator: ", "))") }
+            return lines.joined(separator: "\n")
+        }
+        lines.append(outcome.committed.isEmpty ? "Usage summaries are up to date (\(who)); nothing to commit."
+                     : "Committed “\(outcome.message)”: \(outcome.committed.joined(separator: ", ")). akit sync pushes it.")
+        if !outcome.local.isEmpty { lines.append("Project summaries kept on this Mac only: \(outcome.local.count) files.") }
+        return lines.joined(separator: "\n")
     }
 
     static func insightsPlanText(_ plan: CaptureInstaller.Plan) -> String {

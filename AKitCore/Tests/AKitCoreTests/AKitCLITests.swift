@@ -40,7 +40,7 @@ struct AKitCLITests {
                                          try fm.createDirectory(at: target, withIntermediateDirectories: true)
                                          try fm.moveItem(at: url, to: target.appending(path: url.lastPathComponent))
                                          return target
-                                     })
+                                     }, hardwareHash: { "test-hardware" })
         return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
     }
 
@@ -188,7 +188,8 @@ struct AKitCLITests {
 
         let back = await akit("machine", "personal")
         #expect(back.code == 0 && back.out.hasPrefix("Personal Mac:"))
-        #expect(MachineProfile.load(home: home) == MachineProfile())
+        let personal = MachineProfile.load(home: home)
+        #expect(personal.kind == .personal && personal.name == nil && personal.problem == nil)
     }
 
     @Test func workMacFailsClosedAndKeepsEarlierRendersKnown() async throws {
