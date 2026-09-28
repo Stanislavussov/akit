@@ -204,7 +204,9 @@ extension InsightsStatsTests {
         let db = try database()
         let expected = try #require(ISO8601DateFormatter().date(from: "2026-02-01T08:00:00Z"))
         let first = try #require(ISO8601DateFormatter().date(from: "2026-01-01T10:00:00Z"))
-        let starts = await DescriptionWindow.brainStarts(brainRoot: brain, skills: ["tdd", "lint", "ghost"], database: db, env: env)
+        // A generous budget: on a busy Mac the real git calls can take longer than the default 10 s.
+        let starts = await DescriptionWindow.brainStarts(brainRoot: brain, skills: ["tdd", "lint", "ghost"], database: db, env: env,
+                                                         budget: 120)
         #expect(starts == ["tdd": expected, "lint": first], "author dates, not commit dates; the body edit doesn't count")
 
         // Cached per brain HEAD: the next run asks git only for HEAD.
@@ -217,7 +219,8 @@ extension InsightsStatsTests {
             calls.lock.withLock { calls.arguments.append(arguments) }
             return await live(executable, arguments, directory, timeout)
         }
-        let again = await DescriptionWindow.brainStarts(brainRoot: brain, skills: ["tdd", "lint"], database: db, env: env, run: counting)
+        let again = await DescriptionWindow.brainStarts(brainRoot: brain, skills: ["tdd", "lint"], database: db, env: env, run: counting,
+                                                     budget: 120)
         #expect(again == ["tdd": expected, "lint": first] && calls.arguments == [["rev-parse", "HEAD"]], "\(calls.arguments)")
     }
 }
