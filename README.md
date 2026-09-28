@@ -85,7 +85,7 @@ terminal (CI), every default is taken.
 | **MCP Servers** | Every configured MCP server per agent and project. Add one from a form or pasted JSON, edit or delete it; secret values go to the Keychain, never into config files and never on screen. |
 | **Sessions** | Saved conversations of every agent, newest first, with token use. Copy one as Markdown or JSON for evals or another agent. |
 | **Usage** | Tokens and cost per day and subscription, from the agents' own session files. Only what they recorded; the one exception, Claude Code sessions that saved no cost, is marked as an estimate. |
-| **Brain** | Your layers and skill library: create layers, import skills, set up a project, remove things, sync with the remote. |
+| **Brain** | Your layers and skill library: create and edit layers, add skills to them, import skills, set up a project, remove things, sync with the remote. |
 
 AKit only reads agent files unless you apply a change. Every change shows a diff first,
 replaced files are backed up in `~/.akit/backups`, and removed files go to the Trash.
@@ -205,7 +205,9 @@ counts as work.
 
 **In the app:** Brain → Set Up Project… (pick a folder, tick layers, fill fields, see every
 change as a diff, Apply), New Layer…, Import Skills… (copies skills from `~/.agents/skills`
-into the brain), and the trash buttons on layers and skills.
+into the brain), and the trash buttons on layers and skills. On a layer: Add Skills…, a mode
+menu per skill (auto, manual, off), and Edit… for its description, requires and AGENTS.md
+section. On a brain skill: Add to Layer. Every change is committed to the brain.
 
 **In a terminal:**
 

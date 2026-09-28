@@ -192,9 +192,14 @@ public enum Render {
         for path in targetsInOrder {
             let parts = pieces[path] ?? []
             if isMarkdown(path) {
-                let texts = parts.map { String(decoding: $0.data, as: UTF8.self).trimmingCharacters(in: .newlines) }
-                outputs.append(Output(path: path, content: .data(Data((texts.joined(separator: "\n\n") + "\n").utf8)),
-                                      layers: parts.map(\.layer)))
+                // An empty section (cleared in Edit Layer) adds nothing; an AGENTS.md of
+                // only empty sections is not written. Other empty Markdown files stay.
+                let all = parts.map { (layer: $0.layer, text: String(decoding: $0.data, as: UTF8.self).trimmingCharacters(in: .newlines)) }
+                let filled = all.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                let sections = filled.isEmpty && path != "AGENTS.md" ? all : filled
+                guard !sections.isEmpty else { continue }
+                outputs.append(Output(path: path, content: .data(Data((sections.map(\.text).joined(separator: "\n\n") + "\n").utf8)),
+                                      layers: sections.map(\.layer)))
             } else if let winner = parts.last(where: \.override) ?? parts.last {
                 if parts.count > 1, !parts.contains(where: \.override) {
                     errors.append("\(path) comes from \(parts.map(\.layer).joined(separator: " and ")). Set override: true in the layer that should win.")

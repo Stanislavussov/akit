@@ -163,6 +163,23 @@ struct RenderTests {
         #expect(result.errors.contains(".git/hooks/post-checkout is inside .git; layers can't write there."))
     }
 
+    @Test func emptyAgentsSectionAddsNothing() throws {
+        try takeHome()
+        try write("layers/take-home/templates/take-home.md", "\n")
+        let answers = ProjectAnswers(layers: ["take-home"], values: ["company": .text("Acme")], targets: ["claude"])
+        let result = Render.render(answers, brain: try brain(), projectName: "p")
+        #expect(text(result, "AGENTS.md") == "# p\n\nBe brief.\n")
+        #expect(result.outputs.first { $0.path == "AGENTS.md" }?.layers == ["base"])
+
+        try write("layers/base/templates/base.md", "")
+        let empty = Render.render(answers, brain: try brain(), projectName: "p")
+        #expect(text(empty, "AGENTS.md") == nil && text(empty, "CLAUDE.md") == nil)
+
+        // Other Markdown files may be empty on purpose.
+        try write("layers/base/layer.yaml", "files:\n  - template: base.md\n    to: NOTES.md\n")
+        #expect(text(Render.render(answers, brain: try brain(), projectName: "p"), "NOTES.md") == "\n")
+    }
+
     @Test func pieces() {
         #expect(Render.manualOnly("\u{FEFF}---\n\"disable-model-invocation\" : false\n---\n") == "\u{FEFF}---\ndisable-model-invocation: true\n---\n")
         #expect(Render.substitute("{{a}} {{ b }} {{c}} {{", ["a": .text("1"), "b": .list(["x", "y"])])

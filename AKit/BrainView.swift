@@ -2,7 +2,8 @@ import AKitCore
 import AppKit
 import SwiftUI
 
-/// Brain screen: layers and the skill library of the brain repo. Read-only.
+/// Brain screen: layers and the skill library of the brain repo. Layers are created,
+/// edited (skills, modes, description, requires, AGENTS.md) and removed here.
 struct BrainView: View {
     @Environment(AppModel.self) private var model
     /// Snapshot `--select <layer>` picks that layer, `--select project:<id>` that project.
@@ -15,6 +16,7 @@ struct BrainView: View {
     @State private var setup: SetupRequest?
     @State private var creatingLayer = false
     @State private var pendingRemoval: Removal?
+    @State private var editing: LayerEdit?
     /// Result of a removal or a sync, shown in an alert.
     @State private var message: (title: String, text: String)?
 
@@ -36,6 +38,19 @@ struct BrainView: View {
     }
     @State private var creating = false
     @State private var createError: String?
+
+    /// A layer sheet: Edit… (description, requires, AGENTS.md) or Add Skills….
+    enum LayerEdit: Identifiable {
+        case details(Layer)
+        case skills(Layer)
+
+        var id: String {
+            switch self {
+            case .details(let layer): "details:\(layer.name)"
+            case .skills(let layer): "skills:\(layer.name)"
+            }
+        }
+    }
 
     enum Item: Hashable {
         case layer(String)
@@ -73,10 +88,20 @@ struct BrainView: View {
         .sheet(isPresented: $importing) { BrainImportSheet() }
         .sheet(item: $setup) { ProjectSetupSheet(initialProject: $0.project, initialLayers: $0.layers) }
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
+        .sheet(item: $editing) { edit in
+            switch edit {
+            case .details(let layer): EditLayerSheet(layer: layer)
+            case .skills(let layer): AddLayerSkillsSheet(layer: layer)
+            }
+        }
         // Snapshot `--add`: open the import sheet once the brain is loaded.
         .onChange(of: model.brain?.root) {
             guard model.brain != nil, let options = DebugSnapshot.options else { return }
             if options.tab == "setup" { setup = SetupRequest() } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
+            // `--select <layer> --tab edit|add-skills` opens that layer's sheet.
+            if let name = options.select, let layer = model.brain?.layers.first(where: { $0.name == name }) {
+                if options.tab == "edit" { editing = .details(layer) } else if options.tab == "add-skills" { editing = .skills(layer) }
+            }
         }
         .confirmationDialog(removalTitle, isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
                             titleVisibility: .visible, presenting: pendingRemoval) { removal in
@@ -226,6 +251,17 @@ struct BrainView: View {
         }
     }
 
+    /// Runs a layer edit; a failure is shown in an alert.
+    private func change(_ edit: @escaping () async throws -> Void) {
+        Task {
+            do {
+                try await edit()
+            } catch {
+                message = ("Couldn't change the layer", error.localizedDescription)
+            }
+        }
+    }
+
     private func create() {
         creating = true
         Task {
@@ -251,6 +287,9 @@ struct BrainView: View {
                                         onSelectProject: { selection = .project($0) },
                                         onApply: layer.name == "core" ? nil : { setup = SetupRequest(layers: [layer.name]) },
                                         onRemoveSkill: { pendingRemoval = .skillFromLayer(skill: $0, layer: layer.name) },
+                                        onSetMode: { skill, mode in change { try await model.setMode(mode, ofSkill: skill, inLayer: layer.name) } },
+                                        onAddSkills: { editing = .skills(layer) },
+                                        onEdit: { editing = .details(layer) },
                                         onRemove: layer.name == "core" ? nil : { pendingRemoval = .layer(layer.name) })
                     }
                 case .project(let id):
@@ -264,6 +303,8 @@ struct BrainView: View {
                 case .skill(let name):
                     if let skill = brain.skills.first(where: { $0.name == name }) {
                         BrainSkillDetailView(skill: skill, usedBy: usage(of: name, in: brain),
+                                             otherLayers: brain.layers.map(\.name).filter { layer in !usage(of: name, in: brain).contains { $0.layer == layer } },
+                                             onAddToLayer: { layer, mode in change { try await model.addSkills([skill.name], mode: mode, toLayer: layer) } },
                                              onRemove: { pendingRemoval = .skill(skill.name) })
                     }
                 case nil:
@@ -308,6 +349,9 @@ struct BrainView: View {
                     LayerRow(layer: layer, problemCount: brain.problems(of: layer.name).count)
                         .tag(Item.layer(layer.name))
                         .contextMenu {
+                            Button("Edit…") { editing = .details(layer) }
+                            Button("Add Skills…") { editing = .skills(layer) }
+                            Divider()
                             fileMenu(layer.folder, reveal: layer.manifest)
                             Divider()
                             Button("Move to Trash…", role: .destructive) { pendingRemoval = .layer(layer.name) }
@@ -607,6 +651,9 @@ private struct LayerDetailView: View {
     /// Opens Set Up Project with this layer ticked; nil for core.
     let onApply: (() -> Void)?
     let onRemoveSkill: (String) -> Void
+    let onSetMode: (String, LayerSkill.Mode) -> Void
+    let onAddSkills: () -> Void
+    let onEdit: () -> Void
     /// nil for the core layer, which can't be removed.
     let onRemove: (() -> Void)?
     @State private var manifest: String?
@@ -615,12 +662,12 @@ private struct LayerDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 DetailHeader(title: layer.name, description: layer.description, folder: layer.folder, file: layer.manifest,
-                             onRemove: onRemove)
+                             onEdit: onEdit, onRemove: onRemove)
                 if !problems.isEmpty { ProblemList(problems: problems) }
                 info
                 usedBy
                 if !layer.fields.isEmpty { fields }
-                if !layer.skills.isEmpty { skills }
+                skills
                 if !layer.files.isEmpty { files }
                 if let manifest {
                     Collapsible(title: "layer.yaml", icon: "doc.text", tint: .secondary, text: manifest, monospaced: true)
@@ -720,8 +767,11 @@ private struct LayerDetailView: View {
     }
 
     private var skills: some View {
-        GroupBox("Skills (\(layer.skills.count))") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 6) {
+                if layer.skills.isEmpty {
+                    Text("No skills yet.").foregroundStyle(.secondary)
+                }
                 ForEach(layer.skills, id: \.name) { skill in
                     HStack(spacing: 8) {
                         Button("Remove from Layer…", systemImage: "minus.circle") { onRemoveSkill(skill.name) }
@@ -730,7 +780,15 @@ private struct LayerDetailView: View {
                             .foregroundStyle(.secondary)
                             .help("Remove \(skill.name) from \(layer.name)")
                         Text(skill.name).fontWeight(.medium)
-                        ModeTag(mode: skill.mode)
+                        Picker("Mode", selection: Binding(get: { skill.mode }, set: { onSetMode(skill.name, $0) })) {
+                            Text("auto").tag(LayerSkill.Mode.auto)
+                            Text("manual").tag(LayerSkill.Mode.manual)
+                            Text("off").tag(LayerSkill.Mode.off)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .help("auto: the agent sees it and may use it; manual: only on /\(skill.name); off: not rendered")
                         if skill.override { Tag(text: "override", tint: .purple) }
                         WhenText(conditions: skill.when)
                         Spacer()
@@ -739,6 +797,14 @@ private struct LayerDetailView: View {
             }
             .padding(4)
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            HStack {
+                Text("Skills (\(layer.skills.count))")
+                Spacer()
+                Button("Add Skills…", systemImage: "plus", action: onAddSkills)
+                    .buttonStyle(.borderless)
+                    .help("List skills from the brain in \(layer.name)")
+            }
         }
         .font(.callout)
     }
@@ -769,6 +835,9 @@ private struct BrainSkillDetailView: View {
     @Environment(AppModel.self) private var model
     let skill: Brain.Skill
     let usedBy: [(layer: String, mode: LayerSkill.Mode)]
+    /// Layers that don't list this skill yet.
+    let otherLayers: [String]
+    let onAddToLayer: (String, LayerSkill.Mode) -> Void
     let onRemove: () -> Void
     @State private var text: String?
 
@@ -784,16 +853,27 @@ private struct BrainSkillDetailView: View {
                     }
                     GridRow {
                         GridLabel("Used by")
-                        if usedBy.isEmpty {
-                            Text("No layer").foregroundStyle(.secondary)
-                        } else {
-                            HStack(spacing: 10) {
-                                ForEach(usedBy, id: \.layer) { use in
-                                    HStack(spacing: 4) {
-                                        Text(use.layer)
-                                        ModeTag(mode: use.mode)
+                        HStack(spacing: 10) {
+                            if usedBy.isEmpty {
+                                Text("No layer").foregroundStyle(.secondary)
+                            }
+                            ForEach(usedBy, id: \.layer) { use in
+                                HStack(spacing: 4) {
+                                    Text(use.layer)
+                                    ModeTag(mode: use.mode)
+                                }
+                            }
+                            if !otherLayers.isEmpty {
+                                Menu("Add to Layer") {
+                                    ForEach(otherLayers, id: \.self) { layer in
+                                        Menu(layer) {
+                                            Button("auto") { onAddToLayer(layer, .auto) }
+                                            Button("manual") { onAddToLayer(layer, .manual) }
+                                        }
                                     }
                                 }
+                                .fixedSize()
+                                .help("List \(skill.name) in another layer")
                             }
                         }
                     }
@@ -827,6 +907,7 @@ private struct DetailHeader: View {
     let description: String
     let folder: URL
     let file: URL
+    var onEdit: (() -> Void)? = nil
     var onRemove: (() -> Void)? = nil
 
     var body: some View {
@@ -834,6 +915,10 @@ private struct DetailHeader: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(title).font(.title2.bold()).textSelection(.enabled)
                 Spacer()
+                if let onEdit {
+                    Button("Edit…", systemImage: "slider.horizontal.3", action: onEdit)
+                        .help("Change the description, requires and AGENTS.md section")
+                }
                 if ExternalEditor.appURL != nil {
                     Button("Open in \(ExternalEditor.name)", systemImage: "square.and.pencil") { ExternalEditor.open(folder) }
                 }
