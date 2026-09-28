@@ -340,6 +340,34 @@ extension UsageSummaryTests {
         #expect(try await commitCount() == before + 2)
     }
 
+    @Test func dryRunOnANewMacShowsNoMadeUpID() async throws {
+        try await setUpBrain()
+        let db = try database()
+        try writeFacts(db)
+        // No id yet: a dry run can't know the random one the real publish makes.
+        let dry = try await publish(db, dryRun: true)
+        #expect(dry.key == SummaryPublisher.newID, "\(dry)")
+        #expect(dry.changed == ["insights/machines/<new id>.json", "projects/\(Self.project)/usage/<new id>.json"], "\(dry.changed)")
+        #expect(MachineProfile.load(home: home).id == nil)
+        #expect(AKitCLI.publishText(dry).contains("insights/machines/<new id>.json"))
+        let real = try await publish(db)
+        let id = try #require(MachineProfile.load(home: home).id)
+        #expect(real.key == id && real.committed == ["insights/machines/\(id).json", "projects/\(Self.project)/usage/\(id).json"])
+        // Once it exists, a dry run shows it.
+        try call("c", "tdd", at: at(0, 11), in: db)
+        #expect(try await publish(db, dryRun: true).changed == ["insights/machines/\(id).json"])
+
+        // A work Mac without a pseudonym yet, and a lost machine.json that gets its id back from the index.
+        var work = MachineProfile(kind: .work, name: "work")
+        work.id = id
+        work.hardwareHash = "hw-1"
+        try work.save(home: home)
+        let workDry = try await publish(db, dryRun: true)
+        #expect(workDry.key == SummaryPublisher.newPseudonym && workDry.message == "Update usage summaries (<new pseudonym>)", "\(workDry)")
+        try fm.removeItem(at: MachineProfile.file(home: home))
+        #expect(try await publish(db, dryRun: true).key == id)
+    }
+
     @Test func retentionDropsOldDays() async throws {
         try await setUpBrain()
         let db = try database()

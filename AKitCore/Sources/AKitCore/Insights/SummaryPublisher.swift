@@ -31,6 +31,7 @@ enum SummaryPublisher {
         var profile = MachineProfile.load(home: home)
         if let problem = profile.problem { throw Failure(message: "\(problem) Nothing was published.") }
         let own = UsageSummary.ownKeys(database)
+        let before = profile
         // Never saved while machine.json is broken (refused above).
         if profile.identify(hardware: hardware, own: own), !dryRun {
             do {
@@ -104,7 +105,7 @@ enum SummaryPublisher {
         }
         outcome.changed = (brainWrites.keys + removals.compactMap(brainPath)).sorted()
         outcome.local = (localWrites.keys + removals.filter { brainPath($0) == nil }).map(\.path).sorted()
-        if dryRun { return outcome }
+        if dryRun { return placeholders(outcome, id: id, pseudonym: profile.pseudonym, before: before, own: own) }
 
         do {
             for (url, data) in localWrites {
@@ -160,6 +161,28 @@ enum SummaryPublisher {
             throw Failure(message: "Published, but couldn't remember this Mac's keys in the index: \(error.localizedDescription)")
         }
         return outcome
+    }
+
+    static let newID = "<new id>"
+    static let newPseudonym = "<new pseudonym>"
+
+    /// A dry run saves nothing, so an id or pseudonym it had to make up is random and differs from
+    /// the one the real publish makes: shown as `<new id>` / `<new pseudonym>` instead.
+    private static func placeholders(_ outcome: Outcome, id: String, pseudonym: String?, before: MachineProfile,
+                                     own: MachineProfile.OwnKeys) -> Outcome {
+        var replacements: [(String, String)] = []
+        if id != before.id, !own.ids.contains(id) { replacements.append((id, newID)) }
+        if let pseudonym, pseudonym != before.pseudonym, !own.pseudonyms.contains(pseudonym) {
+            replacements.append((pseudonym, newPseudonym))
+        }
+        guard !replacements.isEmpty else { return outcome }
+        func mask(_ text: String) -> String { replacements.reduce(text) { $0.replacingOccurrences(of: $1.0, with: $1.1) } }
+        var masked = outcome
+        masked.key = mask(outcome.key)
+        masked.message = mask(outcome.message)
+        masked.changed = outcome.changed.map(mask)
+        masked.local = outcome.local.map(mask)
+        return masked
     }
 
     @discardableResult
