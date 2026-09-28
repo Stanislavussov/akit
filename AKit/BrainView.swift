@@ -224,7 +224,9 @@ struct BrainView: View {
             return "layers/\(name) goes to the Trash and the brain gets a commit."
                 + (projects.isEmpty ? "" : " It is dropped from the saved answers of \(projects.joined(separator: ", ")); set those projects up again to take its files out.")
         case .skill(let name):
+            let projects = model.brain.map { BrainRemove.skillProjects(name, in: $0, home: HarnessEnvironment.current.homeDirectory) } ?? []
             return "skills/\(name) goes to the Trash and the brain gets a commit. Copies already rendered into projects stay until they are set up again."
+                + (projects.isEmpty ? "" : " It is dropped from the skills picked for \(projects.joined(separator: ", ")).")
         case .skillFromLayer(let skill, let layer):
             return "\(skill) is taken out of layers/\(layer)/layer.yaml (committed). "
                 + (layer == "core" ? "Run akit apply --home to take it out of your home folder." : "Projects using \(layer) lose it when they are set up again.")
@@ -516,6 +518,7 @@ private struct ProjectRow: View {
 }
 
 private struct BrainProjectDetailView: View {
+    @Environment(AppModel.self) private var model
     let project: Brain.Project
     /// Picked layers and the ones they require.
     let layers: [String]
@@ -526,18 +529,148 @@ private struct BrainProjectDetailView: View {
     let onSelectLayer: (String) -> Void
     /// Opens Set Up Project for it; nil when the folder is not on this Mac.
     let onChange: (() -> Void)?
+    /// Skills in the project's .agents/skills that AKit didn't write.
+    @State private var ownSkills: [ProjectSkills.Skill] = []
+    @State private var creatingSkill = false
+    @State private var pendingTrash: ProjectSkills.Skill?
+    @State private var problem: String?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 info
+                if let folder, !project.isHome {
+                    skills(folder)
+                    agents(folder)
+                }
                 if !project.answers.values.isEmpty { fields }
                 note
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .task(id: "\(project.id)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") { loadOwnSkills() }
+        .sheet(isPresented: $creatingSkill) {
+            if let folder {
+                NewProjectSkillSheet(project: folder) { file in
+                    loadOwnSkills()
+                    if ExternalEditor.appURL != nil { ExternalEditor.open(file) }
+                }
+            }
+        }
+        .confirmationDialog("Move “\(pendingTrash?.name ?? "")” to the Trash?", isPresented: Binding(get: { pendingTrash != nil }, set: { if !$0 { pendingTrash = nil } }),
+                            titleVisibility: .visible, presenting: pendingTrash) { skill in
+            Button("Move to Trash", role: .destructive) { trash(skill) }
+            Button("Cancel", role: .cancel) {}
+        } message: { skill in
+            Text("\(Render.skillsFolder)/\(skill.name) leaves the project (you can put it back from the Trash). Commit the removal in the project.")
+        }
+        .alert("Couldn't change the project", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(problem ?? "")
+        }
+    }
+
+    private func loadOwnSkills() {
+        guard let folder, !project.isHome else { ownSkills = []; return }
+        ownSkills = ProjectSkills.list(in: folder, id: project.id, store: model.projectStore)
+    }
+
+    private func trash(_ skill: ProjectSkills.Skill) {
+        guard let folder else { return }
+        do {
+            try ProjectSkills.remove(skill.name, in: folder, id: project.id, store: model.projectStore)
+        } catch {
+            problem = error.localizedDescription
+        }
+        loadOwnSkills()
+    }
+
+    /// Skills from the layers, the brain skills picked for this project, and its own.
+    private func skills(_ folder: URL) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                let picked = project.answers.skills
+                if picked.isEmpty && ownSkills.isEmpty {
+                    Text("Only the layers' skills. Add brain skills for this project with Layers & Skills…, or write one that lives in the project with New Skill….")
+                        .foregroundStyle(.secondary)
+                }
+                if !picked.isEmpty {
+                    Text("From the brain, for this project").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    ForEach(picked, id: \.name) { skill in
+                        HStack(spacing: 8) {
+                            Text(skill.name).fontWeight(.medium)
+                            ModeTag(mode: skill.mode)
+                            Spacer()
+                        }
+                    }
+                }
+                if !ownSkills.isEmpty {
+                    Text("The project's own (\(Render.skillsFolder), never overwritten)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    ForEach(ownSkills) { skill in
+                        HStack(spacing: 8) {
+                            Button("Move to Trash…", systemImage: "minus.circle") { pendingTrash = skill }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .help("Move \(skill.name) to the Trash")
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(skill.name).fontWeight(.medium)
+                                if !skill.description.isEmpty {
+                                    Text(skill.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            if ExternalEditor.appURL != nil {
+                                Button("Edit", systemImage: "square.and.pencil") { ExternalEditor.open(skill.file) }
+                                    .buttonStyle(.borderless)
+                                    .help("Open SKILL.md in \(ExternalEditor.name)")
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            HStack {
+                Text("Skills")
+                Spacer()
+                if let onChange {
+                    Button("Layers & Skills…", systemImage: "square.stack.3d.up", action: onChange)
+                        .buttonStyle(.borderless)
+                        .help("Pick brain skills for this project or change a layer skill's mode, then preview and apply")
+                }
+                Button("New Skill…", systemImage: "plus") { creatingSkill = true }
+                    .buttonStyle(.borderless)
+                    .help("Write a skill that lives only in this project")
+            }
+        }
+        .font(.callout)
+    }
+
+    private func agents(_ folder: URL) -> some View {
+        let file = folder.appending(path: "AGENTS.md")
+        let exists = FileManager.default.fileExists(atPath: file.path)
+        return GroupBox {
+            HStack {
+                Text(exists
+                     ? "The project's own file. Edit it freely: the layers only started it, and later layer changes are offered in the preview, never written over your text."
+                     : "No AGENTS.md yet. A layer with an AGENTS.md section writes the first version.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if exists, ExternalEditor.appURL != nil {
+                    Button("Edit AGENTS.md", systemImage: "square.and.pencil") { ExternalEditor.open(file) }
+                }
+            }
+            .padding(4)
+        } label: {
+            Text("AGENTS.md")
+        }
+        .font(.callout)
     }
 
     private var header: some View {
@@ -548,7 +681,7 @@ private struct BrainProjectDetailView: View {
                     .textSelection(.enabled)
                 Spacer()
                 if let onChange, !project.isHome {
-                    Button("Change Layers…", systemImage: "square.stack.3d.up", action: onChange)
+                    Button("Layers & Skills…", systemImage: "square.stack.3d.up", action: onChange)
                         .buttonStyle(.borderedProminent)
                         .help("Pick layers and fields, preview the changes, apply")
                 }

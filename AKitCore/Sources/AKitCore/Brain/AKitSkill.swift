@@ -89,6 +89,14 @@ Read `layers/<name>/layer.yaml` and its templates, change them, `akit check`, co
 4. Only after the user says yes: `akit apply` with the same arguments. Files AKit didn't
    write, or that were edited by hand, are skipped; pass `--include PATH` only when the
    user agrees to replace that file (there is a backup either way).
+   AGENTS.md, CLAUDE.md and other layer templates are only a starting point: once the
+   project edits one, it is the project's own, and a newer layer version shows as
+   "LAYERS CHANGED" (taken only with `--include PATH`). Put project-specific rules
+   straight into the project's AGENTS.md, not into a layer.
+   Skills for one project: add them to the answers (`"skills": [{"name": "tdd",
+   "mode": "auto"}]`; `"mode": "off"` drops a layer's skill here), or write a skill
+   that lives only in the project in `.agents/skills/<name>/SKILL.md` (AKit never
+   overwrites it).
 5. Tell the user to review and commit the harness files in the project.
 
 ## Remove

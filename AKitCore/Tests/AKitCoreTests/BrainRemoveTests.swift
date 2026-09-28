@@ -116,13 +116,36 @@ struct BrainRemoveTests {
         let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(root)))
         #expect(lock.files.keys.sorted() == [".agents/skills/old/SKILL.md", ".claude/skills", "AGENTS.md", "CLAUDE.md"])
 
+        // tdd is the project's own skill, so the Claude link to the skills stays for it.
         let preview = await akit("remove", "project")
-        #expect(preview.out.contains("Files AKit wrote go to the Trash: .agents/skills/old/SKILL.md, .claude/skills, AGENTS.md, CLAUDE.md"))
+        #expect(preview.out.contains("Files AKit wrote go to the Trash: .agents/skills/old/SKILL.md, AGENTS.md, CLAUDE.md"), "\(preview)")
         let done = await akit("remove", "project", "--yes")
         #expect(done.code == 0, "\(done)")
         #expect(!fm.fileExists(atPath: project.appending(path: "AGENTS.md").path))
         #expect(fm.fileExists(atPath: project.appending(path: ".agents/skills/tdd/SKILL.md").path))
         #expect(!fm.fileExists(atPath: root.appending(path: "projects/local/task").path))
         #expect(await akit("remove", "project", "--yes").code == 1)
+    }
+
+    @Test func projectSkillsLeaveWithTheProjectAndWithTheBrainSkill() async throws {
+        try await setUp()
+        let brain = try #require(Brain.load(from: root))
+        let answers = ProjectAnswers(layers: [], targets: ["pi"], skills: [.init(name: "old", mode: .auto)])
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(root))
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        #expect(fm.fileExists(atPath: project.appending(path: ".agents/skills/old/SKILL.md").path))
+
+        // Removing the brain skill drops it from the project's picks, in the same commit.
+        #expect(BrainRemove.skillProjects("old", in: brain, home: home) == ["local/task"])
+        try write(".akit/registry/layers/base/layer.yaml", "description: Base\nskills:\n  - name: tdd\n")
+        _ = try await git("commit", "-qam", "Drop old from base")
+        try await BrainRemove.removeSkill("old", in: try #require(Brain.load(from: root)), env: env, trash: trash)
+        #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(root))?.skills == [])
+        #expect(try await git("show", "--name-only", "--format=%s", "HEAD") == "Remove skill old\n\nprojects/local/task/answers.json\nskills/old/SKILL.md\n")
+
+        // Removing the project takes the skill it picked out, too.
+        let done = await akit("remove", "project", "--yes")
+        #expect(done.code == 0, "\(done)")
+        #expect(!fm.fileExists(atPath: project.appending(path: ".agents/skills/old").path))
     }
 }

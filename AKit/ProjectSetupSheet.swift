@@ -24,6 +24,7 @@ struct ProjectSetupSheet: View {
     @State private var isWorking = false
     @State private var error: String?
     @State private var creatingLayer = false
+    @State private var skillQuery = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -69,6 +70,7 @@ struct ProjectSetupSheet: View {
                     VStack(alignment: .leading, spacing: 16) {
                         targetsBox
                         layersBox
+                        skillsBox
                         fieldsBox
                         messages
                     }
@@ -84,7 +86,7 @@ struct ProjectSetupSheet: View {
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(isWorking ? "Preparing…" : "Preview Changes", action: makePlan)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(project == nil || projectID == nil || answers.layers.isEmpty || isWorking)
+                    .disabled(project == nil || projectID == nil || (answers.layers.isEmpty && answers.skills.isEmpty) || isWorking)
             }
         }
     }
@@ -153,6 +155,90 @@ struct ProjectSetupSheet: View {
         }
     }
 
+    /// Skills the picked layers bring (as the render sees them: `when`, `override`, `off`).
+    private var layerSkills: [String: (layer: String, mode: LayerSkill.Mode)] {
+        guard let brain, let project else { return [:] }
+        var layersOnly = answers
+        layersOnly.skills = []
+        let skills = Render.render(layersOnly, brain: brain, projectName: project.lastPathComponent).skills
+        return Dictionary(skills.map { ($0.name, (layer: $0.source, mode: $0.mode)) }, uniquingKeysWith: { _, last in last })
+    }
+
+    private var skillsBox: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                let fromLayers = layerSkills
+                // The ones in use (from a layer or picked) first.
+                let inUse = Set(fromLayers.keys).union(answers.skills.map(\.name))
+                let shown = (brain?.skills ?? []).filter { skillQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(skillQuery) }
+                    .sorted { inUse.contains($0.name) && !inUse.contains($1.name) }
+                // Picked for the project but gone from the brain: can only be taken out.
+                let missing = answers.skills.filter { picked in !(brain?.skills ?? []).contains { $0.name == picked.name } }
+                List {
+                    ForEach(missing, id: \.name) { picked in
+                        HStack {
+                            Label("\(picked.name) is no longer in the brain", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Spacer()
+                            Button("Remove") { answers.skills.removeAll { $0.name == picked.name } }
+                        }
+                    }
+                    ForEach(shown) { skill in
+                        skillRow(skill, layer: fromLayers[skill.name])
+                    }
+                }
+                .listStyle(.bordered)
+                .frame(height: 190)
+                Text("Skills for this project only, or a different mode for one a layer brings. The project's own skills (in .agents/skills) are kept as they are; manage them on the project's page.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(4)
+        } label: {
+            HStack {
+                Text("Skills")
+                Spacer()
+                TextField("Filter", text: $skillQuery).frame(width: 160)
+            }
+        }
+    }
+
+    private func skillRow(_ skill: Brain.Skill, layer: (layer: String, mode: LayerSkill.Mode)?) -> some View {
+        let chosen = answers.skills.first { $0.name == skill.name }?.mode
+        let mode = chosen ?? layer?.mode
+        return HStack(spacing: 8) {
+            Toggle(isOn: Binding(get: { mode != nil && mode != .off },
+                                 set: { on in setSkill(skill.name, on ? layer.map { $0.mode == .off ? .auto : $0.mode } ?? .auto : .off, layer: layer?.mode) })) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(skill.name).fontWeight(.medium)
+                    Text(skill.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer()
+            if let layer {
+                Text(chosen == nil ? "from \(layer.layer)" : "changed for this project").font(.caption).foregroundStyle(chosen == nil ? Color.secondary : .orange)
+            }
+            if let mode, mode != .off {
+                Picker("", selection: Binding(get: { mode }, set: { setSkill(skill.name, $0, layer: layer?.mode) })) {
+                    Text("auto").tag(LayerSkill.Mode.auto)
+                    Text("manual").tag(LayerSkill.Mode.manual)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("auto: the agent sees it and may use it; manual: only on /\(skill.name)")
+            }
+        }
+    }
+
+    /// Keeps only what differs from the layers: an added skill or a changed mode.
+    private func setSkill(_ name: String, _ mode: LayerSkill.Mode, layer: LayerSkill.Mode?) {
+        let differs = layer.map { $0 != mode } ?? (mode != .off)
+        if let index = answers.skills.firstIndex(where: { $0.name == name }) {
+            if differs { answers.skills[index].mode = mode } else { answers.skills.remove(at: index) }
+        } else if differs {
+            answers.skills.append(.init(name: name, mode: mode))
+        }
+    }
+
     @ViewBuilder
     private var fieldsBox: some View {
         let layers = (render?.layers ?? []).compactMap { name in brain?.layers.first { $0.name == name } }
@@ -213,7 +299,7 @@ struct ProjectSetupSheet: View {
 
     @ViewBuilder
     private var messages: some View {
-        if let render, !answers.layers.isEmpty {
+        if let render, !answers.layers.isEmpty || !answers.skills.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(render.errors, id: \.self) { Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red) }
                 ForEach(render.warnings, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
@@ -257,8 +343,11 @@ struct ProjectSetupSheet: View {
                 return
             }
             plan = made
-            // Files AKit didn't write, or edited by hand since, are left out until you tick them.
-            excluded = Set(made.changes.filter { $0.kind == .update && ($0.replacesUnmanaged || $0.editedSinceRender) }.map(\.path))
+            // Files AKit didn't write, or edited by hand since, and the layers' version of the
+            // project's own files are left out until you tick them.
+            excluded = Set(made.changes.filter { change in
+                change.kind == .update && (change.replacesUnmanaged || change.editedSinceRender) || change.kind == .suggest || change.kind == .own
+            }.map(\.path))
             selectedChange = made.changes.first { $0.kind != .same }?.path
             page = .preview
         }
@@ -273,6 +362,9 @@ struct ProjectSetupSheet: View {
                 ForEach(plan.render.errors + plan.blockers, id: \.self) {
                     Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.callout).textSelection(.enabled)
                 }
+                ForEach(plan.render.warnings, id: \.self) {
+                    Label($0, systemImage: "info.circle").foregroundStyle(.secondary).font(.callout).textSelection(.enabled)
+                }
                 HSplitView {
                     changeList(plan).frame(minWidth: 280, idealWidth: 320)
                     diff(plan).frame(minWidth: 300)
@@ -284,22 +376,28 @@ struct ProjectSetupSheet: View {
                 Button("Back") { page = .form; error = nil }.keyboardShortcut(.cancelAction)
                 Button(isWorking ? "Applying…" : "Apply", action: apply)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!(plan?.canApply ?? false) || isWorking || pending.isEmpty)
+                    // Only offers from the layers: Apply still records them as seen.
+                    .disabled(!(plan?.canApply ?? false) || isWorking || (pending.isEmpty && !hasOffers))
             }
         }
     }
 
     /// Changes that Apply would carry out.
     private var pending: [ProjectSetup.Change] {
-        (plan?.changes ?? []).filter { [.create, .update, .remove].contains($0.kind) && !excluded.contains($0.path) }
+        (plan?.changes ?? []).filter { Self.writable.contains($0.kind) && !excluded.contains($0.path) }
     }
+
+    private var hasOffers: Bool { plan?.changes.contains { $0.kind == .suggest } ?? false }
+
+    /// Kinds Apply can carry out; the project's own files only when ticked.
+    private static let writable: [ProjectSetup.Change.Kind] = [.create, .update, .remove, .suggest, .own]
 
     private func changeList(_ plan: ProjectSetup.Plan) -> some View {
         let unchanged = plan.changes.filter { $0.kind == .same }.count
         return List(selection: $selectedChange) {
             ForEach(plan.changes.filter { $0.kind != .same }) { change in
                 HStack(spacing: 6) {
-                    if [.create, .update, .remove].contains(change.kind) {
+                    if Self.writable.contains(change.kind) {
                         Toggle("", isOn: Binding(get: { !excluded.contains(change.path) },
                                                  set: { if $0 { excluded.remove(change.path) } else { excluded.insert(change.path) } }))
                             .labelsHidden()
@@ -312,6 +410,8 @@ struct ProjectSetupSheet: View {
                                 Text("· replaces a file AKit didn't write").foregroundStyle(.orange)
                             } else if change.editedSinceRender {
                                 Text("· edited by hand since the last render").foregroundStyle(.orange)
+                            } else if change.kind == .suggest || change.kind == .own {
+                                Text("· tick to take the layers' version").foregroundStyle(.secondary)
                             }
                         }
                         .font(.caption)
@@ -356,6 +456,8 @@ struct ProjectSetupSheet: View {
         case .same: "unchanged"
         case .remove: "removed (to the Trash)"
         case .keepEdited: "no longer rendered, but edited by hand: kept"
+        case .suggest: "the project's own · layers changed"
+        case .own: "the project's own"
         }
     }
 
@@ -364,7 +466,8 @@ struct ProjectSetupSheet: View {
         case .create: .green
         case .update: .blue
         case .remove: .red
-        case .same, .keepEdited: .secondary
+        case .suggest: .orange
+        case .same, .keepEdited, .own: .secondary
         }
     }
 
@@ -375,7 +478,8 @@ struct ProjectSetupSheet: View {
         Task {
             defer { isWorking = false }
             do {
-                outcome = try await model.applyProject(plan, excluding: excluded)
+                let taken = Set(plan.changes.filter { ($0.kind == .suggest || $0.kind == .own) && !excluded.contains($0.path) }.map(\.path))
+                outcome = try await model.applyProject(plan, excluding: excluded, accepting: taken)
                 page = .done
             } catch {
                 self.error = error.localizedDescription

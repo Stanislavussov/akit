@@ -59,7 +59,13 @@ public enum BrainRemove {
         return impact.projects
     }
 
-    /// Moves `skills/<name>` to the Trash and commits. Refused while a layer lists it.
+    /// Projects whose saved answers pick this skill; it is dropped from them.
+    public static func skillProjects(_ name: String, in brain: Brain, home: URL) -> [String] {
+        savedAnswers(brain: brain, home: home).filter { $0.answers.skills.contains { $0.name == name } }.map(\.id)
+    }
+
+    /// Moves `skills/<name>` to the Trash, drops it from projects' saved answers and
+    /// commits. Refused while a layer lists it.
     public static func removeSkill(_ name: String, in brain: Brain, env: HarnessEnvironment,
                                    trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) {
         guard let skill = brain.skills.first(where: { $0.name == name }) else { throw Failure(message: "No skill named \(name) in skills/.") }
@@ -67,12 +73,23 @@ public enum BrainRemove {
         guard users.isEmpty else {
             throw Failure(message: "\(name) is used by \(users.joined(separator: ", ")). Remove it from \(users.count == 1 ? "that layer" : "those layers") first.")
         }
+        var paths = ["skills/\(name)"]
+        for saved in savedAnswers(brain: brain, home: env.homeDirectory) where saved.answers.skills.contains(where: { $0.name == name }) {
+            var answers = saved.answers
+            answers.skills.removeAll { $0.name == name }
+            do {
+                try encode(answers).write(to: saved.file, options: .atomic)
+            } catch {
+                throw Failure(message: "Couldn't update \(saved.store.describe(id: saved.id))/answers.json: \(error.localizedDescription)")
+            }
+            if !saved.store.isLocal { paths.append("projects/\(saved.id)/answers.json") }
+        }
         do {
             _ = try trash(skill.folder)
         } catch {
             throw Failure(message: "Couldn't move skills/\(name) to the Trash: \(error.localizedDescription)")
         }
-        try await commit(["skills/\(name)"], "Remove skill \(name)", in: brain.root, env: env)
+        try await commit(paths, "Remove skill \(name)", in: brain.root, env: env)
     }
 
     /// The layer.yaml text without this skill's entry; nothing else changes.
