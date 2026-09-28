@@ -146,10 +146,10 @@ struct UsageView: View {
     private func note(_ report: DailyUsageReport) -> String {
         var text = "Numbers come straight from the harnesses' session files. Tokens include cache reads and writes. "
             + "Cost comes from the harnesses too: Pi and OpenCode record it for each response, Claude Code once per "
-            + "session when it ends normally (the /cost total), spread over the session's days by tokens. Codex records none."
+            + "run when it exits normally (the /cost total), spread over that run's days by tokens. Codex records none."
         if report.grandTotal.estimatedCost > 0 {
-            text += " \"≈\": Claude Code sessions that ended without saving a cost (closed terminal, still running) are "
-                + "estimated with the per-token rates learned from the sessions that did save one. No price lists are used."
+            text += " \"≈\": Claude Code runs that exited without saving a cost (closed terminal, still running) are "
+                + "estimated with the cost per transcript token learned from the runs that did save one. No price lists are used."
         }
         if report.grandTotal.unpricedRequests > 0 && report.grandTotal.cost != nil {
             text += " \"≥\" marks a cost that leaves out responses without one."
