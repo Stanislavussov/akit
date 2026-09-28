@@ -80,6 +80,19 @@ public enum AKitCLI {
                                           insights/machines/<pseudonym>.json with brain skills' counts;
                                           its project summaries stay on it. akit sync does this too
 
+        Recommendations (auto skills the model never calls; counts from this Mac and the other Macs' summaries):
+          akit recommend [--project ID|PATH | --all] [--details] [--min-sessions N] [--min-days D] [--bindings LIST] [--json]
+                                          Skills listed in ≥ N (20) sessions on ≥ D (14) distinct days and never
+                                          called by the model anywhere (other Macs, subagents, Pi), counted from
+                                          their current description (and, in a project, from when their layer
+                                          arrived there); sorted by ≈ context space. A layer skill gets a patch
+                                          (mode: manual), anything else advice. Imports new lines first
+          akit recommend apply ID [--yes] Show the layer.yaml patch; --yes commits it in the brain. Then run
+                                          akit plan/apply in the projects using the layer
+          akit recommend dismiss ID [--yes]
+                                          Layer skill: keep_auto: true in its layer.yaml (committed). Advice:
+                                          hidden until its ≈ context space doubles
+
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
           akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
@@ -149,6 +162,12 @@ public enum AKitCLI {
                 return try await insights(&args, options: options, env: env, cwd: cwd,
                                           projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), hostName: hostName,
                                           hardwareHash: hardwareHash, out: out, err: err, trash: trash, runner: runner)
+            }
+            if command == "recommend" {
+                try refuseProjectOptions(options, command: "recommend")
+                return try await recommend(&args, options: options, env: env, cwd: cwd,
+                                           projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), hostName: hostName,
+                                           runner: runner, out: out, err: err)
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -364,7 +383,7 @@ public enum AKitCLI {
                 lines.append(line)
             }
             for skill in layer.skills {
-                lines.append("  skill \(skill.name) \(skill.mode.rawValue)\(skill.when.isEmpty ? "" : " when \(skill.when.map(\.description).joined(separator: " and "))")")
+                lines.append("  skill \(skill.name) \(skill.mode.rawValue)\(skill.keepAuto ? " (keep auto)" : "")\(skill.when.isEmpty ? "" : " when \(skill.when.map(\.description).joined(separator: " and "))")")
             }
             for file in layer.files {
                 lines.append("  file \(file.template) → \(file.to)\(file.when.isEmpty ? "" : " when \(file.when.map(\.description).joined(separator: " and "))")")
@@ -376,7 +395,7 @@ public enum AKitCLI {
 
     private struct LayerInfo: Encodable {
         struct Field: Encodable { let id, prompt, type: String; let required: Bool; let options: [String]; let `default`: FieldValue? }
-        struct Skill: Encodable { let name, mode: String; let when: [String] }
+        struct Skill: Encodable { let name, mode: String; let when: [String]; let keepAuto: Bool }
         struct File: Encodable { let template, to: String; let when: [String] }
         let name, description: String
         let requires, conflicts: [String]
@@ -392,7 +411,8 @@ public enum AKitCLI {
             LayerInfo(name: layer.name, description: layer.description, requires: layer.requires, conflicts: layer.conflicts,
                       fields: layer.fields.map { .init(id: $0.id, prompt: $0.prompt, type: $0.kind.rawValue, required: $0.required,
                                                        options: $0.options, default: $0.defaultValue) },
-                      skills: layer.skills.map { .init(name: $0.name, mode: $0.mode.rawValue, when: $0.when.map(\.description)) },
+                      skills: layer.skills.map { .init(name: $0.name, mode: $0.mode.rawValue, when: $0.when.map(\.description),
+                                                       keepAuto: $0.keepAuto) },
                       files: layer.files.map { .init(template: $0.template, to: $0.to, when: $0.when.map(\.description)) },
                       folder: layer.folder.path, problems: brain.problems(of: layer.name).map(\.message))
         }
@@ -694,6 +714,200 @@ public enum AKitCLI {
         }
         out((failures.isEmpty ? ["Done."] : failures).joined(separator: "\n"))
         return failures.isEmpty ? refused : 1
+    }
+
+    /// `akit recommend`, `akit recommend apply ID`, `akit recommend dismiss ID`.
+    private static func recommend(_ args: inout Arguments, options: Options, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
+                                  hostName: String, runner: CommandRunner?, out: (String) -> Void,
+                                  err: (String) -> Void) async throws -> Int32 {
+        // Value flags before the subcommand word, so a value (`--project apply`) is never taken for it.
+        let bindingList = args.value("--bindings")
+        let projectArgument = args.value("--project")
+        let minSessionsText = args.value("--min-sessions")
+        let minDaysText = args.value("--min-days")
+        let all = args.flag("--all")
+        let details = args.flag("--details")
+        let subcommand = args.positional()
+        let id = subcommand == "apply" || subcommand == "dismiss" ? args.positional() : nil
+        try args.finish()
+        let usage = "Use: akit recommend [--project X|--all] [--details] [--json] [--min-sessions N] [--min-days D] [--bindings LIST], "
+            + "akit recommend apply ID [--yes], or akit recommend dismiss ID [--yes]"
+        if let subcommand, (subcommand != "apply" && subcommand != "dismiss") || id == nil { throw Failure(message: usage) }
+        if projectArgument != nil, all { throw Failure(message: "--project and --all don't go together.") }
+        if subcommand == nil, options.yes { throw Failure(message: "--yes goes with akit recommend apply or dismiss.") }
+        if subcommand != nil, options.json || details { throw Failure(message: "\(options.json ? "--json" : "--details") doesn't go with akit recommend \(subcommand ?? "").") }
+        func number(_ text: String?, _ flag: String) throws -> Int? {
+            guard let text else { return nil }
+            guard let value = Int(text), value > 0 else { throw Failure(message: "\(flag) needs a whole number above 0.") }
+            return value
+        }
+        var recommendOptions = Recommender.Options(bindings: try BindingSet.parse(bindingList),
+                                                   top: details || subcommand != nil ? nil : Recommender.defaultTop)
+        if let minSessions = try number(minSessionsText, "--min-sessions") { recommendOptions.minSessions = minSessions }
+        if let minDays = try number(minDaysText, "--min-days") { recommendOptions.minDays = minDays }
+        let machine = MachineProfile.load(home: env.homeDirectory)
+        if let problem = machine.problem { err("akit: \(problem)") }
+        let database = try IndexSchema.open(InsightsPaths(env: env).database)
+        let imported = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
+        // A folder gives its project id (as akit plan does); anything else is taken as an id.
+        if let projectArgument {
+            let folder = resolve(projectArgument, cwd: cwd, env: env)
+            recommendOptions.project = SkillScanner.isDirectory(folder)
+                ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env) : projectArgument
+        }
+        let brainRoot = options.brain.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+        let brain = Brain.load(from: brainRoot)
+        var inputs = try await Recommender.inputs(env: env, database: database, brain: brain, project: recommendOptions.project,
+                                                  projectsRoot: projectsRoot, hostName: hostName, run: runner)
+        inputs.stats.importNotes = imported.notes
+        guard let subcommand, let id else {
+            let report = try Recommender.recommend(database, options: recommendOptions, inputs: inputs)
+            if options.json {
+                out(encode(report))
+                for note in report.notes { err("note: \(note)") }
+            } else {
+                out(recommendText(report, details: details))
+            }
+            return 0
+        }
+
+        // The id names its scope: the one given, else the global one, then every project known here.
+        var found = try Recommender.recommend(database, options: recommendOptions, inputs: inputs).recommendations.first { $0.id == id }
+        if found == nil, projectArgument == nil {
+            for project in try Recommender.knownProjects(database, brain: brain, home: env.homeDirectory, bindings: recommendOptions.bindings) {
+                var scoped = recommendOptions
+                scoped.project = project
+                let projectInputs = try await Recommender.scoped(inputs, to: project, env: env, database: database, run: runner)
+                found = try Recommender.recommend(database, options: scoped, inputs: projectInputs).recommendations.first { $0.id == id }
+                if found != nil { break }
+            }
+        }
+        guard let recommendation = found else {
+            throw Failure(message: "No recommendation \(id) now. Run akit recommend to see the current ones (with the same --project, --min-sessions and --min-days).")
+        }
+        let confirm = "Run again with --yes to do it."
+        if recommendation.stale {
+            out("Other Macs' summaries are old (\(recommendation.staleMachines.joined(separator: ", "))): run akit sync first, they may have called \(recommendation.skill) since.")
+        }
+        if subcommand == "apply" {
+            guard let patch = recommendation.patch, let layer = recommendation.action.layer, let brain else {
+                throw Failure(message: "\(id) is advice, not a layer patch; nothing to apply. \(recommendation.action.text ?? "") "
+                              + "To hide it: akit recommend dismiss \(id).")
+            }
+            out((["Set \(recommendation.skill) to manual in \(LayerPatch.path(layer: layer)):"]
+                 + unifiedDiff(TextDiff.lines(from: patch.before, to: patch.after))).joined(separator: "\n"))
+            guard options.yes else { out(confirm); return 0 }
+            do {
+                try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .manual, before: patch.before, after: patch.after,
+                                            brain: brain.root, machine: machine, env: env)
+            } catch {
+                throw Failure(message: error.message)
+            }
+            var lines = ["Committed “\(LayerPatch.Change.manual.message(skill: recommendation.skill, layer: layer))”."]
+            let projects = projectsUsing(layer, brain: brain, home: env.homeDirectory)
+            if !projects.isEmpty { lines.append("Run akit plan/apply in: \(projects.joined(separator: ", ")).") }
+            if let note = recommendation.action.text { lines.append(note) }
+            out(lines.joined(separator: "\n"))
+            return 0
+        }
+
+        // Dismiss: a layer skill is pinned in its layer.yaml; advice is remembered with its evidence.
+        if let patch = recommendation.patch, let layer = recommendation.action.layer, let brain {
+            let after: String
+            do {
+                after = try LayerPatch.edit(patch.before, skill: recommendation.skill, layer: layer, change: .keepAuto)
+            } catch {
+                throw Failure(message: error.message)
+            }
+            out((["Keep \(recommendation.skill) auto in \(LayerPatch.path(layer: layer)):"]
+                 + unifiedDiff(TextDiff.lines(from: patch.before, to: after))).joined(separator: "\n"))
+            guard options.yes else { out(confirm); return 0 }
+            do {
+                try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .keepAuto, before: patch.before, after: after,
+                                            brain: brain.root, machine: machine, env: env)
+            } catch {
+                throw Failure(message: error.message)
+            }
+            out("Committed “\(LayerPatch.Change.keepAuto.message(skill: recommendation.skill, layer: layer))”.")
+            return 0
+        }
+        let space = recommendation.evidence.approxContextSpace
+        out("Dismiss \(id) (\(recommendation.skill)): hidden until its ≈ context space doubles (now ≈ \(space)).")
+        guard options.yes else { out(confirm); return 0 }
+        let entry = Dismissals.Entry(id: id, at: Date().formatted(.iso8601), approxContextSpace: space)
+        let url: URL
+        do {
+            url = try await Dismissals.dismiss(entry, project: recommendation.scope.project, brain: brain?.root, home: env.homeDirectory,
+                                               machine: machine, env: env)
+        } catch {
+            throw Failure(message: error.message)
+        }
+        out("Saved in \(url.path).")
+        return 0
+    }
+
+    /// Projects whose layers bring this one (the brain's and this Mac's records); a home folder as `akit apply --home`.
+    private static func projectsUsing(_ layer: String, brain: Brain, home: URL) -> [String] {
+        let saved = BrainRemove.savedAnswers(brain: brain, home: home)
+        let ids = Set(saved.filter { brain.layers(of: Brain.Project(id: $0.id, answers: $0.answers, brainCommit: nil)).contains(layer) }
+            .map(\.id))
+        return ids.sorted().map { $0.hasPrefix("home/") ? "\($0) (akit apply --home)" : $0 }
+    }
+
+    static func recommendText(_ report: RecommendReport, details: Bool) -> String {
+        func short(_ n: Int) -> String {
+            n < 1000 ? "\(n)" : n < 1_000_000 ? String(format: "%.1fk", Double(n) / 1000) : String(format: "%.1fM", Double(n) / 1_000_000)
+        }
+        func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        func label(_ kind: String) -> String {
+            switch kind {
+            case SkillOwner.Kind.handInstalled.rawValue: "hand-installed"
+            case SkillOwner.Kind.builtIn.rawValue: "built-in"
+            default: kind
+            }
+        }
+        let rule = report.rule
+        let scope = report.project.map { "project \($0), sessions bound at \(rule.bindings.joined(separator: ", "))" } ?? "all sessions"
+        var lines = ["Auto skills the model never called: listed in ≥ \(count(rule.minSessions, "session")) on ≥ \(count(rule.minDistinctDays, "day")), "
+                     + "summed over this Mac and the other Macs' summaries (\(scope))."]
+        let owners = report.summary.approxContextPerRequestByOwner.filter { $0.skills > 0 }
+        if !owners.isEmpty {
+            lines.append("≈ Context per request by owner: "
+                         + owners.map { "\(label($0.owner)) ≈ \(short($0.approxTokens)) (\(count($0.skills, "skill")))" }.joined(separator: ", ") + ".")
+        }
+        lines.append("")
+        if report.recommendations.isEmpty { lines.append("Nothing to recommend.") }
+        for item in report.recommendations {
+            let owner = [label(item.owner.kind), item.owner.name].compactMap { $0 }.joined(separator: " ")
+            let evidence = item.evidence
+            lines.append("\(item.stale ? "[stale] " : "")\(item.id)  \(item.skill) (\(owner)): \(item.type)")
+            let period = evidence.from.map { from in " (\(from) … \(evidence.to ?? from))" } ?? ""
+            let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
+            lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed in \(count(evidence.sessions, "session")) on "
+                         + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
+                         + "at 95%), user calls \(evidence.userCalls)")
+            if item.stale { lines.append("  other Macs' summaries are old (\(item.staleMachines.joined(separator: ", "))): run akit sync first") }
+            if item.isPatch {
+                lines.append("  patch: \(item.action.layer.map(LayerPatch.path) ?? "") mode auto → manual; akit recommend apply \(item.id) "
+                             + "(or dismiss to keep it auto)")
+                if details, let diff = item.action.diff { lines += diff.split(separator: "\n", omittingEmptySubsequences: false).map { "    \($0)" } }
+            }
+            if let text = item.action.text { lines.append("  \(item.isPatch ? "then" : "advice"): \(text)") }
+            if details {
+                lines.append("  machines: " + evidence.machines.map { "\($0.name) (\($0.updated ?? "never")\($0.stale ? ", stale" : ""))" }
+                    .joined(separator: ", "))
+                if let binding = evidence.binding {
+                    lines.append("  bound by \(binding.methods.joined(separator: ", ")) (lowest confidence \(binding.confidence ?? "none"))")
+                }
+            }
+        }
+        if report.omitted > 0 { lines.append("\(count(report.omitted, "more recommendation")): --details for all.") }
+        if report.hiddenByDismissal > 0 { lines.append("Hidden by dismissal: \(report.hiddenByDismissal) (they return when their ≈ context space doubles).") }
+        if !report.noData.isEmpty {
+            lines.append("No data (Pi records no skill list): \(report.noData.map(\.skill).joined(separator: ", ")).")
+        }
+        lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
     }
 
     static func publishText(_ outcome: SummaryPublisher.Outcome) -> String {

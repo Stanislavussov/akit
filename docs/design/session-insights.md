@@ -118,6 +118,10 @@ the denominator; its model calls do count as calls (they protect the skill).
 - Plugin → advice only: disable it in this project if other projects use it,
   otherwise globally. Writing `enabledPlugins` waits for harness settings in layers.
 - Hand-installed skill → advice: import into the brain in manual mode.
+- A layer lists it (e.g. as manual), but the installed copy is not one AKit wrote
+  (`akit apply` skips such files) → advice: `akit apply --home --include-unmanaged`
+  (or `--include PATH`) so the layer's mode takes effect. `akit stats` counts these as
+  owner `unknown`.
 - Built-in → cost only, collapsed.
 
 ### Cost metric

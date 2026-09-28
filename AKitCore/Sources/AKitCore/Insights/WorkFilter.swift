@@ -11,36 +11,53 @@ enum WorkFilter {
         var errorDescription: String? { message }
     }
 
-    /// What one kind of commit may contain. Layer commits (step 6) are further kinds.
+    /// What one kind of commit may contain.
     enum Kind: Equatable {
         /// The work machine file: only `insights/machines/<pseudonym>.json`, only counts of brain skills.
         case summary(pseudonym: String, brainSkills: Set<String>)
+        /// `akit recommend apply` / `dismiss` of a layer skill: only `layers/<layer>/layer.yaml`, only
+        /// that skill's mode or keep_auto line, and a message naming nothing but the skill and the layer.
+        case layer(layer: String, skill: String, change: LayerPatch.Change)
 
         var name: String {
             switch self {
             case .summary: "usage summary"
+            case .layer: "layer"
             }
         }
 
         var paths: Set<String> {
             switch self {
             case .summary(let pseudonym, _): [UsageSummary.machinePath(pseudonym)]
+            case .layer(let layer, _, _): [LayerPatch.path(layer: layer)]
             }
         }
 
         var message: String {
             switch self {
             case .summary(let pseudonym, _): "Update usage summaries (\(pseudonym))"
+            case .layer(let layer, let skill, let change): change.message(skill: skill, layer: layer)
             }
         }
 
-        /// Throws when the bytes hold anything the kind doesn't allow.
-        func check(path: String, data: Data) throws(Failure) {
+        /// Throws when the bytes hold anything the kind doesn't allow. `head`: the file at HEAD.
+        func check(path: String, data: Data, head: Data?) throws(Failure) {
             switch self {
             case .summary(let pseudonym, let brainSkills):
                 try WorkFilter.checkSummary(data, pseudonym: pseudonym, brainSkills: brainSkills, path: path)
+            case .layer(let layer, let skill, let change):
+                guard path == LayerPatch.path(layer: layer), let head, let before = String(data: head, encoding: .utf8),
+                      let after = String(data: data, encoding: .utf8) else {
+                    throw Failure(message: "Refused a commit from this work Mac: \(path) is not the committed layer.yaml of \(layer).")
+                }
+                if let problem = LayerPatch.problem(before: before, after: after, skill: skill, layer: layer, change: change) {
+                    throw Failure(message: "Refused a commit from this work Mac: \(path) changes more than \(skill)'s \(change.key) (\(problem)).")
+                }
             }
         }
+
+        /// Kinds that edit a committed file and are checked against it.
+        var needsHead: Bool { if case .layer = self { true } else { false } }
     }
 
     /// Checks that don't need the files: a readable `machine.json`, the brain's own git email and
@@ -54,7 +71,7 @@ enum WorkFilter {
         }
         let staged = try await git(["diff", "--cached", "--name-only", "-z"], in: root, env: env)
         guard staged.isEmpty else {
-            throw Failure(message: "The brain has staged changes; commit or unstage them first (nothing was published).")
+            throw Failure(message: "The brain has staged changes; commit or unstage them first (nothing was committed).")
         }
     }
 
@@ -86,7 +103,7 @@ enum WorkFilter {
             }
         } catch {
             await undo()
-            throw Failure(message: "Couldn't write the summary: \(error.localizedDescription)")
+            throw Failure(message: "Couldn't write \(files.keys.sorted().joined(separator: ", ")): \(error.localizedDescription)")
         }
         do throws(Failure) {
             try await git(["add", "--"] + files.keys.sorted(), in: root, env: env)
@@ -99,7 +116,8 @@ enum WorkFilter {
             for path in staged.sorted() {
                 // The bytes git would commit: the staged blob, not the file on disk.
                 let blob = try await git(["show", ":\(path)"], in: root, env: env)
-                try kind.check(path: path, data: Data(blob.utf8))
+                let head = kind.needsHead ? Data(try await git(["show", "HEAD:\(path)"], in: root, env: env).utf8) : nil
+                try kind.check(path: path, data: Data(blob.utf8), head: head)
             }
             // No hooks (they could add files or change the message); the brain's own identity, not the environment's.
             try await git(["-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--no-verify", "-m", message], in: root, env: env,
@@ -150,7 +168,7 @@ enum WorkFilter {
     @discardableResult
     private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment, failure: String? = nil,
                             identityFromConfig: Bool = false) async throws(Failure) -> String {
-        guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found, so nothing was published.") }
+        guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found, so nothing was committed.") }
         var environment = env.variables.merging(["PATH": env.pathForChildProcesses, "GIT_TERMINAL_PROMPT": "0"]) { $1 }
         if identityFromConfig {
             for name in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"] {
@@ -161,7 +179,7 @@ enum WorkFilter {
                                              environment: environment, timeout: 30)
         guard let result, result.succeeded else {
             let output = result.map { $0.timedOut ? "timed out" : $0.output.trimmingCharacters(in: .whitespacesAndNewlines) } ?? "couldn't start git"
-            throw Failure(message: "\(failure ?? "git \(arguments.first { !$0.hasPrefix("-") } ?? "") failed") (\(output)). Nothing was published.")
+            throw Failure(message: "\(failure ?? "git \(arguments.first { !$0.hasPrefix("-") } ?? "") failed") (\(output)). Nothing was committed.")
         }
         return result.output
     }

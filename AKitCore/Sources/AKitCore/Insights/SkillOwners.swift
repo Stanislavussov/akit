@@ -15,6 +15,10 @@ enum SkillOwner: Hashable {
     /// Installed, but whether it came from the brain can't be told (no brain, or a copy AKit
     /// didn't render under the brain's name).
     case unknown
+    /// These brain layers list it, but the installed copy (`file`, as the harness sees it) is not
+    /// one AKit rendered, so their mode doesn't reach it (`akit apply` skips files it didn't
+    /// write). Counted as `unknown` in the stats, whose owner kinds stay as they were.
+    case unrendered(layers: [String], file: String)
 
     enum Kind: String, CaseIterable {
         case layer, plugin, handInstalled, builtIn, unknown
@@ -26,7 +30,7 @@ enum SkillOwner: Hashable {
         case .plugin: .plugin
         case .handInstalled: .handInstalled
         case .builtIn: .builtIn
-        case .unknown: .unknown
+        case .unknown, .unrendered: .unknown
         }
     }
 
@@ -36,7 +40,7 @@ enum SkillOwner: Hashable {
         case .layer(let layers): layers.joined(separator: ",")
         case .plugin(let name): name
         case .handInstalled(let path): path
-        case .builtIn, .unknown: nil
+        case .builtIn, .unknown, .unrendered: nil
         }
     }
 }
@@ -44,18 +48,20 @@ enum SkillOwner: Hashable {
 enum SkillOwners {
     /// Owners of the listed skill names. `installed`: skills `SkillScanner` found on this Mac;
     /// `links`: their `BrainLinks`, nil without a brain (then no own skill can be told apart from
-    /// a layer skill, and every one is unknown).
+    /// a layer skill, and every one is unknown). `layers`: the brain's, to tell which of them list
+    /// a skill whose installed copy AKit didn't render.
     static func classify(_ names: some Sequence<String>, installed: [Skill], links: [Skill.ID: BrainLink]?,
-                         home: URL) -> [String: SkillOwner] {
+                         layers: [Layer] = [], home: URL) -> [String: SkillOwner] {
         let byName = Dictionary(grouping: installed, by: \.name)
         var owners: [String: SkillOwner] = [:]
         for name in names {
-            owners[name] = owner(of: name, matches: byName[name] ?? [], links: links, home: home)
+            owners[name] = owner(of: name, matches: byName[name] ?? [], links: links, layers: layers, home: home)
         }
         return owners
     }
 
-    private static func owner(of name: String, matches: [Skill], links: [Skill.ID: BrainLink]?, home: URL) -> SkillOwner {
+    private static func owner(of name: String, matches: [Skill], links: [Skill.ID: BrainLink]?, layers brainLayers: [Layer],
+                              home: URL) -> SkillOwner {
         // Claude Code lists plugin skills as `plugin:skill`; a name itself never holds ":".
         if let colon = name.firstIndex(of: ":") { return .plugin(String(name[..<colon])) }
         guard !matches.isEmpty else { return .builtIn }
@@ -78,6 +84,10 @@ enum SkillOwners {
         guard let links else { return .unknown }
         if let hand = own.first(where: { links[$0.id] == .notInBrain }) {
             return .handInstalled(SkillScanner.tilde(hand.file, home: home))
+        }
+        let listing = brainLayers.filter { $0.skills.contains { $0.name == name } }.map(\.name).sorted()
+        if !listing.isEmpty, let copy = own.first(where: { links[$0.id] == .sameName }) {
+            return .unrendered(layers: listing, file: SkillScanner.tilde(copy.file, home: home))
         }
         return .unknown
     }

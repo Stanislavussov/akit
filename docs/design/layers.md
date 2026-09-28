@@ -151,6 +151,10 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 The mode belongs to the layer, not the skill, so the same skill can be
 `manual` in the core layer and `auto` in a project.
 
+`keep_auto: true` on a skill entry pins it to `auto`: `akit recommend` never proposes
+making it manual (`akit recommend dismiss` on a layer skill sets it). Older AKit
+ignores the key.
+
 ## What lands in the project
 
 Only harness files. They are always committed. Nothing from AKit itself.

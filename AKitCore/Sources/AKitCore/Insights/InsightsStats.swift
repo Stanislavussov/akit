@@ -159,13 +159,17 @@ enum InsightsStats {
         /// Other Macs' description hashes per skill, from their machine summaries in the brain.
         var otherMacHashes: [String: [DescriptionWindow.OtherMacHash]] = [:]
         var hasBrain = true
+        /// Installed skills only Pi sees: it records no skill list, so there is no data on them.
+        var piOnly: Set<String> = []
         var importNotes: [String] = []
         var importRunning = false
     }
 
-    private struct Tally {
+    /// Per skill, what the sessions in scope show from its counting start on.
+    struct Tally {
         var listedSessions: Set<String> = []
-        var listedDays = 0
+        /// Distinct local days (`yyyy-MM-dd`) it was listed in a main session.
+        var listedDays: Set<String> = []
         var modelCalls = 0
         var userCalls = 0
         var piModelCalls = 0
@@ -174,31 +178,44 @@ enum InsightsStats {
         var latest: (first: Double, tokens: Int)?
     }
 
-    static func report(_ database: IndexDatabase, options: Options = Options(), inputs: Inputs = Inputs(),
-                       now: Date = Date()) throws -> StatsReport {
-        let from = now.addingTimeInterval(-Double(options.days) * 86_400)
-        // Sessions in scope: started in the window; for a project, bound to it at a confidence of the set.
-        var scoped = "scoped AS (SELECT s.key FROM sessions s"
-        var scopeValues: [any SQLBindable] = []
-        if let project = options.project {
-            scoped += " JOIN bindings b ON b.session_key = s.key AND b.project_id = ? AND b.confidence IN \(options.bindings.sqlList)"
-            scopeValues.append(project)
-        }
-        scoped += " WHERE s.started >= ? AND s.started <= ?)"
-        scopeValues += [from.timeIntervalSince1970, now.timeIntervalSince1970]
+    /// The sessions counted: started between `from` and `to`; for a project, bound to it at a
+    /// confidence of the set.
+    struct Scope {
+        var project: String?
+        var bindings = BindingSet.default
+        var from: Date
+        var to: Date
 
-        let names = try database.rows("""
+        /// `scoped AS (…)` for a `WITH` clause, and its values.
+        var cte: (sql: String, values: [any SQLBindable]) {
+            var sql = "scoped AS (SELECT s.key FROM sessions s"
+            var values: [any SQLBindable] = []
+            if let project {
+                sql += " JOIN bindings b ON b.session_key = s.key AND b.project_id = ? AND b.confidence IN \(bindings.sqlList)"
+                values.append(project)
+            }
+            sql += " WHERE s.started >= ? AND s.started <= ?)"
+            return (sql, values + [from.timeIntervalSince1970, to.timeIntervalSince1970])
+        }
+    }
+
+    /// Skills listed in the scope's sessions (main or subagent).
+    static func listedNames(_ database: IndexDatabase, scope: Scope) throws -> [String] {
+        let (scoped, values) = scope.cte
+        return try database.rows("""
             WITH \(scoped) SELECT DISTINCT l.skill FROM skill_listings l JOIN scoped s ON s.key = l.session_key
-            """, scopeValues).compactMap { $0[0].text }
-        let hashStarts = try DescriptionWindow.hashStarts(database, otherMacs: inputs.otherMacHashes)
-        var windowStarts: [String: Date] = [:]
-        for name in names { windowStarts[name] = inputs.brainStarts[name] ?? hashStarts[name]?.date ?? from }
-        // Counting starts at the later of the report window and the description window.
-        let starts = windowStarts.mapValues { max($0, from).timeIntervalSince1970 }
-        let startsJSON = String(decoding: try JSONEncoder().encode(starts), as: UTF8.self)
+            """, values).compactMap { $0[0].text }
+    }
+
+    /// Listings, calls and ≈ context space per skill in the scope's sessions, each counted from the
+    /// skill's start (skills without one aren't counted). Model and user calls count after the
+    /// session's first listing; Pi lists nothing, so its calls count from the start on.
+    static func tallies(_ database: IndexDatabase, scope: Scope, starts: [String: Date], descriptions: [String: String],
+                        calibration: ContextSize.Calibration) throws -> [String: Tally] {
+        let (scoped, scopeValues) = scope.cte
+        let startsJSON = String(decoding: try JSONEncoder().encode(starts.mapValues(\.timeIntervalSince1970)), as: UTF8.self)
         let with = "WITH \(scoped), starts AS (SELECT key AS skill, value AS start FROM json_each(?))"
         let values = scopeValues + [startsJSON]
-        let calibration = try ContextSize.calibration(database)
 
         var tallies: [String: Tally] = [:]
         // Main sessions: first listing, own description size, main requests from then on.
@@ -210,7 +227,7 @@ enum InsightsStats {
               WHERE r.session_key = f.session_key AND r.is_subagent = 0 AND r.ts >= f.first) FROM firsts f
             """, values) {
             guard let skill = row[0].text, let session = row[1].text, let first = row[2].double else { continue }
-            let script = inputs.descriptions[skill].map(ContextSize.script) ?? .latin
+            let script = descriptions[skill].map(ContextSize.script) ?? .latin
             let tokens = ContextSize.approxTokens(chars: row[3].int ?? 0, script: script, calibration: calibration).tokens
             var tally = tallies[skill] ?? Tally()
             tally.listedSessions.insert(session)
@@ -219,12 +236,12 @@ enum InsightsStats {
             tallies[skill] = tally
         }
         for row in try database.rows("""
-            \(with) SELECT l.skill, COUNT(DISTINCT date(l.ts, 'unixepoch', 'localtime')) FROM skill_listings l
+            \(with) SELECT DISTINCT l.skill, date(l.ts, 'unixepoch', 'localtime') FROM skill_listings l
             JOIN scoped s ON s.key = l.session_key JOIN starts st ON st.skill = l.skill
-            WHERE l.is_subagent = 0 AND l.ts >= st.start GROUP BY l.skill
+            WHERE l.is_subagent = 0 AND l.ts >= st.start
             """, values) {
-            guard let skill = row[0].text else { continue }
-            tallies[skill, default: Tally()].listedDays = row[1].int ?? 0
+            guard let skill = row[0].text, let day = row[1].text else { continue }
+            tallies[skill, default: Tally()].listedDays.insert(day)
         }
         // Calls in sessions with a listing (main or subagent), from the first listing on.
         let userSkill = "(c.by = 'model' OR COALESCE(json_extract(c.extra, '$.kind'), 'skill') = 'skill')"
@@ -246,7 +263,7 @@ enum InsightsStats {
             }
             tallies[skill] = tally
         }
-        // Pi: no listing, so every call from the window start on.
+        // Pi: no listing, so every call from the start on.
         for row in try database.rows("""
             \(with) SELECT c.skill, c.by, COUNT(*) FROM skill_calls c JOIN scoped s ON s.key = c.session_key
             JOIN starts st ON st.skill = c.skill WHERE c.harness = 'pi' AND c.ts >= st.start AND \(userSkill) GROUP BY c.skill, c.by
@@ -258,13 +275,30 @@ enum InsightsStats {
                 tallies[skill, default: Tally()].userCalls += count
             }
         }
+        return tallies
+    }
+
+    static func report(_ database: IndexDatabase, options: Options = Options(), inputs: Inputs = Inputs(),
+                       now: Date = Date()) throws -> StatsReport {
+        let from = now.addingTimeInterval(-Double(options.days) * 86_400)
+        // Sessions in scope: started in the window; for a project, bound to it at a confidence of the set.
+        let scope = Scope(project: options.project, bindings: options.bindings, from: from, to: now)
+        let (scoped, scopeValues) = scope.cte
+        let names = try listedNames(database, scope: scope)
+        let hashStarts = try DescriptionWindow.hashStarts(database, otherMacs: inputs.otherMacHashes)
+        var windowStarts: [String: Date] = [:]
+        for name in names { windowStarts[name] = inputs.brainStarts[name] ?? hashStarts[name]?.date ?? from }
+        let calibration = try ContextSize.calibration(database)
+        // Counting starts at the later of the report window and the description window.
+        let tallies = try tallies(database, scope: scope, starts: windowStarts.mapValues { max($0, from) },
+                                  descriptions: inputs.descriptions, calibration: calibration)
 
         var skills = names.map { name -> StatsReport.SkillStats in
             let tally = tallies[name] ?? Tally()
             let listed = tally.listedSessions.count
             let called = tally.calledSessions.intersection(tally.listedSessions).count
             return StatsReport.SkillStats(
-                name: name, owner: .init(inputs.owners[name] ?? .unknown), listedSessions: listed, listedDays: tally.listedDays,
+                name: name, owner: .init(inputs.owners[name] ?? .unknown), listedSessions: listed, listedDays: tally.listedDays.count,
                 modelCalls: tally.modelCalls, userCalls: tally.userCalls, piModelCalls: tally.piModelCalls,
                 approxTokens: tally.latest?.tokens ?? 0, approxContextSpace: tally.contextSpace,
                 callRate: listed > 0 ? (Double(called) / Double(listed) * 1000).rounded() / 1000 : 0,
@@ -321,7 +355,8 @@ enum InsightsStats {
                              folders: try projectFolders(database, env: env, projectsRoot: projectsRoot, hostName: hostName),
                              store: ProjectStore.current(brain: brain.root, home: env.homeDirectory))
         }
-        let owners = SkillOwners.classify(names, installed: installed, links: links, home: env.homeDirectory)
+        let owners = SkillOwners.classify(names, installed: installed, links: links, layers: brain?.layers ?? [],
+                                          home: env.homeDirectory)
         var descriptions: [String: String] = [:]
         for skill in installed {
             let name = if case .plugin(let plugin) = skill.scope { "\(plugin):\(skill.name)" } else { skill.name }
@@ -341,7 +376,7 @@ enum InsightsStats {
             otherMacHashes = UsageSummary.load(brain: brain.root, store: nil, excludingOwn: own).descHashes
         }
         return Inputs(owners: owners, descriptions: descriptions, brainStarts: brainStarts, otherMacHashes: otherMacHashes,
-                      hasBrain: brain != nil)
+                      hasBrain: brain != nil, piOnly: Set(installed.filter { $0.visibleTo == [.pi] }.map(\.name)))
     }
 
     /// Brain project ids → their folders on this Mac, without git: this Mac's home, the main
