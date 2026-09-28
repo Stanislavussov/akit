@@ -591,7 +591,8 @@ extension RecommenderTests {
         // More context space for `old` (a longer description), which a stale Mac also lists.
         for index in 0..<20 { try listing("s\(index)", "old", at: at(1 + index % 14, 9 + Double(index / 14)), chars: 400, in: db) }
         var inputs = layerInputs(nil, owners: ["old": .handInstalled("~/old"), "fresh": .handInstalled("~/fresh")])
-        inputs.others.machines["abcdef0123456789"] = otherMac(updatedDaysAgo: 20, days: [day(25): ["old": [1, 0, 0]]])
+        // Its last day lies in the window (a Mac whose days all end before it flags nothing).
+        inputs.others.machines["abcdef0123456789"] = otherMac(updatedDaysAgo: 20, days: [day(10): ["old": [1, 0, 0]]])
         inputs.others.machines["fedcba9876543210"] = otherMac("fedcba9876543210", name: "studio", days: [day(3): ["fresh": [1, 0, 0]]])
         let report = try recommend(db, .init(top: nil), inputs)
         #expect(report.recommendations.map(\.skill) == ["fresh", "old"], "stale ones after fresh ones, whatever their size")
@@ -603,7 +604,7 @@ extension RecommenderTests {
         // akit recommend apply says to sync first.
         try await setUpHome()
         try write(".akit/registry/insights/machines/abcdef0123456789.json",
-                  String(decoding: UsageSummary.encode(otherMac(updatedDaysAgo: 20, days: [day(25): ["tdd": [1, 0, 0]]])), as: UTF8.self))
+                  String(decoding: UsageSummary.encode(otherMac(updatedDaysAgo: 20, days: [day(10): ["tdd": [1, 0, 0]]])), as: UTF8.self))
         try await git("add", "--all")
         try await git("commit", "-qm", "Update usage summaries (mbp)")
         try listedSessions(["tdd"], id: "t", in: db)
@@ -612,6 +613,22 @@ extension RecommenderTests {
         #expect(tdd["stale"] as? Bool == true)
         let applied = await akit("recommend", "apply", tdd["id"] as? String ?? "")
         #expect(applied.code == 0 && applied.out.contains("run akit sync first"), "\(applied)")
+    }
+
+    @Test func macRetiredBeforeTheWindowFlagsNothing() throws {
+        let db = try database()
+        try listedSessions(["tdd"], count: 20, days: 14, firstDay: 1, hash: "A", in: db)
+        var inputs = layerInputs(nil, owners: ["tdd": .handInstalled("~/tdd")])
+        // Another Mac saw a new text five days ago: the window starts there.
+        inputs.stats.otherMacHashes = ["tdd": [.init(fromDay: day(5), hash: "C")]]
+        // A Mac that listed tdd, last heard of long before the window.
+        inputs.others.machines["abcdef0123456789"] = otherMac(updatedDaysAgo: 30, days: [day(30): ["tdd": [1, 0, 0]]])
+        let options = Recommender.Options(minSessions: 5, minDays: 5, top: nil)
+        let item = try #require(try recommend(db, options, inputs).recommendations.first)
+        #expect(!item.stale && item.staleMachines.isEmpty && item.evidence.machines.map(\.name) == ["this Mac"])
+        // A day of it inside the window: its old counts may be behind, so it is stale again.
+        inputs.others.machines["abcdef0123456789"] = otherMac(updatedDaysAgo: 30, days: [day(30): ["tdd": [1, 0, 0]], day(4): ["review": [1, 0, 0]]])
+        #expect(try recommend(db, options, inputs).recommendations.first { $0.skill == "tdd" }?.staleMachines == ["mbp"])
     }
 
     @Test func jsonShapeIsTheContract() async throws {

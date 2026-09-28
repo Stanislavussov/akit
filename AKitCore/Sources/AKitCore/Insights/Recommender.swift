@@ -225,14 +225,15 @@ enum Recommender {
         var model = 0
         var user = 0
         var days: Set<String> = []
-        /// Keys of the files that mention the skill at all, and of those listing it from the day on.
+        /// Keys of the files that mention the skill and have days from the day on, and of those listing it from the day on.
         var keys: Set<String> = []
         var listing: Set<String> = []
     }
 
     private static func sum(_ files: [String: UsageSummary.File], skill: String, from day: String) -> Elsewhere {
         var result = Elsewhere()
-        for (key, file) in files {
+        // A file with nothing from the day on (a retired Mac) says nothing about the window, nor is it stale for it.
+        for (key, file) in files where file.days.keys.max().map({ $0 >= day }) == true {
             for (date, entry) in file.days {
                 guard let counts = entry.skills[skill], counts.count == 3 else { continue }
                 result.keys.insert(key)
@@ -456,8 +457,7 @@ enum Recommender {
                                                       hostName: hostName, run: run)
         inputs.brain = brain
         if let brain {
-            let own = UsageSummary.ownKeys(database).all.union([machine.id, machine.pseudonym].compactMap { $0 })
-            inputs.others = UsageSummary.load(brain: brain.root, store: store, excludingOwn: own)
+            inputs.others = UsageSummary.load(brain: brain.root, store: store, ownership: UsageSummary.ownership(database, machine: machine))
         }
         var host = hostName
         if host.hasSuffix(".local") { host.removeLast(".local".count) }

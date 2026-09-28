@@ -372,8 +372,8 @@ enum InsightsStats {
         var otherMacHashes: [String: [DescriptionWindow.OtherMacHash]] = [:]
         if let brain {
             let machine = MachineProfile.load(home: env.homeDirectory)
-            let own = UsageSummary.ownKeys(database).all.union([machine.id, machine.pseudonym].compactMap { $0 })
-            otherMacHashes = UsageSummary.load(brain: brain.root, store: nil, excludingOwn: own).descHashes
+            otherMacHashes = UsageSummary.load(brain: brain.root, store: nil, ownership: UsageSummary.ownership(database, machine: machine))
+                .descHashes
         }
         return Inputs(owners: owners, descriptions: descriptions, brainStarts: brainStarts, otherMacHashes: otherMacHashes,
                       hasBrain: brain != nil, piOnly: Set(installed.filter { $0.visibleTo == [.pi] }.map(\.name)))

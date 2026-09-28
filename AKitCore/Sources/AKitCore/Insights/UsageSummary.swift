@@ -13,7 +13,8 @@ import Foundation
 ///
 /// Days are local `yyyy-MM-dd`, the last 120 of them. After a kind switch a key's days start the
 /// local day after `kindSince`; days up to it stay as that key's file had them, so a switched Mac
-/// never counts a day under two keys.
+/// never counts a day under two keys. A clone's new keys start the local day after `idSince`:
+/// the index it copied holds the original Mac's sessions, which that Mac publishes itself.
 enum UsageSummary {
     static let version = 1
     static let retentionDays = 120
@@ -152,7 +153,7 @@ enum UsageSummary {
                             existing: File?, now: Date, calendar: Calendar = .current) throws -> File? {
         guard let key = profile.summaryKey else { return nil }
         let fresh = try days(database, from: cutoff(now: now, calendar: calendar))
-        var days = merged(fresh, existing: existing, key: key, since: profile.kindSince, now: now, calendar: calendar)
+        var days = merged(fresh, existing: existing, key: key, since: profile.summarySince, now: now, calendar: calendar)
         let updated = now.formatted(.iso8601)
         guard profile.isWork else {
             return File(version: version, machine: key, name: name, updated: updated, days: days,
@@ -172,7 +173,7 @@ enum UsageSummary {
         guard let id = profile.id else { return nil }
         let fresh = try days(database, from: cutoff(now: now, calendar: calendar), project: project, bindings: bindings)
         return File(version: version, machine: id, updated: now.formatted(.iso8601),
-                    days: merged(fresh, existing: existing, key: id, since: profile.kindSince, now: now, calendar: calendar))
+                    days: merged(fresh, existing: existing, key: id, since: profile.summarySince, now: now, calendar: calendar))
     }
 
     /// Projects with sessions bound at `bindings`. Ids that could leave the store's folder are skipped.
@@ -256,16 +257,46 @@ enum UsageSummary {
         }
     }
 
-    /// Reads the other Macs' files. This Mac's own keys are left out by key, never by name
-    /// (two Macs may share a name). Files whose key doesn't match their name are skipped.
-    static func load(brain: URL, store: ProjectStore?, excludingOwn keys: Set<String>) -> Others {
+    /// Which summary keys are this Mac's, for reading the other Macs' files.
+    struct Ownership: Equatable {
+        /// Left out: this Mac's own keys (its index has those days).
+        var own: Set<String> = []
+        /// Keys of the Mac this one was cloned from, with the last local day of theirs the copied
+        /// index holds: only their later days are read.
+        var copied: [String: String] = [:]
+    }
+
+    static func ownership(_ database: IndexDatabase, machine: MachineProfile, calendar: Calendar = .current) -> Ownership {
+        let keys = ownKeys(database)
+        let own = keys.published(by: machine.hardwareHash, cloned: machine.idSince != nil).all
+            .union([machine.id, machine.pseudonym].compactMap { $0 })
+        let foreign = keys.all.subtracting(own)
+        // Without the clone's day it's unknown which of their days the index holds: all of them are left out.
+        guard let since = machine.idSince else { return Ownership(own: own.union(foreign)) }
+        let cloneDay = day(since, calendar: calendar)
+        return Ownership(own: own, copied: Dictionary(uniqueKeysWithValues: foreign.map { ($0, cloneDay) }))
+    }
+
+    /// Reads the other Macs' files, the last 120 days of them. This Mac's own keys are left out by
+    /// key, never by name (two Macs may share a name); a copied key's days only after its day.
+    /// Files whose key doesn't match their name are skipped.
+    static func load(brain: URL, store: ProjectStore?, ownership: Ownership, now: Date = Date(),
+                     calendar: Calendar = .current) -> Others {
         var others = Others()
         let fm = FileManager.default
+        let oldest = day(cutoff(now: now, calendar: calendar), calendar: calendar)
+        func current(_ file: File, key: String) -> File {
+            var file = file
+            let after = ownership.copied[key]
+            file.days = file.days.filter { entry in entry.key >= oldest && after.map { entry.key > $0 } ?? true }
+            return file
+        }
+        let keys = ownership.own
         let folder = machineFolder(brain: brain)
         for name in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasSuffix(".json") {
             let key = String(name.dropLast(5))
             guard !keys.contains(key), let file = read(folder.appending(path: name)), file.version == version, file.machine == key else { continue }
-            others.machines[key] = file
+            others.machines[key] = current(file, key: key)
         }
         guard let store, let walker = fm.enumerator(at: store.root, includingPropertiesForKeys: nil) else { return others }
         let base = store.root.standardizedFileURL.path
@@ -274,7 +305,7 @@ enum UsageSummary {
             let folder = url.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL.path
             guard !keys.contains(key), folder.count > base.count + 1, let file = read(url), file.version == version,
                   file.machine == key else { continue }
-            others.projects[String(folder.dropFirst(base.count + 1)), default: [:]][key] = file
+            others.projects[String(folder.dropFirst(base.count + 1)), default: [:]][key] = current(file, key: key)
         }
         return others
     }
@@ -294,8 +325,9 @@ enum UsageSummary {
         return ownKeys(database)
     }
 
-    /// Adds keys this Mac published under (kept in publish order, each once).
-    static func remember(id: String, pseudonym: String?, in database: IndexDatabase) throws {
+    /// Adds keys this Mac published under (kept in publish order, each once), with its hardware
+    /// hash and `idSince`.
+    static func remember(id: String, pseudonym: String?, hardware: String?, since: Date?, in database: IndexDatabase) throws {
         var keys = ownKeys(database)
         func add(_ key: String, to list: inout [String]) {
             list.removeAll { $0 == key }
@@ -303,6 +335,10 @@ enum UsageSummary {
         }
         add(id, to: &keys.ids)
         if let pseudonym { add(pseudonym, to: &keys.pseudonyms) }
+        for key in [id, pseudonym].compactMap({ $0 }) {
+            if let hardware { keys.hardware[key] = hardware }
+            if let since { keys.since[key] = ISO8601DateFormatter().string(from: since) }
+        }
         let text = String(decoding: try JSONEncoder().encode(keys), as: UTF8.self)
         _ = try database.run("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                              ownKeysMeta, text)

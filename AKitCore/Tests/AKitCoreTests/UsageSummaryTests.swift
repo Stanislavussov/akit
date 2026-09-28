@@ -511,9 +511,16 @@ extension UsageSummaryTests {
         let clone = try await publish(db, hardware: "hw-2")
         let profile = MachineProfile.load(home: home)
         #expect(profile.hardwareHash == "hw-2" && profile.id != "0123456789abcdef" && profile.pseudonym != "work-abc123")
-        #expect(clone.key == profile.pseudonym && clone.committed == ["insights/machines/\(clone.key).json"])
+        // The copied days are the original's: nothing to publish until the clone has a day of its own.
+        #expect(clone.key == profile.pseudonym && clone.committed.isEmpty && profile.idSince == now)
+        #expect(fm.fileExists(atPath: brainRoot.appending(path: "insights/machines/work-abc123.json").path))
+        try session("clone-1", started: at(-1, 10), in: db)
+        try listing("clone-1", "tdd", at: at(-1, 10), hash: "h-tdd-1", in: db)
+        let later = Date(timeIntervalSince1970: at(-1, 20))
+        #expect(try await publish(db, hardware: "hw-2", at: later).committed == ["insights/machines/\(clone.key).json"])
+        #expect(Array(try summary("insights/machines/\(clone.key).json").days.keys) == [day(-1)])
         // No hardware hash at all (IOKit said nothing): the keys stay.
-        #expect(try await publish(db, hardware: nil).key == clone.key)
+        #expect(try await publish(db, hardware: nil, at: later).key == clone.key)
     }
 
     @Test func newIdRemovesOwnStaleKeyFilesInSameCommit() async throws {
@@ -524,7 +531,11 @@ extension UsageSummaryTests {
         let old = try #require(MachineProfile.load(home: home).id)
         let commits = try await commitCount()
 
-        let outcome = try await publish(db, hardware: "hw-2")
+        // Same Mac, another id (machine.json restored from an older backup): the old id's files are its own.
+        var profile = MachineProfile.load(home: home)
+        profile.id = "feedfacefeedface"
+        try profile.save(home: home)
+        let outcome = try await publish(db)
         let new = try #require(MachineProfile.load(home: home).id)
         #expect(new != old && outcome.key == new)
         #expect(try await commitCount() == commits + 1)
@@ -534,6 +545,81 @@ extension UsageSummaryTests {
             "D\tinsights/machines/\(old).json", "D\tprojects/\(Self.project)/usage/\(old).json",
         ])
         #expect(UsageSummary.ownKeys(db).ids == [old, new])
+    }
+
+    @Test func cloneNeverRemovesOriginalMacFilesOrRepublishesItsDays() async throws {
+        try await setUpBrain()
+        let db = try database()
+        try writeFacts(db)
+        _ = try await publish(db)
+        let original = try #require(MachineProfile.load(home: home).id)
+        // Keys as an akit before hardware records wrote them: the index alone can't say whose they are.
+        try db.run("UPDATE meta SET value = ? WHERE key = ?", #"{"ids":["\#(original)"],"pseudonyms":[]}"#, UsageSummary.ownKeysMeta)
+        let originalFiles = ["insights/machines/\(original).json", "projects/\(Self.project)/usage/\(original).json"]
+        let originalBytes = try originalFiles.map(bytes)
+
+        // The clone: other hardware, the same machine.json and index. It removes nothing of the original
+        // and publishes none of the days its copied index holds.
+        let first = try await publish(db, hardware: "hw-2")
+        let profile = MachineProfile.load(home: home)
+        let clone = try #require(profile.id)
+        #expect(clone != original && first.key == clone && profile.idSince == now)
+        #expect(!first.changed.contains { $0.contains(original) }, "\(first.changed)")
+        #expect(try originalFiles.map(bytes) == originalBytes)
+        #expect(try summary("insights/machines/\(clone).json").days.isEmpty)
+
+        // Its own session tomorrow is its first day; publishing again still leaves the original alone.
+        try session("clone-1", started: at(-1, 10), in: db)
+        try listing("clone-1", "tdd", at: at(-1, 10), hash: "h-tdd-1", in: db)
+        try bind("clone-1", to: Self.project, .exact, in: db)
+        let later = Date(timeIntervalSince1970: at(-1, 20))
+        let second = try await publish(db, hardware: "hw-2", at: later)
+        #expect(Set(second.committed) == ["insights/machines/\(clone).json", "projects/\(Self.project)/usage/\(clone).json"])
+        #expect(Array(try summary("insights/machines/\(clone).json").days.keys) == [day(-1)])
+        #expect(Array(try summary("projects/\(Self.project)/usage/\(clone).json").days.keys) == [day(-1)])
+        #expect(try originalFiles.map(bytes) == originalBytes)
+        #expect(UsageSummary.ownKeys(db).hardware == [clone: "hw-2"])
+
+        // A lost machine.json on the clone: its own id and clone day come back from the index.
+        try fm.removeItem(at: MachineProfile.file(home: home))
+        let third = try await publish(db, hardware: "hw-2", at: later)
+        #expect(third.key == clone && third.committed.isEmpty && MachineProfile.load(home: home).idSince == now)
+        #expect(try await git("status", "--porcelain").isEmpty)
+
+        // The clone reads the original as another Mac, only its days after the clone day.
+        var file = try summary(originalFiles[0])
+        file.days[day(-1)] = .init(sessions: 1, firstContextSum: 0, firstContextN: 0, skills: ["review": [1, 0, 0]])
+        try write(".akit/registry/\(originalFiles[0])", String(decoding: UsageSummary.encode(file), as: UTF8.self))
+        let ownership = UsageSummary.ownership(db, machine: MachineProfile.load(home: home), calendar: calendar)
+        #expect(ownership == .init(own: [clone], copied: [original: day(0)]))
+        let others = UsageSummary.load(brain: brainRoot, store: .brain(brainRoot), ownership: ownership, now: later, calendar: calendar)
+        #expect(Array(others.machines.keys) == [original] && others.machines[original].map { Array($0.days.keys) } == [day(-1)])
+        #expect(others.projects[Self.project]?[original]?.days.isEmpty == true)
+    }
+
+    @Test func otherMacsOldDaysAreNotRead() async throws {
+        try await setUpBrain()
+        let other = UsageSummary.File(version: 1, machine: "fedcba9876543210", name: "old", updated: "2026-01-01T10:00:00Z",
+                                      days: [day(130): .init(sessions: 1, firstContextSum: 0, firstContextN: 0, skills: ["tdd": [1, 0, 0]]),
+                                             day(3): .init(sessions: 1, firstContextSum: 0, firstContextN: 0, skills: ["tdd": [1, 0, 0]])])
+        try write(".akit/registry/insights/machines/fedcba9876543210.json", String(decoding: UsageSummary.encode(other), as: UTF8.self))
+        let others = UsageSummary.load(brain: brainRoot, store: nil, ownership: .init(), now: now, calendar: calendar)
+        #expect(others.machines["fedcba9876543210"].map { Array($0.days.keys) } == [day(3)])
+    }
+
+    @Test func publishWhileAnImportRunsLeavesKeysForNextTime() async throws {
+        try await setUpBrain()
+        let db = try database()
+        try writeFacts(db)
+        var lock = try ImportLock.acquire(InsightsPaths(home: home).lock)
+        #expect(lock != nil)
+        let outcome = try await publish(db)
+        withExtendedLifetime(lock) {}
+        #expect(!outcome.committed.isEmpty && outcome.notes.count == 1, "\(outcome)")
+        #expect(UsageSummary.ownKeys(db) == .init())
+        lock = nil
+        #expect(try await publish(db).notes.isEmpty)
+        #expect(UsageSummary.ownKeys(db).ids == [try #require(MachineProfile.load(home: home).id)])
     }
 
     @Test func switchedMacCountsEachDayOnce() async throws {
@@ -581,7 +667,7 @@ extension UsageSummaryTests {
         try write(".akit/registry/projects/\(Self.project)/usage/fedcba9876543210.json",
                   String(decoding: UsageSummary.encode(UsageSummary.File(version: 1, machine: "fedcba9876543210", days: other.days)), as: UTF8.self))
 
-        let others = UsageSummary.load(brain: brainRoot, store: .brain(brainRoot), excludingOwn: [id])
+        let others = UsageSummary.load(brain: brainRoot, store: .brain(brainRoot), ownership: .init(own: [id]), now: now, calendar: calendar)
         #expect(Array(others.machines.keys) == ["fedcba9876543210"])
         #expect(others.machines["fedcba9876543210"]?.updated == "2026-09-01T10:00:00Z")
         #expect(others.projects == [Self.project: ["fedcba9876543210": UsageSummary.File(version: 1, machine: "fedcba9876543210", days: other.days)]])

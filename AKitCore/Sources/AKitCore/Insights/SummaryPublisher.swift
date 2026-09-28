@@ -22,6 +22,8 @@ enum SummaryPublisher {
         /// Files outside the brain written or removed: a work Mac's project summaries.
         var local: [String] = []
         var dryRun = false
+        /// Said to the user after the result, e.g. a step left for the next publish.
+        var notes: [String] = []
     }
 
     static func publish(env: HarnessEnvironment, brain: Brain, database: IndexDatabase, hostName: String, hardware: String?,
@@ -33,7 +35,7 @@ enum SummaryPublisher {
         let own = UsageSummary.ownKeys(database)
         let before = profile
         // Never saved while machine.json is broken (refused above).
-        if profile.identify(hardware: hardware, own: own), !dryRun {
+        if profile.identify(hardware: hardware, own: own, now: now), !dryRun {
             do {
                 try profile.save(home: home)
             } catch {
@@ -86,10 +88,11 @@ enum SummaryPublisher {
             throw Failure(message: "Couldn't read the session index: \(error.localizedDescription)")
         }
         // A personal Mac whose id changed: its files under older ids leave in the same commit,
-        // so other Macs never count those days twice.
+        // so other Macs never count those days twice. Only ids this hardware published: a clone's
+        // copied index also lists the original Mac's, whose files stay.
         var stalePaths: [String] = []
         if !profile.isWork {
-            for old in own.ids where old != id {
+            for old in own.published(by: profile.hardwareHash, cloned: profile.idSince != nil).ids where old != id {
                 if fm.fileExists(atPath: root.appending(path: UsageSummary.machinePath(old)).path) {
                     stalePaths.append(UsageSummary.machinePath(old))
                 }
@@ -155,8 +158,16 @@ enum SummaryPublisher {
                 }
             }
         }
+        // A running import (launchd) may hold the index for a while: then the keys are remembered next time.
         do {
-            try UsageSummary.remember(id: id, pseudonym: profile.isWork ? key : nil, in: database)
+            if let lock = try ImportLock.acquire(InsightsPaths(env: env).lock) {
+                try withExtendedLifetime(lock) {
+                    try UsageSummary.remember(id: id, pseudonym: profile.isWork ? key : nil, hardware: profile.hardwareHash,
+                                              since: profile.idSince, in: database)
+                }
+            } else {
+                outcome.notes.append("An import is running, so this Mac's keys are remembered in the index on the next publish.")
+            }
         } catch {
             throw Failure(message: "Published, but couldn't remember this Mac's keys in the index: \(error.localizedDescription)")
         }

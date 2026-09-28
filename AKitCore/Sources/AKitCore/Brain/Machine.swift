@@ -31,8 +31,11 @@ public struct MachineProfile: Codable, Hashable, Sendable {
     /// SHA-256 of the Mac's hardware UUID; never published. A different one means this file
     /// was copied to another Mac (Migration Assistant, Time Machine), which gets its own keys.
     public var hardwareHash: String?
+    /// When this Mac got keys of its own after being cloned from another one: the copied index
+    /// holds that Mac's sessions up to here, so the new keys' days start the local day after it.
+    public var idSince: Date?
 
-    private enum CodingKeys: String, CodingKey { case kind, name, id, pseudonym, kindSince, hardwareHash }
+    private enum CodingKeys: String, CodingKey { case kind, name, id, pseudonym, kindSince, hardwareHash, idSince }
 
     public init(kind: Kind = .personal, name: String? = nil) {
         self.kind = kind
@@ -48,11 +51,12 @@ public struct MachineProfile: Codable, Hashable, Sendable {
         id = try container.decodeIfPresent(String.self, forKey: .id)
         pseudonym = try container.decodeIfPresent(String.self, forKey: .pseudonym)
         hardwareHash = try container.decodeIfPresent(String.self, forKey: .hardwareHash)
-        if let since = try container.decodeIfPresent(String.self, forKey: .kindSince) {
+        for key in [CodingKeys.kindSince, .idSince] {
+            guard let since = try container.decodeIfPresent(String.self, forKey: key) else { continue }
             guard let date = ISO8601DateFormatter().date(from: since) else {
-                throw DecodingError.dataCorruptedError(forKey: .kindSince, in: container, debugDescription: "Not an ISO 8601 date: \(since)")
+                throw DecodingError.dataCorruptedError(forKey: key, in: container, debugDescription: "Not an ISO 8601 date: \(since)")
             }
-            kindSince = date
+            if key == .kindSince { kindSince = date } else { idSince = date }
         }
     }
 
@@ -64,12 +68,21 @@ public struct MachineProfile: Codable, Hashable, Sendable {
         try container.encodeIfPresent(pseudonym, forKey: .pseudonym)
         try container.encodeIfPresent(kindSince.map { ISO8601DateFormatter().string(from: $0) }, forKey: .kindSince)
         try container.encodeIfPresent(hardwareHash, forKey: .hardwareHash)
+        try container.encodeIfPresent(idSince.map { ISO8601DateFormatter().string(from: $0) }, forKey: .idSince)
     }
 
     /// The key this Mac's machine summary is published under: the pseudonym on a work Mac, else the id.
     public var summaryKey: String? { isWork ? pseudonym : id }
 
     public var isWork: Bool { kind == .work }
+
+    /// Where this Mac's summary days start: the later of the kind switch and the clone (`idSince`).
+    public var summarySince: Date? {
+        switch (kindSince, idSince) {
+        case let (kind?, id?): max(kind, id)
+        case let (kind, id): kind ?? id
+        }
+    }
 
     /// Name for this Mac's home record: the chosen name; on a work Mac never the host name.
     public var homeName: String? { name ?? (isWork ? "work" : nil) }
@@ -99,32 +112,85 @@ public struct MachineProfile: Codable, Hashable, Sendable {
     }
 
     /// Keys this Mac published usage summaries under, oldest first. Kept in the session index
-    /// (`meta.own_machine_keys`), so a lost `machine.json` gets its keys back.
+    /// (`meta.own_machine_keys`), so a lost `machine.json` gets its keys back. The index travels
+    /// with a clone (Migration Assistant, Time Machine), so each key also records the hardware that
+    /// published it: a clone never takes the original Mac's keys for its own.
     public struct OwnKeys: Codable, Equatable, Sendable {
         public var ids: [String] = []
         public var pseudonyms: [String] = []
+        /// Key → hardware hash of the Mac that published it. Keys published before this was kept have none.
+        public var hardware: [String: String] = [:]
+        /// Key → `idSince` of the Mac that published it (ISO 8601), so a lost `machine.json` gets it back.
+        public var since: [String: String] = [:]
 
-        public init(ids: [String] = [], pseudonyms: [String] = []) {
+        public init(ids: [String] = [], pseudonyms: [String] = [], hardware: [String: String] = [:], since: [String: String] = [:]) {
             self.ids = ids
             self.pseudonyms = pseudonyms
+            self.hardware = hardware
+            self.since = since
+        }
+
+        private enum CodingKeys: String, CodingKey { case ids, pseudonyms, hardware, since }
+
+        // Older indexes have only ids and pseudonyms.
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            ids = try container.decodeIfPresent([String].self, forKey: .ids) ?? []
+            pseudonyms = try container.decodeIfPresent([String].self, forKey: .pseudonyms) ?? []
+            hardware = try container.decodeIfPresent([String: String].self, forKey: .hardware) ?? [:]
+            since = try container.decodeIfPresent([String: String].self, forKey: .since) ?? [:]
         }
 
         public var all: Set<String> { Set(ids + pseudonyms) }
+
+        /// The keys the Mac with this hardware published: those recorded with its hardware, and
+        /// ones without a record unless the Mac is a clone (they may be the original's then).
+        /// Without a hardware hash only the unrecorded ones count.
+        public func published(by hardware: String?, cloned: Bool) -> OwnKeys {
+            func mine(_ key: String) -> Bool {
+                guard let recorded = self.hardware[key] else { return !cloned }
+                return recorded == hardware
+            }
+            return OwnKeys(ids: ids.filter(mine), pseudonyms: pseudonyms.filter(mine),
+                           hardware: self.hardware.filter { mine($0.key) }, since: since.filter { mine($0.key) })
+        }
+
+        func sinceDate(_ key: String) -> Date? { since[key].flatMap { ISO8601DateFormatter().date(from: $0) } }
     }
 
     /// Fills in what the profile lacks: the hardware hash, an id (the last one this Mac published
     /// under, else a new random one) and, on a work Mac, a pseudonym (likewise). A profile copied
     /// from another Mac (another hardware hash) gets a new id and a new pseudonym: the keys it
-    /// carries belong to that Mac. Returns whether anything changed.
-    mutating func identify(hardware: String?, own: OwnKeys) -> Bool {
+    /// carries belong to that Mac, and so do the sessions its copied index holds up to now, so
+    /// `idSince` makes the new keys' days start after today. Returns whether anything changed.
+    mutating func identify(hardware: String?, own: OwnKeys, now: Date = Date()) -> Bool {
         let before = self
         if let hardware, let stored = hardwareHash, stored != hardware {
-            id = Self.newID()
-            pseudonym = Self.newPseudonym()
+            // Keys this hardware published before (the file was copied back) are its own again.
+            let mine = own.published(by: hardware, cloned: true)
+            id = mine.ids.last
+            pseudonym = mine.pseudonyms.last
+            idSince = id.flatMap(own.sinceDate)
+            if id == nil {
+                id = Self.newID()
+                idSince = now
+            }
         }
         if let hardware { hardwareHash = hardware }
-        if id == nil { id = own.ids.last ?? Self.newID() }
-        if isWork, pseudonym == nil { pseudonym = own.pseudonyms.last ?? Self.newPseudonym() }
+        if id == nil {
+            let mine = own.published(by: hardwareHash, cloned: idSince != nil)
+            if let last = mine.ids.last {
+                id = last
+                idSince = idSince ?? own.sinceDate(last)
+            } else {
+                id = Self.newID()
+                // An index with keys of another Mac only: its sessions are that Mac's.
+                if !own.ids.isEmpty, idSince == nil { idSince = now }
+            }
+        }
+        if isWork, pseudonym == nil {
+            pseudonym = own.published(by: hardwareHash, cloned: idSince != nil).pseudonyms.last ?? Self.newPseudonym()
+        }
         return self != before
     }
 
@@ -163,12 +229,13 @@ public struct MachineProfile: Codable, Hashable, Sendable {
             profile.id = profile.id ?? old.id
             profile.pseudonym = profile.pseudonym ?? old.pseudonym
             profile.hardwareHash = profile.hardwareHash ?? old.hardwareHash
+            profile.idSince = profile.idSince ?? old.idSince
             profile.kindSince = old.kind == profile.kind ? profile.kindSince ?? old.kindSince : now
         } else {
             // What the broken file said is unknown: count the summary days from today on.
             profile.kindSince = now
         }
-        _ = profile.identify(hardware: hardware, own: ownKeys ?? UsageSummary.ownKeys(home: home))
+        _ = profile.identify(hardware: hardware, own: ownKeys ?? UsageSummary.ownKeys(home: home), now: now)
         // A broken file says nothing about where records were kept; assume the brain, as before the file.
         let oldStore = old.problem == nil ? ProjectStore.current(brain: brainRoot, home: home, machine: old) : .brain(brainRoot)
         let oldHome = ProjectSetup.homeID(hostName: hostName, machineName: old.homeName)

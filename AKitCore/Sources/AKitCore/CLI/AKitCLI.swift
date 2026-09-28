@@ -251,7 +251,7 @@ public enum AKitCLI {
                                                   database: database)
                     let published = try await SummaryPublisher.publish(env: env, brain: brain, database: database, hostName: hostName,
                                                                        hardware: hardwareHash())
-                    if !published.committed.isEmpty { out(publishText(published)) }
+                    if !published.committed.isEmpty || !published.notes.isEmpty { out(publishText(published)) }
                 } catch let failure as SummaryPublisher.Failure {
                     err("akit: usage summaries not published: \(failure.message)")
                 } catch {
@@ -1034,6 +1034,7 @@ public enum AKitCLI {
         lines.append(outcome.committed.isEmpty ? "Usage summaries are up to date (\(who)); nothing to commit."
                      : "Committed “\(outcome.message)”: \(outcome.committed.joined(separator: ", ")). akit sync pushes it.")
         if !outcome.local.isEmpty { lines.append("Project summaries kept on this Mac only: \(outcome.local.count) files.") }
+        lines += outcome.notes.map { "note: \($0)" }
         return lines.joined(separator: "\n")
     }
 
