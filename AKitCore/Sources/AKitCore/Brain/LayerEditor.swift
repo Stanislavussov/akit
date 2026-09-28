@@ -141,7 +141,7 @@ public enum LayerEditor {
         let result = try appending({ indent in quoted.flatMap { ["\(indent)- name: \($0)", "\(indent)  mode: \(mode.rawValue)"] } },
                                    toList: "skills", in: text)
         var expected = before
-        expected.skills += names.map { LayerSkill(name: $0, mode: mode, when: [], override: false) }
+        expected.skills += names.map { LayerSkill(name: $0, mode: mode, when: [], override: false, keepAuto: false) }
         try verify(result, expected, "AKit couldn't add skills to layer.yaml safely. Add them by hand.")
         return result
     }
@@ -178,7 +178,8 @@ public enum LayerEditor {
         let result = lines.joined(separator: newline)
 
         var expected = before
-        expected.skills = before.skills.map { $0.name == skill ? LayerSkill(name: skill, mode: mode, when: $0.when, override: $0.override) : $0 }
+        expected.skills = before.skills.map { $0.name == skill ? LayerSkill(name: skill, mode: mode, when: $0.when, override: $0.override,
+                                                                         keepAuto: $0.keepAuto) : $0 }
         try verify(result, expected, "AKit couldn't change the mode of \(skill) in layer.yaml safely. Edit it by hand.")
         return result
     }
