@@ -1,4 +1,14 @@
-import AKitCore
+import AKitBrain
+import AKitFoundation
+import AKitHarnesses
+import AKitInsights
+import AKitMCP
+import AKitModel
+import AKitProjectSetup
+import AKitSessions
+import AKitSkills
+import AKitSkillsSh
+import AKitUsage
 import Foundation
 import Observation
 
@@ -224,21 +234,20 @@ final class AppModel {
 
     /// Render targets for the harnesses installed on this Mac (`claude`, `pi`, …).
     var installedTargets: [String] {
-        installations.map { $0.id == .claudeCode ? "claude" : $0.id.rawValue }
-            .filter(ProjectAnswers.knownTargets.contains)
+        installations.compactMap { ProjectAnswers.target(for: $0.id) }
     }
 
     /// The brain's id for a project folder (from its git remote).
     func projectID(for project: URL) async -> String {
         let env = HarnessEnvironment.current
         let root = projectRoots.first.map(env.expand) ?? env.homeDirectory.appending(path: "Projects")
-        return await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
+        return await ProjectRecords.projectID(for: project, projectsRoot: root, env: env)
     }
 
     /// Brain project ids found on this Mac → their folders: the home folder and every known project.
     func projectFolders() async -> [String: URL] {
         let env = HarnessEnvironment.current
-        var folders = [ProjectSetup.homeID(machineName: machine.homeName): env.homeDirectory]
+        var folders = [ProjectRecords.homeID(machineName: machine.homeName): env.homeDirectory]
         await withTaskGroup(of: (String, URL).self) { group in
             for project in projects {
                 group.addTask { (await self.projectID(for: project), project) }
@@ -370,22 +379,8 @@ final class AppModel {
 
     /// Stores the secrets in the Keychain, writes the server (backup first), then rescans.
     func applyMCP(_ plan: MCPWritePlan) async throws -> MCPWriter.Outcome {
-        let env = HarnessEnvironment.current
-        let claude = installations.first { $0.id == .claudeCode }?.executableURL
-        let outcome = try await MCPWriter.apply(plan, secrets: KeychainSecretStore(), home: env.homeDirectory) { arguments, directory in
-            guard let claude else { throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "The claude command was not found."]) }
-            var environment = env.variables
-            environment["PATH"] = env.pathForChildProcesses
-            guard let result = await ProcessRunner.run(claude, arguments: arguments, directory: directory,
-                                                       environment: environment, timeout: 30) else {
-                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "claude couldn't be started."])
-            }
-            guard result.succeeded else {
-                let output = SecretFilter.masked(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
-                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey:
-                    "claude \(arguments.prefix(2).joined(separator: " ")) failed: \(output)"])
-            }
-        }
+        let outcome = try await MCPWriter.apply(plan, claude: installations.first { $0.id == .claudeCode },
+                                                secrets: KeychainSecretStore(), env: HarnessEnvironment.current)
         keychainVersion += 1
         await refresh()
         return outcome
@@ -393,8 +388,7 @@ final class AppModel {
 
     /// Messages of one session, read in the background.
     func transcript(of session: SessionSummary) async throws -> SessionTranscript {
-        guard let adapter = adapter(for: session.harness) else { return SessionTranscript() }
-        return try await Self.background { try adapter.transcript(of: session) }
+        try await Self.background { try SessionReader.transcript(of: session) }
     }
 
     // MARK: Usage
@@ -402,18 +396,16 @@ final class AppModel {
     /// Token usage recorded by the installed harnesses from `since` on, read in the background.
     func usage(since: Date) async throws -> [UsageRecord] {
         let installations = installations
-        let adapters = adapters
         return try await Self.background {
-            UsageScanner.scan(installations: installations, adapters: adapters, since: since, in: .current)
+            UsageScanner.scan(installations: installations, since: since, in: .current)
         }
     }
 
     /// Subscription limit use (Codex: ChatGPT plan windows) from `since` on, read in the background.
     func limits(since: Date) async throws -> [LimitSample] {
         let installations = installations
-        let adapters = adapters
         return try await Self.background {
-            UsageScanner.scanLimits(installations: installations, adapters: adapters, since: since, in: .current)
+            UsageScanner.scanLimits(installations: installations, since: since, in: .current)
         }
     }
 
@@ -423,13 +415,12 @@ final class AppModel {
     private(set) var capturedPrompts: [String: PromptSnapshot] = [:]
 
     func promptAccess(_ harness: HarnessID) -> SystemPromptAccess {
-        adapter(for: harness)?.systemPromptAccess ?? .unavailable
+        PromptReader.access(for: harness)
     }
 
     /// The system prompt saved in this session, if the harness saves it.
     func recordedPrompt(in session: SessionSummary) async throws -> PromptSnapshot? {
-        guard let adapter = adapter(for: session.harness) else { return nil }
-        return try await Self.background { try adapter.recordedPrompt(in: session) }
+        try await Self.background { try PromptReader.recorded(in: session) }
     }
 
     func capturedPrompt(harness: HarnessID, project: URL) -> PromptSnapshot? {
@@ -439,7 +430,7 @@ final class AppModel {
     /// Asks the harness for its current system prompt in `project` (see PiPromptProbe).
     func capturePrompt(harness: HarnessID, project: URL) async throws {
         guard let adapter = adapter(for: harness) else { return }
-        guard let prompt = try await adapter.capturePrompt(in: project, env: .current) else {
+        guard let prompt = try await PromptReader.capture(harness: harness, in: project, env: .current) else {
             throw NSError(domain: "AKit", code: 2, userInfo: [NSLocalizedDescriptionKey:
                 "\(adapter.displayName) couldn't be started: its command was not found."])
         }
@@ -506,7 +497,7 @@ final class AppModel {
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
             async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env)
-            async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
+            async let sessions = SessionScanner.scan(installations: found, in: env)
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
             async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
             async let brain = Brain.load(from: brainRoot)

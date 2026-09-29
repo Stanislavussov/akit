@@ -1,12 +1,23 @@
 // swift-tools-version: 6.0
-// AKit core: data model, harness adapters, file access. No UI.
+// AKit's logic, one module per area (docs/design/architecture.md). No UI.
 import PackageDescription
 
 let package = Package(
     name: "AKitCore",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "AKitCore", targets: ["AKitCore"]),
+        // One library per module the app imports (project.yml lists the same ones).
+        .library(name: "AKitFoundation", targets: ["AKitFoundation"]),
+        .library(name: "AKitModel", targets: ["AKitModel"]),
+        .library(name: "AKitHarnesses", targets: ["AKitHarnesses"]),
+        .library(name: "AKitSkills", targets: ["AKitSkills"]),
+        .library(name: "AKitSkillsSh", targets: ["AKitSkillsSh"]),
+        .library(name: "AKitSessions", targets: ["AKitSessions"]),
+        .library(name: "AKitUsage", targets: ["AKitUsage"]),
+        .library(name: "AKitMCP", targets: ["AKitMCP"]),
+        .library(name: "AKitBrain", targets: ["AKitBrain"]),
+        .library(name: "AKitInsights", targets: ["AKitInsights"]),
+        .library(name: "AKitProjectSetup", targets: ["AKitProjectSetup"]),
         // `akit` command for agents and terminals (install: make install-cli).
         .executable(name: "akit", targets: ["akit"]),
     ],
@@ -15,8 +26,32 @@ let package = Package(
         .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
     ],
     targets: [
-        .target(name: "AKitCore", dependencies: ["Yams"]),
-        .executableTarget(name: "akit", dependencies: ["AKitCore"]),
-        .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore"]),
+        .target(name: "AKitFoundation"),
+        .target(name: "AKitModel"),
+        .target(name: "AKitHarnesses", dependencies: ["AKitFoundation", "AKitModel"]),
+        .target(name: "AKitSkills", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .target(name: "AKitSkillsSh", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills"]),
+        .target(name: "AKitSessions", dependencies: ["AKitFoundation", "AKitModel"]),
+        .target(name: "AKitUsage", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions"]),
+        .target(name: "AKitMCP", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .target(name: "AKitBrain", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "Yams"]),
+        .target(name: "AKitInsights", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
+        // The rulesync seam: sees only the brain's ProjectBundle and RenderResult.
+        .target(name: "AKitRender", dependencies: ["AKitBrain"]),
+        .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitBrain", "AKitRender", "AKitInsights"]),
+        .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitInsights", "AKitProjectSetup"]),
+        .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
+        .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
+        .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitModel", "AKitSkills"]),
+        .testTarget(name: "AKitSkillsTests", dependencies: ["AKitSkills", "AKitFoundation", "AKitHarnesses"]),
+        .testTarget(name: "AKitSkillsShTests", dependencies: ["AKitSkillsSh", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills"]),
+        .testTarget(name: "AKitSessionsTests", dependencies: ["AKitSessions", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .testTarget(name: "AKitUsageTests", dependencies: ["AKitUsage", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .testTarget(name: "AKitMCPTests", dependencies: ["AKitMCP", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitProjectSetup", "AKitCommandLine"]),
+        .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitProjectSetup", "AKitCommandLine"]),
+        .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain"]),
+        .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender"]),
+        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitFoundation", "AKitBrain", "AKitInsights"]),
     ]
 )

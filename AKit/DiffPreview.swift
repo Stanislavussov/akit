@@ -1,4 +1,4 @@
-import AKitCore
+import AKitFoundation
 import SwiftUI
 
 /// Changed lines of a file with 3 lines of context; long unchanged runs become "…".

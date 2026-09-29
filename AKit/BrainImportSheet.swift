@@ -1,4 +1,5 @@
-import AKitCore
+import AKitBrain
+import AKitFoundation
 import SwiftUI
 
 /// Preview and run an import of skills into a brain layer: all global skills into core by

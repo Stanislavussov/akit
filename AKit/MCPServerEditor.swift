@@ -1,4 +1,6 @@
-import AKitCore
+import AKitFoundation
+import AKitMCP
+import AKitModel
 import SwiftUI
 
 /// Sheet for adding, editing or deleting an MCP server: fill the form or paste JSON, pick

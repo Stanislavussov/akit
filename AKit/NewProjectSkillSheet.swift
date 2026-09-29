@@ -1,4 +1,5 @@
-import AKitCore
+import AKitBrain
+import AKitProjectSetup
 import SwiftUI
 
 /// Create a skill that belongs to one project: `.agents/skills/<name>/SKILL.md` in the
@@ -35,7 +36,7 @@ struct NewProjectSkillSheet: View {
                     .font(.callout.monospaced())
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(.quaternary))
             }
-            Text("Saved to \(Render.skillsFolder)/\(name.isEmpty ? "<name>" : name) in the project. Commit it with the project. Pi, Codex and OpenCode see it right away; Claude Code once the project has the .claude/skills link (Layers & Skills… → Apply adds it).")
+            Text("Saved to \(ProjectBundle.skillsFolder)/\(name.isEmpty ? "<name>" : name) in the project. Commit it with the project. Pi, Codex and OpenCode see it right away; Claude Code once the project has the .claude/skills link (Layers & Skills… → Apply adds it).")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3) }

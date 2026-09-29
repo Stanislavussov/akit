@@ -24,8 +24,12 @@ Pi and other harnesses read this file too.
 - UI text, code comments and docs are English only.
 - Xcode project is generated: edit `project.yml`, then `make generate`. Don't commit
   `AKit.xcodeproj`.
-- Logic lives in the `AKitCore` Swift package and is tested with Swift Testing
-  (`make test`). Tests use a temporary fake home and never touch real config files.
+- Logic lives in the Swift package in `AKitCore/`, one module per area (`AKitFoundation`,
+  `AKitHarnesses`, `AKitSkills`, `AKitSessions`, `AKitBrain`, `AKitInsights`, `AKitRender`,
+  …; see `docs/design/architecture.md` for the map and allowed dependencies). The app and
+  the `akit` command import only the modules they use. Tested with Swift Testing, one test
+  target per module (`make test`). Tests use a temporary fake home and never touch real
+  config files.
 - AKit only reads harness files unless a step explicitly adds safe writing
   (backup + diff first). Deleting moves things to the Trash.
 - Never display or copy secrets: auth.json files, tokens, MCP env/headers,
