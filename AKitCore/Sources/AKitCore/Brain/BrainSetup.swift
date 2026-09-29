@@ -54,7 +54,7 @@ public enum BrainSetup {
                 try Data(text.utf8).write(to: file, options: .withoutOverwriting)
             }
             // Session capture; each Mac installs it with akit insights install.
-            for plugin in CaptureInstaller.pluginFiles {
+            for plugin in CapturePlugin.files {
                 let file = root.appending(path: plugin.path)
                 try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try Data(plugin.text.utf8).write(to: file, options: .withoutOverwriting)

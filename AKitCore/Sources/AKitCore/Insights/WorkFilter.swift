@@ -60,37 +60,18 @@ enum WorkFilter {
         var needsHead: Bool { if case .layer = self { true } else { false } }
     }
 
-    /// Variables that would win over the brain's configured identity in a commit git makes.
-    static let identityVariables = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"]
-
-    /// The environment without `identityVariables`, so commits (also a sync's rebase) carry the brain's own identity.
-    static func withoutIdentity(_ environment: [String: String]) -> [String: String] {
-        environment.filter { !identityVariables.contains($0.key) }
-    }
-
-    /// Keeps a global `commit.gpgsign` (maybe with a work key) from signing the brain's commits.
-    static let noSigning = ["-c", "commit.gpgsign=false"]
-
     /// Checks that don't need the files: a readable `machine.json`, the brain's own git name and
     /// email and nothing staged already (so a refusal can reset the index without touching the user's work).
     static func preflight(brain root: URL, machine: MachineProfile, env: HarnessEnvironment) async throws(Failure) {
         if let problem = machine.problem { throw Failure(message: "\(problem) Nothing is published from this Mac until then.") }
-        try await requireOwnIdentity(brain: root, env: env)
+        do {
+            try await BrainGit.requireOwnIdentity(brain: root, env: env)
+        } catch {
+            throw Failure(message: error.message)
+        }
         let staged = try await git(["diff", "--cached", "--name-only", "-z"], in: root, env: env)
         guard staged.isEmpty else {
             throw Failure(message: "The brain has staged changes; commit or unstage them first (nothing was committed).")
-        }
-    }
-
-    /// The brain's own `user.email` and `user.name` (in its `.git/config`), checked fail-closed with
-    /// git: without them a commit would carry the global ones, maybe the work ones.
-    static func requireOwnIdentity(brain root: URL, env: HarnessEnvironment) async throws(Failure) {
-        for (key, what) in [("user.email", "email"), ("user.name", "name")] {
-            let value = try await git(["config", "--local", "--get", key], in: root, env: env,
-                                      failure: "The brain has no git \(what) of its own, so a commit would carry the global one (maybe the work \(what))")
-            guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw Failure(message: "The brain's git \(what) is empty. Set one: git -C \(root.path) config \(key) <personal \(what)>")
-            }
         }
     }
 
@@ -143,7 +124,7 @@ enum WorkFilter {
             let paths = staged.sorted()
             var checked: [String: String] = [:]
             for path in paths { checked[path] = try await git(["rev-parse", ":\(path)"], in: root, env: env) }
-            try await git(["-c", "core.hooksPath=/dev/null"] + noSigning + ["commit", "--quiet", "--no-verify", "-m", message, "--"] + paths,
+            try await git(["-c", "core.hooksPath=/dev/null"] + BrainGit.noSigning + ["commit", "--quiet", "--no-verify", "-m", message, "--"] + paths,
                           in: root, env: env, identityFromConfig: true)
             // A path in the commit takes the file as it is on disk: it must still be the checked bytes.
             let committed = Set(records(try await git(["diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", "-z", "HEAD"],
@@ -198,16 +179,16 @@ enum WorkFilter {
     /// Runs git in the brain. `identityFromConfig` drops the author and committer variables, so
     /// the commit carries the brain's configured identity. Output is stdout and stderr combined.
     @discardableResult
-    private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment, failure: String? = nil,
+    private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment,
                             identityFromConfig: Bool = false) async throws(Failure) -> String {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found, so nothing was committed.") }
         var environment = env.gitVariables
-        if identityFromConfig { environment = withoutIdentity(environment) }
+        if identityFromConfig { environment = BrainGit.withoutIdentity(environment) }
         let result = await ProcessRunner.run(git, arguments: ["-C", root.path] + arguments, directory: root,
                                              environment: environment, timeout: 30)
         guard let result, result.succeeded else {
             let output = result.map(\.failureText) ?? "couldn't start git"
-            throw Failure(message: "\(failure ?? "git \(arguments.first { !$0.hasPrefix("-") } ?? "") failed") (\(output)). Nothing was committed.")
+            throw Failure(message: "git \(arguments.first { !$0.hasPrefix("-") } ?? "") failed (\(output)). Nothing was committed.")
         }
         return result.output
     }

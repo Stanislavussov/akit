@@ -107,7 +107,7 @@ public enum BrainSync {
                 }
                 if work {
                     do {
-                        try await WorkFilter.requireOwnIdentity(brain: root, env: env)
+                        try await BrainGit.requireOwnIdentity(brain: root, env: env)
                     } catch {
                         throw Failure(message: "Both this Mac and the remote have new commits; putting this Mac's on top would re-stamp them. \(error.message). Nothing was changed.")
                     }
@@ -228,8 +228,8 @@ public enum BrainSync {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found.") }
         var environment = env.gitVariables
             .merging(extra) { $1 }
-        if work { environment = WorkFilter.withoutIdentity(environment) }
-        let result = await ProcessRunner.run(git, arguments: (work ? WorkFilter.noSigning : []) + arguments, directory: root,
+        if work { environment = BrainGit.withoutIdentity(environment) }
+        let result = await ProcessRunner.run(git, arguments: (work ? BrainGit.noSigning : []) + arguments, directory: root,
                                              environment: environment, timeout: timeout)
         guard let result, result.succeeded else {
             let output = result.map(\.failureText) ?? "couldn't start git"
