@@ -65,7 +65,7 @@ enum PiPromptProbe {
     static func capture(executable: URL, project: URL, env: HarnessEnvironment,
                         timeout: TimeInterval = 60) async throws -> PromptSnapshot {
         let fm = FileManager.default
-        guard SkillScanner.isDirectory(project) else { throw ProbeError.missingFolder(project) }
+        guard FileWalk.isDirectory(project) else { throw ProbeError.missingFolder(project) }
         let folder = fm.temporaryDirectory.appending(path: "akit-pi-probe-\(UUID().uuidString)")
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: folder) }

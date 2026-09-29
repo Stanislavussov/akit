@@ -214,7 +214,7 @@ public struct MachineProfile: Codable, Hashable, Sendable {
         defer { IOObjectRelease(service) }
         guard let uuid = IORegistryEntryCreateCFProperty(service, "IOPlatformUUID" as CFString, kCFAllocatorDefault, 0)?
             .takeRetainedValue() as? String, !uuid.isEmpty else { return nil }
-        return ProjectSetup.sha256(Data(uuid.utf8))
+        return Checksum.sha256(Data(uuid.utf8))
     }
 
     /// Saves a new role for this Mac and says what that means. The home record follows

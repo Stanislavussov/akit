@@ -68,7 +68,7 @@ extension ClaudeSessions {
     static func runs(of session: URL) -> [Run] {
         var (responses, states) = sessionUsage(in: session)
         let subagents = session.deletingPathExtension().appending(path: "subagents")
-        for agent in SkillScanner.children(of: subagents) where agent.pathExtension == "jsonl" {
+        for agent in FileWalk.children(of: subagents) where agent.pathExtension == "jsonl" {
             responses += sessionUsage(in: agent).responses
         }
         // A process saves again as it goes: per start time keep the largest total, and of

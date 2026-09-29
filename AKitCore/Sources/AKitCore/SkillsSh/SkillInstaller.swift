@@ -144,7 +144,7 @@ public enum SkillInstaller {
     @discardableResult
     public static func install(_ request: InstallRequest, into targets: [InstallTarget], replace: Bool,
                                in env: HarnessEnvironment,
-                               trash: (URL) throws -> URL? = SkillRemover.defaultTrash) throws -> [URL] {
+                               trash: (URL) throws -> URL? = Trash.move) throws -> [URL] {
         serial.lock()
         defer { serial.unlock() }
 

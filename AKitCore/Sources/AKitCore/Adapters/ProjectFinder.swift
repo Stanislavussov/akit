@@ -17,7 +17,7 @@ public enum ProjectFinder {
 
     private static func collect(_ dir: URL, depth: Int, maxDepth: Int, into result: inout [URL]) {
         guard depth < maxDepth else { return }
-        for child in SkillScanner.children(of: dir) where SkillScanner.isDirectory(child) {
+        for child in FileWalk.children(of: dir) where FileWalk.isDirectory(child) {
             if child.lastPathComponent == "node_modules" { continue }
             if isProject(child) {
                 result.append(child)

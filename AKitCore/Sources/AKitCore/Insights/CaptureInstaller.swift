@@ -436,7 +436,7 @@ extension CaptureInstaller {
 
     /// `ts` of the last line in the newest spool day file.
     private func lastSpoolLine() -> Date? {
-        let files = SkillScanner.children(of: InsightsPaths(env: env).spool).filter { $0.pathExtension == "jsonl" }
+        let files = FileWalk.children(of: InsightsPaths(env: env).spool).filter { $0.pathExtension == "jsonl" }
         guard let newest = files.max(by: { $0.lastPathComponent < $1.lastPathComponent }),
               let ms = (JSONLines.tail(of: newest).last?["ts"] as? NSNumber)?.doubleValue else { return nil }
         return Date(timeIntervalSince1970: ms / 1000)

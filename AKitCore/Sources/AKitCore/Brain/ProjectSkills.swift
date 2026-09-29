@@ -88,7 +88,7 @@ public enum ProjectSkills {
 
     /// Moves one of the project's own skills to the Trash.
     public static func remove(_ name: String, in project: URL, id: String, store: ProjectStore,
-                              trash: (URL) throws -> URL? = SkillRemover.defaultTrash) throws(Failure) {
+                              trash: (URL) throws -> URL? = Trash.move) throws(Failure) {
         guard isInside(project), let skill = list(in: project, id: id, store: store).first(where: { $0.name == name }) else {
             throw Failure(message: "\(name) is not one of the project's own skills.")
         }

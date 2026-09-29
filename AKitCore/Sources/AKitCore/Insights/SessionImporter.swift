@@ -162,24 +162,24 @@ struct SessionImporter {
     func discover() -> [LogFile] {
         var found: [LogFile] = []
         let projects = ClaudeCodeAdapter().configRoot(in: env).appending(path: "projects")
-        for folder in SkillScanner.children(of: projects) where SkillScanner.isDirectory(folder) {
-            for item in SkillScanner.children(of: folder) {
+        for folder in FileWalk.children(of: projects) where FileWalk.isDirectory(folder) {
+            for item in FileWalk.children(of: folder) {
                 if item.pathExtension == "jsonl" {
                     found += Self.logFile(item, harness: "claude", kind: "session").map { [$0] } ?? []
-                } else if SkillScanner.isDirectory(item) {
-                    for agent in SkillScanner.children(of: item.appending(path: "subagents")) where agent.pathExtension == "jsonl" {
+                } else if FileWalk.isDirectory(item) {
+                    for agent in FileWalk.children(of: item.appending(path: "subagents")) where agent.pathExtension == "jsonl" {
                         found += Self.logFile(agent, harness: "claude", kind: "subagent").map { [$0] } ?? []
                     }
                 }
             }
         }
         let pi = PiSessions.folder(configRoot: PiAdapter().configRoot(in: env), in: env)
-        for folder in SkillScanner.children(of: pi) where SkillScanner.isDirectory(folder) {
-            for item in SkillScanner.children(of: folder) where item.pathExtension == "jsonl" {
+        for folder in FileWalk.children(of: pi) where FileWalk.isDirectory(folder) {
+            for item in FileWalk.children(of: folder) where item.pathExtension == "jsonl" {
                 found += Self.logFile(item, harness: "pi", kind: "session").map { [$0] } ?? []
             }
         }
-        for item in SkillScanner.children(of: InsightsPaths(env: env).spool) where item.pathExtension == "jsonl" {
+        for item in FileWalk.children(of: InsightsPaths(env: env).spool) where item.pathExtension == "jsonl" {
             found += Self.logFile(item, harness: "akit", kind: "spool").map { [$0] } ?? []
         }
         return found

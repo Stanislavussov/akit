@@ -31,7 +31,7 @@ public enum BrainRemove {
     /// commits. Returns the projects to re-apply so its files leave them.
     @discardableResult
     public static func removeLayer(_ name: String, in brain: Brain, env: HarnessEnvironment,
-                                   trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) -> [String] {
+                                   trash: (URL) throws -> URL? = Trash.move) async throws(Failure) -> [String] {
         guard let layer = brain.layers.first(where: { $0.name == name }) else { throw Failure(message: "No layer named \(name).") }
         guard name != "core" else { throw Failure(message: "The core layer can't be removed; remove skills from it instead.") }
         let impact = layerImpact(name, in: brain, home: env.homeDirectory)
@@ -67,7 +67,7 @@ public enum BrainRemove {
     /// Moves `skills/<name>` to the Trash, drops it from projects' saved answers and
     /// commits. Refused while a layer lists it.
     public static func removeSkill(_ name: String, in brain: Brain, env: HarnessEnvironment,
-                                   trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) {
+                                   trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
         guard let skill = brain.skills.first(where: { $0.name == name }) else { throw Failure(message: "No skill named \(name) in skills/.") }
         let users = skillUsers(name, in: brain)
         guard users.isEmpty else {
@@ -144,7 +144,7 @@ public enum BrainRemove {
     /// the Trash, committed when the store is the brain's. Its rendered files are left to
     /// `akit remove project`, which first applies an empty render.
     public static func forgetProject(_ id: String, in store: ProjectStore, env: HarnessEnvironment,
-                                     trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) {
+                                     trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
         let folder = store.folder(id: id)
         guard FileManager.default.fileExists(atPath: folder.path) else { throw Failure(message: "Nothing is saved for \(id).") }
         do {

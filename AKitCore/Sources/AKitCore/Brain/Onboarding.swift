@@ -48,7 +48,7 @@ public enum Onboarding {
 
     public static func run(_ options: Options, root: URL, env: HarnessEnvironment, io: IO, preferences: Preferences,
                            hostName: String, installedTargets: [String],
-                           trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) {
+                           trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
         try await brain(options, root: root, env: env, io: io)
         projectsFolder(io: io, preferences: preferences)
         if options.skipHome {

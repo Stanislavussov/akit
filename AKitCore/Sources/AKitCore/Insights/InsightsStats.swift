@@ -402,7 +402,7 @@ enum InsightsStats {
             } else {
                 continue
             }
-            if SkillScanner.isDirectory(folder) { folders[id] = folder }
+            if FileWalk.isDirectory(folder) { folders[id] = folder }
         }
         return folders
     }

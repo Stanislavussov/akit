@@ -79,15 +79,15 @@ enum SkillOwners {
         if own.isEmpty {
             if case .plugin(let plugin) = matches[0].scope { return .plugin(plugin) }
             if case .bundled = matches[0].scope { return .builtIn }
-            return .handInstalled(SkillScanner.tilde(matches[0].file, home: home))
+            return .handInstalled(FileWalk.tilde(matches[0].file, home: home))
         }
         guard let links else { return .unknown }
         if let hand = own.first(where: { links[$0.id] == .notInBrain }) {
-            return .handInstalled(SkillScanner.tilde(hand.file, home: home))
+            return .handInstalled(FileWalk.tilde(hand.file, home: home))
         }
         let listing = brainLayers.filter { $0.skills.contains { $0.name == name } }.map(\.name).sorted()
         if !listing.isEmpty, let copy = own.first(where: { links[$0.id] == .sameName }) {
-            return .unrendered(layers: listing, file: SkillScanner.tilde(copy.file, home: home))
+            return .unrendered(layers: listing, file: FileWalk.tilde(copy.file, home: home))
         }
         return .unknown
     }

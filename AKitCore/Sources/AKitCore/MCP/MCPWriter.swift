@@ -135,7 +135,7 @@ public enum MCPWriter {
         if let reason = target.blockedReason { throw ConfigTextError(reason) }
         if let problem = draft.problems.first { throw ConfigTextError(problem) }
         let name = draft.name.trimmingCharacters(in: .whitespaces)
-        let where_ = SkillScanner.tilde(target.file, home: home)
+        let where_ = FileWalk.tilde(target.file, home: home)
         var notes: [String] = []
         let built = try entry(for: draft, target: target, mode: secretMode, notes: &notes)
         let entryJSON = try text(redacted(built.entry))
@@ -202,7 +202,7 @@ public enum MCPWriter {
 
     /// Deleting `name` from the target. Keychain items are left alone: another server may use them.
     public static func removalPlan(_ name: String, from target: MCPWriteTarget, home: URL) throws -> MCPWritePlan {
-        let where_ = SkillScanner.tilde(target.file, home: home)
+        let where_ = FileWalk.tilde(target.file, home: home)
         guard let before = try? String(contentsOf: target.file, encoding: .utf8) else {
             throw ConfigTextError("\(where_) doesn't exist.")
         }
@@ -366,7 +366,7 @@ public enum MCPWriter {
                              runClaude: @Sendable (_ arguments: [String], _ directory: URL?) async throws -> Void)
         async throws -> Outcome {
         let target = plan.target
-        let where_ = SkillScanner.tilde(target.file, home: home)
+        let where_ = FileWalk.tilde(target.file, home: home)
         if let before = plan.before {
             let now = (try? String(contentsOf: target.file, encoding: .utf8)) ?? ""
             guard now == before || target.claudeScope != nil else {
@@ -374,7 +374,7 @@ public enum MCPWriter {
             }
         }
         let backup = try backUp(target.file, home: home)
-        let backupNote = backup.map { " A backup is in \(SkillScanner.tilde($0, home: home))." } ?? ""
+        let backupNote = backup.map { " A backup is in \(FileWalk.tilde($0, home: home))." } ?? ""
 
         /// Secrets are stored once the entry that uses them is written.
         func saveSecrets() throws {

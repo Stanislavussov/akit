@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Applies a render to a project folder: what would change, then backup + write +
@@ -113,7 +112,7 @@ public enum ProjectSetup {
     static func localID(path: String, projectsRoot root: String) -> String {
         if path.hasPrefix(root + "/") { return "local/" + cleanPath(String(path.dropFirst(root.count + 1))) }
         // Outside the projects root: the folder name plus a short hash, so two "app" folders differ.
-        return "local/" + cleanPath((path as NSString).lastPathComponent) + "-" + sha256(Data(path.utf8)).prefix(8)
+        return "local/" + cleanPath((path as NSString).lastPathComponent) + "-" + Checksum.sha256(Data(path.utf8)).prefix(8)
     }
 
     /// `git@github.com:Owner/Repo.git`, `https://user@github.com/owner/repo`, `ssh://git@host:22/o/r.git`
@@ -248,13 +247,13 @@ public enum ProjectSetup {
                     let current = destination == nil ? try? Data(contentsOf: url) : nil
                     let written = previous?.files[output.path]?.sha256
                     let offered = previous?.templates?[output.path]
-                    let layersChanged = offered != sha256(data)
+                    let layersChanged = offered != Checksum.sha256(data)
                     let kind: Change.Kind = if destination == nil && current == nil {
                         // Missing: the skeleton, unless the project deleted the file it had.
                         written == nil && offered == nil ? .create : layersChanged ? .suggest : .own
                     } else if current == data {
                         .same
-                    } else if let current, written == sha256(current) {
+                    } else if let current, written == Checksum.sha256(current) {
                         .update  // untouched since AKit wrote it: still the skeleton
                     } else {
                         layersChanged ? .suggest : .own
@@ -272,7 +271,7 @@ public enum ProjectSetup {
                     let kind: Change.Kind = current == nil ? .create : current == data ? .same : .update
                     var change = Change(path: output.path, kind: kind, oldText: current.flatMap { String(data: $0, encoding: .utf8) },
                                         newText: output.text, replacesUnmanaged: current != nil && !managed, layers: output.layers)
-                    if kind == .update, let current, let entry = previous?.files[output.path], entry.sha256 != sha256(current) {
+                    if kind == .update, let current, let entry = previous?.files[output.path], entry.sha256 != Checksum.sha256(current) {
                         change.editedSinceRender = true
                     }
                     changes.append(change)
@@ -289,7 +288,7 @@ public enum ProjectSetup {
                 changes.append(Change(path: path, kind: .remove, oldText: "→ \(link)", newText: nil, replacesUnmanaged: false, layers: entry.layers))
                 snapshot[path] = state(url)
             } else if !isLink(url), let data = try? Data(contentsOf: url) {
-                let edited = entry.sha256 != sha256(data)
+                let edited = entry.sha256 != Checksum.sha256(data)
                 changes.append(Change(path: path, kind: edited ? .keepEdited : .remove, oldText: String(data: data, encoding: .utf8),
                                       newText: nil, replacesUnmanaged: false, layers: entry.layers))
                 snapshot[path] = state(url)
@@ -308,7 +307,7 @@ public enum ProjectSetup {
     /// render wrote and this one doesn't, then stores answers and lock in the plan's store
     /// and commits them when that store is the brain.
     public static func apply(_ plan: Plan, excluding excluded: Set<String> = [], accepting: Set<String> = [], brain: Brain, home: URL,
-                             env: HarnessEnvironment, trash: (URL) throws -> URL? = SkillRemover.defaultTrash) async throws(Failure) -> Outcome {
+                             env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move) async throws(Failure) -> Outcome {
         guard plan.canApply else {
             throw Failure(message: (plan.render.errors + plan.blockers).joined(separator: "\n"))
         }
@@ -390,7 +389,7 @@ public enum ProjectSetup {
             // A declined first version isn't "seen": it is offered again next time.
             if isProjectOwned(output.path, forHome: plan.forHome), case .data(let data) = output.content,
                !(kinds[output.path]?.kind == .create && excluded.contains(output.path)) {
-                lock.templates = (lock.templates ?? [:]).merging([output.path: sha256(data)]) { $1 }
+                lock.templates = (lock.templates ?? [:]).merging([output.path: Checksum.sha256(data)]) { $1 }
             }
             let kind = kinds[output.path]?.kind
             if excluded.contains(output.path) || ((kind == .suggest || kind == .own) && !accepting.contains(output.path)) {
@@ -445,7 +444,7 @@ public enum ProjectSetup {
 
     private static func entry(for output: Render.Output) -> Lock.Entry {
         switch output.content {
-        case .data(let data): .init(sha256: sha256(data), link: nil, layers: output.layers)
+        case .data(let data): .init(sha256: Checksum.sha256(data), link: nil, layers: output.layers)
         case .link(let destination): .init(sha256: nil, link: destination, layers: output.layers)
         }
     }
@@ -466,10 +465,6 @@ public enum ProjectSetup {
 
     private static func isEmptyFolder(_ url: URL) -> Bool {
         (try? FileManager.default.contentsOfDirectory(atPath: url.path))?.allSatisfy { $0 == ".DS_Store" } ?? false
-    }
-
-    static func sha256(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// A path that would leave the project folder through `..` or a symlinked parent.

@@ -41,7 +41,7 @@ public enum BrainLinks {
             case .synced, .plugin, .bundled: continue
             }
             if let found = rendered[key(skill.realFile)] {
-                let current = (try? Data(contentsOf: skill.realFile)).map(ProjectSetup.sha256)
+                let current = (try? Data(contentsOf: skill.realFile)).map(Checksum.sha256)
                 links[skill.id] = .rendered(skill: found.skill, layers: found.layers,
                                             edited: found.sha256 != nil && current != found.sha256)
             } else {

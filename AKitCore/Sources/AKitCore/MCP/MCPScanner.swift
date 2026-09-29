@@ -22,7 +22,7 @@ public enum MCPScanner {
                 found = try MCPReader.read(source, cache: &cache)
             } catch {
                 if failed.insert(source.file.path).inserted {
-                    result.problems.append("\(SkillScanner.tilde(source.file, home: home)): \(error.localizedDescription)")
+                    result.problems.append("\(FileWalk.tilde(source.file, home: home)): \(error.localizedDescription)")
                 }
                 continue
             }
@@ -75,7 +75,7 @@ public enum MCPScanner {
                     let winner = servers[top.0]
                     // Clashes between global entries are handled once, without a project.
                     if context != nil, winner.scope == .global { continue }
-                    let place = "\(winner.uses[top.1].layer) (\(SkillScanner.tilde(winner.file, home: home)))"
+                    let place = "\(winner.uses[top.1].layer) (\(FileWalk.tilde(winner.file, home: home)))"
                     for (s, u) in ranked.dropFirst() {
                         if context != nil, servers[s].scope == .global {
                             // Still used everywhere else: only this project overrides it.

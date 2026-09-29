@@ -137,7 +137,7 @@ public enum AKitCLI {
     public static func run(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL? = nil,
                            hostName: String = ProcessInfo.processInfo.hostName,
                            installedTargets: [String] = [], out: (String) -> Void, err: (String) -> Void,
-                           trash: (URL) throws -> URL? = SkillRemover.defaultTrash,
+                           trash: (URL) throws -> URL? = Trash.move,
                            ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil,
                            input: () -> Data = { Data() }, runner: CommandRunner? = nil,
                            hardwareHash: () -> String? = MachineProfile.currentHardwareHash) async -> Int32 {
@@ -875,7 +875,7 @@ public enum AKitCLI {
                               + "To hide it: akit recommend dismiss \(id).")
             }
             out((["Set \(recommendation.skill) to manual in \(LayerPatch.path(layer: layer)):"]
-                 + unifiedDiff(TextDiff.lines(from: patch.before, to: patch.after))).joined(separator: "\n"))
+                 + TextDiff.unified(TextDiff.lines(from: patch.before, to: patch.after))).joined(separator: "\n"))
             guard options.yes else { out(confirm); return 0 }
             try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .manual, before: patch.before, after: patch.after,
                                         brain: brain.root, machine: machine, env: env)
@@ -891,7 +891,7 @@ public enum AKitCLI {
         if let patch = recommendation.patch, let layer = recommendation.action.layer, let brain {
             let after = try LayerPatch.edit(patch.before, skill: recommendation.skill, layer: layer, change: .keepAuto)
             out((["Keep \(recommendation.skill) auto in \(LayerPatch.path(layer: layer)):"]
-                 + unifiedDiff(TextDiff.lines(from: patch.before, to: after))).joined(separator: "\n"))
+                 + TextDiff.unified(TextDiff.lines(from: patch.before, to: after))).joined(separator: "\n"))
             guard options.yes else { out(confirm); return 0 }
             try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .keepAuto, before: patch.before, after: after,
                                         brain: brain.root, machine: machine, env: env)
@@ -990,7 +990,7 @@ public enum AKitCLI {
         for write in plan.writes {
             if write.backup { lines.append("BACK UP \(write.url.path) (not written by AKit) into ~/.akit/backups") }
             lines.append("\(write.old == nil ? "NEW" : "CHANGED") \(write.url.path)\(write.executable ? " (executable)" : "")")
-            if write.old != nil { lines += unifiedDiff(TextDiff.lines(from: write.old ?? "", to: write.text)) }
+            if write.old != nil { lines += TextDiff.unified(TextDiff.lines(from: write.old ?? "", to: write.text)) }
         }
         if !plan.commitPaths.isEmpty { lines.append("COMMIT in the brain: \(plan.commitMessage) (\(plan.commitPaths.joined(separator: ", ")))") }
         lines += plan.trash.map { "TRASH \($0.path)" }
@@ -1043,7 +1043,7 @@ public enum AKitCLI {
                 if let layer = options.from {
                     guard let found = brain.layers.first(where: { $0.name == layer }) else { throw Failure(message: "No layer named \(layer).") }
                     let edit = try BrainRemove.layerWithoutSkill(name, in: found)
-                    out((["Remove \(name) from layers/\(layer)/layer.yaml:"] + unifiedDiff(TextDiff.lines(from: edit.before, to: edit.after))).joined(separator: "\n"))
+                    out((["Remove \(name) from layers/\(layer)/layer.yaml:"] + TextDiff.unified(TextDiff.lines(from: edit.before, to: edit.after))).joined(separator: "\n"))
                     guard options.yes else { out(confirm); return 0 }
                     try await BrainRemove.removeSkill(name, fromLayer: layer, in: brain, env: env)
                     out("Done. Projects using \(layer) lose it on their next apply\(layer == "core" ? "; the home folder on akit apply --home" : "").")
@@ -1192,7 +1192,7 @@ public enum AKitCLI {
             lines.append("\(label(change.kind)) \(change.path)\(note)")
             let new = change.kind == .remove || change.kind == .keepEdited ? "" : change.newText ?? ""
             if change.oldText != nil || change.newText != nil {
-                lines += unifiedDiff(TextDiff.lines(from: change.oldText ?? "", to: new))
+                lines += TextDiff.unified(TextDiff.lines(from: change.oldText ?? "", to: new))
             }
         }
         let own = plan.changes.filter { $0.kind == .own }.map(\.path)
@@ -1214,23 +1214,6 @@ public enum AKitCLI {
         case .suggest: "LAYERS CHANGED (the project's own file: kept unless --include)"
         case .own: "OWN"
         }
-    }
-
-    /// Changed lines with 3 lines of context, like `diff -u` without headers.
-    static func unifiedDiff(_ diff: [TextDiff.Line]) -> [String] {
-        let changed = diff.indices.filter { if case .same = diff[$0] { false } else { true } }
-        var result: [String] = []
-        var last = -1
-        for index in diff.indices where changed.contains(where: { abs($0 - index) <= 3 }) {
-            if last >= 0, index > last + 1 { result.append("  …") }
-            switch diff[index] {
-            case .same(let text): result.append("  " + text)
-            case .added(let text): result.append("+ " + text)
-            case .removed(let text): result.append("- " + text)
-            }
-            last = index
-        }
-        return result
     }
 
     private static func outcomeText(_ outcome: ProjectSetup.Outcome, skipped: Set<String>, plan: ProjectSetup.Plan) -> String {
@@ -1277,7 +1260,7 @@ public enum AKitCLI {
     /// `--project`: a folder gives its project id (as akit plan does); anything else is taken as an id.
     private static func projectID(argument: String, cwd: URL, projectsRoot: URL, env: HarnessEnvironment) async -> String {
         let folder = resolve(argument, cwd: cwd, env: env)
-        return SkillScanner.isDirectory(folder) ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env) : argument
+        return FileWalk.isDirectory(folder) ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env) : argument
     }
 
     /// `--days`, `--top`, `--min-sessions`, `--min-days`: nil when not given.

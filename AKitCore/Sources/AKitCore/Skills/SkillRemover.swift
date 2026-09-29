@@ -55,13 +55,7 @@ public enum SkillRemover {
     /// `trash` is replaceable so tests don't fill the real Trash.
     @discardableResult
     public static func moveToTrash(_ skill: Skill,
-                                   trash: (URL) throws -> URL? = defaultTrash) throws -> [URL] {
+                                   trash: (URL) throws -> URL? = Trash.move) throws -> [URL] {
         try items(for: skill).compactMap { try trash($0) }
-    }
-
-    public static func defaultTrash(_ url: URL) throws -> URL? {
-        var result: NSURL?
-        try FileManager.default.trashItem(at: url, resultingItemURL: &result)
-        return result as URL?
     }
 }

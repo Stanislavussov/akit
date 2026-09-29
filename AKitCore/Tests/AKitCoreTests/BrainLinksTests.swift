@@ -32,7 +32,7 @@ struct BrainLinksTests {
         try write("app/.agents/skills/edited/SKILL.md", "changed by hand")
         try write("app/.agents/skills/twin/SKILL.md", "not from AKit")
         try write("app/.agents/skills/mine/SKILL.md", "own")
-        let sha = ProjectSetup.sha256(Data("rendered".utf8))
+        let sha = Checksum.sha256(Data("rendered".utf8))
         try write("brain/projects/github.com/me/app/answers.json", #"{"layers": ["web"], "values": {}, "targets": []}"#)
         try write("brain/projects/github.com/me/app/lock.json", """
             {"brainDirty": false, "files": {

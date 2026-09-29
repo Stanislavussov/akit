@@ -410,7 +410,7 @@ struct ProjectBinder {
 
     func bind(database: IndexDatabase, now: Date = Date(), deadline: Date? = nil) async throws -> Report {
         let templateList = Self.pathTemplates(env: env)
-        let templatesHash = ProjectSetup.sha256(Data(templateList.joined(separator: "\n").utf8))
+        let templatesHash = Checksum.sha256(Data(templateList.joined(separator: "\n").utf8))
         let sameTemplates = try database.meta(Self.templatesKey) == templatesHash
         let sessions = try database.rows("""
             SELECT s.key, s.harness, s.native_id, s.cwd, s.git_branch, b.project_id, b.method, b.confidence, b.resolver_version,
@@ -519,12 +519,12 @@ struct ProjectBinder {
             SELECT DISTINCT repo_path FROM bindings WHERE repo_path IS NOT NULL AND confidence IN ('exact', 'high', 'medium')
             """).compactMap { $0[0].text })
         paths.formUnion(decided.compactMap { $0.repository?.repoPath })
-        for child in SkillScanner.children(of: URL(filePath: projectsRoot, directoryHint: .isDirectory))
+        for child in FileWalk.children(of: URL(filePath: projectsRoot, directoryHint: .isDirectory))
         where FileManager.default.fileExists(atPath: child.appending(path: ".git").path) {
             if let repository = RecordSession.repository(containing: child.path) { paths.insert(repository.commonDir) }
         }
         var found: [String: RepositoryMatch] = [:]
-        for path in Set(paths.map(BindingPaths.canonical)) where SkillScanner.isDirectory(URL(filePath: path)) {
+        for path in Set(paths.map(BindingPaths.canonical)) where FileWalk.isDirectory(URL(filePath: path)) {
             found[path] = RepositoryMatch(projectID: BindingPaths.projectID(commonDir: path, projectsRoot: projectsRoot), repoPath: path)
         }
         return found

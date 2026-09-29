@@ -341,8 +341,8 @@ removes every cycle, so phase B is only moving files.
 
 1. Refresh this plan against master `fb4f1d5` (this document). The first
    version was added in `7e3f4aa`.
-2. Toolbox moves: `FileWalk`, `Trash`, `Checksum` (`ProjectSetup.sha256`;
-   `JSONLines.hash` calls it) and `TextDiff.unified` (from `AKitCLI.unifiedDiff`)
+2. Toolbox moves: `FileWalk`, `Trash`, `Checksum` (replaces both
+   `ProjectSetup.sha256` and `JSONLines.hash`) and `TextDiff.unified` (from `AKitCLI.unifiedDiff`)
    into `Support/`; `ConfigText.swift`, `JSONLines.swift` into `Support/`;
    `FileProbe.swift` and `ProjectFinder.swift` into `Adapters/`. Update callers,
    including Insights and the CLI (fixes 4–8, 20).

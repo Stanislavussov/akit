@@ -9,10 +9,10 @@ enum ClaudeSessions {
 
     static func list(configRoot: URL) -> [SessionSummary] {
         let projects = configRoot.appending(path: "projects")
-        let files = SkillScanner.children(of: projects)
-            .filter(SkillScanner.isDirectory)
+        let files = FileWalk.children(of: projects)
+            .filter(FileWalk.isDirectory)
             .flatMap { folder in
-                SkillScanner.children(of: folder).filter { $0.pathExtension == "jsonl" }
+                FileWalk.children(of: folder).filter { $0.pathExtension == "jsonl" }
             }
         return JSONLines.summaries(of: files) { summary(of: $0) }
     }

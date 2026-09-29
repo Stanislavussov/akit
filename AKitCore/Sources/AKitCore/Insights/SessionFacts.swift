@@ -102,5 +102,5 @@ extension Fact {
         return data.count
     }
 
-    static func sha256(_ text: String) -> String { JSONLines.hash(Data(text.utf8)) }
+    static func sha256(_ text: String) -> String { Checksum.sha256(Data(text.utf8)) }
 }

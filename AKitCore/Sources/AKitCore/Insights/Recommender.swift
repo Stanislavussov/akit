@@ -582,7 +582,7 @@ enum Recommender {
                 do {
                     let before = try String(contentsOf: auto.layer.manifest, encoding: .utf8)
                     let after = try LayerPatch.edit(before, skill: skill, layer: layer, change: .manual)
-                    let diff = AKitCLI.unifiedDiff(TextDiff.lines(from: before, to: after)).joined(separator: "\n")
+                    let diff = TextDiff.unified(TextDiff.lines(from: before, to: after)).joined(separator: "\n")
                     return (owner, .init(kind: "layerPatch", layer: layer, diff: diff, text: unrenderedNote), (before, after))
                 } catch {
                     let reason = (error as? LayerPatch.Failure)?.message ?? error.localizedDescription
@@ -647,6 +647,6 @@ enum Recommender {
     static func id(owner: RecommendReport.Owner, skill: String, project: String?) -> String {
         let name = owner.kind == SkillOwner.Kind.handInstalled.rawValue ? skill : owner.name ?? ""
         let text = [rule, owner.kind, name, skill, project ?? "global"].joined(separator: "|")
-        return "r-" + ProjectSetup.sha256(Data(text.utf8)).prefix(10)
+        return "r-" + Checksum.sha256(Data(text.utf8)).prefix(10)
     }
 }

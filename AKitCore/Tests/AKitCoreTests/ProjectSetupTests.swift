@@ -163,7 +163,7 @@ struct ProjectSetupTests {
                                          trash: { _ in throw CocoaError(.fileWriteNoPermission) })
         }
         let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot)))
-        #expect(lock.files["AGENTS.md"]?.sha256 == ProjectSetup.sha256(Data("# Task for Beta\n".utf8)))
+        #expect(lock.files["AGENTS.md"]?.sha256 == Checksum.sha256(Data("# Task for Beta\n".utf8)))
     }
 
     @Test func projectWithoutRemoteUsesItsPath() async throws {

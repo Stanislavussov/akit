@@ -21,9 +21,9 @@ enum PiSessions {
     }
 
     static func list(folder: URL) -> [SessionSummary] {
-        let files = SkillScanner.children(of: folder)
-            .filter(SkillScanner.isDirectory)
-            .flatMap { dir in SkillScanner.children(of: dir).filter { $0.pathExtension == "jsonl" } }
+        let files = FileWalk.children(of: folder)
+            .filter(FileWalk.isDirectory)
+            .flatMap { dir in FileWalk.children(of: dir).filter { $0.pathExtension == "jsonl" } }
         return JSONLines.summaries(of: files) { summary(of: $0) }
     }
 

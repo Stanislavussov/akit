@@ -171,7 +171,7 @@ struct RecommenderTests {
         for name in ["tdd", "review"] {
             let text = "---\nname: \(name)\ndescription: \(name) skill\n---\n"
             try write(".agents/skills/\(name)/SKILL.md", text)
-            rendered[".agents/skills/\(name)/SKILL.md"] = ProjectSetup.sha256(Data(text.utf8))
+            rendered[".agents/skills/\(name)/SKILL.md"] = Checksum.sha256(Data(text.utf8))
         }
         try fm.createDirectory(at: home.appending(path: ".claude"), withIntermediateDirectories: true)
         try fm.createSymbolicLink(atPath: home.appending(path: ".claude/skills").path, withDestinationPath: "../.agents/skills")
@@ -493,7 +493,7 @@ extension RecommenderTests {
         }
         let first = try item("~/.claude/skills/hand/SKILL.md"), moved = try item("~/.agents/skills/hand/SKILL.md")
         #expect(first.id == moved.id && first.owner.name == "~/.claude/skills/hand/SKILL.md")
-        #expect(first.id == "r-" + ProjectSetup.sha256(Data("auto-to-manual|handInstalled|hand|hand|global".utf8)).prefix(10))
+        #expect(first.id == "r-" + Checksum.sha256(Data("auto-to-manual|handInstalled|hand|hand|global".utf8)).prefix(10))
     }
 
     @Test func idStableAcrossRuns() async throws {
@@ -501,7 +501,7 @@ extension RecommenderTests {
         let db = try database()
         try listedSessions(["tdd"], project: Self.project, in: db)
         let first = try #require(try recommend(db, .init(top: nil), layerInputs(brain)).recommendations.first)
-        #expect(first.id == "r-" + ProjectSetup.sha256(Data("auto-to-manual|layer|core|tdd|global".utf8)).prefix(10))
+        #expect(first.id == "r-" + Checksum.sha256(Data("auto-to-manual|layer|core|tdd|global".utf8)).prefix(10))
         #expect(first.id.count == 12 && first.id.dropFirst(2).allSatisfy(\.isHexDigit))
         try listedSessions(["tdd"], count: 3, id: "more", in: db)
         #expect(try recommend(db, .init(top: nil), layerInputs(brain)).recommendations.first?.id == first.id)
@@ -548,7 +548,7 @@ extension RecommenderTests {
                 "\(item.action.text ?? "")")
         #expect(item.evidence.skills == ["omc:hud", "omc:plan", "omc:wiki"] && item.evidence.approxContextSpace == 600)
         #expect(item.evidence.sessions == 20 && item.evidence.distinctDays == 14 && item.evidence.modelCalls == 0)
-        #expect(item.id == "r-" + ProjectSetup.sha256(Data("auto-to-manual|plugin|omc|*unused|global".utf8)).prefix(10))
+        #expect(item.id == "r-" + Checksum.sha256(Data("auto-to-manual|plugin|omc|*unused|global".utf8)).prefix(10))
         // Below the threshold on its own, an unused skill is left out; with none left, no note at all.
         try call("s4", "omc:plan", at: at(5, 10), in: db)
         try call("s5", "omc:wiki", at: at(6, 10), in: db)
@@ -576,7 +576,7 @@ extension RecommenderTests {
         #expect(item.evidence.skills == ["mkt:brand", "mkt:email", "mkt:seo"])
         #expect(item.evidence.sessions == 22 && item.evidence.distinctDays == 14 && item.evidence.from == day(14) && item.evidence.to == day(1))
         #expect(item.evidence.approxContextSpace == 220, "22 sessions × 1 request × ≈ 10 tokens")
-        #expect(item.id == "r-" + ProjectSetup.sha256(Data("auto-to-manual|plugin|mkt|*|global".utf8)).prefix(10))
+        #expect(item.id == "r-" + Checksum.sha256(Data("auto-to-manual|plugin|mkt|*|global".utf8)).prefix(10))
         // Other Macs: a day counts the most sessions one of its skills was listed in, not their sum.
         var others = inputs
         others.others.machines["abcdef0123456789"] = otherMac(days: [day(3): ["mkt:seo": [3, 0, 0], "mkt:brand": [2, 0, 0]]])

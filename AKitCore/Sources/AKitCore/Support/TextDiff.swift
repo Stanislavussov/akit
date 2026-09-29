@@ -30,4 +30,21 @@ public enum TextDiff {
         result += a[i...].map(Line.removed) + b[j...].map(Line.added)
         return result
     }
+
+    /// Changed lines with 3 lines of context, like `diff -u` without headers.
+    public static func unified(_ diff: [Line]) -> [String] {
+        let changed = diff.indices.filter { if case .same = diff[$0] { false } else { true } }
+        var result: [String] = []
+        var last = -1
+        for index in diff.indices where changed.contains(where: { abs($0 - index) <= 3 }) {
+            if last >= 0, index > last + 1 { result.append("  …") }
+            switch diff[index] {
+            case .same(let text): result.append("  " + text)
+            case .added(let text): result.append("+ " + text)
+            case .removed(let text): result.append("- " + text)
+            }
+            last = index
+        }
+        return result
+    }
 }

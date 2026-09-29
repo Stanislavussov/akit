@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 /// Reading JSONL session files: one JSON object per line. Broken lines are skipped,
@@ -91,7 +90,7 @@ enum JSONLines {
             if let lastLine { lastTail = Data(pending[lastLine].suffix(tailBytes)) }
             if stopped {
                 let more = remaining > 0 || pending[lineStart...].contains(UInt8(ascii: "\n"))
-                return (consumed, lastTail.map(hash), more)
+                return (consumed, lastTail.map(Checksum.sha256), more)
             }
             searched = pending.endIndex
             if lineStart > pending.count / 2 {
@@ -100,7 +99,7 @@ enum JSONLines {
                 lineStart = 0
             }
         }
-        return (consumed, lastTail.map(hash), false)
+        return (consumed, lastTail.map(Checksum.sha256), false)
     }
 
     /// How much of a line's end `tailHash` covers.
@@ -121,9 +120,9 @@ enum JSONLines {
               data.last == UInt8(ascii: "\n") else { return nil }
         let body = data.dropLast()
         if let newline = body.lastIndex(of: UInt8(ascii: "\n")) {
-            return (hash(body[body.index(after: newline)...]), true)
+            return (Checksum.sha256(body[body.index(after: newline)...]), true)
         }
-        return (hash(body.suffix(tailBytes)), start == 0 && body.count <= tailBytes)
+        return (Checksum.sha256(body.suffix(tailBytes)), start == 0 && body.count <= tailBytes)
     }
 
     /// SHA-256 of the whole line that ends right before `offset`: the `tail_hash` stored before
@@ -140,16 +139,12 @@ enum JSONLines {
                   data.last == UInt8(ascii: "\n") else { return nil }
             let body = data.dropLast()
             if let newline = body.lastIndex(of: UInt8(ascii: "\n")) {
-                return hash(body[body.index(after: newline)...])
+                return Checksum.sha256(body[body.index(after: newline)...])
             }
-            if start == 0 { return hash(body) }
+            if start == 0 { return Checksum.sha256(body) }
             guard window < maxBytes else { return nil }
             window *= 4
         }
-    }
-
-    static func hash(_ data: some DataProtocol) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Complete lines from the last `bytes` of the file. If the last line alone is longer,

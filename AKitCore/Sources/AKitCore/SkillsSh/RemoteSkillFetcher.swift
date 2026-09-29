@@ -84,12 +84,12 @@ public enum RemoteSkillFetcher {
         func age(_ folder: URL) -> TimeInterval? {
             folder.lastPathComponent.split(separator: "-").first.flatMap { Double($0) }.map { now - $0 }
         }
-        let existing = SkillScanner.children(of: versions).filter(SkillScanner.isDirectory)
+        let existing = FileWalk.children(of: versions).filter(FileWalk.isDirectory)
         for folder in existing where (age(folder) ?? .infinity) > 2 * cacheLifetime {
             try? fm.removeItem(at: folder)
         }
         if let fresh = existing.filter({ (age($0) ?? .infinity) < cacheLifetime }).max(by: { $0.lastPathComponent < $1.lastPathComponent }),
-           let unpacked = SkillScanner.children(of: fresh).first(where: SkillScanner.isDirectory) {
+           let unpacked = FileWalk.children(of: fresh).first(where: FileWalk.isDirectory) {
             return unpacked
         }
 
@@ -116,7 +116,7 @@ public enum RemoteSkillFetcher {
         let target = versions.appending(path: "\(Int(now))-\(UUID().uuidString)", directoryHint: .isDirectory)
         try fm.createDirectory(at: versions, withIntermediateDirectories: true)
         try fm.moveItem(at: staging, to: target)
-        guard let unpacked = SkillScanner.children(of: target).first(where: SkillScanner.isDirectory) else {
+        guard let unpacked = FileWalk.children(of: target).first(where: FileWalk.isDirectory) else {
             throw Failure.unpack("the archive is empty")
         }
         return unpacked

@@ -29,7 +29,7 @@ public enum SkillScanner {
         let installed = Set(installations.map(\.id))
         var seen: Set<String> = [env.homeDirectory.standardizedFileURL.path]
         return (adapters.filter { installed.contains($0.id) }.flatMap { $0.knownProjects(in: env) } + extraProjects)
-            .filter { SkillScanner.isDirectory($0) }
+            .filter { FileWalk.isDirectory($0) }
             .filter { seen.insert($0.standardizedFileURL.path).inserted }
     }
 
@@ -43,18 +43,18 @@ public enum SkillScanner {
     }
 
     static func found(in root: SkillRoot) -> [Hit] {
-        guard isDirectory(root.url) else { return [] }
+        guard FileWalk.isDirectory(root.url) else { return [] }
         switch root.layout {
         case .flat(let rootMayBeSkill):
             if rootMayBeSkill, hasSkillFile(root.url) {
                 return [Hit(file: root.url.appending(path: "SKILL.md"), root: root, isSingleFile: false)]
             }
             var hits: [Hit] = []
-            for child in children(of: root.url) where isDirectory(child) {
+            for child in FileWalk.children(of: root.url) where FileWalk.isDirectory(child) {
                 if let synced = root.syncedFolder, child.path == synced.path {
                     // synced/<bucket>/<name>/SKILL.md
-                    for bucket in children(of: child) where isDirectory(bucket) {
-                        for skill in children(of: bucket) where hasSkillFile(skill) {
+                    for bucket in FileWalk.children(of: child) where FileWalk.isDirectory(bucket) {
+                        for skill in FileWalk.children(of: bucket) where hasSkillFile(skill) {
                             hits.append(Hit(file: skill.appending(path: "SKILL.md"), root: root, isSingleFile: false))
                         }
                     }
@@ -82,9 +82,9 @@ public enum SkillScanner {
             hits.append(Hit(file: dir.appending(path: "SKILL.md"), root: root, isSingleFile: false))
             return
         }
-        for child in children(of: dir) {
+        for child in FileWalk.children(of: dir) {
             if child.lastPathComponent == "node_modules" { continue }
-            if isDirectory(child) {
+            if FileWalk.isDirectory(child) {
                 walk(child, depth: depth + 1, root: root, rootMarkdown: rootMarkdown, visited: &visited, into: &hits)
             } else if depth == 0, rootMarkdown, child.pathExtension == "md", isFile(child) {
                 hits.append(Hit(file: child, root: root, isSingleFile: true))
@@ -169,7 +169,7 @@ public enum SkillScanner {
                 }
                 for (_, indices) in Dictionary(grouping: loaded, by: { skills[$0].name }) where indices.count > 1 {
                     for index in indices {
-                        let others = indices.filter { $0 != index }.map { tilde(skills[$0].file, home: home) }
+                        let others = indices.filter { $0 != index }.map { FileWalk.tilde(skills[$0].file, home: home) }
                         let message = "\(harness.displayName): name collides with \(others.joined(separator: ", "))"
                         if messages[index, default: []].contains(message) == false { messages[index, default: []].append(message) }
                     }
@@ -179,23 +179,7 @@ public enum SkillScanner {
         for (index, list) in messages { skills[index].warnings += list.sorted() }
     }
 
-    /// `/Users/me/x` → `~/x`, for messages.
-    static func tilde(_ url: URL, home: URL) -> String {
-        let homePath = home.path
-        return url.path.hasPrefix(homePath + "/") ? "~" + url.path.dropFirst(homePath.count) : url.path
-    }
-
     // MARK: - File helpers (follow symlinks)
-
-    static func children(of dir: URL) -> [URL] {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        return names.filter { !$0.hasPrefix(".") }.sorted().map { dir.appending(path: $0) }
-    }
-
-    static func isDirectory(_ url: URL) -> Bool {
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
-    }
 
     /// Exact, case-sensitive `SKILL.md` (the default macOS disk ignores case, harnesses don't).
     static func hasSkillFile(_ dir: URL) -> Bool {

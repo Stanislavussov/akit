@@ -113,7 +113,7 @@ extension InsightsStatsTests {
         try fm.createDirectory(at: app.appending(path: ".claude"), withIntermediateDirectories: true)
         try fm.createSymbolicLink(atPath: app.appending(path: ".claude/skills").path, withDestinationPath: "../.agents/skills")
         try write(".claude/skills/mine/SKILL.md", "---\nname: mine\ndescription: Own\n---\n")
-        let sha = ProjectSetup.sha256(Data("---\nname: kept\ndescription: Rendered\n---\n".utf8))
+        let sha = Checksum.sha256(Data("---\nname: kept\ndescription: Rendered\n---\n".utf8))
         try write(".akit/registry/projects/github.com/me/app/answers.json", #"{"layers": ["web"], "values": {}, "targets": []}"#)
         try write(".akit/registry/projects/github.com/me/app/lock.json", """
             {"brainDirty": false, "files": {".agents/skills/kept/SKILL.md": {"layers": ["web"], "sha256": "\(sha)"},
