@@ -16,8 +16,9 @@ let package = Package(
     ],
     targets: [
         .target(name: "AKitFoundation"),
+        .target(name: "AKitModel"),
         // Umbrella: the files not moved into a module yet, plus Exports.swift.
-        .target(name: "AKitCore", dependencies: ["AKitFoundation", "Yams"]),
+        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "Yams"]),
         .executableTarget(name: "akit", dependencies: ["AKitCore"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation"]),

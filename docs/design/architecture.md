@@ -412,7 +412,8 @@ Phase C replaces that with the real modules.
 12. `AKitFoundation` (ProcessRunnerTests, SecretFilterTests; move `FrontmatterTests`
     out of `SkillScannerTests.swift` into its own file here). `JSONLines.summaries`
     named `SessionSummary`, so it became generic over the summary type.
-13. `AKitModel`
+13. `AKitModel` (no tests of its own, so no test target; `SkillScope` and `SkillRoot`
+    go into a new `SkillScope.swift`, `Skill` stays in `Model/Skill.swift` until step 15)
 14. `AKitHarnesses` (DetectionTests.swift incl. VersionProbeTests, CustomHarnessTests)
 15. `AKitSkills` (SkillScannerTests.swift incl. SkillRemoverTests, MoreHarnessTests;
     first move the `PiSkillPaths` line at `SkillScannerTests.swift:351` into
