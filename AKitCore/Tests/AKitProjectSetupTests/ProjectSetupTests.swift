@@ -1,6 +1,9 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitBrain
+import AKitFoundation
+import AKitRender
+@testable import AKitProjectSetup
 
 /// Planning and applying a render to a project, all inside a temporary fake home.
 struct ProjectSetupTests {

@@ -1,3 +1,7 @@
+import AKitBrain
+import AKitFoundation
+import AKitInsights
+import AKitRender
 import Foundation
 
 /// Applies a render to a project folder: what would change, then backup + write +

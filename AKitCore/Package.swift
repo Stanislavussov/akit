@@ -27,8 +27,9 @@ let package = Package(
         .target(name: "AKitInsights", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
         // The rulesync seam: sees only the brain's ProjectBundle and RenderResult.
         .target(name: "AKitRender", dependencies: ["AKitBrain"]),
+        .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitBrain", "AKitRender", "AKitInsights"]),
         // Umbrella: the files not moved into a module yet, plus Exports.swift.
-        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSkillsSh", "AKitSessions", "AKitUsage", "AKitMCP", "AKitBrain", "AKitInsights", "AKitRender"]),
+        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSkillsSh", "AKitSessions", "AKitUsage", "AKitMCP", "AKitBrain", "AKitInsights", "AKitRender", "AKitProjectSetup"]),
         .executableTarget(name: "akit", dependencies: ["AKitCore"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitCore"]),
@@ -38,8 +39,9 @@ let package = Package(
         .testTarget(name: "AKitUsageTests", dependencies: ["AKitUsage", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitMCPTests", dependencies: ["AKitMCP", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitCore"]),
-        .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitCore"]),
+        .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitProjectSetup", "AKitCore"]),
         .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain"]),
+        .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender"]),
         .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitInsights"]),
     ]
 )

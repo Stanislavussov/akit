@@ -1,3 +1,5 @@
+import AKitBrain
+import AKitFoundation
 import Foundation
 
 /// A project's own skills: folders in its `.agents/skills` that AKit didn't write. They

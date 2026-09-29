@@ -2,6 +2,7 @@ import Foundation
 import Testing
 @testable import AKitCore
 @testable import AKitInsights
+@testable import AKitProjectSetup
 @testable import AKitFoundation
 
 /// Session capture: the spool, `akit record-session`, apply events and their import. A

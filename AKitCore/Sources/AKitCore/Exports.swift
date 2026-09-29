@@ -11,3 +11,4 @@
 @_exported import AKitBrain
 @_exported import AKitInsights
 @_exported import AKitRender
+@_exported import AKitProjectSetup
