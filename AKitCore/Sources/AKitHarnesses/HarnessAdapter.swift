@@ -1,3 +1,5 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// An adapter is the "translator" for one harness.

@@ -1,3 +1,5 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// A harness the user describes by hand (Add Harness… in the app).
@@ -185,7 +187,7 @@ public enum CustomHarnessStore {
 }
 
 /// Adapter built from a CustomHarness description.
-public struct CustomHarnessAdapter: HarnessAdapter {
+struct CustomHarnessAdapter: HarnessAdapter {
     public let definition: CustomHarness
     public var id: HarnessID { definition.harnessID }
     public var displayName: String { definition.name }

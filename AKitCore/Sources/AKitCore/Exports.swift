@@ -2,3 +2,4 @@
 // the app and the akit command keep `import AKitCore` and see every extracted module.
 @_exported import AKitFoundation
 @_exported import AKitModel
+@_exported import AKitHarnesses

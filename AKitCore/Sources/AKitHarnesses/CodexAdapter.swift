@@ -1,8 +1,10 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// OpenAI Codex CLI.
 /// Paths verified against the Codex docs (config reference, skills) and a real machine (0.147.x).
-public struct CodexAdapter: HarnessAdapter {
+struct CodexAdapter: HarnessAdapter {
     public let id = HarnessID.codex
     public let displayName = "Codex"
 

@@ -1,8 +1,10 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// Claude Code.
 /// Paths verified against code.claude.com/docs and a real machine (2.1.x).
-public struct ClaudeCodeAdapter: HarnessAdapter {
+struct ClaudeCodeAdapter: HarnessAdapter {
     public let id = HarnessID.claudeCode
     public let displayName = "Claude Code"
 

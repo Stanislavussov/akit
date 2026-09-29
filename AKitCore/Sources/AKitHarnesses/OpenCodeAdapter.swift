@@ -1,8 +1,10 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// OpenCode (opencode.ai).
 /// Paths verified against opencode.ai/docs (config, skills, agents, rules) and a real machine (1.18.x).
-public struct OpenCodeAdapter: HarnessAdapter {
+struct OpenCodeAdapter: HarnessAdapter {
     public let id = HarnessID.openCode
     public let displayName = "OpenCode"
 

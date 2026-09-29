@@ -1,8 +1,10 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// Pi coding agent (@earendil-works/pi-coding-agent).
 /// Paths verified against the docs/ shipped in the installed package (0.84.x) and a real machine.
-public struct PiAdapter: HarnessAdapter {
+struct PiAdapter: HarnessAdapter {
     public let id = HarnessID.pi
     public let displayName = "Pi"
 

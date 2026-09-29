@@ -1,3 +1,4 @@
+import AKitModel
 import Foundation
 
 /// Checks whether a file/folder exists and whether it is a symlink. Read-only.

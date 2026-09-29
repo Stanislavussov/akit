@@ -17,10 +17,12 @@ let package = Package(
     targets: [
         .target(name: "AKitFoundation"),
         .target(name: "AKitModel"),
+        .target(name: "AKitHarnesses", dependencies: ["AKitFoundation", "AKitModel"]),
         // Umbrella: the files not moved into a module yet, plus Exports.swift.
-        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "Yams"]),
+        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "Yams"]),
         .executableTarget(name: "akit", dependencies: ["AKitCore"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
-        .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation"]),
+        .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitCore"]),
+        .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation", "AKitHarnesses"]),
     ]
 )

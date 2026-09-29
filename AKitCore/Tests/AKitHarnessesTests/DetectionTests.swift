@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+@testable import AKitFoundation
+@testable import AKitHarnesses
 
 /// All tests run in a temporary fake home folder and never touch the real one.
 struct DetectionTests {

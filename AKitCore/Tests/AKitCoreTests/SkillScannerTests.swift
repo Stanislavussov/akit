@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AKitCore
+@testable import AKitHarnesses
 
 /// Skill discovery in a temporary fake home. Never touches the real one.
 struct SkillScannerTests {

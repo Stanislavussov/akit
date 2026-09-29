@@ -23,8 +23,6 @@ public struct MCPWriteTarget: Identifiable, Hashable, Sendable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
-extension MCPSource.Dialect: Hashable {}
-
 /// How a secret reaches the server.
 public enum MCPSecretMode: String, CaseIterable, Hashable, Sendable {
     /// The config runs `security find-generic-password` itself. Works however the harness

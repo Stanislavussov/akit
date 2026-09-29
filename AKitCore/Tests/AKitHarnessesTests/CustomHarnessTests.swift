@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitCore
+@testable import AKitHarnesses
 
 struct CustomHarnessTests {
     let home: URL
