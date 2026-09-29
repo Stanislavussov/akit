@@ -1,7 +1,10 @@
 import Foundation
 import SQLite3
 import Testing
-@testable import AKitCore
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
+@testable import AKitUsage
 
 /// Daily usage from session files in a temporary fake home. Never touches the real one.
 struct UsageTests {
