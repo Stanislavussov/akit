@@ -332,7 +332,7 @@ struct CaptureTests {
         try write(".akit/index/spool", "a file where the spool folder should be")
         let outcome = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
         #expect(outcome.written.contains(".agents/skills/tdd/SKILL.md"))
-        #expect(ProjectSetup.savedAnswers(id: "local/task", in: plan.store)?.layers == ["task"])
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: plan.store)?.layers == ["task"])
     }
 
     @Test func sameSecondAppliesBothKept() async throws {

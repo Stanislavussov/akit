@@ -159,8 +159,8 @@ public enum Onboarding {
         }
         // A work Mac keeps its home record locally (see ProjectStore), under its machine name.
         let store = ProjectStore.current(brain: root, home: env.homeDirectory)
-        let id = ProjectSetup.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
-        var answers = ProjectSetup.savedAnswers(id: id, in: store) ?? ProjectAnswers()
+        let id = ProjectRecords.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
+        var answers = ProjectRecords.savedAnswers(id: id, in: store) ?? ProjectAnswers()
         answers.layers = ["core"]
         // Harnesses installed since the last setup join in.
         answers.targets += installedTargets.filter { !answers.targets.contains($0) }

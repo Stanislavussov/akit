@@ -243,9 +243,9 @@ public struct MachineProfile: Codable, Hashable, Sendable {
         _ = profile.identify(hardware: hardware, own: ownKeys ?? UsageSummary.ownKeys(home: home), now: now)
         // A broken file says nothing about where records were kept; assume the brain, as before the file.
         let oldStore = old.problem == nil ? ProjectStore.current(brain: brainRoot, home: home, machine: old) : .brain(brainRoot)
-        let oldHome = ProjectSetup.homeID(hostName: hostName, machineName: old.homeName)
+        let oldHome = ProjectRecords.homeID(hostName: hostName, machineName: old.homeName)
         try profile.save(home: home)
-        let newHome = ProjectSetup.homeID(hostName: hostName, machineName: profile.homeName)
+        let newHome = ProjectRecords.homeID(hostName: hostName, machineName: profile.homeName)
         let local = ProjectStore.local(home: home)
 
         guard profile.isWork else {

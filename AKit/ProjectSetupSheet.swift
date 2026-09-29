@@ -327,7 +327,7 @@ struct ProjectSetupSheet: View {
         let id = await model.projectID(for: url)
         guard project == url else { return }
         projectID = id
-        answers = ProjectSetup.savedAnswers(id: id, in: model.projectStore)
+        answers = ProjectRecords.savedAnswers(id: id, in: model.projectStore)
             ?? ProjectAnswers(layers: [], values: [:], targets: model.installedTargets)
         for name in initialLayers where !answers.layers.contains(name) { answers.layers.append(name) }
     }

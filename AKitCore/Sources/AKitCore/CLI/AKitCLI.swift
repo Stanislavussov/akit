@@ -272,9 +272,9 @@ public enum AKitCLI {
                 guard FileManager.default.fileExists(atPath: project.path) else { throw Failure(message: "No folder at \(project.path).") }
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
                 let id = options.home ? homeID(hostName: hostName, env: env)
-                    : await ProjectSetup.projectID(for: project, projectsRoot: projectsRoot, env: env)
+                    : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 if command == "answers" {
-                    let saved = ProjectSetup.savedAnswers(id: id, in: store)
+                    let saved = ProjectRecords.savedAnswers(id: id, in: store)
                     out(saved.map(encode) ?? "No saved answers for \(id).")
                     return saved == nil ? 1 : 0
                 }
@@ -324,7 +324,7 @@ public enum AKitCLI {
 
     /// This Mac's home id: the machine name when set, else the host name.
     private static func homeID(hostName: String, env: HarnessEnvironment) -> String {
-        ProjectSetup.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
+        ProjectRecords.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
     }
 
     private static func machine(_ kind: String?, options: Options, brainRoot: URL, env: HarnessEnvironment, hostName: String,
@@ -1061,9 +1061,9 @@ public enum AKitCLI {
                 if options.home, name != nil { throw Failure(message: "--home and a project folder don't go together.") }
                 let project = options.home ? env.homeDirectory : resolve(name ?? ".", cwd: cwd, env: env)
                 let id = options.home ? homeID(hostName: hostName, env: env)
-                    : await ProjectSetup.projectID(for: project, projectsRoot: projectsRoot, env: env)
+                    : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
-                guard let saved = ProjectSetup.savedAnswers(id: id, in: store) else {
+                guard let saved = ProjectRecords.savedAnswers(id: id, in: store) else {
                     out("Nothing is saved for \(id).")
                     return 1
                 }
@@ -1135,7 +1135,7 @@ public enum AKitCLI {
                 throw Failure(message: "Can't read answers from \(url.path): \(error.localizedDescription)")
             }
         }
-        var answers = ProjectSetup.savedAnswers(id: id, in: store)
+        var answers = ProjectRecords.savedAnswers(id: id, in: store)
             ?? ProjectAnswers(layers: [], values: [:], targets: installedTargets)
         if let layers = options.layers { answers.layers = list(layers) }
         if let targets = options.targets {
@@ -1260,7 +1260,7 @@ public enum AKitCLI {
     /// `--project`: a folder gives its project id (as akit plan does); anything else is taken as an id.
     private static func projectID(argument: String, cwd: URL, projectsRoot: URL, env: HarnessEnvironment) async -> String {
         let folder = resolve(argument, cwd: cwd, env: env)
-        return FileWalk.isDirectory(folder) ? await ProjectSetup.projectID(for: folder, projectsRoot: projectsRoot, env: env) : argument
+        return FileWalk.isDirectory(folder) ? await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env) : argument
     }
 
     /// `--days`, `--top`, `--min-sessions`, `--min-days`: nil when not given.

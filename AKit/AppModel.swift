@@ -232,13 +232,13 @@ final class AppModel {
     func projectID(for project: URL) async -> String {
         let env = HarnessEnvironment.current
         let root = projectRoots.first.map(env.expand) ?? env.homeDirectory.appending(path: "Projects")
-        return await ProjectSetup.projectID(for: project, projectsRoot: root, env: env)
+        return await ProjectRecords.projectID(for: project, projectsRoot: root, env: env)
     }
 
     /// Brain project ids found on this Mac → their folders: the home folder and every known project.
     func projectFolders() async -> [String: URL] {
         let env = HarnessEnvironment.current
-        var folders = [ProjectSetup.homeID(machineName: machine.homeName): env.homeDirectory]
+        var folders = [ProjectRecords.homeID(machineName: machine.homeName): env.homeDirectory]
         await withTaskGroup(of: (String, URL).self) { group in
             for project in projects {
                 group.addTask { (await self.projectID(for: project), project) }

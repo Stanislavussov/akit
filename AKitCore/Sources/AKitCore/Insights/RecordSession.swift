@@ -113,7 +113,7 @@ public enum RecordSession {
         if let pointer = small(gitdir + "/commondir")?.trimmingCharacters(in: .whitespacesAndNewlines), !pointer.isEmpty {
             common = ((pointer.hasPrefix("/") ? pointer : gitdir + "/" + pointer) as NSString).standardizingPath
         }
-        let remote = small(common + "/config").flatMap(originURL).flatMap(ProjectSetup.normalizedRemote)
+        let remote = small(common + "/config").flatMap(originURL).flatMap(ProjectRecords.normalizedRemote)
         var branch: String?
         if let head = small(gitdir + "/HEAD")?.trimmingCharacters(in: .whitespacesAndNewlines), head.hasPrefix("ref: refs/heads/") {
             branch = String(head.dropFirst("ref: refs/heads/".count))

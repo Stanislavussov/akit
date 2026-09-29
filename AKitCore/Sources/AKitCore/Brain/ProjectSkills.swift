@@ -28,7 +28,7 @@ public enum ProjectSkills {
     }
 
     public static func list(in project: URL, id: String, store: ProjectStore) -> [Skill] {
-        names(in: project, lock: ProjectSetup.savedLock(id: id, in: store)).map { name in
+        names(in: project, lock: ProjectRecords.savedLock(id: id, in: store)).map { name in
             let folder = folder(of: project).appending(path: name)
             let text = (try? String(contentsOf: folder.appending(path: "SKILL.md"), encoding: .utf8)) ?? ""
             return Skill(name: name, description: Frontmatter.parse(text)["description"] ?? "", folder: folder)
@@ -36,7 +36,7 @@ public enum ProjectSkills {
     }
 
     /// Skill folders (with a SKILL.md) in `.agents/skills` with no file from the last render.
-    static func names(in project: URL, lock: ProjectSetup.Lock?) -> [String] {
+    static func names(in project: URL, lock: ProjectRecords.Lock?) -> [String] {
         guard isInside(project) else { return [] }
         let prefix = Render.skillsFolder + "/"
         let written = Set((lock?.files ?? [:]).keys.compactMap { path -> String? in

@@ -390,7 +390,7 @@ enum InsightsStats {
     /// checkout of every bound repository, and `local/…` folders under the projects root.
     static func projectFolders(_ database: IndexDatabase, env: HarnessEnvironment, projectsRoot: URL,
                                hostName: String) throws -> [String: URL] {
-        let home = ProjectSetup.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
+        let home = ProjectRecords.homeID(hostName: hostName, machineName: MachineProfile.load(home: env.homeDirectory).homeName)
         var folders = [home: env.homeDirectory]
         for row in try database.rows("SELECT DISTINCT project_id, repo_path FROM bindings WHERE project_id IS NOT NULL") {
             guard let id = row[0].text, folders[id] == nil else { continue }

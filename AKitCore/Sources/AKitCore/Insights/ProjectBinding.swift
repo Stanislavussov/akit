@@ -80,7 +80,7 @@ struct BindingSet: Equatable {
     func contains(_ confidence: Confidence?) -> Bool { confidence.map(confidences.contains) ?? false }
 }
 
-/// A session folder's repository: the project id `ProjectSetup.projectID` would give it and the
+/// A session folder's repository: the project id `ProjectRecords.projectID` would give it and the
 /// main repository's git folder (`<repo>/.git`, shared by its worktrees), nil for a plain folder.
 struct RepositoryMatch: Equatable {
     let projectID: String
@@ -117,12 +117,12 @@ enum BindingPaths {
     }
 
     /// The project id of the repository with this common git dir: its `origin` remote, else the
-    /// `local/…` id of its main folder, as `ProjectSetup.projectID` gives it.
+    /// `local/…` id of its main folder, as `ProjectRecords.projectID` gives it.
     static func projectID(commonDir: String, projectsRoot: String) -> String {
-        if let remote = RecordSession.small(commonDir + "/config").flatMap(RecordSession.originURL).flatMap(ProjectSetup.normalizedRemote) {
+        if let remote = RecordSession.small(commonDir + "/config").flatMap(RecordSession.originURL).flatMap(ProjectRecords.normalizedRemote) {
             return remote
         }
-        return ProjectSetup.localID(path: canonical(mainFolder(ofCommonDir: commonDir)), projectsRoot: projectsRoot)
+        return ProjectRecords.localID(path: canonical(mainFolder(ofCommonDir: commonDir)), projectsRoot: projectsRoot)
     }
 }
 
@@ -151,13 +151,13 @@ final class LiveFolderResolver: ProjectResolver {
         if let repository = RecordSession.repository(containing: path) {
             let common = BindingPaths.canonical(repository.commonDir)
             let id = repository.remoteID
-                ?? ProjectSetup.localID(path: BindingPaths.mainFolder(ofCommonDir: common), projectsRoot: projectsRoot)
+                ?? ProjectRecords.localID(path: BindingPaths.mainFolder(ofCommonDir: common), projectsRoot: projectsRoot)
             return RepositoryMatch(projectID: id, repoPath: common)
         }
         // A folder without git is a project only inside the projects root (not ~, not /tmp).
         let folder = BindingPaths.canonical(path)
         guard folder.hasPrefix(projectsRoot + "/") else { return nil }
-        return RepositoryMatch(projectID: ProjectSetup.localID(path: folder, projectsRoot: projectsRoot), repoPath: nil)
+        return RepositoryMatch(projectID: ProjectRecords.localID(path: folder, projectsRoot: projectsRoot), repoPath: nil)
     }
 }
 
@@ -506,7 +506,7 @@ struct ProjectBinder {
             """, session.harness, session.nativeID).first else { return nil }
         let common = row[1].text.map(BindingPaths.canonical)
         guard let id = row[0].text
-            ?? common.map({ ProjectSetup.localID(path: BindingPaths.mainFolder(ofCommonDir: $0), projectsRoot: projectsRoot) }) else { return nil }
+            ?? common.map({ ProjectRecords.localID(path: BindingPaths.mainFolder(ofCommonDir: $0), projectsRoot: projectsRoot) }) else { return nil }
         return RepositoryMatch(projectID: id, repoPath: common)
     }
 

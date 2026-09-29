@@ -106,7 +106,7 @@ struct ProjectBindingTests {
         let report = try await bind(db)
         #expect(report == .init(changed: 3, pending: 0))
         #expect(try binding("s1", in: db) == Bound(project: "github.com/me/other", method: "hook", confidence: "exact"))
-        let localID = await ProjectSetup.projectID(for: local, projectsRoot: root, env: env)
+        let localID = await ProjectRecords.projectID(for: local, projectsRoot: root, env: env)
         #expect(localID == "local/tools/local")
         #expect(try binding("s2", in: db) == Bound(project: localID, method: "hook", confidence: "exact"))
         #expect(try binding("s3", in: db) == Bound(project: "github.com/me/app", method: "live", confidence: "exact"))

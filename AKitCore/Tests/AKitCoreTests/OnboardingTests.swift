@@ -84,7 +84,7 @@ struct OnboardingTests {
         let result = await setup()
         #expect(result.code == 0, "\(result.out)")
         #expect(read(".agents/skills/akit/SKILL.md") != nil)
-        #expect(ProjectSetup.savedAnswers(id: "home/work", in: .local(home: home))?.layers == ["core"])
+        #expect(ProjectRecords.savedAnswers(id: "home/work", in: .local(home: home))?.layers == ["core"])
         #expect(!fm.fileExists(atPath: brain.appending(path: "projects/home").path))
         let again = await setup(answers: [], session: result.session)
         #expect(again.code == 0 && again.out.contains("nothing new"), "\(again.out)")

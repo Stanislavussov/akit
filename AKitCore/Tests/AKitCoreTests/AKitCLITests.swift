@@ -126,14 +126,14 @@ struct AKitCLITests {
         #expect(skill.contains("disable-model-invocation: true"))
         #expect(try fm.destinationOfSymbolicLink(atPath: home.appending(path: ".claude/skills").path) == "../.agents/skills")
         #expect(taken.out.contains("Backup: "))
-        #expect(ProjectSetup.savedAnswers(id: "home/testmac", in: .brain(Brain.defaultRoot(home: home)))?.layers == ["core"])
+        #expect(ProjectRecords.savedAnswers(id: "home/testmac", in: .brain(Brain.defaultRoot(home: home)))?.layers == ["core"])
     }
 
     @Test func homeIDs() {
-        #expect(ProjectSetup.homeID(hostName: "Example-Mac.local") == "home/example-mac")
-        #expect(ProjectSetup.homeID(hostName: "") == "home/mac")
-        #expect(ProjectSetup.homeID(hostName: "ACME-1234.local", machineName: "Work") == "home/work")
-        #expect(ProjectSetup.homeID(hostName: "ACME-1234.local", machineName: "") == "home/acme-1234")
+        #expect(ProjectRecords.homeID(hostName: "Example-Mac.local") == "home/example-mac")
+        #expect(ProjectRecords.homeID(hostName: "") == "home/mac")
+        #expect(ProjectRecords.homeID(hostName: "ACME-1234.local", machineName: "Work") == "home/work")
+        #expect(ProjectRecords.homeID(hostName: "ACME-1234.local", machineName: "") == "home/acme-1234")
     }
 
     func brainGit(_ args: String...) async throws -> String {
@@ -163,13 +163,13 @@ struct AKitCLITests {
         let homeAgain = await akit("apply", "--home")
         #expect(homeAgain.code == 0 && !homeAgain.out.contains("Skipped"), "\(homeAgain)")
         #expect(homeAgain.out.contains("on this Mac only"))
-        #expect(ProjectSetup.savedAnswers(id: "home/work", in: local)?.layers == ["core"])
+        #expect(ProjectRecords.savedAnswers(id: "home/work", in: local)?.layers == ["core"])
 
         let applied = await akit("apply", "--layers", "task", "--set", "company=Acme", "--set", "stack=swift")
         #expect(applied.code == 0, "\(applied)")
         #expect(applied.out.contains("(saved locally: \(local.folder(id: "local/task").path))"))
         #expect(read("AGENTS.md") == "# Acme in swift\n")
-        #expect(ProjectSetup.savedAnswers(id: "local/task", in: local)?.values["company"] == .text("Acme"))
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: local)?.values["company"] == .text("Acme"))
         #expect(await akit("answers").out.contains("\"company\" : \"Acme\""))
 
         // Nothing reached the brain: no new commit, no new files.
@@ -179,7 +179,7 @@ struct AKitCLITests {
 
         // Removing a layer updates local answers without committing them.
         #expect(await akit("remove", "layer", "task", "--yes").code == 0)
-        #expect(ProjectSetup.savedAnswers(id: "local/task", in: local)?.layers == [])
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: local)?.layers == [])
         #expect(try await brainGit("status", "--porcelain").isEmpty)
 
         let forgot = await akit("remove", "project", "--yes")
@@ -221,7 +221,7 @@ struct AKitCLITests {
         #expect(read("AGENTS.md") == "# Beta in swift\n")
         let local = ProjectStore.local(home: home)
         #expect(fm.fileExists(atPath: local.folder(id: "local/task").appending(path: "lock.json").path))
-        #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(Brain.defaultRoot(home: home)))?.values["company"] == .text("Acme"))
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: .brain(Brain.defaultRoot(home: home)))?.values["company"] == .text("Acme"))
         #expect(try await brainGit("rev-list", "--count", "HEAD") == commits)
         #expect(try await brainGit("status", "--porcelain").isEmpty)
 

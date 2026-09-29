@@ -91,19 +91,19 @@ struct ProjectSetupTests {
     }
 
     @Test func remoteURLsBecomeIDs() {
-        #expect(ProjectSetup.normalizedRemote("git@github.com:Owner/Repo.git\n") == "github.com/owner/repo")
-        #expect(ProjectSetup.normalizedRemote("https://user@github.com/owner/repo") == "github.com/owner/repo")
-        #expect(ProjectSetup.normalizedRemote("ssh://git@gitlab.example.com:2222/group/sub/proj.git") == "gitlab.example.com/group/sub/proj")
-        #expect(ProjectSetup.normalizedRemote("https://github.com/../../etc") == "github.com/etc")
-        #expect(ProjectSetup.normalizedRemote("") == nil)
-        #expect(ProjectSetup.normalizedRemote("https://me:p/ss@github.com/o/r.git") == "github.com/o/r")
-        #expect(ProjectSetup.normalizedRemote("https://host/.git/x/y") == "host/x/y")
+        #expect(ProjectRecords.normalizedRemote("git@github.com:Owner/Repo.git\n") == "github.com/owner/repo")
+        #expect(ProjectRecords.normalizedRemote("https://user@github.com/owner/repo") == "github.com/owner/repo")
+        #expect(ProjectRecords.normalizedRemote("ssh://git@gitlab.example.com:2222/group/sub/proj.git") == "gitlab.example.com/group/sub/proj")
+        #expect(ProjectRecords.normalizedRemote("https://github.com/../../etc") == "github.com/etc")
+        #expect(ProjectRecords.normalizedRemote("") == nil)
+        #expect(ProjectRecords.normalizedRemote("https://me:p/ss@github.com/o/r.git") == "github.com/o/r")
+        #expect(ProjectRecords.normalizedRemote("https://host/.git/x/y") == "host/x/y")
     }
 
     @Test func projectOutsideTheRootGetsAHashedID() async throws {
         let other = home.appending(path: "Elsewhere/app")
         try fm.createDirectory(at: other, withIntermediateDirectories: true)
-        let id = await ProjectSetup.projectID(for: other, projectsRoot: home.appending(path: "Projects"), env: env)
+        let id = await ProjectRecords.projectID(for: other, projectsRoot: home.appending(path: "Projects"), env: env)
         #expect(id.hasPrefix("local/app-") && id.count == "local/app-".count + 8)
     }
 
@@ -162,13 +162,13 @@ struct ProjectSetupTests {
             try await ProjectSetup.apply(plan, accepting: ["AGENTS.md"], brain: brain, home: home, env: env,
                                          trash: { _ in throw CocoaError(.fileWriteNoPermission) })
         }
-        let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot)))
+        let lock = try #require(ProjectRecords.savedLock(id: "local/task", in: .brain(brainRoot)))
         #expect(lock.files["AGENTS.md"]?.sha256 == Checksum.sha256(Data("# Task for Beta\n".utf8)))
     }
 
     @Test func projectWithoutRemoteUsesItsPath() async throws {
         try fm.createDirectory(at: project, withIntermediateDirectories: true)
-        #expect(await ProjectSetup.projectID(for: project, projectsRoot: home.appending(path: "Projects"), env: env) == "local/task")
+        #expect(await ProjectRecords.projectID(for: project, projectsRoot: home.appending(path: "Projects"), env: env) == "local/task")
     }
 
     @Test func firstRenderWritesFilesBacksUpAndSavesAnswers() async throws {
@@ -189,8 +189,8 @@ struct ProjectSetupTests {
         #expect(read(".claude/skills/tdd/SKILL.md")?.contains("disable-model-invocation: true") == true)
         #expect(outcome.backup == nil)
 
-        #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(brainRoot)) == answers)
-        let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot)))
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: .brain(brainRoot)) == answers)
+        let lock = try #require(ProjectRecords.savedLock(id: "local/task", in: .brain(brainRoot)))
         #expect(lock.files.keys.sorted() == [".agents/skills/tdd/SKILL.md", ".claude/skills", "AGENTS.md", "REVIEW.md"])
         #expect(lock.templates?.keys.sorted() == ["AGENTS.md", "CLAUDE.md", "REVIEW.md"])
         #expect(lock.brainCommit?.isEmpty == false)
@@ -231,7 +231,7 @@ struct ProjectSetupTests {
         #expect(!fm.fileExists(atPath: project.appending(path: ".claude").path))
         #expect(fm.fileExists(atPath: project.appending(path: ".agents/skills/tdd/SKILL.md").path))
         // A file left alone keeps its old lock entry, so the next plan still knows AKit wrote it.
-        #expect(ProjectSetup.savedLock(id: "local/task", in: .brain(brainRoot))?.files["AGENTS.md"] != nil)
+        #expect(ProjectRecords.savedLock(id: "local/task", in: .brain(brainRoot))?.files["AGENTS.md"] != nil)
 
         // Edited after a render and then dropped: left alone.
         try write("Projects/task/.agents/skills/tdd/SKILL.md", "mine")

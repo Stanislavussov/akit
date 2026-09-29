@@ -103,7 +103,7 @@ public struct Brain: Sendable {
         // The brain's own records; a work Mac's local ones are not part of the brain.
         let projects = BrainRemove.savedAnswers(in: .brain(root)).map { saved in
             Project(id: saved.id, answers: saved.answers,
-                    brainCommit: ProjectSetup.savedLock(id: saved.id, in: .brain(root))?.brainCommit)
+                    brainCommit: ProjectRecords.savedLock(id: saved.id, in: .brain(root))?.brainCommit)
         }
         return Brain(root: root, skills: skills, layers: layers, problems: problems, projects: projects)
     }

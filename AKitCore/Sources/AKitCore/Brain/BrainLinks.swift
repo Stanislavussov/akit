@@ -25,7 +25,7 @@ public enum BrainLinks {
         let prefix = Render.skillsFolder + "/"
         let ids = Set(brain.projects.map(\.id) + BrainRemove.savedAnswers(in: store).map(\.id))
         for id in ids.sorted() {
-            guard let folder = folders[id], let lock = ProjectSetup.savedLock(id: id, in: store) else { continue }
+            guard let folder = folders[id], let lock = ProjectRecords.savedLock(id: id, in: store) else { continue }
             for (path, entry) in lock.files where path.hasPrefix(prefix) && path.hasSuffix("/SKILL.md") {
                 let parts = path.dropFirst(prefix.count).split(separator: "/")
                 guard parts.count == 2 else { continue }

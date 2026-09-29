@@ -85,7 +85,7 @@ struct BrainRemoveTests {
         let done = await akit("remove", "layer", "task", "--yes")
         #expect(done.code == 0, "\(done)")
         #expect(!fm.fileExists(atPath: root.appending(path: "layers/task").path))
-        #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(root))?.layers == [])
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: .brain(root))?.layers == [])
         #expect(try await git("log", "-1", "--format=%s") == "Remove layer task\n")
         #expect(try await git("status", "--porcelain") == "")
         #expect(await akit("remove", "layer", "core", "--yes").code == 2)
@@ -113,7 +113,7 @@ struct BrainRemoveTests {
         // Already there with the same content: stays the user's.
         try write("Projects/task/.agents/skills/tdd/SKILL.md", "---\nname: tdd\ndisable-model-invocation: true\n---\n")
         #expect(await akit("apply", "--layers", "base").code == 0)
-        let lock = try #require(ProjectSetup.savedLock(id: "local/task", in: .brain(root)))
+        let lock = try #require(ProjectRecords.savedLock(id: "local/task", in: .brain(root)))
         #expect(lock.files.keys.sorted() == [".agents/skills/old/SKILL.md", ".claude/skills", "AGENTS.md", "CLAUDE.md"])
 
         // tdd is the project's own skill, so the Claude link to the skills stays for it.
@@ -140,7 +140,7 @@ struct BrainRemoveTests {
         try write(".akit/registry/layers/base/layer.yaml", "description: Base\nskills:\n  - name: tdd\n")
         _ = try await git("commit", "-qam", "Drop old from base")
         try await BrainRemove.removeSkill("old", in: try #require(Brain.load(from: root)), env: env, trash: trash)
-        #expect(ProjectSetup.savedAnswers(id: "local/task", in: .brain(root))?.skills == [])
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: .brain(root))?.skills == [])
         #expect(try await git("show", "--name-only", "--format=%s", "HEAD") == "Remove skill old\n\nprojects/local/task/answers.json\nskills/old/SKILL.md\n")
 
         // Removing the project takes the skill it picked out, too.
