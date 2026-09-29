@@ -1,13 +1,15 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// Reading Pi's session folder and single lines of its session files. Shared by the
 /// session list and transcript (PiSessions), token usage and the insights fact reader.
-enum PiLogFormat {
-    typealias Object = JSONLines.Object
+public enum PiLogFormat {
+    public typealias Object = JSONLines.Object
 
     /// `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` from the global settings, then `<config>/sessions`.
     /// A relative `sessionDir` points inside each project and is not followed.
-    static func folder(configRoot: URL, in env: HarnessEnvironment) -> URL {
+    public static func folder(configRoot: URL, in env: HarnessEnvironment) -> URL {
         if let custom = env.variables["PI_CODING_AGENT_SESSION_DIR"], !custom.isEmpty {
             return env.expand(custom)
         }
@@ -20,14 +22,14 @@ enum PiLogFormat {
     }
 
     /// A prompt that starts with an expanded skill (`<skill name="tdd" …>`) is titled by what follows it.
-    static func promptTitle(_ text: String) -> String {
+    public static func promptTitle(_ text: String) -> String {
         guard text.hasPrefix("<skill "), let end = text.range(of: "</skill>") else { return text }
         let rest = text[end.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
         return rest.isEmpty ? text : rest
     }
 
     /// `x` for a prompt that starts with an expanded skill `<skill name="x" …>`.
-    static func skillPrefixName(_ text: String) -> String? {
+    public static func skillPrefixName(_ text: String) -> String? {
         let start = "<skill name=\""
         guard text.hasPrefix(start) else { return nil }
         let rest = text.dropFirst(start.count)
@@ -36,14 +38,14 @@ enum PiLogFormat {
     }
 
     /// Pi's `message.usage`: input, output, cacheRead, cacheWrite.
-    static func tokens(fromPiUsage usage: Object) -> TokenCounts {
+    public static func tokens(fromPiUsage usage: Object) -> TokenCounts {
         func count(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
         return TokenCounts(input: count("input"), output: count("output"),
                            cacheRead: count("cacheRead"), cacheWrite: count("cacheWrite"))
     }
 
     /// `usage.cost.total` in US dollars, when Pi recorded it.
-    static func cost(fromPiUsage usage: Object) -> Double? {
+    public static func cost(fromPiUsage usage: Object) -> Double? {
         ((usage["cost"] as? Object)?["total"] as? NSNumber)?.doubleValue
     }
 }

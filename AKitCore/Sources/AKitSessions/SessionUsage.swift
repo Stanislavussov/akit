@@ -1,3 +1,4 @@
+import AKitModel
 import Foundation
 
 /// What one model did in a session.

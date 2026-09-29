@@ -1,3 +1,4 @@
+import AKitModel
 import Foundation
 
 /// A whole session as text to paste into another agent or an eval set.

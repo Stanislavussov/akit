@@ -1,3 +1,5 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// One saved conversation of a harness, as shown in the list.

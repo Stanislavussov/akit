@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AKitCore
+@testable import AKitSessions
 
 /// The session index: schema, import rules, facts. Temporary fake home and index; never
 /// reads the real ~/.claude or ~/.pi.

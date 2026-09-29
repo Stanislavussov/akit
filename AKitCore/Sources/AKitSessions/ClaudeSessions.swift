@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// Claude Code session files: `<config>/projects/<encoded cwd>/<session id>.jsonl`.
