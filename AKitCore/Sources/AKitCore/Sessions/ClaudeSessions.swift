@@ -26,7 +26,7 @@ enum ClaudeSessions {
             cwd = cwd ?? entry["cwd"] as? String
             version = version ?? entry["version"] as? String
             started = started ?? JSONLines.date(entry["timestamp"])
-            firstPrompt = firstPrompt ?? promptText(entry)
+            firstPrompt = firstPrompt ?? ClaudeLogFormat.promptText(entry)
             return cwd != nil && firstPrompt != nil
         }
 
@@ -52,22 +52,6 @@ enum ClaudeSessions {
                               started: started, modified: info.modified, size: info.size, harnessVersion: version)
     }
 
-    /// Text the user typed, or nil for tool results, harness-injected and meta entries.
-    static func promptText(_ entry: Object) -> String? {
-        guard entry["type"] as? String == "user", !isSidechain(entry),
-              entry["isMeta"] as? Bool != true, entry["isCompactSummary"] as? Bool != true,
-              let message = entry["message"] as? Object else { return nil }
-        if let blocks = message["content"] as? [Object], blocks.contains(where: { $0["type"] as? String == "tool_result" }) {
-            return nil
-        }
-        let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
-        // Slash commands and their output are wrapped in tags like <command-name>.
-        if text.isEmpty || text.hasPrefix("<") || text.hasPrefix("[Request interrupted") { return nil }
-        return text
-    }
-
-    static func isSidechain(_ entry: Object) -> Bool { entry["isSidechain"] as? Bool == true }
-
     // MARK: - Transcript
 
     static func transcript(of file: URL) throws -> SessionTranscript {
@@ -78,7 +62,7 @@ enum ClaudeSessions {
 
         for entry in try JSONLines.objects(in: data) {
             // Side chains: subagents of old versions, written into the main file.
-            if isSidechain(entry) {
+            if ClaudeLogFormat.isSidechain(entry) {
                 recordUsage(entry, in: &builder.subagentUsage)
                 continue
             }
@@ -146,17 +130,7 @@ enum ClaudeSessions {
         guard entry["type"] as? String == "assistant", let message = entry["message"] as? Object,
               let usage = message["usage"] as? Object else { return }
         counter.record(id: message["id"] as? String ?? entry["requestId"] as? String,
-                       model: message["model"] as? String, tokens: tokens(fromClaudeUsage: usage))
-    }
-
-    /// Claude's `message.usage`: input_tokens, output_tokens, cache_read_input_tokens,
-    /// cache_creation_input_tokens, output_tokens_details.thinking_tokens.
-    static func tokens(fromClaudeUsage usage: Object) -> TokenCounts {
-        func count(_ key: String, in object: Object? = usage) -> Int { (object?[key] as? NSNumber)?.intValue ?? 0 }
-        return TokenCounts(input: count("input_tokens"), output: count("output_tokens"),
-                           cacheRead: count("cache_read_input_tokens"),
-                           cacheWrite: count("cache_creation_input_tokens"),
-                           reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? Object))
+                       model: message["model"] as? String, tokens: ClaudeLogFormat.tokens(fromClaudeUsage: usage))
     }
 
     struct ToolCall {
@@ -208,16 +182,9 @@ enum ClaudeSessions {
 
     /// `<command-name>/model</command-name><command-args>opus</command-args>` → `/model opus`.
     static func commandLine(_ text: String) -> String {
-        let name = tag("command-name", in: text) ?? tag("command-message", in: text) ?? ""
-        let args = tag("command-args", in: text) ?? ""
+        let name = ClaudeLogFormat.tag("command-name", in: text) ?? ClaudeLogFormat.tag("command-message", in: text) ?? ""
+        let args = ClaudeLogFormat.tag("command-args", in: text) ?? ""
         return args.isEmpty ? name : "\(name) \(args)"
-    }
-
-    /// Trimmed text between `<name>` and `</name>`.
-    static func tag(_ name: String, in text: String) -> String? {
-        guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex)
-        else { return nil }
-        return String(text[open.upperBound..<close.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func stripTags(_ text: String) -> String {
@@ -248,7 +215,7 @@ extension ClaudeSessions {
         let entries = try JSONLines.objects(in: data) { line in
             JSONLines.contains(line, attachment) || JSONLines.contains(line, assistant)
         }
-        for entry in entries where !isSidechain(entry) {
+        for entry in entries where !ClaudeLogFormat.isSidechain(entry) {
             if entry["type"] as? String == "assistant" { beforeFirstAnswer = false }
             guard entry["type"] as? String == "attachment", let attachment = entry["attachment"] as? Object else { continue }
             if attachment["type"] as? String == "prompt_snapshot" {

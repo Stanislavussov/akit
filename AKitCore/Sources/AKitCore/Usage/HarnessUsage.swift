@@ -154,7 +154,7 @@ extension ClaudeSessions {
                   let model = message["model"] as? String, model != "<synthetic>",
                   let time = JSONLines.date(entry["timestamp"]) else { continue }
             let record = UsageRecord(time: time, harness: .claudeCode, provider: "anthropic", model: model,
-                                     tokens: tokens(fromClaudeUsage: usage), cost: nil)
+                                     tokens: ClaudeLogFormat.tokens(fromClaudeUsage: usage), cost: nil)
             let id = message["id"] as? String ?? entry["requestId"] as? String
             // The last line of a response carries its final usage.
             if let id, let index = byID[id] {
@@ -236,7 +236,7 @@ extension PiSessions {
                       message["role"] as? String == "assistant", let usage = message["usage"] as? JSONLines.Object,
                       let time = JSONLines.date(message["timestamp"]) ?? JSONLines.date(entry["timestamp"]),
                       time >= since else { return nil }
-                let tokens = tokens(fromPiUsage: usage), cost = cost(fromPiUsage: usage)
+                let tokens = PiLogFormat.tokens(fromPiUsage: usage), cost = PiLogFormat.cost(fromPiUsage: usage)
                 // Failed requests are saved with all counts at zero.
                 guard tokens.total > 0 || (cost ?? 0) > 0 else { return nil }
                 let record = UsageRecord(time: time, harness: .pi, provider: message["provider"] as? String ?? "unknown",

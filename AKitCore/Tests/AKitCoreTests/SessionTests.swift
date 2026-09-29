@@ -14,6 +14,15 @@ struct SessionTests {
 
     var env: HarnessEnvironment { HarnessEnvironment(homeDirectory: home) }
 
+    /// Sessions of one harness as `SessionScanner` reads them, whether it is detected or not.
+    func sessions(_ harness: HarnessID, in env: HarnessEnvironment? = nil) -> [SessionSummary] {
+        let env = env ?? self.env
+        let root = harness == .pi ? PiAdapter().configRoot(in: env) : ClaudeCodeAdapter().configRoot(in: env)
+        let installation = HarnessInstallation(id: harness, displayName: harness.displayName, executableURL: nil,
+                                               configRoot: root, locations: [])
+        return SessionScanner.scan(installations: [installation], in: env)
+    }
+
     func write(_ path: String, lines: [[String: Any]]) throws {
         let url = home.appending(path: path)
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -58,7 +67,7 @@ struct SessionTests {
         try write(claudeFile, lines: claudeSession(extra: [["type": "ai-title", "aiTitle": "Fix login bug", "sessionId": "1111"]]))
         try fm.createDirectory(at: home.appending(path: ".claude/projects/-work-app/1111/subagents"), withIntermediateDirectories: true)
 
-        let sessions = ClaudeCodeAdapter().sessions(in: env)
+        let sessions = self.sessions(.claudeCode)
         let session = try #require(sessions.first)
         #expect(sessions.count == 1) // the subagents folder is not a session
         #expect(session.harness == .claudeCode)
@@ -72,13 +81,12 @@ struct SessionTests {
         var lines = claudeSession()
         lines.removeLast() // no ai-title
         try write(claudeFile, lines: lines)
-        #expect(ClaudeCodeAdapter().sessions(in: env).first?.title == "Fix the login bug")
+        #expect(sessions(.claudeCode).first?.title == "Fix the login bug")
     }
 
     @Test func claudeTranscriptSkipsMetaAndSidechains() throws {
         try write(claudeFile, lines: claudeSession())
-        let adapter = ClaudeCodeAdapter()
-        let transcript = try adapter.transcript(of: try #require(adapter.sessions(in: env).first))
+        let transcript = try SessionReader.transcript(of: try #require(sessions(.claudeCode).first))
 
         #expect(transcript.items.map(\.kind) == [
             .event("Command"), .user, .thinking, .toolCall(name: "Read"),
@@ -100,8 +108,7 @@ struct SessionTests {
         ]]])
         lines.append(["type": "user", "message": ["role": "user", "content": "use key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123"]])
         try write(claudeFile, lines: lines)
-        let adapter = ClaudeCodeAdapter()
-        let items = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).items
+        let items = try SessionReader.transcript(of: try #require(sessions(.claudeCode).first)).items
 
         #expect(items.contains { $0.kind == .toolResult(name: "Bash", isError: false) && $0.text == SecretFilter.hiddenOutput })
         #expect(!items.contains { $0.text.contains("hunter2") || $0.text.contains("sk-ant-api03") })
@@ -116,15 +123,14 @@ struct SessionTests {
             ["type": "user", "message": ["role": "user", "content": "<bash-stdout>README.md</bash-stdout>"]],
         ]
         try write(claudeFile, lines: lines)
-        let adapter = ClaudeCodeAdapter()
-        let items = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).items.suffix(4)
+        let items = try SessionReader.transcript(of: try #require(sessions(.claudeCode).first)).items.suffix(4)
         #expect(items.map(\.kind) == [.event("Shell"), .event("Shell output"), .event("Shell"), .event("Shell output")])
         #expect(items.map(\.text) == ["$ cat .env", SecretFilter.hiddenOutput, "$ ls", "README.md"])
     }
 
     @Test func claudeFileWithoutConversationIsSkipped() throws {
         try write(claudeFile, lines: [["type": "permission-mode", "permissionMode": "default", "sessionId": "1111"]])
-        #expect(ClaudeCodeAdapter().sessions(in: env).isEmpty)
+        #expect(sessions(.claudeCode).isEmpty)
     }
 
     // MARK: Pi
@@ -158,7 +164,7 @@ struct SessionTests {
         try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
         try write(piFile, lines: piSession())
 
-        let session = try #require(PiAdapter().sessions(in: env).first)
+        let session = try #require(sessions(.pi).first)
         #expect(session.harness == .pi)
         #expect(session.title == "Test run")
         #expect(session.project?.path == "/work/app")
@@ -168,13 +174,12 @@ struct SessionTests {
         var lines = piSession()
         lines.removeLast()
         try write(piFile, lines: lines)
-        #expect(PiAdapter().sessions(in: env).first?.title == "Add tests")
+        #expect(sessions(.pi).first?.title == "Add tests")
     }
 
     @Test func piTranscriptFollowsTheActiveBranch() throws {
         try write(piFile, lines: piSession())
-        let adapter = PiAdapter()
-        let transcript = try adapter.transcript(of: try #require(adapter.sessions(in: env).first))
+        let transcript = try SessionReader.transcript(of: try #require(sessions(.pi).first))
 
         #expect(transcript.items.map(\.kind) == [
             .event("Model"), .user, .thinking, .toolCall(name: "bash"), .toolResult(name: "bash", isError: true),
@@ -194,16 +199,15 @@ struct SessionTests {
             "content": [["type": "text", "text": "{\"access\": \"secret-value-123456\"}"]],
         ]])
         try write(piFile, lines: lines)
-        let adapter = PiAdapter()
-        let items = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).items
+        let items = try SessionReader.transcript(of: try #require(sessions(.pi).first)).items
         #expect(items.last?.text == SecretFilter.hiddenOutput)
     }
 
     @Test func piSessionFolderFromEnvironment() throws {
         let custom = HarnessEnvironment(homeDirectory: home, variables: ["PI_CODING_AGENT_SESSION_DIR": "~/pi-sessions"])
         try write("pi-sessions/--work-app--/s.jsonl", lines: piSession())
-        #expect(PiAdapter().sessions(in: custom).count == 1)
-        #expect(PiAdapter().sessions(in: env).isEmpty)
+        #expect(sessions(.pi, in: custom).count == 1)
+        #expect(sessions(.pi).isEmpty)
     }
 
     @Test func scannerListsInstalledHarnessesNewestFirst() throws {
@@ -224,7 +228,7 @@ struct SessionTests {
         ]]
         // Real order: the typed prompt, then the context of the first request, then the answer.
         var lines = claudeSession()
-        let prompt = try #require(lines.firstIndex { ClaudeSessions.promptText($0) != nil })
+        let prompt = try #require(lines.firstIndex { ClaudeLogFormat.promptText($0) != nil })
         lines.insert(contentsOf: [
             ["type": "attachment", "attachment": ["type": "instructions", "files": [
                 ["path": "/home/.claude/CLAUDE.md", "type": "User", "content": "Be brief."],
@@ -238,9 +242,8 @@ struct SessionTests {
         lines.append(["type": "attachment", "attachment": ["type": "date", "date": "later, not initial"]])
         try write(claudeFile, lines: lines)
 
-        let adapter = ClaudeCodeAdapter()
-        let session = try #require(adapter.sessions(in: env).first)
-        let recorded = try #require(try adapter.recordedPrompt(in: session))
+        let session = try #require(sessions(.claudeCode).first)
+        let recorded = try #require(try PromptReader.recorded(in: session))
         #expect(recorded.sections == ["You are Claude Code.", "# Harness"])
         #expect(recorded.tools.map(\.name) == ["Bash"])
         #expect(recorded.tools.first?.schema.contains("\"type\" : \"object\"") == true)
@@ -253,9 +256,8 @@ struct SessionTests {
 
     @Test func claudeSessionWithoutSnapshotHasNoPrompt() throws {
         try write(claudeFile, lines: claudeSession())
-        let adapter = ClaudeCodeAdapter()
-        let session = try #require(adapter.sessions(in: env).first)
-        #expect(try adapter.recordedPrompt(in: session) == nil)
+        let session = try #require(sessions(.claudeCode).first)
+        #expect(try PromptReader.recorded(in: session) == nil)
     }
 
     /// A stand-in `pi` that behaves like the probe extension: writes the prompt file.
@@ -273,7 +275,7 @@ struct SessionTests {
         case "$*" in *--no-session*--offline*-p*-e*) ;; *) echo "unexpected: $*"; exit 2;; esac
         printf '{"systemPrompt":"You are pi in %s","tools":[{"name":"read","description":"Read files","parameters":{"type":"object"}}],"contextFiles":["/p/AGENTS.md"],"skills":["tdd"]}' "$(basename "$(pwd)")" > "$AKIT_PROMPT_OUT"
         """)
-        let prompt = try #require(try await PiAdapter().capturePrompt(in: home.appending(path: "work/app"), env: env))
+        let prompt = try #require(try await PromptReader.capture(harness: .pi, in: home.appending(path: "work/app"), env: env))
         #expect(prompt.systemPrompt == "You are pi in app")
         #expect(prompt.tools.map(\.name) == ["read"])
         #expect(prompt.context.map(\.title) == ["Context files (1)", "Skills (1)"])
@@ -282,17 +284,17 @@ struct SessionTests {
     @Test func piCaptureFailureShowsPiOutput() async throws {
         let env = try fakePi("echo 'No model configured'; exit 1")
         await #expect(throws: PiPromptProbe.ProbeError.self) {
-            _ = try await PiAdapter().capturePrompt(in: home.appending(path: "work/app"), env: env)
+            _ = try await PromptReader.capture(harness: .pi, in: home.appending(path: "work/app"), env: env)
         }
         do {
-            _ = try await PiAdapter().capturePrompt(in: home.appending(path: "work/app"), env: env)
+            _ = try await PromptReader.capture(harness: .pi, in: home.appending(path: "work/app"), env: env)
         } catch {
             #expect(error.localizedDescription.contains("No model configured"))
         }
     }
 
     @Test func piCaptureWithoutExecutableIsNil() async throws {
-        #expect(try await PiAdapter().capturePrompt(in: home, env: env) == nil)
+        #expect(try await PromptReader.capture(harness: .pi, in: home, env: env) == nil)
     }
 
     // MARK: Export
@@ -309,9 +311,8 @@ struct SessionTests {
             ["type": "text", "text": "Done:\n```swift\nlet key = \"sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123\"\n```"],
         ]]])
         try write(claudeFile, lines: lines)
-        let adapter = ClaudeCodeAdapter()
-        let session = try #require(adapter.sessions(in: env).first)
-        let transcript = try adapter.transcript(of: session)
+        let session = try #require(sessions(.claudeCode).first)
+        let transcript = try SessionReader.transcript(of: session)
 
         let markdown = SessionExport.markdown(session, transcript)
         #expect(markdown.hasPrefix("# \(session.title)\n"))
@@ -382,8 +383,7 @@ struct SessionTests {
             ["type": "user", "isSidechain": true, "message": ["role": "user", "content": "review"]],
             claudeAnswer(id: "s2", model: "claude-sonnet-5", sidechain: true, block: text, input: 3, output: 4),
         ])
-        let adapter = ClaudeCodeAdapter()
-        let usage = try adapter.transcript(of: try #require(adapter.sessions(in: env).first)).usage
+        let usage = try SessionReader.transcript(of: try #require(sessions(.claudeCode).first)).usage
 
         #expect(usage.models.map(\.model) == ["claude-opus-5-5", "claude-haiku-4-5"])
         let opus = try #require(usage.models.first)
@@ -415,8 +415,7 @@ struct SessionTests {
         withUsage(3, input: 100, output: 5, cost: 0.25) // abandoned branch, model "old"
         withUsage(4, input: 200, output: 7, cost: 0.5)
         try write(piFile, lines: lines)
-        let adapter = PiAdapter()
-        let transcript = try adapter.transcript(of: try #require(adapter.sessions(in: env).first))
+        let transcript = try SessionReader.transcript(of: try #require(sessions(.pi).first))
         let usage = transcript.usage
 
         #expect(usage.models.map(\.id) == ["anthropic/old", "anthropic/claude-opus-5-5"])
@@ -424,10 +423,10 @@ struct SessionTests {
         #expect(usage.cost == 0.75)
         #expect(usage.toolErrors == 1)
 
-        let markdown = SessionExport.markdown(try #require(adapter.sessions(in: env).first), transcript)
+        let markdown = SessionExport.markdown(try #require(sessions(.pi).first), transcript)
         #expect(markdown.contains("| anthropic/claude-opus-5-5 | 1 | 200 | 7 | 0 | 10 | 0 | 217 | 0.5000 |"))
         #expect(markdown.contains("| **Total** | 2 | 300 | 12 | 0 | 20 | 0 | 332 | 0.7500 |"))
-        let json = SessionExport.json(try #require(adapter.sessions(in: env).first), transcript)
+        let json = SessionExport.json(try #require(sessions(.pi).first), transcript)
         let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let exported = try #require(object["usage"] as? [String: Any])
         #expect(exported["costUSD"] as? Double == 0.75)

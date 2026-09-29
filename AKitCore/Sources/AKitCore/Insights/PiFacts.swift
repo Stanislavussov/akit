@@ -48,11 +48,11 @@ struct PiFacts {
         switch message["role"] as? String {
         case "user":
             let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let skill = PiSessions.skillPrefixName(text) else {
+            guard let skill = PiLogFormat.skillPrefixName(text) else {
                 if !text.isEmpty { lastPrompt = text }
                 return []
             }
-            let args = PiSessions.promptTitle(text) == text ? "" : PiSessions.promptTitle(text)
+            let args = PiLogFormat.promptTitle(text) == text ? "" : PiLogFormat.promptTitle(text)
             return [.skillCall(.init(key: key, ts: time, skill: skill, by: .user, isSubagent: false, hasArgs: !args.isEmpty)),
                     .manualCallExample(.init(key: key, ts: time, skill: skill, args: args, request: lastPrompt))]
         case "assistant":
@@ -78,8 +78,8 @@ struct PiFacts {
         // Same rule as SessionUsage: responses without a model are no requests.
         if let usage = message["usage"] as? JSONLines.Object, let model = message["model"] as? String,
            !model.isEmpty, model != "<synthetic>" {
-            facts.append(.request(.init(key: key, ts: ts, model: model, tokens: PiSessions.tokens(fromPiUsage: usage),
-                                        cost: PiSessions.cost(fromPiUsage: usage), isSubagent: false)))
+            facts.append(.request(.init(key: key, ts: ts, model: model, tokens: PiLogFormat.tokens(fromPiUsage: usage),
+                                        cost: PiLogFormat.cost(fromPiUsage: usage), isSubagent: false)))
         }
         for (index, block) in (message["content"] as? [JSONLines.Object] ?? []).enumerated()
         where block["type"] as? String == "toolCall" {

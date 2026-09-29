@@ -152,13 +152,34 @@ struct TranscriptBuilder {
 
 /// Sessions of all installed harnesses. Read-only.
 public enum SessionScanner {
-    /// Newest first.
-    public static func scan(installations: [HarnessInstallation],
-                            adapters: [any HarnessAdapter] = HarnessCatalog.adapters,
-                            in env: HarnessEnvironment) -> [SessionSummary] {
-        let installed = Set(installations.map(\.id))
-        return adapters.filter { installed.contains($0.id) }
-            .flatMap { $0.sessions(in: env) }
+    /// Newest first. Harnesses whose sessions AKit can't read (custom ones too) add none.
+    public static func scan(installations: [HarnessInstallation], in env: HarnessEnvironment) -> [SessionSummary] {
+        installations.flatMap { sessions(of: $0, in: env) }
             .sorted { $0.modified > $1.modified }
+    }
+
+    /// Saved conversations of one harness (any order).
+    static func sessions(of installation: HarnessInstallation, in env: HarnessEnvironment) -> [SessionSummary] {
+        switch installation.id {
+        case .claudeCode:
+            // `<config>/projects/*/<session id>.jsonl`.
+            ClaudeSessions.list(configRoot: installation.configRoot)
+        case .pi:
+            PiSessions.list(folder: PiLogFormat.folder(configRoot: installation.configRoot, in: env))
+        default:
+            []
+        }
+    }
+}
+
+/// Messages of saved sessions. Read-only.
+public enum SessionReader {
+    /// Messages of one session from `SessionScanner.scan`. Empty for a harness AKit can't read.
+    public static func transcript(of session: SessionSummary) throws -> SessionTranscript {
+        switch session.harness {
+        case .claudeCode: try ClaudeSessions.transcript(of: session.file)
+        case .pi: try PiSessions.transcript(of: session.file)
+        default: SessionTranscript()
+        }
     }
 }

@@ -6,20 +6,6 @@ import Foundation
 enum PiSessions {
     typealias Object = JSONLines.Object
 
-    /// `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` from the global settings, then `<config>/sessions`.
-    /// A relative `sessionDir` points inside each project and is not followed.
-    static func folder(configRoot: URL, in env: HarnessEnvironment) -> URL {
-        if let custom = env.variables["PI_CODING_AGENT_SESSION_DIR"], !custom.isEmpty {
-            return env.expand(custom)
-        }
-        if let data = try? Data(contentsOf: configRoot.appending(path: "settings.json")),
-           let settings = try? JSONSerialization.jsonObject(with: data) as? Object,
-           let dir = settings["sessionDir"] as? String, dir.hasPrefix("/") || dir.hasPrefix("~") {
-            return env.expand(dir)
-        }
-        return configRoot.appending(path: "sessions")
-    }
-
     static func list(folder: URL) -> [SessionSummary] {
         let files = FileWalk.children(of: folder)
             .filter(FileWalk.isDirectory)
@@ -46,28 +32,12 @@ enum PiSessions {
         for entry in JSONLines.tail(of: file) where entry["type"] as? String == "session_info" {
             name = entry["name"] as? String ?? name
         }
-        let title = [name, firstPrompt.map { JSONLines.titleLine(SecretFilter.masked(promptTitle($0))) }]
+        let title = [name, firstPrompt.map { JSONLines.titleLine(SecretFilter.masked(PiLogFormat.promptTitle($0))) }]
             .compactMap { $0 }.first { !$0.isEmpty } ?? "Untitled session"
         let info = JSONLines.fileInfo(file)
         return SessionSummary(harness: .pi, file: file, title: title,
                               project: (header["cwd"] as? String).map { URL(filePath: $0, directoryHint: .isDirectory) },
                               started: JSONLines.date(header["timestamp"]), modified: info.modified, size: info.size)
-    }
-
-    /// A prompt that starts with an expanded skill (`<skill name="tdd" …>`) is titled by what follows it.
-    static func promptTitle(_ text: String) -> String {
-        guard text.hasPrefix("<skill "), let end = text.range(of: "</skill>") else { return text }
-        let rest = text[end.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
-        return rest.isEmpty ? text : rest
-    }
-
-    /// `x` for a prompt that starts with an expanded skill `<skill name="x" …>`.
-    static func skillPrefixName(_ text: String) -> String? {
-        let start = "<skill name=\""
-        guard text.hasPrefix(start) else { return nil }
-        let rest = text.dropFirst(start.count)
-        guard let quote = rest.firstIndex(of: "\""), quote > rest.startIndex else { return nil }
-        return String(rest[..<quote])
     }
 
     // MARK: - Transcript
@@ -91,19 +61,8 @@ enum PiSessions {
         guard entry["type"] as? String == "message", let message = entry["message"] as? Object,
               message["role"] as? String == "assistant", let usage = message["usage"] as? Object else { return }
         counter.record(id: entry["id"] as? String, model: message["model"] as? String,
-                       provider: message["provider"] as? String, tokens: tokens(fromPiUsage: usage), cost: cost(fromPiUsage: usage))
-    }
-
-    /// Pi's `message.usage`: input, output, cacheRead, cacheWrite.
-    static func tokens(fromPiUsage usage: Object) -> TokenCounts {
-        func count(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
-        return TokenCounts(input: count("input"), output: count("output"),
-                           cacheRead: count("cacheRead"), cacheWrite: count("cacheWrite"))
-    }
-
-    /// `usage.cost.total` in US dollars, when Pi recorded it.
-    static func cost(fromPiUsage usage: Object) -> Double? {
-        ((usage["cost"] as? Object)?["total"] as? NSNumber)?.doubleValue
+                       provider: message["provider"] as? String, tokens: PiLogFormat.tokens(fromPiUsage: usage),
+                       cost: PiLogFormat.cost(fromPiUsage: usage))
     }
 
     /// Entries from the root to the current leaf (the last entry written).

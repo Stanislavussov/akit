@@ -19,28 +19,12 @@ public protocol HarnessAdapter: Sendable {
     /// Folders the harness reads skills from, global and for the given projects.
     func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot]
 
-    /// Saved conversations (any order). Empty if the harness keeps none or AKit can't read them.
-    func sessions(in env: HarnessEnvironment) -> [SessionSummary]
-
-    /// Messages of one saved session from `sessions(in:)`.
-    func transcript(of session: SessionSummary) throws -> SessionTranscript
-
     /// Token usage of every model response recorded at or after `since`, from all saved
     /// sessions. Empty if the harness records none or AKit can't read it.
     func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord]
 
     /// Subscription limit use recorded at or after `since` (Codex: ChatGPT plan windows).
     func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample]
-
-    /// The system prompt the harness saved inside this session, if it saves one.
-    func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot?
-
-    /// How AKit can show this harness's system prompt.
-    var systemPromptAccess: SystemPromptAccess { get }
-
-    /// Starts the harness in `project` to read the system prompt it would send now.
-    /// Must not contact the model or save a session.
-    func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot?
 
     /// Folder new skills are installed into. nil = this harness can't take skills there.
     func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL?
@@ -53,13 +37,8 @@ public protocol HarnessAdapter: Sendable {
 extension HarnessAdapter {
     public func knownProjects(in env: HarnessEnvironment) -> [URL] { [] }
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] { [] }
-    public func sessions(in env: HarnessEnvironment) -> [SessionSummary] { [] }
-    public func transcript(of session: SessionSummary) throws -> SessionTranscript { SessionTranscript() }
     public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] { [] }
     public func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample] { [] }
-    public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? { nil }
-    public var systemPromptAccess: SystemPromptAccess { .unavailable }
-    public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? { nil }
     public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] { [] }
 
     /// The first writable skill root of that scope.
@@ -71,14 +50,6 @@ extension HarnessAdapter {
             return skillRoots(in: env, projects: [project]).first { $0.scope == .project(project) && !$0.isReadOnly }?.url
         }
     }
-}
-
-public enum SystemPromptAccess: Sendable {
-    case unavailable
-    /// Saved inside session files: `recordedPrompt(in:)`.
-    case recorded
-    /// Asked from the harness on demand: `capturePrompt(in:env:)`.
-    case captured
 }
 
 /// All known adapters.

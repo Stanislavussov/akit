@@ -105,24 +105,8 @@ public struct PiAdapter: HarnessAdapter {
         return roots
     }
 
-    public func sessions(in env: HarnessEnvironment) -> [SessionSummary] {
-        PiSessions.list(folder: PiSessions.folder(configRoot: configRoot(in: env), in: env))
-    }
-
-    public func transcript(of session: SessionSummary) throws -> SessionTranscript {
-        try PiSessions.transcript(of: session.file)
-    }
-
     public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
-        PiSessions.usage(folder: PiSessions.folder(configRoot: configRoot(in: env), in: env), since: since)
-    }
-
-    public var systemPromptAccess: SystemPromptAccess { .captured }
-
-    /// See PiPromptProbe. nil when the `pi` command isn't found.
-    public func capturePrompt(in project: URL, env: HarnessEnvironment) async throws -> PromptSnapshot? {
-        guard let executable = env.findExecutable("pi") else { return nil }
-        return try await PiPromptProbe.capture(executable: executable, project: project, env: env)
+        PiSessions.usage(folder: PiLogFormat.folder(configRoot: configRoot(in: env), in: env), since: since)
     }
 
     /// The shared `.agents/skills` (Codex and OpenCode read it too), not `~/.pi/agent/skills`.

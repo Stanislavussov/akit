@@ -393,8 +393,7 @@ final class AppModel {
 
     /// Messages of one session, read in the background.
     func transcript(of session: SessionSummary) async throws -> SessionTranscript {
-        guard let adapter = adapter(for: session.harness) else { return SessionTranscript() }
-        return try await Self.background { try adapter.transcript(of: session) }
+        try await Self.background { try SessionReader.transcript(of: session) }
     }
 
     // MARK: Usage
@@ -423,13 +422,12 @@ final class AppModel {
     private(set) var capturedPrompts: [String: PromptSnapshot] = [:]
 
     func promptAccess(_ harness: HarnessID) -> SystemPromptAccess {
-        adapter(for: harness)?.systemPromptAccess ?? .unavailable
+        PromptReader.access(for: harness)
     }
 
     /// The system prompt saved in this session, if the harness saves it.
     func recordedPrompt(in session: SessionSummary) async throws -> PromptSnapshot? {
-        guard let adapter = adapter(for: session.harness) else { return nil }
-        return try await Self.background { try adapter.recordedPrompt(in: session) }
+        try await Self.background { try PromptReader.recorded(in: session) }
     }
 
     func capturedPrompt(harness: HarnessID, project: URL) -> PromptSnapshot? {
@@ -439,7 +437,7 @@ final class AppModel {
     /// Asks the harness for its current system prompt in `project` (see PiPromptProbe).
     func capturePrompt(harness: HarnessID, project: URL) async throws {
         guard let adapter = adapter(for: harness) else { return }
-        guard let prompt = try await adapter.capturePrompt(in: project, env: .current) else {
+        guard let prompt = try await PromptReader.capture(harness: harness, in: project, env: .current) else {
             throw NSError(domain: "AKit", code: 2, userInfo: [NSLocalizedDescriptionKey:
                 "\(adapter.displayName) couldn't be started: its command was not found."])
         }
@@ -506,7 +504,7 @@ final class AppModel {
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
             async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env)
-            async let sessions = SessionScanner.scan(installations: found, adapters: adapters, in: env)
+            async let sessions = SessionScanner.scan(installations: found, in: env)
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
             async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
             async let brain = Brain.load(from: brainRoot)

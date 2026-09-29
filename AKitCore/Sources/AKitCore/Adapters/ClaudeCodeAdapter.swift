@@ -71,23 +71,8 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
         return roots
     }
 
-    /// `<config>/projects/*/<session id>.jsonl`.
-    public func sessions(in env: HarnessEnvironment) -> [SessionSummary] {
-        ClaudeSessions.list(configRoot: configRoot(in: env))
-    }
-
-    public func transcript(of session: SessionSummary) throws -> SessionTranscript {
-        try ClaudeSessions.transcript(of: session.file)
-    }
-
     public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
         ClaudeSessions.usage(configRoot: configRoot(in: env), since: since)
-    }
-
-    public var systemPromptAccess: SystemPromptAccess { .recorded }
-
-    public func recordedPrompt(in session: SessionSummary) throws -> PromptSnapshot? {
-        try ClaudeSessions.recordedPrompt(in: session.file)
     }
 
     /// User servers (`~/.claude.json` → `mcpServers`), local ones (`projects[path].mcpServers`),

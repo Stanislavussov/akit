@@ -45,14 +45,14 @@ struct ClaudeFacts {
 
     mutating func facts(from entry: JSONLines.Object) -> [Fact] {
         let ts = JSONLines.date(entry["timestamp"])
-        let isSubagent = isSubagentFile || ClaudeSessions.isSidechain(entry)
+        let isSubagent = isSubagentFile || ClaudeLogFormat.isSidechain(entry)
         if !isSubagentFile { note(entry, at: ts) }
         switch entry["type"] as? String {
         case "assistant":
             return assistantFacts(entry, at: ts, isSubagent: isSubagent)
         case "user":
             let facts = userFacts(entry, at: ts, isSubagent: isSubagent)
-            if !isSubagent, let prompt = ClaudeSessions.promptText(entry) { lastPrompt = prompt }
+            if !isSubagent, let prompt = ClaudeLogFormat.promptText(entry) { lastPrompt = prompt }
             return facts
         case "attachment":
             guard let attachment = entry["attachment"] as? JSONLines.Object,
@@ -82,7 +82,7 @@ struct ClaudeFacts {
         if let usage = message["usage"] as? JSONLines.Object, let model = message["model"] as? String,
            !model.isEmpty, model != "<synthetic>",
            let key = message["id"] as? String ?? entry["requestId"] as? String {
-            facts.append(.request(.init(key: key, ts: ts, model: model, tokens: ClaudeSessions.tokens(fromClaudeUsage: usage),
+            facts.append(.request(.init(key: key, ts: ts, model: model, tokens: ClaudeLogFormat.tokens(fromClaudeUsage: usage),
                                         cost: nil, isSubagent: isSubagent)))
         }
         for block in message["content"] as? [JSONLines.Object] ?? [] where block["type"] as? String == "tool_use" {
@@ -116,9 +116,9 @@ struct ClaudeFacts {
         let text = JSONLines.text(of: content).trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("<command-name>") || text.hasPrefix("<command-message>") {
             guard entry["isMeta"] as? Bool != true, let key = entry["uuid"] as? String,
-                  let command = ClaudeSessions.tag("command-name", in: text), command.hasPrefix("/"), command.count > 1
+                  let command = ClaudeLogFormat.tag("command-name", in: text), command.hasPrefix("/"), command.count > 1
             else { return facts }
-            let args = ClaudeSessions.tag("command-args", in: text) ?? ""
+            let args = ClaudeLogFormat.tag("command-args", in: text) ?? ""
             let skill = String(command.dropFirst())
             let call = Fact.SkillCall(key: key, ts: ts, skill: skill, by: .user, isSubagent: isSubagent, hasArgs: !args.isEmpty)
             guard text.hasPrefix("<command-message>") else { return facts + [.command(call)] }

@@ -173,7 +173,7 @@ struct SessionImporter {
                 }
             }
         }
-        let pi = PiSessions.folder(configRoot: PiAdapter().configRoot(in: env), in: env)
+        let pi = PiLogFormat.folder(configRoot: PiAdapter().configRoot(in: env), in: env)
         for folder in FileWalk.children(of: pi) where FileWalk.isDirectory(folder) {
             for item in FileWalk.children(of: folder) where item.pathExtension == "jsonl" {
                 found += Self.logFile(item, harness: "pi", kind: "session").map { [$0] } ?? []
