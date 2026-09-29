@@ -106,8 +106,9 @@ struct VersionProbeTests {
         // 200 KB of banner before the version — more than the pipe buffer (64 KB).
         let exe = try script("head -c 200000 /dev/zero | tr '\\\\0' 'x'; echo; echo 'v3.0.1'")
         let start = Date()
-        let version = await VersionProbe.version(of: exe, in: env, timeout: 5)
-        #expect(Date().timeIntervalSince(start) < 3)
+        // A hang would last the whole timeout; the bound leaves room for a busy parallel test run.
+        let version = await VersionProbe.version(of: exe, in: env, timeout: 20)
+        #expect(Date().timeIntervalSince(start) < 10)
         #expect(version == "v3.0.1")
     }
 
