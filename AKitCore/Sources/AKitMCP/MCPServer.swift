@@ -1,3 +1,4 @@
+import AKitModel
 import Foundation
 
 /// One MCP server entry in one config file. The same entry can be used by several

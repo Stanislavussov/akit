@@ -1,6 +1,9 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
+@testable import AKitMCP
 
 /// Adding MCP servers, in a temporary fake home with an in-memory secret store.
 struct MCPWriterTests {

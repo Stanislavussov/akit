@@ -1,3 +1,6 @@
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
 import Foundation
 
 /// A place a new MCP server can be written to. One file read by several harnesses

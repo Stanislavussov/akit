@@ -7,3 +7,4 @@
 @_exported import AKitSkillsSh
 @_exported import AKitSessions
 @_exported import AKitUsage
+@_exported import AKitMCP

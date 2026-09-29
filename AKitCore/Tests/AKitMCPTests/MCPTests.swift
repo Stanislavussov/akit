@@ -1,6 +1,9 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
+@testable import AKitMCP
 
 /// MCP discovery in a temporary fake home. Never touches the real one.
 struct MCPTests {

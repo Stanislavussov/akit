@@ -1,3 +1,6 @@
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
 import Foundation
 
 /// Finds MCP servers in the config files of the installed harnesses. Read-only.

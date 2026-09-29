@@ -1,3 +1,5 @@
+import AKitFoundation
+import AKitModel
 import Foundation
 
 /// A server the user is adding, filled from the form or from pasted JSON.

@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// Variable references and masking for MCP config values.
