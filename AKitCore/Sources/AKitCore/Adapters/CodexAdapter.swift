@@ -36,16 +36,6 @@ public struct CodexAdapter: HarnessAdapter {
                                    configRoot: root, locations: locations)
     }
 
-    /// Token counts from the rollout files. Codex records no cost.
-    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
-        CodexUsage.usage(codexHome: configRoot(in: env), since: since)
-    }
-
-    /// ChatGPT plan limits Codex saw after each response.
-    public func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample] {
-        CodexUsage.limits(codexHome: configRoot(in: env), since: since)
-    }
-
     /// `[mcp_servers.<name>]` in `config.toml`, global and in a project's `.codex/config.toml`.
     /// Codex reads the project file only in projects the user trusted.
     public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] {

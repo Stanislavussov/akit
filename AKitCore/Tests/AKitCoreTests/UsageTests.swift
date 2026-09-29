@@ -16,6 +16,23 @@ struct UsageTests {
 
     var env: HarnessEnvironment { HarnessEnvironment(homeDirectory: home) }
 
+    /// The harness at its usual place in the fake home, whether it is detected or not.
+    func installation(_ harness: HarnessID) -> HarnessInstallation {
+        let root = switch harness {
+        case .claudeCode: ClaudeCodeAdapter().configRoot(in: env)
+        case .pi: PiAdapter().configRoot(in: env)
+        case .codex: CodexAdapter().configRoot(in: env)
+        default: OpenCodeAdapter().configRoot(in: env)
+        }
+        return HarnessInstallation(id: harness, displayName: harness.displayName, executableURL: nil,
+                                   configRoot: root, locations: [])
+    }
+
+    /// Usage of one harness as `UsageScanner` reads it.
+    func usage(_ harness: HarnessID) -> [UsageRecord] {
+        UsageScanner.scan(installations: [installation(harness)], since: since, in: env)
+    }
+
     func write(_ path: String, lines: [[String: Any]]) throws {
         let url = home.appending(path: path)
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -47,7 +64,7 @@ struct UsageTests {
             claudeAnswer(id: "msg_3", time: "2026-09-21T11:00:00.000Z", model: "claude-haiku-4-5", input: 2, output: 3),
         ])
 
-        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.claudeCode).sorted { $0.time < $1.time }
         #expect(records.count == 2)
         #expect(records.map(\.model) == ["claude-opus-5", "claude-haiku-4-5"])
         #expect(records.allSatisfy { $0.provider == "anthropic" && $0.cost == nil && $0.harness == .claudeCode })
@@ -73,7 +90,7 @@ struct UsageTests {
             claudeAnswer(id: "m4", time: "2026-09-21T11:00:00.000Z", input: 1, output: 1),
         ])
 
-        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.claudeCode).sorted { $0.time < $1.time }
         #expect(records.map(\.model) == ["claude-opus-5[1m]", "claude-opus-5[1m]", "claude-haiku-4-5-20251001", "claude-opus-5"])
         let costs = records.map { $0.cost.map { ($0 * 1000).rounded() / 1000 } }
         // Opus: 210 and 410 tokens (with the cache) share $0.80; haiku gets its $0.30; the
@@ -106,7 +123,7 @@ struct UsageTests {
             claudeAnswer(id: "r5", time: "2026-09-21T10:05:00.000Z", input: 0, output: 890), // in the second run
         ])
 
-        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.claudeCode).sorted { $0.time < $1.time }
         #expect(records.map { $0.cost.map { ($0 * 1000).rounded() / 1000 } } == [1, 1, 1, 1, 1])
         // Only the second run and its subagent carry the recorded $2.
         #expect(records.map(\.costIsEstimated) == [true, false, false, true, true])
@@ -126,7 +143,7 @@ struct UsageTests {
             claudeAnswer(id: "f1", time: "2026-09-21T10:00:00.000Z", input: 0, output: 890),
         ])
 
-        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.claudeCode).sorted { $0.time < $1.time }
         #expect(records.map(\.cost) == [2, 2])
         #expect(records.map(\.costIsEstimated) == [false, true])
     }
@@ -153,7 +170,7 @@ struct UsageTests {
             claudeAnswer(id: "k2", time: "2026-09-21T10:01:00.000Z", model: "claude-haiku-4-5", input: 1, output: 1),
         ])
 
-        let records = ClaudeCodeAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.claudeCode).sorted { $0.time < $1.time }
         #expect(records.count == 2)
         let opus = try #require(records.first)
         #expect(opus.costIsEstimated)
@@ -172,7 +189,7 @@ struct UsageTests {
         ])
         try fm.setAttributes([.modificationDate: JSONLines.date("2026-08-01T00:00:00.000Z")!],
                              ofItemAtPath: home.appending(path: ".claude/projects/-work-app/a.jsonl").path)
-        #expect(ClaudeCodeAdapter().usage(since: since, in: env).isEmpty)
+        #expect(usage(.claudeCode).isEmpty)
     }
 
     // MARK: Pi
@@ -199,7 +216,7 @@ struct UsageTests {
         failed["message"] = message
         try write(".pi/agent/sessions/--work-app--/2_y.jsonl", lines: [shared, failed]) // a fork copies the entry
 
-        let records = PiAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.pi).sorted { $0.time < $1.time }
         #expect(records.count == 2)
         #expect(records.map(\.provider) == ["anthropic", "minimax"])
         #expect(records.map(\.cost) == [0.25, 0.01])
@@ -226,7 +243,7 @@ struct UsageTests {
             tokenCount("2026-09-24T09:00:01.000Z", input: 10_000, cached: 9000, output: 330, reasoning: 0, last: last),
             tokenCount("2026-09-24T09:00:02.000Z", input: 10_500, cached: 9400, output: 360, reasoning: 0),
         ])
-        let records = CodexAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.codex).sorted { $0.time < $1.time }
         #expect(records.map(\.tokens) == [
             TokenCounts(input: 100, output: 30, cacheRead: 200),
             TokenCounts(input: 100, output: 30, cacheRead: 400),
@@ -244,7 +261,7 @@ struct UsageTests {
             tokenCount("2026-09-23T09:01:01.000Z", input: 3000, cached: 2400, output: 100, reasoning: 30),
         ])
 
-        let records = CodexAdapter().usage(since: since, in: env).sorted { $0.time < $1.time }
+        let records = usage(.codex).sorted { $0.time < $1.time }
         #expect(records.map(\.model) == ["gpt-5.5", "gpt-5.5", "gpt-5.4-mini"])
         #expect(records.map(\.tokens) == [
             TokenCounts(input: 200, output: 50, cacheRead: 800, reasoning: 10),
@@ -270,7 +287,7 @@ struct UsageTests {
             limitEvent("2026-09-23T12:00:01.000Z", fiveHour: 99, weekly: 99, limit: "premium"), // another limit: ignored
             limitEvent("2026-09-24T08:00:00.000Z", fiveHour: 5, weekly: 11),
         ])
-        let samples = CodexAdapter().limits(since: since, in: env)
+        let samples = UsageScanner.scanLimits(installations: [installation(.codex)], since: since, in: env)
         #expect(samples.count == 6)
         #expect(samples.first?.planName == "ChatGPT Plus")
 
@@ -310,7 +327,7 @@ struct UsageTests {
         ].joined()
         #expect(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
 
-        let records = OpenCodeAdapter().usage(since: since, in: env)
+        let records = usage(.openCode)
         #expect(records.count == 1)
         let record = try #require(records.first)
         #expect(record.provider == "opencode-go")

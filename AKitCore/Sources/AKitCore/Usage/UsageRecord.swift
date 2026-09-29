@@ -61,13 +61,28 @@ public struct Subscription: Sendable, Hashable, Identifiable, Comparable {
 
 /// Usage records of all installed harnesses.
 public enum UsageScanner {
-    /// Responses from `since` on, in no particular order.
-    public static func scan(installations: [HarnessInstallation],
-                            adapters: [any HarnessAdapter] = HarnessCatalog.adapters,
-                            since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
-        let installed = Set(installations.map(\.id))
-        return adapters.filter { installed.contains($0.id) }
-            .flatMap { $0.usage(since: since, in: env) }
+    /// Responses from `since` on, in no particular order. Harnesses that record none or
+    /// that AKit can't read (custom ones too) add none.
+    public static func scan(installations: [HarnessInstallation], since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
+        installations.flatMap { usage(of: $0, since: since, in: env) }
+    }
+
+    /// Token usage of every model response one harness recorded at or after `since`.
+    static func usage(of installation: HarnessInstallation, since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
+        switch installation.id {
+        case .claudeCode:
+            ClaudeUsage.usage(configRoot: installation.configRoot, since: since)
+        case .pi:
+            PiUsage.usage(folder: PiLogFormat.folder(configRoot: installation.configRoot, in: env), since: since)
+        case .codex:
+            // Token counts from the rollout files. Codex records no cost.
+            CodexUsage.usage(codexHome: installation.configRoot, since: since)
+        case .openCode:
+            // Token counts and cost from OpenCode's session database.
+            OpenCodeUsage.usage(database: OpenCodeUsage.database(in: env), since: since)
+        default:
+            []
+        }
     }
 
     /// Session files changed at or after `since`: older ones can't hold newer responses.

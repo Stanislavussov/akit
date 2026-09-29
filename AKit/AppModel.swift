@@ -401,18 +401,16 @@ final class AppModel {
     /// Token usage recorded by the installed harnesses from `since` on, read in the background.
     func usage(since: Date) async throws -> [UsageRecord] {
         let installations = installations
-        let adapters = adapters
         return try await Self.background {
-            UsageScanner.scan(installations: installations, adapters: adapters, since: since, in: .current)
+            UsageScanner.scan(installations: installations, since: since, in: .current)
         }
     }
 
     /// Subscription limit use (Codex: ChatGPT plan windows) from `since` on, read in the background.
     func limits(since: Date) async throws -> [LimitSample] {
         let installations = installations
-        let adapters = adapters
         return try await Self.background {
-            UsageScanner.scanLimits(installations: installations, adapters: adapters, since: since, in: .current)
+            UsageScanner.scanLimits(installations: installations, since: since, in: .current)
         }
     }
 

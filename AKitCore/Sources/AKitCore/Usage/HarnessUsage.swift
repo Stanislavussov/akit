@@ -4,7 +4,8 @@ import SQLite3
 // Readers of the token usage each harness records, for the daily usage table.
 // They only read files, and only lines that can hold usage are decoded.
 
-extension ClaudeSessions {
+/// Claude Code session files, read for their token usage and saved costs.
+enum ClaudeUsage {
     /// `message.usage` of assistant entries in all sessions and their subagent runs. One
     /// response is written as several lines with the same `message.id`, and resumed or
     /// forked sessions copy earlier lines, so responses are counted once per id.
@@ -209,18 +210,19 @@ extension ClaudeSessions {
 
 private final class RunBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var slots: [[ClaudeSessions.Run]]
+    private var slots: [[ClaudeUsage.Run]]
 
     init(count: Int) { slots = Array(repeating: [], count: count) }
 
-    func set(_ index: Int, _ value: [ClaudeSessions.Run]) {
+    func set(_ index: Int, _ value: [ClaudeUsage.Run]) {
         lock.withLock { slots[index] = value }
     }
 
-    var values: [[ClaudeSessions.Run]] { lock.withLock { slots } }
+    var values: [[ClaudeUsage.Run]] { lock.withLock { slots } }
 }
 
-extension PiSessions {
+/// Pi session files, read for their token usage and recorded costs.
+enum PiUsage {
     /// Every assistant message in the file, abandoned branches included: they were paid for.
     /// Pi records the provider and the cost of each response. A fork copies entries into
     /// a new file, so an entry id and time is counted once.

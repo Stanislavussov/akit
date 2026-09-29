@@ -71,10 +71,6 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
         return roots
     }
 
-    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
-        ClaudeSessions.usage(configRoot: configRoot(in: env), since: since)
-    }
-
     /// User servers (`~/.claude.json` → `mcpServers`), local ones (`projects[path].mcpServers`),
     /// project `.mcp.json` with Claude's approval, and servers of enabled plugins.
     /// Claude's order when names clash: local > project > user.

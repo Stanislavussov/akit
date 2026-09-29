@@ -19,13 +19,6 @@ public protocol HarnessAdapter: Sendable {
     /// Folders the harness reads skills from, global and for the given projects.
     func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot]
 
-    /// Token usage of every model response recorded at or after `since`, from all saved
-    /// sessions. Empty if the harness records none or AKit can't read it.
-    func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord]
-
-    /// Subscription limit use recorded at or after `since` (Codex: ChatGPT plan windows).
-    func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample]
-
     /// Folder new skills are installed into. nil = this harness can't take skills there.
     func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL?
 
@@ -37,8 +30,6 @@ public protocol HarnessAdapter: Sendable {
 extension HarnessAdapter {
     public func knownProjects(in env: HarnessEnvironment) -> [URL] { [] }
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] { [] }
-    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] { [] }
-    public func limits(since: Date, in env: HarnessEnvironment) -> [LimitSample] { [] }
     public func mcpSources(in env: HarnessEnvironment, projects: [URL]) -> [MCPSource] { [] }
 
     /// The first writable skill root of that scope.

@@ -87,13 +87,15 @@ public struct SubscriptionLimitReport: Sendable {
 }
 
 extension UsageScanner {
-    /// Limit samples of all installed harnesses from `since` on.
-    public static func scanLimits(installations: [HarnessInstallation],
-                                  adapters: [any HarnessAdapter] = HarnessCatalog.adapters,
-                                  since: Date, in env: HarnessEnvironment) -> [LimitSample] {
-        let installed = Set(installations.map(\.id))
-        return adapters.filter { installed.contains($0.id) }
-            .flatMap { $0.limits(since: since, in: env) }
+    /// Limit samples of all installed harnesses from `since` on. Only Codex records them
+    /// (ChatGPT plan windows it saw after each response).
+    public static func scanLimits(installations: [HarnessInstallation], since: Date, in env: HarnessEnvironment) -> [LimitSample] {
+        installations.flatMap { installation -> [LimitSample] in
+            switch installation.id {
+            case .codex: CodexUsage.limits(codexHome: installation.configRoot, since: since)
+            default: []
+            }
+        }
     }
 }
 

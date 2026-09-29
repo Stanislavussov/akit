@@ -105,10 +105,6 @@ public struct PiAdapter: HarnessAdapter {
         return roots
     }
 
-    public func usage(since: Date, in env: HarnessEnvironment) -> [UsageRecord] {
-        PiSessions.usage(folder: PiLogFormat.folder(configRoot: configRoot(in: env), in: env), since: since)
-    }
-
     /// The shared `.agents/skills` (Codex and OpenCode read it too), not `~/.pi/agent/skills`.
     public func skillInstallRoot(for scope: InstallScope, in env: HarnessEnvironment) -> URL? {
         switch scope {
