@@ -1,12 +1,23 @@
 // swift-tools-version: 6.0
-// AKit core: data model, harness adapters, file access. No UI.
+// AKit's logic, one module per area (docs/design/architecture.md). No UI.
 import PackageDescription
 
 let package = Package(
     name: "AKitCore",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "AKitCore", targets: ["AKitCore"]),
+        // One library per module the app imports (project.yml lists the same ones).
+        .library(name: "AKitFoundation", targets: ["AKitFoundation"]),
+        .library(name: "AKitModel", targets: ["AKitModel"]),
+        .library(name: "AKitHarnesses", targets: ["AKitHarnesses"]),
+        .library(name: "AKitSkills", targets: ["AKitSkills"]),
+        .library(name: "AKitSkillsSh", targets: ["AKitSkillsSh"]),
+        .library(name: "AKitSessions", targets: ["AKitSessions"]),
+        .library(name: "AKitUsage", targets: ["AKitUsage"]),
+        .library(name: "AKitMCP", targets: ["AKitMCP"]),
+        .library(name: "AKitBrain", targets: ["AKitBrain"]),
+        .library(name: "AKitInsights", targets: ["AKitInsights"]),
+        .library(name: "AKitProjectSetup", targets: ["AKitProjectSetup"]),
         // `akit` command for agents and terminals (install: make install-cli).
         .executable(name: "akit", targets: ["akit"]),
     ],
@@ -29,20 +40,18 @@ let package = Package(
         .target(name: "AKitRender", dependencies: ["AKitBrain"]),
         .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitBrain", "AKitRender", "AKitInsights"]),
         .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitInsights", "AKitProjectSetup"]),
-        // Umbrella: only Exports.swift, so the app keeps compiling until it imports the modules.
-        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSkillsSh", "AKitSessions", "AKitUsage", "AKitMCP", "AKitBrain", "AKitInsights", "AKitRender", "AKitProjectSetup", "AKitCommandLine"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
-        .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitCore"]),
+        .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitModel", "AKitSkills"]),
         .testTarget(name: "AKitSkillsTests", dependencies: ["AKitSkills", "AKitFoundation", "AKitHarnesses"]),
         .testTarget(name: "AKitSkillsShTests", dependencies: ["AKitSkillsSh", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills"]),
         .testTarget(name: "AKitSessionsTests", dependencies: ["AKitSessions", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitUsageTests", dependencies: ["AKitUsage", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitMCPTests", dependencies: ["AKitMCP", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
-        .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitCore"]),
+        .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitProjectSetup", "AKitCommandLine"]),
         .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitProjectSetup", "AKitCommandLine"]),
         .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain"]),
         .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender"]),
-        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitInsights", "AKitProjectSetup"]),
+        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitFoundation", "AKitBrain", "AKitInsights"]),
     ]
 )

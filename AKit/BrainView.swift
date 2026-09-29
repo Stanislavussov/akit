@@ -1,4 +1,6 @@
-import AKitCore
+import AKitBrain
+import AKitFoundation
+import AKitProjectSetup
 import AppKit
 import SwiftUI
 

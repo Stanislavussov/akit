@@ -1,8 +1,10 @@
 # Architecture: splitting AKitCore into swappable modules
 
-Status: plan, written 2026-09-28, refreshed 2026-09-29 against master `fb4f1d5`
-(after `session-insights` and `skills-layer-add-button` were merged). No code has
-moved yet.
+Status: done. Written 2026-09-28, refreshed 2026-09-29 against master `fb4f1d5`
+(after `session-insights` and `skills-layer-add-button` were merged); all 25 steps
+below were carried out on 2026-09-29. The umbrella `AKitCore` target is gone: the
+package folder is still `AKitCore/`, and the app and the `akit` command import the
+modules directly.
 
 ## Goal
 
@@ -46,7 +48,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitInsights` | Session insights: the local SQLite index of session facts, import, capture hooks (Claude plugin, Pi extension, launchd), project binding, `akit stats`, per-Mac usage summaries in the brain, recommendations with layer patches, before/after measurement. | `Insights/*` (28 files); new `Insights/MachineChange.swift`: `MachineProfile.change` and `hasOwnGitIdentity` as an `extension MachineProfile` (fix 18) |
 | `AKitRender` | **The swappable part.** Turns a `ProjectBundle` into harness files: `.agents/skills/<name>/…`, a glued `AGENTS.md`, the `CLAUDE.md` shim, the `.claude/skills` link, the manual-only skill header, clash checks. Pure: it writes nothing. | Render steps 3–5 of `Brain/Render.swift` |
 | `AKitProjectSetup` | Writes rendered files into a project safely: diff preview, blockers, backup, Trash, `lock.json`, committing the answers in the brain, and the project's own skills. | `Brain/ProjectSetup.swift` (plan + apply, without the storage helpers); `Brain/ProjectSkills.swift` |
-| `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `Brain/Onboarding.swift` (used only by the CLI) |
+| `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
 | `AKit` (app) | SwiftUI shell. | `AKit/*` |
 

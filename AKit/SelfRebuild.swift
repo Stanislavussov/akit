@@ -1,4 +1,4 @@
-import AKitCore
+import AKitFoundation
 import AppKit
 import Observation
 

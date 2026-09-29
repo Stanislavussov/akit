@@ -1,4 +1,4 @@
-import AKitCore
+import AKitBrain
 import SwiftUI
 
 /// Create a layer in the brain: name, what it requires, skills with their mode, and

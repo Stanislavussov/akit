@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-import AKitCore
+import AKitFoundation
+import AKitModel
+import AKitSkills
 @testable import AKitHarnesses
 
 struct CustomHarnessTests {

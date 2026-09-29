@@ -279,9 +279,11 @@ make screenshots        # README screenshots from a made-up home (tools/demo-hom
 make banner             # redraw docs/assets/banner.png
 ```
 
-The logic lives in the `AKitCore` Swift package; the app in `AKit/` is SwiftUI on top of
-it. See `CLAUDE.md` for the project rules and `docs/design/layers.md` for the brain and
-layers design.
+The logic lives in the Swift package in `AKitCore/`, split into one module per area
+(harnesses, skills, sessions, usage, MCP, brain, insights, render, project setup, the
+`akit` command); `docs/design/architecture.md` shows the modules and how they depend on
+each other. The app in `AKit/` is SwiftUI on top of them. See `CLAUDE.md` for the project
+rules and `docs/design/layers.md` for the brain and layers design.
 
 ## License
 

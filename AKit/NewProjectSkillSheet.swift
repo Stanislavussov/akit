@@ -1,4 +1,5 @@
-import AKitCore
+import AKitBrain
+import AKitProjectSetup
 import SwiftUI
 
 /// Create a skill that belongs to one project: `.agents/skills/<name>/SKILL.md` in the

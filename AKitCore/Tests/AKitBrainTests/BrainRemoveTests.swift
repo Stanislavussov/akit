@@ -1,7 +1,8 @@
 import Foundation
 import Testing
-import AKitCore
+import AKitCommandLine
 import AKitFoundation
+import AKitProjectSetup
 @testable import AKitBrain
 
 /// Removing layers, skills and projects from a brain in a temporary fake home.

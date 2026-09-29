@@ -13,7 +13,29 @@ targets:
     platform: macOS
     sources: [AKit]
     dependencies:
+      # One product per module the app imports (see AKitCore/Package.swift).
       - package: AKitCore
+        product: AKitFoundation
+      - package: AKitCore
+        product: AKitModel
+      - package: AKitCore
+        product: AKitHarnesses
+      - package: AKitCore
+        product: AKitSkills
+      - package: AKitCore
+        product: AKitSkillsSh
+      - package: AKitCore
+        product: AKitSessions
+      - package: AKitCore
+        product: AKitUsage
+      - package: AKitCore
+        product: AKitMCP
+      - package: AKitCore
+        product: AKitBrain
+      - package: AKitCore
+        product: AKitInsights
+      - package: AKitCore
+        product: AKitProjectSetup
     postBuildScripts:
       # Records where this build comes from; shown at the bottom of the sidebar.
       - name: Stamp build source

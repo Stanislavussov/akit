@@ -1,4 +1,4 @@
-import AKitCore
+import AKitBrain
 import SwiftUI
 
 /// Edit an existing layer: description, what it requires and its AGENTS.md section.

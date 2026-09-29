@@ -1,4 +1,14 @@
-import AKitCore
+import AKitBrain
+import AKitFoundation
+import AKitHarnesses
+import AKitInsights
+import AKitMCP
+import AKitModel
+import AKitProjectSetup
+import AKitSessions
+import AKitSkills
+import AKitSkillsSh
+import AKitUsage
 import Foundation
 import Observation
 
