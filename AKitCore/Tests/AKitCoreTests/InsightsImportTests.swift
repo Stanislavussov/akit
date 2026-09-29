@@ -670,6 +670,8 @@ struct InsightsImportTests {
         try append(piFile("sa"), lines: [Self.piMessage("a2", "a1", "05", Self.piAssistant([Self.read("./.agents/skills/fmt/SKILL.md")]))])
         try runImport()
         #expect(try modelCalls() == ["fmt", "fmt", "up"])
+        // Walking up stops at `/` (URL's parent of `/` is `/..`, which once looped forever).
+        #expect(PiSkillPaths.ancestors(of: "/a/b") == ["/a/b", "/a", "/"])
     }
 
     @Test func piSymlinkedAndTildeSkillRootsMatch() throws {

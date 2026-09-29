@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// `~/.akit/skills-lock.json`: skills AKit installed from skills.sh and where they came from.

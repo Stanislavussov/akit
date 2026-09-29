@@ -1,7 +1,8 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
 @testable import AKitHarnesses
+@testable import AKitSkills
 
 /// Skill discovery in a temporary fake home. Never touches the real one.
 struct SkillScannerTests {
@@ -314,7 +315,6 @@ struct MoreHarnessTests {
     @Test func piAncestorsStopAtRootOutsideHome() {
         let dirs = PiAdapter.ancestorsToGitRoot(of: URL(filePath: "/nonexistent-akit/app", directoryHint: .isDirectory), home: home)
         #expect(dirs.map(\.path) == ["/nonexistent-akit/app", "/nonexistent-akit", "/"])
-        #expect(PiSkillPaths.ancestors(of: "/a/b") == ["/a/b", "/a", "/"])
     }
 
     func write(_ path: String, _ text: String = "---\nname: x\ndescription: d\n---\n") throws {

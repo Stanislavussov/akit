@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// Deletes a skill by moving it to the Trash, so it can always be put back.

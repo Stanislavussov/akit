@@ -1,3 +1,6 @@
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
 import Foundation
 
 /// Finds skills on disk. Read-only: never writes anything.
@@ -182,7 +185,7 @@ public enum SkillScanner {
     // MARK: - File helpers (follow symlinks)
 
     /// Exact, case-sensitive `SKILL.md` (the default macOS disk ignores case, harnesses don't).
-    static func hasSkillFile(_ dir: URL) -> Bool {
+    public static func hasSkillFile(_ dir: URL) -> Bool {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return names.contains("SKILL.md") && isFile(dir.appending(path: "SKILL.md"))
     }
@@ -214,7 +217,7 @@ public struct SkillLock: Sendable {
     let sources: [String: String]
     var installed = InstalledSkillLock()
 
-    static func read(in env: HarnessEnvironment) -> SkillLock {
+    public static func read(in env: HarnessEnvironment) -> SkillLock {
         let folder = env.homeDirectory.appending(path: ".agents/skills").resolvingSymlinksInPath()
         let url = env.homeDirectory.appending(path: ".agents/.skill-lock.json")
         var sources: [String: String] = [:]
@@ -230,7 +233,7 @@ public struct SkillLock: Sendable {
         return lock
     }
 
-    func source(forSkillFolder folder: URL) -> String? {
+    public func source(forSkillFolder folder: URL) -> String? {
         if let origin = installed.origin(forSkillFolder: folder) { return origin }
         guard folder.deletingLastPathComponent().path == skillsFolder.path else { return nil }
         return sources[folder.lastPathComponent]

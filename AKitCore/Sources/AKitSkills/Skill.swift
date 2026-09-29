@@ -1,3 +1,4 @@
+import AKitModel
 import Foundation
 
 /// One skill (a folder with SKILL.md, or a single .md file for Pi), merged across

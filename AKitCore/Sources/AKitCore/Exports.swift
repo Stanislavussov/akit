@@ -3,3 +3,4 @@
 @_exported import AKitFoundation
 @_exported import AKitModel
 @_exported import AKitHarnesses
+@_exported import AKitSkills

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AKitCore
+@testable import AKitSkills
 
 /// Which installed skills AKit rendered from the brain, in a temporary folder.
 struct BrainLinksTests {
