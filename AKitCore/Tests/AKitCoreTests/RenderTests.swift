@@ -20,7 +20,11 @@ struct RenderTests {
 
     func brain() throws -> Brain { try #require(Brain.load(from: root)) }
 
-    func text(_ result: Render.Result, _ path: String) -> String? {
+    func render(_ answers: ProjectAnswers, brain: Brain, projectName: String) -> RenderResult {
+        Render.render(ProjectBundle.resolve(answers, brain: brain, projectName: projectName))
+    }
+
+    func text(_ result: RenderResult, _ path: String) -> String? {
         result.outputs.first { $0.path == path }?.text
     }
 
@@ -61,7 +65,7 @@ struct RenderTests {
     @Test func rendersTheTakeHomeExample() throws {
         try takeHome()
         let answers = ProjectAnswers(layers: ["take-home"], values: ["company": .text("Acme")], targets: ["claude", "pi"])
-        let result = Render.render(answers, brain: try brain(), projectName: "acme-task")
+        let result = render(answers, brain: try brain(), projectName: "acme-task")
 
         #expect(result.errors.isEmpty, "\(result.errors)")
         #expect(result.layers == ["base", "take-home"])
@@ -82,7 +86,7 @@ struct RenderTests {
         try takeHome()
         let answers = ProjectAnswers(layers: ["take-home"], values: ["company": .text("Acme"), "reviewer_readme": .bool(false)],
                                      targets: ["pi"])
-        let result = Render.render(answers, brain: try brain(), projectName: "p")
+        let result = render(answers, brain: try brain(), projectName: "p")
         let paths = result.outputs.map(\.path)
         #expect(!paths.contains("CLAUDE.md"))
         #expect(!paths.contains(".claude/skills"))
@@ -93,8 +97,8 @@ struct RenderTests {
     @Test func missingRequiredFieldUnknownLayerAndConflicts() throws {
         try takeHome()
         try write("layers/solo/layer.yaml", "conflicts: [base]\n")
-        let result = Render.render(ProjectAnswers(layers: ["take-home", "solo", "ghost"], targets: []),
-                                   brain: try brain(), projectName: "p")
+        let result = render(ProjectAnswers(layers: ["take-home", "solo", "ghost"], targets: []),
+                            brain: try brain(), projectName: "p")
         #expect(result.errors.contains("“Company name” (company) is required by take-home."))
         #expect(result.errors.contains("Layer “ghost” is not in the brain."))
         #expect(result.errors.contains("“solo” can't be used together with “base”."))
@@ -109,11 +113,11 @@ struct RenderTests {
         try write("layers/c/layer.yaml", "skills:\n  - name: tdd\n    mode: manual\n    override: true\nfiles:\n  - template: x.json\n    override: true\n")
         try write("layers/c/templates/x.json", "{\"c\": 1}")
 
-        let clash = Render.render(ProjectAnswers(layers: ["a", "b"]), brain: try brain(), projectName: "p")
+        let clash = render(ProjectAnswers(layers: ["a", "b"]), brain: try brain(), projectName: "p")
         #expect(clash.errors.contains { $0.hasPrefix("Skill “tdd” comes from both a and b.") })
         #expect(clash.errors.contains { $0.hasPrefix("x.json comes from a and b.") })
 
-        let overridden = Render.render(ProjectAnswers(layers: ["a", "c"]), brain: try brain(), projectName: "p")
+        let overridden = render(ProjectAnswers(layers: ["a", "c"]), brain: try brain(), projectName: "p")
         #expect(overridden.errors.isEmpty, "\(overridden.errors)")
         #expect(text(overridden, "x.json") == "{\"c\": 1}")
         #expect(text(overridden, ".agents/skills/tdd/SKILL.md")?.contains("disable-model-invocation: true") == true)
@@ -122,14 +126,14 @@ struct RenderTests {
     @Test func requiresCycleDoesNotHang() throws {
         try write("layers/a/layer.yaml", "requires: [b]\n")
         try write("layers/b/layer.yaml", "requires: [a]\n")
-        let result = Render.render(ProjectAnswers(layers: ["a"]), brain: try brain(), projectName: "p")
+        let result = render(ProjectAnswers(layers: ["a"]), brain: try brain(), projectName: "p")
         #expect(Set(result.layers) == ["a", "b"])
     }
 
     @Test func unansweredFieldsAreEmptyNotUnknown() throws {
         try write("layers/x/layer.yaml", "fields:\n  - id: note\n  - id: flag\n    type: bool\nfiles:\n  - template: a.md\n    when: flag != true\n")
         try write("layers/x/templates/a.md", "Note: {{note}}.\n")
-        let result = Render.render(ProjectAnswers(layers: ["x"]), brain: try brain(), projectName: "p")
+        let result = render(ProjectAnswers(layers: ["x"]), brain: try brain(), projectName: "p")
         #expect(result.warnings.isEmpty, "\(result.warnings)")
         #expect(text(result, "a.md") == "Note: .\n")
     }
@@ -143,13 +147,13 @@ struct RenderTests {
         try write("layers/b/templates/x.json", "b")
         try write("layers/off/layer.yaml", "skills:\n  - name: tdd\n    mode: off\n    override: true\n")
 
-        let earlier = Render.render(ProjectAnswers(layers: ["a", "b"]), brain: try brain(), projectName: "p")
+        let earlier = render(ProjectAnswers(layers: ["a", "b"]), brain: try brain(), projectName: "p")
         #expect(earlier.errors.isEmpty, "\(earlier.errors)")
         #expect(text(earlier, "x.json") == "a")
         #expect(text(earlier, ".agents/skills/tdd/SKILL.md")?.contains("disable-model-invocation") == false)
         #expect(text(earlier, ".agents/skills/tdd/run.sh") == "echo {{project_name}}\n")  // only Markdown is filled
 
-        let off = Render.render(ProjectAnswers(layers: ["b", "off"]), brain: try brain(), projectName: "p")
+        let off = render(ProjectAnswers(layers: ["b", "off"]), brain: try brain(), projectName: "p")
         #expect(off.errors.isEmpty, "\(off.errors)")
         #expect(!off.outputs.contains { $0.path.contains("tdd") })
     }
@@ -158,7 +162,7 @@ struct RenderTests {
         try write("skills/tdd/SKILL.md", "---\nname: tdd\n---\n")
         try write("layers/x/layer.yaml", "skills: [tdd]\nfiles:\n  - template: s.md\n    to: .agents/skills/tdd/SKILL.md\n  - template: s.md\n    to: .git/hooks/post-checkout\n")
         try write("layers/x/templates/s.md", "x")
-        let result = Render.render(ProjectAnswers(layers: ["x"]), brain: try brain(), projectName: "p")
+        let result = render(ProjectAnswers(layers: ["x"]), brain: try brain(), projectName: "p")
         #expect(result.errors.contains { $0.hasPrefix(".agents/skills/tdd/SKILL.md is written twice") })
         #expect(result.errors.contains(".git/hooks/post-checkout is inside .git; layers can't write there."))
     }
@@ -167,27 +171,27 @@ struct RenderTests {
         try takeHome()
         try write("layers/take-home/templates/take-home.md", "\n")
         let answers = ProjectAnswers(layers: ["take-home"], values: ["company": .text("Acme")], targets: ["claude"])
-        let result = Render.render(answers, brain: try brain(), projectName: "p")
+        let result = render(answers, brain: try brain(), projectName: "p")
         #expect(text(result, "AGENTS.md") == "# p\n\nBe brief.\n")
         #expect(result.outputs.first { $0.path == "AGENTS.md" }?.layers == ["base"])
 
         try write("layers/base/templates/base.md", "")
-        let empty = Render.render(answers, brain: try brain(), projectName: "p")
+        let empty = render(answers, brain: try brain(), projectName: "p")
         #expect(text(empty, "AGENTS.md") == nil && text(empty, "CLAUDE.md") == nil)
 
         // Other Markdown files may be empty on purpose.
         try write("layers/base/layer.yaml", "files:\n  - template: base.md\n    to: NOTES.md\n")
-        #expect(text(Render.render(answers, brain: try brain(), projectName: "p"), "NOTES.md") == "\n")
+        #expect(text(render(answers, brain: try brain(), projectName: "p"), "NOTES.md") == "\n")
     }
 
     @Test func pieces() {
         #expect(Render.manualOnly("\u{FEFF}---\n\"disable-model-invocation\" : false\n---\n") == "\u{FEFF}---\ndisable-model-invocation: true\n---\n")
-        #expect(Render.substitute("{{a}} {{ b }} {{c}} {{", ["a": .text("1"), "b": .list(["x", "y"])])
+        #expect(ProjectBundle.substitute("{{a}} {{ b }} {{c}} {{", ["a": .text("1"), "b": .list(["x", "y"])])
                 == ("1 x, y {{c}} {{", ["c"]))
         #expect(Render.manualOnly("---\nname: x\ndisable-model-invocation: false\n---\nbody") == "---\nname: x\ndisable-model-invocation: true\n---\nbody")
         #expect(Render.manualOnly("no header") == nil)
-        #expect(Render.matches([Condition(parsing: "target == pi")!], ["target": .list(["claude", "pi"])]))
-        #expect(!Render.matches([Condition(parsing: "flag")!], ["flag": .bool(false)]))
-        #expect(Render.matches([Condition(parsing: "flag != false")!], ["flag": .bool(true)]))
+        #expect(ProjectBundle.matches([Condition(parsing: "target == pi")!], ["target": .list(["claude", "pi"])]))
+        #expect(!ProjectBundle.matches([Condition(parsing: "flag")!], ["flag": .bool(false)]))
+        #expect(ProjectBundle.matches([Condition(parsing: "flag != false")!], ["flag": .bool(true)]))
     }
 }

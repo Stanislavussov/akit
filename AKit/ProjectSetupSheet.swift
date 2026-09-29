@@ -56,9 +56,9 @@ struct ProjectSetupSheet: View {
     /// Layers the form offers: every layer except core, which is for the home folder.
     private var offered: [Layer] { brain?.layers.filter { $0.name != "core" } ?? [] }
 
-    private var render: Render.Result? {
+    private var bundle: ProjectBundle? {
         guard let brain, let project else { return nil }
-        return Render.render(answers, brain: brain, projectName: project.lastPathComponent)
+        return ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent)
     }
 
     private var form: some View {
@@ -131,7 +131,7 @@ struct ProjectSetupSheet: View {
                 if offered.isEmpty {
                     Text("No layers for projects yet (core is for the home folder).").foregroundStyle(.secondary)
                 }
-                let pulledIn = Set(render?.layers ?? []).subtracting(answers.layers)
+                let pulledIn = Set(bundle?.layers ?? []).subtracting(answers.layers)
                 ForEach(offered) { layer in
                     Toggle(isOn: Binding(get: { answers.layers.contains(layer.name) || pulledIn.contains(layer.name) },
                                          set: { on in
@@ -160,7 +160,7 @@ struct ProjectSetupSheet: View {
         guard let brain, let project else { return [:] }
         var layersOnly = answers
         layersOnly.skills = []
-        let skills = Render.render(layersOnly, brain: brain, projectName: project.lastPathComponent).skills
+        let skills = ProjectBundle.resolve(layersOnly, brain: brain, projectName: project.lastPathComponent).skills
         return Dictionary(skills.map { ($0.name, (layer: $0.source, mode: $0.mode)) }, uniquingKeysWith: { _, last in last })
     }
 
@@ -241,7 +241,7 @@ struct ProjectSetupSheet: View {
 
     @ViewBuilder
     private var fieldsBox: some View {
-        let layers = (render?.layers ?? []).compactMap { name in brain?.layers.first { $0.name == name } }
+        let layers = (bundle?.layers ?? []).compactMap { name in brain?.layers.first { $0.name == name } }
         let fields = layers.flatMap(\.fields)
         if !fields.isEmpty {
             GroupBox("Fields") {
@@ -299,10 +299,10 @@ struct ProjectSetupSheet: View {
 
     @ViewBuilder
     private var messages: some View {
-        if let render, !answers.layers.isEmpty || !answers.skills.isEmpty {
+        if let bundle, !answers.layers.isEmpty || !answers.skills.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(render.errors, id: \.self) { Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red) }
-                ForEach(render.warnings, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                ForEach(bundle.errors, id: \.self) { Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red) }
+                ForEach(bundle.warnings, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
             }
             .font(.callout)
             .textSelection(.enabled)

@@ -212,7 +212,7 @@ Tests use `@testable import`, so they still see internals.
 | MCP | `MCPScanner.scan`, `MCPServer`, `MCPSetting`, `MCPState`, `MCPDraft` (+ `parse`, `editing`, `split/joinArguments`, `.Transport`, `.Value`), `MCPSecretMode`, `MCPWriter.targets/target/plan/removalPlan/apply/rawEntry/sourceLine/storeSecret/isEnvFileSourced`, `MCPWriter.Outcome`, `MCPWritePlan`, `MCPWriteTarget` | `MCPReader`, `MCPValues`, `MCPScanResult` internals |
 | Brain | `Brain` (+ `.load`, `.defaultRoot`, `.Skill`, `.Project`), `Layer`, `LayerField`, `LayerSkill` (+ `.Mode`), `Condition`, `FieldValue`, `ProjectAnswers` (+ `.knownTargets`, new `target(for:)`), `BrainImport.plan/apply/layerAfter/defaultSource/Plan/Candidate`, `BrainRemove.*` (`layerImpact`, `skillUsers`, `removeLayer`, `skillProjects`, `removeSkill`, `layerWithoutSkill`, `forgetProject`), `BrainSetup.create`, `BrainSync.status/sync/Status/Outcome`, `LayerWriter.create/nameProblem/Draft`, `LayerEditor.Details/agentsFile/details/requirable/addSkills/setMode/update/oneLine`, `BrainLink`, `BrainLinks.links`, `MachineProfile` (`load`, `save`, `Kind`, `OwnKeys`, `currentHardwareHash`, `isWork`, `problem`), `ProjectStore` (`current`, `brain`, `local`, `folder`, `describe`), `ProjectRecords.projectID/homeID/savedAnswers/Lock`; new `ProjectBundle` (+ `skillsFolder`, `projectSource`), `RenderedFile`, `RenderResult`, `resolve`. For Insights also: `LayerManifest.parse`, `Brain.requiredClosure`, `BrainRemove.savedAnswers`, `ProjectStore.savedFile`, `MachineProfile.displayName(hostName:)`, `.identify`, `ProjectRecords.localID/normalizedRemote/savedLock`, `CapturePlugin`, `BrainGit` | `AKitSkill`, `BrainImport.copyable`, `BrainImport.addSkills`, `LayerEditor`'s text helpers (`block`, `skillItem`, `addingSkills`, …; `BrainRemove` and `BrainImport` use them inside Brain) |
 | Insights | app: `MachineProfile.change` (the extension). `akit`: `RecordSession.main`. CLI: `RecordSession.run/harness`, `CommandRunner`, `IndexSchema.open` + `IndexDatabase`, `InsightsPaths` (`database`, `lock`, `spool`), `ImportLock.acquire`, `QuickImport.run`, `SessionImporter.importAndBind`, `ImportReport`, `InsightsStats.inputs/report/defaultDays/defaultTop`, `StatsReport`, `IndexQueries.debugStats/debugNotes/bindingStats/BindingStats/SessionDebug`, `BindingMethod`, `BindingSet.parse`, `Confidence`, `ProjectBinder.pathTemplates`, `BeforeAfter.changes/date/window`, `ChangesReport`, `ContextCalibration.calibration/save/summary`, `ContextSize.minimumPairs/short`, `Spool.append/lineVersion/milliseconds` (also for ProjectSetup), `CaptureInstaller` (init, `status`, `installPlan`, `uninstallPlan`, `execute`, `.Plan`, `.Status`, `.Part`), `Recommender.inputs/recommend/scoped/wholePlugin/knownProjects/defaultTop/Options`, `RecommendReport`, `SkillOwner.Kind`, `Dismissals.dismiss/showsAgainAt/Entry`, `LayerPatch.edit/commit/path/Change`, `SummaryPublisher.publish/Outcome` | The fact readers (`ClaudeFacts`, `PiFacts`, `SpoolFacts`, `Fact*`), `IndexDatabase` SQL helpers, `WorkFilter`, `UsageSummary`, `LayerHistory`, `DescriptionWindow`, `SkillOwners`, the binding resolvers |
-| Render | one function: `Render.render(_ bundle: ProjectBundle, forHome:) -> RenderResult` | `substitute`, `manualOnly`, `matches` |
+| Render | one function: `Render.render(_ bundle: ProjectBundle, forHome:) -> RenderResult` | `manualOnly` (`substitute` and `matches` are Brain's, used by `resolve`) |
 | ProjectSetup | `ProjectSetup.plan/apply`, `.Plan`, `.Change` (+ `.Kind`), `.Outcome`, `.Failure`; `ProjectSkills.list/create/remove/nameProblem/folder/Skill` | lock entries, `escapes`, `state`, `applyEvent`, `isProjectOwned`, `ProjectSkills.names` |
 | CommandLine | `AKitCLI.run`, `Onboarding.Preferences` | the rest |
 
@@ -238,6 +238,8 @@ while moving files.
    which reports missing fields, unknown layers and conflicts and lists the
    skills (name, mode, source), or `ProjectSetup.plan`. Then only
    `AKitProjectSetup` calls the render module, and a rulesync swap touches one call site.
+   (Done in step 9. The render's own errors, such as a file clash between two
+   layers or a manual skill without a header, now show on the preview step only.)
 4. **`ProjectSetup.Plan.render: Render.Result`** is shown in the sheet. Keep it,
    but typed with the seam's `RenderResult` from `AKitBrain` (section 4), not a
    type owned by the render module. `ProjectSetup.plan` builds a new result
@@ -290,13 +292,18 @@ brain screens. rulesync does not ask per-project questions, so those stay AKit's
 
 Data going **into** the seam: `ProjectBundle`, defined in `AKitBrain`:
 
-- `projectName`, `targets` (`claude`, `pi`, `opencode`, `codex`), `forHome`
+- `projectName`, `targets` (`claude`, `pi`, `opencode`, `codex`); `forHome` is a
+  parameter of `render`, not part of the bundle
 - `layers`: resolved order (required first, then the user's selection order)
-- `instructions`: `[(layer, to: "AGENTS.md", text)]`, Markdown fragments with fields already filled in
-- `files`: `[(layer, to, data, override)]`, other template outputs with fields filled in
-- `skills`: `[(name, mode: auto|manual, source, files: [relativePath: Data])]` with fields filled in the `.md` files; `source` is a layer name or `projectSource` ("this project")
-- `errors` / `warnings` from resolving (missing required field, unknown layer, clash)
+- `files`: `[(layer, to, data, override)]`, every template output whose `when` holds,
+  in layer order, with fields filled in. The AGENTS.md fragments are the ones with
+  `to == "AGENTS.md"`; the render glues Markdown files and checks the others for clashes
+- `skills`: `[(name, mode: auto|manual, source, files: [relativePath: Data])]` with fields filled in the `.md` files; `source` is a layer name or `projectSource` ("this project"); `files` is empty for a skill missing from the brain
+- `errors` / `warnings` from resolving (missing required field, unknown layer, conflicting layers, skill clash, missing skill or template)
 - the constants `skillsFolder` (`.agents/skills`) and `projectSource`
+
+`ProjectBundle.resolve(answers, brain:, projectName:)` builds it, with the
+`{{field}}` filling (`substitute`) and `when` checks (`matches`, `isSet`).
 
 Data coming **out**: `RenderResult`, also defined in `AKitBrain`, so a
 replacement module needs nothing from the old one:
@@ -305,7 +312,9 @@ replacement module needs nothing from the old one:
   `content` (`.data` or `.link(destination)`) and `layers`
 - `layers` (render order) and `skills` (name, mode, source): the project form
   and the spool's `apply` line use them
-- `errors`, `warnings`
+- `errors`, `warnings`: the bundle's, then the render's own (manual-only skill
+  without a header, two layers writing the same non-Markdown file, a layer writing
+  into `.claude/skills`, a path written twice or inside `.git`)
 
 A rulesync-based `AKitRender` would:
 

@@ -22,7 +22,7 @@ public enum BrainLinks {
         let store = store ?? .brain(brain.root)
         struct Rendered { let skill: String, layers: [String], sha256: String? }
         var rendered: [String: Rendered] = [:]
-        let prefix = Render.skillsFolder + "/"
+        let prefix = ProjectBundle.skillsFolder + "/"
         let ids = Set(brain.projects.map(\.id) + BrainRemove.savedAnswers(in: store).map(\.id))
         for id in ids.sorted() {
             guard let folder = folders[id], let lock = ProjectRecords.savedLock(id: id, in: store) else { continue }

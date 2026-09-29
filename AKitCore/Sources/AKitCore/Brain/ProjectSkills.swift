@@ -17,7 +17,7 @@ public enum ProjectSkills {
     }
 
     public static func folder(of project: URL) -> URL {
-        project.appending(path: Render.skillsFolder, directoryHint: .isDirectory)
+        project.appending(path: ProjectBundle.skillsFolder, directoryHint: .isDirectory)
     }
 
     /// `.agents/skills` resolves inside the project (it may be a link to a shared folder,
@@ -38,7 +38,7 @@ public enum ProjectSkills {
     /// Skill folders (with a SKILL.md) in `.agents/skills` with no file from the last render.
     static func names(in project: URL, lock: ProjectRecords.Lock?) -> [String] {
         guard isInside(project) else { return [] }
-        let prefix = Render.skillsFolder + "/"
+        let prefix = ProjectBundle.skillsFolder + "/"
         let written = Set((lock?.files ?? [:]).keys.compactMap { path -> String? in
             guard path.hasPrefix(prefix) else { return nil }
             return path.dropFirst(prefix.count).split(separator: "/").first.map(String.init)
@@ -52,7 +52,7 @@ public enum ProjectSkills {
     /// Why the name can't be used, or nil.
     public static func nameProblem(_ name: String, in project: URL) -> String? {
         if name.isEmpty { return "Give the skill a name." }
-        guard isInside(project) else { return "\(Render.skillsFolder) is a link out of the project; add skills where it points." }
+        guard isInside(project) else { return "\(ProjectBundle.skillsFolder) is a link out of the project; add skills where it points." }
         guard name.allSatisfy({ ($0.isLowercase && $0.isASCII) || $0.isNumber || $0 == "-" }), name.first?.isLetter == true else {
             return "Use lowercase letters, digits and -, starting with a letter."
         }
@@ -81,7 +81,7 @@ public enum ProjectSkills {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try Data((header + "\n" + (body.isEmpty ? "# \(name)\n" : body + "\n")).utf8).write(to: file, options: .withoutOverwriting)
         } catch {
-            throw Failure(message: "Couldn't create \(Render.skillsFolder)/\(name): \(error.localizedDescription)")
+            throw Failure(message: "Couldn't create \(ProjectBundle.skillsFolder)/\(name): \(error.localizedDescription)")
         }
         return file
     }
@@ -95,7 +95,7 @@ public enum ProjectSkills {
         do {
             _ = try trash(skill.folder)
         } catch {
-            throw Failure(message: "Couldn't move \(Render.skillsFolder)/\(name) to the Trash: \(error.localizedDescription)")
+            throw Failure(message: "Couldn't move \(ProjectBundle.skillsFolder)/\(name) to the Trash: \(error.localizedDescription)")
         }
     }
 }

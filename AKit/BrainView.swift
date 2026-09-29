@@ -564,7 +564,7 @@ private struct BrainProjectDetailView: View {
             Button("Move to Trash", role: .destructive) { trash(skill) }
             Button("Cancel", role: .cancel) {}
         } message: { skill in
-            Text("\(Render.skillsFolder)/\(skill.name) leaves the project (you can put it back from the Trash). Commit the removal in the project.")
+            Text("\(ProjectBundle.skillsFolder)/\(skill.name) leaves the project (you can put it back from the Trash). Commit the removal in the project.")
         }
         .alert("Couldn't change the project", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
             Button("OK") {}
@@ -608,7 +608,7 @@ private struct BrainProjectDetailView: View {
                     }
                 }
                 if !ownSkills.isEmpty {
-                    Text("The project's own (\(Render.skillsFolder), never overwritten)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Text("The project's own (\(ProjectBundle.skillsFolder), never overwritten)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(ownSkills) { skill in
                         HStack(spacing: 8) {
                             Button("Move to Trash…", systemImage: "minus.circle") { pendingTrash = skill }

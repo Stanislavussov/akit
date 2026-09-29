@@ -37,7 +37,7 @@ public enum ProjectSetup {
         public let project: URL
         public let id: String
         public let answers: ProjectAnswers
-        public let render: Render.Result
+        public let render: RenderResult
         /// Every path, including unchanged ones, sorted.
         public let changes: [Change]
         /// Things in the project that stop Apply.
@@ -71,14 +71,14 @@ public enum ProjectSetup {
     /// offered. Skills (and the link to them) stay AKit's. The home folder follows the core
     /// layer completely.
     static func isProjectOwned(_ path: String, forHome: Bool) -> Bool {
-        !forHome && !path.hasPrefix(Render.skillsFolder + "/") && path != ".claude/skills"
+        !forHome && !path.hasPrefix(ProjectBundle.skillsFolder + "/") && path != ".claude/skills"
     }
 
 
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
                             forHome: Bool = false) -> Plan {
         let fm = FileManager.default
-        var render = Render.render(answers, brain: brain, projectName: project.lastPathComponent, forHome: forHome)
+        var render = Render.render(ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent), forHome: forHome)
         let previous = ProjectRecords.savedLock(id: id, in: store)
         // A skill the project has itself wins over the brain's copy with the same name. Only
         // with a lock: without one AKit can't tell its own earlier copies from the project's.
@@ -87,7 +87,7 @@ public enum ProjectSetup {
         if !forHome, previous != nil {
             for name in ProjectSkills.names(in: project, lock: previous) { own[name.lowercased()] = name }
         }
-        let skillPrefix = Render.skillsFolder + "/"
+        let skillPrefix = ProjectBundle.skillsFolder + "/"
         func skillName(_ path: String) -> String? {
             path.hasPrefix(skillPrefix) ? path.dropFirst(skillPrefix.count).split(separator: "/").first.map(String.init) : nil
         }
@@ -99,20 +99,20 @@ public enum ProjectSetup {
             if current != data { shadowed.insert(name) }
         }
         var outputs = render.outputs.filter { output in skillName(output.path).map { !shadowed.contains($0) } ?? true }
-        var warnings = render.warnings + shadowed.sorted().map { "The project has its own \($0) skill in \(Render.skillsFolder); the brain's is not written." }
+        var warnings = render.warnings + shadowed.sorted().map { "The project has its own \($0) skill in \(ProjectBundle.skillsFolder); the brain's is not written." }
         // Claude finds the project's own skills through the same link as the brain's, if
         // nothing else is at .claude/skills.
         if !forHome, !own.isEmpty, answers.targets.contains("claude"),
            !outputs.contains(where: { $0.path == ".claude/skills" || $0.path.hasPrefix(".claude/skills/") }) {
             let link = project.appending(path: ".claude/skills")
             if isLink(link) || !fm.fileExists(atPath: link.path) || isEmptyFolder(link) {
-                outputs.append(Render.Output(path: ".claude/skills", content: .link("../\(Render.skillsFolder)"), layers: [Render.projectSource]))
+                outputs.append(RenderedFile(path: ".claude/skills", content: .link("../\(ProjectBundle.skillsFolder)"), layers: [ProjectBundle.projectSource]))
             } else {
-                warnings.append(".claude/skills is a folder, so Claude Code doesn't see the project's own skills in \(Render.skillsFolder).")
+                warnings.append(".claude/skills is a folder, so Claude Code doesn't see the project's own skills in \(ProjectBundle.skillsFolder).")
             }
         }
-        render = Render.Result(layers: render.layers, outputs: outputs.sorted { $0.path < $1.path }, errors: render.errors,
-                               warnings: warnings, skills: render.skills)
+        render = RenderResult(layers: render.layers, outputs: outputs.sorted { $0.path < $1.path }, errors: render.errors,
+                              warnings: warnings, skills: render.skills)
         let rendered = Set(render.outputs.map(\.path))
 
         var changes: [Change] = []
@@ -137,7 +137,7 @@ public enum ProjectSetup {
                         changes.append(Change(path: output.path, kind: .update, oldText: "(empty folder)", newText: "→ \(destination)",
                                               replacesUnmanaged: true, layers: output.layers))
                     } else {
-                        blockers.append("\(output.path) is a folder with \(items.count) item\(items.count == 1 ? "" : "s") (\(items.sorted().prefix(3).joined(separator: ", "))). Move them into the brain or \(Render.skillsFolder) first; AKit links \(output.path) to \(destination).")
+                        blockers.append("\(output.path) is a folder with \(items.count) item\(items.count == 1 ? "" : "s") (\(items.sorted().prefix(3).joined(separator: ", "))). Move them into the brain or \(ProjectBundle.skillsFolder) first; AKit links \(output.path) to \(destination).")
                     }
                 } else {
                     changes.append(Change(path: output.path, kind: .create, oldText: nil, newText: "→ \(destination)",
@@ -350,7 +350,7 @@ public enum ProjectSetup {
 
     // MARK: - Helpers
 
-    private static func entry(for output: Render.Output) -> ProjectRecords.Lock.Entry {
+    private static func entry(for output: RenderedFile) -> ProjectRecords.Lock.Entry {
         switch output.content {
         case .data(let data): .init(sha256: Checksum.sha256(data), link: nil, layers: output.layers)
         case .link(let destination): .init(sha256: nil, link: destination, layers: output.layers)

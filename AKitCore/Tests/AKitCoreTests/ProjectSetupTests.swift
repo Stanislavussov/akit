@@ -267,15 +267,15 @@ struct ProjectSetupTests {
         let withGrill = try #require(Brain.load(from: brainRoot))
         var picked = answers
         picked.skills = [.init(name: "grill", mode: .auto), .init(name: "tdd", mode: .auto)]
-        let render = Render.render(picked, brain: withGrill, projectName: "task")
+        let render = Render.render(ProjectBundle.resolve(picked, brain: withGrill, projectName: "task"))
         let skill = { (name: String) in render.outputs.first { $0.path == ".agents/skills/\(name)/SKILL.md" } }
-        #expect(skill("grill")?.layers == [Render.projectSource])
+        #expect(skill("grill")?.layers == [ProjectBundle.projectSource])
         // tdd is manual in the layer; the project makes it auto.
         #expect(skill("tdd")?.text?.contains("disable-model-invocation") == false)
-        #expect(skill("tdd")?.layers == [Render.projectSource])
+        #expect(skill("tdd")?.layers == [ProjectBundle.projectSource])
 
         picked.skills = [.init(name: "tdd", mode: .off)]
-        #expect(!Render.render(picked, brain: brain, projectName: "task").outputs.contains { $0.path.hasPrefix(".agents/skills/tdd/") })
+        #expect(!Render.render(ProjectBundle.resolve(picked, brain: brain, projectName: "task")).outputs.contains { $0.path.hasPrefix(".agents/skills/tdd/") })
 
         // Answers saved before project skills existed still read.
         let old = try JSONDecoder().decode(ProjectAnswers.self, from: Data(#"{"layers":["task"],"values":{},"targets":["pi"]}"#.utf8))

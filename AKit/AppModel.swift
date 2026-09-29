@@ -224,8 +224,7 @@ final class AppModel {
 
     /// Render targets for the harnesses installed on this Mac (`claude`, `pi`, …).
     var installedTargets: [String] {
-        installations.map { $0.id == .claudeCode ? "claude" : $0.id.rawValue }
-            .filter(ProjectAnswers.knownTargets.contains)
+        installations.compactMap { ProjectAnswers.target(for: $0.id) }
     }
 
     /// The brain's id for a project folder (from its git remote).

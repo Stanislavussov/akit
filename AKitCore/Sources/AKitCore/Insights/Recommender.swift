@@ -632,7 +632,7 @@ enum Recommender {
 
     /// The layers list the skill, but AKit didn't write the installed copy, so their mode doesn't reach it.
     static func unmanagedAdvice(skill: String, file: String, layers: [String]) -> String {
-        let include = "--include \(Render.skillsFolder)/\(skill)/SKILL.md"
+        let include = "--include \(ProjectBundle.skillsFolder)/\(skill)/SKILL.md"
         let whose = layers.count == 1 ? "the \(layers[0]) layer's" : "the brain's (\(layers.joined(separator: ", ")))"
         // A copy in a dot folder of the home (~/.agents/skills, ~/.claude/skills) is the home render's.
         let command = file.hasPrefix("~/.") ? "akit apply --home --include-unmanaged (or akit apply --home \(include))"

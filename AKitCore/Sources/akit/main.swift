@@ -13,8 +13,7 @@ if getuid() == 0 {
     exit(2)
 }
 let env = HarnessEnvironment.current
-let installed = HarnessCatalog.detectAll(in: env).map { $0.id == .claudeCode ? "claude" : $0.id.rawValue }
-    .filter(ProjectAnswers.knownTargets.contains)
+let installed = HarnessCatalog.detectAll(in: env).compactMap { ProjectAnswers.target(for: $0.id) }
 // The app's projects folder (Settings), so a project gets the same id in both;
 // AKIT_PROJECTS_ROOT overrides it.
 let appDefaults = UserDefaults(suiteName: "dev.ussov.akit")
