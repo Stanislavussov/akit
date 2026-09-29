@@ -1,3 +1,7 @@
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
+import AKitSkills
 import Foundation
 
 /// One skills folder a new skill is copied into. Several harnesses may share it
@@ -240,7 +244,7 @@ enum SkillCopier {
 }
 
 /// Small edits of SKILL.md text.
-public enum SkillText {
+enum SkillText {
     /// Sets the top-level `name:` in the frontmatter, adding a frontmatter block if there is none.
     public static func settingName(_ name: String, in text: String) -> String {
         var lines = text.components(separatedBy: "\n")

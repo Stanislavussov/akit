@@ -1,6 +1,10 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+import AKitHarnesses
+import AKitModel
+import AKitSkills
+@testable import AKitSkillsSh
 
 /// skills.sh search parsing, finding a skill in a repository and installing it.
 /// Offline: a fake repository and a fake home in a temporary folder.

@@ -1,3 +1,5 @@
+import AKitFoundation
+import AKitSkills
 import Foundation
 
 /// A skill from skills.sh, downloaded and unpacked into AKit's cache. Nothing is installed yet.
@@ -150,7 +152,7 @@ public enum RemoteSkillFetcher {
 }
 
 /// Finds a skill folder inside a repository, the way skills.sh names skills.
-public enum SkillLocator {
+enum SkillLocator {
     static let skipped: Set<String> = [".git", "node_modules"]
 
     /// Match order: slug of the SKILL.md name, then the folder name, then the exact name.

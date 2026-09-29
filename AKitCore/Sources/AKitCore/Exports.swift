@@ -4,3 +4,4 @@
 @_exported import AKitModel
 @_exported import AKitHarnesses
 @_exported import AKitSkills
+@_exported import AKitSkillsSh
