@@ -360,8 +360,11 @@ removes every cycle, so phase B is only moving files.
    dispatches on `HarnessID`; remove `usage`/`limits` from `HarnessAdapter`.
    UI check: Usage screen (fixes 1, part 2, and 2).
 6. Adapter lookups: `HarnessCatalog.configRoot(of:in:)` and `.adapter(for:)`
-   replace `ClaudeCodeAdapter()` and `PiAdapter()` in Insights (fix 23). After
-   this step only `Adapters/` names the concrete adapters.
+   replace `ClaudeCodeAdapter()` and `PiAdapter()` in Insights (fix 23). Both
+   return nil for custom harnesses. After this step only `Adapters/` and
+   `Custom/CustomHarness.swift` (which defines `CustomHarnessAdapter`) name the
+   concrete adapters, besides the tests that check them directly
+   (`DetectionTests`, `CustomHarnessTests`, `SkillScannerTests`).
 7. MCP Claude-CLI runner moves from `AppModel.applyMCP` into `MCPWriter`.
    UI check: MCP editor save.
 8. Project records: new `Brain/ProjectRecords.swift` takes `Lock`, the id

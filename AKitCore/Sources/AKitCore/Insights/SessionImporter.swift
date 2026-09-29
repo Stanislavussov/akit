@@ -161,7 +161,7 @@ struct SessionImporter {
     /// spool day files.
     func discover() -> [LogFile] {
         var found: [LogFile] = []
-        let projects = ClaudeCodeAdapter().configRoot(in: env).appending(path: "projects")
+        let projects = HarnessCatalog.configRoot(of: .claudeCode, in: env)!.appending(path: "projects")
         for folder in FileWalk.children(of: projects) where FileWalk.isDirectory(folder) {
             for item in FileWalk.children(of: folder) {
                 if item.pathExtension == "jsonl" {
@@ -173,7 +173,7 @@ struct SessionImporter {
                 }
             }
         }
-        let pi = PiLogFormat.folder(configRoot: PiAdapter().configRoot(in: env), in: env)
+        let pi = PiLogFormat.folder(configRoot: HarnessCatalog.configRoot(of: .pi, in: env)!, in: env)
         for folder in FileWalk.children(of: pi) where FileWalk.isDirectory(folder) {
             for item in FileWalk.children(of: folder) where item.pathExtension == "jsonl" {
                 found += Self.logFile(item, harness: "pi", kind: "session").map { [$0] } ?? []

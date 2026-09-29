@@ -17,9 +17,8 @@ struct SessionTests {
     /// Sessions of one harness as `SessionScanner` reads them, whether it is detected or not.
     func sessions(_ harness: HarnessID, in env: HarnessEnvironment? = nil) -> [SessionSummary] {
         let env = env ?? self.env
-        let root = harness == .pi ? PiAdapter().configRoot(in: env) : ClaudeCodeAdapter().configRoot(in: env)
         let installation = HarnessInstallation(id: harness, displayName: harness.displayName, executableURL: nil,
-                                               configRoot: root, locations: [])
+                                               configRoot: HarnessCatalog.configRoot(of: harness, in: env)!, locations: [])
         return SessionScanner.scan(installations: [installation], in: env)
     }
 

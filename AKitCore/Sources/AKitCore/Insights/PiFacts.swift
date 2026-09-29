@@ -144,7 +144,7 @@ struct PiSkillPaths {
 
     private static func roots(env: HarnessEnvironment, cwd: URL?) -> [(written: String, real: String)] {
         let home = env.homeDirectory
-        var urls = PiAdapter().skillRoots(in: env, projects: cwd.map { [$0] } ?? []).map(\.url)
+        var urls = (HarnessCatalog.adapter(for: .pi)?.skillRoots(in: env, projects: cwd.map { [$0] } ?? []) ?? []).map(\.url)
         urls += [".agents/skills", ".pi/agent/skills", ".pi/skills"].map { home.appending(path: $0) }
         for folder in cwd.map({ ancestors(of: $0.standardizedFileURL.path) }) ?? [] {
             let url = URL(filePath: folder, directoryHint: .isDirectory)

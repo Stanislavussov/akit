@@ -92,7 +92,7 @@ struct CaptureInstaller {
 
     // MARK: - Files
 
-    var piExtension: URL { PiAdapter().configRoot(in: env).appending(path: "extensions/akit-record.ts") }
+    var piExtension: URL { HarnessCatalog.configRoot(of: .pi, in: env)!.appending(path: "extensions/akit-record.ts") }
 
     /// The plugin, by path inside the brain; `true` = executable.
     static let pluginFiles: [(path: String, text: String, executable: Bool)] = [
@@ -257,7 +257,7 @@ extension CaptureInstaller {
     }
 
     private func planPi(into plan: inout Plan) {
-        let root = PiAdapter().configRoot(in: env)
+        let root = HarnessCatalog.configRoot(of: .pi, in: env)!
         guard FileManager.default.fileExists(atPath: root.path) else {
             plan.notes.append("Pi was not found (\(root.path)); no extension written.")
             return

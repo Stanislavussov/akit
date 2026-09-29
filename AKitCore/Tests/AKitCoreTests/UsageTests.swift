@@ -18,14 +18,8 @@ struct UsageTests {
 
     /// The harness at its usual place in the fake home, whether it is detected or not.
     func installation(_ harness: HarnessID) -> HarnessInstallation {
-        let root = switch harness {
-        case .claudeCode: ClaudeCodeAdapter().configRoot(in: env)
-        case .pi: PiAdapter().configRoot(in: env)
-        case .codex: CodexAdapter().configRoot(in: env)
-        default: OpenCodeAdapter().configRoot(in: env)
-        }
-        return HarnessInstallation(id: harness, displayName: harness.displayName, executableURL: nil,
-                                   configRoot: root, locations: [])
+        HarnessInstallation(id: harness, displayName: harness.displayName, executableURL: nil,
+                            configRoot: HarnessCatalog.configRoot(of: harness, in: env)!, locations: [])
     }
 
     /// Usage of one harness as `UsageScanner` reads it.

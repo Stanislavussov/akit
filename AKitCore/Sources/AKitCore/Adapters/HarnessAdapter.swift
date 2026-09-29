@@ -62,4 +62,21 @@ public enum HarnessCatalog {
                                  adapters: [any HarnessAdapter] = HarnessCatalog.adapters) -> [HarnessInstallation] {
         adapters.compactMap { $0.detect(in: env) }
     }
+
+    /// The built-in adapter of this harness. nil for custom harnesses.
+    public static func adapter(for harness: HarnessID) -> (any HarnessAdapter)? {
+        adapters.first { $0.id == harness }
+    }
+
+    /// Main config folder of a built-in harness (`~/.claude`, `~/.pi/agent`, or the folder
+    /// its environment variable names), also when it isn't installed. nil for custom harnesses.
+    public static func configRoot(of harness: HarnessID, in env: HarnessEnvironment) -> URL? {
+        switch harness {
+        case .claudeCode: ClaudeCodeAdapter().configRoot(in: env)
+        case .pi: PiAdapter().configRoot(in: env)
+        case .openCode: OpenCodeAdapter().configRoot(in: env)
+        case .codex: CodexAdapter().configRoot(in: env)
+        default: nil
+        }
+    }
 }
