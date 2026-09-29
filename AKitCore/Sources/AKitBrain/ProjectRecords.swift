@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// What AKit keeps about a project in the project store (the brain's `projects/<id>/`, or a
@@ -12,6 +13,12 @@ public enum ProjectRecords {
             /// Destination of a written link.
             public var link: String?
             public var layers: [String]
+
+            public init(sha256: String?, link: String?, layers: [String]) {
+                self.sha256 = sha256
+                self.link = link
+                self.layers = layers
+            }
         }
 
         /// Brain commit the files were rendered from.
@@ -22,6 +29,13 @@ public enum ProjectRecords {
         /// Project-owned files (AGENTS.md, templates): hash of the layers' version when it
         /// was last written or offered. A suggestion appears only when that version changes.
         public var templates: [String: String]?
+
+        public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil) {
+            self.brainCommit = brainCommit
+            self.brainDirty = brainDirty
+            self.files = files
+            self.templates = templates
+        }
     }
 
     // MARK: - Home
@@ -49,7 +63,7 @@ public enum ProjectRecords {
     }
 
     /// `local/<path under the projects root>`, for a project without a git remote.
-    static func localID(path: String, projectsRoot root: String) -> String {
+    public static func localID(path: String, projectsRoot root: String) -> String {
         if path.hasPrefix(root + "/") { return "local/" + cleanPath(String(path.dropFirst(root.count + 1))) }
         // Outside the projects root: the folder name plus a short hash, so two "app" folders differ.
         return "local/" + cleanPath((path as NSString).lastPathComponent) + "-" + Checksum.sha256(Data(path.utf8)).prefix(8)
@@ -57,7 +71,7 @@ public enum ProjectRecords {
 
     /// `git@github.com:Owner/Repo.git`, `https://user@github.com/owner/repo`, `ssh://git@host:22/o/r.git`
     /// → `github.com/owner/repo`.
-    static func normalizedRemote(_ remote: String) -> String? {
+    public static func normalizedRemote(_ remote: String) -> String? {
         var text = remote.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         if let scheme = text.range(of: "://") {
@@ -91,13 +105,13 @@ public enum ProjectRecords {
             .flatMap { try? JSONDecoder().decode(ProjectAnswers.self, from: $0) }
     }
 
-    static func savedLock(id: String, in store: ProjectStore) -> Lock? {
+    public static func savedLock(id: String, in store: ProjectStore) -> Lock? {
         store.savedFile(id: id, "lock.json").flatMap { try? Data(contentsOf: $0) }
             .flatMap { try? JSONDecoder().decode(Lock.self, from: $0) }
     }
 
     /// Writes lock.json (and answers.json, when given) under `<store>/<id>`.
-    static func save(_ lock: Lock, answers: ProjectAnswers?, id: String, in store: ProjectStore) throws {
+    public static func save(_ lock: Lock, answers: ProjectAnswers?, id: String, in store: ProjectStore) throws {
         let folder = store.folder(id: id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let encoder = JSONEncoder()

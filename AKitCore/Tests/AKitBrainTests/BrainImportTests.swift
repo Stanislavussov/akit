@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+@testable import AKitBrain
 
 /// Importing global skills into a brain, all inside a temporary fake home.
 struct BrainImportTests {

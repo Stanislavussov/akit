@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// The brain repo: your skill library, layers and project metadata.
@@ -33,6 +34,12 @@ public struct Brain: Sendable {
         public var isHome: Bool { id.hasPrefix("home/") }
         /// The repo or folder name; the host for a home folder.
         public var name: String { id.split(separator: "/").last.map(String.init) ?? id }
+
+        public init(id: String, answers: ProjectAnswers, brainCommit: String?) {
+            self.id = id
+            self.answers = answers
+            self.brainCommit = brainCommit
+        }
     }
 
     public let root: URL
@@ -153,7 +160,7 @@ public struct Brain: Sendable {
     }
 
     /// The layer and everything it requires, directly or not.
-    static func requiredClosure(of name: String, in layers: [String: Layer]) -> Set<String> {
+    public static func requiredClosure(of name: String, in layers: [String: Layer]) -> Set<String> {
         var seen: Set<String> = []
         var queue = [name]
         while let next = queue.popLast() {

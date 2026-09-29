@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// Removing things from the brain safely: folders go to the Trash, every removal is one
@@ -159,20 +160,20 @@ public enum BrainRemove {
 
     // MARK: - Helpers
 
-    struct Saved {
-        let id: String
+    public struct Saved {
+        public let id: String
         let file: URL
-        let answers: ProjectAnswers
+        public let answers: ProjectAnswers
         let store: ProjectStore
     }
 
     /// Saved answers in the brain and in this Mac's local store.
-    static func savedAnswers(brain: Brain, home: URL) -> [Saved] {
+    public static func savedAnswers(brain: Brain, home: URL) -> [Saved] {
         savedAnswers(in: .brain(brain.root)) + savedAnswers(in: .local(home: home))
     }
 
     /// Every `**/answers.json` in a store.
-    static func savedAnswers(in store: ProjectStore) -> [Saved] {
+    public static func savedAnswers(in store: ProjectStore) -> [Saved] {
         let base = store.root.standardizedFileURL
         guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil) else { return [] }
         var found: [Saved] = []

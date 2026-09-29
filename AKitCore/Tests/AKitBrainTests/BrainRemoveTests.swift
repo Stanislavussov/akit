@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitCore
+import AKitFoundation
+@testable import AKitBrain
 
 /// Removing layers, skills and projects from a brain in a temporary fake home.
 struct BrainRemoveTests {

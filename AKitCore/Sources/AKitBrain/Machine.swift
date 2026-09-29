@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 import IOKit
 
@@ -88,7 +89,7 @@ public struct MachineProfile: Codable, Hashable, Sendable {
     public var homeName: String? { name ?? (isWork ? "work" : nil) }
 
     /// Name for this Mac in usage summaries and evidence: the chosen name, else the host name without `.local`.
-    func displayName(hostName: String) -> String {
+    public func displayName(hostName: String) -> String {
         name ?? (hostName.hasSuffix(".local") ? String(hostName.dropLast(".local".count)) : hostName)
     }
 
@@ -259,7 +260,7 @@ public struct ProjectStore: Hashable, Sendable {
     public func folder(id: String) -> URL { root.appending(path: id, directoryHint: .isDirectory) }
 
     /// A saved file of a project: this store's, else the read-only fallback's.
-    func savedFile(id: String, _ name: String) -> URL? {
+    public func savedFile(id: String, _ name: String) -> URL? {
         let own = folder(id: id).appending(path: name)
         if FileManager.default.fileExists(atPath: own.path) { return own }
         guard let fallback = readFallback?.appending(path: id).appending(path: name),
@@ -268,7 +269,7 @@ public struct ProjectStore: Hashable, Sendable {
     }
 
     /// Same place (fallbacks aside), however the paths are spelled.
-    func isSamePlace(as other: ProjectStore) -> Bool {
+    public func isSamePlace(as other: ProjectStore) -> Bool {
         root.standardizedFileURL.resolvingSymlinksInPath() == other.root.standardizedFileURL.resolvingSymlinksInPath()
             && isLocal == other.isLocal
     }

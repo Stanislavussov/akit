@@ -69,6 +69,14 @@ public struct LayerSkill: Hashable, Sendable {
     /// `keep_auto: true`: stays auto; `akit recommend` never proposes making it manual.
     /// Older AKit ignores the key.
     public let keepAuto: Bool
+
+    public init(name: String, mode: Mode, when: [Condition], override: Bool, keepAuto: Bool) {
+        self.name = name
+        self.mode = mode
+        self.when = when
+        self.override = override
+        self.keepAuto = keepAuto
+    }
 }
 
 /// A template rendered into the project.

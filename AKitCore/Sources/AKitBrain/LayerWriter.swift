@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 import Yams
 
@@ -63,7 +64,7 @@ public enum LayerWriter {
     }
 
     /// One YAML scalar, quoted by Yams when needed (`a: b`, `#x`, `yes`, …).
-    static func scalar(_ text: String) throws(Failure) -> String {
+    public static func scalar(_ text: String) throws(Failure) -> String {
         do {
             return try Yams.serialize(node: Node(text)).trimmingCharacters(in: .newlines)
         } catch {

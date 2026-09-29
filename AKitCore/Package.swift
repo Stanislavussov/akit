@@ -23,8 +23,9 @@ let package = Package(
         .target(name: "AKitSessions", dependencies: ["AKitFoundation", "AKitModel"]),
         .target(name: "AKitUsage", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions"]),
         .target(name: "AKitMCP", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .target(name: "AKitBrain", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "Yams"]),
         // Umbrella: the files not moved into a module yet, plus Exports.swift.
-        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSkillsSh", "AKitSessions", "AKitUsage", "AKitMCP", "Yams"]),
+        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSkillsSh", "AKitSessions", "AKitUsage", "AKitMCP", "AKitBrain"]),
         .executableTarget(name: "akit", dependencies: ["AKitCore"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitCore"]),
@@ -33,6 +34,7 @@ let package = Package(
         .testTarget(name: "AKitSessionsTests", dependencies: ["AKitSessions", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitUsageTests", dependencies: ["AKitUsage", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitMCPTests", dependencies: ["AKitMCP", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
-        .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation", "AKitHarnesses", "AKitSkills", "AKitSessions"]),
+        .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitCore"]),
+        .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
     ]
 )

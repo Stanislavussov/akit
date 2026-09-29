@@ -3,17 +3,17 @@ import Yams
 
 /// Reads `layer.yaml`. Anything that is wrong but not fatal becomes a problem
 /// message instead of an error, so one typo doesn't hide the whole layer.
-enum LayerManifest {
-    struct Parsed {
-        var layer: Layer
-        var problems: [String]
+public enum LayerManifest {
+    public struct Parsed {
+        public var layer: Layer
+        public var problems: [String]
     }
 
-    struct Failure: Error {
+    public struct Failure: Error {
         let message: String
     }
 
-    static func parse(_ text: String, folder: URL) throws(Failure) -> Parsed {
+    public static func parse(_ text: String, folder: URL) throws(Failure) -> Parsed {
         let node: Node?
         do {
             node = try Yams.compose(yaml: text)

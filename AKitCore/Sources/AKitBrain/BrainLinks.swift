@@ -1,3 +1,5 @@
+import AKitFoundation
+import AKitSkills
 import Foundation
 
 /// How an installed skill relates to the brain: a copy AKit rendered from a layer, or not.

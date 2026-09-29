@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+@testable import AKitBrain
 
 /// Creating a layer from the New Layer form, in a temporary brain.
 struct LayerWriterTests {

@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitCore
+import AKitFoundation
+@testable import AKitBrain
 
 /// Two Macs' brains sharing a bare remote, all in a temporary fake home.
 struct BrainSyncTests {

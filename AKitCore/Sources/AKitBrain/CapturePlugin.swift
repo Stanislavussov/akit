@@ -2,16 +2,16 @@ import Foundation
 
 /// The Claude Code plugin that records session starts for `akit stats`. It lives in the brain
 /// (`plugins/`, a local marketplace), so a new brain gets it and `CaptureInstaller` installs it.
-enum CapturePlugin {
+public enum CapturePlugin {
     /// Version of the plugin files this akit writes; `insights status` compares it with the
     /// brain's and the installed one.
-    static let version = "1.0.1"
-    static let marketplace = "akit-brain"
+    public static let version = "1.0.1"
+    public static let marketplace = "akit-brain"
     /// First line of every file AKit owns here; a file without it is someone else's.
-    static let marker = "akit-record: written by AKit"
+    public static let marker = "akit-record: written by AKit"
 
     /// The plugin, by path inside the brain; `true` = executable.
-    static let files: [(path: String, text: String, executable: Bool)] = [
+    public static let files: [(path: String, text: String, executable: Bool)] = [
         ("plugins/.claude-plugin/marketplace.json", """
             {
               "name": "\(marketplace)",

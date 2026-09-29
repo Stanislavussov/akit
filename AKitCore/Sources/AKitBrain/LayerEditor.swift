@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// Changes an existing layer from the Brain screen: adds skills, sets a skill's mode, and

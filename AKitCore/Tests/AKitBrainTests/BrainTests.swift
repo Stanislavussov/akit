@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+@testable import AKitBrain
 
 /// Brain repo loading and layer checks, in a temporary folder.
 struct BrainTests {

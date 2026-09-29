@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+import AKitModel
+@testable import AKitBrain
 @testable import AKitSkills
 
 /// Which installed skills AKit rendered from the brain, in a temporary folder.

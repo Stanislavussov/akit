@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+@testable import AKitBrain
 
 /// Editing an existing layer from the Brain screen, in a temporary brain.
 struct LayerEditorTests {
