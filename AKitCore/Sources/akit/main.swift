@@ -1,5 +1,10 @@
-// `akit` command line: see AKitCLI.usage. All logic lives in AKitCore.
-import AKitCore
+// `akit` command line: see AKitCLI.usage. All logic lives in the AKit modules
+// (docs/design/architecture.md).
+import AKitBrain
+import AKitCommandLine
+import AKitFoundation
+import AKitHarnesses
+import AKitInsights
 import Foundation
 
 // Session hooks: first and alone, so a session start pays only for one appended line

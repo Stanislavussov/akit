@@ -1,3 +1,7 @@
+import AKitBrain
+import AKitFoundation
+import AKitInsights
+import AKitProjectSetup
 import Foundation
 
 /// The `akit` command: the brain and project setup for agents and terminals. Same rules

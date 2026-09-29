@@ -1,6 +1,10 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitBrain
+import AKitFoundation
+import AKitHarnesses
+import AKitSkills
+@testable import AKitCommandLine
 @testable import AKitInsights
 
 /// `akit recommend`: the auto → manual rule, its actions by owner, `apply` and `dismiss`. Facts are

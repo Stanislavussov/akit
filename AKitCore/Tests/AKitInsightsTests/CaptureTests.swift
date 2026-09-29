@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitBrain
+@testable import AKitCommandLine
 @testable import AKitInsights
 @testable import AKitProjectSetup
 @testable import AKitFoundation

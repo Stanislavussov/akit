@@ -1,6 +1,10 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitBrain
+import AKitFoundation
+import AKitHarnesses
+import AKitSkills
+@testable import AKitCommandLine
 @testable import AKitInsights
 
 /// `akit stats`: owners, description windows, ≈ context space and calls. Facts are written straight

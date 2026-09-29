@@ -1,5 +1,5 @@
 // Temporary umbrella while AKitCore is split into modules (docs/design/architecture.md):
-// the app and the akit command keep `import AKitCore` and see every extracted module.
+// the app keeps `import AKitCore` and sees every extracted module.
 @_exported import AKitFoundation
 @_exported import AKitModel
 @_exported import AKitHarnesses
@@ -12,3 +12,4 @@
 @_exported import AKitInsights
 @_exported import AKitRender
 @_exported import AKitProjectSetup
+@_exported import AKitCommandLine

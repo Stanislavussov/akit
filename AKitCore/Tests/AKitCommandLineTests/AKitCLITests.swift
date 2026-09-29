@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitBrain
+import AKitFoundation
+@testable import AKitCommandLine
 @testable import AKitInsights
 
 /// The `akit` command, run in-process against a temporary fake home.

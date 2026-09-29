@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitBrain
+import AKitFoundation
+@testable import AKitCommandLine
 @testable import AKitInsights
 
 /// Machine identity and the usage summaries published to the brain. Facts are written straight into

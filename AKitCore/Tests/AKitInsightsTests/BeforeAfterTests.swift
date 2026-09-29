@@ -1,6 +1,7 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitFoundation
+@testable import AKitCommandLine
 @testable import AKitInsights
 
 /// Before/after measurement of first-request context around applies and marks, and the k

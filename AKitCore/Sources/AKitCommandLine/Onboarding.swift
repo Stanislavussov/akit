@@ -1,3 +1,7 @@
+import AKitBrain
+import AKitFoundation
+import AKitHarnesses
+import AKitProjectSetup
 import Foundation
 
 /// `akit setup`: the questions a new Mac needs answered, each with a default (Enter), then

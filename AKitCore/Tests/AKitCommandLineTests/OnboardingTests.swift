@@ -1,6 +1,8 @@
 import Foundation
 import Testing
-@testable import AKitCore
+import AKitBrain
+import AKitFoundation
+@testable import AKitCommandLine
 
 /// `akit setup` on a new Mac, in a temporary fake home, with scripted answers.
 struct OnboardingTests {
