@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AKitCore
+@testable import AKitFoundation
 
 /// Binding sessions to projects. Real git repositories in a temporary fake home; sessions and
 /// hook events written straight into a temporary index. Never touches the real home.

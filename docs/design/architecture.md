@@ -410,7 +410,8 @@ well, so tests that drive `AKitCLI.run` or `ProjectSetup.apply` keep compiling.
 Phase C replaces that with the real modules.
 
 12. `AKitFoundation` (ProcessRunnerTests, SecretFilterTests; move `FrontmatterTests`
-    out of `SkillScannerTests.swift` into its own file here)
+    out of `SkillScannerTests.swift` into its own file here). `JSONLines.summaries`
+    named `SessionSummary`, so it became generic over the summary type.
 13. `AKitModel`
 14. `AKitHarnesses` (DetectionTests.swift incl. VersionProbeTests, CustomHarnessTests)
 15. `AKitSkills` (SkillScannerTests.swift incl. SkillRemoverTests, MoreHarnessTests;

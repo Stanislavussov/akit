@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AKitCore
+@testable import AKitFoundation
 
 struct SecretFilterTests {
     @Test func masksTokenShapes() {

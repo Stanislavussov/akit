@@ -15,8 +15,11 @@ let package = Package(
         .package(url: "https://github.com/jpsim/Yams.git", from: "6.0.0"),
     ],
     targets: [
-        .target(name: "AKitCore", dependencies: ["Yams"]),
+        .target(name: "AKitFoundation"),
+        // Umbrella: the files not moved into a module yet, plus Exports.swift.
+        .target(name: "AKitCore", dependencies: ["AKitFoundation", "Yams"]),
         .executableTarget(name: "akit", dependencies: ["AKitCore"]),
-        .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore"]),
+        .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
+        .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation"]),
     ]
 )

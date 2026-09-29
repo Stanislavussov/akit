@@ -1,9 +1,9 @@
 import Foundation
 
 /// Small readers for config formats Foundation doesn't know.
-enum ConfigText {
+public enum ConfigText {
     /// JSON with `//` and `/* */` comments and trailing commas (OpenCode's `.jsonc`) → plain JSON.
-    static func stripJSONC(_ text: String) -> String {
+    public static func stripJSONC(_ text: String) -> String {
         var out = ""
         var chars = Array(normalized(text))
         var index = 0
@@ -56,13 +56,13 @@ enum ConfigText {
     }
 
     /// `\r\n` is one Character in Swift and would never equal `\n`; also drops a BOM.
-    static func normalized(_ text: String) -> String {
+    public static func normalized(_ text: String) -> String {
         var text = text.replacingOccurrences(of: "\r\n", with: "\n")
         if text.hasPrefix("\u{FEFF}") { text.removeFirst() }
         return text
     }
 
-    static func jsonObject(_ data: Data, jsonc: Bool) throws -> [String: Any] {
+    public static func jsonObject(_ data: Data, jsonc: Bool) throws -> [String: Any] {
         var data = data
         if jsonc, let text = String(data: data, encoding: .utf8) { data = Data(stripJSONC(text).utf8) }
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -72,23 +72,23 @@ enum ConfigText {
     }
 }
 
-struct ConfigTextError: Error, LocalizedError {
+public struct ConfigTextError: Error, LocalizedError {
     let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
 }
 
 /// Enough TOML for Codex's `config.toml`: tables, dotted keys, strings, numbers,
 /// booleans, arrays and inline tables. Arrays of tables (`[[x]]`) are skipped:
 /// MCP servers never use them.
-struct MiniTOML {
+public struct MiniTOML {
     private let chars: [Character]
     private var index = 0
     /// Nesting of arrays and inline tables; deep input would overflow the stack.
     private var depth = 0
     static let maxDepth = 64
 
-    static func parse(_ text: String) throws -> [String: Any] {
+    public static func parse(_ text: String) throws -> [String: Any] {
         var parser = MiniTOML(chars: Array(ConfigText.normalized(text)))
         return try parser.document()
     }

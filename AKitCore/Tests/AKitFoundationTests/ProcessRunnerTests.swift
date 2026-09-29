@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import AKitCore
+@testable import AKitFoundation
 
 /// ProcessRunner with small shell scripts in a temporary folder.
 final class ProcessRunnerTests {

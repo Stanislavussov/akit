@@ -6,7 +6,7 @@ import Foundation
 /// token shapes are masked everywhere else.
 public enum SecretFilter {
     public static let hiddenOutput = "[Hidden by AKit: this output comes from a file that usually holds secrets.]"
-    static let mask = "[secret hidden]"
+    public static let mask = "[secret hidden]"
 
     /// Whether a tool call reads or writes a file that usually holds secrets: its
     /// `file_path`/`path` names one, or its shell `command` (up to any heredoc) has one
@@ -43,7 +43,7 @@ public enum SecretFilter {
         return fields
     }
 
-    static func isSecretFile(_ path: String) -> Bool {
+    public static func isSecretFile(_ path: String) -> Bool {
         let parts = path.split(separator: "/")
         guard let name = parts.last.map(String.init) else { return false }
         let parent = parts.dropLast().last.map(String.init)

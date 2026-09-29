@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AKitCore
+@testable import AKitFoundation
 
 /// Session capture: the spool, `akit record-session`, apply events and their import. A
 /// temporary fake home; the real ~/.akit, ~/.claude and ~/.pi are never touched.
