@@ -76,11 +76,10 @@ public enum MCPWriter {
                                in env: HarnessEnvironment) -> [MCPWriteTarget] {
         let installed = Set(installations.map(\.id))
         let sources = adapters.filter { installed.contains($0.id) }.flatMap { $0.mcpSources(in: env, projects: projects) }
-        return targets(from: sources, env: env)
+        return targets(from: sources)
     }
 
-    static func targets(from sources: [MCPSource], env: HarnessEnvironment) -> [MCPWriteTarget] {
-        let claudeState = ClaudeCodeAdapter().stateFile(in: env).standardizedFileURL.path
+    static func targets(from sources: [MCPSource]) -> [MCPWriteTarget] {
         var order: [String] = []
         var grouped: [String: [MCPSource]] = [:]
         for source in sources where !source.isReadOnly && source.format != .toml {
@@ -90,7 +89,7 @@ public enum MCPWriter {
         }
         return order.compactMap { key in
             guard let group = grouped[key], let first = group.first else { return nil }
-            let isClaudeState = first.harness == .claudeCode && first.file.standardizedFileURL.path == claudeState
+            let isClaudeState = first.writesThroughClaudeCLI
             var blocked: String?
             if first.format == .jsonc, let text = try? String(contentsOf: first.file, encoding: .utf8),
                ConfigText.stripJSONC(text) != text {

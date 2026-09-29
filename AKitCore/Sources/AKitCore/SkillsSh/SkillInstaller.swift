@@ -1,11 +1,5 @@
 import Foundation
 
-/// Where a skill gets installed: for every project, or inside one project.
-public enum InstallScope: Hashable, Sendable {
-    case global
-    case project(URL)
-}
-
 /// One skills folder a new skill is copied into. Several harnesses may share it
 /// (`~/.agents/skills` is read by Pi, Codex and OpenCode).
 public struct InstallTarget: Hashable, Sendable, Identifiable {

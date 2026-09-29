@@ -100,67 +100,6 @@ public enum MCPState: Hashable, Sendable {
     public var isActive: Bool { self == .active }
 }
 
-/// A file (or a part of one) a harness reads MCP servers from.
-public struct MCPSource: Sendable {
-    public enum Format: Sendable {
-        /// JSON; `.jsonc` also allows comments and trailing commas.
-        case json, jsonc, toml
-    }
-
-    /// How server entries are spelled.
-    public enum Dialect: Sendable {
-        /// `{command, args, env, cwd}` or `{type, url, headers}` — Claude, Pi, most tools.
-        case standard
-        /// OpenCode: `{type: local, command: [...], environment}` / `{type: remote, url, headers}`.
-        case openCode
-        /// Codex: `command, args, env, env_vars, url, bearer_token_env_var, http_headers, env_http_headers`.
-        case codex
-    }
-
-    public let file: URL
-    public let format: Format
-    public let dialect: Dialect
-    /// Path to the `name → server` table inside the file.
-    public let keyPath: [String]
-    public let harness: HarnessID
-    public let scope: SkillScope
-    public let layer: String
-    let precedence: Int
-    public let isReadOnly: Bool
-    /// Claude's answer for project servers; nil = no approval step.
-    var approval: MCPApproval?
-    /// Set when the harness won't load this file right now.
-    var inactiveReason: String?
-    /// Names switched off for this source (Claude's `/mcp` toggle: `disabledMcpServers`).
-    var turnedOff: Set<String> = []
-
-    public init(file: URL, format: Format = .json, dialect: Dialect = .standard, keyPath: [String],
-                harness: HarnessID, scope: SkillScope, layer: String, precedence: Int, isReadOnly: Bool = false) {
-        self.file = file
-        self.format = format
-        self.dialect = dialect
-        self.keyPath = keyPath
-        self.harness = harness
-        self.scope = scope
-        self.layer = layer
-        self.precedence = precedence
-        self.isReadOnly = isReadOnly
-    }
-}
-
-/// Claude's approval of project `.mcp.json` servers, collected from its settings.
-struct MCPApproval: Sendable {
-    var enabled: Set<String> = []
-    var disabled: Set<String> = []
-    var enableAll = false
-
-    func state(of name: String) -> MCPState {
-        if disabled.contains(name) { return .rejected }
-        if enableAll || enabled.contains(name) { return .active }
-        return .needsApproval
-    }
-}
-
 /// Everything found, plus files that couldn't be read.
 public struct MCPScanResult: Sendable {
     public var servers: [MCPServer] = []

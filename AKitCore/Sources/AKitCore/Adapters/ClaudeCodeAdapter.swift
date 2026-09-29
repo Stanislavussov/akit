@@ -100,8 +100,10 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
         let stateProjects = stateJSON["projects"] as? [String: Any] ?? [:]
         let userSettings = Self.json(root.appending(path: "settings.json")) ?? [:]
 
-        var sources = [MCPSource(file: state, keyPath: ["mcpServers"], harness: id, scope: .global,
-                                 layer: "User", precedence: 0)]
+        var user = MCPSource(file: state, keyPath: ["mcpServers"], harness: id, scope: .global,
+                             layer: "User", precedence: 0)
+        user.writesThroughClaudeCLI = true
+        var sources = [user]
         for project in projects {
             let key = project.standardizedFileURL.path
             let entry = stateProjects[key] as? [String: Any] ?? [:]
@@ -110,6 +112,7 @@ public struct ClaudeCodeAdapter: HarnessAdapter {
             var local = MCPSource(file: state, keyPath: ["projects", key, "mcpServers"], harness: id,
                                   scope: .project(project), layer: "Local", precedence: 2)
             local.turnedOff = turnedOff
+            local.writesThroughClaudeCLI = true
             var approval = MCPApproval()
             for settings in [userSettings, Self.json(project.appending(path: ".claude/settings.json")) ?? [:],
                              Self.json(project.appending(path: ".claude/settings.local.json")) ?? [:], entry] {

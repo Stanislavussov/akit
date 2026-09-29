@@ -153,3 +153,11 @@ enum MCPReader {
         return []
     }
 }
+
+extension MCPApproval {
+    func state(of name: String) -> MCPState {
+        if disabled.contains(name) { return .rejected }
+        if enableAll || enabled.contains(name) { return .active }
+        return .needsApproval
+    }
+}
