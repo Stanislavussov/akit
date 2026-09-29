@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AKitCore
+@testable import AKitInsights
 
 /// The `akit` command, run in-process against a temporary fake home.
 struct AKitCLITests {

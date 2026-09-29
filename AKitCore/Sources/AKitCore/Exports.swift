@@ -9,3 +9,4 @@
 @_exported import AKitUsage
 @_exported import AKitMCP
 @_exported import AKitBrain
+@_exported import AKitInsights
