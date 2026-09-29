@@ -74,6 +74,11 @@ public enum ProjectSetup {
         !forHome && !path.hasPrefix(ProjectBundle.skillsFolder + "/") && path != ".claude/skills"
     }
 
+    /// Everything wrong with a project's bundle before a preview: its own errors and warnings,
+    /// then the render's (file clashes, a manual skill without a header, …). For the project form.
+    public static func check(_ bundle: ProjectBundle) -> RenderResult {
+        Render.render(bundle, forHome: false)
+    }
 
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
                             forHome: Bool = false) -> Plan {

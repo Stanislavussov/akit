@@ -90,6 +90,20 @@ struct ProjectSetupTests {
         #expect(!fm.fileExists(atPath: brainRoot.appending(path: "projects/local").path))
     }
 
+    @Test func checkReportsTheBundlesAndTheRendersErrors() async throws {
+        _ = try await setUpBrain()
+        try write(".akit/registry/layers/twice/layer.yaml", "files:\n  - template: s.md\n    to: .agents/skills/tdd/SKILL.md\n")
+        try write(".akit/registry/layers/twice/templates/s.md", "x")
+        let brain = try #require(Brain.load(from: brainRoot))
+        let bundle = ProjectBundle.resolve(ProjectAnswers(layers: ["task", "twice"], targets: ["claude"]), brain: brain, projectName: "task")
+        let check = ProjectSetup.check(bundle)
+        #expect(!bundle.errors.isEmpty && !bundle.errors.contains { $0.contains("written twice") })
+        #expect(Array(check.errors.prefix(bundle.errors.count)) == bundle.errors)
+        #expect(check.errors.contains { $0.hasPrefix(".agents/skills/tdd/SKILL.md is written twice") })
+        #expect(Set(check.errors).count == check.errors.count)
+        #expect(check.warnings == bundle.warnings)
+    }
+
     @Test func remoteURLsBecomeIDs() {
         #expect(ProjectRecords.normalizedRemote("git@github.com:Owner/Repo.git\n") == "github.com/owner/repo")
         #expect(ProjectRecords.normalizedRemote("https://user@github.com/owner/repo") == "github.com/owner/repo")

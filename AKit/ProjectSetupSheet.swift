@@ -300,9 +300,10 @@ struct ProjectSetupSheet: View {
     @ViewBuilder
     private var messages: some View {
         if let bundle, !answers.layers.isEmpty || !answers.skills.isEmpty {
+            let check = ProjectSetup.check(bundle)
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(bundle.errors, id: \.self) { Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red) }
-                ForEach(bundle.warnings, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                ForEach(check.errors, id: \.self) { Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red) }
+                ForEach(check.warnings, id: \.self) { Label($0, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
             }
             .font(.callout)
             .textSelection(.enabled)
