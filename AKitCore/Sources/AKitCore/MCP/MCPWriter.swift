@@ -427,6 +427,27 @@ public enum MCPWriter {
         return Outcome(backup: backup, notes: notes)
     }
 
+    /// `apply` with the real `claude` CLI of `claude` (Claude Code's installation), run with
+    /// `env`'s variables and PATH. A failure shows the CLI's output with secrets masked.
+    public static func apply(_ plan: MCPWritePlan, claude: HarnessInstallation?, secrets store: SecretStore,
+                             env: HarnessEnvironment) async throws -> Outcome {
+        let claude = claude?.executableURL
+        return try await apply(plan, secrets: store, home: env.homeDirectory) { arguments, directory in
+            guard let claude else { throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "The claude command was not found."]) }
+            var environment = env.variables
+            environment["PATH"] = env.pathForChildProcesses
+            guard let result = await ProcessRunner.run(claude, arguments: arguments, directory: directory,
+                                                       environment: environment, timeout: 30) else {
+                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "claude couldn't be started."])
+            }
+            guard result.succeeded else {
+                let output = SecretFilter.masked(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
+                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey:
+                    "claude \(arguments.prefix(2).joined(separator: " ")) failed: \(output)"])
+            }
+        }
+    }
+
     /// Writes through a symlink to the real file and keeps its permissions (a 0600 config stays 0600).
     static func write(_ text: String, to file: URL) throws {
         let real = file.resolvingSymlinksInPath()

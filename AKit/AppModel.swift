@@ -370,22 +370,8 @@ final class AppModel {
 
     /// Stores the secrets in the Keychain, writes the server (backup first), then rescans.
     func applyMCP(_ plan: MCPWritePlan) async throws -> MCPWriter.Outcome {
-        let env = HarnessEnvironment.current
-        let claude = installations.first { $0.id == .claudeCode }?.executableURL
-        let outcome = try await MCPWriter.apply(plan, secrets: KeychainSecretStore(), home: env.homeDirectory) { arguments, directory in
-            guard let claude else { throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "The claude command was not found."]) }
-            var environment = env.variables
-            environment["PATH"] = env.pathForChildProcesses
-            guard let result = await ProcessRunner.run(claude, arguments: arguments, directory: directory,
-                                                       environment: environment, timeout: 30) else {
-                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey: "claude couldn't be started."])
-            }
-            guard result.succeeded else {
-                let output = SecretFilter.masked(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
-                throw NSError(domain: "AKit", code: 3, userInfo: [NSLocalizedDescriptionKey:
-                    "claude \(arguments.prefix(2).joined(separator: " ")) failed: \(output)"])
-            }
-        }
+        let outcome = try await MCPWriter.apply(plan, claude: installations.first { $0.id == .claudeCode },
+                                                secrets: KeychainSecretStore(), env: HarnessEnvironment.current)
         keychainVersion += 1
         await refresh()
         return outcome

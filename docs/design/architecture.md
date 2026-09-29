@@ -230,7 +230,7 @@ while moving files.
 2. **MCP writes via the Claude CLI are coded in the UI**: `AppModel.applyMCP`
    (`AppModel.swift:372–393`) builds the closure that runs `claude mcp …` with
    `ProcessRunner` and `SecretFilter`. Move it into `AKitMCP`
-   (`MCPWriter.apply(plan, claude: installation, secrets:, home:, env:)`). Otherwise a
+   (`MCPWriter.apply(plan, claude: installation, secrets:, env:)`, home from `env`). Otherwise a
    replacement MCP module would leave dead process code in the app.
 3. **The project form calls Render directly**: `ProjectSetupSheet.swift:59–62`
    calls `Render.render` for live form errors, and `:160–164` renders the layers

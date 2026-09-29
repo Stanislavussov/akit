@@ -254,6 +254,38 @@ struct MCPWriterTests {
         #expect(calls.all.map { Array($0.prefix(2)) + [$0[4]] } == [["mcp", "add-json", "b"], ["mcp", "remove", "a"], ["mcp", "remove", "a"]]) // rename adds first
     }
 
+    /// The real-CLI `apply` with a fake `claude` script: arguments, PATH, masked failure output.
+    @Test func claudeCLIRunsWithEnvironmentAndMasksFailures() async throws {
+        try write(".claude/settings.json", "{}")
+        try write(".claude.json", #"{"mcpServers": {"a": {"command": "a"}}}"#)
+        let target = try #require(try targets().first { $0.claudeScope == "user" })
+        let script = home.appending(path: "bin/claude")
+        func claude(_ body: String) throws -> HarnessInstallation {
+            try write("bin/claude", "#!/bin/sh\n\(body)\n")
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            return HarnessInstallation(id: .claudeCode, displayName: "Claude Code", executableURL: script,
+                                       configRoot: home.appending(path: ".claude"), locations: [])
+        }
+        let removal = try MCPWriter.removalPlan("a", from: target, home: home)
+        let log = home.appending(path: "claude-args")
+        _ = try await MCPWriter.apply(removal, claude: try claude(#"printf '%s\n' "$@" "$PATH" > "\#(log.path)""#),
+                                      secrets: MemorySecretStore(), env: env)
+        #expect(try String(contentsOf: log, encoding: .utf8)
+                == "mcp\nremove\n--scope\nuser\na\n\(env.pathForChildProcesses)\n")
+
+        let failing = try claude("echo 'GRAFANA_TOKEN=glsa_secret_value_123'; exit 1")
+        let message = await #expect(throws: ConfigTextError.self) {
+            try await MCPWriter.apply(removal, claude: failing, secrets: MemorySecretStore(), env: env)
+        }?.localizedDescription ?? ""
+        #expect(message.hasPrefix("claude mcp remove failed: GRAFANA_TOKEN="))
+        #expect(!message.contains("glsa_secret_value_123"))
+
+        let missing = await #expect(throws: ConfigTextError.self) {
+            try await MCPWriter.apply(removal, claude: nil, secrets: MemorySecretStore(), env: env)
+        }?.localizedDescription ?? ""
+        #expect(missing.hasPrefix("The claude command was not found."))
+    }
+
     @Test func wrapperAndHelperParsing() {
         let script = KeychainSecretStore.wrapperScript([("TOKEN", "GRAFANA_TOKEN")])
         #expect(KeychainSecretStore.wrapperAccounts(script)?.map { "\($0.key)=\($0.account)" } == ["TOKEN=GRAFANA_TOKEN"])
