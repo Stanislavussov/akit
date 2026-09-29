@@ -25,8 +25,10 @@ let package = Package(
         .target(name: "AKitMCP", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .target(name: "AKitBrain", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "Yams"]),
         .target(name: "AKitInsights", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
+        // The rulesync seam: sees only the brain's ProjectBundle and RenderResult.
+        .target(name: "AKitRender", dependencies: ["AKitBrain"]),
         // Umbrella: the files not moved into a module yet, plus Exports.swift.
-        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSkillsSh", "AKitSessions", "AKitUsage", "AKitMCP", "AKitBrain", "AKitInsights"]),
+        .target(name: "AKitCore", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSkillsSh", "AKitSessions", "AKitUsage", "AKitMCP", "AKitBrain", "AKitInsights", "AKitRender"]),
         .executableTarget(name: "akit", dependencies: ["AKitCore"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitCore"]),
@@ -37,6 +39,7 @@ let package = Package(
         .testTarget(name: "AKitMCPTests", dependencies: ["AKitMCP", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitCore"]),
         .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitCore"]),
+        .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain"]),
         .testTarget(name: "AKitCoreTests", dependencies: ["AKitCore", "AKitFoundation", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitInsights"]),
     ]
 )

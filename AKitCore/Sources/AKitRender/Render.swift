@@ -1,3 +1,4 @@
+import AKitBrain
 import Foundation
 
 /// Turns a `ProjectBundle` into harness files: skills in `.agents/skills`, glued Markdown

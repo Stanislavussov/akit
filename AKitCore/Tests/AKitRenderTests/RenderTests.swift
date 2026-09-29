@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 @testable import AKitBrain
-@testable import AKitCore
+@testable import AKitRender
 
 /// Rendering layers + answers into project files, from a brain in a temporary folder.
 struct RenderTests {

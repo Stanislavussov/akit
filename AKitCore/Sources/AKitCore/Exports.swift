@@ -10,3 +10,4 @@
 @_exported import AKitMCP
 @_exported import AKitBrain
 @_exported import AKitInsights
+@_exported import AKitRender
