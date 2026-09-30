@@ -1,6 +1,7 @@
 import AKitFoundation
 import AKitLab
 import AKitSessions
+import AppKit
 import Foundation
 
 /// Lab: queuing runs, starting them in a terminal, reading their folders.
@@ -129,8 +130,15 @@ extension AppModel {
         await reloadLab()
     }
 
+    /// Selects the run's tab in Orca or herdr, then brings Orca to the front (switching a
+    /// tab alone leaves AKit on top, so nothing seems to happen).
     func showTab(of run: LabRun) async throws {
         guard let launch = run.launch else { return }
         try await Launcher.show(launch, env: .current)
+        if let app = Launcher.app(for: launch.environment, env: .current) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            _ = try await NSWorkspace.shared.openApplication(at: app, configuration: configuration)
+        }
     }
 }
