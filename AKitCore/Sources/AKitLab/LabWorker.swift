@@ -128,8 +128,8 @@ enum ReviewRun {
 
         phase(.agent)
         // The transcript may carry text written to steer an agent (fetched pages, file contents):
-        // the reviewer can only read and write files, with no shell, web or MCP. Pi's allowlist
-        // covers extension tools too.
+        // the reviewer gets only file tools, with no shell, web or MCP. Pi's allowlist covers
+        // extension tools too. The file tools aren't limited to the run folder.
         let tools = switch AgentRun.harness(of: run.spec) {
         case .claudeCode: ["--tools", "Read,Write,Glob,Grep", "--strict-mcp-config"]
         case .pi: ["--tools", "read,write,grep,find,ls"]

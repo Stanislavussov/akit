@@ -94,6 +94,11 @@ struct NewLabRunSheet: View {
             suggested = await model.suggestedEnvironment(for: folder)
         }
         .task {
+            if !model.labHarnesses.contains(harness), let first = model.labHarnesses.first { harness = first }
+            await loadAgent(harness)
+        }
+        .onChange(of: harness) { _, chosen in Task { await loadAgent(chosen) } }
+        .task {
             let defaults = model.defaultModelAndEffort
             if modelName.isEmpty { modelName = defaults.model }
             effort = LabRuns.efforts.contains(defaults.effort) ? defaults.effort : "high"
@@ -182,13 +187,17 @@ struct NewLabRunSheet: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .frame(height: 170)
-        .task(id: harness) {
-            let defaults = model.defaultAgent(harness)
-            reviewModel = defaults.model
-            reviewEffort = harness.efforts.contains(defaults.effort) ? defaults.effort : harness.efforts[0]
-            reviewModels = []
-            reviewModels = await model.labModels(for: harness)
-        }
+    }
+
+    /// The chosen harness's defaults and models. `ProcessRunner` doesn't stop on cancel, so a
+    /// slow `pi --list-models` that ends after a switch back to Claude Code is dropped.
+    private func loadAgent(_ chosen: LabHarness) async {
+        let defaults = model.defaultAgent(chosen)
+        reviewModel = defaults.model
+        reviewEffort = chosen.efforts.contains(defaults.effort) ? defaults.effort : chosen.efforts[0]
+        reviewModels = []
+        let models = await model.labModels(for: chosen)
+        if harness == chosen { reviewModels = models }
     }
 
     private var reviewAgent: LabAgent {

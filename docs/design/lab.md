@@ -174,6 +174,8 @@ Who writes what:
   where it runs (`AKIT_LAB_DIR`). The reviewed transcript may hold text written to steer an
   agent, so it gets only `Read`, `Write`, `Glob` and `Grep` (`--tools`, no MCP servers;
   in Pi `--tools read,write,grep,find,ls`, an allowlist that covers extension tools too).
+  Known gap: those file tools aren't confined to the run folder, so an injected transcript
+  could still make the reviewer write a file elsewhere; a path sandbox is still to do.
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.

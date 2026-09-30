@@ -85,6 +85,7 @@ extension AKitCLI {
             _ = args.positional()
             guard let commit = args.positional() else { throw Failure(message: "Which commit? akit lab new replay COMMIT.") }
             try args.finish()
+            guard harnessText == nil else { throw Failure(message: "Replays run in Claude Code only; --harness is for reviews.") }
             let environment = try labEnvironment(environmentText, env: env)
             let defaults = LabRuns.defaultModelAndEffort(env: env)
             let effort = effortText ?? defaults.effort
