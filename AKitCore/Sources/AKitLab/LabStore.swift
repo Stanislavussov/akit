@@ -42,16 +42,26 @@ public struct LabRun: Identifiable, Sendable, Hashable {
 
 /// Reads and writes run folders in `~/.akit/lab`.
 public enum LabStore {
-    static let encoder: JSONEncoder = {
+    /// Dates with milliseconds: runs queued together keep their order.
+    public static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(Date.ISO8601FormatStyle(includingFractionalSeconds: true).format(date))
+        }
         return encoder
     }()
 
     static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let text = try decoder.singleValueContainer().decode(String.self)
+            guard let date = JSONLines.date(text) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not a date: \(text)"))
+            }
+            return date
+        }
         return decoder
     }()
 
@@ -154,5 +164,47 @@ public enum LabRuns {
         let spec = RunSpec(id: RunSpec.newID(), kind: .review, title: "Review: \(name)", folder: folder.path,
                            environment: chosen, akit: akit.path, reviewedTranscript: transcript.path, reviewedTitle: title)
         return try LabStore.create(spec, env: env)
+    }
+}
+
+extension LabRuns {
+    /// Model and effort from `~/.claude/settings.json` (`model`, `effortLevel`), else opus and high.
+    public static func defaultModelAndEffort(env: HarnessEnvironment) -> (model: String, effort: String) {
+        let file = LabPaths.claudeRoot(env: env).appending(path: "settings.json")
+        let settings = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let model = (settings["model"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "opus"
+        let effort = (settings["effortLevel"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "high"
+        return (model, effort)
+    }
+
+    public static let efforts = ["low", "medium", "high", "xhigh", "max"]
+
+    /// Queues `repeats` runs of each setup, interleaved (1 of each, then 2 of each…) so a
+    /// partly done comparison is still fair. The tab opens in `repo` (a worktree or the root);
+    /// the work happens in an isolated clone inside the run folder.
+    public static func newReplays(commit: String, repo: URL, setups: [LabSetup], repeats: Int, environment: LabEnvironment?,
+                                  keep: Bool, akit: URL, env: HarnessEnvironment) async throws -> [LabRun] {
+        guard !setups.isEmpty, repeats > 0 else { throw LabStore.Failure(message: "Pick at least one setup and one repeat.") }
+        guard let root = await LabGit.output(["rev-parse", "--show-toplevel"], in: repo, env: env),
+              let full = await LabGit.output(["rev-parse", "--verify", "--quiet", "\(commit)^{commit}"], in: repo, env: env) else {
+            throw LabStore.Failure(message: "No commit \(commit) in \(repo.path).")
+        }
+        let folder = URL(filePath: root, directoryHint: .isDirectory)
+        let chosen: LabEnvironment
+        if let environment { chosen = environment } else { chosen = await Launcher.suggested(for: folder, env: env) }
+        var runs: [LabRun] = []
+        let start = Date.now
+        for index in 1...repeats {
+            for setup in setups {
+                // Creation times one millisecond apart keep the queue in this order.
+                let created = start.addingTimeInterval(Double(runs.count) / 1000)
+                let spec = RunSpec(id: RunSpec.newID(at: created), kind: .replay,
+                                   title: "Replay \(full.prefix(7)) · \(setup.label) · \(index)/\(repeats)",
+                                   createdAt: created, folder: folder.path, environment: chosen, akit: akit.path,
+                                   repo: folder.path, commit: full, setup: setup, repeatIndex: index, repeats: repeats, keep: keep)
+                runs.append(try LabStore.create(spec, env: env))
+            }
+        }
+        return runs
     }
 }

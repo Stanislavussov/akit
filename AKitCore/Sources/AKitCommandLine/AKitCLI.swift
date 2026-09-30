@@ -1276,7 +1276,7 @@ public enum AKitCLI {
     }
 
     /// `--days`, `--top`, `--min-sessions`, `--min-days`: nil when not given.
-    private static func positiveNumber(_ text: String?, _ flag: String) throws -> Int? {
+    static func positiveNumber(_ text: String?, _ flag: String) throws -> Int? {
         guard let text else { return nil }
         guard let value = Int(text), value > 0 else { throw Failure(message: "\(flag) needs a whole number above 0.") }
         return value
@@ -1317,6 +1317,9 @@ public enum AKitCLI {
             }
             return found
         }
+
+        /// The next positional word, without taking it.
+        var peek: String? { items.first { !$0.hasPrefix("--") } }
 
         mutating func positional() -> String? {
             guard let index = items.firstIndex(where: { !$0.hasPrefix("--") }) else { return nil }

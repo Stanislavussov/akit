@@ -37,7 +37,7 @@ struct LabView: View {
         .toolbar {
             ToolbarItem {
                 Button("New Run…", systemImage: "plus") { showNewRun = true }
-                    .help("Queue a review of a session")
+                    .help("Review a session, or replay a commit under different setups")
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -97,8 +97,12 @@ private struct LabRunRow: View {
             }
             HStack(spacing: 6) {
                 Label(run.spec.environment.title, systemImage: run.spec.environment.icon)
+                if let tests = run.result?.tests {
+                    Image(systemName: tests.status == .passed ? "checkmark.seal" : "xmark.seal")
+                        .foregroundStyle(tests.status == .passed ? .green : .red)
+                }
                 if let metrics = run.result?.metrics {
-                    Text("\(UsageText.short(metrics.freshTokens)) fresh · \(metrics.calls) calls")
+                    Text("\(UsageText.short(metrics.freshTokens)) fresh · \(metrics.calls) \(metrics.calls == 1 ? "call" : "calls")")
                 }
                 Spacer()
                 Text(run.spec.createdAt, format: .relative(presentation: .named))
@@ -184,7 +188,7 @@ private struct LabRunDetail: View {
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                 }
-                if run.spec.kind == .review { review }
+                if run.spec.kind == .review { review } else { replay }
                 if let metrics = run.result?.metrics {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("The run's own agent session").font(.title3.bold())
@@ -291,6 +295,53 @@ private struct LabRunDetail: View {
         }
     }
 
+    @ViewBuilder private var replay: some View {
+        if let commit = run.spec.commit {
+            let task = ReplayTasks.cached(commit, env: .current)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(commit.prefix(7)) \(task?.subject ?? "")").fontWeight(.medium).textSelection(.enabled)
+                if let task {
+                    Text("From \(task.base.prefix(7)) · \(task.failToPass.count) fail-to-pass, \(task.passToPass.count) pass-to-pass tests")
+                        .foregroundStyle(.secondary)
+                    ForEach(task.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                }
+                if run.spec.keep {
+                    Text("The clone is kept: \(run.folder.appending(path: "work").tildePath)").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        if let leaks = run.result?.leaks, !leaks.isEmpty {
+            Label("Left out of comparisons: the agent's tool calls mention \(leaks.joined(separator: " and ")).",
+                  systemImage: "eye.trianglebadge.exclamationmark")
+                .foregroundStyle(.orange)
+        }
+        if let tests = run.result?.tests {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Hidden tests").font(.title3.bold())
+                Label(tests.status == .passed ? "Passed" : tests.status == .failed ? "Failed" : "Not run",
+                      systemImage: tests.status == .passed ? "checkmark.seal" : "xmark.seal")
+                    .foregroundStyle(tests.status == .passed ? .green : .red)
+                    .font(.headline)
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
+                    row("Fail-to-pass", "\(tests.failToPass.passed) of \(tests.failToPass.total) pass now")
+                    row("Pass-to-pass", "\(tests.passToPass.passed) of \(tests.passToPass.total) still pass")
+                    if tests.timeouts > 0 { row("Timed out", "\(tests.timeouts) (30 s each)") }
+                }
+                if let note = tests.note { Text(note).foregroundStyle(.orange) }
+                if !tests.failed.isEmpty {
+                    Text("Failed: " + tests.failed.joined(separator: ", ")).font(.callout.monospaced()).foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        if let commit = run.spec.commit {
+            let comparison = LabComparison.compare(commit: commit, runs: model.labRuns)
+            if comparison.rows.count > 1 || (comparison.rows.first?.runs ?? 0) > 1 {
+                ComparisonView(comparison: comparison)
+            }
+        }
+    }
+
     private func row(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
         GridRow {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
@@ -302,104 +353,6 @@ private struct LabRunDetail: View {
         error = nil
         Task {
             do { try await work() } catch { self.error = error.localizedDescription }
-        }
-    }
-}
-
-/// Queue a run. From a session (Review in Terminal…) the session is already chosen.
-struct NewLabRunSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    let session: SessionSummary?
-    let onQueued: (LabRun) -> Void
-
-    @State private var chosen: SessionSummary.ID?
-    @State private var query = ""
-    /// nil = the one suggested for the folder.
-    @State private var environment: LabEnvironment?
-    @State private var suggested: LabEnvironment?
-    @State private var error: String?
-    @State private var busy = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("New Lab Run").font(.title2.bold())
-            Text("An agent reads the session (secrets masked) and AKit's numbers for it, then writes a review: where it lost time or tokens and what to change. It runs headless with Claude Code; nothing in your projects changes.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if session == nil { picker } else if let target { Text("Session: \(target.title)").fontWeight(.medium) }
-            Picker("Open in", selection: $environment) {
-                Text(suggested.map { "Automatic (\($0.title))" } ?? "Automatic").tag(LabEnvironment?.none)
-                ForEach(model.labEnvironments, id: \.self) { Text($0.title).tag(LabEnvironment?.some($0)) }
-            }
-            .frame(maxWidth: 320)
-            if let folder = target?.project {
-                Text("The tab opens in \(folder.tildePath). One run at a time: it waits in the queue while another runs.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if let error {
-                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Queue and Start") { queue() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(target == nil || busy)
-            }
-        }
-        .padding(20)
-        .frame(width: 560, height: session == nil ? 560 : 300)
-        .task(id: target?.id) {
-            suggested = nil
-            guard let folder = target?.project else { return }
-            suggested = await model.suggestedEnvironment(for: folder)
-        }
-    }
-
-    private var claudeSessions: [SessionSummary] {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        return model.sessions.filter { $0.harness == .claudeCode }
-            .filter { q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || ($0.project?.path.localizedCaseInsensitiveContains(q) ?? false) }
-    }
-
-    private var target: SessionSummary? {
-        session ?? model.sessions.first { $0.id == chosen }
-    }
-
-    private var picker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("Search sessions", text: $query)
-                .textFieldStyle(.roundedBorder)
-            List(claudeSessions, selection: $chosen) { session in
-                HStack {
-                    Text(session.title).lineLimit(1)
-                    Spacer()
-                    Text(session.project?.lastPathComponent ?? "").foregroundStyle(.secondary)
-                    Text(session.modified, format: .relative(presentation: .named)).foregroundStyle(.secondary)
-                }
-                .font(.callout)
-                .tag(session.id)
-            }
-            .frame(minHeight: 220)
-        }
-    }
-
-    private func queue() {
-        guard let target else { return }
-        busy = true
-        error = nil
-        Task {
-            do {
-                let run = try await model.queueReview(of: target, environment: environment)
-                onQueued(run)
-                dismiss()
-            } catch {
-                self.error = error.localizedDescription
-            }
-            busy = false
         }
     }
 }
@@ -428,5 +381,58 @@ struct MarkdownLines: View {
     private func inline(_ line: String) -> AttributedString {
         (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(line)
+    }
+}
+
+/// Replays of one commit per setup: passed, fresh tokens, calls and wall time as median and range.
+struct ComparisonView: View {
+    let comparison: LabComparison
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Setups compared").font(.title3.bold())
+            Grid(alignment: .trailing, horizontalSpacing: 16, verticalSpacing: 6) {
+                GridRow {
+                    Text("Setup").gridColumnAlignment(.leading)
+                    Text("Passed")
+                    Text("Fresh tokens")
+                    Text("Calls")
+                    Text("Wall time")
+                    Text("").gridColumnAlignment(.leading)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                Divider()
+                ForEach(comparison.rows) { row in
+                    GridRow {
+                        Text(row.setup)
+                        Text("\(row.passed)/\(row.runs)")
+                        Text(spread(row.freshTokens, UsageText.short))
+                        Text(spread(row.calls) { "\($0)" })
+                        Text(spread(row.wallSeconds) { UsageText.duration(TimeInterval($0)) })
+                        Text(extra(row)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .monospacedDigit()
+            .textSelection(.enabled)
+            Text("Median, then the range in brackets. Runs that saw the answer, stopped or are still waiting don't count. LLM runs vary: compare at least 3 runs per setup.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func spread(_ value: LabComparison.Spread?, _ format: (Int) -> String) -> String {
+        guard let value else { return "–" }
+        return value.min == value.max ? format(value.median) : "\(format(value.median)) (\(format(value.min))–\(format(value.max)))"
+    }
+
+    private func extra(_ row: LabComparison.Row) -> String {
+        var parts: [String] = []
+        if row.pending > 0 { parts.append("\(row.pending) to run") }
+        if row.failed > 0 { parts.append("\(row.failed) stopped") }
+        if row.leaked > 0 { parts.append("\(row.leaked) saw the answer") }
+        return parts.joined(separator: " · ")
     }
 }

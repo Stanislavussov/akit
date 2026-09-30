@@ -17,6 +17,21 @@ extension AKitCLI {
           akit lab new review SESSION [--env orca|herdr|background] [--no-start]
                                           An agent reads the session (masked) and AKit's numbers and
                                           writes a review. Opens where the session ran; --env overrides
+          akit lab new replay COMMIT [--repo DIR] [--setups full,lean] [--model M] [--effort E]
+                              [--repeats N] [--env orca|herdr|background] [--keep] [--no-start]
+                                          Redo a commit from its parent in an isolated clone (no refs,
+                                          no remote, not the answer), headless; then the commit's own
+                                          tests judge it. N (3) repeats of each setup. full = your
+                                          setup, lean = --setting-sources project. Model and effort
+                                          default to ~/.claude/settings.json (else opus, high).
+                                          --keep keeps the clone; otherwise it goes to the Trash
+          akit lab task COMMIT [--repo DIR]
+                                          Check a commit as a task now: its tests on the parent and on
+                                          the commit (fail-to-pass, pass-to-pass). A replay does this
+                                          first when the task isn't checked yet
+          akit lab compare COMMIT [--json]
+                                          Replays of a commit per setup: passed, fresh tokens, calls,
+                                          wall time (median and range)
           akit lab list [--json]          Runs, newest first, with status
           akit lab show ID [--json]       One run: state, metrics, test results, review
           akit lab start                  Start the next queued run, if none is running
@@ -40,7 +55,14 @@ extension AKitCLI {
         let json = args.flag("--json")
         let noStart = args.flag("--no-start")
         let environmentText = args.value("--env")
+        let repoText = args.value("--repo")
+        let setupsText = args.value("--setups")
+        let modelText = args.value("--model")
+        let effortText = args.value("--effort")
+        let repeatsText = args.value("--repeats")
+        let keep = args.flag("--keep")
         let command = args.positional()
+        let repo = repoText.map { resolve($0, cwd: cwd, env: env) } ?? cwd
         switch command {
         case "analyze":
             guard let session = args.positional() else { throw Failure(message: "Which session? akit lab analyze SESSION.") }
@@ -54,9 +76,55 @@ extension AKitCLI {
             }
             out(json ? try labJSON(metrics) : ([file.path] + MetricsText.lines(metrics)).joined(separator: "\n"))
             return 0
+        case "new" where args.peek == "replay":
+            _ = args.positional()
+            guard let commit = args.positional() else { throw Failure(message: "Which commit? akit lab new replay COMMIT.") }
+            try args.finish()
+            let environment = try labEnvironment(environmentText, env: env)
+            let defaults = LabRuns.defaultModelAndEffort(env: env)
+            let effort = effortText ?? defaults.effort
+            guard LabRuns.efforts.contains(effort) else { throw Failure(message: "--effort is one of \(LabRuns.efforts.joined(separator: ", ")).") }
+            let names = try (setupsText ?? "full").split(separator: ",").map { name in
+                guard let setup = LabSetup.Name(rawValue: String(name)) else { throw Failure(message: "--setups takes full and lean.") }
+                return setup
+            }
+            let repeats = try positiveNumber(repeatsText, "--repeats") ?? 3
+            let setups = names.map { LabSetup(name: $0, model: modelText ?? defaults.model, effort: effort) }
+            let runs: [LabRun]
+            do {
+                runs = try await LabRuns.newReplays(commit: commit, repo: repo, setups: setups, repeats: repeats,
+                                                    environment: environment, keep: keep, akit: ownExecutable, env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            out("Queued \(runs.count) runs: \(repeats) × \(setups.map(\.label).joined(separator: ", ")) (\(runs[0].spec.environment.title)).")
+            if !noStart { try await startNext(env: env, out: out) }
+            return 0
+        case "task":
+            guard let commit = args.positional() else { throw Failure(message: "Which commit? akit lab task COMMIT.") }
+            try args.finish()
+            do {
+                let draft = try await ReplayTasks.draft(commit: commit, repo: repo, env: env)
+                let printer = LinePrinter.shared
+                let task = try await ReplayTasks.validate(draft, env: env, out: { printer.print($0) })
+                out(taskText(task))
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            return 0
+        case "compare":
+            guard let commit = args.positional() else { throw Failure(message: "Which commit? akit lab compare COMMIT.") }
+            try args.finish()
+            let runs = LabStore.list(env: env)
+            guard let full = runs.compactMap(\.spec.commit).first(where: { $0.hasPrefix(commit) }) else {
+                throw Failure(message: "No replays of \(commit).")
+            }
+            let comparison = LabComparison.compare(commit: full, runs: runs)
+            out(json ? try labJSON(comparison.rows.map(CompareJSON.init)) : comparison.text)
+            return 0
         case "new":
             let kind = args.positional()
-            guard kind == "review" else { throw Failure(message: "akit lab new review SESSION.") }
+            guard kind == "review" else { throw Failure(message: "akit lab new review SESSION, or akit lab new replay COMMIT.") }
             guard let session = args.positional() else { throw Failure(message: "Which session? akit lab new review SESSION.") }
             try args.finish()
             let environment = try labEnvironment(environmentText, env: env)
@@ -171,6 +239,39 @@ extension AKitCLI {
         return lines.joined(separator: "\n")
     }
 
+    private static func taskText(_ task: ReplayTask) -> String {
+        var lines = ["Task \(task.shortCommit) “\(task.subject)” from \(String(task.base.prefix(7)))",
+                     "Package  \(task.package.isEmpty ? "(root)" : task.package)",
+                     "Tests    \(task.testFiles.joined(separator: ", "))",
+                     "Fail-to-pass (\(task.failToPass.count)): \(task.failToPass.map(\.id).joined(separator: ", "))",
+                     "Pass-to-pass (\(task.passToPass.count)): \(task.passToPass.map(\.id).joined(separator: ", "))"]
+        lines += task.notes
+        return lines.joined(separator: "\n")
+    }
+
+    struct CompareJSON: Encodable {
+        struct Spread: Encodable {
+            let median: Int, min: Int, max: Int
+        }
+
+        let setup: String
+        let runs: Int, passed: Int, leaked: Int, pending: Int, stopped: Int
+        let freshTokens: Spread?, calls: Spread?, wallSeconds: Spread?
+
+        init(_ row: LabComparison.Row) {
+            func spread(_ value: LabComparison.Spread?) -> Spread? { value.map { Spread(median: $0.median, min: $0.min, max: $0.max) } }
+            setup = row.setup
+            runs = row.runs
+            passed = row.passed
+            leaked = row.leaked
+            pending = row.pending
+            stopped = row.failed
+            freshTokens = spread(row.freshTokens)
+            calls = spread(row.calls)
+            wallSeconds = spread(row.wallSeconds)
+        }
+    }
+
     /// A transcript path, or a Claude Code session id.
     private static func transcript(_ argument: String, cwd: URL, env: HarnessEnvironment) throws -> URL {
         if argument.hasSuffix(".jsonl") || argument.contains("/") {
@@ -185,10 +286,7 @@ extension AKitCLI {
     }
 
     static func labJSON<Value: Encodable>(_ value: Value) throws -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        encoder.dateEncodingStrategy = .iso8601
-        return String(decoding: try encoder.encode(value), as: UTF8.self)
+        String(decoding: try LabStore.encoder.encode(value), as: UTF8.self)
     }
 
     /// A run as `--json` prints it.

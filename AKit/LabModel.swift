@@ -46,6 +46,27 @@ extension AppModel {
         return run
     }
 
+    /// Queues repeats × setups replays of a commit and starts the queue.
+    func queueReplays(commit: String, repo: URL, setups: [LabSetup], repeats: Int, environment: LabEnvironment?,
+                      keep: Bool) async throws -> [LabRun] {
+        if let problem = await labProblem() { throw LabStore.Failure(message: problem) }
+        guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
+        let runs = try await LabRuns.newReplays(commit: commit, repo: repo, setups: setups, repeats: repeats,
+                                                environment: environment, keep: keep, akit: akit, env: .current)
+        try await startLabQueue()
+        return runs
+    }
+
+    func replayCandidates(in repo: URL) async -> [ReplayTasks.Candidate] {
+        await ReplayTasks.candidates(repo: repo, env: .current)
+    }
+
+    func replayDraft(commit: String, repo: URL) async throws -> ReplayTasks.Draft {
+        try await ReplayTasks.draft(commit: commit, repo: repo, env: .current)
+    }
+
+    var defaultModelAndEffort: (model: String, effort: String) { LabRuns.defaultModelAndEffort(env: .current) }
+
     /// Starts the next queued run when nothing runs, then reloads.
     func startLabQueue() async throws {
         defer { Task { await reloadLab() } }

@@ -195,8 +195,10 @@ that holds only the base commit's history: `git init work`, `git fetch --no-tags
 <base-sha>`, `git checkout --detach FETCH_HEAD`. Checked on the pilot: no refs, no
 remote, the answer commit is not among the objects. The original session transcripts are the
 other leak (Claude's own history search, OMC `session_search` in the full setup):
-after the run, Lab flags a replay whose transcript mentions the target sha, its subject
-line or a path under `~/.claude/projects`, and leaves it out of comparisons.
+after the run, Lab flags a replay whose tool calls or tool results mention the target
+sha or a path under `~/.claude/projects`, or that called a `session_search` tool, and
+leaves it out of comparisons. The subject line is not a sign: it is in the prompt, and the
+agent's own commit usually reuses it.
 
 The clone lives in `~/.akit/lab/<run-id>/work` and is moved to the Trash when the run
 ends, unless "keep" is ticked; no branch is left in the real repository.
@@ -317,7 +319,9 @@ is kept here.
      `AKitCore/.build/debug/akit` when that exists.
    - App: a **Lab** sidebar section with the queue and past runs, run details, Cancel,
      Show in Orca/herdr, Remove, and **New Run…**.
-3. **Replay tasks** — status: planned.
+3. **Replay tasks** — status: done 2026-09-30. The pilot `1c9cf65` validates as recorded above
+   (7 fail-to-pass, 3 pass-to-pass, the hanging test killed at 30 s); the whole chain (task check,
+   clone, agent, hidden tests, queue moving on, comparison) was run with a stand-in `claude`.
    - `akit lab task SHA [--repo DIR]` builds and validates a task and caches it in
      `~/.akit/lab/tasks/<sha>.json` (prompt, base, test files, fail-to-pass and
      pass-to-pass test names). Test names are read from the commit's test files: Swift
@@ -333,7 +337,8 @@ is kept here.
    - Isolated clone as above, agent run with the safety flags, hidden tests copied in,
      metrics, leak flag, clone to the Trash unless kept.
    - `akit lab new replay SHA [--repo DIR] [--setups full,lean] [--model M] [--effort E]
-     [--repeats N] [--env orca|herdr|background] [--keep]` queues repeats × setups.
+     [--repeats N] [--env orca|herdr|background] [--keep]` queues repeats × setups,
+     interleaved (one of each setup, then the second of each…). `akit lab compare SHA`.
    - App: New Run offers the commit, setups, model, effort, repeats; the Lab screen shows
      runs of one task side by side per setup (passed, fresh tokens, calls, wall time: median
      and range).

@@ -130,6 +130,9 @@ enum Cancellation {
 
     static var isCancelled: Bool { lock.withLock { cancelled } }
 
+    /// Process groups of the running children (each child leads its own group).
+    static var trackedGroups: Set<pid_t> { lock.withLock { children } }
+
     static func track(_ pid: pid_t) {
         let stop = lock.withLock { () -> Bool in
             children.insert(pid)

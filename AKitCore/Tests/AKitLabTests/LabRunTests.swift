@@ -159,6 +159,19 @@ struct LabRunTests {
         #expect(trashed == run.folder)
     }
 
+    @Test func setupsPinModelAndEffort() {
+        let lean = LabSetup(name: .lean, model: "sonnet", effort: "max")
+        let spec = RunSpec(id: "x", kind: .replay, title: "t", folder: "/", environment: .background, akit: "/a", setup: lean)
+        let args = AgentRun.arguments(prompt: "Do it", spec: spec)
+        #expect(args.starts(with: ["-p", "Do it"]))
+        #expect(args.suffix(6) == ["--setting-sources", "project", "--model", "sonnet", "--effort", "max"])
+        let full = AgentRun.arguments(prompt: "Do it", spec: RunSpec(id: "x", kind: .replay, title: "t", folder: "/", environment: .background,
+                                                                     akit: "/a", setup: LabSetup(name: .full, model: "opus", effort: "high")))
+        #expect(!full.contains("--setting-sources") && full.suffix(4) == ["--model", "opus", "--effort", "high"])
+        let env = AgentRun.environment(HarnessEnvironment(homeDirectory: home, variables: ["CLAUDECODE": "1", "KEEP": "x"]), runFolder: home)
+        #expect(env["CLAUDECODE"] == nil && env["KEEP"] == "x" && env["AKIT_LAB_DIR"] == home.path)
+    }
+
     @Test func streamPrinterLines() {
         #expect(StreamPrinter.readable(["type": "user", "message": ["content": [
             ["type": "tool_result", "is_error": true, "content": "boom\nmore"]]]]) == ["  ✗ boom"])

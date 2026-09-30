@@ -159,10 +159,67 @@ enum ReviewRun {
         """
 }
 
-/// Replay tasks (plan step 3). No command or screen creates a replay run yet.
+/// A replay: the agent redoes a commit in an isolated clone of its parent, then the
+/// commit's own tests judge the result.
 enum ReplayRun {
     static func execute(_ run: LabRun, env: HarnessEnvironment, phase: (RunState.Phase) -> Void,
                         out: @escaping @Sendable (String) -> Void) async throws -> RunResult {
-        throw LabWorker.Failure(message: "This akit can't run replay tasks yet.")
+        guard let commit = run.spec.commit, let repoPath = run.spec.repo else {
+            throw LabWorker.Failure(message: "The run names no commit to replay.")
+        }
+        let repo = URL(filePath: repoPath, directoryHint: .isDirectory)
+        let work = run.folder.appending(path: "work", directoryHint: .isDirectory)
+        let logURL = run.folder.appending(path: "check.log")
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        let log = try? FileHandle(forWritingTo: logURL)
+        defer {
+            try? log?.close()
+            // The clone goes to the Trash unless kept; no branch is left in the real repository.
+            if !run.spec.keep, FileManager.default.fileExists(atPath: work.path) { _ = try? Trash.move(work) }
+        }
+
+        let task = try await ReplayTasks.task(commit: commit, repo: repo, env: env, out: out)
+        guard !Cancellation.isCancelled else { throw CancellationError() }
+        out("Replaying \(task.shortCommit) “\(task.subject)” from \(String(task.base.prefix(7)))"
+            + (run.spec.setup.map { " · \($0.label)" } ?? ""))
+        try await IsolatedClone.make(at: work, from: URL(filePath: task.repo), commit: task.base, env: env)
+
+        phase(.agent)
+        let exit = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, env: env, out: out)
+        guard !exit.cancelled else { throw CancellationError() }
+
+        phase(.tests)
+        out("Hidden tests: \(task.failToPass.count) fail-to-pass, \(task.passToPass.count) pass-to-pass.")
+        try await IsolatedClone.copyTests(task.testFiles, from: URL(filePath: task.repo), commit: task.commit, into: work, env: env)
+        let package = task.package.isEmpty ? work : work.appending(path: task.package, directoryHint: .isDirectory)
+        let runner = SwiftTests(package: package, folder: work, env: env, log: log, out: out)
+        let outcome: TestOutcome
+        if await runner.build() {
+            let results = await runner.run(task.failToPass + task.passToPass)
+            guard !Cancellation.isCancelled else { throw CancellationError() }
+            outcome = Self.outcome(task, results)
+        } else {
+            guard !Cancellation.isCancelled else { throw CancellationError() }
+            outcome = TestOutcome(status: .failed, failToPass: .init(passed: 0, total: task.failToPass.count),
+                                  passToPass: .init(passed: 0, total: task.passToPass.count),
+                                  failed: (task.failToPass + task.passToPass).map(\.id),
+                                  note: "The tests don't build after the agent's changes (see check.log).")
+        }
+
+        phase(.metrics)
+        let metrics = await LabWorker.ownMetrics(run.spec, project: work, env: env)
+        let leaks = LabPaths.transcript(sessionID: run.spec.sessionID, env: env).map { LeakCheck.leaks(in: $0, task: task) } ?? []
+        return RunResult(metrics: metrics, tests: outcome, leaks: leaks)
+    }
+
+    static func outcome(_ task: ReplayTask, _ results: [TestName: SwiftTests.Outcome]) -> TestOutcome {
+        func count(_ tests: [TestName]) -> TestOutcome.Count {
+            TestOutcome.Count(passed: tests.filter { results[$0] == .passed }.count, total: tests.count)
+        }
+        let all = task.failToPass + task.passToPass
+        let failed = all.filter { results[$0] != .passed }
+        return TestOutcome(status: failed.isEmpty ? .passed : .failed, failToPass: count(task.failToPass),
+                           passToPass: count(task.passToPass), timeouts: all.filter { results[$0] == .timedOut }.count,
+                           failed: failed.map(\.id))
     }
 }
