@@ -247,7 +247,8 @@ akit machine [work [--name NAME] | personal]     a work Mac keeps project record
 akit lab analyze SESSION                         metrics of one Claude Code session
 akit lab new review SESSION [--harness pi] [--model M]
                                                  a model (through Claude Code or Pi) reviews a
-                                                 session: one paragraph and up to 3 improvements
+                                                 session: one paragraph and up to 3 generic
+                                                 improvements with evidence (--language ru|cs)
 akit lab new replay COMMIT [--setups full,lean] [--repeats N]
                                                  redo a commit under setups; hidden tests judge it
 akit lab list / show ID / compare COMMIT         runs and their results

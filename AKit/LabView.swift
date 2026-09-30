@@ -220,6 +220,7 @@ private struct LabRunDetail: View {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
                 row("Kind", run.spec.kind == .review ? "Session review" : "Replay task")
                 if let agent = run.spec.agent { row("Agent", agent.label) }
+                if let language = run.spec.language, language != .english { row("Language", language.name) }
                 row("Opens in", "\(run.spec.environment.title) · \(URL(filePath: run.spec.folder).tildePath)")
                 if let setup = run.spec.setup { row("Setup", setup.label) }
                 row("Queued", run.spec.createdAt.formatted(date: .abbreviated, time: .shortened))
@@ -296,6 +297,9 @@ private struct LabRunDetail: View {
                 ForEach(Array(review.findings.enumerated()), id: \.offset) { index, finding in
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(index + 1). \(finding.title)").fontWeight(.semibold)
+                        if let evidence = finding.evidence {
+                            Text("Evidence: \(evidence)").foregroundStyle(.secondary)
+                        }
                         Text(finding.detail).foregroundStyle(.secondary)
                     }
                     .textSelection(.enabled)
