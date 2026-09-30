@@ -111,23 +111,21 @@ public enum Launcher {
 
     private static func launchHerdr(_ spec: RunSpec, title: String, env: HarnessEnvironment) async throws -> LaunchInfo {
         let folder = URL(filePath: spec.folder).standardizedFileURL.path
-        var workspace = await herdrWorkspace(for: folder, env: env)
-        if workspace == nil {
-            let created = try await json("herdr", ["workspace", "create", "--cwd", folder, "--label", title, "--no-focus"], env: env)
-            let result = created["result"] as? [String: Any]
-            workspace = ((result?["workspace"] as? [String: Any])?["workspace_id"] as? String)
-                ?? ((result?["root_pane"] as? [String: Any])?["workspace_id"] as? String)
-        }
-        guard let workspace else { throw Failure(message: "herdr didn't create a workspace for \(folder).") }
-        let object = try await json("herdr", ["tab", "create", "--workspace", workspace, "--cwd", folder,
+        // A workspace of its own when none has the folder as its worktree; it comes with a tab.
+        let object: [String: Any]
+        if let workspace = await herdrWorkspace(for: folder, env: env) {
+            object = try await json("herdr", ["tab", "create", "--workspace", workspace, "--cwd", folder,
                                               "--label", title, "--no-focus"], env: env)
-        let result = object["result"] as? [String: Any]
-        guard let pane = (result?["root_pane"] as? [String: Any])?["pane_id"] as? String,
-              let tab = (result?["tab"] as? [String: Any])?["tab_id"] as? String else {
-            throw Failure(message: "herdr didn't create a tab.")
+        } else {
+            object = try await json("herdr", ["workspace", "create", "--cwd", folder, "--label", title, "--no-focus"], env: env)
         }
-        _ = try await run("herdr", ["pane", "run", pane, command(for: spec)], env: env)
-        return LaunchInfo(environment: .herdr, herdrWorkspace: workspace, herdrTab: tab, herdrPane: pane)
+        let pane = (object["result"] as? [String: Any])?["root_pane"] as? [String: Any]
+        guard let paneID = pane?["pane_id"] as? String, let tab = pane?["tab_id"] as? String,
+              let workspace = pane?["workspace_id"] as? String else {
+            throw Failure(message: "herdr didn't open a tab in \(folder).")
+        }
+        _ = try await run("herdr", ["pane", "run", paneID, command(for: spec)], env: env)
+        return LaunchInfo(environment: .herdr, herdrWorkspace: workspace, herdrTab: tab, herdrPane: paneID)
     }
 
     /// The herdr workspace whose worktree is `path` (or holds it).
