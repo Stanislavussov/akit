@@ -94,6 +94,9 @@ private struct LabRunRow: View {
             }
             HStack(spacing: 6) {
                 Label(run.spec.environment.title, systemImage: run.spec.environment.icon)
+                if let agent = run.spec.agent, agent.harness != .claudeCode {
+                    Text(agent.harness.title)
+                }
                 if let tests = run.result?.tests {
                     Image(systemName: tests.status == .passed ? "checkmark.seal" : "xmark.seal")
                         .foregroundStyle(tests.status == .passed ? .green : .red)
@@ -192,7 +195,8 @@ private struct LabRunDetail: View {
                         MetricsView(metrics: metrics)
                     }
                 } else if run.status == .finished {
-                    Text("Claude Code wrote no transcript for this run, so there are no numbers.")
+                    Text(run.spec.agent?.harness == .pi ? "AKit doesn't measure Pi sessions yet, so there are no numbers."
+                         : "Claude Code wrote no transcript for this run, so there are no numbers.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -215,6 +219,7 @@ private struct LabRunDetail: View {
             }
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
                 row("Kind", run.spec.kind == .review ? "Session review" : "Replay task")
+                if let agent = run.spec.agent { row("Agent", agent.label) }
                 row("Opens in", "\(run.spec.environment.title) · \(URL(filePath: run.spec.folder).tildePath)")
                 if let setup = run.spec.setup { row("Setup", setup.label) }
                 row("Queued", run.spec.createdAt.formatted(date: .abbreviated, time: .shortened))
@@ -273,15 +278,21 @@ private struct LabRunDetail: View {
                   systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.orange)
         }
-        if let summary = run.summary {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Summary").font(.title3.bold())
-                MarkdownLines(text: summary)
-            }
+        if let error = run.result?.agentError {
+            Text("The agent stopped with an error: \(error)")
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        if let review = run.review, !review.findings.isEmpty {
+        if let summary = run.summary {
+            MarkdownLines(text: summary.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if let review = run.review {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Findings").font(.title3.bold())
+                Text("What to Improve").font(.title3.bold())
+                if review.findings.isEmpty {
+                    Text("Nothing worth changing.").foregroundStyle(.secondary)
+                }
                 ForEach(Array(review.findings.enumerated()), id: \.offset) { index, finding in
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(index + 1). \(finding.title)").fontWeight(.semibold)
@@ -312,6 +323,12 @@ private struct LabRunDetail: View {
             Label("Left out of comparisons: the agent's tool calls mention \(leaks.joined(separator: " and ")).",
                   systemImage: "eye.trianglebadge.exclamationmark")
                 .foregroundStyle(.orange)
+        }
+        if let error = run.result?.agentError {
+            Text("The agent stopped with an error: \(error)")
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
         if let tests = run.result?.tests {
             VStack(alignment: .leading, spacing: 6) {

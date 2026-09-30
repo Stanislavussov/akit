@@ -28,6 +28,11 @@ struct NewLabRunSheet: View {
     // Review
     @State private var chosen: SessionSummary.ID?
     @State private var query = ""
+    @State private var harness: LabHarness = .claudeCode
+    @State private var reviewModel = ""
+    @State private var reviewEffort = "high"
+    /// Models to offer for the harness (Pi: the ones it has credentials for).
+    @State private var reviewModels: [String] = []
 
     // Replay
     @State private var repo: URL?
@@ -82,12 +87,17 @@ struct NewLabRunSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 620, height: session == nil ? 700 : 300)
+        .frame(width: 620, height: session == nil ? 760 : 400)
         .task(id: tabFolder) {
             suggested = nil
             guard let folder = tabFolder else { return }
             suggested = await model.suggestedEnvironment(for: folder)
         }
+        .task {
+            if !model.labHarnesses.contains(harness), let first = model.labHarnesses.first { harness = first }
+            await loadAgent(harness)
+        }
+        .onChange(of: harness) { _, chosen in Task { await loadAgent(chosen) } }
         .task {
             let defaults = model.defaultModelAndEffort
             if modelName.isEmpty { modelName = defaults.model }
@@ -121,7 +131,7 @@ struct NewLabRunSheet: View {
 
     private var canQueue: Bool {
         switch kind {
-        case .review: target != nil
+        case .review: target != nil && (harness == .pi || !reviewModel.trimmingCharacters(in: .whitespaces).isEmpty)
         case .replay: repo != nil && draft != nil && checking == nil && !setups.isEmpty
             && !modelName.trimmingCharacters(in: .whitespaces).isEmpty
         }
@@ -134,7 +144,7 @@ struct NewLabRunSheet: View {
     }
 
     @ViewBuilder private var review: some View {
-        Text("An agent reads the session (secrets masked) and AKit's numbers for it, then writes a review: where it lost time or tokens and what to change. It runs headless with Claude Code; nothing in your projects changes.")
+        Text("An agent reads the session (secrets masked) and AKit's numbers for it, then writes one paragraph and up to three improvements. It runs headless in the harness you pick, with only file reading and writing; nothing in your projects changes.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -157,6 +167,41 @@ struct NewLabRunSheet: View {
         } else if let target {
             Text("Session: \(target.title)").fontWeight(.medium)
         }
+        Form {
+            Picker("Agent", selection: $harness) {
+                ForEach(model.labHarnesses, id: \.self) { Text($0.title).tag($0) }
+            }
+            HStack {
+                TextField("Model", text: $reviewModel, prompt: Text(harness == .pi ? "Pi's default" : "opus"))
+                Menu("Models") {
+                    ForEach(reviewModels, id: \.self) { name in Button(name) { reviewModel = name } }
+                }
+                .fixedSize()
+                .disabled(reviewModels.isEmpty)
+                .help(harness == .pi ? "Models Pi has credentials for (pi --list-models)" : "Claude Code model aliases")
+            }
+            Picker(harness == .pi ? "Thinking" : "Effort", selection: $reviewEffort) {
+                ForEach(harness.efforts, id: \.self) { Text($0).tag($0) }
+            }
+        }
+        .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(height: 170)
+    }
+
+    /// The chosen harness's defaults and models. `ProcessRunner` doesn't stop on cancel, so a
+    /// slow `pi --list-models` that ends after a switch back to Claude Code is dropped.
+    private func loadAgent(_ chosen: LabHarness) async {
+        let defaults = model.defaultAgent(chosen)
+        reviewModel = defaults.model
+        reviewEffort = chosen.efforts.contains(defaults.effort) ? defaults.effort : chosen.efforts[0]
+        reviewModels = []
+        let models = await model.labModels(for: chosen)
+        if harness == chosen { reviewModels = models }
+    }
+
+    private var reviewAgent: LabAgent {
+        LabAgent(harness: harness, model: reviewModel.trimmingCharacters(in: .whitespaces), effort: reviewEffort)
     }
 
     private var claudeSessions: [SessionSummary] {
@@ -296,7 +341,7 @@ struct NewLabRunSheet: View {
                 switch kind {
                 case .review:
                     guard let target else { break }
-                    onQueued(try await model.queueReview(of: target, environment: environment))
+                    onQueued(try await model.queueReview(of: target, agent: reviewAgent, environment: environment))
                 case .replay:
                     guard let repo, let draft else { break }
                     let runs = try await model.queueReplays(commit: draft.commit, repo: repo, setups: setups, repeats: repeats,

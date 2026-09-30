@@ -166,6 +166,66 @@ struct LabRunTests {
         #expect(!LabStore.isAlive(RunState(status: .running, pid: 1)))
     }
 
+    @Test func reviewShowsAtMostThreeImprovements() async throws {
+        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
+                                              akit: URL(filePath: "/usr/bin/true"), env: env)
+        let findings = (1...5).map { #"{"title":"Change \#($0)","detail":"Why"}"# }.joined(separator: ",")
+        try Data(#"{"findings":[\#(findings)]}"#.utf8).write(to: run.folder.appending(path: "review.json"))
+        let loaded = try #require(LabStore.load(run.id, env: env))
+        #expect(loaded.review?.findings.map(\.title) == ["Change 1", "Change 2", "Change 3"])
+    }
+
+    @Test func reviewInPi() async throws {
+        try write("bin/pi", #"""
+            #!/bin/sh
+            printf '%s\n' "$@" > "$AKIT_LAB_DIR/args.txt"
+            echo 'Warning: No project session found with id x; creating a new session with that id.' >&2
+            echo '{"type":"session","version":3,"id":"s1","cwd":"/x"}'
+            echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"transcript.md"}}],"stopReason":"toolUse"}}'
+            echo '{"type":"message_end","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"no such file"}],"isError":true}}'
+            echo '{"findings":[]}' > review.json
+            echo 'One paragraph.' > summary.md
+            echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"stopReason":"stop"}}'
+            echo '{"type":"agent_settled"}'
+            """#, executable: true)
+        let agent = LabAgent(harness: .pi, model: "zai/glm-5", effort: "low")
+        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, agent: agent, environment: .background,
+                                              akit: URL(filePath: "/usr/bin/true"), env: env)
+        let output = Output()
+        let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: output.add)
+        let done = try #require(LabStore.load(run.id, env: env))
+        #expect(code == 0 && done.status == .finished && done.result?.review == .ok, "\(output.lines)")
+        #expect(done.spec.agent == agent && done.review?.findings.isEmpty == true && done.summary == "One paragraph.\n")
+        #expect(done.result?.agentError == nil)
+        let args = read(run.folder.appending(path: "args.txt")).split(separator: "\n").map(String.init)
+        #expect(args.starts(with: ["-p"]) && args.contains(run.spec.sessionID) && !args.contains("--permission-prompts"))
+        #expect(args.suffix(6) == ["--model", "zai/glm-5", "--thinking", "low", "--tools", "read,write,grep,find,ls"])
+        #expect(output.lines.contains("▸ read transcript.md") && output.lines.contains("  ✗ no such file"))
+        #expect(output.lines.contains("Agent finished") && !output.lines.contains { $0.hasPrefix("Warning:") })
+    }
+
+    @Test func piDefaultsAndModels() throws {
+        #expect(LabRuns.defaultAgent(.pi, env: env) == LabAgent(harness: .pi, model: "", effort: "medium"))
+        #expect(!LabAgent(harness: .pi, model: "", effort: "medium").flags.contains("--model"))
+        try write(".pi/agent/settings.json", #"{"defaultProvider":"zai","defaultModel":"glm-5","defaultThinkingLevel":"high"}"#)
+        #expect(LabRuns.defaultAgent(.pi, env: env) == LabAgent(harness: .pi, model: "zai/glm-5", effort: "high"))
+        #expect(LabRuns.piModels(["provider  model  context", "zai       glm-5  200K", "", "provider  model  context",
+                                  "zai       glm-5  200K", "zai       glm-6  1M"]) == ["zai/glm-5", "zai/glm-6"])
+    }
+
+    @Test func piErrorsAreShown() {
+        var failed = false
+        let error: [String: Any] = ["type": "message_end", "message": ["role": "assistant", "content": [Any](),
+                                                                      "stopReason": "error", "errorMessage": "403: no subscription"]]
+        #expect(StreamPrinter.readablePi(error, failed: &failed) == ["  ✗ 403: no subscription"] && failed)
+        #expect(StreamPrinter.readablePi(["type": "agent_settled"], failed: &failed) == ["Agent stopped with an error"])
+        let printer = StreamPrinter(harness: .pi, out: { _ in })
+        printer.print(#"{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"403: no subscription"}}"#)
+        #expect(printer.error == "403: no subscription")
+        printer.print(#"{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"stop"}}"#)
+        #expect(printer.error == nil)
+    }
+
     @Test func cancelAndRemoveQueuedRun() async throws {
         let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
                                               akit: URL(filePath: "/usr/bin/true"), env: env)
