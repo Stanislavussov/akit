@@ -1,6 +1,7 @@
 # Lab: measuring how well agent sessions work
 
-Status: design proposal 2026-09-28, not implemented. Replaces the Session Insights
+Status: design proposal 2026-09-28; implementation started 2026-09-30 (see
+[Implementation plan](#implementation-plan-v1)). Replaces the Session Insights
 decision "AKit has no own eval runner" (see [Relation to other designs](#relation-to-other-designs)).
 
 ## Goal
@@ -260,15 +261,76 @@ Lab screen shows the spread, not only the mean.
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 
-## Roadmap
+## Implementation plan (v1)
 
-1. Session analysis in AKit: metrics and context rent for one session, shown on the
-   Sessions screen. No agent, no terminal.
-2. `akit lab run`, run folder and lifecycle, the queue, Orca / herdr / background
-   launchers and the Lab screen.
-3. Replay tasks: task from a commit with fail-to-pass validation, isolated clone,
-   setups, repeats, leak flag, comparison view.
-4. Session review skill as its own kind.
+Decided 2026-09-30 when building starts. Each step is one or more commits on branch `lab`
+and ends with `make build`, `make test` and a snapshot of the screens it touches. Status
+is kept here.
+
+1. **Session analysis** — status: planned.
+   - New module `AKitLab` (Foundation, Model, Sessions). `SessionAnalyzer.analyze(file)`
+     reads one Claude Code transcript in order: API calls (one per `message.id`, main
+     chain only; subagent calls and fresh tokens are counted apart), fresh and cache-read
+     tokens, peak and baseline (first-call) context, context rent, tool errors, re-reads
+     (a `Read` of the same file and range with no `Edit`/`Write` of it in between),
+     interrupts (`[Request interrupted by user…`), rejected tool calls (the user's "doesn't
+     want to proceed" and permission denials), commits (the `[branch sha] subject` line in
+     the output of a `git commit` Bash call), wall and active time.
+   - Context rent: the growth of the context between two calls is split by characters
+     over what arrived in between (the agent's own output, code reads: `Read`, `Grep`,
+     `Glob` and read-only Bash such as `cat`/`sed -n`/`grep`/`head`, harness injections,
+     everything else) and multiplied by the number of later calls until the next
+     compaction. The first call's context (and the first after a compaction) is the baseline.
+   - Commits that reached the main branch: `git merge-base --is-ancestor` against
+     `master`/`main` in the session's folder, when that folder is still a repository.
+   - `akit lab analyze SESSION [--json]` (a transcript path or a session id).
+   - App: an **Analysis** tab on the Sessions screen (Claude Code sessions), computed when
+     it is opened.
+2. **Runs** — status: planned.
+   - `~/.akit/lab/<run-id>/`: `run.json` (written once when the run is queued),
+     `launch.json` (environment and handle, written when it is started; a queued run has
+     none yet), `state.json`, `result.json`, `console.log` (background runs).
+   - `akit lab run <id>`: the worker, same phases as above; SIGTERM → `cancelled`. When it
+     ends it starts the next queued run with the same launcher, so the queue moves on
+     without the app. `akit lab start` starts the next queued run; `akit lab list`, `show`,
+     `cancel`, `remove` (to the Trash).
+   - Launchers: Orca (`orca terminal create --worktree path:<worktree> --title … --command
+     … --json`; the folder must be an Orca worktree, else the repository root is used),
+     herdr (`herdr tab create --workspace <the workspace whose worktree is the folder>
+     --cwd … --label … --no-focus`, then `herdr pane run <root pane> <cmd>`; no such
+     workspace → `herdr workspace create --cwd …`), background (a detached child of
+     AKit, output in `console.log`). "Show" = `orca terminal switch` /
+     `herdr workspace focus` + `herdr tab focus`.
+   - The command in the tab is the absolute path of the `akit` that queued the run: the
+     app uses `~/.local/bin/akit`, a development build its own worktree's
+     `AKitCore/.build/debug/akit` when that exists.
+   - App: a **Lab** sidebar section with the queue and past runs, run details, Cancel,
+     Show in Orca/herdr, Remove, and **New Run…**.
+3. **Replay tasks** — status: planned.
+   - `akit lab task SHA [--repo DIR]` builds and validates a task and caches it in
+     `~/.akit/lab/tasks/<sha>.json` (prompt, base, test files, fail-to-pass and
+     pass-to-pass test names). Test names are read from the commit's test files: Swift
+     Testing `@Test func name(` in a type `Suite` (filter `Suite/name\(`) and XCTest
+     `func testName(` in an `XCTestCase` class. The package is the nearest folder with a
+     `Package.swift` (SwiftPM only in v1). A queued replay validates its task in the
+     prepare phase when no cached one exists.
+   - Test runner: `swift build --build-tests` once (15 min limit), then `swift test
+     --skip-build --filter …` per test, 30 s each, in its own process group; a watchdog
+     checks the memory footprint of every process in the group and every
+     `swiftpm-testing-helper`/`xctest` working in the folder every second and kills
+     them above 2 GB.
+   - Isolated clone as above, agent run with the safety flags, hidden tests copied in,
+     metrics, leak flag, clone to the Trash unless kept.
+   - `akit lab new replay SHA [--repo DIR] [--setups full,lean] [--model M] [--effort E]
+     [--repeats N] [--env orca|herdr|background] [--keep]` queues repeats × setups.
+   - App: New Run offers the commit, setups, model, effort, repeats; the Lab screen shows
+     runs of one task side by side per setup (passed, fresh tokens, calls, wall time: median
+     and range).
+4. **Session review** — status: planned.
+   - The review instructions ship inside `akit` (no skill to install). The run folder gets
+     `transcript.md` (the masked Markdown export) and `analysis.json`; the agent runs
+     headless in the run folder, reads them and writes `review.json` and `summary.md`.
+   - `akit lab new review SESSION [--env …]`; app: **Review in Terminal…** on a session.
 
 ## Open questions
 
