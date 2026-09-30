@@ -274,14 +274,14 @@ private struct LabRunDetail: View {
                 .foregroundStyle(.orange)
         }
         if let summary = run.summary {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Summary").font(.title3.bold())
-                MarkdownLines(text: summary)
-            }
+            MarkdownLines(text: summary.trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        if let review = run.review, !review.findings.isEmpty {
+        if let review = run.review {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Findings").font(.title3.bold())
+                Text("What to Improve").font(.title3.bold())
+                if review.findings.isEmpty {
+                    Text("Nothing worth changing.").foregroundStyle(.secondary)
+                }
                 ForEach(Array(review.findings.enumerated()), id: \.offset) { index, finding in
                     VStack(alignment: .leading, spacing: 3) {
                         Text("\(index + 1). \(finding.title)").fontWeight(.semibold)

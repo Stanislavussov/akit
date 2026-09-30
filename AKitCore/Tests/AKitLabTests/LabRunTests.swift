@@ -166,6 +166,15 @@ struct LabRunTests {
         #expect(!LabStore.isAlive(RunState(status: .running, pid: 1)))
     }
 
+    @Test func reviewShowsAtMostThreeImprovements() async throws {
+        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
+                                              akit: URL(filePath: "/usr/bin/true"), env: env)
+        let findings = (1...5).map { #"{"title":"Change \#($0)","detail":"Why"}"# }.joined(separator: ",")
+        try Data(#"{"findings":[\#(findings)]}"#.utf8).write(to: run.folder.appending(path: "review.json"))
+        let loaded = try #require(LabStore.load(run.id, env: env))
+        #expect(loaded.review?.findings.map(\.title) == ["Change 1", "Change 2", "Change 3"])
+    }
+
     @Test func cancelAndRemoveQueuedRun() async throws {
         let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
                                               akit: URL(filePath: "/usr/bin/true"), env: env)

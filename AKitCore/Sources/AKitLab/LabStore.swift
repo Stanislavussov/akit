@@ -13,7 +13,7 @@ public struct LabRun: Identifiable, Sendable, Hashable {
     public let result: RunResult?
     /// The status to show: `running` only while its worker lives.
     public let status: RunState.Status
-    /// The review agent's findings; secrets masked.
+    /// The review agent's improvements (at most `Review.limit`); secrets masked.
     public let review: Review?
     /// The review agent's summary; secrets masked.
     public let summary: String?
@@ -97,7 +97,7 @@ public enum LabStore {
     static func load(folder: URL) -> LabRun? {
         guard let spec = read(RunSpec.self, from: folder.appending(path: "run.json")) else { return nil }
         let review = read(Review.self, from: folder.appending(path: "review.json")).map { review in
-            Review(findings: review.findings.map { .init(title: SecretFilter.masked($0.title), detail: SecretFilter.masked($0.detail)) })
+            Review(findings: review.findings.prefix(Review.limit).map { .init(title: SecretFilter.masked($0.title), detail: SecretFilter.masked($0.detail)) })
         }
         let summary = (try? String(contentsOf: folder.appending(path: "summary.md"), encoding: .utf8)).map(SecretFilter.masked)
         return LabRun(folder: folder, spec: spec,

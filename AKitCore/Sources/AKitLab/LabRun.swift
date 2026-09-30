@@ -235,8 +235,11 @@ public struct TestOutcome: Codable, Sendable, Hashable {
     }
 }
 
-/// `review.json`, written by the review agent.
+/// `review.json`, written by the review agent: up to three improvements.
 public struct Review: Codable, Sendable, Hashable {
+    /// AKit shows at most this many, even when an agent writes more.
+    public static let limit = 3
+
     public struct Finding: Codable, Sendable, Hashable {
         public var title: String
         public var detail: String

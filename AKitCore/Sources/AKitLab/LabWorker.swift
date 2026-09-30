@@ -171,11 +171,12 @@ enum ReviewRun {
         prompt, a line in AGENTS.md or CLAUDE.md, a skill, a hook, a setting.
 
         Write exactly two files in the current folder and change nothing else:
-        - review.json: {"findings": [{"title": "…", "detail": "…"}]} with at most 10 findings,
-          the most costly first. Each detail says where in the transcript it happened and what
-          to change.
-        - summary.md: 5 to 15 lines for a person: what the session did, how efficient it was
-          (use the numbers), and the two or three changes that matter most.
+        - summary.md: one plain paragraph of 3 to 5 sentences, no headings or lists: what the
+          session did, whether it went well, and how efficient it was (one or two numbers).
+        - review.json: {"findings": [{"title": "…", "detail": "…"}]} with at most 3
+          improvements, the most valuable first. The title is the change to make, in one
+          sentence; the detail is one or two sentences on what went wrong and where. Leave
+          out anything small: 0 or 1 improvements are fine when the session went well.
         """
 }
 

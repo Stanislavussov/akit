@@ -229,8 +229,8 @@ extension AKitCLI {
             lines += LabWorker.resultLines(result)
         }
         if let summary = run.summary { lines += ["", summary.trimmingCharacters(in: .whitespacesAndNewlines)] }
-        if let review = run.review, !review.findings.isEmpty {
-            lines.append("")
+        if let review = run.review {
+            lines += ["", review.findings.isEmpty ? "Nothing worth changing." : "What to improve:"]
             for (index, finding) in review.findings.enumerated() {
                 lines.append("\(index + 1). \(finding.title)")
                 lines.append("   \(finding.detail)")

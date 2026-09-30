@@ -76,7 +76,7 @@ AKit UI ◀──(3) watches ~/.akit/lab/ and shows state and result
 | Kind | Agent | Where it runs | Result |
 |---|---|---|---|
 | **Session analysis** | no | inside AKit, instant | cost, friction and context rent of one recorded session |
-| **Session review** | yes | terminal | a skill reads the session and writes a qualitative review |
+| **Session review** | yes | terminal | an agent reads the session and writes one paragraph plus 0 to 3 improvements |
 | **Replay task** | yes | terminal, N repeats × setups | hidden tests passed or not, and what it cost |
 
 Session analysis is plain computation over the transcript and git; it needs no
@@ -131,8 +131,9 @@ phase change:
                   herdr workspace, tab and pane; background pid)
   state.json      by `akit lab run`, see lifecycle
   result.json     by `akit lab run` at the end (schema below); the only writer
-  review.json     by the review skill only: { "findings": [ { "title", "detail" } ] }
-  summary.md      by the review skill only
+  review.json     by the review skill only: { "findings": [ { "title", "detail" } ] },
+                  0 to 3 improvements (AKit shows at most 3)
+  summary.md      by the review skill only: one paragraph
   agent.jsonl     raw stream-json of a headless run; the tab shows a readable version
   check.log       hidden-test output, watchdog kills
   console.log     output of a background run (Orca and herdr show it in the tab)
