@@ -104,16 +104,22 @@ phase change:
 
 ```json
 { "status": "queued | running | finished | cancelled | error",
-  "phase": "prepare | agent | tests | metrics", "pid": 51234,
+  "phase": "prepare | agent | tests | metrics", "pid": 51234, "pidStart": 1790783456.12,
   "startedAt": "2026-09-28T18:02:11Z", "updatedAt": "2026-09-28T18:14:40Z" }
 ```
 
-- AKit shows `running` only while the pid is alive. A dead pid without `finished`
-  becomes `error` ("the run stopped: tab closed or crash").
+- AKit shows `running` only while the worker is alive: a process of this user with that
+  pid and that start time (`pidStart`), so a reused pid is never taken for it. A dead
+  worker without `finished` becomes `error` ("the run stopped: tab closed or crash").
 - Cancel in AKit sends SIGTERM to the pid; `akit lab run` stops the harness, kills its
-  test helpers and writes `cancelled`.
+  test helpers and writes `cancelled`. Closing the tab (SIGHUP), Ctrl-C and SIGQUIT do the
+  same: the agent and tests run in their own process groups and never see those signals.
+- Starting a run, a worker taking its run and cancelling happen under
+  `~/.akit/lab/queue.lock`, so a cancel can't cross a start.
 - v1 runs one run at a time from a queue: parallel runs mean cold `swift build`s and
-  test helpers of up to 2 GB each. Repeats and setups are queued runs.
+  test helpers of up to 2 GB each. Repeats and setups are queued runs. A finishing worker
+  starts the next one; while AKit is open it also moves the queue on when a worker died.
+  After a start fails, the queue waits for Start in AKit (or `akit lab start`).
 
 ## Run folder
 
@@ -162,8 +168,9 @@ Who writes what:
 
 - **Numbers come from `akit lab run`**, never from the agent: tokens, calls, context
   rent, tests, commits. An agent can't be trusted to report its own metrics.
-- **The review skill writes only `review.json` and `summary.md`**, into `AKIT_LAB_DIR`
-  (passed with `--add-dir "$AKIT_LAB_DIR"`, since it is outside the working folder).
+- **The review agent writes only `review.json` and `summary.md`**, in the run folder
+  where it runs (`AKIT_LAB_DIR`). The reviewed transcript may hold text written to steer an
+  agent, so it gets only `Read`, `Write`, `Glob` and `Grep` (`--tools`, no MCP servers).
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
@@ -200,8 +207,13 @@ sha or a path under `~/.claude/projects`, or that called a `session_search` tool
 leaves it out of comparisons. The subject line is not a sign: it is in the prompt, and the
 agent's own commit usually reuses it.
 
-The clone lives in `~/.akit/lab/<run-id>/work` and is moved to the Trash when the run
-ends, unless "keep" is ticked; no branch is left in the real repository.
+The clone lives in a temporary folder with a random name, not in the run folder (its
+`run.json` names the commit), and replay agents get no `AKIT_LAB_DIR`. After the checkout
+`.git/FETCH_HEAD`, which names the source repository, is removed. When the run ends the
+clone goes to the Trash (build folder included: the Trash grows), or into the run folder
+as `work` when "keep" is ticked; no branch is left in the real repository. Beyond the
+hash and the session history, the leak flag also catches tool calls that name the real
+repository or `~/.akit/lab`.
 
 ### Test runner
 
@@ -211,6 +223,7 @@ Rules learned in the pilot:
   any leftover `swiftpm-testing-helper` of that folder (it outlives `swift test`).
 - `--filter 'Suite/name\('`; a run with 0 tests is "not run", not "pass".
 - A watchdog kills test helpers above 2 GB (see the memory note about the 35 GB test).
+  Builds are not held to it (compilers may need more); only test helpers are watched then.
 
 ### Setups to compare (Claude Code)
 

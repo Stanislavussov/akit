@@ -114,6 +114,31 @@ struct SessionAnalyzerTests {
         #expect(abs(rent.share(rent.baseline) - 34_000.0 / 43_000.0) < 0.001)
     }
 
+    @Test func rereadsAmendsAndShrinkingContext() throws {
+        let file = try write("more.jsonl", [
+            call("m1", context: 5_000, at: 1, [tool("t1", "Read", ["file_path": "/p/a.swift"])]),
+            result("t1", "File does not exist.", error: true, at: 2),
+            // The first read failed: this one is not a re-read.
+            call("m2", context: 9_000, at: 3, [tool("t2", "Read", ["file_path": "/p/a.swift"])]),
+            result("t2", String(repeating: "x", count: 4000), at: 4),
+            // A shell command that writes makes files new again.
+            call("m3", context: 9_100, at: 5, [tool("t3", "Bash", ["command": "sed -i '' s/a/b/ /p/a.swift"])]),
+            result("t3", "", at: 6),
+            call("m4", context: 9_200, at: 7, [tool("t4", "Read", ["file_path": "/p/a.swift"])]),
+            result("t4", "x", at: 8),
+            call("m5", context: 9_300, at: 9, [tool("t5", "Bash", ["command": "git commit -m 'One'"])]),
+            result("t5", "[main 1111111] One", at: 10),
+            call("m6", context: 9_400, at: 11, [tool("t6", "Bash", ["command": "git commit --amend -m 'One, fixed'"])]),
+            result("t6", "[main 2222222] One, fixed", at: 12),
+            // Tool results cleared without a compaction: the context shrinks.
+            call("m7", context: 3_000, at: 13, [["type": "text", "text": "done"]]),
+        ])
+        let metrics = try SessionAnalyzer.analyze(file: file)
+        #expect(metrics.rereads == 0)
+        #expect(metrics.commits == [LabCommit(sha: "2222222", subject: "One, fixed")])
+        #expect(metrics.contextRent.total == 5_000 + 9_000 + 9_100 + 9_200 + 9_300 + 9_400 + 3_000)
+    }
+
     @Test func subagentFilesCountApart() throws {
         let file = try write("abc.jsonl", [prompt("Go", at: 0), call("m1", context: 500, at: 1, [["type": "text", "text": "ok"]])])
         _ = try write("abc/subagents/agent-1.jsonl", [
@@ -136,8 +161,8 @@ struct SessionAnalyzerTests {
     }
 
     @Test func commitLines() {
-        let lines = "[main (root-commit) abc1234] First\n[feature/x 1234567890abcdef] Second one\nnot [a line]"
-        #expect(SessionAnalyzer.Reader.commits(in: lines).map(\.sha) == ["abc1234", "1234567890abcdef"])
+        let lines = "[main (root-commit) abc1234] First\n[feature/x 1234567890abcdef] Second one\n[detached HEAD bf8e62c] Replay\nnot [a line]"
+        #expect(SessionAnalyzer.Reader.commits(in: lines).map(\.sha) == ["abc1234", "1234567890abcdef", "bf8e62c"])
         // `git commit -q … && git log --oneline -3`: only the line whose subject is in the command.
         let log = "11f1b09 Plan the Lab\n6a4a3f6 Merge branch 'x'\n75881d1 Show the app version"
         let quiet = SessionAnalyzer.Reader.commits(in: log, command: "git commit -q -m \"Plan the Lab\" && git log --oneline -3")

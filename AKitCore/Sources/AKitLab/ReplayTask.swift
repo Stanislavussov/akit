@@ -117,8 +117,19 @@ public enum ReplayTasks {
     /// Runs the tests on the base (with the commit's test files) and on the commit, keeps the
     /// ones that tell the two apart, and caches the task. Throws when no test fails on the base.
     public static func validate(_ draft: Draft, env: HarnessEnvironment, out: @escaping @Sendable (String) -> Void) async throws -> ReplayTask {
-        let folder = LabPaths(env: env).tasks.appending(path: "\(draft.commit)-check", directoryHint: .isDirectory)
-        if FileManager.default.fileExists(atPath: folder.path) { _ = try? Trash.move(folder) }
+        // One check of a commit at a time (the app's Check Now and a queued replay); the second
+        // takes the first one's result.
+        let tasks = LabPaths(env: env).tasks
+        try FileManager.default.createDirectory(at: tasks, withIntermediateDirectories: true)
+        return try await FileLock.holding(tasks.appending(path: "\(draft.commit).lock")) {
+            if let done = cached(draft.commit, env: env) { return done }
+            return try await check(draft, env: env, out: out)
+        }
+    }
+
+    private static func check(_ draft: Draft, env: HarnessEnvironment, out: @escaping @Sendable (String) -> Void) async throws -> ReplayTask {
+        let folder = LabPaths(env: env).tasks
+            .appending(path: "\(draft.commit)-check-\(UUID().uuidString.prefix(8).lowercased())", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { _ = try? Trash.move(folder) }
         let log = try? FileHandle(forWritingTo: {
@@ -184,6 +195,8 @@ enum IsolatedClone {
         try await git(["init", "-q"], in: folder, env: env)
         try await git(["fetch", "-q", "--no-tags", repo.path, commit], in: folder, env: env, timeout: 600)
         try await git(["checkout", "-q", "--detach", "FETCH_HEAD"], in: folder, env: env)
+        // FETCH_HEAD names the source repository's path; the agent must not find it there.
+        try? FileManager.default.removeItem(at: folder.appending(path: ".git/FETCH_HEAD"))
     }
 
     /// Validation only: brings in the commit and checks it out, test files included.
@@ -206,35 +219,44 @@ enum IsolatedClone {
     }
 
     private static func git(_ arguments: [String], in folder: URL, env: HarnessEnvironment, timeout: TimeInterval = 60) async throws {
+        guard !Cancellation.isCancelled else { throw CancellationError() }
         guard let result = await LabGit.run(arguments, in: folder, env: env, timeout: timeout), result.succeeded else {
             throw ReplayTasks.Failure(message: "git \(arguments.prefix(2).joined(separator: " ")) failed in \(folder.path).")
         }
     }
 }
 
-/// Signs that a replay saw the answer: its tool calls or their results mention the commit's
-/// hash, or it read Claude Code's own session history (files or a session search tool). The
-/// subject line doesn't count: it is in the prompt, and the agent's own commit reuses it.
+/// Signs that a replay saw the answer. Anywhere in its tool calls or their results: the
+/// commit's hash. In what its tool calls ask for: the real repository, AKit's Lab folder
+/// (run.json and the task cache name the commit), Claude Code's session history, or a
+/// `session_search` tool. The subject line is not a sign: it is in the prompt, and the agent's
+/// own commit usually reuses it. Tool results aren't searched for paths: Claude Code itself
+/// mentions `~/.claude/projects` when it saves a long output there.
 enum LeakCheck {
-    static func leaks(in transcript: URL, task: ReplayTask) -> [String] {
+    static func leaks(in transcript: URL, task: ReplayTask, repo: URL, env: HarnessEnvironment) -> [String] {
         guard let data = try? Data(contentsOf: transcript), let entries = try? JSONLines.objects(in: data) else { return [] }
-        var text = ""
+        var inputs = ""
+        var results = ""
         var usedSearch = false
         for entry in entries {
             let blocks = (entry["message"] as? JSONLines.Object)?["content"] as? [JSONLines.Object] ?? []
             for block in blocks {
                 switch block["type"] as? String {
                 case "tool_use":
-                    text += JSONLines.pretty(block["input"]) + "\n"
+                    inputs += JSONLines.pretty(block["input"]) + "\n"
                     if (block["name"] as? String ?? "").contains("session_search") { usedSearch = true }
-                case "tool_result": text += JSONLines.text(of: block["content"]) + "\n"
+                case "tool_result": results += JSONLines.text(of: block["content"]) + "\n"
                 default: break
                 }
             }
         }
         var found: [String] = []
-        if text.contains(task.shortCommit) { found.append("the commit \(task.shortCommit)") }
-        if text.contains(".claude/projects") || usedSearch { found.append("Claude Code's session history") }
+        if (inputs + results).contains(task.shortCommit) { found.append("the commit \(task.shortCommit)") }
+        let home = env.homeDirectory.path
+        let repoPaths = Set([repo.path, task.repo].map { URL(filePath: $0).standardizedFileURL.path })
+        if repoPaths.contains(where: { inputs.contains($0) }) { found.append("the real repository") }
+        if inputs.contains(home + "/.akit/lab") || inputs.contains("~/.akit/lab") { found.append("AKit's Lab folder") }
+        if inputs.contains(".claude/projects") || usedSearch { found.append("Claude Code's session history") }
         return found
     }
 }

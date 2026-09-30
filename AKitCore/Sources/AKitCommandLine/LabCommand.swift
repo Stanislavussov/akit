@@ -156,7 +156,7 @@ extension AKitCLI {
             try args.finish()
             let wasRunning = run.status == .running
             do {
-                try LabStore.cancel(run, env: env)
+                try await LabStore.cancel(run, env: env)
             } catch {
                 throw Failure(message: error.localizedDescription)
             }

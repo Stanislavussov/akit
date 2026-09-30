@@ -32,8 +32,33 @@ extension AppModel {
 
     func reloadLab() async {
         let env = HarnessEnvironment.current
-        let runs = await Task.detached { LabStore.list(env: env) }.value
+        let (runs, tasks) = await Task.detached { () -> ([LabRun], [String: ReplayTask]) in
+            let runs = LabStore.list(env: env)
+            var tasks: [String: ReplayTask] = [:]
+            for commit in Set(runs.compactMap(\.spec.commit)) { tasks[commit] = ReplayTasks.cached(commit, env: env) }
+            return (runs, tasks)
+        }.value
         if runs != labRuns { labRuns = runs }
+        if tasks != labTasks { labTasks = tasks }
+    }
+
+    /// Keeps the Lab badge and the queue current while AKit runs: reloads the runs, and
+    /// starts the next queued one when nothing runs (a worker that died can't do it). After a
+    /// start fails, it waits for the user (Start) instead of failing run after run.
+    func watchLab() async {
+        while !Task.isCancelled {
+            await reloadLab()
+            let waiting = labRuns.contains { $0.status == .queued && $0.launch == nil }
+            if waiting, !labAutoStartPaused, !labRuns.contains(where: \.isActive), Self.labAkit != nil {
+                do {
+                    try await LabQueue.startNext(env: .current)
+                } catch {
+                    labAutoStartPaused = true
+                }
+                await reloadLab()
+            }
+            try? await Task.sleep(for: .seconds(2))
+        }
     }
 
     /// Queues a review of a Claude Code session and starts the queue.
@@ -42,7 +67,8 @@ extension AppModel {
         guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
         let run = try await LabRuns.newReview(transcript: session.file, title: session.title, environment: environment,
                                               akit: akit, env: .current)
-        try await startLabQueue()
+        // Queued either way; a start that fails marks the run with the reason.
+        try? await startLabQueue()
         return run
     }
 
@@ -53,7 +79,7 @@ extension AppModel {
         guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
         let runs = try await LabRuns.newReplays(commit: commit, repo: repo, setups: setups, repeats: repeats,
                                                 environment: environment, keep: keep, akit: akit, env: .current)
-        try await startLabQueue()
+        try? await startLabQueue()
         return runs
     }
 
@@ -78,7 +104,13 @@ extension AppModel {
     /// Starts the next queued run when nothing runs, then reloads.
     func startLabQueue() async throws {
         defer { Task { await reloadLab() } }
-        try await LabQueue.startNext(env: .current)
+        labAutoStartPaused = false
+        do {
+            try await LabQueue.startNext(env: .current)
+        } catch {
+            labAutoStartPaused = true
+            throw error
+        }
     }
 
     func suggestedEnvironment(for folder: URL) async -> LabEnvironment {
@@ -88,7 +120,7 @@ extension AppModel {
     var labEnvironments: [LabEnvironment] { Launcher.available(env: .current) }
 
     func cancel(_ run: LabRun) async throws {
-        try LabStore.cancel(run, env: .current)
+        try await LabStore.cancel(run, env: .current)
         await reloadLab()
     }
 

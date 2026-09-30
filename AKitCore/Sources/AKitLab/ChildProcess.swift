@@ -37,15 +37,15 @@ enum ChildProcess {
         }
         close(writeEnd)
         Cancellation.track(pid)
-        defer { Cancellation.untrack(pid) }
 
-        let reader = FileHandle(fileDescriptor: readEnd, closeOnDealloc: true)
+        let reader = FileHandle(fileDescriptor: readEnd, closeOnDealloc: false)
         let drained = DispatchSemaphore(value: 0)
         let lines = LineBuffer(onLine: onLine)
         reader.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
+                try? handle.close()
                 lines.finish()
                 drained.signal()
             } else {
@@ -74,12 +74,18 @@ enum ChildProcess {
         }
         // Whatever the child left behind in its group (test helpers, servers).
         kill(-pid, SIGTERM)
-        if drained.wait(timeout: .now() + 2) == .timedOut {
+        var closed = drained.wait(timeout: .now() + 2) == .success
+        if !closed {
             kill(-pid, SIGKILL)
-            _ = drained.wait(timeout: .now() + 1)
+            closed = drained.wait(timeout: .now() + 1) == .success
         }
-        reader.readabilityHandler = nil
-        try? reader.close()
+        // The group is gone (or killed); its id may be reused from now on.
+        Cancellation.untrack(pid)
+        if !closed {
+            // A process outside the group still holds the pipe. Stop reading, but leave the
+            // descriptor open: closing it while a read is running would crash.
+            reader.readabilityHandler = nil
+        }
         let raw = box.value
         let normal = raw & 0x7f == 0
         return Exit(status: normal ? (raw >> 8) & 0xff : raw & 0x7f, exitedNormally: normal, timedOut: timedOut,
@@ -154,9 +160,10 @@ enum Cancellation {
     /// For tests.
     static func reset() { lock.withLock { cancelled = false } }
 
-    /// Routes SIGTERM and SIGINT to `cancel()`.
+    /// Routes SIGTERM, SIGINT, SIGQUIT and SIGHUP (the tab was closed) to `cancel()`. The
+    /// children are in their own process groups and never see these signals themselves.
     static func installSignalHandlers() {
-        for signalNumber in [SIGTERM, SIGINT] {
+        for signalNumber in [SIGTERM, SIGINT, SIGQUIT, SIGHUP] {
             signal(signalNumber, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
             source.setEventHandler { cancel() }

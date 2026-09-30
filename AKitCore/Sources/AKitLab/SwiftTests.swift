@@ -28,7 +28,8 @@ struct SwiftTests {
     /// `swift build --build-tests`; false when it fails (the reason is in the log).
     func build() async -> Bool {
         out(package == folder ? "Building the tests…" : "Building the tests in \(package.lastPathComponent)…")
-        let exit = await run(["build", "--build-tests", "--package-path", package.path], limit: buildLimit)
+        // Compilers and the linker may use more than a test may: only test helpers are watched.
+        let exit = await run(["build", "--build-tests", "--package-path", package.path], limit: buildLimit, watchGroup: false)
         guard let exit, exit.succeeded else {
             out(exit?.timedOut == true ? "The build took longer than \(MetricsText.duration(Int(buildLimit)))." : "The build failed (see check.log).")
             return false
@@ -54,13 +55,14 @@ struct SwiftTests {
     }
 
     /// Runs one command with the watchdog; output into the log (and `collect`).
-    private func run(_ arguments: [String], limit: TimeInterval, collect: Collected? = nil) async -> ChildProcess.Exit? {
+    private func run(_ arguments: [String], limit: TimeInterval, collect: Collected? = nil,
+                     watchGroup: Bool = true) async -> ChildProcess.Exit? {
         let log = log
-        log?.write(Data("$ swift \(arguments.joined(separator: " "))\n".utf8))
-        let watchdog = Watchdog(folder: folder) { out($0) }
+        try? log?.write(contentsOf: Data("$ swift \(arguments.joined(separator: " "))\n".utf8))
+        let watchdog = Watchdog(folder: folder, watchesGroups: watchGroup) { out($0) }
         return await watchdog.watching {
             await ChildProcess.run(swift, arguments: arguments, directory: folder, environment: variables, timeout: limit) { line in
-                log?.write(Data((line + "\n").utf8))
+                try? log?.write(contentsOf: Data((line + "\n").utf8))
                 collect?.append(line)
             }
         }

@@ -12,9 +12,13 @@ final class Watchdog: @unchecked Sendable {
     private let lock = NSLock()
     private var running = false
 
-    init(folder: URL, limit: UInt64 = 2 << 30, log: @escaping @Sendable (String) -> Void) {
+    /// Also every process in the groups of the run's children (off for builds).
+    let watchesGroups: Bool
+
+    init(folder: URL, limit: UInt64 = 2 << 30, watchesGroups: Bool = true, log: @escaping @Sendable (String) -> Void) {
         self.folder = folder.standardizedFileURL.resolvingSymlinksInPath().path
         self.limit = limit
+        self.watchesGroups = watchesGroups
         self.log = log
     }
 
@@ -38,7 +42,7 @@ final class Watchdog: @unchecked Sendable {
     }
 
     func check() {
-        let groups = Cancellation.trackedGroups
+        let groups = watchesGroups ? Cancellation.trackedGroups : []
         for pid in Self.allProcesses() where pid != getpid() {
             let inGroup = groups.contains(getpgid(pid))
             guard inGroup || isTestHelper(pid) else { continue }

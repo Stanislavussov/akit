@@ -165,18 +165,26 @@ public enum SessionAnalyzer {
             ClaudeLogFormat.tokens(fromClaudeUsage: (entry["message"] as? Object)?["usage"] as? Object ?? [:])
         }
 
-        /// Re-reads and the edits that make a later read new again.
+        /// Re-reads and the edits that make a later read new again. A read counts as done
+        /// when its result came back without an error (see `toolResult`). A shell command that
+        /// may write (anything but plain reading) makes every file new again.
         private mutating func toolStarted(_ name: String, input: Object) {
+            if name == "Bash", !ShellCommand.onlyReads(input["command"] as? String ?? "") {
+                readKeys = [:]
+                return
+            }
             guard let path = input["file_path"] as? String ?? input["notebook_path"] as? String else { return }
             switch name {
             case "Read":
-                let key = "\(input["offset"] ?? "")|\(input["limit"] ?? "")|\(input["pages"] ?? "")"
-                if readKeys[path, default: []].contains(key) { metrics.rereads += 1 }
-                readKeys[path, default: []].insert(key)
+                if readKeys[path, default: []].contains(Self.readKey(input)) { metrics.rereads += 1 }
             case "Edit", "MultiEdit", "Write", "NotebookEdit":
                 readKeys[path] = nil
             default: break
             }
+        }
+
+        static func readKey(_ input: Object) -> String {
+            "\(input["offset"] ?? "")|\(input["limit"] ?? "")|\(input["pages"] ?? "")"
         }
 
         private mutating func user(_ entry: Object) {
@@ -206,6 +214,9 @@ public enum SessionAnalyzer {
         private mutating func toolResult(_ block: Object) {
             let text = JSONLines.text(of: block["content"])
             let call = (block["tool_use_id"] as? String).flatMap { tools.removeValue(forKey: $0) }
+            if let call, call.name == "Read", block["is_error"] as? Bool != true, let path = call.input["file_path"] as? String {
+                readKeys[path, default: []].insert(Self.readKey(call.input))
+            }
             if block["is_error"] as? Bool == true {
                 if Self.isRejection(text) {
                     metrics.rejected += 1
@@ -220,7 +231,12 @@ public enum SessionAnalyzer {
             }
             if call?.name == "Bash", let command = call?.input["command"] as? String, command.contains("git"), command.contains("commit") {
                 for commit in Self.commits(in: text, command: command) where commitShas.insert(commit.sha).inserted {
-                    metrics.commits.append(commit)
+                    // An amended commit replaces the one it rewrote.
+                    if command.contains("--amend"), !metrics.commits.isEmpty {
+                        metrics.commits[metrics.commits.count - 1] = commit
+                    } else {
+                        metrics.commits.append(commit)
+                    }
                 }
             }
         }
@@ -268,10 +284,17 @@ public enum SessionAnalyzer {
                 rent.other += part(chunk.other)
             }
             explained += rent.readCode + rent.ownOutput + rent.injections + rent.other
-            // Growth without characters, rounding, and shrinking between calls: the parts
-            // must add up to what was really sent.
+            // The parts must add up to what was really sent. Growth without characters and
+            // rounding leave some over: it goes to other. A context that shrank without a
+            // compaction (cleared tool results) was counted too long: scale the parts down.
             let sent = calls.reduce(0) { $0 + $1.context }
-            rent.other += max(0, sent - explained)
+            if explained > sent, explained > 0 {
+                let scale = Double(sent) / Double(explained)
+                func scaled(_ value: Int) -> Int { Int((Double(value) * scale).rounded(.down)) }
+                rent = ContextRent(baseline: scaled(rent.baseline), readCode: scaled(rent.readCode), ownOutput: scaled(rent.ownOutput),
+                                   injections: scaled(rent.injections), other: scaled(rent.other))
+            }
+            rent.other += max(0, sent - rent.total)
             return rent
         }
 
@@ -318,13 +341,14 @@ public enum SessionAnalyzer {
             }
         }
 
-        /// `[main 1a2b3c4] Subject` and `[main (root-commit) 1a2b3c4] Subject` lines. After
+        /// `[main 1a2b3c4] Subject`, `[main (root-commit) 1a2b3c4] Subject` and `[detached HEAD
+        /// 1a2b3c4] Subject` lines. After
         /// `git commit -q`, a `git log --oneline` line counts only when its subject is in the
         /// command itself (the lines of older commits it prints are not).
         static func commits(in output: String, command: String = "") -> [LabCommit] {
             let lines = output.split(whereSeparator: \.isNewline)
             let printed = lines.compactMap { line -> LabCommit? in
-                guard let match = line.wholeMatch(of: /\[[^\]\s]+(?: \([^)]*\))? ([0-9a-f]{7,40})\] (.+)/) else { return nil }
+                guard let match = line.wholeMatch(of: /\[(?:detached HEAD|[^\]\s]+)(?: \([^)]*\))? ([0-9a-f]{7,40})\] (.+)/) else { return nil }
                 return LabCommit(sha: String(match.1), subject: String(match.2))
             }
             guard printed.isEmpty else { return printed }

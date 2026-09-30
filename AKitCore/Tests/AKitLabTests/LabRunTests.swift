@@ -147,13 +147,23 @@ struct LabRunTests {
         #expect(LabStore.list(env: env).map(\.id) == [second.id, first.id])
     }
 
+    @Test func reusedPidIsNotTheWorker() {
+        let me = getpid()
+        let start = LabStore.processStart(me)
+        #expect(start != nil)
+        #expect(LabStore.isAlive(RunState(status: .running, pid: me, pidStart: start)))
+        // Same pid, another start time: another process now has the worker's pid.
+        #expect(!LabStore.isAlive(RunState(status: .running, pid: me, pidStart: (start ?? 0) - 100)))
+        #expect(!LabStore.isAlive(RunState(status: .running, pid: 1)))
+    }
+
     @Test func cancelAndRemoveQueuedRun() async throws {
         let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
                                               akit: URL(filePath: "/usr/bin/true"), env: env)
-        try LabStore.cancel(run, env: env)
+        try await LabStore.cancel(run, env: env)
         let cancelled = try #require(LabStore.load(run.id, env: env))
         #expect(cancelled.status == .cancelled)
-        #expect(throws: LabStore.Failure.self) { try LabStore.cancel(cancelled, env: env) }
+        await #expect(throws: LabStore.Failure.self) { try await LabStore.cancel(cancelled, env: env) }
         var trashed: URL?
         try LabStore.remove(cancelled) { trashed = $0; return nil }
         #expect(trashed == run.folder)

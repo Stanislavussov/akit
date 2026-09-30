@@ -394,6 +394,10 @@ final class AppModel {
 
     /// Lab runs in `~/.akit/lab`, newest first (reloaded by the Lab screen while it is open).
     var labRuns: [LabRun] = []
+    /// Checked replay tasks of those runs, by commit.
+    var labTasks: [String: ReplayTask] = [:]
+    /// A start failed; the queue waits for Start instead of retrying on its own.
+    var labAutoStartPaused = false
 
     /// Lab metrics of one Claude Code session: transcript, then git for its commits.
     func analysis(of session: SessionSummary) async throws -> SessionMetrics {

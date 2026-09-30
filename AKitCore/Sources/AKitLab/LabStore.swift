@@ -2,7 +2,8 @@ import AKitFoundation
 import Darwin
 import Foundation
 
-/// One run as read from its folder.
+/// One run as read from its folder. Everything, the status too, is read once when loaded,
+/// so two loads compare equal only when nothing changed (and views read no files).
 public struct LabRun: Identifiable, Sendable, Hashable {
     public var id: String { spec.id }
     public let folder: URL
@@ -10,12 +11,27 @@ public struct LabRun: Identifiable, Sendable, Hashable {
     public let state: RunState?
     public let launch: LaunchInfo?
     public let result: RunResult?
-
     /// The status to show: `running` only while its worker lives.
-    public var status: RunState.Status {
-        guard let state else { return .queued }
-        if state.status == .running, let pid = state.pid, !LabStore.isAlive(pid) { return .error }
-        return state.status
+    public let status: RunState.Status
+    /// The review agent's findings; secrets masked.
+    public let review: Review?
+    /// The review agent's summary; secrets masked.
+    public let summary: String?
+
+    public init(folder: URL, spec: RunSpec, state: RunState?, launch: LaunchInfo?, result: RunResult?,
+                review: Review? = nil, summary: String? = nil) {
+        self.folder = folder
+        self.spec = spec
+        self.state = state
+        self.launch = launch
+        self.result = result
+        self.review = review
+        self.summary = summary
+        if let state {
+            status = state.status == .running && !LabStore.isAlive(state) ? .error : state.status
+        } else {
+            status = .queued
+        }
     }
 
     /// Error text, including a worker that died without saying so.
@@ -24,19 +40,11 @@ public struct LabRun: Identifiable, Sendable, Hashable {
         return state?.message
     }
 
-    public var isActive: Bool { status == .running || (status == .queued && launch != nil) }
-
-    /// The review agent's findings; secrets masked.
-    public var review: Review? {
-        guard let data = try? Data(contentsOf: folder.appending(path: "review.json")),
-              var review = try? LabStore.decoder.decode(Review.self, from: data) else { return nil }
-        review.findings = review.findings.map { .init(title: SecretFilter.masked($0.title), detail: SecretFilter.masked($0.detail)) }
-        return review
-    }
-
-    /// The review agent's summary; secrets masked.
-    public var summary: String? {
-        (try? String(contentsOf: folder.appending(path: "summary.md"), encoding: .utf8)).map(SecretFilter.masked)
+    /// Running, or started in a tab within the last two minutes (a launch that never ran
+    /// stops blocking the queue after that; the next start marks it as an error).
+    public var isActive: Bool {
+        status == .running
+            || (status == .queued && launch.map { Date.now.timeIntervalSince($0.launchedAt) < LabQueue.startGrace } == true)
     }
 }
 
@@ -88,10 +96,15 @@ public enum LabStore {
 
     static func load(folder: URL) -> LabRun? {
         guard let spec = read(RunSpec.self, from: folder.appending(path: "run.json")) else { return nil }
+        let review = read(Review.self, from: folder.appending(path: "review.json")).map { review in
+            Review(findings: review.findings.map { .init(title: SecretFilter.masked($0.title), detail: SecretFilter.masked($0.detail)) })
+        }
+        let summary = (try? String(contentsOf: folder.appending(path: "summary.md"), encoding: .utf8)).map(SecretFilter.masked)
         return LabRun(folder: folder, spec: spec,
                       state: read(RunState.self, from: folder.appending(path: "state.json")),
                       launch: read(LaunchInfo.self, from: folder.appending(path: "launch.json")),
-                      result: read(RunResult.self, from: folder.appending(path: "result.json")))
+                      result: read(RunResult.self, from: folder.appending(path: "result.json")),
+                      review: review, summary: summary)
     }
 
     /// Every run, newest first.
@@ -114,8 +127,20 @@ public enum LabStore {
         try write(result, to: LabPaths(env: env).run(id).appending(path: "result.json"))
     }
 
-    public static func isAlive(_ pid: Int32) -> Bool {
-        pid > 0 && (kill(pid, 0) == 0 || errno == EPERM)
+    /// The worker that wrote `state` still runs: its pid exists and started when the worker
+    /// did (a pid reused by another process has another start time).
+    static func isAlive(_ state: RunState) -> Bool {
+        guard let pid = state.pid, pid > 0, let started = processStart(pid) else { return false }
+        guard let recorded = state.pidStart else { return true }
+        return abs(started - recorded) < 0.01
+    }
+
+    /// When a process of this user started, in seconds since 1970; nil when there is none.
+    static func processStart(_ pid: Int32) -> Double? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size, info.pbi_uid == getuid() else { return nil }
+        return Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1_000_000
     }
 
     public struct Failure: Error, LocalizedError {
@@ -126,15 +151,20 @@ public enum LabStore {
 
     /// A running run gets SIGTERM (its worker stops the agent and writes `cancelled`);
     /// a queued one is marked cancelled and never starts.
-    public static func cancel(_ run: LabRun, env: HarnessEnvironment) throws {
-        switch run.status {
-        case .running:
-            guard let pid = run.state?.pid else { return }
-            kill(pid, SIGTERM)
-        case .queued:
-            try save(RunState(status: .cancelled, message: "Cancelled before it started."), of: run.id, env: env)
-        default:
-            throw Failure(message: "The run isn't running.")
+    /// Decided on the files as they are now, under the queue lock, so a worker that is just
+    /// starting can't be missed.
+    public static func cancel(_ run: LabRun, env: HarnessEnvironment) async throws {
+        try await LabQueue.locked(env: env) {
+            guard let current = load(run.id, env: env) else { throw Failure(message: "The run is gone.") }
+            switch current.status {
+            case .running:
+                guard let state = current.state, let pid = state.pid, isAlive(state) else { return }
+                kill(pid, SIGTERM)
+            case .queued:
+                try save(RunState(status: .cancelled, message: "Cancelled before it started."), of: run.id, env: env)
+            default:
+                throw Failure(message: "The run isn't running.")
+            }
         }
     }
 

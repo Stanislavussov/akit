@@ -14,21 +14,38 @@ public enum LabWorker {
     /// Returns the exit code. `startNext` and `handleSignals` are off in tests.
     public static func run(id: String, env: HarnessEnvironment, startNext: Bool = true, handleSignals: Bool = true,
                            out: @escaping @Sendable (String) -> Void) async -> Int32 {
-        guard let run = LabStore.load(id, env: env) else {
-            out("akit: no Lab run \(id) in \(LabPaths(env: env).folder.path).")
-            return 2
-        }
-        guard run.status == .queued else {
-            out("akit: run \(id) is \(run.status.rawValue); only a queued run can start.")
-            return 2
-        }
-        let started = Date.now
-        func state(_ status: RunState.Status, _ phase: RunState.Phase? = nil, message: String? = nil) {
-            try? LabStore.save(RunState(status: status, phase: phase, pid: getpid(), startedAt: started, message: message),
-                               of: id, env: env)
-        }
-        state(.running, .prepare)
+        // Signals first: from here on a closed tab or Ctrl-C stops the run cleanly.
         if handleSignals { Cancellation.installSignalHandlers() }
+        let started = Date.now
+        let pidStart = LabStore.processStart(getpid())
+        func state(_ status: RunState.Status, _ phase: RunState.Phase? = nil, message: String? = nil) {
+            try? LabStore.save(RunState(status: status, phase: phase, pid: getpid(), pidStart: pidStart, startedAt: started,
+                                        message: message), of: id, env: env)
+        }
+        // Take the run under the queue lock, so a cancel of the queued run can't cross it.
+        let taken: Result<LabRun, LabStore.Failure>
+        do {
+            taken = try await LabQueue.locked(env: env) {
+                guard let run = LabStore.load(id, env: env) else {
+                    return .failure(LabStore.Failure(message: "no Lab run \(id) in \(LabPaths(env: env).folder.path)."))
+                }
+                guard run.status == .queued else {
+                    return .failure(LabStore.Failure(message: "run \(id) is \(run.status.rawValue); only a queued run can start."))
+                }
+                state(.running, .prepare)
+                return .success(run)
+            }
+        } catch {
+            taken = .failure(LabStore.Failure(message: error.localizedDescription))
+        }
+        let run: LabRun
+        switch taken {
+        case .success(let value): run = value
+        case .failure(let failure):
+            out("akit: \(failure.message)")
+            if startNext { _ = try? await LabQueue.startNext(env: env) }
+            return 2
+        }
         out("Lab run \(id): \(run.spec.title)")
 
         let code: Int32
@@ -108,7 +125,10 @@ enum ReviewRun {
         guard !Cancellation.isCancelled else { throw CancellationError() }
 
         phase(.agent)
-        let exit = try await AgentRun.run(prompt: prompt, spec: run.spec, in: run.folder, runFolder: run.folder, env: env, out: out)
+        // The transcript may carry text written to steer an agent (fetched pages, file contents):
+        // the reviewer can only read and write files in its folder, with no shell, web or MCP.
+        let exit = try await AgentRun.run(prompt: prompt, spec: run.spec, in: run.folder, runFolder: run.folder, exposeRunFolder: true,
+                                          extra: ["--tools", "Read,Write,Glob,Grep", "--strict-mcp-config"], env: env, out: out)
         guard !exit.cancelled else { throw CancellationError() }
 
         phase(.metrics)
@@ -168,14 +188,24 @@ enum ReplayRun {
             throw LabWorker.Failure(message: "The run names no commit to replay.")
         }
         let repo = URL(filePath: repoPath, directoryHint: .isDirectory)
-        let work = run.folder.appending(path: "work", directoryHint: .isDirectory)
+        // The clone lives in a folder with a random name, not in the run folder: nothing in or
+        // next to it (run.json, the task cache) points at the commit being replayed.
+        let work = FileManager.default.temporaryDirectory
+            .appending(path: "akit-replay-\(UUID().uuidString.lowercased())", directoryHint: .isDirectory)
         let logURL = run.folder.appending(path: "check.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let log = try? FileHandle(forWritingTo: logURL)
         defer {
             try? log?.close()
-            // The clone goes to the Trash unless kept; no branch is left in the real repository.
-            if !run.spec.keep, FileManager.default.fileExists(atPath: work.path) { _ = try? Trash.move(work) }
+            // The clone (with its build) goes to the Trash unless kept, then it moves into the
+            // run folder; no branch is ever left in the real repository.
+            if FileManager.default.fileExists(atPath: work.path) {
+                if run.spec.keep {
+                    try? FileManager.default.moveItem(at: work, to: run.folder.appending(path: "work"))
+                } else {
+                    _ = try? Trash.move(work)
+                }
+            }
         }
 
         let task = try await ReplayTasks.task(commit: commit, repo: repo, env: env, out: out)
@@ -185,7 +215,8 @@ enum ReplayRun {
         try await IsolatedClone.make(at: work, from: URL(filePath: task.repo), commit: task.base, env: env)
 
         phase(.agent)
-        let exit = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, env: env, out: out)
+        let exit = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, exposeRunFolder: false,
+                                          env: env, out: out)
         guard !exit.cancelled else { throw CancellationError() }
 
         phase(.tests)
@@ -208,7 +239,8 @@ enum ReplayRun {
 
         phase(.metrics)
         let metrics = await LabWorker.ownMetrics(run.spec, project: work, env: env)
-        let leaks = LabPaths.transcript(sessionID: run.spec.sessionID, env: env).map { LeakCheck.leaks(in: $0, task: task) } ?? []
+        let leaks = LabPaths.transcript(sessionID: run.spec.sessionID, env: env)
+            .map { LeakCheck.leaks(in: $0, task: task, repo: repo, env: env) } ?? []
         return RunResult(metrics: metrics, tests: outcome, leaks: leaks)
     }
 

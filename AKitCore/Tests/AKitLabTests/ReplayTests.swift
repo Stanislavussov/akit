@@ -43,11 +43,14 @@ struct ReplayTests {
                 func testOne() {}
                 func helperTwo() {}
             }
+            extension OldTests {
+                func testLater() {}
+            }
             """
         let names = TestNames.parse(source).map(\.id)
-        #expect(names.count == 6)
+        #expect(names.count == 7)
         #expect(Set(names) == ["ParserTests/parsesEmpty", "ParserTests/parsesNumbers", "Inner/deep", "ParserTests/afterInner",
-                               "freeStanding", "OldTests/testOne"])
+                               "freeStanding", "OldTests/testOne", "OldTests/testLater"])
     }
 
     @Test func filtersMatchOnlyTheirTest() throws {
@@ -57,6 +60,12 @@ struct ReplayTests {
         #expect(!"AKitLabTests.ParserTests/parsesMore()".contains(regex))
         #expect(!"AKitLabTests.OtherParserTests/parses()".contains(regex))
         #expect("AKitLabTests.Outer/ParserTests/parses()".contains(regex))
+        let xctest = TestName(suite: "OldTests", name: "testOne", xctest: true)
+        #expect("Pkg.OldTests/testOne".contains(try Regex(xctest.filter)))
+        #expect(!"Pkg.OldTests/testOneMore".contains(try Regex(xctest.filter)))
+        // Tasks cached before XCTest support decode as Swift Testing.
+        let old = try JSONDecoder().decode(TestName.self, from: Data(#"{"suite":"S","name":"n"}"#.utf8))
+        #expect(old == TestName(suite: "S", name: "n"))
         #expect(TestNames.isTestFile("AKitCore/Tests/AKitLabTests/ReplayTests.swift"))
         #expect(!TestNames.isTestFile("AKitCore/Sources/AKitLab/TestNames.swift"))
         #expect(!TestNames.isTestFile("AKitCore/Sources/AKitLab/SwiftTests.swift"))
@@ -141,13 +150,25 @@ struct ReplayTests {
             ["type": "assistant", "message": ["content": [["type": "tool_use", "name": "Bash",
                                                             "input": ["command": "git commit -m 'Report layer.yaml mistakes'"]]]]],
         ])
-        #expect(LeakCheck.leaks(in: clean, task: task).isEmpty)
+        #expect(LeakCheck.leaks(in: clean, task: task, repo: URL(filePath: "/r"), env: env).isEmpty)
         let leaked = try transcript([
             ["type": "assistant", "message": ["content": [["type": "tool_use", "name": "Bash",
                                                             "input": ["command": "grep -r layer ~/.claude/projects"]]]]],
             ["type": "user", "message": ["content": [["type": "tool_result", "content": "commit 1c9cf65aaaa"]]]],
         ])
-        #expect(LeakCheck.leaks(in: leaked, task: task).count == 2)
+        #expect(LeakCheck.leaks(in: leaked, task: task, repo: URL(filePath: "/r"), env: env).count == 2)
+        // Claude Code's own note about a saved long output is not a leak; reading the real repository is.
+        let saved = try transcript([
+            ["type": "user", "message": ["content": [["type": "tool_result", "content": "Output saved to ~/.claude/projects/x/tool.txt"]]]],
+        ])
+        #expect(LeakCheck.leaks(in: saved, task: task, repo: URL(filePath: "/r"), env: env).isEmpty)
+        let repoRead = try transcript([
+            ["type": "assistant", "message": ["content": [["type": "tool_use", "name": "Bash", "input": ["command": "git -C /r log -p"]]]]],
+            ["type": "assistant", "message": ["content": [["type": "tool_use", "name": "Read",
+                                                            "input": ["file_path": home.path + "/.akit/lab/x/run.json"]]]]],
+        ])
+        #expect(LeakCheck.leaks(in: repoRead, task: task, repo: URL(filePath: "/r"), env: env)
+                == ["the real repository", "AKit's Lab folder"])
     }
 
     @Test func comparisonPerSetup() {

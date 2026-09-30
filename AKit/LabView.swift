@@ -53,13 +53,10 @@ struct LabView: View {
             NewLabRunSheet(session: nil) { run in selection = run.id }
         }
         .task {
+            // The app watches ~/.akit/lab all the time (RootView); this only picks a first run.
             await model.reloadLab()
             if selection == nil { selection = model.labRuns.first?.id }
             problem = await model.labProblem()
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                await model.reloadLab()
-            }
         }
     }
 
@@ -244,7 +241,8 @@ private struct LabRunDetail: View {
                 }
                 if run.status == .queued, run.launch == nil {
                     Button("Start", systemImage: "play") { act { try await model.startLabQueue() } }
-                        .help("Start the next queued run if nothing is running")
+                        .help(model.labAutoStartPaused ? "The last start failed; start the next queued run again"
+                              : "Start the next queued run if nothing is running")
                 }
                 Button("Show in Finder", systemImage: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([run.folder])
@@ -297,7 +295,7 @@ private struct LabRunDetail: View {
 
     @ViewBuilder private var replay: some View {
         if let commit = run.spec.commit {
-            let task = ReplayTasks.cached(commit, env: .current)
+            let task = model.labTasks[commit]
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(commit.prefix(7)) \(task?.subject ?? "")").fontWeight(.medium).textSelection(.enabled)
                 if let task {
@@ -378,9 +376,14 @@ struct MarkdownLines: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// Links an agent wrote stay clickable only for http and https (no file:// or app schemes).
     private func inline(_ line: String) -> AttributedString {
-        (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
-            ?? AttributedString(line)
+        guard var text = try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
+        else { return AttributedString(line) }
+        for run in text.runs {
+            if let link = run.link, !["http", "https"].contains(link.scheme?.lowercased() ?? "") { text[run.range].link = nil }
+        }
+        return text
     }
 }
 

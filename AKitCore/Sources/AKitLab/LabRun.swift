@@ -133,16 +133,19 @@ public struct RunState: Codable, Sendable, Hashable {
     public var status: Status
     public var phase: Phase?
     public var pid: Int32?
+    /// The worker's process start time, so a reused pid isn't taken for it.
+    public var pidStart: Double?
     public var startedAt: Date?
     public var updatedAt: Date
     /// Why the run stopped with an error.
     public var message: String?
 
-    public init(status: Status, phase: Phase? = nil, pid: Int32? = nil, startedAt: Date? = nil, updatedAt: Date = .now,
-                message: String? = nil) {
+    public init(status: Status, phase: Phase? = nil, pid: Int32? = nil, pidStart: Double? = nil, startedAt: Date? = nil,
+                updatedAt: Date = .now, message: String? = nil) {
         self.status = status
         self.phase = phase
         self.pid = pid
+        self.pidStart = pidStart
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.message = message

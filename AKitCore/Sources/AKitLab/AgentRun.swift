@@ -16,14 +16,18 @@ enum AgentRun {
 
     /// The environment of the agent: AKit's, with `AKIT_LAB_DIR` set and the markers of an
     /// outer Claude Code session removed (akit lab run may be started from inside one).
-    static func environment(_ env: HarnessEnvironment, runFolder: URL) -> [String: String] {
-        var variables = env.variables.merging(["PATH": env.pathForChildProcesses, "AKIT_LAB_DIR": runFolder.path]) { $1 }
+    /// `runFolder` nil (replays): the agent gets no pointer to the run folder, whose run.json
+    /// names the commit being replayed.
+    static func environment(_ env: HarnessEnvironment, runFolder: URL?) -> [String: String] {
+        var variables = env.variables.merging(["PATH": env.pathForChildProcesses]) { $1 }
+        variables["AKIT_LAB_DIR"] = runFolder?.path
         for key in ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"] { variables[key] = nil }
         return variables
     }
 
     /// Runs the agent to the end (or the time limit). Throws when Claude Code can't start.
-    static func run(prompt: String, spec: RunSpec, in directory: URL, runFolder: URL, extra: [String] = [],
+    /// The raw stream goes to `runFolder/agent.jsonl`; `exposeRunFolder` sets `AKIT_LAB_DIR`.
+    static func run(prompt: String, spec: RunSpec, in directory: URL, runFolder: URL, exposeRunFolder: Bool, extra: [String] = [],
                     env: HarnessEnvironment, timeout: TimeInterval = 2 * 3600,
                     out: @escaping @Sendable (String) -> Void) async throws -> ChildProcess.Exit {
         guard let claude = env.findExecutable("claude") else { throw LabWorker.Failure(message: "Claude Code (claude) is not installed.") }
@@ -33,9 +37,9 @@ enum AgentRun {
         defer { try? writer.close() }
         let printer = StreamPrinter(out: out)
         let exit = await ChildProcess.run(claude, arguments: arguments(prompt: prompt, spec: spec, extra: extra),
-                                          directory: directory, environment: environment(env, runFolder: runFolder),
+                                          directory: directory, environment: environment(env, runFolder: exposeRunFolder ? runFolder : nil),
                                           timeout: timeout) { line in
-            writer.write(Data((line + "\n").utf8))
+            try? writer.write(contentsOf: Data((line + "\n").utf8))
             printer.print(line)
         }
         guard let exit else { throw LabWorker.Failure(message: "Couldn't start \(claude.path).") }

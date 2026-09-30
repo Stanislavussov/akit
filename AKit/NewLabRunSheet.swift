@@ -122,7 +122,8 @@ struct NewLabRunSheet: View {
     private var canQueue: Bool {
         switch kind {
         case .review: target != nil
-        case .replay: repo != nil && draft != nil && !setups.isEmpty && !modelName.trimmingCharacters(in: .whitespaces).isEmpty
+        case .replay: repo != nil && draft != nil && checking == nil && !setups.isEmpty
+            && !modelName.trimmingCharacters(in: .whitespaces).isEmpty
         }
     }
 
@@ -232,7 +233,7 @@ struct NewLabRunSheet: View {
                 ForEach(LabRuns.efforts, id: \.self) { Text($0).tag($0) }
             }
             Stepper("Repeats: \(repeats) per setup", value: $repeats, in: 1...10)
-            Toggle("Keep the clone (otherwise it goes to the Trash)", isOn: $keep)
+            Toggle("Keep the clone (otherwise it goes to the Trash, build folder and all)", isOn: $keep)
         }
         .formStyle(.grouped)
         .task(id: repo) {

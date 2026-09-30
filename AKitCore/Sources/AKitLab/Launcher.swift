@@ -197,12 +197,16 @@ public enum Launcher {
         return result.output
     }
 
-    /// The command's JSON output (the last line that parses as an object: CLIs may print warnings first).
+    /// The command's JSON output: all of it, else the text from the last line that starts an
+    /// object that parses to the end (CLIs may print warnings first).
     private static func json(_ tool: String, _ arguments: [String], env: HarnessEnvironment) async throws -> [String: Any] {
         let output = try await run(tool, arguments, env: env)
-        if let object = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] { return object }
-        if let start = output.firstIndex(of: "{"),
-           let object = try? JSONSerialization.jsonObject(with: Data(output[start...].utf8)) as? [String: Any] { return object }
+        func object(_ text: Substring) -> [String: Any]? { try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] }
+        if let whole = object(output[...]) { return whole }
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
+        for index in lines.indices.reversed() where lines[index].hasPrefix("{") {
+            if let found = object(lines[index...].joined(separator: "\n")[...]) { return found }
+        }
         throw Failure(message: "\(tool) printed no JSON: \(output.prefix(200))")
     }
 }
@@ -212,18 +216,20 @@ public enum LabQueue {
     /// A launched run whose worker hasn't written `state.json` after this long never started.
     static let startGrace: TimeInterval = 120
 
+    /// Runs `work` holding `~/.akit/lab/queue.lock`, shared with every akit process: starting
+    /// a run, a worker taking its run, and cancelling happen one at a time.
+    static func locked<T>(env: HarnessEnvironment, _ work: () async throws -> T) async throws -> T {
+        try FileManager.default.createDirectory(at: LabPaths(env: env).folder, withIntermediateDirectories: true)
+        return try await FileLock.holding(LabPaths(env: env).folder.appending(path: "queue.lock"), work)
+    }
+
     /// Starts the oldest queued run if no run is active. Returns it, or nil.
     @discardableResult
     public static func startNext(env: HarnessEnvironment) async throws -> LabRun? {
-        let lock = LabPaths(env: env).folder.appending(path: "queue.lock")
-        try FileManager.default.createDirectory(at: lock.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let descriptor = open(lock.path, O_CREAT | O_RDWR, 0o644)
-        guard descriptor >= 0 else { return nil }
-        defer { close(descriptor) }
-        // Two starters (the app and a finishing worker) must not both launch.
-        guard flock(descriptor, LOCK_EX) == 0 else { return nil }
-        defer { flock(descriptor, LOCK_UN) }
+        try await locked(env: env) { try await startNextLocked(env: env) }
+    }
 
+    private static func startNextLocked(env: HarnessEnvironment) async throws -> LabRun? {
         var runs = LabStore.list(env: env)
         let stale = runs.filter { run in
             run.status == .queued && run.launch.map { Date.now.timeIntervalSince($0.launchedAt) >= startGrace } == true
