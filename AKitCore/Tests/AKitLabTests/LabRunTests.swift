@@ -211,7 +211,7 @@ struct LabRunTests {
             #!/bin/sh
             printf '%s\n' "$@" > "$HOME/args.txt"
             cat > "$HOME/stdin.txt"
-            echo '{"type":"result","is_error":false,"result":"","structured_output":{"summary":"It went well.","improvements":[{"title":"A","detail":"a"},{"title":"B","detail":"b"},{"title":"C","detail":"c"},{"title":"D","detail":"d"}]}}'
+            echo '{"type":"result","is_error":false,"result":"","structured_output":{"summary":"It went well.","improvements":[{"title":"A","evidence":"#3: 4 errors","detail":"a"},{"title":"B","detail":"b"},{"title":"C","detail":"c"},{"title":"D","detail":"d"}]}}'
             """#, executable: true)
         let agent = LabAgent(harness: .claudeCode, model: "haiku", effort: "low")
         let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: "Fix it", agent: agent, environment: .background,
@@ -221,6 +221,7 @@ struct LabRunTests {
         let done = try #require(LabStore.load(run.id, env: env))
         #expect(code == 0 && done.result?.review == .ok && done.result?.agentError == nil, "\(output.lines)")
         #expect(done.summary == "It went well.\n" && done.review?.findings.map(\.title) == ["A", "B", "C"])
+        #expect(done.review?.findings.map(\.evidence) == ["#3: 4 errors", nil, nil])
         let args = read(home.appending(path: "args.txt")).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         #expect(args.contains("--safe-mode") && args.contains("--json-schema") && !args.contains("--restricted"))
         let tools = try #require(args.firstIndex(of: "--tools"))
@@ -247,6 +248,21 @@ struct LabRunTests {
         #expect(args.contains("--no-tools") && args.contains("--no-context-files") && !args.contains("--tools"))
         #expect(args.last == "@" + run.folder.appending(path: "review-input.md").path)
         #expect(read(run.folder.appending(path: "review-input.md")).contains("## Transcript digest"))
+    }
+
+    @Test func reviewLanguageFromLabSettings() async throws {
+        #expect(LabSettings.load(env: env).reportLanguage == .english)
+        try LabSettings(reportLanguage: .czech).save(env: env)
+        #expect(LabSettings.load(env: env).reportLanguage == .czech)
+        let fromSettings = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
+                                                       akit: URL(filePath: "/usr/bin/true"), env: env)
+        #expect(fromSettings.spec.language == .czech)
+        let chosen = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, language: .russian,
+                                                 environment: .background, akit: URL(filePath: "/usr/bin/true"), env: env)
+        #expect(chosen.spec.language == .russian && LabStore.list(env: env).count == 2)
+        let flags = ReviewRun.callFlags(.claudeCode, input: home, language: .russian)
+        let prompt = try #require(flags.firstIndex(of: "--system-prompt").map { flags[$0 + 1] })
+        #expect(prompt.hasSuffix(LabLanguage.russian.instruction) && prompt.contains("in Russian"))
     }
 
     @Test func unreadableAnswerIsKept() throws {

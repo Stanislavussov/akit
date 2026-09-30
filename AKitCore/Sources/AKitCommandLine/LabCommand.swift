@@ -15,7 +15,8 @@ extension AKitCLI {
 
         Runs (one at a time; each opens a tab that runs `akit lab run ID`):
           akit lab new review SESSION [--harness claude-code|pi] [--model M] [--effort E]
-                              [--mode call|agent] [--env orca|herdr|background] [--no-start]
+                              [--mode call|agent] [--language en|ru|cs] [--env orca|herdr|background]
+                              [--no-start]
                                           A model reads the session (masked) and AKit's numbers and
                                           writes one paragraph and up to 3 improvements. Opens where
                                           the session ran; --env overrides. It runs through Claude
@@ -23,7 +24,8 @@ extension AKitCLI {
                                           default to the harness's settings (Pi: --effort is its
                                           thinking level). call (default): one model call on a
                                           digest, no tools; agent: an agent reads the whole
-                                          transcript with file tools
+                                          transcript with file tools. --language: the language of the
+                                          review (default: Lab settings in AKit, else English)
           akit lab new replay COMMIT [--repo DIR] [--setups full,lean] [--model M] [--effort E]
                               [--repeats N] [--env orca|herdr|background] [--keep] [--no-start]
                                           Redo a commit from its parent in an isolated clone (no refs,
@@ -68,6 +70,7 @@ extension AKitCLI {
         let effortText = args.value("--effort")
         let harnessText = args.value("--harness")
         let modeText = args.value("--mode")
+        let languageText = args.value("--language")
         let repeatsText = args.value("--repeats")
         let keep = args.flag("--keep")
         let command = args.positional()
@@ -89,8 +92,8 @@ extension AKitCLI {
             _ = args.positional()
             guard let commit = args.positional() else { throw Failure(message: "Which commit? akit lab new replay COMMIT.") }
             try args.finish()
-            guard harnessText == nil, modeText == nil else {
-                throw Failure(message: "Replays run a Claude Code agent; --harness and --mode are for reviews.")
+            guard harnessText == nil, modeText == nil, languageText == nil else {
+                throw Failure(message: "Replays run a Claude Code agent; --harness, --mode and --language are for reviews.")
             }
             let environment = try labEnvironment(environmentText, env: env)
             let defaults = LabRuns.defaultModelAndEffort(env: env)
@@ -155,9 +158,13 @@ extension AKitCLI {
                 throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
             }
             guard harness == .pi || !agent.model.isEmpty else { throw Failure(message: "Which model? --model.") }
-            let run = try await LabRuns.newReview(transcript: file, title: nil, agent: agent, environment: environment,
-                                                  akit: ownExecutable, env: env)
-            out("Queued \(run.id): \(run.spec.title) by \(agent.label) (\(run.spec.environment.title), \(run.spec.folder)).")
+            let language = try languageText.map { text in
+                guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is en, ru or cs.") }
+                return language
+            }
+            let run = try await LabRuns.newReview(transcript: file, title: nil, agent: agent, language: language,
+                                                  environment: environment, akit: ownExecutable, env: env)
+            out("Queued \(run.id): \(run.spec.title) by \(agent.label) in \(run.spec.language?.name ?? "English") (\(run.spec.environment.title), \(run.spec.folder)).")
             if !noStart { try await startNext(env: env, out: out) }
             return 0
         case "list":
@@ -251,6 +258,7 @@ extension AKitCLI {
                      "Opens in \(run.spec.environment.title) · \(run.spec.folder)",
                      "Folder   \(run.folder.path)"]
         if let agent = run.spec.agent { lines.append("Agent    \(agent.label)") }
+        if let language = run.spec.language, language != .english { lines.append("Language \(language.name)") }
         if let message = run.message { lines.append("Message  \(message)") }
         if let result = run.result {
             if let metrics = result.metrics { lines += [""] + MetricsText.lines(metrics) }
@@ -261,6 +269,7 @@ extension AKitCLI {
             lines += ["", review.findings.isEmpty ? "Nothing worth changing." : "What to improve:"]
             for (index, finding) in review.findings.enumerated() {
                 lines.append("\(index + 1). \(finding.title)")
+                if let evidence = finding.evidence { lines.append("   Evidence: \(evidence)") }
                 lines.append("   \(finding.detail)")
             }
         }

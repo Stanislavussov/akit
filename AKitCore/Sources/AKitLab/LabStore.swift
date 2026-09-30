@@ -97,7 +97,7 @@ public enum LabStore {
     static func load(folder: URL) -> LabRun? {
         guard let spec = read(RunSpec.self, from: folder.appending(path: "run.json")) else { return nil }
         let review = read(Review.self, from: folder.appending(path: "review.json")).map { review in
-            Review(findings: review.findings.prefix(Review.limit).map { .init(title: SecretFilter.masked($0.title), detail: SecretFilter.masked($0.detail)) })
+            Review(findings: review.findings.prefix(Review.limit).map(\.masked))
         }
         let summary = (try? String(contentsOf: folder.appending(path: "summary.md"), encoding: .utf8)).map(SecretFilter.masked)
         return LabRun(folder: folder, spec: spec,
@@ -179,9 +179,9 @@ public enum LabStore {
 public enum LabRuns {
     /// A review of a recorded Claude Code session, opened where the session ran (or in
     /// the home folder when that is gone). `environment` nil = suggested for that folder.
-    /// `agent` nil = Claude Code with your settings.
-    public static func newReview(transcript: URL, title: String?, agent: LabAgent? = nil, environment: LabEnvironment?, akit: URL,
-                                 env: HarnessEnvironment) async throws -> LabRun {
+    /// `agent` nil = Claude Code with your settings; `language` nil = the one in Lab settings.
+    public static func newReview(transcript: URL, title: String?, agent: LabAgent? = nil, language: LabLanguage? = nil,
+                                 environment: LabEnvironment?, akit: URL, env: HarnessEnvironment) async throws -> LabRun {
         let ran = LabPaths.folder(ofTranscript: transcript)
         let folder = ran.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil } ?? env.homeDirectory
         let chosen: LabEnvironment
@@ -194,7 +194,7 @@ public enum LabRuns {
         let name = title.map { JSONLines.titleLine($0, limit: 60) } ?? transcript.deletingPathExtension().lastPathComponent
         let spec = RunSpec(id: RunSpec.newID(), kind: .review, title: "Review: \(name)", folder: folder.path,
                            environment: chosen, akit: akit.path, reviewedTranscript: transcript.path, reviewedTitle: title,
-                           agent: agent)
+                           agent: agent, language: language ?? LabSettings.load(env: env).reportLanguage)
         return try LabStore.create(spec, env: env)
     }
 }

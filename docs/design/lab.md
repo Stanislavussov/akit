@@ -132,8 +132,10 @@ phase change:
                   herdr workspace, tab and pane; background pid)
   state.json      by `akit lab run`, see lifecycle
   result.json     by `akit lab run` at the end (schema below); the only writer
-  review.json     by the review skill only: { "findings": [ { "title", "detail" } ] },
-                  0 to 3 improvements (AKit shows at most 3)
+  review.json     { "findings": [ { "title", "evidence", "detail" } ] }: 0 to 3 improvements
+                  (AKit shows at most 3); written by AKit from the model's answer, or by
+                  the agent
+  settings.json   (in ~/.akit/lab itself) Lab defaults: { "reportLanguage": "en|ru|cs" }
   summary.md      by the review skill only: one paragraph
   agent.jsonl     raw stream-json of a headless run; the tab shows a readable version
   check.log       hidden-test output, watchdog kills
@@ -385,6 +387,12 @@ is kept here.
      `result.json` keeps it as `agentError` and the Lab screen shows it.
    - Later (2026-09-30): one model call became the default (`--mode call|agent`); the
      agent stays for sessions too long for a digest.
+   - Later (2026-09-30): an improvement is generic advice (a rule, skill, hook, setting or
+     way of working that helps any session meeting the same barrier; its title names nothing
+     of the reviewed project), `evidence` with the session's facts (items #n, numbers) that
+     prove the barrier, and `detail` with what the advice improves. The review language
+     (English, Russian, Czech) is a Lab setting in AKit's Settings, kept in
+     `~/.akit/lab/settings.json`; `--language` overrides it and the run keeps it in run.json.
 
 ## Open questions
 

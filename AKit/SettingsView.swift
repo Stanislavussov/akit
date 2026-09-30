@@ -1,5 +1,6 @@
 import AKitBrain
 import AKitHarnesses
+import AKitLab
 import AppKit
 import SwiftUI
 
@@ -10,6 +11,8 @@ struct SettingsView: View {
     @State private var machineError: String?
     @State private var machineNotes: [String] = []
     @State private var confirmPersonal = false
+    @State private var lab = LabSettings.load(env: .current)
+    @State private var labError: String?
 
     var body: some View {
         Form {
@@ -86,6 +89,27 @@ struct SettingsView: View {
             } footer: {
                 Text("Your git repo with the skill library and layers. No harness reads this folder; AKit renders from it.")
                     .foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Review language", selection: $lab.reportLanguage) {
+                    ForEach(LabLanguage.allCases, id: \.self) { Text($0.name).tag($0) }
+                }
+                if let labError {
+                    Label(labError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                }
+            } header: {
+                Text("Lab")
+            } footer: {
+                Text("The language of new session reviews: the paragraph and the improvements. Kept in ~/.akit/lab/settings.json, so akit lab new review uses it too (--language overrides).")
+                    .foregroundStyle(.secondary)
+            }
+            .onChange(of: lab) {
+                do {
+                    try lab.save(env: .current)
+                    labError = nil
+                } catch {
+                    labError = "Couldn't save ~/.akit/lab/settings.json: \(error.localizedDescription)"
+                }
             }
         }
         .formStyle(.grouped)

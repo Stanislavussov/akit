@@ -1,3 +1,4 @@
+import AKitFoundation
 import Foundation
 
 /// What a run does: `run.json`, written once when the run is queued.
@@ -28,6 +29,8 @@ public struct RunSpec: Codable, Sendable, Hashable {
     public var reviewedTitle: String?
     /// The harness and model that write the review; nil = Claude Code with your settings.
     public var agent: LabAgent?
+    /// The language the review is written in; nil = English.
+    public var language: LabLanguage?
 
     // Replay
     public var repo: String?
@@ -40,7 +43,8 @@ public struct RunSpec: Codable, Sendable, Hashable {
 
     public init(id: String, kind: Kind, title: String, createdAt: Date = .now, folder: String,
                 environment: LabEnvironment, akit: String, sessionID: String = UUID().uuidString.lowercased(),
-                reviewedTranscript: String? = nil, reviewedTitle: String? = nil, agent: LabAgent? = nil, repo: String? = nil, commit: String? = nil,
+                reviewedTranscript: String? = nil, reviewedTitle: String? = nil, agent: LabAgent? = nil, language: LabLanguage? = nil,
+                repo: String? = nil, commit: String? = nil,
                 setup: LabSetup? = nil, repeatIndex: Int? = nil, repeats: Int? = nil, keep: Bool = false) {
         self.id = id
         self.kind = kind
@@ -53,6 +57,7 @@ public struct RunSpec: Codable, Sendable, Hashable {
         self.reviewedTranscript = reviewedTranscript
         self.reviewedTitle = reviewedTitle
         self.agent = agent
+        self.language = language
         self.repo = repo
         self.commit = commit
         self.setup = setup
@@ -177,6 +182,54 @@ public struct LabAgent: Codable, Sendable, Hashable {
         // An empty model: Pi's own default.
         case .pi: (model.isEmpty ? [] : ["--model", model]) + ["--thinking", effort]
         }
+    }
+}
+
+/// The language a review is written in. AKit's own text stays English.
+public enum LabLanguage: String, Codable, Sendable, CaseIterable {
+    case english = "en"
+    case russian = "ru"
+    case czech = "cs"
+
+    public var name: String {
+        switch self {
+        case .english: "English"
+        case .russian: "Russian"
+        case .czech: "Czech"
+        }
+    }
+
+    /// Added to the review instructions.
+    var instruction: String {
+        "Write the summary and the improvements (titles and details) in \(name). Keep JSON keys, file names, "
+            + "commands, code and quoted text as they are."
+    }
+}
+
+/// `~/.akit/lab/settings.json`: Lab defaults shared by the app (Settings) and `akit lab`.
+public struct LabSettings: Codable, Sendable, Hashable {
+    /// The language new reviews are written in.
+    public var reportLanguage: LabLanguage
+
+    public init(reportLanguage: LabLanguage = .english) {
+        self.reportLanguage = reportLanguage
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        reportLanguage = (try? container.decodeIfPresent(LabLanguage.self, forKey: .reportLanguage)) ?? .english
+    }
+
+    static func file(env: HarnessEnvironment) -> URL { LabPaths(env: env).folder.appending(path: "settings.json") }
+
+    /// The defaults when the file is missing or unreadable.
+    public static func load(env: HarnessEnvironment) -> LabSettings {
+        (try? Data(contentsOf: file(env: env))).flatMap { try? JSONDecoder().decode(LabSettings.self, from: $0) } ?? LabSettings()
+    }
+
+    public func save(env: HarnessEnvironment) throws {
+        try FileManager.default.createDirectory(at: LabPaths(env: env).folder, withIntermediateDirectories: true)
+        try LabStore.write(self, to: Self.file(env: env))
     }
 }
 
@@ -329,9 +382,24 @@ public struct Review: Codable, Sendable, Hashable {
     /// AKit shows at most this many, even when an agent writes more.
     public static let limit = 3
 
+    /// One improvement: generic advice (`title`), the facts from the session that show the
+    /// barrier (`evidence`, missing in early reviews), and what the advice would improve
+    /// (`detail`).
     public struct Finding: Codable, Sendable, Hashable {
         public var title: String
+        public var evidence: String?
         public var detail: String
+
+        public init(title: String, evidence: String? = nil, detail: String) {
+            self.title = title
+            self.evidence = evidence
+            self.detail = detail
+        }
+
+        /// Secrets masked in every part.
+        var masked: Finding {
+            Finding(title: SecretFilter.masked(title), evidence: evidence.map(SecretFilter.masked), detail: SecretFilter.masked(detail))
+        }
     }
 
     public var findings: [Finding]
