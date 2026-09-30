@@ -158,7 +158,7 @@ public enum AKitCLI {
         do {
             // Lab has its own options (--repo, --json, …); none of the brain's apply.
             if arguments.first == "lab" {
-                return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err)
+                return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
             }
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {

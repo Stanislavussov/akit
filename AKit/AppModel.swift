@@ -392,6 +392,9 @@ final class AppModel {
         try await Self.background { try SessionReader.transcript(of: session) }
     }
 
+    /// Lab runs in `~/.akit/lab`, newest first (reloaded by the Lab screen while it is open).
+    var labRuns: [LabRun] = []
+
     /// Lab metrics of one Claude Code session: transcript, then git for its commits.
     func analysis(of session: SessionSummary) async throws -> SessionMetrics {
         let file = session.file, project = session.project

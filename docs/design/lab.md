@@ -119,14 +119,19 @@ phase change:
 
 ```
 ~/.akit/lab/<run-id>/
-  run.json        by AKit before start: kind, target, harness, setup, environment +
-                  launcher handle, session id, transcript path, repeat index, base commit
+  run.json        by AKit when queued: kind, target, setup, environment, the akit to run,
+                  session id, repeat index, commit
+  launch.json     by the launcher when started: environment and handle (Orca terminal;
+                  herdr workspace, tab and pane; background pid)
   state.json      by `akit lab run`, see lifecycle
   result.json     by `akit lab run` at the end (schema below); the only writer
   review.json     by the review skill only: { "findings": [ { "title", "detail" } ] }
   summary.md      by the review skill only
   agent.jsonl     raw stream-json of a headless run; the tab shows a readable version
   check.log       hidden-test output, watchdog kills
+  console.log     output of a background run (Orca and herdr show it in the tab)
+  transcript.md   review: the reviewed session, masked (the app's Markdown export)
+  analysis.json   review: AKit's metrics of the reviewed session
 ```
 
 `result.json`:
@@ -135,17 +140,23 @@ phase change:
 {
   "schema": 1,
   "metrics": { "calls": 146, "freshTokens": 700000, "cacheReadTokens": 24900000,
-               "peakContext": 299000, "baselineContext": 41000,
-               "contextRent": { "baseline": 0.22, "readCode": 0.31, "ownOutput": 0.21,
-                                "injections": 0.15, "other": 0.11 },
-               "toolErrors": 5, "rereads": 0, "interrupts": 0, "rejected": 0,
-               "commits": 3, "wallSeconds": 1820 },
+               "outputTokens": 120000, "peakContext": 299000, "baselineContext": 41000,
+               "contextRent": { "baseline": 1380000, "readCode": 1950000, "ownOutput": 1320000,
+                                "injections": 940000, "other": 690000 },
+               "toolCalls": 180, "toolErrors": 5, "rereads": 0, "interrupts": 0, "rejected": 0,
+               "compactions": 0, "commits": [ { "sha": "1a2b3c4", "subject": "…", "onMainBranch": true } ],
+               "wallSeconds": 1820, "activeSeconds": 1400, "subagentCalls": 0,
+               "subagentFreshTokens": 0, "models": ["claude-opus-5-5"] },
   "tests": { "status": "passed | failed | not-run",
              "failToPass": { "passed": 7, "total": 7 },
              "passToPass": { "passed": 3, "total": 3 }, "timeouts": 0 },
-  "review": { "status": "ok | missing | invalid" }
+  "review": "ok | missing | invalid",
+  "leaks": []
 }
 ```
+
+Context rent parts are tokens × calls (they add up to all context sent); the app and
+`akit lab show` turn them into shares. Absent parts are left out (a review has no `tests`).
 
 Who writes what:
 
@@ -286,7 +297,7 @@ is kept here.
    - `akit lab analyze SESSION [--json]` (a transcript path or a session id).
    - App: an **Analysis** tab on the Sessions screen (Claude Code sessions), computed when
      it is opened.
-2. **Runs** — status: planned.
+2. **Runs** — status: done 2026-09-30 (checked with real Orca and background runs, and a real cancel).
    - `~/.akit/lab/<run-id>/`: `run.json` (written once when the run is queued),
      `launch.json` (environment and handle, written when it is started; a queued run has
      none yet), `state.json`, `result.json`, `console.log` (background runs).
@@ -326,7 +337,7 @@ is kept here.
    - App: New Run offers the commit, setups, model, effort, repeats; the Lab screen shows
      runs of one task side by side per setup (passed, fresh tokens, calls, wall time: median
      and range).
-4. **Session review** — status: planned.
+4. **Session review** — status: done 2026-09-30, built with step 2 as the first kind of run.
    - The review instructions ship inside `akit` (no skill to install). The run folder gets
      `transcript.md` (the masked Markdown export) and `analysis.json`; the agent runs
      headless in the run folder, reads them and writes `review.json` and `summary.md`.

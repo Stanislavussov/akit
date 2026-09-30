@@ -304,6 +304,7 @@ public enum SessionAnalyzer {
         static let rejectionMarkers = [
             "doesn't want to proceed with this tool use",
             "Permission for this action was denied",
+            "Permission for this tool use was denied",
             "Permission to use",
             "permission prompts are disabled",
             "requires approval",

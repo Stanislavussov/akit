@@ -8,6 +8,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case mcp
     case sessions
     case usage
+    case lab
     case brain
     var id: Self { self }
 
@@ -19,6 +20,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .mcp: "MCP Servers"
         case .sessions: "Sessions"
         case .usage: "Usage"
+        case .lab: "Lab"
         case .brain: "Brain"
         }
     }
@@ -31,6 +33,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .mcp: "server.rack"
         case .sessions: "bubble.left.and.bubble.right"
         case .usage: "chart.bar.xaxis"
+        case .lab: "flask"
         case .brain: "brain"
         }
     }
@@ -45,7 +48,7 @@ struct RootView: View {
         NavigationSplitView {
             List(SidebarSection.allCases, selection: $model.section) { section in
                 Label(section.title, systemImage: section.icon)
-                    .badge(section == .skills ? model.skills.count : section == .mcp ? model.mcpServers.count : 0)
+                    .badge(badge(for: section))
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200)
             .safeAreaInset(edge: .bottom) {
@@ -59,6 +62,7 @@ struct RootView: View {
             case .mcp: MCPView()
             case .sessions: SessionsView()
             case .usage: UsageView()
+            case .lab: LabView()
             case .brain: BrainView()
             }
         }
@@ -79,6 +83,15 @@ struct RootView: View {
             Button("OK") { rebuild.dismissError() }
         } message: {
             Text(rebuildError ?? "")
+        }
+    }
+
+    private func badge(for section: SidebarSection) -> Int {
+        switch section {
+        case .skills: model.skills.count
+        case .mcp: model.mcpServers.count
+        case .lab: model.labRuns.filter { $0.status == .running || $0.status == .queued }.count
+        default: 0
         }
     }
 

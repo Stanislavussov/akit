@@ -26,6 +26,20 @@ public struct LabPaths: Sendable {
             .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    /// The session's name: set by the user, else Claude Code's title (the last one written).
+    public static func title(ofTranscript file: URL) -> String? {
+        var custom: String?
+        var ai: String?
+        for entry in JSONLines.tail(of: file) {
+            switch entry["type"] as? String {
+            case "custom-title": custom = entry["customTitle"] as? String ?? custom
+            case "ai-title": ai = entry["aiTitle"] as? String ?? ai
+            default: break
+            }
+        }
+        return [custom, ai].compactMap { $0 }.first { !$0.isEmpty }.map(SecretFilter.masked)
+    }
+
     /// The folder a Claude Code session ran in (`cwd` of its first lines).
     public static func folder(ofTranscript file: URL) -> URL? {
         var cwd: String?
