@@ -12,13 +12,15 @@ enum AgentRun {
     static func arguments(prompt: String, spec: RunSpec, extra: [String] = []) -> [String] {
         switch harness(of: spec) {
         case .claudeCode:
-            ["-p", prompt, "--verbose", "--output-format", "stream-json",
-             "--session-id", spec.sessionID, "--name", "Lab: \(spec.title)",
-             "--permission-mode", "auto", "--permission-prompts", "none",
-             "--disallowedTools", "Bash(git push:*)"]
-                + (spec.setup?.flags ?? spec.agent?.flags ?? []) + extra
+            // `extra` may bring its own permission mode.
+            let mode: [String] = extra.contains("--permission-mode") ? [] : ["--permission-mode", "auto"]
+            let flags: [String] = spec.setup?.flags ?? spec.agent?.flags ?? []
+            var arguments = ["-p", prompt, "--verbose", "--output-format", "stream-json",
+                             "--session-id", spec.sessionID, "--name", "Lab: \(spec.title)"]
+            arguments += mode + ["--permission-prompts", "none", "--disallowedTools", "Bash(git push:*)"]
+            return arguments + flags + extra
         case .pi:
-            ["-p", prompt, "--mode", "json", "--session-id", spec.sessionID, "--name", "Lab: \(spec.title)", "--offline"]
+            return ["-p", prompt, "--mode", "json", "--session-id", spec.sessionID, "--name", "Lab: \(spec.title)", "--offline"]
                 + (spec.agent?.flags ?? []) + extra
         }
     }
@@ -38,12 +40,15 @@ enum AgentRun {
         let exit: ChildProcess.Exit
         /// The harness's last error, when the agent ended with one (a refused model call).
         let error: String?
+        /// The model's final answer: Claude Code's structured output or result text, Pi's
+        /// last assistant text.
+        let answer: String?
     }
 
     /// Runs the agent to the end (or the time limit). Throws when the harness can't start.
     /// The raw stream goes to `runFolder/agent.jsonl`; `exposeRunFolder` sets `AKIT_LAB_DIR`.
     static func run(prompt: String, spec: RunSpec, in directory: URL, runFolder: URL, exposeRunFolder: Bool, extra: [String] = [],
-                    env: HarnessEnvironment, timeout: TimeInterval = 2 * 3600,
+                    input: URL? = nil, env: HarnessEnvironment, timeout: TimeInterval = 2 * 3600,
                     out: @escaping @Sendable (String) -> Void) async throws -> Outcome {
         let harness = harness(of: spec)
         guard let command = env.findExecutable(harness.command) else {
@@ -56,13 +61,13 @@ enum AgentRun {
         let printer = StreamPrinter(harness: harness, out: out)
         let exit = await ChildProcess.run(command, arguments: arguments(prompt: prompt, spec: spec, extra: extra),
                                           directory: directory, environment: environment(env, runFolder: exposeRunFolder ? runFolder : nil),
-                                          timeout: timeout) { line in
+                                          input: input, timeout: timeout) { line in
             try? writer.write(contentsOf: Data((line + "\n").utf8))
             printer.print(line)
         }
         guard let exit else { throw LabWorker.Failure(message: "Couldn't start \(command.path).") }
         if exit.timedOut { out("The agent was stopped after \(MetricsText.duration(Int(timeout))).") }
-        return Outcome(exit: exit, error: printer.error)
+        return Outcome(exit: exit, error: printer.error, answer: printer.answer)
     }
 }
 
@@ -75,6 +80,10 @@ final class StreamPrinter: @unchecked Sendable {
     /// Pi: whether the last model call failed, for the end line.
     private var failed = false
     private var lastError: String?
+    private var lastAnswer: String?
+
+    /// The model's final answer, unmasked (AKit masks what it writes from it).
+    var answer: String? { lock.withLock { lastAnswer } }
 
     /// The agent's error when it ended with one: Claude Code's failed result, or Pi's last
     /// model call when it failed. Masked.
@@ -100,10 +109,19 @@ final class StreamPrinter: @unchecked Sendable {
                 let message = object["message"] as? [String: Any] ?? [:]
                 if message["role"] as? String == "assistant" {
                     lastError = failed ? (message["errorMessage"] as? String).map { SecretFilter.masked(String($0.prefix(300))) } : nil
+                    let text = (message["content"] as? [[String: Any]] ?? [])
+                        .filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
+                    if !text.isEmpty { lastAnswer = text }
                 }
             case .claudeCode where object["type"] as? String == "result":
                 lastError = object["is_error"] as? Bool == true
                     ? SecretFilter.masked(String((object["result"] as? String ?? "Claude Code stopped with an error.").prefix(300))) : nil
+                if let structured = object["structured_output"], JSONSerialization.isValidJSONObject(structured),
+                   let data = try? JSONSerialization.data(withJSONObject: structured) {
+                    lastAnswer = String(decoding: data, as: UTF8.self)
+                } else {
+                    lastAnswer = object["result"] as? String
+                }
             default:
                 break
             }

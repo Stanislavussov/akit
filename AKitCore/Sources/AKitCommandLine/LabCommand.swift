@@ -15,12 +15,15 @@ extension AKitCLI {
 
         Runs (one at a time; each opens a tab that runs `akit lab run ID`):
           akit lab new review SESSION [--harness claude-code|pi] [--model M] [--effort E]
-                              [--env orca|herdr|background] [--no-start]
-                                          An agent reads the session (masked) and AKit's numbers and
+                              [--mode call|agent] [--env orca|herdr|background] [--no-start]
+                                          A model reads the session (masked) and AKit's numbers and
                                           writes one paragraph and up to 3 improvements. Opens where
-                                          the session ran; --env overrides. The agent runs in Claude
-                                          Code (default) or Pi; model and effort default to the
-                                          harness's settings (Pi: --effort is its thinking level)
+                                          the session ran; --env overrides. It runs through Claude
+                                          Code (default) or Pi, with their sign-in; model and effort
+                                          default to the harness's settings (Pi: --effort is its
+                                          thinking level). call (default): one model call on a
+                                          digest, no tools; agent: an agent reads the whole
+                                          transcript with file tools
           akit lab new replay COMMIT [--repo DIR] [--setups full,lean] [--model M] [--effort E]
                               [--repeats N] [--env orca|herdr|background] [--keep] [--no-start]
                                           Redo a commit from its parent in an isolated clone (no refs,
@@ -64,6 +67,7 @@ extension AKitCLI {
         let modelText = args.value("--model")
         let effortText = args.value("--effort")
         let harnessText = args.value("--harness")
+        let modeText = args.value("--mode")
         let repeatsText = args.value("--repeats")
         let keep = args.flag("--keep")
         let command = args.positional()
@@ -85,7 +89,9 @@ extension AKitCLI {
             _ = args.positional()
             guard let commit = args.positional() else { throw Failure(message: "Which commit? akit lab new replay COMMIT.") }
             try args.finish()
-            guard harnessText == nil else { throw Failure(message: "Replays run in Claude Code only; --harness is for reviews.") }
+            guard harnessText == nil, modeText == nil else {
+                throw Failure(message: "Replays run a Claude Code agent; --harness and --mode are for reviews.")
+            }
             let environment = try labEnvironment(environmentText, env: env)
             let defaults = LabRuns.defaultModelAndEffort(env: env)
             let effort = effortText ?? defaults.effort
@@ -141,6 +147,10 @@ extension AKitCLI {
             var agent = LabRuns.defaultAgent(harness, env: env)
             if let modelText { agent.model = modelText }
             if let effortText { agent.effort = effortText }
+            if let modeText {
+                guard let mode = LabAgent.Mode(rawValue: modeText) else { throw Failure(message: "--mode is call or agent.") }
+                agent.mode = mode
+            }
             guard harness.efforts.contains(agent.effort) else {
                 throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
             }

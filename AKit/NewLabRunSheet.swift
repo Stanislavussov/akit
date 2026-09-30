@@ -31,6 +31,7 @@ struct NewLabRunSheet: View {
     @State private var harness: LabHarness = .claudeCode
     @State private var reviewModel = ""
     @State private var reviewEffort = "high"
+    @State private var reviewMode: LabAgent.Mode = .call
     /// Models to offer for the harness (Pi: the ones it has credentials for).
     @State private var reviewModels: [String] = []
 
@@ -87,7 +88,7 @@ struct NewLabRunSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 620, height: session == nil ? 760 : 400)
+        .frame(width: 620, height: session == nil ? 800 : 440)
         .task(id: tabFolder) {
             suggested = nil
             guard let folder = tabFolder else { return }
@@ -144,7 +145,7 @@ struct NewLabRunSheet: View {
     }
 
     @ViewBuilder private var review: some View {
-        Text("An agent reads the session (secrets masked) and AKit's numbers for it, then writes one paragraph and up to three improvements. It runs headless in the harness you pick, with only file reading and writing; nothing in your projects changes.")
+        Text("A model reads the session (secrets masked) and AKit's numbers for it, then writes one paragraph and up to three improvements. It goes through the harness you pick, with its own sign-in; nothing in your projects changes.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -168,7 +169,7 @@ struct NewLabRunSheet: View {
             Text("Session: \(target.title)").fontWeight(.medium)
         }
         Form {
-            Picker("Agent", selection: $harness) {
+            Picker("Harness", selection: $harness) {
                 ForEach(model.labHarnesses, id: \.self) { Text($0.title).tag($0) }
             }
             HStack {
@@ -183,10 +184,16 @@ struct NewLabRunSheet: View {
             Picker(harness == .pi ? "Thinking" : "Effort", selection: $reviewEffort) {
                 ForEach(harness.efforts, id: \.self) { Text($0).tag($0) }
             }
+            Picker("How", selection: $reviewMode) {
+                ForEach(LabAgent.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .help(reviewMode == .call
+                  ? "One call with no tools and none of your customizations: AKit sends a digest of the session (about 90K tokens at most)"
+                  : "An agent reads the whole transcript with file tools; slower and dearer, for sessions too long for a digest")
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
-        .frame(height: 170)
+        .frame(height: 215)
     }
 
     /// The chosen harness's defaults and models. `ProcessRunner` doesn't stop on cancel, so a
@@ -201,7 +208,7 @@ struct NewLabRunSheet: View {
     }
 
     private var reviewAgent: LabAgent {
-        LabAgent(harness: harness, model: reviewModel.trimmingCharacters(in: .whitespaces), effort: reviewEffort)
+        LabAgent(harness: harness, model: reviewModel.trimmingCharacters(in: .whitespaces), effort: reviewEffort, mode: reviewMode)
     }
 
     private var claudeSessions: [SessionSummary] {

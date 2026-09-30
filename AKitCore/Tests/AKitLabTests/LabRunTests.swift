@@ -83,6 +83,7 @@ struct LabRunTests {
         #expect(read(run.folder.appending(path: "agent.jsonl")).contains("\"type\":\"result\""))
         let args = read(run.folder.appending(path: "args.txt")).split(separator: "\n").map(String.init)
         #expect(args.contains("--permission-prompts") && args.contains("none") && args.contains(run.spec.sessionID))
+        #expect(args.contains("--restricted") && args.filter { $0 == "--permission-mode" }.count == 1 && args.contains("acceptEdits"))
         #expect(args.contains("Bash(git push:*)"))
         #expect(output.lines.contains("▸ Read transcript.md"))
         #expect(output.lines.contains("Agent finished · 2 turns · 5 sec"))
@@ -188,7 +189,7 @@ struct LabRunTests {
             echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Done."}],"stopReason":"stop"}}'
             echo '{"type":"agent_settled"}'
             """#, executable: true)
-        let agent = LabAgent(harness: .pi, model: "zai/glm-5", effort: "low")
+        let agent = LabAgent(harness: .pi, model: "zai/glm-5", effort: "low", mode: .agent)
         let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, agent: agent, environment: .background,
                                               akit: URL(filePath: "/usr/bin/true"), env: env)
         let output = Output()
@@ -204,8 +205,64 @@ struct LabRunTests {
         #expect(output.lines.contains("Agent finished") && !output.lines.contains { $0.hasPrefix("Warning:") })
     }
 
+    @Test func reviewInOneClaudeCall() async throws {
+        // Reads the input on stdin, answers through a result event with structured output.
+        try write("bin/claude", #"""
+            #!/bin/sh
+            printf '%s\n' "$@" > "$HOME/args.txt"
+            cat > "$HOME/stdin.txt"
+            echo '{"type":"result","is_error":false,"result":"","structured_output":{"summary":"It went well.","improvements":[{"title":"A","detail":"a"},{"title":"B","detail":"b"},{"title":"C","detail":"c"},{"title":"D","detail":"d"}]}}'
+            """#, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "haiku", effort: "low")
+        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: "Fix it", agent: agent, environment: .background,
+                                              akit: URL(filePath: "/usr/bin/true"), env: env)
+        let output = Output()
+        let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: output.add)
+        let done = try #require(LabStore.load(run.id, env: env))
+        #expect(code == 0 && done.result?.review == .ok && done.result?.agentError == nil, "\(output.lines)")
+        #expect(done.summary == "It went well.\n" && done.review?.findings.map(\.title) == ["A", "B", "C"])
+        let args = read(home.appending(path: "args.txt")).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        #expect(args.contains("--safe-mode") && args.contains("--json-schema") && !args.contains("--restricted"))
+        let tools = try #require(args.firstIndex(of: "--tools"))
+        #expect(args[tools + 1] == "" && args.contains("haiku"))
+        let input = read(home.appending(path: "stdin.txt"))
+        #expect(input.contains("## AKit's numbers") && input.contains("[#0 user] Fix it"))
+        #expect(output.lines.contains("It went well."))
+    }
+
+    @Test func reviewInOnePiCall() async throws {
+        try write("bin/pi", #"""
+            #!/bin/sh
+            printf '%s\n' "$@" > "$HOME/args.txt"
+            echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Here: {\"summary\":\"Fine.\",\"improvements\":[]}"}],"stopReason":"stop"}}'
+            echo '{"type":"agent_settled"}'
+            """#, executable: true)
+        let agent = LabAgent(harness: .pi, model: "zai/glm-5", effort: "low")
+        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, agent: agent, environment: .background,
+                                              akit: URL(filePath: "/usr/bin/true"), env: env)
+        let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in })
+        let done = try #require(LabStore.load(run.id, env: env))
+        #expect(code == 0 && done.result?.review == .ok && done.summary == "Fine.\n" && done.review?.findings.isEmpty == true)
+        let args = read(home.appending(path: "args.txt")).split(separator: "\n").map(String.init)
+        #expect(args.contains("--no-tools") && args.contains("--no-context-files") && !args.contains("--tools"))
+        #expect(args.last == "@" + run.folder.appending(path: "review-input.md").path)
+        #expect(read(run.folder.appending(path: "review-input.md")).contains("## Transcript digest"))
+    }
+
+    @Test func unreadableAnswerIsKept() throws {
+        let folder = home.appending(path: "answer")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        #expect(ReviewRun.write(answer: "Sorry, no JSON.", to: folder, out: { _ in }) != nil)
+        #expect(read(folder.appending(path: "answer.txt")) == "Sorry, no JSON." && ReviewRun.status(in: folder) == .missing)
+    }
+
+    @Test func oldAgentsDecodeAsAgentMode() throws {
+        let old = try JSONDecoder().decode(LabAgent.self, from: Data(#"{"harness":"pi","model":"m","effort":"low"}"#.utf8))
+        #expect(old.mode == .agent)
+    }
+
     @Test func piDefaultsAndModels() throws {
-        #expect(LabRuns.defaultAgent(.pi, env: env) == LabAgent(harness: .pi, model: "", effort: "medium"))
+        #expect(LabRuns.defaultAgent(.pi, env: env) == LabAgent(harness: .pi, model: "", effort: "medium", mode: .call))
         #expect(!LabAgent(harness: .pi, model: "", effort: "medium").flags.contains("--model"))
         try write(".pi/agent/settings.json", #"{"defaultProvider":"zai","defaultModel":"glm-5","defaultThinkingLevel":"high"}"#)
         #expect(LabRuns.defaultAgent(.pi, env: env) == LabAgent(harness: .pi, model: "zai/glm-5", effort: "high"))

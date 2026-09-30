@@ -77,7 +77,7 @@ AKit UI ◀──(3) watches ~/.akit/lab/ and shows state and result
 | Kind | Agent | Where it runs | Result |
 |---|---|---|---|
 | **Session analysis** | no | inside AKit, instant | cost, friction and context rent of one recorded session |
-| **Session review** | yes | terminal | an agent reads the session and writes one paragraph plus 0 to 3 improvements |
+| **Session review** | a model call or an agent | terminal | one paragraph plus 0 to 3 improvements |
 | **Replay task** | yes | terminal, N repeats × setups | hidden tests passed or not, and what it cost |
 
 Session analysis is plain computation over the transcript and git; it needs no
@@ -170,12 +170,22 @@ Who writes what:
 
 - **Numbers come from `akit lab run`**, never from the agent: tokens, calls, context
   rent, tests, commits. An agent can't be trusted to report its own metrics.
-- **The review agent writes only `review.json` and `summary.md`**, in the run folder
+- **A review is one model call by default**: AKit sends its numbers and a digest of the
+  masked transcript (numbered items, long texts cut, thinking left out; tool results and
+  then the middle of the session go first when it is still over ~90K tokens), the model
+  answers with JSON, and AKit writes `review.json` and `summary.md` itself. The call goes
+  through the harness with its own sign-in and model settings, never with keys AKit reads:
+  Claude Code `-p --tools "" --safe-mode --system-prompt … --json-schema …` with the digest
+  on stdin; Pi `-p --no-tools --no-skills --no-context-files --no-prompt-templates
+  --system-prompt … @review-input.md`. No tools means an injected transcript can't make it
+  touch any file.
+- **As an agent (`--mode agent`) the reviewer writes only `review.json` and `summary.md`**, in the run folder
   where it runs (`AKIT_LAB_DIR`). The reviewed transcript may hold text written to steer an
   agent, so it gets only `Read`, `Write`, `Glob` and `Grep` (`--tools`, no MCP servers;
   in Pi `--tools read,write,grep,find,ls`, an allowlist that covers extension tools too).
-  Known gap: those file tools aren't confined to the run folder, so an injected transcript
-  could still make the reviewer write a file elsewhere; a path sandbox is still to do.
+  Claude Code also gets `--restricted`, which confines its file tools to the run folder and
+  skips your settings files. Known gap: Pi's file tools reach any path, so a Pi agent review
+  of an injected transcript could write a file elsewhere; one model call has no such gap.
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
@@ -373,6 +383,8 @@ is kept here.
      be Pi (`pi -p --mode json`); AKit doesn't measure Pi sessions yet, so a Pi review has
      no numbers of its own. When the harness ends with an error (a refused model call),
      `result.json` keeps it as `agentError` and the Lab screen shows it.
+   - Later (2026-09-30): one model call became the default (`--mode call|agent`); the
+     agent stays for sessions too long for a digest.
 
 ## Open questions
 

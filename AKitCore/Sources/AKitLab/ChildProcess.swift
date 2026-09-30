@@ -14,23 +14,25 @@ enum ChildProcess {
     }
 
     /// nil = couldn't start. `onLine` gets stdout and stderr lines (without the newline).
-    static func run(_ executable: URL, arguments: [String], directory: URL, environment: [String: String],
+    /// `input`: a file for stdin (else /dev/null).
+    static func run(_ executable: URL, arguments: [String], directory: URL, environment: [String: String], input: URL? = nil,
                     timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) async -> Exit? {
         await withCheckedContinuation { continuation in
             Thread.detachNewThread {
                 continuation.resume(returning: runBlocking(executable, arguments: arguments, directory: directory,
-                                                           environment: environment, timeout: timeout, onLine: onLine))
+                                                           environment: environment, input: input, timeout: timeout, onLine: onLine))
             }
         }
     }
 
     private static func runBlocking(_ executable: URL, arguments: [String], directory: URL, environment: [String: String],
-                                    timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) -> Exit? {
+                                    input: URL?, timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) -> Exit? {
         guard !Cancellation.isCancelled else { return Exit(status: 0, exitedNormally: false, timedOut: false, cancelled: true) }
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { return nil }
         let (readEnd, writeEnd) = (fds[0], fds[1])
-        guard let pid = spawn(executable, arguments: arguments, directory: directory, environment: environment, output: writeEnd) else {
+        guard let pid = spawn(executable, arguments: arguments, directory: directory, environment: environment, input: input,
+                              output: writeEnd) else {
             close(readEnd)
             close(writeEnd)
             return nil
@@ -92,13 +94,13 @@ enum ChildProcess {
                     cancelled: Cancellation.isCancelled)
     }
 
-    /// stdin from /dev/null, stdout+stderr into `output`, a new process group, default signals.
+    /// stdin from `input` or /dev/null, stdout+stderr into `output`, a new process group, default signals.
     private static func spawn(_ executable: URL, arguments: [String], directory: URL, environment: [String: String],
-                              output: Int32) -> pid_t? {
+                              input: URL?, output: Int32) -> pid_t? {
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
-        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 0, input?.path ?? "/dev/null", O_RDONLY, 0)
         posix_spawn_file_actions_adddup2(&actions, output, 1)
         posix_spawn_file_actions_adddup2(&actions, output, 2)
         guard posix_spawn_file_actions_addchdir_np(&actions, directory.path) == 0 else { return nil }
