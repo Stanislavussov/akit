@@ -83,8 +83,9 @@ terminal (CI), every default is taken.
 | **Skills** | Every skill the agents can see, grouped by where it lives (global, per project, plugins, claude.ai), with filters by project and agent. |
 | **skills.sh** | Search the public [skills.sh](https://skills.sh) directory, preview a skill and install it into one folder you choose, as is or as your own copy. |
 | **MCP Servers** | Every configured MCP server per agent and project. Add one from a form or pasted JSON, edit or delete it; secret values go to the Keychain, never into config files and never on screen. |
-| **Sessions** | Saved conversations of every agent, newest first, with token use. Copy one as Markdown or JSON for evals or another agent. |
+| **Sessions** | Saved conversations of every agent, newest first, with token use. Copy one as Markdown or JSON for evals or another agent. A Claude Code session also gets an Analysis tab (calls, fresh tokens, where the context went, friction, commits) and a button to have an agent review it. |
 | **Usage** | Tokens and cost per day and subscription, from the agents' own session files. Only what they recorded; the one exception, Claude Code sessions that saved no cost, is marked as an estimate. |
+| **Lab** | Measures agent sessions. Runs start in an Orca or herdr tab (or in the background), one at a time: an agent reviews a session, or redoes a commit from its parent in an isolated clone under different setups while the commit's own tests judge it. Numbers come from the transcript and git, never from the agent. |
 | **Brain** | Your layers and skill library: create and edit layers, add skills to them, import skills, set up a project, remove things, sync with the remote. |
 
 AKit only reads agent files unless you apply a change. Every change shows a diff first,
@@ -243,6 +244,12 @@ akit remove project [PROJECT|--home] [--keep-files]
 
 akit machine [work [--name NAME] | personal]     a work Mac keeps project records out of the brain
 
+akit lab analyze SESSION                         metrics of one Claude Code session
+akit lab new review SESSION                      an agent reviews a session in a terminal tab
+akit lab new replay COMMIT [--setups full,lean] [--repeats N]
+                                                 redo a commit under setups; hidden tests judge it
+akit lab list / show ID / compare COMMIT         runs and their results
+
 ANSWERS: --layers a,b  --set field=value  --unset field  --targets claude,pi  --answers FILE
 ```
 
@@ -258,6 +265,7 @@ projects folder. `akit --help` has the details.
 | `~/.akit/registry` | your brain |
 | `~/.akit/backups/<time>/` | every file AKit replaced, by path under `~` |
 | `~/.akit/machine.json`, `~/.akit/local/projects/` | this Mac's role; on a work Mac, its project records |
+| `~/.akit/lab/` | Lab runs (one folder each) and checked replay tasks |
 | `~/.agents/skills`, `~/.claude/skills` | skills from the core layer (the second links to the first) |
 | Keychain | MCP secret values you entered in AKit |
 
@@ -280,8 +288,8 @@ make banner             # redraw docs/assets/banner.png
 ```
 
 The logic lives in the Swift package in `AKitCore/`, split into one module per area
-(harnesses, skills, sessions, usage, MCP, brain, insights, render, project setup, the
-`akit` command); `docs/design/architecture.md` shows the modules and how they depend on
+(harnesses, skills, sessions, usage, MCP, brain, insights, render, project setup, lab,
+the `akit` command); `docs/design/architecture.md` shows the modules and how they depend on
 each other. The app in `AKit/` is SwiftUI on top of them. See `CLAUDE.md` for the project
 rules and `docs/design/layers.md` for the brain and layers design.
 
