@@ -112,6 +112,10 @@ public enum AKitCLI {
                                           Layer skill: keep_auto: true in its layer.yaml (committed). Advice:
                                           hidden until its ≈ context space doubles
 
+        Lab (measure agent sessions; ~/.akit/lab, never in the brain):
+          akit lab analyze SESSION        Calls, fresh tokens, context rent, friction and commits of one
+                                          Claude Code session. akit lab --help lists the rest
+
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
           akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
@@ -152,6 +156,10 @@ public enum AKitCLI {
         }
         let projectsRoot = projectsRoot ?? env.homeDirectory.appending(path: "Projects")
         do {
+            // Lab has its own options (--repo, --json, …); none of the brain's apply.
+            if arguments.first == "lab" {
+                return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err)
+            }
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {
                 out(usage)
@@ -1251,7 +1259,7 @@ public enum AKitCLI {
         text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
-    private static func resolve(_ path: String, cwd: URL, env: HarnessEnvironment) -> URL {
+    static func resolve(_ path: String, cwd: URL, env: HarnessEnvironment) -> URL {
         if path.hasPrefix("~") || path.hasPrefix("/") { return env.expand(path).standardizedFileURL }
         return cwd.appending(path: path).standardizedFileURL
     }

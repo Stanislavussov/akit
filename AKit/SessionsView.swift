@@ -118,6 +118,7 @@ private struct SessionRow: View {
 enum SessionDetailTab: String, CaseIterable, Identifiable {
     case conversation
     case usage
+    case analysis
     case prompt
     var id: Self { self }
 
@@ -125,8 +126,14 @@ enum SessionDetailTab: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: "Conversation"
         case .usage: "Usage"
+        case .analysis: "Analysis"
         case .prompt: "System Prompt"
         }
+    }
+
+    /// Lab analysis reads Claude Code transcripts only.
+    static func available(for harness: HarnessID) -> [SessionDetailTab] {
+        allCases.filter { $0 != .analysis || harness == .claudeCode }
     }
 }
 
@@ -146,6 +153,12 @@ private struct SessionDetailView: View {
             switch tab {
             case .conversation: content
             case .usage: usage
+            case .analysis:
+                if session.harness == .claudeCode {
+                    SessionAnalysisView(session: session)
+                } else {
+                    content
+                }
             case .prompt: SessionPromptView(session: session)
             }
         }
@@ -207,7 +220,7 @@ private struct SessionDetailView: View {
             .textSelection(.enabled)
 
             Picker("View", selection: $tab) {
-                ForEach(SessionDetailTab.allCases) { Text($0.title).tag($0) }
+                ForEach(SessionDetailTab.available(for: session.harness)) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()

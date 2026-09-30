@@ -267,7 +267,7 @@ Decided 2026-09-30 when building starts. Each step is one or more commits on bra
 and ends with `make build`, `make test` and a snapshot of the screens it touches. Status
 is kept here.
 
-1. **Session analysis** — status: planned.
+1. **Session analysis** — status: done 2026-09-30.
    - New module `AKitLab` (Foundation, Model, Sessions). `SessionAnalyzer.analyze(file)`
      reads one Claude Code transcript in order: API calls (one per `message.id`, main
      chain only; subagent calls and fresh tokens are counted apart), fresh and cache-read
