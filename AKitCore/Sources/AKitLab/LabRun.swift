@@ -128,20 +128,48 @@ public enum LabHarness: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// Who writes a review: a harness, a model (`opus`; for Pi `provider/model`) and an effort.
+/// Who writes a review: a harness, a model (`opus`; for Pi `provider/model`), an effort, and
+/// how the model is used. Both modes go through the harness, with its own sign-in and model
+/// settings; AKit never reads the harness's keys.
 public struct LabAgent: Codable, Sendable, Hashable {
+    public enum Mode: String, Codable, Sendable, CaseIterable {
+        /// One model call with no tools and none of your customizations: AKit sends a digest
+        /// of the session, the model answers with JSON, AKit writes the review files.
+        case call
+        /// An agent with file tools reads the whole transcript in parts and writes the files.
+        case agent
+
+        public var title: String {
+            switch self {
+            case .call: "One model call"
+            case .agent: "Agent with file tools"
+            }
+        }
+    }
+
     public var harness: LabHarness
     public var model: String
     public var effort: String
+    public var mode: Mode
 
-    public init(harness: LabHarness, model: String, effort: String) {
+    public init(harness: LabHarness, model: String, effort: String, mode: Mode = .call) {
         self.harness = harness
         self.model = model
         self.effort = effort
+        self.mode = mode
     }
 
-    /// "Pi · opencode-go/kimi-k3 · high".
-    public var label: String { "\(harness.title) · \(model) · \(effort)" }
+    /// Runs queued before modes existed were agents.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        harness = try container.decode(LabHarness.self, forKey: .harness)
+        model = try container.decode(String.self, forKey: .model)
+        effort = try container.decode(String.self, forKey: .effort)
+        mode = try container.decodeIfPresent(Mode.self, forKey: .mode) ?? .agent
+    }
+
+    /// "Pi · opencode-go/kimi-k3 · high · one model call".
+    public var label: String { "\(harness.title) · \(model.isEmpty ? "default model" : model) · \(effort) · \(mode.title.lowercased())" }
 
     var flags: [String] {
         switch harness {

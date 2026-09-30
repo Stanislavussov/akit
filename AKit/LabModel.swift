@@ -65,7 +65,7 @@ extension AppModel {
 
     /// Queues a review of a Claude Code session by `agent` and starts the queue.
     func queueReview(of session: SessionSummary, agent: LabAgent, environment: LabEnvironment?) async throws -> LabRun {
-        if let problem = await labProblem(needing: "--harness") { throw LabStore.Failure(message: problem) }
+        if let problem = await labProblem(needing: "--mode") { throw LabStore.Failure(message: problem) }
         guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
         let run = try await LabRuns.newReview(transcript: session.file, title: session.title, agent: agent,
                                               environment: environment, akit: akit, env: .current)
