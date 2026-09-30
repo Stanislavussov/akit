@@ -59,6 +59,8 @@ struct ReplayTests {
         #expect("AKitLabTests.Outer/ParserTests/parses()".contains(regex))
         #expect(TestNames.isTestFile("AKitCore/Tests/AKitLabTests/ReplayTests.swift"))
         #expect(!TestNames.isTestFile("AKitCore/Sources/AKitLab/TestNames.swift"))
+        #expect(!TestNames.isTestFile("AKitCore/Sources/AKitLab/SwiftTests.swift"))
+        #expect(TestNames.isTestFile("Tests/Unit/ParserTests.swift"))
     }
 
     @Test func testOutcomeFromOutput() {

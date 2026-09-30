@@ -251,7 +251,7 @@ extension ReplayTasks {
     /// Recent commits (no merges) that change Swift test files: the ones that can become tasks.
     public static func candidates(repo: URL, limit: Int = 60, env: HarnessEnvironment) async -> [Candidate] {
         guard let log = await LabGit.output(["log", "--no-merges", "-n", "\(limit)", "--format=%H%x09%s", "--",
-                                             "*Tests/*.swift", "*Tests.swift"], in: repo, env: env) else { return [] }
+                                             "*Tests/*.swift"], in: repo, env: env) else { return [] }
         return log.split(separator: "\n").compactMap { line in
             let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { return nil }

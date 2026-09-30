@@ -65,6 +65,14 @@ extension AppModel {
         try await ReplayTasks.draft(commit: commit, repo: repo, env: .current)
     }
 
+    /// Checks a commit as a task now (two builds, a few minutes): the Lab screen's
+    /// `akit lab task`. `progress` gets the last line printed.
+    func checkTask(_ draft: ReplayTasks.Draft, progress: @escaping @MainActor (String) -> Void) async throws -> ReplayTask {
+        try await Task.detached(priority: .userInitiated) {
+            try await ReplayTasks.validate(draft, env: .current) { line in Task { @MainActor in progress(line) } }
+        }.value
+    }
+
     var defaultModelAndEffort: (model: String, effort: String) { LabRuns.defaultModelAndEffort(env: .current) }
 
     /// Starts the next queued run when nothing runs, then reloads.

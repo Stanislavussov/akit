@@ -68,8 +68,9 @@ enum TestNames {
         return tests.filter { seen.insert($0).inserted }
     }
 
-    /// Test sources: Swift files under a `Tests` folder or named `…Tests.swift`.
+    /// Test sources: Swift files in a test folder (`Tests/`, `AKitLabTests/`…). A name alone
+    /// isn't enough: `Sources/X/SwiftTests.swift` is code the agent may change.
     static func isTestFile(_ path: String) -> Bool {
-        path.hasSuffix(".swift") && (path.contains("Tests/") || path.hasSuffix("Tests.swift") || path.hasSuffix("Test.swift"))
+        path.hasSuffix(".swift") && path.split(separator: "/").dropLast().contains { $0.hasSuffix("Tests") || $0 == "Tests" }
     }
 }

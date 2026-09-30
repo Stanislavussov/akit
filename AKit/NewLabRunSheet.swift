@@ -41,6 +41,9 @@ struct NewLabRunSheet: View {
     @State private var effort = "high"
     @State private var repeats = 3
     @State private var keep = false
+    /// The last line of a running task check.
+    @State private var checking: String?
+    @State private var checked: ReplayTask?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -79,7 +82,7 @@ struct NewLabRunSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 620, height: session == nil ? 640 : 300)
+        .frame(width: 620, height: session == nil ? 700 : 300)
         .task(id: tabFolder) {
             suggested = nil
             guard let folder = tabFolder else { return }
@@ -200,12 +203,21 @@ struct NewLabRunSheet: View {
                 Text(draft.subject).foregroundStyle(.secondary)
             }
             if let draft {
-                let cached = ReplayTasks.cached(draft.commit, env: .current)
+                let cached = checked ?? ReplayTasks.cached(draft.commit, env: .current)
                 LabeledContent("Tests") {
-                    Text(cached.map { "\($0.failToPass.count) fail-to-pass, \($0.passToPass.count) pass-to-pass (checked)" }
-                         ?? "\(draft.tests.count) in \(draft.testFiles.map { URL(filePath: $0).lastPathComponent }.joined(separator: ", ")) (checked by the first run)")
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text(cached.map { "\($0.failToPass.count) fail-to-pass, \($0.passToPass.count) pass-to-pass (checked)" }
+                             ?? "\(draft.tests.count) in \(draft.testFiles.map { URL(filePath: $0).lastPathComponent }.joined(separator: ", ")) (the first run checks them)")
+                            .foregroundStyle(.secondary)
+                        if cached == nil {
+                            Button(checking == nil ? "Check Now" : "Checking…") { check(draft) }
+                                .disabled(checking != nil)
+                                .help("Run the tests on the parent and on the commit now (two builds, a few minutes)")
+                        }
+                    }
                 }
+                if let checking { Text(checking).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                if let draftError { Text(draftError).foregroundStyle(.orange).font(.callout) }
             } else if let draftError {
                 Text(draftError).foregroundStyle(.orange).font(.callout)
             }
@@ -233,6 +245,7 @@ struct NewLabRunSheet: View {
         .task(id: "\(repo?.path ?? "")|\(commit)") {
             draft = nil
             draftError = nil
+            checked = nil
             let commit = commit.trimmingCharacters(in: .whitespaces)
             guard let repo, commit.count >= 4 else { return }
             try? await Task.sleep(for: .milliseconds(300))
@@ -242,6 +255,19 @@ struct NewLabRunSheet: View {
             } catch {
                 draftError = error.localizedDescription
             }
+        }
+    }
+
+    private func check(_ draft: ReplayTasks.Draft) {
+        checking = "Starting…"
+        draftError = nil
+        Task {
+            do {
+                checked = try await model.checkTask(draft) { checking = $0 }
+            } catch {
+                draftError = error.localizedDescription
+            }
+            checking = nil
         }
     }
 
