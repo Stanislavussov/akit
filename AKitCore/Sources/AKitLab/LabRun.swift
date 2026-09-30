@@ -26,6 +26,8 @@ public struct RunSpec: Codable, Sendable, Hashable {
     // Review
     public var reviewedTranscript: String?
     public var reviewedTitle: String?
+    /// The harness and model that write the review; nil = Claude Code with your settings.
+    public var agent: LabAgent?
 
     // Replay
     public var repo: String?
@@ -38,7 +40,7 @@ public struct RunSpec: Codable, Sendable, Hashable {
 
     public init(id: String, kind: Kind, title: String, createdAt: Date = .now, folder: String,
                 environment: LabEnvironment, akit: String, sessionID: String = UUID().uuidString.lowercased(),
-                reviewedTranscript: String? = nil, reviewedTitle: String? = nil, repo: String? = nil, commit: String? = nil,
+                reviewedTranscript: String? = nil, reviewedTitle: String? = nil, agent: LabAgent? = nil, repo: String? = nil, commit: String? = nil,
                 setup: LabSetup? = nil, repeatIndex: Int? = nil, repeats: Int? = nil, keep: Bool = false) {
         self.id = id
         self.kind = kind
@@ -50,6 +52,7 @@ public struct RunSpec: Codable, Sendable, Hashable {
         self.sessionID = sessionID
         self.reviewedTranscript = reviewedTranscript
         self.reviewedTitle = reviewedTitle
+        self.agent = agent
         self.repo = repo
         self.commit = commit
         self.setup = setup
@@ -92,6 +95,60 @@ public struct LabSetup: Codable, Sendable, Hashable {
 
     var flags: [String] {
         (name == .lean ? ["--setting-sources", "project"] : []) + ["--model", model, "--effort", effort]
+    }
+}
+
+/// The harness a review agent runs in. Replays use Claude Code only: their numbers come
+/// from Claude Code transcripts.
+public enum LabHarness: String, Codable, Sendable, CaseIterable {
+    case claudeCode = "claude-code"
+    case pi
+
+    public var title: String {
+        switch self {
+        case .claudeCode: "Claude Code"
+        case .pi: "Pi"
+        }
+    }
+
+    /// The command that runs it headless.
+    public var command: String {
+        switch self {
+        case .claudeCode: "claude"
+        case .pi: "pi"
+        }
+    }
+
+    /// `--effort` for Claude Code, `--thinking` for Pi.
+    public var efforts: [String] {
+        switch self {
+        case .claudeCode: ["low", "medium", "high", "xhigh", "max"]
+        case .pi: ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        }
+    }
+}
+
+/// Who writes a review: a harness, a model (`opus`; for Pi `provider/model`) and an effort.
+public struct LabAgent: Codable, Sendable, Hashable {
+    public var harness: LabHarness
+    public var model: String
+    public var effort: String
+
+    public init(harness: LabHarness, model: String, effort: String) {
+        self.harness = harness
+        self.model = model
+        self.effort = effort
+    }
+
+    /// "Pi · opencode-go/kimi-k3 · high".
+    public var label: String { "\(harness.title) · \(model) · \(effort)" }
+
+    var flags: [String] {
+        switch harness {
+        case .claudeCode: ["--model", model, "--effort", effort]
+        // An empty model: Pi's own default.
+        case .pi: (model.isEmpty ? [] : ["--model", model]) + ["--thinking", effort]
+        }
     }
 }
 
@@ -185,12 +242,16 @@ public struct RunResult: Codable, Sendable, Hashable {
     public var review: ReviewStatus?
     /// Why the run is left out of comparisons: the transcript mentions the answer.
     public var leaks: [String]?
+    /// The agent's own error when it ended with one (a refused model call, no credit), masked.
+    public var agentError: String?
 
-    public init(metrics: SessionMetrics? = nil, tests: TestOutcome? = nil, review: ReviewStatus? = nil, leaks: [String]? = nil) {
+    public init(metrics: SessionMetrics? = nil, tests: TestOutcome? = nil, review: ReviewStatus? = nil, leaks: [String]? = nil,
+                agentError: String? = nil) {
         self.metrics = metrics
         self.tests = tests
         self.review = review
         self.leaks = leaks
+        self.agentError = agentError
     }
 
     public var leaked: Bool { !(leaks ?? []).isEmpty }

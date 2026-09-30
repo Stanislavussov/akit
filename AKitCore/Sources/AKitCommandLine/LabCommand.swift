@@ -14,9 +14,13 @@ extension AKitCLI {
                                           or a Claude Code session id
 
         Runs (one at a time; each opens a tab that runs `akit lab run ID`):
-          akit lab new review SESSION [--env orca|herdr|background] [--no-start]
+          akit lab new review SESSION [--harness claude-code|pi] [--model M] [--effort E]
+                              [--env orca|herdr|background] [--no-start]
                                           An agent reads the session (masked) and AKit's numbers and
-                                          writes a review. Opens where the session ran; --env overrides
+                                          writes one paragraph and up to 3 improvements. Opens where
+                                          the session ran; --env overrides. The agent runs in Claude
+                                          Code (default) or Pi; model and effort default to the
+                                          harness's settings (Pi: --effort is its thinking level)
           akit lab new replay COMMIT [--repo DIR] [--setups full,lean] [--model M] [--effort E]
                               [--repeats N] [--env orca|herdr|background] [--keep] [--no-start]
                                           Redo a commit from its parent in an isolated clone (no refs,
@@ -59,6 +63,7 @@ extension AKitCLI {
         let setupsText = args.value("--setups")
         let modelText = args.value("--model")
         let effortText = args.value("--effort")
+        let harnessText = args.value("--harness")
         let repeatsText = args.value("--repeats")
         let keep = args.flag("--keep")
         let command = args.positional()
@@ -129,8 +134,19 @@ extension AKitCLI {
             try args.finish()
             let environment = try labEnvironment(environmentText, env: env)
             let file = try transcript(session, cwd: cwd, env: env)
-            let run = try await LabRuns.newReview(transcript: file, title: nil, environment: environment, akit: ownExecutable, env: env)
-            out("Queued \(run.id): \(run.spec.title) (\(run.spec.environment.title), \(run.spec.folder)).")
+            guard let harness = LabHarness(rawValue: harnessText ?? "claude-code") else {
+                throw Failure(message: "--harness is claude-code or pi.")
+            }
+            var agent = LabRuns.defaultAgent(harness, env: env)
+            if let modelText { agent.model = modelText }
+            if let effortText { agent.effort = effortText }
+            guard harness.efforts.contains(agent.effort) else {
+                throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
+            }
+            guard harness == .pi || !agent.model.isEmpty else { throw Failure(message: "Which model? --model.") }
+            let run = try await LabRuns.newReview(transcript: file, title: nil, agent: agent, environment: environment,
+                                                  akit: ownExecutable, env: env)
+            out("Queued \(run.id): \(run.spec.title) by \(agent.label) (\(run.spec.environment.title), \(run.spec.folder)).")
             if !noStart { try await startNext(env: env, out: out) }
             return 0
         case "list":
@@ -223,6 +239,7 @@ extension AKitCLI {
                      + (run.state?.phase.map { " (\($0.title))" } ?? ""),
                      "Opens in \(run.spec.environment.title) · \(run.spec.folder)",
                      "Folder   \(run.folder.path)"]
+        if let agent = run.spec.agent { lines.append("Agent    \(agent.label)") }
         if let message = run.message { lines.append("Message  \(message)") }
         if let result = run.result {
             if let metrics = result.metrics { lines += [""] + MetricsText.lines(metrics) }

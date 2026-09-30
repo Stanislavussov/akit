@@ -179,7 +179,8 @@ public enum LabStore {
 public enum LabRuns {
     /// A review of a recorded Claude Code session, opened where the session ran (or in
     /// the home folder when that is gone). `environment` nil = suggested for that folder.
-    public static func newReview(transcript: URL, title: String?, environment: LabEnvironment?, akit: URL,
+    /// `agent` nil = Claude Code with your settings.
+    public static func newReview(transcript: URL, title: String?, agent: LabAgent? = nil, environment: LabEnvironment?, akit: URL,
                                  env: HarnessEnvironment) async throws -> LabRun {
         let ran = LabPaths.folder(ofTranscript: transcript)
         let folder = ran.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil } ?? env.homeDirectory
@@ -192,7 +193,8 @@ public enum LabRuns {
         let title = title ?? LabPaths.title(ofTranscript: transcript)
         let name = title.map { JSONLines.titleLine($0, limit: 60) } ?? transcript.deletingPathExtension().lastPathComponent
         let spec = RunSpec(id: RunSpec.newID(), kind: .review, title: "Review: \(name)", folder: folder.path,
-                           environment: chosen, akit: akit.path, reviewedTranscript: transcript.path, reviewedTitle: title)
+                           environment: chosen, akit: akit.path, reviewedTranscript: transcript.path, reviewedTitle: title,
+                           agent: agent)
         return try LabStore.create(spec, env: env)
     }
 }
@@ -207,7 +209,60 @@ extension LabRuns {
         return (model, effort)
     }
 
-    public static let efforts = ["low", "medium", "high", "xhigh", "max"]
+    public static let efforts = LabHarness.claudeCode.efforts
+
+    /// The model and effort a harness uses by default: Claude Code's from
+    /// `~/.claude/settings.json`; Pi's from `~/.pi/agent/settings.json` (`defaultProvider`,
+    /// `defaultModel`, `defaultThinkingLevel`), else an empty model (Pi picks) and medium.
+    public static func defaultAgent(_ harness: LabHarness, env: HarnessEnvironment) -> LabAgent {
+        switch harness {
+        case .claudeCode:
+            let defaults = defaultModelAndEffort(env: env)
+            return LabAgent(harness: .claudeCode, model: defaults.model, effort: defaults.effort)
+        case .pi:
+            let settings = (try? Data(contentsOf: piRoot(env: env).appending(path: "settings.json")))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+            let provider = (settings["defaultProvider"] as? String) ?? ""
+            let model = (settings["defaultModel"] as? String) ?? ""
+            let effort = (settings["defaultThinkingLevel"] as? String).flatMap { LabHarness.pi.efforts.contains($0) ? $0 : nil }
+            return LabAgent(harness: .pi, model: provider.isEmpty || model.isEmpty ? model : "\(provider)/\(model)",
+                            effort: effort ?? "medium")
+        }
+    }
+
+    /// Models to offer for a harness. Claude Code: its aliases. Pi: `pi --list-models`
+    /// (the models it has credentials for) as `provider/model`.
+    public static func models(for harness: LabHarness, env: HarnessEnvironment) async -> [String] {
+        switch harness {
+        case .claudeCode:
+            return ["opus", "sonnet", "haiku"]
+        case .pi:
+            guard let pi = env.findExecutable("pi") else { return [] }
+            guard let result = await ProcessRunner.run(pi, arguments: ["--list-models", "--offline"],
+                                                       environment: env.variables.merging(["PATH": env.pathForChildProcesses, "NO_COLOR": "1"]) { $1 },
+                                                       timeout: 30),
+                  result.succeeded else { return [] }
+            return piModels(result.output.split(whereSeparator: \.isNewline).map(String.init))
+        }
+    }
+
+    /// The `provider model …` table of `pi --list-models`, as `provider/model`. Pi prints the
+    /// table to stdout and stderr, which arrive together: header rows and repeats are skipped.
+    static func piModels(_ lines: [String]) -> [String] {
+        var seen = Set<String>()
+        return lines.compactMap { line in
+            let columns = line.split(separator: " ", omittingEmptySubsequences: true)
+            guard columns.count >= 2, columns[0] != "provider" else { return nil }
+            let name = "\(columns[0])/\(columns[1])"
+            return seen.insert(name).inserted ? name : nil
+        }
+    }
+
+    /// Pi's config folder: `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
+    static func piRoot(env: HarnessEnvironment) -> URL {
+        env.variables["PI_CODING_AGENT_DIR"].map { URL(filePath: $0, directoryHint: .isDirectory) }
+            ?? env.homeDirectory.appending(path: ".pi/agent", directoryHint: .isDirectory)
+    }
 
     /// Queues `repeats` runs of each setup, interleaved (1 of each, then 2 of each…) so a
     /// partly done comparison is still fair. The tab opens in `repo` (a worktree or the root);

@@ -97,6 +97,7 @@ public enum LabWorker {
                          + (tests.timeouts > 0 ? " · \(tests.timeouts) timed out" : ""))
             if let note = tests.note { lines.append("  \(note)") }
         }
+        if let error = result.agentError { lines.append("The agent stopped with an error: \(error)") }
         if let review = result.review { lines.append("Review: \(review.rawValue)") }
         if let leaks = result.leaks, !leaks.isEmpty {
             lines.append("Left out of comparisons: the transcript mentions \(leaks.joined(separator: ", ")).")
@@ -104,7 +105,8 @@ public enum LabWorker {
         return lines
     }
 
-    /// The run's own agent session, measured; nil when Claude Code wrote no transcript.
+    /// The run's own agent session, measured; nil when Claude Code wrote no transcript (and
+    /// for Pi, whose sessions AKit doesn't measure yet).
     static func ownMetrics(_ spec: RunSpec, project: URL, env: HarnessEnvironment) async -> SessionMetrics? {
         guard let file = LabPaths.transcript(sessionID: spec.sessionID, env: env) else { return nil }
         return try? await LabAnalysis.analyze(file: file, project: project, env: env)
@@ -126,14 +128,19 @@ enum ReviewRun {
 
         phase(.agent)
         // The transcript may carry text written to steer an agent (fetched pages, file contents):
-        // the reviewer can only read and write files in its folder, with no shell, web or MCP.
-        let exit = try await AgentRun.run(prompt: prompt, spec: run.spec, in: run.folder, runFolder: run.folder, exposeRunFolder: true,
-                                          extra: ["--tools", "Read,Write,Glob,Grep", "--strict-mcp-config"], env: env, out: out)
-        guard !exit.cancelled else { throw CancellationError() }
+        // the reviewer can only read and write files, with no shell, web or MCP. Pi's allowlist
+        // covers extension tools too.
+        let tools = switch AgentRun.harness(of: run.spec) {
+        case .claudeCode: ["--tools", "Read,Write,Glob,Grep", "--strict-mcp-config"]
+        case .pi: ["--tools", "read,write,grep,find,ls"]
+        }
+        let agent = try await AgentRun.run(prompt: prompt, spec: run.spec, in: run.folder, runFolder: run.folder, exposeRunFolder: true,
+                                           extra: tools, env: env, out: out)
+        guard !agent.exit.cancelled else { throw CancellationError() }
 
         phase(.metrics)
         return RunResult(metrics: await LabWorker.ownMetrics(run.spec, project: run.folder, env: env),
-                         review: status(in: run.folder))
+                         review: status(in: run.folder), agentError: agent.error)
     }
 
     /// `transcript.md` (masked, as the app copies it) and `analysis.json` for the agent.
@@ -216,9 +223,9 @@ enum ReplayRun {
         try await IsolatedClone.make(at: work, from: URL(filePath: task.repo), commit: task.base, env: env)
 
         phase(.agent)
-        let exit = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, exposeRunFolder: false,
-                                          env: env, out: out)
-        guard !exit.cancelled else { throw CancellationError() }
+        let agent = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, exposeRunFolder: false,
+                                           env: env, out: out)
+        guard !agent.exit.cancelled else { throw CancellationError() }
 
         phase(.tests)
         out("Hidden tests: \(task.failToPass.count) fail-to-pass, \(task.passToPass.count) pass-to-pass.")
@@ -242,7 +249,7 @@ enum ReplayRun {
         let metrics = await LabWorker.ownMetrics(run.spec, project: work, env: env)
         let leaks = LabPaths.transcript(sessionID: run.spec.sessionID, env: env)
             .map { LeakCheck.leaks(in: $0, task: task, repo: repo, env: env) } ?? []
-        return RunResult(metrics: metrics, tests: outcome, leaks: leaks)
+        return RunResult(metrics: metrics, tests: outcome, leaks: leaks, agentError: agent.error)
     }
 
     static func outcome(_ task: ReplayTask, _ results: [TestName: SwiftTests.Outcome]) -> TestOutcome {

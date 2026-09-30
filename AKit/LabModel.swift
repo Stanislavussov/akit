@@ -19,14 +19,15 @@ extension AppModel {
     }
 
     /// Why runs can't start from AKit, or nil: no akit command, or one too old for Lab.
-    func labProblem() async -> String? {
+    /// `option`: an `akit lab` option the run needs (an older akit would ignore what it asks for).
+    func labProblem(needing option: String? = nil) async -> String? {
         guard let akit = Self.labAkit else {
             return "The akit command is not installed. In the AKit folder run: make install-cli"
         }
         let result = await ProcessRunner.run(akit, arguments: ["lab", "--help"],
                                              environment: HarnessEnvironment.current.variables, timeout: 10)
-        guard result?.succeeded == true else {
-            return "\(akit.tildePath) is older than this AKit and has no Lab. In the AKit folder run: make install-cli"
+        guard let result, result.succeeded, option.map(result.output.contains) ?? true else {
+            return "\(akit.tildePath) is older than this AKit. In the AKit folder run: make install-cli"
         }
         return nil
     }
@@ -62,12 +63,12 @@ extension AppModel {
         }
     }
 
-    /// Queues a review of a Claude Code session and starts the queue.
-    func queueReview(of session: SessionSummary, environment: LabEnvironment?) async throws -> LabRun {
-        if let problem = await labProblem() { throw LabStore.Failure(message: problem) }
+    /// Queues a review of a Claude Code session by `agent` and starts the queue.
+    func queueReview(of session: SessionSummary, agent: LabAgent, environment: LabEnvironment?) async throws -> LabRun {
+        if let problem = await labProblem(needing: "--harness") { throw LabStore.Failure(message: problem) }
         guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
-        let run = try await LabRuns.newReview(transcript: session.file, title: session.title, environment: environment,
-                                              akit: akit, env: .current)
+        let run = try await LabRuns.newReview(transcript: session.file, title: session.title, agent: agent,
+                                              environment: environment, akit: akit, env: .current)
         // Queued either way; a start that fails marks the run with the reason.
         try? await startLabQueue()
         return run
@@ -101,6 +102,17 @@ extension AppModel {
     }
 
     var defaultModelAndEffort: (model: String, effort: String) { LabRuns.defaultModelAndEffort(env: .current) }
+
+    func defaultAgent(_ harness: LabHarness) -> LabAgent { LabRuns.defaultAgent(harness, env: .current) }
+
+    /// Harnesses that can write a review: the installed ones.
+    var labHarnesses: [LabHarness] {
+        LabHarness.allCases.filter { HarnessEnvironment.current.findExecutable($0.command) != nil }
+    }
+
+    func labModels(for harness: LabHarness) async -> [String] {
+        await LabRuns.models(for: harness, env: .current)
+    }
 
     /// Starts the next queued run when nothing runs, then reloads.
     func startLabQueue() async throws {

@@ -14,7 +14,8 @@ read the result in AKit.
 Name: `akit check` already validates the brain, so this feature is **Lab**:
 `akit lab …`, `~/.akit/lab/`, a Lab screen.
 
-v1 scope: Claude Code only; Orca, herdr and background launchers; one run at a time.
+v1 scope: Claude Code sessions and replays (a review may run in Pi); Orca, herdr and
+background launchers; one run at a time.
 
 ## What we learned first (2026-09-28, 21 AKit sessions)
 
@@ -171,7 +172,8 @@ Who writes what:
   rent, tests, commits. An agent can't be trusted to report its own metrics.
 - **The review agent writes only `review.json` and `summary.md`**, in the run folder
   where it runs (`AKIT_LAB_DIR`). The reviewed transcript may hold text written to steer an
-  agent, so it gets only `Read`, `Write`, `Glob` and `Grep` (`--tools`, no MCP servers).
+  agent, so it gets only `Read`, `Write`, `Glob` and `Grep` (`--tools`, no MCP servers;
+  in Pi `--tools read,write,grep,find,ls`, an allowlist that covers extension tools too).
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
@@ -260,8 +262,10 @@ Lab screen shows the spread, not only the mean.
 
 - **Sessions → "Analyze"**: session analysis, shown in place.
 - **Sessions → "Review in terminal…"** and **Lab → "New run…"**: kind, target (session,
-  commit, task set), setup, repeats, environment (prefilled from the path). Harness is
-  Claude Code only in v1, so the sheet doesn't offer a choice yet.
+  commit, task set), setup, repeats, environment (prefilled from the path). A review picks
+  its agent: harness (Claude Code or Pi, when installed), model (Claude aliases; for Pi the
+  models `pi --list-models` offers) and effort (Pi: thinking level). Replays stay Claude
+  Code only: their numbers come from Claude Code transcripts.
 - **Lab screen**: the queue and past runs with status, environment, target, time and key
   numbers. A run shows its summary, metrics, test results, Cancel while running and
   "Show in Orca/herdr" (`orca terminal switch --terminal <handle>` /
@@ -360,7 +364,13 @@ is kept here.
    - The review instructions ship inside `akit` (no skill to install). The run folder gets
      `transcript.md` (the masked Markdown export) and `analysis.json`; the agent runs
      headless in the run folder, reads them and writes `review.json` and `summary.md`.
-   - `akit lab new review SESSION [--env …]`; app: **Review in Terminal…** on a session.
+   - `akit lab new review SESSION [--harness claude-code|pi] [--model M] [--effort E] [--env …]`;
+     app: **Review in Terminal…** on a session.
+   - Later (2026-09-30): the review is one paragraph and 0 to 3 improvements (the first
+     version wrote up to 10 findings and a long summary; too much to read). The agent can
+     be Pi (`pi -p --mode json`); AKit doesn't measure Pi sessions yet, so a Pi review has
+     no numbers of its own. When the harness ends with an error (a refused model call),
+     `result.json` keeps it as `agentError` and the Lab screen shows it.
 
 ## Open questions
 

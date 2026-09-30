@@ -245,7 +245,9 @@ akit remove project [PROJECT|--home] [--keep-files]
 akit machine [work [--name NAME] | personal]     a work Mac keeps project records out of the brain
 
 akit lab analyze SESSION                         metrics of one Claude Code session
-akit lab new review SESSION                      an agent reviews a session in a terminal tab
+akit lab new review SESSION [--harness pi] [--model M]
+                                                 an agent (Claude Code or Pi) reviews a session:
+                                                 one paragraph and up to 3 improvements
 akit lab new replay COMMIT [--setups full,lean] [--repeats N]
                                                  redo a commit under setups; hidden tests judge it
 akit lab list / show ID / compare COMMIT         runs and their results
