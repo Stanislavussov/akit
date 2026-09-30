@@ -118,6 +118,7 @@ private struct SessionRow: View {
 enum SessionDetailTab: String, CaseIterable, Identifiable {
     case conversation
     case usage
+    case analysis
     case prompt
     var id: Self { self }
 
@@ -125,8 +126,14 @@ enum SessionDetailTab: String, CaseIterable, Identifiable {
         switch self {
         case .conversation: "Conversation"
         case .usage: "Usage"
+        case .analysis: "Analysis"
         case .prompt: "System Prompt"
         }
+    }
+
+    /// Lab analysis reads Claude Code transcripts only.
+    static func available(for harness: HarnessID) -> [SessionDetailTab] {
+        allCases.filter { $0 != .analysis || harness == .claudeCode }
     }
 }
 
@@ -136,6 +143,7 @@ private struct SessionDetailView: View {
     @State private var transcript: SessionTranscript?
     @State private var error: String?
     @State private var copied = false
+    @State private var showReview = false
     @State private var tab = DebugSnapshot.options?.tab.flatMap(SessionDetailTab.init(rawValue:)) ?? .conversation
 
     var body: some View {
@@ -146,8 +154,17 @@ private struct SessionDetailView: View {
             switch tab {
             case .conversation: content
             case .usage: usage
+            case .analysis:
+                if session.harness == .claudeCode {
+                    SessionAnalysisView(session: session)
+                } else {
+                    content
+                }
             case .prompt: SessionPromptView(session: session)
             }
+        }
+        .sheet(isPresented: $showReview) {
+            NewLabRunSheet(session: session) { _ in model.section = .lab }
         }
         // Reload on selection change and after every rescan (⌘R).
         .task(id: "\(session.id)|\(session.modified.timeIntervalSince1970)") {
@@ -170,6 +187,11 @@ private struct SessionDetailView: View {
                 Text(session.title).font(.title2.bold()).textSelection(.enabled).lineLimit(3)
                 Spacer()
                 HarnessBadge(harness: session.harness)
+                if session.harness == .claudeCode {
+                    Button("Review in Terminal…", systemImage: "flask") { showReview = true }
+                        .labelStyle(.iconOnly)
+                        .help("Lab: an agent reviews this session in a terminal tab and writes what to change")
+                }
                 copyMenu
                 if ExternalEditor.appURL != nil {
                     Button("Open in \(ExternalEditor.name)", systemImage: "square.and.pencil") {
@@ -207,7 +229,7 @@ private struct SessionDetailView: View {
             .textSelection(.enabled)
 
             Picker("View", selection: $tab) {
-                ForEach(SessionDetailTab.allCases) { Text($0.title).tag($0) }
+                ForEach(SessionDetailTab.available(for: session.harness)) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()

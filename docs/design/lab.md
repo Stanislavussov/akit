@@ -1,6 +1,7 @@
 # Lab: measuring how well agent sessions work
 
-Status: design proposal 2026-09-28, not implemented. Replaces the Session Insights
+Status: design proposal 2026-09-28; implementation started 2026-09-30 (see
+[Implementation plan](#implementation-plan-v1)). Replaces the Session Insights
 decision "AKit has no own eval runner" (see [Relation to other designs](#relation-to-other-designs)).
 
 ## Goal
@@ -103,29 +104,40 @@ phase change:
 
 ```json
 { "status": "queued | running | finished | cancelled | error",
-  "phase": "prepare | agent | tests | metrics", "pid": 51234,
+  "phase": "prepare | agent | tests | metrics", "pid": 51234, "pidStart": 1790783456.12,
   "startedAt": "2026-09-28T18:02:11Z", "updatedAt": "2026-09-28T18:14:40Z" }
 ```
 
-- AKit shows `running` only while the pid is alive. A dead pid without `finished`
-  becomes `error` ("the run stopped: tab closed or crash").
+- AKit shows `running` only while the worker is alive: a process of this user with that
+  pid and that start time (`pidStart`), so a reused pid is never taken for it. A dead
+  worker without `finished` becomes `error` ("the run stopped: tab closed or crash").
 - Cancel in AKit sends SIGTERM to the pid; `akit lab run` stops the harness, kills its
-  test helpers and writes `cancelled`.
+  test helpers and writes `cancelled`. Closing the tab (SIGHUP), Ctrl-C and SIGQUIT do the
+  same: the agent and tests run in their own process groups and never see those signals.
+- Starting a run, a worker taking its run and cancelling happen under
+  `~/.akit/lab/queue.lock`, so a cancel can't cross a start.
 - v1 runs one run at a time from a queue: parallel runs mean cold `swift build`s and
-  test helpers of up to 2 GB each. Repeats and setups are queued runs.
+  test helpers of up to 2 GB each. Repeats and setups are queued runs. A finishing worker
+  starts the next one; while AKit is open it also moves the queue on when a worker died.
+  After a start fails, the queue waits for Start in AKit (or `akit lab start`).
 
 ## Run folder
 
 ```
 ~/.akit/lab/<run-id>/
-  run.json        by AKit before start: kind, target, harness, setup, environment +
-                  launcher handle, session id, transcript path, repeat index, base commit
+  run.json        by AKit when queued: kind, target, setup, environment, the akit to run,
+                  session id, repeat index, commit
+  launch.json     by the launcher when started: environment and handle (Orca terminal;
+                  herdr workspace, tab and pane; background pid)
   state.json      by `akit lab run`, see lifecycle
   result.json     by `akit lab run` at the end (schema below); the only writer
   review.json     by the review skill only: { "findings": [ { "title", "detail" } ] }
   summary.md      by the review skill only
   agent.jsonl     raw stream-json of a headless run; the tab shows a readable version
   check.log       hidden-test output, watchdog kills
+  console.log     output of a background run (Orca and herdr show it in the tab)
+  transcript.md   review: the reviewed session, masked (the app's Markdown export)
+  analysis.json   review: AKit's metrics of the reviewed session
 ```
 
 `result.json`:
@@ -134,24 +146,31 @@ phase change:
 {
   "schema": 1,
   "metrics": { "calls": 146, "freshTokens": 700000, "cacheReadTokens": 24900000,
-               "peakContext": 299000, "baselineContext": 41000,
-               "contextRent": { "baseline": 0.22, "readCode": 0.31, "ownOutput": 0.21,
-                                "injections": 0.15, "other": 0.11 },
-               "toolErrors": 5, "rereads": 0, "interrupts": 0, "rejected": 0,
-               "commits": 3, "wallSeconds": 1820 },
+               "outputTokens": 120000, "peakContext": 299000, "baselineContext": 41000,
+               "contextRent": { "baseline": 1380000, "readCode": 1950000, "ownOutput": 1320000,
+                                "injections": 940000, "other": 690000 },
+               "toolCalls": 180, "toolErrors": 5, "rereads": 0, "interrupts": 0, "rejected": 0,
+               "compactions": 0, "commits": [ { "sha": "1a2b3c4", "subject": "…", "onMainBranch": true } ],
+               "wallSeconds": 1820, "activeSeconds": 1400, "subagentCalls": 0,
+               "subagentFreshTokens": 0, "models": ["claude-opus-5-5"] },
   "tests": { "status": "passed | failed | not-run",
              "failToPass": { "passed": 7, "total": 7 },
              "passToPass": { "passed": 3, "total": 3 }, "timeouts": 0 },
-  "review": { "status": "ok | missing | invalid" }
+  "review": "ok | missing | invalid",
+  "leaks": []
 }
 ```
+
+Context rent parts are tokens × calls (they add up to all context sent); the app and
+`akit lab show` turn them into shares. Absent parts are left out (a review has no `tests`).
 
 Who writes what:
 
 - **Numbers come from `akit lab run`**, never from the agent: tokens, calls, context
   rent, tests, commits. An agent can't be trusted to report its own metrics.
-- **The review skill writes only `review.json` and `summary.md`**, into `AKIT_LAB_DIR`
-  (passed with `--add-dir "$AKIT_LAB_DIR"`, since it is outside the working folder).
+- **The review agent writes only `review.json` and `summary.md`**, in the run folder
+  where it runs (`AKIT_LAB_DIR`). The reviewed transcript may hold text written to steer an
+  agent, so it gets only `Read`, `Write`, `Glob` and `Grep` (`--tools`, no MCP servers).
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
@@ -183,11 +202,18 @@ that holds only the base commit's history: `git init work`, `git fetch --no-tags
 <base-sha>`, `git checkout --detach FETCH_HEAD`. Checked on the pilot: no refs, no
 remote, the answer commit is not among the objects. The original session transcripts are the
 other leak (Claude's own history search, OMC `session_search` in the full setup):
-after the run, Lab flags a replay whose transcript mentions the target sha, its subject
-line or a path under `~/.claude/projects`, and leaves it out of comparisons.
+after the run, Lab flags a replay whose tool calls or tool results mention the target
+sha or a path under `~/.claude/projects`, or that called a `session_search` tool, and
+leaves it out of comparisons. The subject line is not a sign: it is in the prompt, and the
+agent's own commit usually reuses it.
 
-The clone lives in `~/.akit/lab/<run-id>/work` and is moved to the Trash when the run
-ends, unless "keep" is ticked; no branch is left in the real repository.
+The clone lives in a temporary folder with a random name, not in the run folder (its
+`run.json` names the commit), and replay agents get no `AKIT_LAB_DIR`. After the checkout
+`.git/FETCH_HEAD`, which names the source repository, is removed. When the run ends the
+clone goes to the Trash (build folder included: the Trash grows), or into the run folder
+as `work` when "keep" is ticked; no branch is left in the real repository. Beyond the
+hash and the session history, the leak flag also catches tool calls that name the real
+repository or `~/.akit/lab`.
 
 ### Test runner
 
@@ -197,6 +223,7 @@ Rules learned in the pilot:
   any leftover `swiftpm-testing-helper` of that folder (it outlives `swift test`).
 - `--filter 'Suite/name\('`; a run with 0 tests is "not run", not "pass".
 - A watchdog kills test helpers above 2 GB (see the memory note about the 35 GB test).
+  Builds are not held to it (compilers may need more); only test helpers are watched then.
 
 ### Setups to compare (Claude Code)
 
@@ -260,15 +287,79 @@ Lab screen shows the spread, not only the mean.
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 
-## Roadmap
+## Implementation plan (v1)
 
-1. Session analysis in AKit: metrics and context rent for one session, shown on the
-   Sessions screen. No agent, no terminal.
-2. `akit lab run`, run folder and lifecycle, the queue, Orca / herdr / background
-   launchers and the Lab screen.
-3. Replay tasks: task from a commit with fail-to-pass validation, isolated clone,
-   setups, repeats, leak flag, comparison view.
-4. Session review skill as its own kind.
+Decided 2026-09-30 when building starts. Each step is one or more commits on branch `lab`
+and ends with `make build`, `make test` and a snapshot of the screens it touches. Status
+is kept here.
+
+1. **Session analysis** — status: done 2026-09-30.
+   - New module `AKitLab` (Foundation, Model, Sessions). `SessionAnalyzer.analyze(file)`
+     reads one Claude Code transcript in order: API calls (one per `message.id`, main
+     chain only; subagent calls and fresh tokens are counted apart), fresh and cache-read
+     tokens, peak and baseline (first-call) context, context rent, tool errors, re-reads
+     (a `Read` of the same file and range with no `Edit`/`Write` of it in between),
+     interrupts (`[Request interrupted by user…`), rejected tool calls (the user's "doesn't
+     want to proceed" and permission denials), commits (the `[branch sha] subject` line in
+     the output of a `git commit` Bash call), wall and active time.
+   - Context rent: the growth of the context between two calls is split by characters
+     over what arrived in between (the agent's own output, code reads: `Read`, `Grep`,
+     `Glob` and read-only Bash such as `cat`/`sed -n`/`grep`/`head`, harness injections,
+     everything else) and multiplied by the number of later calls until the next
+     compaction. The first call's context (and the first after a compaction) is the baseline.
+   - Commits that reached the main branch: `git merge-base --is-ancestor` against
+     `master`/`main` in the session's folder, when that folder is still a repository.
+   - `akit lab analyze SESSION [--json]` (a transcript path or a session id).
+   - App: an **Analysis** tab on the Sessions screen (Claude Code sessions), computed when
+     it is opened.
+2. **Runs** — status: done 2026-09-30 (checked with real Orca and background runs, and a real cancel).
+   - `~/.akit/lab/<run-id>/`: `run.json` (written once when the run is queued),
+     `launch.json` (environment and handle, written when it is started; a queued run has
+     none yet), `state.json`, `result.json`, `console.log` (background runs).
+   - `akit lab run <id>`: the worker, same phases as above; SIGTERM → `cancelled`. When it
+     ends it starts the next queued run with the same launcher, so the queue moves on
+     without the app. `akit lab start` starts the next queued run; `akit lab list`, `show`,
+     `cancel`, `remove` (to the Trash).
+   - Launchers: Orca (`orca terminal create --worktree path:<worktree> --title … --command
+     … --json`; the folder must be an Orca worktree, else the repository root is used),
+     herdr (`herdr tab create --workspace <the workspace whose worktree is the folder>
+     --cwd … --label … --no-focus`, then `herdr pane run <root pane> <cmd>`; no such
+     workspace → `herdr workspace create --cwd …`), background (a detached child of
+     AKit, output in `console.log`). "Show" = `orca terminal switch` /
+     `herdr workspace focus` + `herdr tab focus`.
+   - The command in the tab is the absolute path of the `akit` that queued the run: the
+     app uses `~/.local/bin/akit`, a development build its own worktree's
+     `AKitCore/.build/debug/akit` when that exists.
+   - App: a **Lab** sidebar section with the queue and past runs, run details, Cancel,
+     Show in Orca/herdr, Remove, and **New Run…**.
+3. **Replay tasks** — status: done 2026-09-30. The pilot `1c9cf65` validates as recorded above
+   (7 fail-to-pass, 3 pass-to-pass, the hanging test killed at 30 s); the whole chain (task check,
+   clone, agent, hidden tests, queue moving on, comparison) was run with a stand-in `claude`.
+   - `akit lab task SHA [--repo DIR]` builds and validates a task and caches it in
+     `~/.akit/lab/tasks/<sha>.json` (prompt, base, test files, fail-to-pass and
+     pass-to-pass test names). Test names are read from the commit's test files: Swift
+     Testing `@Test func name(` in a type `Suite` (filter `Suite/name\(`) and XCTest
+     `func testName(` in an `XCTestCase` class. The package is the nearest folder with a
+     `Package.swift` (SwiftPM only in v1). A queued replay validates its task in the
+     prepare phase when no cached one exists.
+   - Test runner: `swift build --build-tests` once (15 min limit), then `swift test
+     --skip-build --filter …` per test, 30 s each, in its own process group; a watchdog
+     checks the memory footprint of every process in the group and every
+     `swiftpm-testing-helper`/`xctest` working in the folder every second and kills
+     them above 2 GB.
+   - Isolated clone as above, agent run with the safety flags, hidden tests copied in,
+     metrics, leak flag, clone to the Trash unless kept.
+   - `akit lab new replay SHA [--repo DIR] [--setups full,lean] [--model M] [--effort E]
+     [--repeats N] [--env orca|herdr|background] [--keep]` queues repeats × setups,
+     interleaved (one of each setup, then the second of each…). `akit lab compare SHA`.
+   - App: New Run offers the commit, setups, model, effort, repeats; the Lab screen shows
+     runs of one task side by side per setup (passed, fresh tokens, calls, wall time: median
+     and range).
+4. **Session review** — status: done 2026-09-30, built with step 2 as the first kind of run.
+   - The review instructions ship inside `akit` (no skill to install). The run folder gets
+     `transcript.md` (the masked Markdown export) and `analysis.json`; the agent runs
+     headless in the run folder, reads them and writes `review.json` and `summary.md`.
+   - `akit lab new review SESSION [--env …]`; app: **Review in Terminal…** on a session.
 
 ## Open questions
 

@@ -2,6 +2,7 @@ import AKitBrain
 import AKitFoundation
 import AKitHarnesses
 import AKitInsights
+import AKitLab
 import AKitMCP
 import AKitModel
 import AKitProjectSetup
@@ -389,6 +390,21 @@ final class AppModel {
     /// Messages of one session, read in the background.
     func transcript(of session: SessionSummary) async throws -> SessionTranscript {
         try await Self.background { try SessionReader.transcript(of: session) }
+    }
+
+    /// Lab runs in `~/.akit/lab`, newest first (reloaded by the Lab screen while it is open).
+    var labRuns: [LabRun] = []
+    /// Checked replay tasks of those runs, by commit.
+    var labTasks: [String: ReplayTask] = [:]
+    /// A start failed; the queue waits for Start instead of retrying on its own.
+    var labAutoStartPaused = false
+
+    /// Lab metrics of one Claude Code session: transcript, then git for its commits.
+    func analysis(of session: SessionSummary) async throws -> SessionMetrics {
+        let file = session.file, project = session.project
+        return try await Task.detached(priority: .userInitiated) {
+            try await LabAnalysis.analyze(file: file, project: project, env: .current)
+        }.value
     }
 
     // MARK: Usage
