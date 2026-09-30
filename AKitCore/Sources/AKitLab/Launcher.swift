@@ -68,6 +68,20 @@ public enum Launcher {
         }
     }
 
+    /// The app to bring forward after `show`: `orca` is a link into Orca.app, so the app is
+    /// the `.app` folder above the resolved command. nil for herdr (it runs inside whatever
+    /// terminal you use) and the background.
+    public static func app(for environment: LabEnvironment, env: HarnessEnvironment) -> URL? {
+        guard environment == .orca, let command = env.findExecutable("orca") else { return nil }
+        var folder = command.resolvingSymlinksInPath()
+        for _ in 0..<8 {
+            folder = folder.deletingLastPathComponent()
+            if folder.pathExtension == "app" { return folder }
+            if folder.path == "/" { break }
+        }
+        return nil
+    }
+
     // MARK: Orca
 
     private static func launchOrca(_ spec: RunSpec, title: String, env: HarnessEnvironment) async throws -> LaunchInfo {

@@ -147,6 +147,15 @@ struct LabRunTests {
         #expect(LabStore.list(env: env).map(\.id) == [second.id, first.id])
     }
 
+    @Test func orcaAppFromItsCommand() throws {
+        // Like /usr/local/bin/orca → /Applications/Orca.app/Contents/Resources/bin/orca.
+        try write("Apps/Orca.app/Contents/Resources/bin/orca", "#!/bin/sh\n", executable: true)
+        try fm.createSymbolicLink(at: home.appending(path: "bin/orca"), withDestinationURL: home.appending(path: "Apps/Orca.app/Contents/Resources/bin/orca"))
+        let app = Launcher.app(for: .orca, env: env)
+        #expect(app?.resolvingSymlinksInPath().path == home.appending(path: "Apps/Orca.app").resolvingSymlinksInPath().path)
+        #expect(Launcher.app(for: .herdr, env: env) == nil && Launcher.app(for: .background, env: env) == nil)
+    }
+
     @Test func reusedPidIsNotTheWorker() {
         let me = getpid()
         let start = LabStore.processStart(me)
