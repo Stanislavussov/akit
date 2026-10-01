@@ -124,8 +124,11 @@ struct NotesPipelineTests {
         #expect(notes.advice.map(\.title) == ["Report the last test result verbatim."])
         #expect(notes.advice[0].checkedByRepeating == false)
 
-        let saved = try #require(NotesStore(env: env).load(notes.sessionKey))
-        #expect(try AnalysisJSON.encoder.encode(saved) == AnalysisJSON.encoder.encode(notes))
+        var saved = try #require(NotesStore(env: env).load(notes.sessionKey))
+        // Dates are kept to the millisecond.
+        #expect(abs(saved.createdAt.timeIntervalSince(notes.createdAt)) < 0.002)
+        saved.createdAt = notes.createdAt
+        #expect(saved == notes)
         #expect(calls() == ["notes", "verifier"])
         #expect(SendLog.records(env: env).map(\.purpose) == ["notes", "verifier"])
     }
