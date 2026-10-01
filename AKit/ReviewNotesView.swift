@@ -104,7 +104,7 @@ struct ReviewNotesView: View {
     }
 }
 
-private struct OutcomeBadge: View {
+struct OutcomeBadge: View {
     let outcome: Outcome
 
     var body: some View {
@@ -136,7 +136,7 @@ private struct OutcomeBadge: View {
 }
 
 /// One note: id, step, phase, severity, fault layer, the description and the quote.
-private struct NoteView: View {
+struct NoteView: View {
     let note: Note
     @State private var showSteelman = DebugSnapshot.options?.tab == "notes"
 
@@ -154,19 +154,7 @@ private struct NoteView: View {
                 }
             }
             Text(note.description).fixedSize(horizontal: false, vertical: true)
-            if !note.quote.isEmpty {
-                Text(note.quote)
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(6)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 5))
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(.tertiary).frame(width: 3)
-                    }
-            }
+            QuoteText(text: note.quote)
             if let verdict = note.verdict {
                 if !verdict.accepted {
                     Label("\(verdict.by == .code ? "Rejected by code" : "Rejected by the verifier model"): \(verdict.reason)",
@@ -192,7 +180,28 @@ private struct NoteView: View {
     }
 }
 
-private struct NoteTag: View {
+/// A quote from a transcript, with a bar on the left; nothing when it is empty.
+struct QuoteText: View {
+    let text: String
+
+    var body: some View {
+        if !text.isEmpty {
+            Text(text)
+                .font(.callout.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(6)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 5))
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(.tertiary).frame(width: 3)
+                }
+        }
+    }
+}
+
+struct NoteTag: View {
     let text: String
     let color: Color
 

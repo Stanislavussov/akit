@@ -43,6 +43,9 @@ final class AppModel {
     var mcpFilter: SkillsFilter = .initial
     var mcpHarness: String? = DebugSnapshot.options?.harness
 
+    /// A Lab run the Lab screen should select when it appears (set by "Show Review").
+    var revealLabRun: String?
+
     /// A brain skill the Brain screen should select when it appears (set by "Show in Brain").
     var revealBrainSkill: String?
 

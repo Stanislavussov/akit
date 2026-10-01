@@ -83,6 +83,10 @@ struct LabView: View {
         .task {
             // The app watches ~/.akit/lab all the time (RootView); this only picks a first run.
             await model.reloadLab()
+            if let reveal = model.revealLabRun {
+                selection = reveal
+                model.revealLabRun = nil
+            }
             if selection == nil { selection = model.labRuns.first?.id }
             problem = await model.labProblem()
         }
