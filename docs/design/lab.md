@@ -190,6 +190,9 @@ Who writes what:
   of an injected transcript could write a file elsewhere; one model call has no such gap.
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
+- The digest described here is planned to be replaced by the evidence-preserving digest
+  of `error-analysis.md` (user turns verbatim, tool-output stubs that keep exit codes and
+  error lines).
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
 
 ## Replay tasks
@@ -303,8 +306,9 @@ Lab screen shows the spread, not only the mean.
   measures whole sessions and setups. Update that doc when both are on master. Lab reuses
   its path templates for picking the environment and, once merged, its SQLite index for
   session analysis.
-- **Error analysis** (`error-analysis.md`): failure modes across many sessions; the
-  one-session review becomes its first step.
+- **Error analysis** (`error-analysis.md`): failure modes across many sessions, checks
+  per mode and controlled evals of fixes; the one-session review becomes its first step.
+  Its control sets may reuse replay tasks (an open question there).
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 
