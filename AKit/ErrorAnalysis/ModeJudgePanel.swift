@@ -43,6 +43,7 @@ struct ModeJudgePanel: View {
                 Label("Judged by \(judge.label)", systemImage: "person.badge.shield.checkmark")
                 Spacer()
                 Button("Change…") { editJudge = true }
+                    .disabled(!eligible)
                 Button("Disable") {
                     let id = mode.id, name = mode.name
                     analysis.act { env in
@@ -59,11 +60,13 @@ struct ModeJudgePanel: View {
                      ?? "No judge and no code check: the mode stays \"seen in k notes\".")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Enable Judge…") { editJudge = true }.controlSize(.small)
+                Button("Enable Judge…") { editJudge = true }
+                    .controlSize(.small)
+                    .disabled(!eligible)
             }
         }
         if !eligible {
-            Text("Judges are meant for the top 3 modes by notes that have a fix drafted or applied; this one isn't, so a judge may cost more than it tells.")
+            Text("Only a mode in the top 3 by notes with a fix drafted or applied gets a judge; this one isn't. Other modes get a code check or stay \"seen in k notes\".")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

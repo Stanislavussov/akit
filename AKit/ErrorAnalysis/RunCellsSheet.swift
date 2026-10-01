@@ -77,6 +77,8 @@ struct RunCellsSheet: View {
 
     private var chosenTasks: [ControlTask] { analysis.data.controlTasks.filter { tasks.contains($0.id) } }
     private var cells: Int { repeats * chosenTasks.count * setups.count }
+    /// Test oracles that fail on their reference commit can't tell a fix from noise.
+    private var redTasks: [ControlTask] { chosenTasks.filter { $0.referenceGreen == false } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -92,6 +94,13 @@ struct RunCellsSheet: View {
             Text(costLine)
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
+            if let red = redTasks.first {
+                Label("The tests of \(red.title) fail on its reference commit: fix the test command or the reference, then Check Reference on the Evals tab.",
+                      systemImage: "xmark.seal")
+                    .foregroundStyle(.red)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if variant, case .failure(let reason) = patch {
                 Label(reason.message, systemImage: "info.circle").foregroundStyle(.orange).font(.callout)
             }
@@ -106,7 +115,7 @@ struct RunCellsSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(cells == 1 ? "Queue 1 Cell" : "Queue \(cells) Cells", action: queue)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || cells == 0 || (variant && setups.allSatisfy { $0.patch == nil })
+                    .disabled(busy || cells == 0 || !redTasks.isEmpty || (variant && setups.allSatisfy { $0.patch == nil })
                               || (harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty))
             }
         }

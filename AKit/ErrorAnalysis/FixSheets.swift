@@ -16,6 +16,7 @@ struct FixDraftSheet: View {
     @State private var exemplars: Set<NoteRef>
     @State private var error: String?
     @State private var busy = false
+    @State private var confirmStartOver = false
 
     init(mode: Mode, draft: FixDraft?) {
         self.mode = mode
@@ -42,10 +43,12 @@ struct FixDraftSheet: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if mode.fix == .applied || mode.fixAppliedAt != nil {
-                Label("Saving moves the fix back to draft and clears T.", systemImage: "exclamationmark.triangle")
+            if startsOver, let status = mode.fix {
+                Label("The fix is \(status.title.lowercased()). The draft and its \"helped\" criterion were fixed before the run; a new draft starts over: it drops T and the criterion.",
+                      systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                     .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Picker("Layer", selection: $layer) {
@@ -98,11 +101,26 @@ struct FixDraftSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save Draft", action: save).keyboardShortcut(.defaultAction).disabled(busy || !canSave)
+                Button(startsOver ? "Start Over…" : "Save Draft") {
+                    if startsOver { confirmStartOver = true } else { save() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(busy || !canSave)
             }
         }
         .padding(20)
         .frame(width: 660)
+        .confirmationDialog("Start the fix over?", isPresented: $confirmStartOver) {
+            Button("Start Over", role: .destructive, action: save)
+        } message: {
+            Text("The fix goes back to draft: T and the old criterion are dropped, and before/after starts again from the next Mark Applied.")
+        }
+    }
+
+    /// Past draft (applied, confirmed, didn't help, rejected): a new draft is a reset (`--reset`).
+    private var startsOver: Bool {
+        guard let status = mode.fix else { return false }
+        return status != .open && status != .draft
     }
 
     private func field<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
