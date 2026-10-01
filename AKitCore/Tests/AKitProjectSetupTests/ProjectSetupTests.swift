@@ -299,6 +299,19 @@ struct ProjectSetupTests {
         #expect(old == ProjectAnswers(layers: ["task"], targets: ["pi"]))
     }
 
+    @Test func anOffForASkillNoLayerBringsIsDropped() async throws {
+        let brain = try await setUpBrain()
+        var picked = answers
+        picked.skills = [.init(name: "tdd", mode: .off)]
+        // The task layer brings tdd: the off stays.
+        #expect(ProjectSetup.plan(project: project, id: "local/task", answers: picked, brain: brain, store: .brain(brainRoot)).answers.skills == picked.skills)
+        // Without the layer, off turns nothing off and is not saved.
+        picked.layers = []
+        picked.skills.append(.init(name: "tdd2", mode: .auto))
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: picked, brain: brain, store: .brain(brainRoot))
+        #expect(plan.answers.skills == [.init(name: "tdd2", mode: .auto)])
+    }
+
     @Test func theProjectsOwnSkillsAreNeverOverwritten() async throws {
         let brain = try await setUpBrain()
         // Set up once with nothing from the brain, so AKit has a lock for the project.
