@@ -223,6 +223,17 @@ struct ControlRunsTests {
         #expect(ControlRuns.cellKey(task: task, setup: variant("a"), repeatIndex: 1) != ControlRuns.cellKey(task: task, setup: variant("b"), repeatIndex: 1))
     }
 
+    @Test func labAloneCantRunACell() async throws {
+        let (repo, base) = try await repository()
+        let task = task(repo, base, oracle: .tests(command: "true"))
+        try ControlTasks.save(task, env: env)
+        let run = try #require(try await ControlRuns.newControlRuns(tasks: [task], setups: [baseline], repeats: 1, environment: .background,
+                                                                   keep: true, akit: URL(filePath: "/usr/bin/true"), env: env).runs.first)
+        let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in })
+        let done = try #require(LabStore.load(run.id, env: env))
+        #expect(code == 1 && done.status == .error && done.message?.contains("can't do a control run") == true)
+    }
+
     @Test func leaksNameTheExemplarAndTheRepository() {
         let task = task(URL(filePath: "/work/repo"), "abc", oracle: .tests(command: "true"))
         func transcript(_ calls: [(String, String)]) -> SessionTranscript {

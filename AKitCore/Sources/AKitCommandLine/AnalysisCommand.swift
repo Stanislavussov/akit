@@ -21,10 +21,10 @@ extension AKitCLI {
                                           Run code checks over every indexed session (all of them
                                           without MODE): the share of sessions where each mode shows,
                                           with a 95% interval. Local, nothing is sent
-        """ + analysisModesUsage + analysisReportUsage
+        """ + analysisModesUsage + analysisReportUsage + "\n\n" + analysisControlUsage
 
     static func analysis(_ arguments: [String], env: HarnessEnvironment, cwd: URL,
-                         out: (String) -> Void, err: (String) -> Void) async throws -> Int32 {
+                         out: (String) -> Void, err: (String) -> Void, trash: (URL) throws -> URL? = Trash.move) async throws -> Int32 {
         var args = Arguments(arguments)
         if args.flag("--help") || args.flag("-h") || args.isEmpty {
             out(analysisUsage)
@@ -97,6 +97,8 @@ extension AKitCLI {
                 if check.kind == .heuristic { out("  not validated: reports show this mode as \"seen in k notes\"") }
             }
             return 0
+        case "control":
+            return try await analysisControl(&args, json: json, env: env, cwd: cwd, out: out, trash: trash)
         case let other:
             throw Failure(message: "Unknown “akit analysis \(other ?? "")”. Run akit analysis --help.")
         }

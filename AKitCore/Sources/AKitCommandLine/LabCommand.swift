@@ -388,7 +388,7 @@ extension AKitCLI {
             + (record.session.map { "  \($0)" } ?? "")
     }
 
-    private static func startNext(env: HarnessEnvironment, out: (String) -> Void) async throws {
+    static func startNext(env: HarnessEnvironment, out: (String) -> Void) async throws {
         do {
             if let run = try await LabQueue.startNext(env: env) {
                 out("Started \(run.id) in \(run.spec.environment.title).")
