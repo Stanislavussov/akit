@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitLab
 import Foundation
 
 /// Did the session reach the user's goal, judged from what the user saw: their messages and
@@ -167,6 +168,8 @@ public struct SessionNotes: Codable, Hashable, Sendable {
     public var doneKeys: [String: String]
     /// Lab run that wrote it, if any.
     public var runID: String?
+    /// Where matching routed each accepted note (missing in reviews before matching).
+    public var routes: [Route]?
 
     public init(sessionKey: String, transcript: String, title: String?, project: String?, createdAt: Date = .now,
                 requirements: [String], outcome: Outcome, notes: [Note], deviation: Deviation, paragraph: String, advice: [Advice],
@@ -188,9 +191,80 @@ public struct SessionNotes: Codable, Hashable, Sendable {
         self.runID = runID
     }
 
+    /// Where the session's data came from, for the sending policy of calls over its notes.
+    public var origin: SendOrigin { Self.origin(sessionKey: sessionKey, transcript: transcript) }
+
+    /// The route of a note, if matching has routed it.
+    public func route(of noteID: String) -> Route? { routes?.first { $0.noteID == noteID } }
+
     /// Notes in the pool: accepted by the verifier.
     public var accepted: [Note] { notes.filter(\.isAccepted) }
     public var rejected: [Note] { notes.filter { !$0.isAccepted } }
     /// "Checked, no failures": it still counts in denominators.
     public var noFailures: Bool { accepted.isEmpty }
+}
+
+/// Where matching sent one note: a mode, a candidate, or "none fits". Matching is a router: it
+/// maintains the list of modes and never feeds a frequency.
+public struct Route: Codable, Hashable, Sendable {
+    public enum Source: String, Codable, Sendable {
+        /// The matching call of a session.
+        case matching
+        /// Clustering made a candidate mode out of unmatched notes.
+        case clustering
+        /// Retro-matching of the pool against a newly confirmed mode.
+        case retro
+        /// The user moved the note.
+        case human
+    }
+
+    public enum Review: String, Codable, Sendable {
+        case accepted, rejected
+    }
+
+    public var noteID: String
+    /// nil: none of the modes fits.
+    public var modeID: String?
+    public var confidence: Double
+    public var reason: String?
+    public var by: Source
+    /// The list of modes it was routed against (a hash of their definitions).
+    public var modesVersion: String?
+    /// The user's verdict, the source of route acceptance.
+    public var review: Review?
+    public var reviewedAt: Date?
+
+    public init(noteID: String, modeID: String?, confidence: Double, reason: String? = nil, by: Source, modesVersion: String? = nil,
+                review: Review? = nil, reviewedAt: Date? = nil) {
+        self.noteID = noteID
+        self.modeID = modeID
+        self.confidence = confidence
+        self.reason = reason
+        self.by = by
+        self.modesVersion = modesVersion
+        self.review = review
+        self.reviewedAt = reviewedAt
+    }
+}
+
+/// A note anywhere in the pool: `<session-key>#<note-id>`.
+public struct NoteRef: Codable, Hashable, Sendable, Comparable, CustomStringConvertible {
+    public var sessionKey: String
+    public var noteID: String
+
+    public init(sessionKey: String, noteID: String) {
+        self.sessionKey = sessionKey
+        self.noteID = noteID
+    }
+
+    public init?(parsing text: String) {
+        guard let hash = text.lastIndex(of: "#") else { return nil }
+        sessionKey = String(text[..<hash])
+        noteID = String(text[text.index(after: hash)...])
+        guard !sessionKey.isEmpty, !noteID.isEmpty else { return nil }
+    }
+
+    public var description: String { "\(sessionKey)#\(noteID)" }
+
+    public static func < (a: NoteRef, b: NoteRef) -> Bool { a.description < b.description }
 }

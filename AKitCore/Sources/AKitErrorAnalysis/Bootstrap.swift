@@ -291,6 +291,17 @@ public enum Bootstrap {
         return result
     }
 
+    /// A reserved session's transcript items, as the labeling screen shows them (scrubbed with
+    /// the user's own patterns too, like everything a model would see).
+    public static func items(transcript: String, sessionKey: String, env: HarnessEnvironment) throws -> [TranscriptItem] {
+        let harness: HarnessID = sessionKey.hasPrefix("pi:") ? .pi : .claudeCode
+        let settings = LabSettings.load(env: env)
+        let summary = NotesPipeline.Target(harness: harness, file: URL(filePath: transcript)).summary
+        return try SessionReader.transcript(of: summary).items.map {
+            TranscriptItem(id: $0.id, kind: $0.kind, text: Scrubber.scrub($0.text, own: settings.scrub).text, timestamp: $0.timestamp)
+        }
+    }
+
     /// The phases of every labeled session's steps, by code, for phase agreement.
     public static func phases(of labels: [Label]) -> [String: [Int: Phase]] {
         var result: [String: [Int: Phase]] = [:]

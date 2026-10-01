@@ -43,6 +43,22 @@ public enum AnalysisRuns {
         } catch let failure as NotesPipeline.Failure {
             return RunResult(review: .invalid, agentError: failure.message)
         }
+        // Matching right after the verifier: the notes go into the pool routed to modes. A failed
+        // matching call leaves them unrouted; it doesn't fail the review.
+        var routed = notes
+        do {
+            let store = ModeStore(env: env)
+            let modes = try await store.list()
+            var exemplars: [String: [Exemplar]] = [:]
+            for mode in Matching.routable(modes) { exemplars[mode.id] = try store.exemplars(of: mode.id) }
+            routed = try await Matching.route(notes, modes: modes, exemplars: exemplars, agent: agent, gate: gate, origin: notes.origin,
+                                              runID: run.id, workFolder: run.folder, env: env)
+            try await Clustering.promoteCandidates(store: store, env: env)
+        } catch {
+            out("Matching didn't run: \(error.localizedDescription)")
+        }
+        let routedCount = Matching.currentRoutes(routed).values.filter { $0.modeID != nil }.count
+        if routedCount > 0 { out("Matched \(routedCount) notes to modes.") }
         try ReviewRun.write(summary: notes.paragraph,
                             findings: notes.advice.map { Review.Finding(title: $0.title, evidence: $0.evidence, detail: $0.detail) },
                             to: run.folder)

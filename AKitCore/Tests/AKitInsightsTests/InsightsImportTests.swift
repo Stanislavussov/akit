@@ -417,8 +417,8 @@ struct InsightsImportTests {
         try runImport()
         let db = try database()
         let tables = try db.rows("SELECT name FROM sqlite_master WHERE type = 'table'").compactMap { $0[0].text }
-        // Fact tables, meta, sources, bindings: a new table must be added to this check.
-        #expect(tables.count == IndexSchema.factTables.count + 3)
+        // Fact tables, meta, sources, bindings, signals: a new table must be added to this check.
+        #expect(tables.count == IndexSchema.factTables.count + 4)
         var checked = 0
         for table in tables {
             for row in try db.rows("SELECT * FROM \(table)") {
@@ -928,7 +928,7 @@ struct InsightsImportTests {
             """)
 
         let database = try IndexSchema.open(paths.database)
-        #expect(try database.userVersion == 5)
+        #expect(try database.userVersion == IndexSchema.migrations.count)
         let row = try #require(try database.rows("SELECT session_id, cwd, branch, head FROM hook_events").first)
         #expect(row == [.text("s1"), .text("/work/app"), .text("main"), .null])
         #expect(try IndexQueries.head(database, harness: "claude", sessionID: "s1") == nil)

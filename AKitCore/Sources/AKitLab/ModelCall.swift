@@ -16,10 +16,18 @@ public enum ModelCall {
         public var input: String
         /// A JSON schema the answer must match. Claude Code checks it; Pi gets it in the prompt.
         public var schema: String?
-        public var origin: SendOrigin
+        /// Where the data came from: every origin must be allowed at the destination (a call
+        /// over notes of many sessions carries all their origins).
+        public var origins: [SendOrigin]
         /// The session key or transcript path the input came from.
         public var session: String?
         public var runID: String?
+
+        public init(agent: LabAgent, purpose: String, system: String, input: String, schema: String? = nil, origins: [SendOrigin],
+                    runID: String? = nil) {
+            self.init(agent: agent, purpose: purpose, system: system, input: input, schema: schema, origin: .claudeSession, runID: runID)
+            self.origins = origins
+        }
 
         public init(agent: LabAgent, purpose: String, system: String, input: String, schema: String? = nil, origin: SendOrigin,
                     session: String? = nil, runID: String? = nil) {
@@ -28,7 +36,7 @@ public enum ModelCall {
             self.system = system
             self.input = input
             self.schema = schema
-            self.origin = origin
+            origins = [origin]
             self.session = session
             self.runID = runID
         }
@@ -52,7 +60,8 @@ public enum ModelCall {
     public static func run(_ request: Request, gate: SendGate, folder: URL, env: HarnessEnvironment,
                            timeout: TimeInterval = 20 * 60, retries: Int = 4,
                            sleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) async throws -> Answer {
-        try gate.check(request.origin)
+        guard !request.origins.isEmpty else { throw SendAccounts.Failure(message: "Not sent: the data names no origin.") }
+        for origin in Set(request.origins) { try gate.check(origin) }
         let scrubbed = gate.scrub(request.input)
         let records = SendLog.records(env: env)
         try SendLog.checkLimit(estimate: SendLog.estimate(characters: scrubbed.text.count, harness: request.agent.harness,
