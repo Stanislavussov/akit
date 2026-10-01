@@ -87,6 +87,7 @@ public enum ProjectSetup {
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
                             forHome: Bool = false) -> Plan {
         let fm = FileManager.default
+        let answers = ProjectBundle.pruned(answers, brain: brain, projectName: project.lastPathComponent)
         var render = Render.render(ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent), forHome: forHome)
         let previous = ProjectRecords.savedLock(id: id, in: store)
         // A skill the project has itself wins over the brain's copy with the same name. Only

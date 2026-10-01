@@ -233,6 +233,18 @@ public struct ProjectBundle: Sendable {
                              skills: resolved, errors: errors, warnings: warnings)
     }
 
+    /// The answers without an `off` for a skill no picked layer brings: it takes nothing out,
+    /// and would stay behind as "off" after its layer is gone.
+    public static func pruned(_ answers: ProjectAnswers, brain: Brain, projectName: String) -> ProjectAnswers {
+        guard answers.skills.contains(where: { $0.mode == .off }) else { return answers }
+        var layersOnly = answers
+        layersOnly.skills = []
+        let brought = Set(resolve(layersOnly, brain: brain, projectName: projectName).skills.map(\.name))
+        var pruned = answers
+        pruned.skills.removeAll { $0.mode == .off && !brought.contains($0.name) }
+        return pruned
+    }
+
     // MARK: - Pieces
 
     /// `when` entries all hold. A list value (multi field, `target`) matches when it contains the value.
