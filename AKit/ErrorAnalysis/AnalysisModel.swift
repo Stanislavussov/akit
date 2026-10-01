@@ -28,6 +28,19 @@ struct AnalysisData: Sendable {
     /// Finished labels since the list of modes last changed (the stop rule).
     var sinceLastChange = 0
     var testSessions: Set<String> = []
+    /// Error analysis batches, newest first.
+    var batches: [Batch] = []
+    /// Modes with a judge, and who judges.
+    var judges: [String: LabAgent] = [:]
+    /// Each judge's verdicts (`checks/<mode>@judge.json`), by mode id.
+    var judgeResults: [String: CheckResults] = [:]
+    var validation: [String: [ValidationResult]] = [:]
+    var splits: [String: ValidationStore.Split] = [:]
+    /// How far each mode's check can be trusted.
+    var trust: [String: CheckTrust] = [:]
+    var fixes: [String: FixDraft] = [:]
+    /// Controlled eval tasks, oldest first.
+    var controlTasks: [ControlTask] = []
 
     var current: [Mode] { modes.filter(\.isCurrent) }
 
@@ -80,7 +93,18 @@ struct AnalysisData: Sendable {
         let counted = labels.filter { confirmed.contains($0.sessionKey) }
         data.metrics = Bootstrap.metrics(labels: labels, notes: data.pool, pairings: pairings, phases: Bootstrap.phases(of: counted))
         data.sinceLastChange = Bootstrap.sessionsSinceLastModeChange(labels, lastChange: try await store.lastTaxonomyChange())
-        data.testSessions = ValidationStore(env: env).testSessions()
+        let validation = ValidationStore(env: env)
+        data.testSessions = validation.testSessions()
+        data.batches = BatchStore(env: env).all()
+        data.judges = validation.judges()
+        for id in data.judges.keys {
+            if let results = checkStore.load(Judges.resultsID(id)) { data.judgeResults[id] = results }
+        }
+        data.validation = validation.results()
+        data.splits = validation.splits()
+        data.trust = Validation.trustMap(modes: data.modes, env: env)
+        data.fixes = Dictionary(FixStore(env: env).all().map { ($0.modeID, $0) }, uniquingKeysWith: { first, _ in first })
+        data.controlTasks = ControlTasks.list(env: env)
         return data
     }
 }
@@ -99,6 +123,11 @@ final class AnalysisModel {
     var progress: String?
     /// A model call waiting for the user's go (its sheet).
     var send: AnalysisSend?
+    /// Reports: the batch shown and the one compared with it.
+    var reportBatch: String? = DebugSnapshot.options?.tab == "reports" ? DebugSnapshot.options?.select : nil
+    var compareBatch: String? = DebugSnapshot.options?.tab == "reports" ? DebugSnapshot.options?.query : nil
+    /// The last rebuild: all notes clustered from scratch, shown and never saved.
+    var rebuild: [Clustering.Candidate]?
 
     var env: HarnessEnvironment { .current }
 

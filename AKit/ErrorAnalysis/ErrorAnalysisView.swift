@@ -6,19 +6,20 @@ import SwiftUI
 /// their cost first and go through the sending policy.
 struct ErrorAnalysisView: View {
     enum Tab: String, CaseIterable {
-        case modes, review, bootstrap
+        case modes, review, bootstrap, reports
 
         var title: String {
             switch self {
             case .modes: "Modes"
             case .review: "Review"
             case .bootstrap: "Bootstrap"
+            case .reports: "Reports"
             }
         }
     }
 
     @State private var analysis = AnalysisModel()
-    /// Snapshots: `--tab modes|review|bootstrap`.
+    /// Snapshots: `--tab modes|review|bootstrap|reports`.
     @State private var tab = DebugSnapshot.options?.tab.flatMap(Tab.init(rawValue:)) ?? .modes
     @State private var modeAction: ModeAction?
 
@@ -29,6 +30,7 @@ struct ErrorAnalysisView: View {
             case .modes: ModesTab(action: $modeAction)
             case .review: ReviewQueueTab(action: $modeAction)
             case .bootstrap: BootstrapTab()
+            case .reports: ReportsTab()
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) { statusBar }
@@ -43,7 +45,7 @@ struct ErrorAnalysisView: View {
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
-                .help("Modes: the list of failure modes. Review: what waits for you. Bootstrap: your own notes on 30+ sessions.")
+                .help("Modes: the list of failure modes. Review: what waits for you. Bootstrap: your own notes on 30+ sessions. Reports: what a batch found.")
             }
             ToolbarItem {
                 Button("History", systemImage: "clock.arrow.circlepath") { modeAction = .history }
@@ -57,6 +59,13 @@ struct ErrorAnalysisView: View {
         .sheet(item: $modeAction) { ModeActionSheet(action: $0) }
         .sheet(item: $analysis.send) { AnalysisSendSheet(send: $0) }
         .environment(analysis)
+        .task(id: model.revealBatch) {
+            // Lab → Open Report: this batch on the Reports tab.
+            guard let batch = model.revealBatch else { return }
+            analysis.reportBatch = batch
+            tab = .reports
+            model.revealBatch = nil
+        }
         .task {
             await analysis.reload()
             // Snapshots: `--tab review --add` opens the clustering confirmation.

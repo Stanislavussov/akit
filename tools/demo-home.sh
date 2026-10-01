@@ -472,6 +472,7 @@ prompts=("Sort pinned notes first" "Add a search field" "Fix the sidebar selecti
          "Show word counts" "Rename the Archive tab" "Add iCloud sync settings" "Fix the toolbar layout" "Add keyboard shortcuts")
 judged=()   # no-build-after-swift-edit's judge: "key positive"
 large=()    # large-file-read-whole's code check
+constraint=()  # user-constraint-violated's judge
 picks_a=() picks_b=()
 for i in $(seq 1 60); do
     id=$(printf '7d0c0000-0000-4000-8000-0000000000%02d' "$i"); key="claude:$id"; r=$((i % 10))
@@ -498,6 +499,7 @@ for i in $(seq 1 60); do
     esac
     if [[ $kind == nobuild* ]]; then judged+=("$key true"); else judged+=("$key false"); fi
     if [[ $kind == large ]]; then large+=("$key true"); else large+=("$key false"); fi
+    if [[ $kind == constraint ]]; then constraint+=("$key true"); else constraint+=("$key false"); fi
     if (( r < 3 )); then
         inclusion=0.083; sampling=random
     else
@@ -560,8 +562,6 @@ verdicts() { # checker, "key positive"...
     verdicts judge "${judged[@]}"
     printf '\n} }\n'
 } | file "$ANALYSIS/checks/no-build-after-swift-edit_judge.json"
-constraint=()
-for entry in "${large[@]}"; do constraint+=("${entry% *} false"); done
 {
     printf '{ "modeID": "user-constraint-violated@judge", "modeVersion": 1, "judge": "claude-code|sonnet|1", "verdicts": {\n'
     verdicts judge "${constraint[@]}"
