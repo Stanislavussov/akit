@@ -679,8 +679,45 @@ never synced.
 
 ## Implementation plan
 
-Each slice is merged into master with a tag, is usable in the installed AKit, and brings
-its own UI.
+Each slice is usable in the installed AKit and brings its own UI. Built on branch
+`error-analysis` (2026-10-01, all slices; merged as one feature). Code: module
+`AKitErrorAnalysis` (plus the sending policy in `AKitLab`, the scrubber in
+`AKitFoundation`, HEAD and signals in `AKitInsights`); commands `akit analysis …`,
+`akit lab new analysis`, `akit lab policy|sends`; screens Settings → Lab, Lab (Sends,
+review notes, batch and control runs) and Error Analysis (Modes, Review, Bootstrap,
+Reports, Evals).
+
+What differs from the text above, found while building or on real sessions:
+
+- **Verifier context.** The verifier sees the cited step and the three steps before and
+  after it: on a real session it rejected claims that sum up a step with its neighbours
+  when it saw the step alone. Quotes under 8 characters are rejected in code.
+- **Low-confidence routes** count in "seen in k notes" only after the user accepts them.
+- **Lab's own sessions** (replays, control cells, agent reviews) are left out of samples,
+  bootstrap picks and check rates, so evals never enter production frequencies.
+- **Signals** live in the session index (schema v6, table `signals`), computed by
+  `akit analysis signals` and after every `akit sessions import` once error analysis is in
+  use, together with the code checks of active modes.
+- **Code checks.** Seed 9 has a mechanical check (output over 20 KB of a Read without a
+  range or a plain `cat`); seeds 1, 5, 7 and 8 have heuristic checks.
+- **Control tasks** keep a `referenceGreen` flag from `akit analysis control task check`;
+  a success mode's assertion passes when the mode shows (from the mode's kind).
+- Model calls of the analysis run with `--no-session-persistence` (Claude Code) or
+  `--no-session` (Pi), so they never appear as sessions.
+- **Clustering never confirms a mode.** Its candidates wait for the user; a candidate is
+  promoted when a later session (matching, retro-matching or the user) routes a note to it.
+  A seed is activated by two batches whose own matching routed two different sessions to it.
+- **Scrubber v2.** After a secret's name, long hex values and UUIDs are masked unless the
+  name says hash (sha, digest, commit, checksum, cache…); `--token VALUE` flags are masked.
+- **Concurrent writers.** Every file of the analysis folder is changed under a lock, as a
+  read-modify-write of what is on disk, so the app, `akit` and two batch workers never save
+  over each other.
+- **Fixes.** A draft of a fix already applied needs an explicit start-over (it would move T
+  and its criterion); the before/after view also flags a harness-version change.
+- **Matrix.** Sessions with failures but no decisive step are counted as unlocated, outside
+  the cells.
+
+Status per slice: all done 2026-10-01/02, with the review fixes above.
 
 1. **Sending policy and cost.**
    - Allowed list with the account check: Settings → Lab.

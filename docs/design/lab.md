@@ -79,6 +79,8 @@ AKit UI ◀──(3) watches ~/.akit/lab/ and shows state and result
 | **Session analysis** | no | inside AKit, instant | cost, friction and context rent of one recorded session |
 | **Session review** | a model call or an agent | terminal | one paragraph plus 0 to 3 improvements |
 | **Replay task** | yes | terminal, N repeats × setups | hidden tests passed or not, and what it cost |
+| **Error analysis** | model calls | terminal | a batch of sessions: notes, verifier, matching, checks, clustering (`error-analysis.md`) |
+| **Control cell** | yes | terminal, repeats × setups | a control task's oracle (tests or a mode's check) and the guard (`error-analysis.md`) |
 
 Session analysis is plain computation over the transcript and git; it needs no
 terminal, no run folder and should be the first thing built.
@@ -196,6 +198,9 @@ Who writes what:
   smallest cap doesn't fit, the middle of the session goes, but never user turns or the
   stubs of failed tool results.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
+- Since 2026-10-01 every call that sends session data or code goes through the sending
+  policy of `error-analysis.md` (allowed list, same origin, account check, scrub, monthly
+  limit, `sends.jsonl`); the one-call review is error analysis's notes and verifier.
 
 ## Replay tasks
 
@@ -310,7 +315,7 @@ Lab screen shows the spread, not only the mean.
   session analysis.
 - **Error analysis** (`error-analysis.md`): failure modes across many sessions, checks
   per mode and controlled evals of fixes; the one-session review becomes its first step.
-  Its control sets may reuse replay tasks (an open question there).
+  Its control sets are Lab runs too: control cells (kind `control`) built on replay's isolated clone.
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 
