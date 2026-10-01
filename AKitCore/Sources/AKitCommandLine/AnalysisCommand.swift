@@ -1,5 +1,6 @@
 import AKitErrorAnalysis
 import AKitFoundation
+import AKitInsights
 import AKitLab
 import Foundation
 
@@ -13,6 +14,13 @@ extension AKitCLI {
                                           by the verifier), deviation steps and advice. Without
                                           SESSION: every reviewed session. Review one with
                                           akit lab new review SESSION
+          akit analysis signals [--json]  Compute cheap signals (interrupts, pushbacks, tool errors,
+                                          repeated calls, "done" with no check) for every indexed
+                                          session; local, no model call. Run akit sessions import first
+          akit analysis check [MODE…] [--json]
+                                          Run code checks over every indexed session (all of them
+                                          without MODE): the share of sessions where each mode shows,
+                                          with a 95% interval. Local, nothing is sent
         """
 
     static func analysis(_ arguments: [String], env: HarnessEnvironment, cwd: URL,
@@ -41,6 +49,44 @@ extension AKitCLI {
                 throw Failure(message: "No notes for \(session). Review it first: akit lab new review \(session).")
             }
             out(json ? try labJSON(notes) : notesText(notes))
+            return 0
+        case "signals":
+            try args.finish()
+            let result = try SignalScanner.refresh(env: env)
+            guard result.total > 0 else { throw Failure(message: "The session index is empty. Run akit sessions import first.") }
+            guard let database = try AnalysisIndex.open(env: env) else { return 0 }
+            let signals = try AnalysisIndex.signals(database).mapValues(\.signals)
+            if json { out(try labJSON(signals)); return 0 }
+            let raised = signals.values.filter(\.raised).count
+            out("Computed \(result.computed) of \(result.total) sessions. \(raised) raise a signal:")
+            for (name, count) in [("interrupted", signals.values.filter { $0.interrupts > 0 }.count),
+                                  ("pushback", signals.values.filter { $0.pushbacks > 0 }.count),
+                                  ("tool errors", signals.values.filter { $0.toolErrors > 0 }.count),
+                                  ("repeated calls", signals.values.filter { $0.repeatedCalls > 0 }.count),
+                                  ("done with no check", signals.values.filter(\.unverifiedDone).count)] {
+                out("  \(name.padding(toLength: 20, withPad: " ", startingAt: 0)) \(count)")
+            }
+            return 0
+        case "check":
+            var ids: [String] = []
+            while let id = args.positional() { ids.append(id) }
+            try args.finish()
+            let checks = try ids.isEmpty ? CodeChecks.all : ids.map { id in
+                guard let check = CodeChecks.check(for: id) else {
+                    throw Failure(message: "No code check for \(id). Code checks: \(CodeChecks.all.map(\.modeID).joined(separator: ", ")).")
+                }
+                return check
+            }
+            let results = try CheckRunner.run(checks, env: env)
+            if json { out(try labJSON(results)); return 0 }
+            for (check, result) in zip(checks, results) {
+                let rate = result.rate()
+                let share = rate.total == 0 ? "no sessions" : String(format: "%d of %d (%.1f%%, 95%% %.1f–%.1f%%)", rate.positive, rate.total,
+                                                                       100 * Double(rate.positive) / Double(rate.total),
+                                                                       100 * rate.interval.low, 100 * rate.interval.high)
+                out("\(check.modeID) [\(check.kind.rawValue)]: \(share)")
+                if check.kind == .heuristic { out("  not validated: reports show this mode as \"seen in k notes\"") }
+            }
             return 0
         case let other:
             throw Failure(message: "Unknown “akit analysis \(other ?? "")”. Run akit analysis --help.")

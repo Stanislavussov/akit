@@ -87,6 +87,13 @@ public enum IndexSchema {
         """
         ALTER TABLE hook_events ADD COLUMN head TEXT;
         """,
+        // v6: cheap signals per session for error analysis's sampling (computed by code from the
+        // transcript, no model call). Not facts of a source: recomputed when the file changes.
+        """
+        CREATE TABLE signals(session_key TEXT PRIMARY KEY, file_size INTEGER NOT NULL, file_mtime REAL NOT NULL,
+          version INTEGER NOT NULL, interrupts INTEGER NOT NULL, pushbacks INTEGER NOT NULL, tool_errors INTEGER NOT NULL,
+          repeated_calls INTEGER NOT NULL, unverified_done INTEGER NOT NULL, user_turns INTEGER NOT NULL, steps INTEGER NOT NULL);
+        """,
     ]
 
     /// Brings the database to the latest version. Refuses an index written by a newer akit.
