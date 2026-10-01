@@ -81,16 +81,20 @@ public enum ControlRuns {
         guard let task = ControlTasks.load(id, env: env) else { throw LabWorker.Failure(message: "The control task \(id) is gone.") }
         let gate = try await SendGate.open(agent: setup.agent, env: env)
         try gate.check(.code(setup.agent.harness))
+        // A task made from a session sends its user's turn: that session's origin must be allowed
+        // too, and the turn is scrubbed with the user's own patterns.
+        if case .session(let key) = task.source { try gate.check(ControlTasks.origin(of: key, env: env)) }
+        let prompt = gate.scrub(task.prompt).text
         try SendLog.checkLimit(estimate: nil, settings: gate.settings, env: env)
         guard !Cancellation.isCancelled else { throw CancellationError() }
         out("Control task “\(task.title)” from \(String(task.base.prefix(7))) · \(setup.label) · \(task.oracle.label)")
         let testCommand: String? = if case .tests(let command) = task.oracle { command } else { nil }
         let facts = try await ControlCell.run(run, setup: setup, repo: URL(filePath: task.repo, directoryHint: .isDirectory),
-                                              base: task.base, prompt: task.prompt, testCommand: testCommand, env: env,
+                                              base: task.base, prompt: prompt, testCommand: testCommand, env: env,
                                               phase: phase, out: out)
         let session: String? = if case .session(let key) = task.source { key.description } else { nil }
         try? SendLog.append(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,
-                                       model: setup.agent.model, inputCharacters: task.prompt.count, usage: facts.usage), env: env)
+                                       model: setup.agent.model, inputCharacters: prompt.count, usage: facts.usage), env: env)
         let control = outcome(task: task, setup: setup, repeatIndex: run.spec.repeatIndex ?? 1, facts: facts)
         return RunResult(metrics: facts.metrics, leaks: control.leaks, agentError: facts.agentError, control: control)
     }

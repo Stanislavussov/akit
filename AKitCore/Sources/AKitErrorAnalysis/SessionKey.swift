@@ -33,11 +33,14 @@ public struct SessionKey: Hashable, Codable, Sendable, CustomStringConvertible {
         let file = summary.file
         switch summary.harness {
         case .claudeCode:
-            // A subagent run belongs to its parent session: `<session id>/subagents/<run>.jsonl`.
-            let id = file.deletingLastPathComponent().lastPathComponent == "subagents"
-                ? file.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
-                : file.deletingPathExtension().lastPathComponent
-            return SessionKey(harness: "claude", nativeID: id)
+            // A subagent run lives in `<session id>/subagents/<run>.jsonl`. The index counts it
+            // with its parent; reviewed on its own it gets a key of its own, so its notes never
+            // replace the parent's.
+            if file.deletingLastPathComponent().lastPathComponent == "subagents" {
+                let parent = file.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+                return SessionKey(harness: "claude", nativeID: "\(parent)/\(file.deletingPathExtension().lastPathComponent)")
+            }
+            return SessionKey(harness: "claude", nativeID: file.deletingPathExtension().lastPathComponent)
         case .pi:
             var id: String?
             JSONLines.scanHead(of: file) { entry in

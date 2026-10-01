@@ -22,6 +22,8 @@ public enum ModelCall {
         /// The session key or transcript path the input came from.
         public var session: String?
         public var runID: String?
+        /// Scrubber matches of a scrub the caller already did, for the send log.
+        public var scrubbed: [String: Int]?
 
         public init(agent: LabAgent, purpose: String, system: String, input: String, schema: String? = nil, origins: [SendOrigin],
                     runID: String? = nil) {
@@ -52,7 +54,15 @@ public enum ModelCall {
         public let message: String
         /// The provider said "too many requests": worth retrying after a pause.
         public let rateLimited: Bool
+        /// What the failed call still cost, when the harness recorded it.
+        public var usage: SendUsage?
         public var errorDescription: String? { message }
+
+        public init(message: String, rateLimited: Bool, usage: SendUsage? = nil) {
+            self.message = message
+            self.rateLimited = rateLimited
+            self.usage = usage
+        }
     }
 
     /// Checks, scrubs, sends, logs. Retries a rate-limited call with exponential backoff.
@@ -67,16 +77,25 @@ public enum ModelCall {
         try SendLog.checkLimit(estimate: SendLog.estimate(characters: scrubbed.text.count, harness: request.agent.harness,
                                                           model: request.agent.model, records: records),
                                settings: gate.settings, env: env)
+        // Matches of the caller's own scrub (done earlier so quotes match what was sent) count too.
+        let counts = scrubbed.counts.merging(request.scrubbed ?? [:], uniquingKeysWith: +)
+        func log(_ usage: SendUsage, error: String? = nil) throws {
+            var record = SendRecord(purpose: request.purpose, session: request.session, runID: request.runID, destination: gate.destination,
+                                    model: request.agent.model, inputCharacters: scrubbed.text.count, usage: usage,
+                                    scrubbed: counts.isEmpty ? nil : counts)
+            record.error = error
+            try SendLog.append(record, env: env)
+        }
         var attempt = 0
         while true {
             do {
                 let answer = try await once(request, input: scrubbed.text, folder: folder, env: env, timeout: timeout)
-                try? SendLog.append(SendRecord(purpose: request.purpose, session: request.session, runID: request.runID,
-                                               destination: gate.destination, model: request.agent.model,
-                                               inputCharacters: scrubbed.text.count, usage: answer.usage,
-                                               scrubbed: scrubbed.counts.isEmpty ? nil : scrubbed.counts), env: env)
+                try log(answer.usage)
                 return answer
-            } catch let failure as Failure where failure.rateLimited && attempt < retries {
+            } catch let failure as Failure {
+                // A failed call is logged too when it cost something: the limit counts it.
+                if let usage = failure.usage { try log(usage, error: failure.message) }
+                guard failure.rateLimited, attempt < retries else { throw failure }
                 attempt += 1
                 try await sleep(.seconds(5 * (1 << attempt)))
             }
@@ -134,7 +153,8 @@ public enum ModelCall {
         let sent = claudeUsage(result)
         if result["is_error"] as? Bool == true {
             let text = result["result"] as? String ?? "Claude Code stopped with an error."
-            throw Failure(message: SecretFilter.masked(String(text.prefix(300))), rateLimited: isRateLimit(text))
+            let recorded = result["usage"] != nil || result["total_cost_usd"] != nil
+            throw Failure(message: SecretFilter.masked(String(text.prefix(300))), rateLimited: isRateLimit(text), usage: recorded ? sent : nil)
         }
         if let structured = result["structured_output"], JSONSerialization.isValidJSONObject(structured),
            let data = try? JSONSerialization.data(withJSONObject: structured) {
@@ -174,7 +194,10 @@ public enum ModelCall {
                 if !answer.isEmpty { text = answer }
             }
         }
-        if let error { throw Failure(message: SecretFilter.masked(String(error.prefix(300))), rateLimited: isRateLimit(error)) }
+        if let error {
+            throw Failure(message: SecretFilter.masked(String(error.prefix(300))), rateLimited: isRateLimit(error),
+                          usage: usage == SendUsage() ? nil : usage)
+        }
         guard let text else {
             let output = lines.joined(separator: "\n")
             throw Failure(message: "Pi gave no answer: \(SecretFilter.masked(String(output.suffix(300))))", rateLimited: isRateLimit(output))

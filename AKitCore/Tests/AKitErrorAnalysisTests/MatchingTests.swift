@@ -124,8 +124,8 @@ struct MatchingTests {
         // Unknown refs dropped; a note in at most one candidate.
         #expect(candidates.map(\.notes.count) == [2, 1])
         let created = try await Clustering.apply(candidates, store: store, env: env)
-        // Two independent sessions: a mode at once. One case: a candidate.
-        #expect(created.map(\.status) == [.active, .candidate])
+        // Candidates, both: clustering never confirms a mode on its own.
+        #expect(created.map(\.status) == [.candidate, .candidate])
         #expect(created[0].id == "lint-warnings-ignored")
         let seen = Matching.seen(NotesStore(env: env).all(), modes: try await store.list()).byMode
         #expect(seen["lint-warnings-ignored"]?.count == 2 && seen["repeated-questions"]?.count == 1)
@@ -223,5 +223,36 @@ struct MatchingTests {
                                                notes: [NoteRef(sessionKey: "claude:a", noteID: "n2")])]
         #expect(Clustering.umbrellas(candidates, pool: [a], modes: modes) == ["false-premise"])
         #expect(Clustering.umbrellas(Array(candidates.prefix(1)), pool: [a], modes: modes).isEmpty)
+    }
+
+    @Test func aLaterRouteReplacesAnAcceptedNoneFits() async throws {
+        var a = try pool("claude:a", notes: [("n1", "x")])
+        a.routes = [Route(noteID: "n1", modeID: nil, confidence: 0.9, by: .matching, review: .accepted)]
+        try NotesStore(env: env).save(a)
+        try NotesStore(env: env).update("claude:a") { notes in
+            notes.routes?.append(Route(noteID: "n1", modeID: "new-mode", confidence: 1, by: .clustering))
+        }
+        #expect(Matching.currentRoutes(try #require(NotesStore(env: env).load("claude:a")))["n1"]?.modeID == "new-mode")
+    }
+
+    @Test func lockedUpdatesFromManyWritersLoseNothing() async throws {
+        _ = try pool("claude:a", notes: [("n1", "x")])
+        let env = env
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<20 {
+                group.addTask {
+                    _ = try? NotesStore(env: env).update("claude:a") { notes in
+                        notes.routes = (notes.routes ?? []) + [Route(noteID: "n\(index)", modeID: nil, confidence: 1, by: .human)]
+                    }
+                }
+            }
+        }
+        #expect(NotesStore(env: env).load("claude:a")?.routes?.count == 20)
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<20 {
+                group.addTask { _ = try? CheckStore(env: env).update("m") { $0.verdicts["s\(index)"] = CheckVerdict(positive: true, version: 1) } }
+            }
+        }
+        #expect(CheckStore(env: env).load("m")?.verdicts.count == 20)
     }
 }

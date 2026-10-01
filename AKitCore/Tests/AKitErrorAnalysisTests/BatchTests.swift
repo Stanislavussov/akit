@@ -112,7 +112,8 @@ struct BatchTests {
         let result = try #require(LabStore.load(first.id, env: env)?.result?.batch)
         #expect(result.done == 5 && result.failed == 1 && result.total == 6)
         let store = ModeStore(env: env)
-        #expect(try await store.mode("vague-requests")?.status == .active)
+        // Clustering makes candidates; the user confirms them (or a later case promotes them).
+        #expect(try await store.mode("vague-requests")?.status == .candidate)
         // One batch match: the seed is still inactive.
         #expect(try await store.mode("large-file-read-whole")?.status == .seedInactive)
 

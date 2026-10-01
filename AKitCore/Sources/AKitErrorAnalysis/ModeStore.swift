@@ -69,6 +69,17 @@ public struct ModeStore: Sendable {
     }
 
     /// The newest commits of the modes repository: what changed in the list, and when.
+    /// When the list of modes last changed: a mode added, renamed, edited, merged, split,
+    /// rejected, restored, confirmed or activated. Batch bookkeeping, fixes and exemplars
+    /// don't count (the bootstrap stop rule waits for 20 sessions without such a change).
+    public func lastTaxonomyChange() async throws -> Date? {
+        let changes = ["Add mode", "Add seed modes", "Rename mode", "Edit mode", "Merge modes", "Split mode", "Reject mode",
+                       "Restore mode", "Confirm mode"]
+        return try await history(limit: 1000).first { entry in
+            changes.contains(where: entry.message.hasPrefix) || entry.message.hasSuffix("seed activated")
+        }?.date
+    }
+
     public func history(limit: Int = 50) async throws -> [(date: Date, message: String)] {
         try await locked {
             _ = try await prepare()
@@ -274,14 +285,18 @@ public struct ModeStore: Sendable {
     /// with matches from two different batch runs becomes active; ad-hoc matches never come
     /// here. The same run twice counts once.
     @discardableResult
-    public func recordBatchMatch(_ id: String, runID: String) async throws -> Mode {
+    /// `sessions`: the sessions of the batch routed to the mode by that batch's own matching.
+    /// A seed is activated by matches in two batches covering two different sessions.
+    public func recordBatchMatch(_ id: String, runID: String, sessions: [String] = []) async throws -> Mode {
         try await change { modes in
             let resolved = Self.resolve(id, in: modes)
             let index = try Self.index(of: resolved, in: modes)
             guard !modes[index].batchMatches.contains(runID) else { return (modes[index], nil) }
             modes[index].batchMatches.append(runID)
+            modes[index].batchSessions = Array(Set((modes[index].batchSessions ?? []) + sessions)).sorted()
             var message = "Record batch match of mode \(resolved) in run \(runID)"
-            if modes[index].status == .seedInactive, Set(modes[index].batchMatches).count >= 2 {
+            if modes[index].status == .seedInactive, Set(modes[index].batchMatches).count >= 2,
+               Set(modes[index].batchSessions ?? []).count >= 2 {
                 modes[index].status = .active
                 message += "; seed activated"
             }

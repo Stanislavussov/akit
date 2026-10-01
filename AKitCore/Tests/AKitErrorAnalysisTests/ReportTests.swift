@@ -106,4 +106,11 @@ struct ReportTests {
         #expect(Reports.build(b, modes: [], pool: pool, checks: [], trust: [:], bootstrap: [good], acceptance: (0, 0), allBatches: [b],
                               phases: phases).matrixHidden == nil)
     }
+
+    @Test func failuresWithoutADecisiveStepAreUnlocatedNotNoFailures() {
+        let pool = [notes("a", outcome: .no, decisive: nil, routes: ["m"]), notes("b", outcome: .achieved, decisive: nil, routes: [])]
+        let matrix = TransitionMatrix.build(pool, phases: [:])
+        #expect(matrix.unlocated == ["a"])
+        #expect(matrix.count(.report, TransitionMatrix.noFailures) == 1)
+    }
 }

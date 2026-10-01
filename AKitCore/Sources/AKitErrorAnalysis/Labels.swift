@@ -67,15 +67,14 @@ public struct LabelBookStore: Sendable {
     }
 
     public func save(_ book: LabelBook) throws {
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(book).write(to: file, options: .atomic)
+        try JSONFile.write(book, to: file)
     }
 
     public func update(_ change: (inout LabelBook) throws -> Void) throws -> LabelBook {
-        var book = load()
-        try change(&book)
-        try save(book)
-        return book
+        try JSONFile.update(file, empty: LabelBook()) { book in
+            try change(&book)
+            return book
+        }
     }
 }
 

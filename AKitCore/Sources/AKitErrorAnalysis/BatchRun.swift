@@ -124,30 +124,27 @@ public enum Batches {
 
     /// Asks a running batch to stop after its current calls.
     public static func pause(_ batchID: String, env: HarnessEnvironment) throws {
-        let store = BatchStore(env: env)
-        guard var batch = store.load(batchID) else { throw Failure(message: "No batch \(batchID).") }
-        batch.paused = true
-        try store.save(batch)
+        try BatchStore(env: env).update(batchID) { $0.paused = true }
     }
 
     /// Continues a paused batch from where it stopped, as a new run.
     public static func resume(_ batchID: String, retryErrors: Bool = false, environment: LabEnvironment?, akit: URL,
                               env: HarnessEnvironment) async throws -> LabRun {
-        let store = BatchStore(env: env)
-        guard var batch = store.load(batchID) else { throw Failure(message: "No batch \(batchID).") }
-        batch.paused = false
-        batch.pauseReason = nil
-        if retryErrors {
-            // The old result of a failed session stays until the retry succeeds: notes files are
-            // replaced only by a successful review.
-            for index in batch.sessions.indices where batch.sessions[index].status == .error {
-                batch.sessions[index].status = .pending
-            }
-        }
-        guard batch.sessions.contains(where: { $0.status != .done }) || !batch.clustered else {
+        guard let current = BatchStore(env: env).load(batchID) else { throw Failure(message: "No batch \(batchID).") }
+        guard current.sessions.contains(where: { $0.status != .done }) || current.unfinished else {
             throw Failure(message: "The batch is done; nothing to resume.")
         }
-        try store.save(batch)
+        let batch = try BatchStore(env: env).update(batchID) { batch in
+            batch.paused = false
+            batch.pauseReason = nil
+            if retryErrors {
+                // The old result of a failed session stays until the retry succeeds: notes files
+                // are replaced only by a successful review.
+                for index in batch.sessions.indices where batch.sessions[index].status == .error {
+                    batch.sessions[index].status = .pending
+                }
+            }
+        }
         let title = (retryErrors ? "Error analysis (retry errors)" : "Error analysis (resumed)") + ": \(batch.sessions.count) sessions"
         return try await queueRun(batchID: batchID, runID: RunSpec.newID(), title: title, environment: environment, akit: akit, env: env)
     }
@@ -174,8 +171,18 @@ enum BatchRunner {
         /// Pause is written into the file by another process (the app, `akit analysis batch
         /// pause`): read it before every write so it is never written over.
         private func save() {
-            if let saved = store.load(batch.runID), saved.paused { batch.paused = true }
-            try? store.save(batch)
+            let mine = batch
+            if let saved = try? store.update(mine.runID, { disk in
+                // Pause and its reason come from the file; everything else from this worker.
+                let paused = disk.paused || mine.paused
+                let reason = disk.pauseReason ?? mine.pauseReason
+                disk = mine
+                disk.paused = paused
+                disk.pauseReason = reason
+            }) {
+                batch.paused = saved.paused
+                batch.pauseReason = saved.pauseReason
+            }
         }
 
         func update(_ key: String, _ change: (inout Batch.Session) -> Void) {
@@ -208,7 +215,9 @@ enum BatchRunner {
         for index in batch.sessions.indices where batch.sessions[index].status == .running { batch.sessions[index].status = .pending }
         // Starting is resuming: the run clears an earlier pause.
         batch.paused = false
-        try BatchStore(env: env).save(batch)
+        batch.pauseReason = nil
+        let fresh = batch
+        try BatchStore(env: env).update(batchID) { $0 = fresh }
         let state = State(batch: batch, store: BatchStore(env: env))
 
         // Account checks once at the start; each session's own origin is checked per call.
@@ -246,7 +255,7 @@ enum BatchRunner {
         batch = await state.batch
 
         let open = batch.sessions.contains { $0.status == .pending || $0.status == .running }
-        if !batch.paused, !open, !batch.clustered {
+        if !batch.paused, !open, batch.unfinished {
             phase(.metrics)
             await finishBatch(state: state, modeStore: modeStore, gate: matchingGate, work: work, env: env, out: out)
             batch = await state.batch
@@ -317,7 +326,8 @@ enum BatchRunner {
     static func finishBatch(state: State, modeStore: ModeStore, gate: SendGate, work: URL, env: HarnessEnvironment,
                             out: @escaping @Sendable (String) -> Void) async {
         let batch = await state.batch
-        let keys = Set(batch.sessions.filter { $0.status == .done }.map(\.pick.sessionKey))
+        let finished = Set(batch.finishedSessions ?? [])
+        let keys = Set(batch.sessions.filter { $0.status == .done && !finished.contains($0.pick.sessionKey) }.map(\.pick.sessionKey))
         let pool = NotesStore(env: env).all().filter { keys.contains($0.sessionKey) }
         do {
             var modes = try await modeStore.list()
@@ -326,10 +336,16 @@ enum BatchRunner {
                 try CheckRunner.run(checks.map(\.1), modeVersions: Dictionary(uniqueKeysWithValues: checks.map { ($0.0.id, $0.0.version) }), env: env)
                 out("Code checks: \(checks.map(\.0.id).joined(separator: ", ")).")
             }
-            // Seeds become active after matches in two independent batches.
-            let matched = Set(Matching.seen(pool, modes: modes).byMode.keys)
-            for mode in modes where matched.contains(mode.id) && mode.origin.isSeed {
-                let updated = try await modeStore.recordBatchMatch(mode.id, runID: batch.runID)
+            // Seeds become active after matches in two independent batches: only this batch's own
+            // routes count (not ones reused from an earlier review), with the sessions behind them.
+            var matched: [String: Set<String>] = [:]
+            for notes in pool {
+                for route in Matching.currentRoutes(notes).values where route.runID == batch.runID {
+                    if let mode = route.modeID { matched[ModeStore.resolve(mode, in: modes), default: []].insert(notes.sessionKey) }
+                }
+            }
+            for mode in modes where matched[mode.id] != nil && mode.origin.isSeed {
+                let updated = try await modeStore.recordBatchMatch(mode.id, runID: batch.runID, sessions: matched[mode.id]?.sorted() ?? [])
                 if updated.status == .active, mode.status != .active { out("Seed \(mode.name) is now active (matched in two batches).") }
             }
             modes = try await modeStore.list()
@@ -345,8 +361,9 @@ enum BatchRunner {
             let spot = ReviewQueue.pickSpotCheck(pool, using: &generator)
             await state.finish {
                 $0.clustered = true
-                $0.candidates = created.map(\.id)
-                $0.spotCheck = spot
+                $0.candidates += created.map(\.id)
+                $0.spotCheck += spot
+                $0.finishedSessions = (($0.finishedSessions ?? []) + keys.sorted())
             }
         } catch {
             out("The end of the batch failed: \(error.localizedDescription). Resume the batch to try again.")

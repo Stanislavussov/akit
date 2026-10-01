@@ -15,7 +15,8 @@ struct SessionKeyTests {
         let key = SessionKey.of(summary(.claudeCode, file))
         #expect(key?.description == "claude:0b6c1d2e-aaaa-bbbb-cccc-1234567890ab")
         let subagent = URL(filePath: "/tmp/home/.claude/projects/-x/abc/subagents/agent-1.jsonl")
-        #expect(SessionKey.of(summary(.claudeCode, subagent))?.description == "claude:abc")
+        // Reviewed on its own, a subagent run keeps a key apart from its parent's.
+        #expect(SessionKey.of(summary(.claudeCode, subagent))?.description == "claude:abc/agent-1")
         #expect(SessionKey.of(summary(.codex, file)) == nil)
     }
 

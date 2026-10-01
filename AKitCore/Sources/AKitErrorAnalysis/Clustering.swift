@@ -123,9 +123,8 @@ public enum Clustering {
         return id
     }
 
-    /// Saves candidates as candidate modes and routes their notes to them. A candidate whose
-    /// notes come from two or more sessions (independent cases) becomes a mode at once; the
-    /// others wait for a second case or the user's confirmation.
+    /// Saves candidates as candidate modes and routes their notes to them. They stay
+    /// candidates: the user confirms them (or a second independent case promotes them).
     @discardableResult
     public static func apply(_ candidates: [Candidate], store: ModeStore, env: HarnessEnvironment) async throws -> [Mode] {
         var taken = Set(try await store.list().map(\.id))
@@ -134,33 +133,43 @@ public enum Clustering {
         for candidate in candidates {
             let id = slug(candidate.name, taken: taken)
             taken.insert(id)
-            var mode = try await store.create(Mode(id: id, name: candidate.name, kind: candidate.kind, definition: candidate.definition,
+            let mode = try await store.create(Mode(id: id, name: candidate.name, kind: candidate.kind, definition: candidate.definition,
                                                    include: candidate.include, exclude: candidate.exclude))
-            for (key, refs) in Dictionary(grouping: candidate.notes, by: \.sessionKey) {
-                guard var notes = notesStore.load(key) else { continue }
-                var routes = notes.routes ?? []
-                for ref in refs {
-                    routes.removeAll { $0.noteID == ref.noteID && $0.modeID == nil && $0.review == nil }
-                    routes.append(Route(noteID: ref.noteID, modeID: id, confidence: 1, reason: "Clustered into a new candidate.",
-                                        by: .clustering))
+            for (key, refs) in Dictionary(grouping: candidate.notes, by: \.sessionKey) where notesStore.load(key) != nil {
+                try notesStore.update(key) { notes in
+                    var routes = notes.routes ?? []
+                    for ref in refs {
+                        routes.removeAll { $0.noteID == ref.noteID && $0.modeID == nil && $0.review == nil }
+                        routes.append(Route(noteID: ref.noteID, modeID: id, confidence: 1, reason: "Clustered into a new candidate.",
+                                            by: .clustering))
+                    }
+                    notes.routes = routes
                 }
-                notes.routes = routes
-                try notesStore.save(notes)
             }
-            if Set(candidate.notes.map(\.sessionKey)).count >= 2 { mode = try await store.confirm(id) }
             created.append(mode)
         }
         return created
     }
 
-    /// Candidates that have gained a second independent case since they were made become modes.
+    /// A candidate becomes a mode at its second independent case: a session routed to it by
+    /// matching, retro-matching or the user after clustering made it, besides the sessions it
+    /// was made from.
     @discardableResult
     public static func promoteCandidates(store: ModeStore, env: HarnessEnvironment) async throws -> [Mode] {
         let modes = try await store.list()
-        let seen = Matching.seen(NotesStore(env: env).all(), modes: modes).byMode
+        var sessions: [String: (made: Set<String>, later: Set<String>)] = [:]
+        for notes in NotesStore(env: env).all() {
+            for route in Matching.currentRoutes(notes).values {
+                guard let id = route.modeID.map({ ModeStore.resolve($0, in: modes) }) else { continue }
+                if route.by == .clustering { sessions[id, default: ([], [])].made.insert(notes.sessionKey) } else {
+                    sessions[id, default: ([], [])].later.insert(notes.sessionKey)
+                }
+            }
+        }
         var promoted: [Mode] = []
         for mode in modes where mode.status == .candidate {
-            if Set((seen[mode.id] ?? []).map(\.sessionKey)).count >= 2 { promoted.append(try await store.confirm(mode.id)) }
+            guard let cases = sessions[mode.id], !cases.later.isEmpty, cases.made.union(cases.later).count >= 2 else { continue }
+            promoted.append(try await store.confirm(mode.id))
         }
         return promoted
     }

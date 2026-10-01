@@ -8,7 +8,7 @@ import Foundation
 /// would send them to their provider. Keys, schemes and surrounding text stay readable.
 public enum Scrubber {
     /// Bumped whenever rules change; part of done keys and the send log.
-    public static let version = 1
+    public static let version = 2
     public static let hostMask = "[host hidden]"
     public static let emailMask = "[email hidden]"
 
@@ -42,6 +42,7 @@ public enum Scrubber {
         }
         current = maskDotenv(current, counts: &counts)
         current = apply(genericRule, to: current, present: present, counts: &counts)
+        current = apply(flagRule, to: current, present: present, counts: &counts)
         current = apply(entropyRule, to: current, present: present, counts: &counts)
 
         let before = occurrences(of: SecretFilter.mask, in: current)
@@ -182,7 +183,32 @@ public enum Scrubber {
     ) { text, match in
         let keyword = text.substring(with: match.range(at: 1)).lowercased()
         return looksLikeSecretValue(text.substring(with: match.range(at: 3)), quoted: match.range(at: 2).length > 0,
-                                    passwordLike: keyword.hasPrefix("pas") || keyword == "pwd" || keyword == "secret")
+                                    passwordLike: keyword.hasPrefix("pas") || keyword == "pwd" || keyword == "secret",
+                                    hashName: isHashName(nameBefore(match.range.location, in: text) + keyword))
+    }
+
+    /// `--token VALUE`, `--api-key=VALUE`: secrets passed on a command line.
+    private static let flagRule = Rule(
+        "cli-flag-secret", #"--(?:token|api-key|apikey|access-token|auth-token|password|secret|client-secret)(?:[ \t]+|=)["']?([^\s"'`]{8,})"#,
+        group: 1, hints: ["--"], options: .caseInsensitive
+    ) { text, match in
+        looksLikeSecretValue(text.substring(with: match.range(at: 1)), quoted: true, passwordLike: true, hashName: false)
+    }
+
+    /// The identifier just before a keyword match (`commit_` of `commit_sha_key`), up to 32 chars.
+    static func nameBefore(_ location: Int, in text: NSString) -> String {
+        var start = location
+        while start > 0, location - start < 32 {
+            let char = text.character(at: start - 1)
+            guard let scalar = UnicodeScalar(char), CharacterSet.alphanumerics.contains(scalar) || scalar == "_" || scalar == "-" || scalar == "." else { break }
+            start -= 1
+        }
+        return text.substring(with: NSRange(location: start, length: location - start)).lowercased()
+    }
+
+    /// A name for a hash, not a secret: its hex value is fine to send.
+    static func isHashName(_ name: String) -> Bool {
+        ["sha", "hash", "digest", "commit", "checksum", "etag", "revision", "cache"].contains(where: name.contains)
     }
 
     /// Stand-alone random tokens without a known prefix.
@@ -252,7 +278,7 @@ public enum Scrubber {
     }
 
     private static let caseSensitiveHints: Set<String> = Set(
-        (rules + [genericRule, entropyRule, emailRule])
+        (rules + [genericRule, flagRule, entropyRule, emailRule])
             .filter { !$0.regex.options.contains(.caseInsensitive) }
             .flatMap(\.hints)
     )
@@ -326,8 +352,12 @@ public enum Scrubber {
     /// A generic-rule value worth masking: random enough, and not a hash, number, path,
     /// URL, variable or (when unquoted) code like `os.environ` or `settings.apiKey`. Lower-case
     /// words like `"user-profile-cache"` name keys and tokens, but may be a password.
-    static func looksLikeSecretValue(_ value: String, quoted: Bool, passwordLike: Bool) -> Bool {
-        if isHexLike(value) || value.allSatisfy({ $0.isNumber || $0 == "." }) { return false }
+    /// The hex/UUID allowlist is for stand-alone runs (the entropy detector): after a secret's
+    /// name, a long hex value or a UUID is a key (Datadog, Heroku, Rails), unless the name says
+    /// it is a hash.
+    static func looksLikeSecretValue(_ value: String, quoted: Bool, passwordLike: Bool, hashName: Bool) -> Bool {
+        if isHexLike(value) { return value.count >= 20 && !hashName }
+        if value.allSatisfy({ $0.isNumber || $0 == "." }) { return false }
         for prefix in ["$", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
         if value.contains("://") { return false }
         if !passwordLike, value.utf8.allSatisfy({ kind($0) == 0 || "-_.:/".utf8.contains($0) }) { return false }

@@ -72,6 +72,8 @@ public struct TransitionMatrix: Codable, Hashable, Sendable {
     /// `row|column` → session keys.
     public var cells: [String: [String]]
     public var sessions: Int
+    /// Sessions with accepted notes but no decisive step: failures the matrix can't place.
+    public var unlocated: [String] = []
 
     public func count(_ row: Phase, _ column: String) -> Int { cells["\(row.rawValue)|\(column)"]?.count ?? 0 }
     public func sessions(_ row: Phase, _ column: String) -> [String] { cells["\(row.rawValue)|\(column)"] ?? [] }
@@ -88,10 +90,15 @@ public struct TransitionMatrix: Codable, Hashable, Sendable {
 
     public static func build(_ pool: [SessionNotes], phases: [String: [Int: Phase]]) -> TransitionMatrix {
         var cells: [String: [String]] = [:]
+        var unlocated: [String] = []
         for notes in pool {
             let sessionPhases = phases[notes.sessionKey] ?? [:]
-            guard !notes.noFailures, let step = notes.deviation.decisiveStep else {
+            if notes.noFailures {
                 cells["\(Phase.report.rawValue)|\(noFailures)", default: []].append(notes.sessionKey)
+                continue
+            }
+            guard let step = notes.deviation.decisiveStep else {
+                unlocated.append(notes.sessionKey)
                 continue
             }
             // The model may label only understand and plan; code labels the rest.
@@ -100,7 +107,7 @@ public struct TransitionMatrix: Codable, Hashable, Sendable {
             let previous = sessionPhases.keys.filter { $0 < step }.max().flatMap { sessionPhases[$0] } ?? .understand
             cells["\(previous.rawValue)|\(column.rawValue)", default: []].append(notes.sessionKey)
         }
-        return TransitionMatrix(cells: cells, sessions: pool.count)
+        return TransitionMatrix(cells: cells, sessions: pool.count, unlocated: unlocated)
     }
 
     /// One cell of a comparison of two runs: the change of its share, whether it is within
@@ -236,7 +243,8 @@ public enum Reports {
         var rebuild: String?
         if let unmatched, unmatched > rebuildUnmatched {
             rebuild = String(format: "%.0f%% of the notes matched no mode (more than 15%%): cluster all notes again from scratch.", unmatched * 100)
-        } else if allBatches.count % rebuildEvery == 0, !allBatches.isEmpty {
+        } else if let position = allBatches.sorted(by: { $0.createdAt < $1.createdAt }).firstIndex(where: { $0.runID == batch.runID }),
+                  (position + 1) % rebuildEvery == 0 {
             rebuild = "Every \(rebuildEvery) runs, cluster all notes again from scratch to check the list."
         }
 

@@ -7,6 +7,8 @@ import Foundation
 /// review, which is Step 1 and the verifier for one session.
 public enum AnalysisRuns {
     public static let execute: LabWorker.Execute = { run, env, phase, out in
+        // Every review, also an agent's, keeps away from sessions reserved for blind labeling.
+        if run.spec.kind == .review { try refuseReserved(run, env: env) }
         switch run.spec.kind {
         case .review where run.spec.agent?.mode == .call:
             return try await review(run, env: env, phase: phase, out: out)
@@ -19,6 +21,14 @@ public enum AnalysisRuns {
         }
     }
 
+    static func refuseReserved(_ run: LabRun, env: HarnessEnvironment) throws {
+        let file = try ReviewRun.reviewedFile(run)
+        let summary = NotesPipeline.Target(harness: run.spec.reviewedHarness, file: file).summary
+        if let key = SessionKey.of(summary), BootstrapReservations(env: env).isReserved(key.description) {
+            throw LabWorker.Failure(message: "This session is reserved for bootstrap labeling; review it after you have labeled it.")
+        }
+    }
+
     /// Notes, verifier, then what the Lab screen shows: the paragraph as `summary.md` and the
     /// advice as `review.json`. A refused send or a missing account stops the run with the
     /// reason; a model that fails or answers badly is kept as the run's agent error.
@@ -28,9 +38,6 @@ public enum AnalysisRuns {
         let agent = run.spec.agent ?? LabRuns.defaultAgent(.claudeCode, env: env)
         var target = NotesPipeline.Target(harness: run.spec.reviewedHarness, file: file, title: run.spec.reviewedTitle,
                                           project: LabPaths.folder(ofTranscript: file))
-        if let key = SessionKey.of(target.summary), BootstrapReservations(env: env).isReserved(key.description) {
-            throw LabWorker.Failure(message: "This session is reserved for bootstrap labeling; review it after you have labeled it.")
-        }
         let gate = try await SendGate.open(agent: agent, env: env)
         let metrics = try await ReviewRun.prepare(run, transcript: file, env: env).metrics
         target.numbers = metrics.flatMap { try? String(decoding: LabStore.encoder.encode($0), as: UTF8.self) }

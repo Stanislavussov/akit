@@ -233,9 +233,12 @@ public struct Route: Codable, Hashable, Sendable {
     /// The user's verdict, the source of route acceptance.
     public var review: Review?
     public var reviewedAt: Date?
+    /// The Lab run whose matching made it: a batch counts only its own routes as matches.
+    public var runID: String?
 
     public init(noteID: String, modeID: String?, confidence: Double, reason: String? = nil, by: Source, modesVersion: String? = nil,
-                review: Review? = nil, reviewedAt: Date? = nil) {
+                review: Review? = nil, reviewedAt: Date? = nil, runID: String? = nil) {
+        self.runID = runID
         self.noteID = noteID
         self.modeID = modeID
         self.confidence = confidence

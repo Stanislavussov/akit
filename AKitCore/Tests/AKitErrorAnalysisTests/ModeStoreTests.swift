@@ -194,10 +194,12 @@ struct ModeStoreTests {
     }
 
     @Test func aSeedActivatesAfterTwoDistinctBatchRuns() async throws {
-        #expect(try await store.recordBatchMatch("repeated-steps", runID: "run-1").status == .seedInactive)
-        #expect(try await store.recordBatchMatch("repeated-steps", runID: "run-1").status == .seedInactive)
-        let active = try await store.recordBatchMatch("repeated-steps", runID: "run-2")
-        #expect(active.status == .active && active.batchMatches == ["run-1", "run-2"] && active.confirmedAt == nil)
+        #expect(try await store.recordBatchMatch("repeated-steps", runID: "run-1", sessions: ["claude:a"]).status == .seedInactive)
+        #expect(try await store.recordBatchMatch("repeated-steps", runID: "run-1", sessions: ["claude:a"]).status == .seedInactive)
+        // A second batch that matched only the same session is not an independent case.
+        #expect(try await store.recordBatchMatch("repeated-steps", runID: "run-2", sessions: ["claude:a"]).status == .seedInactive)
+        let active = try await store.recordBatchMatch("repeated-steps", runID: "run-3", sessions: ["claude:b"])
+        #expect(active.status == .active && active.batchMatches == ["run-1", "run-2", "run-3"] && active.confirmedAt == nil)
     }
 
     @Test func exemplarsSkipTestSessionsAndStopAtThree() async throws {

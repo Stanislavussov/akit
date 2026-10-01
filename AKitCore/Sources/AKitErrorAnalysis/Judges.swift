@@ -81,14 +81,18 @@ public enum Judges {
                            workFolder: URL, env: HarnessEnvironment, out: @escaping @Sendable (String) -> Void = { _ in }) async throws -> CheckResults {
         let store = CheckStore(env: env)
         let id = resultsID(mode.id)
-        var results = store.load(id) ?? CheckResults(modeID: id)
         let judgeConfig = "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)"
-        if results.modeVersion != mode.version || results.judge != judgeConfig {
-            results = CheckResults(modeID: id, modeVersion: mode.version)
-            results.judge = judgeConfig
+        // Another mode version or judge starts over; verdicts of others are merged one by one,
+        // so two batch workers judging at once never drop each other's.
+        var results = try store.update(id) { results in
+            if results.modeVersion != mode.version || results.judge != judgeConfig {
+                results = CheckResults(modeID: id, modeVersion: mode.version)
+                results.judge = judgeConfig
+            }
         }
         let train = Set(ValidationStore(env: env).splits()[mode.id]?.train ?? [])
-        let exemplars = try ModeStore(env: env).exemplars(of: mode.id).filter { train.isEmpty || train.contains($0.sessionKey) }
+        // Few-shot examples come only from train; with no train labels yet, none.
+        let exemplars = train.isEmpty ? [] : try ModeStore(env: env).exemplars(of: mode.id).filter { train.contains($0.sessionKey) }
         for session in sessions {
             let file = URL(filePath: session.file)
             let info = JSONLines.fileInfo(file)
@@ -96,17 +100,16 @@ public enum Judges {
                 continue
             }
             do {
-                results.verdicts[session.key] = try await judge(mode: mode, exemplars: exemplars, session: session.key, file: file, agent: agent,
-                                                                gate: gate, runID: runID, workFolder: workFolder, env: env)
-                try store.save(results)
-                out("\(session.key): \(results.verdicts[session.key]?.positive == true ? "present" : "absent")")
+                let verdict = try await judge(mode: mode, exemplars: exemplars, session: session.key, file: file, agent: agent,
+                                              gate: gate, runID: runID, workFolder: workFolder, env: env)
+                results = try store.update(id) { $0.verdicts[session.key] = verdict }
+                out("\(session.key): \(verdict.positive ? "present" : "absent")")
             } catch let failure as SendAccounts.Failure {
                 throw failure
             } catch {
                 out("\(session.key): \(error.localizedDescription)")
             }
         }
-        try store.save(results)
         return results
     }
 

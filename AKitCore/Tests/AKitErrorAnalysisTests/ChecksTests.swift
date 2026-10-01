@@ -31,7 +31,11 @@ struct StatsTests {
         // 50% → 15% with 30 sessions each is a large effect: clearly lower.
         #expect(Stats.probabilityLower(after: 5, of: 30, before: 15, of: 30) > 0.99)
         #expect(Stats.probabilityLower(after: 15, of: 30, before: 5, of: 30) < 0.01)
-        #expect(abs(Stats.regularizedIncompleteBeta(0.5, 2, 2) - 0.5) < 1e-9)
+        // The two directions add up to 1, and large samples with rates near 0 stay resolved.
+        let lower = Stats.probabilityLower(after: 3, of: 40, before: 9, of: 40)
+        #expect(abs(lower + Stats.probabilityLower(after: 9, of: 40, before: 3, of: 40) - 1) < 1e-9)
+        #expect(Stats.probabilityLower(after: 5, of: 8000, before: 40, of: 8000) > 0.999)
+        #expect(abs(Stats.probabilityLower(after: 4, of: 8000, before: 4, of: 8000) - 0.5) < 0.01)
     }
 }
 

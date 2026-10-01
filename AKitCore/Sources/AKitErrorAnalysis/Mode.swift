@@ -116,6 +116,9 @@ public struct Mode: Codable, Hashable, Sendable, Identifiable {
     public var confirmedAt: Date?
     /// Run ids of independent batch matches: two activate a seed.
     public var batchMatches: [String]
+    /// The sessions behind those matches: two batches that sampled the same session are not
+    /// two independent cases.
+    public var batchSessions: [String]?
 
     /// A new mode at version 1. Without a status, a seed starts inactive and an emergent mode
     /// starts as a candidate.

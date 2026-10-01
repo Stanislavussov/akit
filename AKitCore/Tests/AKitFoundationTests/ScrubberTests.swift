@@ -205,10 +205,11 @@ struct ScrubberTests {
         sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
         digest=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
         session 3F2504E0-4F89-11D3-9A0C-0305E82C3301 and 7c9e6679-7425-40de-944b-e07fc1f90ae7
-        "session_key": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
         cache_key = 9f86d081884c7d659a2feaa0c55ad015
         """
         #expect(scrub(text).text == text)
+        // After a secret's name a UUID is a key: masked.
+        #expect(!scrub(#""session_key": "7c9e6679-7425-40de-944b-e07fc1f90ae7""#).text.contains("7c9e6679"))
     }
 
     @Test func testScrubberKeepsLongCamelCaseIdentifiers() {
@@ -353,5 +354,20 @@ struct ScrubberTests {
         let text = pieces.joined(separator: "\n")
         let seconds = cpuSeconds { _ = Scrubber.scrub(text) }
         #expect(seconds < 5, "took \(seconds) s of CPU")
+    }
+
+    @Test func hexAndUUIDKeysAfterASecretsNameAreMasked() {
+        let hex32 = "3f2a9c4e8b7d6a5f" + "1e0c9b8a7d6e5f4c"
+        let uuid = "6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b"
+        for text in ["api_key: \(hex32)", "secret_key_base: \(hex32)\(hex32)", "token = \"\(uuid)\"", "apiKey: \"\(hex32)\"",
+                     "curl --token \(hex32) https://x", "deploy --api-key=\(hex32)"] {
+            let result = Scrubber.scrub(text)
+            #expect(!result.text.contains(hex32) && !result.text.contains(uuid), "\(text) → \(result.text)")
+        }
+        // A hash stays: by its name, or standing alone.
+        for text in ["commit_sha: \(hex32)", "checksum_key = \(hex32)", "HEAD is \(hex32)", "request \(uuid) done"] {
+            #expect(Scrubber.scrub(text).text == text, "\(text)")
+        }
+        #expect(Scrubber.version == 2)
     }
 }

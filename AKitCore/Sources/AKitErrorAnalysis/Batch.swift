@@ -47,6 +47,9 @@ public struct Batch: Codable, Hashable, Sendable {
     public var clustered: Bool
     /// Asked to pause: the worker stops after the current calls.
     public var paused: Bool
+    /// Sessions the end-of-batch work (checks, clustering, seed matches) has covered; a retry
+    /// of failed sessions runs it again for the new ones.
+    public var finishedSessions: [String]?
     /// "≈" cost when it was queued, from earlier batches' recorded cost per session.
     public var estimate: Double?
     /// Why the worker paused it on its own (an account that changed under it).
@@ -73,6 +76,12 @@ public struct Batch: Codable, Hashable, Sendable {
     /// Sessions done out of all: the report shows coverage k/N when some failed.
     public var coverage: (done: Int, total: Int) { (sessions.filter { $0.status == .done }.count, sessions.count) }
 
+    /// Done sessions the end-of-batch work hasn't covered yet.
+    public var unfinished: Bool {
+        let finished = Set(finishedSessions ?? [])
+        return sessions.contains { $0.status == .done && !finished.contains($0.pick.sessionKey) }
+    }
+
     /// k/N per step, for the Lab screen.
     public func progress(of step: String) -> Int { sessions.filter { $0.steps.contains(step) }.count }
 }
@@ -87,8 +96,19 @@ public struct BatchStore: Sendable {
     }
 
     public func save(_ batch: Batch) throws {
-        try FileManager.default.createDirectory(at: paths.batches, withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(batch).write(to: paths.batch(batch.runID), options: .atomic)
+        try JSONFile.write(batch, to: paths.batch(batch.runID))
+    }
+
+    /// Changes a batch as it is on disk now, under its lock.
+    @discardableResult
+    public func update(_ runID: String, _ change: (inout Batch) throws -> Void) throws -> Batch {
+        let url = paths.batch(runID)
+        return try JSONFile.locked(url) {
+            guard var batch = JSONFile.read(Batch.self, from: url) else { throw JSONFile.Failure(message: "No batch \(runID).") }
+            try change(&batch)
+            try AnalysisJSON.encoder.encode(batch).write(to: url, options: .atomic)
+            return batch
+        }
     }
 
     /// Every batch, newest first.

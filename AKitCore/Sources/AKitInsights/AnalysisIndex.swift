@@ -19,6 +19,8 @@ public struct IndexedSession: Sendable, Hashable {
     public let model: String?
     /// The project the session is bound to, when one is.
     public let projectID: String?
+    /// The harness version that wrote the session (its system prompt changes with it).
+    public var harnessVersion: String?
 
     public init(key: String, harness: String, nativeID: String, file: String?, cwd: String?, started: Date?, lastActivity: Date?,
                 requests: Int, model: String?, projectID: String?) {
@@ -90,16 +92,18 @@ public enum AnalysisIndex {
               (SELECT COUNT(*) FROM requests r WHERE r.session_key = s.key AND r.is_subagent = 0),
               (SELECT r.model FROM requests r WHERE r.session_key = s.key AND r.is_subagent = 0 AND r.model IS NOT NULL
                  GROUP BY r.model ORDER BY COUNT(*) DESC LIMIT 1),
-              b.project_id
+              b.project_id, s.harness_version
             FROM sessions s LEFT JOIN sources src ON src.id = s.source_id LEFT JOIN bindings b ON b.session_key = s.key
             ORDER BY s.started
             """)
         return rows.compactMap { row in
             guard let key = row[0].text, let harness = row[1].text, let native = row[2].text else { return nil }
-            return IndexedSession(key: key, harness: harness, nativeID: native, file: row[3].text, cwd: row[4].text,
-                                  started: row[5].double.map(Date.init(timeIntervalSince1970:)),
-                                  lastActivity: row[6].double.map(Date.init(timeIntervalSince1970:)),
-                                  requests: row[7].int ?? 0, model: row[8].text, projectID: row[9].text)
+            var session = IndexedSession(key: key, harness: harness, nativeID: native, file: row[3].text, cwd: row[4].text,
+                                         started: row[5].double.map(Date.init(timeIntervalSince1970:)),
+                                         lastActivity: row[6].double.map(Date.init(timeIntervalSince1970:)),
+                                         requests: row[7].int ?? 0, model: row[8].text, projectID: row[9].text)
+            session.harnessVersion = row[10].text
+            return session
         }
     }
 

@@ -71,7 +71,7 @@ public enum NotesPipeline {
             throw Failure(message: "AKit can't name the session in \(target.file.path).")
         }
         let origin = SendOrigin.of(harness: target.harness, sessionFile: target.file)
-        let items = try scrubbedItems(target, gate: notesGate)
+        let (items, scrubbedCounts) = try scrubbedItems(target, gate: notesGate)
         let input = Data(items.map { "[#\($0.id)] \($0.text)" }.joined(separator: "\n").utf8)
         let notesKey = DoneKey.make(input: input, configs: [config.notesStep])
         let verifierKey = DoneKey.make(input: input, configs: [config.notesStep, config.verifierStep])
@@ -84,11 +84,11 @@ public enum NotesPipeline {
             draft = earlier
         } else {
             out("Writing notes with \(config.notes.label)…")
-            let answer = try await ModelCall.run(
-                ModelCall.Request(agent: config.notes, purpose: "notes", system: NotesPrompts.notesSystem + "\n" + config.language.instruction,
-                                  input: notesInput(title: target.title, numbers: target.numbers, items: items, model: config.notes.model),
-                                  schema: NotesPrompts.notesSchema, origin: origin, session: key.description, runID: runID),
-                gate: notesGate, folder: workFolder, env: env)
+            var request = ModelCall.Request(agent: config.notes, purpose: "notes", system: NotesPrompts.notesSystem + "\n" + config.language.instruction,
+                                            input: notesInput(title: target.title, numbers: target.numbers, items: items, model: config.notes.model),
+                                            schema: NotesPrompts.notesSchema, origin: origin, session: key.description, runID: runID)
+            request.scrubbed = scrubbedCounts
+            let answer = try await ModelCall.run(request, gate: notesGate, folder: workFolder, env: env)
             draft = try parseNotes(answer.text, items: items)
             draft.sessionKey = key.description
             draft.transcript = target.file.path
@@ -105,15 +105,21 @@ public enum NotesPipeline {
             draft.verifierConfig = config.verifierStep
             draft.doneKeys["verifier"] = verifierKey
         }
-        try store.save(draft)
-        return draft
+        try store.saveReview(draft)
+        return store.load(key.description) ?? draft
     }
 
     /// The transcript as the model sees it: the session readers' masking, then the scrub with
     /// the user's own patterns. Quotes are matched against exactly this text.
-    static func scrubbedItems(_ target: Target, gate: SendGate) throws -> [TranscriptItem] {
+    static func scrubbedItems(_ target: Target, gate: SendGate) throws -> (items: [TranscriptItem], counts: [String: Int]) {
         let transcript = try SessionReader.transcript(of: target.summary)
-        return transcript.items.map { TranscriptItem(id: $0.id, kind: $0.kind, text: gate.scrub($0.text).text, timestamp: $0.timestamp) }
+        var counts: [String: Int] = [:]
+        let items = transcript.items.map { item -> TranscriptItem in
+            let result = gate.scrub(item.text)
+            counts.merge(result.counts, uniquingKeysWith: +)
+            return TranscriptItem(id: item.id, kind: item.kind, text: result.text, timestamp: item.timestamp)
+        }
+        return (items, counts)
     }
 
     static func notesInput(title: String?, numbers: String?, items: [TranscriptItem], model: String) -> String {
@@ -174,7 +180,7 @@ public enum NotesPipeline {
             let id = seen.insert(raw.id).inserted ? raw.id : "n\(index + 1)-\(UUID().uuidString.prefix(4))"
             let modelPhase = raw.phase.flatMap { [.understand, .plan].contains($0) ? $0 : nil }
             return Note(id: id, source: .model, description: SecretFilter.masked(raw.description), step: raw.step,
-                        quote: raw.quote, severity: raw.severity, faultLayer: raw.faultLayer,
+                        quote: SecretFilter.masked(raw.quote), severity: raw.severity, faultLayer: raw.faultLayer,
                         symptomOf: raw.symptomOf.flatMap { $0.isEmpty ? nil : $0 }, costTokens: raw.costTokens,
                         costSteps: raw.costSteps, phase: modelPhase ?? phases[raw.step])
         }
@@ -339,8 +345,35 @@ public struct NotesStore: Sendable {
     }
 
     public func save(_ notes: SessionNotes) throws {
-        try FileManager.default.createDirectory(at: paths.notes, withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(notes).write(to: paths.notes(of: notes.sessionKey), options: .atomic)
+        try JSONFile.write(notes, to: paths.notes(of: notes.sessionKey))
+    }
+
+    /// Changes a session's notes as they are on disk now, under its lock.
+    @discardableResult
+    public func update(_ sessionKey: String, _ change: (inout SessionNotes) throws -> Void) throws -> SessionNotes {
+        let url = paths.notes(of: sessionKey)
+        return try JSONFile.locked(url) {
+            guard var notes = JSONFile.read(SessionNotes.self, from: url) else {
+                throw JSONFile.Failure(message: "No notes for \(sessionKey).")
+            }
+            try change(&notes)
+            try AnalysisJSON.encoder.encode(notes).write(to: url, options: .atomic)
+            return notes
+        }
+    }
+
+    /// Saves a new review; when the notes on disk are the same notes (same done key), the
+    /// routes written since this review began (the user's verdicts, clustering) are kept.
+    func saveReview(_ review: SessionNotes) throws {
+        let url = paths.notes(of: review.sessionKey)
+        try JSONFile.locked(url) {
+            var saved = review
+            if let current = JSONFile.read(SessionNotes.self, from: url), current.doneKeys["notes"] == review.doneKeys["notes"] {
+                saved.routes = current.routes
+                saved.doneKeys["matching"] = current.doneKeys["matching"]
+            }
+            try AnalysisJSON.encoder.encode(saved).write(to: url, options: .atomic)
+        }
     }
 
     /// Every reviewed session.

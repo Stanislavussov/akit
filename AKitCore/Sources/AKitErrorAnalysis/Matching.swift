@@ -88,10 +88,23 @@ public enum Matching {
             routes += open.map { Route(noteID: $0.id, modeID: nil, confidence: 1, reason: "No modes yet.", by: .matching,
                                        modesVersion: modesVersion(modes)) }
         }
-        result.routes = routes
-        result.doneKeys["matching"] = key
-        try NotesStore(env: env).save(result)
-        return result
+        for index in routes.indices where routes[index].by == .matching && routes[index].review == nil { routes[index].runID = runID }
+        let fresh = routes.filter { $0.by == .matching && $0.review == nil }
+        // Merged into the notes as they are on disk now: routes the user reviewed or that
+        // clustering and retro-matching added during the call stay.
+        do {
+            return try NotesStore(env: env).update(notes.sessionKey) { current in
+                let kept = (current.routes ?? []).filter { $0.review != nil || $0.by != .matching }
+                let taken = Set(kept.filter { $0.review != nil || $0.by == .human }.map(\.noteID))
+                current.routes = kept + fresh.filter { !taken.contains($0.noteID) }
+                current.doneKeys["matching"] = key
+            }
+        } catch {
+            result.routes = routes
+            result.doneKeys["matching"] = key
+            try NotesStore(env: env).save(result)
+            return result
+        }
     }
 
     static func parse(_ text: String, notes: [Note], modes: [Mode]) throws -> [Route] {
@@ -128,34 +141,40 @@ public enum Matching {
     @discardableResult
     public static func review(_ ref: NoteRef, route: Route? = nil, accept: Bool, moveTo: String?? = nil,
                               env: HarnessEnvironment) throws -> SessionNotes {
-        let store = NotesStore(env: env)
-        guard var notes = store.load(ref.sessionKey) else { throw Failure(message: "No notes for \(ref.sessionKey).") }
-        var routes = notes.routes ?? []
-        let index = route.flatMap { route in routes.firstIndex(of: route) }
-            ?? routes.firstIndex { $0.noteID == ref.noteID && $0.review == nil && $0.by != .human }
-        guard let index else { throw Failure(message: "\(ref) has no open route to review.") }
-        routes[index].review = accept ? .accepted : .rejected
-        routes[index].reviewedAt = .now
-        if !accept, let target = moveTo {
-            // The old route stays as rejected (for acceptance); the note follows the user's.
-            routes.append(Route(noteID: ref.noteID, modeID: target, confidence: 1, reason: "Moved by you.", by: .human,
-                                modesVersion: routes[index].modesVersion, review: .accepted, reviewedAt: .now))
+        guard NotesStore(env: env).load(ref.sessionKey) != nil else { throw Failure(message: "No notes for \(ref.sessionKey).") }
+        return try NotesStore(env: env).update(ref.sessionKey) { notes in
+            var routes = notes.routes ?? []
+            let index = route.flatMap { route in routes.firstIndex(of: route) }
+                ?? routes.firstIndex { $0.noteID == ref.noteID && $0.review == nil && $0.by != .human }
+            guard let index else { throw Failure(message: "\(ref) has no open route to review.") }
+            routes[index].review = accept ? .accepted : .rejected
+            routes[index].reviewedAt = .now
+            if !accept, let target = moveTo {
+                // The old route stays as rejected (for acceptance); the note follows the user's.
+                routes.append(Route(noteID: ref.noteID, modeID: target, confidence: 1, reason: "Moved by you.", by: .human,
+                                    modesVersion: routes[index].modesVersion, review: .accepted, reviewedAt: .now))
+            }
+            notes.routes = routes
         }
-        notes.routes = routes
-        try store.save(notes)
-        return notes
     }
 
     /// The current route of every routed note: the user's latest move, else the latest route
-    /// the user accepted, else the first open one (a retro-matching "also fits" waits for the
-    /// user and doesn't replace it).
+    /// that isn't rejected (routes are appended in time order, so a later clustering or
+    /// retro-matching route replaces an accepted "none fits"). A retro-matching "also fits"
+    /// proposal waits for the user and doesn't replace the route it competes with.
     public static func currentRoutes(_ notes: SessionNotes) -> [String: Route] {
         var result: [String: Route] = [:]
         for (noteID, routes) in Dictionary(grouping: notes.routes ?? [], by: \.noteID) {
             let live = routes.filter { $0.review != .rejected }
-            result[noteID] = live.last { $0.by == .human } ?? live.last { $0.review == .accepted } ?? live.first
+            let settled = live.filter { !isProposal($0) }
+            result[noteID] = live.last { $0.by == .human } ?? settled.last ?? live.first
         }
         return result
+    }
+
+    /// Retro-matching's "also fits" for a note already routed elsewhere, until the user decides.
+    static func isProposal(_ route: Route) -> Bool {
+        route.by == .retro && route.review == nil && route.confidence < lowConfidence
     }
 
     /// Routes waiting for the user: below the confidence threshold and not reviewed.
@@ -246,24 +265,25 @@ public enum Matching {
             }
         }
         let store = NotesStore(env: env)
-        for (key, refs) in Dictionary(grouping: fits.keys, by: \.sessionKey) {
-            guard var notes = store.load(key) else { continue }
-            let current = currentRoutes(notes)
-            var routes = notes.routes ?? []
-            for ref in refs {
-                let confidence = fits[ref] ?? 0
-                if let existing = current[ref.noteID], existing.modeID != nil {
-                    if existing.modeID != mode.id {
-                        routes.append(Route(noteID: ref.noteID, modeID: mode.id, confidence: min(confidence, lowConfidence - 0.01),
-                                            reason: "Retro-matching: also fits \(mode.id).", by: .retro))
+        for (key, refs) in Dictionary(grouping: fits.keys, by: \.sessionKey) where store.load(key) != nil {
+            try store.update(key) { notes in
+                let current = currentRoutes(notes)
+                var routes = notes.routes ?? []
+                for ref in refs {
+                    let confidence = fits[ref] ?? 0
+                    if let existing = current[ref.noteID], existing.modeID != nil {
+                        if existing.modeID != mode.id {
+                            routes.append(Route(noteID: ref.noteID, modeID: mode.id, confidence: min(confidence, lowConfidence - 0.01),
+                                                reason: "Retro-matching: also fits \(mode.id).", by: .retro))
+                        }
+                    } else {
+                        routes.removeAll { $0.noteID == ref.noteID && $0.modeID == nil && $0.review == nil }
+                        routes.append(Route(noteID: ref.noteID, modeID: mode.id, confidence: confidence,
+                                            reason: "Retro-matching.", by: .retro))
                     }
-                } else {
-                    routes.removeAll { $0.noteID == ref.noteID && $0.modeID == nil && $0.review == nil }
-                    routes.append(Route(noteID: ref.noteID, modeID: mode.id, confidence: confidence, reason: "Retro-matching.", by: .retro))
                 }
+                notes.routes = routes
             }
-            notes.routes = routes
-            try store.save(notes)
         }
         return fits.keys.sorted()
     }

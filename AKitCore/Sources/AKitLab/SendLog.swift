@@ -44,6 +44,8 @@ public struct SendRecord: Codable, Hashable, Sendable {
     public var scrubVersion: Int
     /// Scrubber matches per rule, so the log shows what was masked (never the values).
     public var scrubbed: [String: Int]?
+    /// Why the call failed, when it did (its cost still counts).
+    public var error: String?
 
     public init(date: Date = .now, purpose: String, session: String?, runID: String?, destination: SendDestination, model: String,
                 inputCharacters: Int, usage: SendUsage, scrubVersion: Int = Scrubber.version, scrubbed: [String: Int]? = nil) {

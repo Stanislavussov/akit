@@ -1,0 +1,45 @@
+import Darwin
+import Foundation
+
+/// The analysis folder's JSON files are written by the app, by `akit` in a terminal tab and
+/// by two batch workers at once. Every write, and every read-modify-write, happens under an
+/// exclusive `flock` on `<file>.lock`, so no writer saves over another's change with a stale
+/// copy. The lock is held only around file work, never across a model call.
+enum JSONFile {
+    struct Failure: Error, LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    static func read<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
+        (try? Data(contentsOf: url)).flatMap { try? AnalysisJSON.decoder.decode(T.self, from: $0) }
+    }
+
+    static func locked<R>(_ url: URL, _ body: () throws -> R) throws -> R {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lock = url.appendingPathExtension("lock")
+        let descriptor = open(lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else { throw Failure(message: "Can't open \(lock.path).") }
+        defer { close(descriptor) }
+        while flock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else { throw Failure(message: "Can't lock \(lock.path).") }
+        }
+        defer { flock(descriptor, LOCK_UN) }
+        return try body()
+    }
+
+    static func write<T: Encodable>(_ value: T, to url: URL) throws {
+        try locked(url) { try AnalysisJSON.encoder.encode(value).write(to: url, options: .atomic) }
+    }
+
+    /// Reads the file (or `empty` when there is none), lets `change` edit it, writes it back.
+    @discardableResult
+    static func update<T: Codable, R>(_ url: URL, empty: @autoclosure () -> T, _ change: (inout T) throws -> R) throws -> R {
+        try locked(url) {
+            var value = read(T.self, from: url) ?? empty()
+            let result = try change(&value)
+            try AnalysisJSON.encoder.encode(value).write(to: url, options: .atomic)
+            return result
+        }
+    }
+}

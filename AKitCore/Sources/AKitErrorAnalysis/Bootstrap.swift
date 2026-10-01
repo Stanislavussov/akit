@@ -35,7 +35,10 @@ public enum Bootstrap {
         var generator = SeededGenerator(seed: seed)
         let picked = choose(candidates, signals: signals, count: count, using: &generator)
         let entries = picked.compactMap { session in session.file.map { BootstrapReservations.Entry(sessionKey: session.key, transcript: $0) } }
-        try reservations.save(reservations.all() + entries)
+        try reservations.update { current in
+            let known = Set(current.map(\.sessionKey))
+            current += entries.filter { !known.contains($0.sessionKey) }
+        }
         return entries
     }
 
@@ -112,12 +115,9 @@ public enum Bootstrap {
                 saved.notes[index].source = .human
                 saved.notes[index].phase = saved.notes[index].phase ?? phases[saved.notes[index].step]
             }
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try AnalysisJSON.encoder.encode(saved).write(to: file(saved.sessionKey), options: .atomic)
-            var entries = reservations.all()
-            if let index = entries.firstIndex(where: { $0.sessionKey == saved.sessionKey }) {
-                entries[index].labeledAt = saved.labeledAt
-                try reservations.save(entries)
+            try JSONFile.write(saved, to: file(saved.sessionKey))
+            try reservations.update { entries in
+                if let index = entries.firstIndex(where: { $0.sessionKey == saved.sessionKey }) { entries[index].labeledAt = saved.labeledAt }
             }
         }
     }
@@ -180,8 +180,7 @@ public enum Bootstrap {
         }
 
         public func save(_ pairing: Pairing) throws {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try AnalysisJSON.encoder.encode(pairing).write(to: file(pairing.sessionKey), options: .atomic)
+            try JSONFile.write(pairing, to: file(pairing.sessionKey))
         }
     }
 

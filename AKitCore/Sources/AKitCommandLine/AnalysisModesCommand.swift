@@ -528,7 +528,7 @@ extension AKitCLI {
                     + "decisive step: phase \(pct(m.phaseAgreement)), ±3 steps \(pct(m.stepAgreement)), outcome \(pct(m.outcomeAgreement))")
             }
             let store = ModeStore(env: env)
-            let since = Bootstrap.sessionsSinceLastModeChange(all, lastChange: try await store.history(limit: 1).first?.date)
+            let since = Bootstrap.sessionsSinceLastModeChange(all, lastChange: try await store.lastTaxonomyChange())
             out("\(since) labeled sessions since the list of modes last changed (stop after \(Bootstrap.stopAfter)).")
         case "first-modes":
             try args.finish()

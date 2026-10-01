@@ -232,8 +232,16 @@ public struct CheckStore: Sendable {
     }
 
     public func save(_ results: CheckResults) throws {
-        try FileManager.default.createDirectory(at: paths.checks, withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(results).write(to: paths.check(of: results.modeID), options: .atomic)
+        try JSONFile.write(results, to: paths.check(of: results.modeID))
+    }
+
+    /// Changes one mode's results as they are on disk now, under its lock.
+    @discardableResult
+    public func update(_ modeID: String, _ change: (inout CheckResults) throws -> Void) throws -> CheckResults {
+        try JSONFile.update(paths.check(of: modeID), empty: CheckResults(modeID: modeID)) { results in
+            try change(&results)
+            return results
+        }
     }
 }
 
@@ -271,7 +279,15 @@ public enum CheckRunner {
                 results[i].verdicts[session.key] = verdict
             }
         }
-        for result in results { try store.save(result) }
-        return results
+        // Merged into what is on disk now: another runner (the app, an import) may have added verdicts.
+        return try results.map { fresh in
+            try store.update(fresh.modeID) { disk in
+                if disk.modeVersion != fresh.modeVersion || disk.kind != fresh.kind {
+                    disk = fresh
+                } else {
+                    disk.verdicts.merge(fresh.verdicts) { _, new in new }
+                }
+            }
+        }
     }
 }

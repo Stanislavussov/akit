@@ -191,6 +191,17 @@ public enum ControlTasks {
         return checked
     }
 
+    /// Where a task's session came from: Claude Code, or the Pi providers of its log (found
+    /// through the index; an unknown Pi log has no single origin, so only the allowed list
+    /// lets it out).
+    public static func origin(of key: SessionKey, env: HarnessEnvironment) -> SendOrigin {
+        guard key.harness == "pi" else { return .claudeSession }
+        let file = (try? AnalysisIndex.open(env: env)).flatMap { $0 }.flatMap { database in
+            (try? AnalysisIndex.sessions(database))?.first { $0.key == key.description }?.file
+        }
+        return file.map { SendOrigin.of(harness: .pi, sessionFile: URL(filePath: $0)) } ?? .piSession(providers: [])
+    }
+
     public static func save(_ task: ControlTask, env: HarnessEnvironment) throws {
         let paths = EvalPaths(env: env)
         try FileManager.default.createDirectory(at: paths.tasks, withIntermediateDirectories: true)

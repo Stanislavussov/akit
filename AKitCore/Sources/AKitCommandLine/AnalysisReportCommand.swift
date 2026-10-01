@@ -29,7 +29,7 @@ extension AKitCLI {
 
         Fixes (failure and efficiency modes; you apply them, AKit never does):
           akit analysis fix draft MODE --layer claude-md|agents-md|skill|hook|tool-description|environment
-                              --text TEXT|@FILE --expect TEXT --helped TEXT [--skill NAME] [--exemplar SESSION#NOTE]…
+                              --text TEXT|@FILE --expect TEXT --helped TEXT [--skill NAME] [--exemplar SESSION#NOTE]… [--reset]
                                           Write the fix down before any run: the text, what should change
                                           in transcripts and the "helped" criterion
           akit analysis fix applied MODE [--at YYYY-MM-DD]
@@ -87,8 +87,9 @@ extension AKitCLI {
                 case "enable":
                     let agent = try options.agent(env: env)
                     let seen = Matching.seen(NotesStore(env: env).all(), modes: try await modeStore.list()).byMode.mapValues(\.count)
-                    if !Judges.eligible(try await modeStore.list(), seen: seen).contains(where: { $0.id == target.id }) {
-                        out("Note: judges are meant for the top 3 modes by notes that have a fix drafted or applied.")
+                    guard Judges.eligible(try await modeStore.list(), seen: seen).contains(where: { $0.id == target.id }) else {
+                        throw Failure(message: "Only a mode in the top 3 by notes with a fix drafted or applied gets a judge; "
+                                          + "\(target.name) isn't one. Other modes get a code check or stay \"seen in k notes\".")
                     }
                     try store.setJudge(agent, for: target.id)
                     out("\(target.name) is judged by \(agent.label). Validate it: akit analysis validate \(target.id) dev.")
@@ -175,6 +176,12 @@ extension AKitCLI {
                 throw Failure(message: "Give --text, --expect (the change you expect in transcripts) and --helped (the criterion), before any run.")
             }
             let skill = args.value("--skill")
+            let reset = args.flag("--reset")
+            // The draft and its "helped" criterion are fixed before the run: once applied, a new
+            // draft would move T and let the criterion follow the results.
+            if let status = mode.fix, ![Mode.FixStatus.open, .draft].contains(status), !reset {
+                throw Failure(message: "The fix of \(mode.name) is \(status.title.lowercased()); a new draft would drop T and its criterion. Add --reset to start over.")
+            }
             let exemplars = try args.values("--exemplar").map { text in
                 guard let ref = NoteRef(parsing: text) else { throw Failure(message: "--exemplar is SESSION#NOTE.") }
                 return ref
@@ -292,6 +299,9 @@ extension AKitCLI {
         }
         if let rebuild = report.rebuild { lines.append(rebuild) }
         lines.append("")
+        if !report.matrix.unlocated.isEmpty {
+            lines.append("\(report.matrix.unlocated.count) sessions with failures but no decisive step are left out of the matrix.")
+        }
         if let hidden = report.matrixHidden {
             lines.append(hidden)
         } else if report.showFunnel {

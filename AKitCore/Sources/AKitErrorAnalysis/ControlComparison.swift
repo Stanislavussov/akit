@@ -111,11 +111,15 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             TaskRate(task: task, passed: cells.filter(\.passed).count, total: cells.count)
         }.sorted { $0.task < $1.task }
         let passed = counted.filter(\.passed).count
+        let k = tasks.map(\.total).min() ?? 0
+        // pass^k per task, unbiased when a task has more than k cells: C(c, k) / C(n, k).
+        let hatK = tasks.map { task in task.passed < k ? 0 : exp(Stats.logChoose(task.passed, k) - Stats.logChoose(task.total, k)) }
+        let passHatK = tasks.isEmpty ? nil : hatK.reduce(0, +) / Double(tasks.count)
         let allPassed = tasks.filter { $0.passed == $0.total }.count
         return Row(setup: setup, tasks: tasks, cells: counted.count, flagged: cells.count - counted.count,
                    passAt1: tasks.isEmpty ? nil : tasks.map(\.rate).reduce(0, +) / Double(tasks.count),
-                   passAt1Interval: Stats.wilson(passed, counted.count), k: tasks.map(\.total).min() ?? 0,
-                   passHatK: tasks.isEmpty ? nil : Double(allPassed) / Double(tasks.count),
+                   passAt1Interval: Stats.wilson(passed, counted.count), k: k,
+                   passHatK: passHatK,
                    passHatKInterval: Stats.wilson(allPassed, tasks.count))
     }
 

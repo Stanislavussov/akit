@@ -78,8 +78,7 @@ public struct FixStore: Sendable {
     }
 
     public func save(_ draft: FixDraft) throws {
-        try FileManager.default.createDirectory(at: paths.fixes, withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(draft).write(to: file(draft.modeID), options: .atomic)
+        try JSONFile.write(draft, to: file(draft.modeID))
     }
 
     public func all() -> [FixDraft] {
@@ -94,8 +93,10 @@ public struct FixEvaluation: Codable, Hashable, Sendable {
         public var sessions: Int
         public var failures: Int
         public var interval: Stats.Interval
-        /// The model most sessions of the period used, and the harness versions seen.
+        /// The model most sessions of the period used.
         public var model: String?
+        /// The harness version most sessions of the period ran on (its prompt changes with it).
+        public var harnessVersion: String?
     }
 
     public enum Verdict: String, Codable, Sendable {
@@ -132,7 +133,8 @@ public enum Fixes {
 
     /// Applies the rule to failure counts on both sides.
     public static func evaluate(modeID: String, appliedAt: Date, before: (failures: Int, sessions: Int, model: String?),
-                                after: (failures: Int, sessions: Int, model: String?), trust: CheckTrust.Level) -> FixEvaluation {
+                                after: (failures: Int, sessions: Int, model: String?), trust: CheckTrust.Level,
+                                versions: (before: String?, after: String?) = (nil, nil)) -> FixEvaluation {
         let lower = Stats.probabilityLower(after: after.failures, of: after.sessions, before: before.failures, of: before.sessions)
         let higher = Stats.probabilityLower(after: before.failures, of: before.sessions, before: after.failures, of: after.sessions)
         let verdict: FixEvaluation.Verdict
@@ -145,13 +147,16 @@ public enum Fixes {
         }
         var flags: [String] = []
         if let a = before.model, let b = after.model, a != b { flags.append("The sessions' model changed: \(a) before, \(b) after.") }
+        if let a = versions.before, let b = versions.after, a != b {
+            flags.append("The harness version (and its system prompt) changed: \(a) before, \(b) after.")
+        }
         if trust != .exact && trust != .validated { flags.append("The mode's check isn't validated: these are a heuristic's numbers.") }
         let rate = before.sessions > 0 ? Double(before.failures) / Double(before.sessions) : nil
         return FixEvaluation(modeID: modeID, appliedAt: appliedAt,
                              before: .init(sessions: before.sessions, failures: before.failures, interval: Stats.wilson(before.failures, before.sessions),
-                                           model: before.model),
+                                           model: before.model, harnessVersion: versions.before),
                              after: .init(sessions: after.sessions, failures: after.failures, interval: Stats.wilson(after.failures, after.sessions),
-                                          model: after.model),
+                                          model: after.model, harnessVersion: versions.after),
                              probabilityLower: lower, probabilityHigher: higher,
                              fisherP: Stats.fisherExact(before.failures, before.sessions, after.failures, after.sessions), verdict: verdict,
                              minimumDetectable: rate.flatMap { minimumDetectable(from: $0, perSide: min(before.sessions, after.sessions)) },
@@ -176,14 +181,17 @@ public enum Fixes {
         let lab = IndexedSessions.labKeys(env: env)
         let sessions = try AnalysisIndex.sessions(database).filter { !lab.contains($0.key) && results.verdicts[$0.key] != nil }
         let span = max(now.timeIntervalSince(applied), 86_400)
-        func side(_ range: Range<Date>) -> (failures: Int, sessions: Int, model: String?) {
-            let members = sessions.filter { session in (session.started ?? session.lastActivity).map(range.contains) ?? false }
-            let models = Dictionary(grouping: members.compactMap(\.model), by: { $0 }).max { $0.value.count < $1.value.count }?.key
-            return (members.filter { results.verdicts[$0.key]?.positive == true }.count, members.count, models)
+        func members(_ range: Range<Date>) -> [IndexedSession] {
+            sessions.filter { session in (session.started ?? session.lastActivity).map(range.contains) ?? false }
         }
+        func most(_ values: [String]) -> String? { Dictionary(grouping: values, by: { $0 }).max { $0.value.count < $1.value.count }?.key }
+        func side(_ members: [IndexedSession]) -> (failures: Int, sessions: Int, model: String?) {
+            (members.filter { results.verdicts[$0.key]?.positive == true }.count, members.count, most(members.compactMap(\.model)))
+        }
+        let before = members(applied.addingTimeInterval(-span)..<applied), after = members(applied..<now.addingTimeInterval(1))
         let trust = Validation.trustMap(modes: [mode], env: env)[mode.id]?.level ?? .none
-        return evaluate(modeID: mode.id, appliedAt: applied, before: side(applied.addingTimeInterval(-span)..<applied),
-                        after: side(applied..<now.addingTimeInterval(1)), trust: trust)
+        return evaluate(modeID: mode.id, appliedAt: applied, before: side(before), after: side(after), trust: trust,
+                        versions: (most(before.compactMap(\.harnessVersion)), most(after.compactMap(\.harnessVersion))))
     }
 
     /// Modes whose check shows a higher failure rate after the fix's T: regressions offline

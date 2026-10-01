@@ -170,7 +170,9 @@ struct ControlRunsTests {
             echo '{"type":"message_end","message":{"role":"assistant","model":"m","provider":"fake","stopReason":"stop","content":[{"type":"text","text":"Done"}],"usage":{"input":10,"output":5,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.01}}}}'
             echo '{"type":"agent_settled"}'
             """#, executable: true)
-        try LabSettings(piAccounts: [PiAccount(provider: "fake", account: "me", org: "Me")]).save(env: env)
+        // The task comes from a Claude Code session: sending its turn to Pi needs the allowed list.
+        try LabSettings(allowedDestinations: [SendDestination(harness: .pi, provider: "fake", account: "me", org: "Me")],
+                        piAccounts: [PiAccount(provider: "fake", account: "me", org: "Me")]).save(env: env)
         let (repo, base) = try await repository()
         let pi = LabAgent(harness: .pi, model: "fake/m", effort: "low")
         let task = task(repo, base, oracle: .tests(command: #"test "$(cat value.txt)" = 2"#))

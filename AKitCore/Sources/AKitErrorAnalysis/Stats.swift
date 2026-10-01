@@ -50,64 +50,22 @@ public enum Stats {
     }
 
     /// P(rate_after < rate_before) with Beta(1,1) priors: k failures of n before and after.
-    /// Numerical integration over the "before" density; exact enough for n up to thousands.
-    public static func probabilityLower(after kAfter: Int, of nAfter: Int, before kBefore: Int, of nBefore: Int,
-                                        steps: Int = 4000) -> Double {
+    /// The exact finite sum for integer Beta parameters (Evan Miller's formula for
+    /// P(p_B > p_A)), in log space, so it holds for thousands of sessions and rates near 0.
+    public static func probabilityLower(after kAfter: Int, of nAfter: Int, before kBefore: Int, of nBefore: Int) -> Double {
+        // B = before, A = after: P(p_B > p_A).
         let aA = Double(kAfter + 1), bA = Double(nAfter - kAfter + 1)
-        let aB = Double(kBefore + 1), bB = Double(nBefore - kBefore + 1)
-        // ∫ f_before(x) · F_after(x) dx, midpoint rule.
+        let aB = kBefore + 1
+        let bB = Double(nBefore - kBefore + 1)
         var total = 0.0
-        let h = 1.0 / Double(steps)
-        for i in 0..<steps {
-            let x = (Double(i) + 0.5) * h
-            total += betaDensity(x, aB, bB) * regularizedIncompleteBeta(x, aA, bA) * h
+        for i in 0..<aB {
+            let i = Double(i)
+            total += exp(logBeta(aA + i, bA + bB) - log(bB + i) - logBeta(1 + i, bB) - logBeta(aA, bA))
         }
         return min(1, max(0, total))
     }
 
-    static func betaDensity(_ x: Double, _ a: Double, _ b: Double) -> Double {
-        exp((a - 1) * log(x) + (b - 1) * log(1 - x) - logBeta(a, b))
-    }
-
     static func logBeta(_ a: Double, _ b: Double) -> Double { lgamma(a) + lgamma(b) - lgamma(a + b) }
-
-    /// I_x(a, b) by its continued fraction (Numerical Recipes, betacf).
-    static func regularizedIncompleteBeta(_ x: Double, _ a: Double, _ b: Double) -> Double {
-        if x <= 0 { return 0 }
-        if x >= 1 { return 1 }
-        let front = exp(a * log(x) + b * log(1 - x) - logBeta(a, b))
-        if x < (a + 1) / (a + b + 2) { return front * continuedFraction(x, a, b) / a }
-        return 1 - front * continuedFraction(1 - x, b, a) / b
-    }
-
-    private static func continuedFraction(_ x: Double, _ a: Double, _ b: Double) -> Double {
-        let tiny = 1e-300
-        var c = 1.0
-        var d = 1 - (a + b) * x / (a + 1)
-        if abs(d) < tiny { d = tiny }
-        d = 1 / d
-        var result = d
-        for m in 1...300 {
-            let m = Double(m)
-            var numerator = m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m))
-            d = 1 + numerator * d
-            if abs(d) < tiny { d = tiny }
-            c = 1 + numerator / c
-            if abs(c) < tiny { c = tiny }
-            d = 1 / d
-            result *= d * c
-            numerator = -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))
-            d = 1 + numerator * d
-            if abs(d) < tiny { d = tiny }
-            c = 1 + numerator / c
-            if abs(c) < tiny { c = tiny }
-            d = 1 / d
-            let step = d * c
-            result *= step
-            if abs(step - 1) < 1e-12 { break }
-        }
-        return result
-    }
 
     // MARK: Frequencies
 
@@ -186,9 +144,11 @@ public enum Stats {
                 let positives = resample(labels.onPositives)
                 let negatives = resample(labels.onNegatives)
                 guard let tpr = CheckLabels(onPositives: positives, onNegatives: negatives).tpr,
-                      let tnr = CheckLabels(onPositives: positives, onNegatives: negatives).tnr,
-                      let corrected = roganGladen(observed: estimate, tpr: tpr, tnr: tnr) else { continue }
-                estimate = corrected
+                      let tnr = CheckLabels(onPositives: positives, onNegatives: negatives).tnr else { continue }
+                // A resample whose check is no better than chance clips instead of being
+                // dropped, which would narrow the interval.
+                let denominator = max(tpr + tnr - 1, 1e-6)
+                estimate = min(1, max(0, (estimate + tnr - 1) / denominator))
             }
             estimates.append(estimate)
         }

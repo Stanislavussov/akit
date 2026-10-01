@@ -107,8 +107,15 @@ extension AKitCLI {
     /// A session key (`claude:<id>`), a transcript path, or a Claude Code session id.
     static func sessionKey(_ text: String, cwd: URL, env: HarnessEnvironment) throws -> String {
         if SessionKey(parsing: text) != nil { return text }
+        let path = resolve(text, cwd: cwd, env: env)
+        // A Pi session log: its key comes from the file's header.
+        if path.pathExtension == "jsonl", FileManager.default.fileExists(atPath: path.path),
+           let key = SessionKey.of(NotesPipeline.Target(harness: path.path.contains("/.pi/") ? .pi : .claudeCode, file: path).summary) {
+            return key.description
+        }
         let file = try transcript(text, cwd: cwd, env: env)
-        return "claude:" + file.deletingPathExtension().lastPathComponent
+        return SessionKey.of(NotesPipeline.Target(harness: .claudeCode, file: file).summary)?.description
+            ?? "claude:" + file.deletingPathExtension().lastPathComponent
     }
 
     static func notesText(_ notes: SessionNotes) -> String {

@@ -22,8 +22,15 @@ public enum Validation {
 
     /// The split of a mode's labelled sessions. A session keeps its set once it has one; new
     /// ones are placed by a hash of mode and session, 10% train, 30% dev, 60% test.
-    public static func split(_ labels: [ModeLabel], modeID: String, existing: ValidationStore.Split?) -> ValidationStore.Split {
+    /// `train`: sessions that must be in train (exemplars); they move there from dev or test.
+    public static func split(_ labels: [ModeLabel], modeID: String, existing: ValidationStore.Split?,
+                             train forced: Set<String> = []) -> ValidationStore.Split {
         var split = existing ?? ValidationStore.Split()
+        split.dev.removeAll { forced.contains($0) }
+        split.test.removeAll { forced.contains($0) }
+        for key in forced.sorted() where labels.contains(where: { $0.sessionKey == key }) && !split.train.contains(key) {
+            split.train.append(key)
+        }
         let placed = Set(split.train + split.dev + split.test)
         for label in labels where !placed.contains(label.sessionKey) {
             let hash = Checksum.sha256(Data("\(modeID)|\(label.sessionKey)".utf8))
@@ -106,10 +113,13 @@ public enum Validation {
         let book = LabelBookStore(env: env).load()
         let labels = ModeLabels.labels(for: mode.id, modes: modes, bootstrap: Bootstrap.LabelStore(env: env).all(), book: book,
                                        toughCalls: book.toughCalls(of: mode.id))
-        var splits = store.splits()
-        let split = Validation.split(labels, modeID: mode.id, existing: splits[mode.id])
-        splits[mode.id] = split
-        try store.save(splits)
+        // Exemplars go into every matching and judge call: their sessions are kept in train.
+        let exemplarSessions = Set(try ModeStore(env: env).exemplars(of: mode.id).map(\.sessionKey))
+        var split = ValidationStore.Split()
+        try store.updateSplits { splits in
+            split = Validation.split(labels, modeID: mode.id, existing: splits[mode.id], train: exemplarSessions)
+            splits[mode.id] = split
+        }
         let sessions = set == .dev ? split.dev : split.test
         let verdicts: [String: CheckVerdict]
         if let judge {
@@ -191,8 +201,7 @@ public struct ValidationStore: Sendable {
     }
 
     private func write<T: Encodable>(_ value: T, _ name: String) throws {
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(value).write(to: folder.appending(path: name), options: .atomic)
+        try JSONFile.write(value, to: folder.appending(path: name))
     }
 
     public func splits() -> [String: Split] { read("splits.json", as: [String: Split].self) ?? [:] }
@@ -204,17 +213,20 @@ public struct ValidationStore: Sendable {
     public func results() -> [String: [ValidationResult]] { read("validation.json", as: [String: [ValidationResult]].self) ?? [:] }
 
     public func append(_ result: ValidationResult) throws {
-        var all = results()
-        all[result.modeID, default: []].append(result)
-        try write(all, "validation.json")
+        try JSONFile.update(folder.appending(path: "validation.json"), empty: [String: [ValidationResult]]()) {
+            $0[result.modeID, default: []].append(result)
+        }
     }
 
     /// Modes with a judge, and who judges.
     public func judges() -> [String: LabAgent] { read("judges.json", as: [String: LabAgent].self) ?? [:] }
 
     public func setJudge(_ agent: LabAgent?, for modeID: String) throws {
-        var all = judges()
-        all[modeID] = agent
-        try write(all, "judges.json")
+        try JSONFile.update(folder.appending(path: "judges.json"), empty: [String: LabAgent]()) { $0[modeID] = agent }
+    }
+
+    /// Changes the splits as they are on disk now.
+    public func updateSplits(_ change: (inout [String: Split]) throws -> Void) throws {
+        try JSONFile.update(folder.appending(path: "splits.json"), empty: [String: Split]()) { try change(&$0) }
     }
 }

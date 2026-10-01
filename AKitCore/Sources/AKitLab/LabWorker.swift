@@ -140,6 +140,7 @@ public enum ReviewRun {
         // The account behind the agent is checked before anything is written for it to read.
         let gate = try await SendGate.open(agent: agent, env: env)
         try gate.check(SendOrigin.of(harness: run.spec.reviewedHarness, sessionFile: file))
+        try SendLog.checkLimit(estimate: nil, settings: gate.settings, env: env)
         let (transcript, _) = try await prepare(run, transcript: file, env: env)
         try Data(gate.scrub(transcript).text.utf8).write(to: run.folder.appending(path: "transcript.md"))
         guard !Cancellation.isCancelled else { throw CancellationError() }
@@ -292,6 +293,7 @@ enum ReplayRun {
         let gate = try await SendGate.open(agent: LabAgent(harness: .claudeCode, model: model, effort: run.spec.setup?.effort ?? defaults.effort),
                                            env: env)
         try gate.check(.code(.claudeCode))
+        try SendLog.checkLimit(estimate: nil, settings: gate.settings, env: env)
         let agent = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, exposeRunFolder: false,
                                            env: env, out: out)
         guard !agent.exit.cancelled else { throw CancellationError() }

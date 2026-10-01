@@ -31,23 +31,18 @@ public struct UnclearNotes: Sendable {
     /// Adds the note once; adding it again keeps the first entry.
     @discardableResult
     public func add(_ entry: Entry) throws -> [Entry] {
-        var entries = all()
-        guard !entries.contains(where: { $0.sessionKey == entry.sessionKey && $0.noteID == entry.noteID }) else { return entries }
-        entries.append(entry)
-        try save(entries)
-        return entries
+        try JSONFile.update(file, empty: [Entry]()) { entries in
+            if !entries.contains(where: { $0.sessionKey == entry.sessionKey && $0.noteID == entry.noteID }) { entries.append(entry) }
+            return entries
+        }
     }
 
     /// Removes the note, for example once it was placed in a mode.
     @discardableResult
     public func remove(sessionKey: String, noteID: String) throws -> [Entry] {
-        let entries = all().filter { !($0.sessionKey == sessionKey && $0.noteID == noteID) }
-        try save(entries)
-        return entries
-    }
-
-    private func save(_ entries: [Entry]) throws {
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(entries).write(to: file, options: .atomic)
+        try JSONFile.update(file, empty: [Entry]()) { entries in
+            entries.removeAll { $0.sessionKey == sessionKey && $0.noteID == noteID }
+            return entries
+        }
     }
 }
