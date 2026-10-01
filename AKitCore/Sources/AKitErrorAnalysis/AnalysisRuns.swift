@@ -12,6 +12,8 @@ public enum AnalysisRuns {
             return try await review(run, env: env, phase: phase, out: out)
         case .analysis:
             return try await BatchRunner.execute(run, env: env, phase: phase, out: out)
+        case .control:
+            return try await ControlRuns.execute(run, env: env, phase: phase, out: out)
         default:
             return nil
         }

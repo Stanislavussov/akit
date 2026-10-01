@@ -112,6 +112,7 @@ public enum LabWorker {
                          + (tests.timeouts > 0 ? " · \(tests.timeouts) timed out" : ""))
             if let note = tests.note { lines.append("  \(note)") }
         }
+        if let control = result.control { lines += control.lines }
         if let error = result.agentError { lines.append("The agent stopped with an error: \(error)") }
         if let review = result.review { lines.append("Review: \(review.rawValue)") }
         if let leaks = result.leaks, !leaks.isEmpty {

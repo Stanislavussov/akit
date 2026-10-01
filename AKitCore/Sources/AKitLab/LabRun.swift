@@ -12,6 +12,9 @@ public struct RunSpec: Codable, Sendable, Hashable {
         /// Error analysis over a batch of sessions: notes, verifier, matching and checks per
         /// session, clustering at the end (`docs/design/error-analysis.md`, "Batch run").
         case analysis
+        /// One cell of a controlled eval: a control task in an isolated clone with one setup
+        /// (`ControlCell`); error analysis runs it (`docs/design/error-analysis.md`).
+        case control
     }
 
     public var schema = 1
@@ -55,11 +58,17 @@ public struct RunSpec: Codable, Sendable, Hashable {
     /// Keep the clone instead of moving it to the Trash at the end.
     public var keep: Bool
 
+    // Control (with `repo`, `repeatIndex`, `repeats`, `keep`)
+    /// The control task's id (`~/.akit/lab/evals/tasks/<id>.json`).
+    public var controlTask: String?
+    public var controlSetup: ControlSetup?
+
     public init(id: String, kind: Kind, title: String, createdAt: Date = .now, folder: String,
                 environment: LabEnvironment, akit: String, sessionID: String = UUID().uuidString.lowercased(),
                 reviewedTranscript: String? = nil, reviewedTitle: String? = nil, agent: LabAgent? = nil, language: LabLanguage? = nil,
                 repo: String? = nil, commit: String? = nil,
-                setup: LabSetup? = nil, repeatIndex: Int? = nil, repeats: Int? = nil, keep: Bool = false) {
+                setup: LabSetup? = nil, repeatIndex: Int? = nil, repeats: Int? = nil, keep: Bool = false,
+                controlTask: String? = nil, controlSetup: ControlSetup? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -78,6 +87,8 @@ public struct RunSpec: Codable, Sendable, Hashable {
         self.repeatIndex = repeatIndex
         self.repeats = repeats
         self.keep = keep
+        self.controlTask = controlTask
+        self.controlSetup = controlSetup
     }
 
     /// `20260930-181502-a1b2`: sorts by creation time.
@@ -360,15 +371,18 @@ public struct RunResult: Codable, Sendable, Hashable {
     public var agentError: String?
     /// An error analysis batch: sessions done, failed and in all when the run ended.
     public var batch: BatchProgress?
+    /// A control cell's oracle verdict and guard.
+    public var control: ControlOutcome?
 
     public init(metrics: SessionMetrics? = nil, tests: TestOutcome? = nil, review: ReviewStatus? = nil, leaks: [String]? = nil,
-                agentError: String? = nil, batch: BatchProgress? = nil) {
+                agentError: String? = nil, batch: BatchProgress? = nil, control: ControlOutcome? = nil) {
         self.metrics = metrics
         self.tests = tests
         self.review = review
         self.leaks = leaks
         self.agentError = agentError
         self.batch = batch
+        self.control = control
     }
 
     public var leaked: Bool { !(leaks ?? []).isEmpty }
