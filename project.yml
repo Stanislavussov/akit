@@ -38,6 +38,8 @@ targets:
         product: AKitProjectSetup
       - package: AKitCore
         product: AKitLab
+      - package: AKitCore
+        product: AKitErrorAnalysis
     postBuildScripts:
       # Records where this build comes from; shown at the bottom of the sidebar.
       - name: Stamp build source

@@ -1,9 +1,10 @@
 # Error analysis: failure modes across many sessions
 
 Status: design 2026-10-01 (decided in a grilling session, reviewed against the evals
-literature, then revised against 2025–2026 practice), not started. Extends Lab (`lab.md`):
-the one-session review becomes the first step of this pipeline. Parts marked
-**(pending)** depend on a decision listed in [Open questions](#open-questions).
+literature, then revised against 2025–2026 practice); open questions decided the same day
+(see [Decisions](#decisions)); implementation started 2026-10-01 on branch
+`error-analysis`. Extends Lab (`lab.md`): the one-session review becomes the first step of
+this pipeline.
 
 ## Goal
 
@@ -92,11 +93,9 @@ transcript (see [Sending policy](#sending-policy)), and evidence is never cut aw
 - **Budget per turn** scales with the session's length instead of fixed limits per kind.
   The target is an input under 272K tokens; today's `ReviewDigest` budget, 360K chars
   (about 90K tokens), becomes per-model. This replaces the digest described in `lab.md`.
-- **`get_step(n)` (pending).** A tool that returns step `#n` of the scrubbed transcript in
-  full, so quotes don't depend on what the digest cut. Today the review call has no tools
-  on purpose (`lab.md`), so this is an open question. Without it, the
-  [verifier](#verifier-second-pass) still checks every quote in code against the full
-  scrubbed transcript.
+- **No `get_step(n)` tool** (decided): the call stays tool-less, as in `lab.md`, so an
+  injected transcript can't make it do anything. The [verifier](#verifier-second-pass)
+  checks every quote in code against the full scrubbed transcript.
 
 ## Step 1: notes per session
 
@@ -375,7 +374,7 @@ measured only by route acceptance). Raw agreement is not used, because a judge c
 - **Status by volume**, counted in test labels per class: "provisional" at 20 or more,
   "validated" at 30 or more and meeting the bound. A provisional check shows its mode as
   "seen in k notes" with its provisional rate beside it, never as a frequency. In total that is about 50 labels per
-  class, about 100 per mode, and 300 for three judged modes **(pending: label volume)**.
+  class, about 100 per mode, and 300 for three judged modes (accepted as proposed).
   A judge for a subjective mode may never reach the bound; it then stays "seen in k
   notes".
 - **Invalidation.** Any merge, split or definition edit bumps the mode's version and
@@ -497,7 +496,8 @@ provider (`/login` in Pi once).
   family, AKit takes a model of another family when it can, but only among destinations
   the [sending policy](#sending-policy) allows. The policy always wins.
 - **Cache.** A stable prefix (system prompt + modes list) comes first in the request.
-- **Cost (pending: credits).** Before any model work AKit shows an estimate. A monthly
+- **Cost (recorded only).** Before any model work AKit shows an estimate, "≈" from the
+  recorded cost of past calls of the same harness and model in the send log. A monthly
   limit is a setting, shared by everything that calls a model here:
   - ad-hoc reviews and batches;
   - bootstrap pairing and the similar-case search;
@@ -520,7 +520,7 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
   entry is harness + provider + account + plan/organization (the org through which Copilot
   is granted, not only the login).
   - **Work machine** (`work` mode, see `layers.md`): the list is empty by default.
-  - **Personal machine (pending).** Same-origin by default: a transcript may go only to
+  - **Personal machine.** Same-origin by default: a transcript may go only to
     the provider and account that produced it; everything else is added explicitly. The
     default notes model (Copilot through Pi) on a Claude Code session is cross-origin,
     so it has to be added.
@@ -531,20 +531,21 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
   data, the call is refused.
   - **Claude Code:** `claude auth status --json` returns `email`, `orgId` and `orgName`,
     and no secrets.
-  - **Pi (pending)** has no whoami (`pi auth check --json` gives only provider, status and
-    reason). Either a token exception, or the account the user entered (see
-    [Open questions](#open-questions)). Under the second option the user's entry counts as
-    the plan/org data.
-  - **A failed check rejects Pi on this machine**; Claude Code keeps working.
-- **Scrub before sending (pending).**
-  - **Detector**: gitleaks rules, with no live verification of found keys (trufflehog-style
-    verification sends the secret to its provider).
+  - **Pi** has no whoami (`pi auth check --json` gives only provider, status and reason).
+    The user enters the account and plan/org per Pi provider in Settings → Lab, and that
+    entry counts as the plan/org data. No harness secret is read.
+  - **A failed check rejects Pi on this machine** (no entry for the provider); Claude
+    Code keeps working.
+- **Scrub before sending.**
+  - **Detector**: gitleaks rules ported to Swift (`Scrubber`, next to `SecretFilter`), with
+    no live verification of found keys (trufflehog-style verification sends the secret to
+    its provider).
   - **Own patterns**: regexes for internal hosts and e-mails, and `.env` contents.
   - **Allowlist**: hex strings (SHAs, hashes, UUIDs) are allowlisted for the entropy
     detector.
   - **Versioning**: the scrub version is part of the [done key](#done-key).
 - **Send log** (`sends.jsonl`): session, harness, provider, account, tokens (input,
-  cached, output) and scrub version.
+  cached, output), the recorded cost and scrub version.
 
 ## Fixes
 
@@ -556,15 +557,12 @@ fix applied, an anchor like `akit stats mark`.
   description, environment), the text, links to exemplar notes, and the expected
   observable change in transcripts. It is written down before any run, together with the
   "helped" criterion. The user applies it.
-- **Signals**, from strongest to weakest:
-  1. **Randomized interleaving (pending)** for CLAUDE.md rules and skills (context, not
-     hooks). AKit would include the draft in a random half of new sessions and log the
-     group. It conflicts with "no auto-apply", AKit's read-only rule and the capture
-     hook's contract; see [Open questions](#open-questions).
-  2. **Control set**: controlled tasks, see [Controlled evals](#controlled-evals).
-  3. **The mode's check** over indexed sessions before and after T. It is the fallback
-     while interleaving isn't agreed, and the guard against regressions that offline
-     tasks miss (as the Anthropic postmortem and Replit's write-up show).
+- **Signals**, from strongest to weakest. Randomized interleaving was rejected: AKit never
+  changes the context of real sessions on its own.
+  1. **Control set**: controlled tasks, see [Controlled evals](#controlled-evals).
+  2. **The mode's check** over indexed sessions before and after T: the production
+     signal, and the guard against regressions that offline tasks miss (as the Anthropic
+     postmortem and Replit's write-up show).
 - **"Helped"**, fixed before the run, from one rule:
   - **Production** (independent sessions): P(fail_after < fail_before) ≥ 0.95 under
     Beta(1,1) posteriors. Wilson intervals per group and Fisher's exact p are shown
@@ -586,21 +584,21 @@ fix applied, an anchor like `akit stats mark`.
 
 ## Controlled evals
 
-**(pending: promptfoo or Lab replay tasks.)** Error analysis answers "what breaks and how
-often" on real sessions. Controlled evals answer "did the fix help" on fixed tasks, where
-the mix of tasks can't move the number. The proposed setup follows the runbook "Evals for
-Pi through promptfoo" (pinned commit, an oracle, repeats); it covers Pi only.
+Error analysis answers "what breaks and how often" on real sessions. Controlled evals
+answer "did the fix help" on fixed tasks, where the mix of tasks can't move the number.
+They are Lab replay tasks (`lab.md`) extended in two ways: a task can be made from a
+session instead of a commit, and the agent can be Claude Code or Pi.
 
 **Mapping.**
 
 | Error analysis | Control set |
 |---|---|
 | a confirmed frequent mode | a reason to add tasks to the set |
-| the mode's exemplar sessions | `tasks/*.yaml`: the user's turn verbatim, commit = HEAD at the session's start |
-| the mode's check | a `javascript` assertion over Pi events (`--mode json`) |
-| the fix draft | a second provider config with exactly one difference |
+| the mode's exemplar sessions | control tasks: the user's first turn verbatim, base = HEAD at the session's start |
+| the mode's check | the task's assertion: AKit runs the mode's code check (or judge) on the cell's transcript |
+| the fix draft | a second setup with exactly one difference |
 | the draft's expected observable change | a written hypothesis with the "helped" criterion, before the run |
-| outcome | the oracle `testsPassed` |
+| outcome | the oracle: tests passed, or the assertion |
 
 **Oracle.** Each task names its oracle:
 - the project's test command at that commit, when the session's goal is covered by
@@ -612,30 +610,20 @@ those stay with production signals.
 
 **Shared event parser.** Event parsing lives in AKit (`AKitSessions`, next to the session
 readers, which already read Claude Code and Pi logs). For Pi it reads the session log and
-the `--mode json` stream into the same items. The promptfoo assertion calls `akit` on the
-cell's event file instead of parsing on its own, so a check over the session index and an
-assertion read events the same way.
+the `--mode json` stream into the same items, so a check over the session index and an
+assertion over a control cell read events the same way.
 
-**Mechanics** (from the runbook):
-- a folder outside any repository, `~/.akit/lab/evals/`;
-- one work folder per cell on the pinned commit;
-- Pi with `--no-session`;
-- cleanup in `finally`: cell folders go to the Trash, like every delete in AKit;
-- `maxConcurrency` 2.
-
-**What differs from the runbook.**
-
-1. **Isolation as in Lab replay.** A cell's folder is a fresh repository holding only the
-   pinned commit's history (`git init`, `git fetch <sha>`), not a git worktree. A worktree
-   shares refs and objects with the user's repository, so the later fix would be
-   reachable (`lab.md`, "Isolation"), and it writes into that repository's `.git`. As in
-   Lab, a cell whose tool calls read the original session history (the exemplar's own
-   transcript) is flagged.
-2. **Traces are kept.** Pi's stdout goes to `runs/<run-id>/<label>/<task>-<n>.jsonl`. AKit
-   imports them as sessions with `source: eval`: they can be reviewed, but they never
-   enter production frequencies. Red cells of the fixed config are offered for review
-   automatically, since new modes after a fix are side effects.
-3. **The oracle is guarded from day one.** Assertions check that the number of tests
+**Mechanics** (Lab replay):
+1. **Isolation.** A cell's folder is a fresh repository holding only the base commit's
+   history (`git init`, `git fetch <sha>`), not a git worktree: a worktree shares refs and
+   objects with the user's repository, so the later fix would be reachable (`lab.md`,
+   "Isolation"). A cell whose tool calls read the original session history (the
+   exemplar's own transcript) is flagged.
+2. **Traces are kept.** A cell is a Lab run with its own transcript: it can be reviewed,
+   but it never enters production frequencies (Lab runs are tagged `source: eval`). Red
+   cells of the fixed setup are offered for review, since new modes after a fix are side
+   effects.
+3. **The oracle is guarded from day one.** The result records that the number of tests
    didn't drop, and that test and scoring files are unchanged (by diff). This is a direct
    check of the seed "Weakening tests or oversight".
 4. **Statistics, not "+4 cells".** 21/30 against 25/30 gives p ≈ 0.36 by Fisher's exact
@@ -645,28 +633,25 @@ assertion read events the same way.
    - Shown: Wilson intervals, pass@1 (the chance one run passes) next to pass^k (the
      chance all k runs pass).
    - The set grows to 20–30 tasks before the number of repeats grows.
-5. **Cell key** = the [done key](#done-key) of a cell: the task + the config (model,
-   prompt, tools, thinking) + commit + repeat number. Cells already run aren't rerun.
+5. **Cell key** = the [done key](#done-key) of a cell: the task + the setup (harness,
+   model, effort, the one difference) + base commit + repeat number. Cells already run
+   aren't rerun.
 6. **Money.** Copilot bills per token in AI credits since June 2026, so runs cost money,
    not just quota. AKit estimates the cost before a run; the monthly limit is shared with
    the analysis.
 7. **Sending policy.** Tasks and traces contain the code of a work repository. Control
-   runs go through the same allowed list (harness + provider + account + plan/org) and the
-   same scrub; see [Sending policy](#sending-policy).
-8. **Sanity checks** from the runbook stay:
-   - a deliberately broken config (read-only tools) must fail;
+   runs go through the same allowed list (harness + provider + account + plan/org); see
+   [Sending policy](#sending-policy).
+8. **Sanity checks:**
+   - a deliberately broken setup (read-only tools) must fail;
    - the tests are green on the reference commit;
    - a manual calibration of 5 red and 2 green cells.
 
-**Reproducibility (pending: snapshot method).** A control task needs the repository state
-at the session's start.
-- **HEAD** can be recorded from now on by the capture hook, which already reads `.git`
-  files as text.
-- **Uncommitted changes** (diff and untracked files) need a process, which the hook's
-  contract rules out; see [Open questions](#open-questions).
-
-A session without a usable snapshot can't become a control task. Instead, the user can
-write a minimal reproduction: the simplest request that triggers the mode.
+**Reproducibility: HEAD only.** A control task needs the repository state at the
+session's start. The capture hook records HEAD from `.git` files as text. Uncommitted
+changes would need a process, which the hook's contract rules out, so a session that
+started with uncommitted changes can't become a control task. Instead, the user can write
+a minimal reproduction: the simplest request that triggers the mode.
 
 ## Storage
 
@@ -681,13 +666,12 @@ write a minimal reproduction: the simplest request that triggers the mode.
                              # train/dev/test splits, validation results
   batches/<run-id>.json      # sample with inclusion probabilities, per-session status,
                              # coverage, saturation, matrix
-  snapshots/                 # repository state at session start (pending), never in git
   sends.jsonl                # send log
-~/.akit/lab/evals/           # control sets: tasks, configs, runs/<run-id>/…
+~/.akit/lab/evals/           # control tasks and sets; cells are Lab runs
 ```
 
 All of it is local and never goes into the brain repo. Everything outside `modes/` is
-ignored by the local git repo, so raw snapshots never enter its history. A later export
+ignored by the local git repo, so notes and quotes never enter its history. A later export
 of `general` definitions (no exemplars) would need a scrub check first: an internal tool
 or client name can leak through a criterion. `project:` modes from a work machine are
 never synced.
@@ -695,7 +679,7 @@ never synced.
 ## Implementation plan
 
 Each slice is merged into master with a tag, is usable in the installed AKit, and brings
-its own UI. Slices that depend on a pending decision wait for it.
+its own UI.
 
 1. **Sending policy and cost.**
    - Allowed list with the account check: Settings → Lab.
@@ -704,9 +688,9 @@ its own UI. Slices that depend on a pending decision wait for it.
 2. **Blind notes and the verifier.**
    - Outcome, notes, deviation steps, paragraph and advice in the one-session review,
      with "Re-check with another model" for hard sessions;
-     the verifier pass; the evidence-preserving digest (and `get_step(n)` if agreed).
+     the verifier pass; the evidence-preserving digest.
    - The code phase classifier; the note pool, the done key, "no failures" records.
-   - HEAD at session start (and uncommitted changes, if agreed).
+   - HEAD at session start.
    - UI: the review shows verified and rejected notes, deviation steps "about here", phases.
 3. **Bootstrap labeling.**
    - Reserved sessions picked by the agent; the blind labeling screen; pairing of notes.
@@ -732,89 +716,43 @@ its own UI. Slices that depend on a pending decision wait for it.
      funnel or matrix behind the phase-agreement gate, comparison.
 7. **Fixes and controlled evals.**
    - Drafts and statuses; before/after T with the "helped" rule.
-   - Control sets (promptfoo or Lab replay, as decided) with the shared event parser.
-   - Randomized interleaving, if agreed.
+   - Control sets as Lab replay tasks with the shared event parser.
 8. **Judges and validation.**
    - LLM judges and heuristic code checks for 2–3 modes picked by the rule in
      [Checks](#checks), validated as in [Validation](#validation).
    - Rogan–Gladen correction; pool judge runs by button; `tough_call` review.
 
-## Open questions
+## Decisions
 
-Each item is a proposal awaiting the user's confirmation. Where a proposal conflicts with
-an earlier decision, both options are given.
+Decided by the user on 2026-10-01; they replace the open questions of the design.
 
-- **Personal machine default.** Same-origin: a transcript may go only to the provider and
-  account that produced it; everything else is added explicitly. (The earlier open
-  question was "empty, or the harnesses already signed in".)
-- **Pi account.** Two options, the user decides:
-  - **(a) Token exception** (the earlier decision). AKit runs `pi auth print-bearer-token
-    --provider github-copilot`, keeps the token in its process memory only, asks GitHub
-    `/user` and Copilot's plan/org, and logs HTTP errors without headers or body. First
-    it checks that `/user` accepts that token at all.
-    - *For:* the real account and org are verified, so a switched account is caught.
-    - *Against:* AKit touches a harness secret for the first time. That needs an exception
-      to CLAUDE.md "never display or copy secrets" and to "AKit never reads harness keys",
-      removed once Pi has a whoami command.
-  - **(b) Account entered by the user.** Pi is allowed by provider + model + the account
-    and plan/org the user entered; with same-origin, a Pi session is reviewed only through
-    the Pi provider that produced it.
-    - *For:* no secret is touched and no CLAUDE.md exception is needed.
-    - *Against:* AKit can't see that the account behind Pi changed. On a work machine
-      that means trusting the entry.
-  - Asking Pi upstream for a whoami command stays with the user; nothing is sent from here.
-- **Randomized interleaving.** The strongest signal for rule and skill fixes, but AKit
-  would change the context of real sessions on its own. The capture hook's contract
-  (`session-insights.md`: it prints nothing, because SessionStart output lands in the
-  agent's context) rules out injecting through it.
-  - *(a) Keep* "the user applies it; no auto-apply", AKit's read-only rule and the hook's
-    contract. The signals are before/after T and control sets.
-  - *(b) Allow* interleaving as an explicit opt-in per fix, logged and reversible, with a
-    hook that may print the draft. It needs CLAUDE.md and `session-insights.md` changes.
-    Hook fixes can't be interleaved this way.
-- **Controlled evals: promptfoo or Lab replay tasks.** Lab already has replay tasks
-  (`lab.md`): an isolated clone at a base commit, hidden tests, repeats × setups, for
-  Claude Code only (v1 scope).
-  - *(a) promptfoo* as described. It works for Pi now; Claude Code sessions and
-    hook fixes get no controlled eval. It adds Node and promptfoo as dependencies and a
-    second runner next to Lab.
-  - *(b) Extend Lab replay tasks* to Pi and add the assertions there. One runner and one
-    UI for both harnesses, but it widens Lab's v1 scope and needs more work before the
-    first control set.
-- **Snapshot of uncommitted changes.** HEAD can be read from `.git` files by the capture
-  hook as it is. Uncommitted changes can't, without breaking its contract
-  ("starts no process").
-  - *(a) HEAD only.* Sessions that started with uncommitted changes can't become control
-    tasks; minimal reproductions cover them.
-  - *(b) A detached process* from the hook stores the diff and the untracked files in
-    `snapshots/`. Full state, but it changes the hook's contract.
-  - `git stash create` is not proposed: it writes an unreferenced commit object into the
-    user's repository.
-- **Credits.** The earlier decision is "only recorded data, no built-in price tables".
-  - *(a) Recorded only.* Pi's recorded `usage.cost` per request, if Pi records it for
-    `github-copilot` (to check). The estimate before a run is "≈" from the recorded cost
-    of similar past calls.
-  - *(b) A dated, editable rate table* that prices logged tokens (input, cached, output).
-    It is an exception to the earlier decision.
-  - Either way, implementation isn't blocked on reading the credit balance.
-- **`get_step(n)`.** The review call has no tools on purpose: an injected transcript can't
-  make it do anything (`lab.md`).
-  - *(a) No tool.* The digest keeps user turns verbatim and the stub evidence, and the
-    verifier checks quotes in code against the full scrubbed transcript.
-  - *(b) One read-only tool* (a restricted MCP server for Claude Code, an extension for Pi)
-    that serves scrubbed steps only. Fewer quotes lost to cutting, but it reopens the tool
-    surface.
-- **Label volume.** About 100 labels per judged mode (test-heavy split, see
-  [Validation](#validation)), about 300 for three modes. Is that acceptable for one
-  person, or should fewer modes get judges?
-- **Scrub.** Gitleaks rules as the main detector, plus own regexes; no trufflehog live
-  verification; hex allowlist. Open: port the rules to Swift next to Lab's `SecretFilter`,
-  or call a bundled gitleaks binary (a new dependency).
-- **Control sets.** Session snapshots from now on, minimal reproductions for older
-  sessions (see [Controlled evals](#controlled-evals)).
-- **Claude Code `/insights`.** A one-time comparison on the same sessions. If the findings
-  match, AKit should focus on validating modes and checking fixes rather than on
-  discovering them.
+- **Personal machine default: same-origin.** A transcript may go only to the provider and
+  account that produced it; everything else is added explicitly.
+- **Pi account: entered by the user** (option b). Pi is allowed by provider + model + the
+  account and plan/org the user entered in Settings → Lab; no harness secret is touched and
+  CLAUDE.md needs no exception. With same-origin, a Pi session is reviewed only through the
+  Pi provider that produced it. AKit can't see a switched account behind Pi; on a work
+  machine that means trusting the entry.
+- **Randomized interleaving: no.** The user applies fixes; AKit never changes the context
+  of real sessions, stays read-only and the capture hook keeps printing nothing. The fix
+  signals are control sets and before/after T.
+- **Controlled evals: Lab replay tasks**, extended to control tasks made from sessions and
+  to Pi. One runner and one UI; no promptfoo or Node dependency.
+- **Snapshot: HEAD only.** The capture hook records HEAD from `.git` files. Sessions that
+  started with uncommitted changes can't become control tasks; minimal reproductions cover
+  them.
+- **Credits: recorded only.** The send log keeps the cost each harness recorded for a call
+  (Claude Code's `total_cost_usd`, Pi's `usage.cost`); the estimate before a run is "≈"
+  from recorded calls of the same harness and model. No rate table.
+- **`get_step(n)`: no tool.** The calls stay tool-less; the digest keeps user turns and the
+  evidence stubs, and the verifier checks quotes in code against the full scrubbed
+  transcript.
+- **Label volume:** as proposed (about 100 labels per judged mode, at most three judged
+  modes); the thresholds are constants in one place.
+- **Scrub: gitleaks rules ported to Swift** next to `SecretFilter`, plus own patterns and the
+  hex allowlist. No new dependency.
+- **Control sets:** HEAD snapshots from now on, minimal reproductions for older sessions.
+- **Claude Code `/insights`:** a one-time manual comparison, not part of AKit.
 
 ## Caveats
 
