@@ -135,7 +135,8 @@ enum ReviewRun {
         switch run.spec.agent?.mode ?? .agent {
         case .call:
             let input = run.folder.appending(path: "review-input.md")
-            try Data(callInput(title: run.spec.reviewedTitle, transcript: transcript, metrics: metrics).utf8).write(to: input)
+            try Data(callInput(title: run.spec.reviewedTitle, transcript: transcript, metrics: metrics,
+                                    model: run.spec.agent?.model).utf8).write(to: input)
             agent = try await AgentRun.run(prompt: harness == .pi ? "Review the session in the attached file." : "Review the session on stdin.",
                                            spec: run.spec, in: run.folder, runFolder: run.folder, exposeRunFolder: false,
                                            extra: callFlags(harness, input: input, language: language), input: harness == .pi ? nil : input,
@@ -205,7 +206,8 @@ enum ReviewRun {
         }
     }
 
-    static func callInput(title: String?, transcript: SessionTranscript, metrics: SessionMetrics) -> String {
+    /// `model`: the reviewing model; models with large windows get a longer digest.
+    static func callInput(title: String?, transcript: SessionTranscript, metrics: SessionMetrics, model: String?) -> String {
         let numbers = (try? LabStore.encoder.encode(metrics)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         return """
             # Session: \(title ?? "untitled")
@@ -216,10 +218,11 @@ enum ReviewRun {
 
             ## Transcript digest
 
-            Items are numbered [#n] in order. Long texts are cut ([…N chars]), thinking is left
-            out, and secrets are masked.
+            Items are numbered [#n] in order. User messages are complete. Long texts are cut
+            ([…N chars]); long tool output keeps its start, end and the exit code / error lines
+            ({…}). Thinking is left out, and secrets are masked.
 
-            \(ReviewDigest.text(transcript))
+            \(EvidenceDigest.text(transcript, budget: EvidenceDigest.budget(model: model)).text)
 
             """
     }

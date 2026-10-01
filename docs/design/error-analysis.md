@@ -91,8 +91,9 @@ transcript (see [Sending policy](#sending-policy)), and evidence is never cut aw
 - **Long tool output** keeps its head and tail. The stub always keeps the exit code, the
   lines with error/fail/warn, and the number of failed tests.
 - **Budget per turn** scales with the session's length instead of fixed limits per kind.
-  The target is an input under 272K tokens; today's `ReviewDigest` budget, 360K chars
-  (about 90K tokens), becomes per-model. This replaces the digest described in `lab.md`.
+  The target is an input under 272K tokens; the budget is per model: 360K chars (about
+  90K tokens) by default, 1M chars for 1M-token windows. `EvidenceDigest` (AKitLab)
+  replaced the earlier digest of `lab.md`.
 - **No `get_step(n)` tool** (decided): the call stays tool-less, as in `lab.md`, so an
   injected transcript can't make it do anything. The [verifier](#verifier-second-pass)
   checks every quote in code against the full scrubbed transcript.

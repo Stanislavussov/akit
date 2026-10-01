@@ -173,9 +173,10 @@ Who writes what:
 - **Numbers come from `akit lab run`**, never from the agent: tokens, calls, context
   rent, tests, commits. An agent can't be trusted to report its own metrics.
 - **A review is one model call by default**: AKit sends its numbers and a digest of the
-  masked transcript (numbered items, long texts cut, thinking left out; tool results and
-  then the middle of the session go first when it is still over ~90K tokens), the model
-  answers with JSON, and AKit writes `review.json` and `summary.md` itself. The call goes
+  masked transcript (`EvidenceDigest`: numbered items, thinking left out, user turns
+  verbatim, other items cut to one cap that scales with the session, long tool output kept
+  as start, end and a stub with the exit code, error lines and failed-test count; the
+  budget is per model, ~90K tokens by default), the model answers with JSON, and AKit writes `review.json` and `summary.md` itself. The call goes
   through the harness with its own sign-in and model settings, never with keys AKit reads:
   Claude Code `-p --tools "" --safe-mode --system-prompt … --json-schema …` with the digest
   on stdin; Pi `-p --no-tools --no-skills --no-context-files --no-prompt-templates
@@ -190,9 +191,10 @@ Who writes what:
   of an injected transcript could write a file elsewhere; one model call has no such gap.
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
-- The digest described here is planned to be replaced by the evidence-preserving digest
-  of `error-analysis.md` (user turns verbatim, tool-output stubs that keep exit codes and
-  error lines).
+- The earlier digest (fixed limits per kind, tool results dropped first) was replaced on
+  2026-10-01 by the evidence-preserving digest of `error-analysis.md`. When even the
+  smallest cap doesn't fit, the middle of the session goes, but never user turns or the
+  stubs of failed tool results.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
 
 ## Replay tasks
