@@ -207,6 +207,19 @@ public enum ControlCell {
                      changedTestFiles: before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted())
     }
 
+    /// The runbook's sanity check: the task's test command must pass on its reference commit
+    /// (the one that later fixed it). Runs in an isolated clone that goes to the Trash.
+    public static func checkReference(repo: URL, commit: String, command: String, log: URL, limit: TimeInterval = 15 * 60,
+                                      env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move,
+                                      out: @escaping @Sendable (String) -> Void) async throws -> TestCommand {
+        let work = FileManager.default.temporaryDirectory
+            .appending(path: "akit-reference-\(UUID().uuidString.lowercased())", directoryHint: .isDirectory)
+        defer { if FileManager.default.fileExists(atPath: work.path) { _ = try? trash(work) } }
+        try await IsolatedClone.make(at: work, from: repo, commit: commit, env: env)
+        try FileManager.default.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+        return await runTests(command, in: work, limit: limit, log: log, env: env, out: out)
+    }
+
     /// Claude Code's transcript of the cell's session, or Pi's stream in `agent.jsonl`.
     static func transcript(_ spec: RunSpec, runFolder: URL, env: HarnessEnvironment) -> SessionTranscript? {
         switch AgentRun.harness(of: spec) {

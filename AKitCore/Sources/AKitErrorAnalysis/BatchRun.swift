@@ -25,7 +25,7 @@ public enum Batches {
         try SignalScanner.refresh(env: env)
         let signals = try AnalysisIndex.signals(database).mapValues(\.signals)
         let population = Sampling.population(try AnalysisIndex.sessions(database), filter: filter,
-                                             reserved: BootstrapReservations(env: env).keys())
+                                             reserved: BootstrapReservations(env: env).keys().union(IndexedSessions.labKeys(env: env)))
         guard !population.isEmpty else { throw Failure(message: "No sessions match (at least \(Sampling.minimumRequests) requests each).") }
         let seed = seed ?? UInt64(Date.now.timeIntervalSince1970 * 1000)
         var generator = SeededGenerator(seed: seed)

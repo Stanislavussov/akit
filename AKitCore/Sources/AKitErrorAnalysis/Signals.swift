@@ -1,5 +1,6 @@
 import AKitFoundation
 import AKitInsights
+import AKitLab
 import AKitModel
 import AKitSessions
 import Foundation
@@ -82,6 +83,12 @@ public enum IndexedSessions {
         case "pi": .pi
         default: nil
         }
+    }
+
+    /// Index keys of the sessions Lab's own runs made: left out of samples, bootstrap picks and
+    /// check rates, so evals never enter production frequencies.
+    public static func labKeys(env: HarnessEnvironment) -> Set<String> {
+        Set(LabStore.sessionIDs(env: env).flatMap { ["claude:\($0)", "pi:\($0)"] })
     }
 
     public static func summary(_ session: IndexedSession) -> SessionSummary? {

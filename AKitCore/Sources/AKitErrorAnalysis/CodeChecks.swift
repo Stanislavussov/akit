@@ -253,7 +253,8 @@ public enum CheckRunner {
             return loaded
         }
         guard let database = try AnalysisIndex.open(env: env) else { return results }
-        let sessions = try AnalysisIndex.sessions(database)
+        let lab = IndexedSessions.labKeys(env: env)
+        let sessions = try AnalysisIndex.sessions(database).filter { !lab.contains($0.key) }
         for (index, session) in sessions.enumerated() {
             progress(index, sessions.count)
             guard let summary = IndexedSessions.summary(session) else { continue }

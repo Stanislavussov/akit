@@ -9,7 +9,7 @@ import Foundation
 extension AKitCLI {
     static let analysisControlUsage = """
         Controlled evals: did a fix help on fixed tasks? Tasks in ~/.akit/lab/evals; cells are Lab runs:
-          akit analysis control task new --session SESSION [--mode MODE] (--tests CMD | --assert MODE [--success])
+          akit analysis control task new --session SESSION [--mode MODE] (--tests CMD | --assert MODE)
                               [--reference SHA]
                                           A task from an exemplar session: its first user turn, at HEAD
                                           of its start (recorded by the capture hook), in the repository
@@ -17,12 +17,15 @@ extension AKitCLI {
                                           transcript path or a Claude Code session id. The oracle: the
                                           project's test command (exit 0 passes), or a mode's code check
                                           on the cell's transcript (passes when the mode doesn't show;
-                                          --success: when it does)
+                                          for a success mode, when it does)
           akit analysis control task new --repo DIR --base SHA --prompt TEXT [--mode MODE]
-                              (--tests CMD | --assert MODE [--success]) [--reference SHA]
+                              (--tests CMD | --assert MODE) [--reference SHA]
                                           A minimal reproduction: the simplest request that triggers the mode
           akit analysis control tasks [--json]
                                           Control tasks, oldest first
+          akit analysis control task check ID
+                                          The sanity check: the test command must pass on the task's
+                                          --reference commit (in an isolated clone)
           akit analysis control task remove ID
                                           Move a task's file to the Trash (its cells stay Lab runs)
           akit analysis control run TASK[,TASK…] [--setups baseline,variant] [--patch-file FILE]
@@ -60,8 +63,20 @@ extension AKitCLI {
                 }
                 out("Moved control task \(id) to the Trash.")
                 return 0
+            case "check":
+                guard let id = args.positional() else { throw Failure(message: "Which task? akit analysis control task check ID.") }
+                try args.finish()
+                guard let task = ControlTasks.load(id, env: env) else { throw Failure(message: "No control task \(id).") }
+                do {
+                    let checked = try await ControlTasks.checkReference(task, env: env, out: { LinePrinter.shared.print($0) })
+                    out(checked.referenceGreen == true ? "The tests pass on the reference commit: the oracle can tell a fix."
+                        : "The tests fail on the reference commit: fix the test command or the reference before running cells.")
+                } catch {
+                    throw Failure(message: error.localizedDescription)
+                }
+                return 0
             default:
-                throw Failure(message: "akit analysis control task new …, or akit analysis control task remove ID.")
+                throw Failure(message: "akit analysis control task new|check|remove ….")
             }
         case "tasks":
             try args.finish()
@@ -95,7 +110,6 @@ extension AKitCLI {
         let mode = args.value("--mode")
         let tests = args.value("--tests")
         let assert = args.value("--assert")
-        let success = args.flag("--success")
         let reference = args.value("--reference")
         try args.finish()
         let oracle: ControlTask.Oracle
@@ -104,7 +118,9 @@ extension AKitCLI {
         case (nil, let modeID?): oracle = .assertion(modeID: modeID)
         default: throw Failure(message: "Give the oracle: --tests CMD or --assert MODE (one of them).")
         }
-        guard !success || assert != nil else { throw Failure(message: "--success goes with --assert.") }
+        // A success mode's assertion passes when the strategy shows; the mode's kind says which.
+        var success = false
+        if let assert { success = try await ModeStore(env: env).mode(assert)?.kind == .success }
         let modeID = mode ?? assert
         let task: ControlTask
         do {
@@ -184,6 +200,22 @@ extension AKitCLI {
         if readOnly { setups.append(ControlSetup(name: "read-only", agent: agent, readOnly: true)) }
         let repeats = try positiveNumber(repeatsText, "--repeats") ?? 3
 
+        // Agent runs cost money (Copilot bills per token): an estimate from the recorded cost of
+        // earlier control cells of the same harness and model, before anything is queued.
+        let cells = repeats * tasks.count * setups.count
+        let earlier = SendLog.records(env: env).filter { $0.purpose == "control" && $0.harness == agent.harness && $0.model == agent.model }
+        let costs = earlier.compactMap(\.usage.cost)
+        if !costs.isEmpty {
+            let estimate = costs.reduce(0, +) / Double(costs.count) * Double(cells)
+            out(String(format: "Up to %d cells, ≈ $%.2f at the recorded cost of %d earlier cells.", cells, estimate, costs.count))
+            do {
+                try SendLog.checkLimit(estimate: estimate, settings: LabSettings.load(env: env), env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+        } else {
+            out("Up to \(cells) cells; no estimate yet (no recorded cost of control cells with \(agent.harness.title) · \(agent.model)).")
+        }
         let queued: (runs: [LabRun], skipped: Int)
         do {
             queued = try await ControlRuns.newControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep,

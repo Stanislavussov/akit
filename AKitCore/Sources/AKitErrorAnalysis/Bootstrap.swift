@@ -31,7 +31,7 @@ public enum Bootstrap {
         let reviewed = Set(NotesStore(env: env).all().map(\.sessionKey))
         let signals = try AnalysisIndex.signals(database).mapValues(\.signals)
         let candidates = Sampling.population(try AnalysisIndex.sessions(database), filter: Sampling.Filter(),
-                                             reserved: reservations.keys().union(reviewed))
+                                             reserved: reservations.keys().union(reviewed).union(IndexedSessions.labKeys(env: env)))
         var generator = SeededGenerator(seed: seed)
         let picked = choose(candidates, signals: signals, count: count, using: &generator)
         let entries = picked.compactMap { session in session.file.map { BootstrapReservations.Entry(sessionKey: session.key, transcript: $0) } }

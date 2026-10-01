@@ -155,4 +155,23 @@ struct ControlTasksTests {
         #expect(ControlTasks.list(env: env).isEmpty && fm.fileExists(atPath: trash.appending(path: "\(task.id).json").path))
         #expect(throws: ControlTasks.Failure.self) { try ControlTasks.remove(task.id, env: env) { _ in nil } }
     }
+
+    @Test func theReferenceCheckRunsTheTestsOnTheReferenceCommit() async throws {
+        let (repo, base) = try await repository()
+        let head = try #require(await git("rev-parse", "HEAD", in: repo))
+        let remove: (URL) throws -> URL? = { try FileManager.default.removeItem(at: $0); return nil }
+        let green = try await ControlTasks.reproduction(repo: repo, base: base, prompt: "Make x 2", modeID: nil,
+                                                       oracle: .tests(command: "grep -q 'x = 2' Sources/x.swift"), reference: head, env: env)
+        try ControlTasks.save(green, env: env)
+        #expect(try await ControlTasks.checkReference(green, env: env, trash: remove).referenceGreen == true)
+        #expect(ControlTasks.load(green.id, env: env)?.referenceGreen == true)
+        let red = try await ControlTasks.reproduction(repo: repo, base: base, prompt: "Make x 3", modeID: nil,
+                                                     oracle: .tests(command: "grep -q 'x = 3' Sources/x.swift"), reference: head, env: env)
+        #expect(try await ControlTasks.checkReference(red, env: env, trash: remove).referenceGreen == false)
+        await #expect(throws: (any Error).self) {
+            _ = try await ControlTasks.checkReference(ControlTask(id: "t", title: "t", repo: repo.path, base: base, prompt: "p",
+                                                                  source: .reproduction, modeID: nil, oracle: .tests(command: "true")),
+                                                      env: env, trash: remove)
+        }
+    }
 }

@@ -44,11 +44,11 @@ extension AKitCLITests {
         try write("Projects/task/rule.md", "- Check value.txt before saying done.\n")
         let run = await akit("analysis", "control", "run", String(id.prefix(10)), "--patch-file", "CLAUDE.md", "--patch-text", "@rule.md",
                              "--read-only-setup", "--env", "background", "--no-start")
-        #expect(run.code == 0 && run.out.hasPrefix("Queued 9 cells: 3 × 1 tasks × baseline · Claude Code · opus · high"), "\(run)")
+        #expect(run.code == 0 && run.out.contains("Up to 9 cells; no estimate yet") && run.out.contains("Queued 9 cells: 3 × 1 tasks × baseline · Claude Code · opus · high"), "\(run)")
         #expect(run.out.contains("variant · Claude Code · opus · high · + CLAUDE.md") && run.out.contains("read-only"))
         let again = await akit("analysis", "control", "run", id, "--patch-file", "CLAUDE.md", "--patch-text", "@rule.md",
                                "--read-only-setup", "--env", "background", "--no-start")
-        #expect(again.out == "Nothing to queue. Skipped 9 cells already done or queued.", "\(again)")
+        #expect(again.out.hasSuffix("Nothing to queue. Skipped 9 cells already done or queued."), "\(again)")
         let runs = await akit("lab", "list", "--json")
         let specs = try #require(try JSONSerialization.jsonObject(with: Data(runs.out.utf8)) as? [[String: Any]]).compactMap { $0["spec"] as? [String: Any] }
         #expect(specs.count == 9 && specs.allSatisfy { $0["kind"] as? String == "control" && $0["controlTask"] as? String == id })

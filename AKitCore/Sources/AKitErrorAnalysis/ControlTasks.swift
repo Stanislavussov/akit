@@ -59,6 +59,8 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
     public var successMode: Bool?
     /// A commit on which the tests are green (the later fix), for the sanity check.
     public var reference: String?
+    /// Whether the test command passed on the reference commit (nil: not checked).
+    public var referenceGreen: Bool?
     public var createdAt: Date
 
     public init(id: String, title: String, repo: String, base: String, prompt: String, source: Source, modeID: String? = nil,
@@ -170,6 +172,23 @@ public enum ControlTasks {
                                                    timeout: 60),
               result.succeeded else { return nil }
         return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Runs the task's test command on its reference commit and records whether it passed: a
+    /// test oracle that isn't green there can't tell a fix from noise.
+    @discardableResult
+    public static func checkReference(_ task: ControlTask, env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move,
+                                      out: @escaping @Sendable (String) -> Void = { _ in }) async throws -> ControlTask {
+        guard case .tests(let command) = task.oracle else { throw Failure(message: "Only a test oracle has a reference to check.") }
+        guard let reference = task.reference else { throw Failure(message: "The task names no reference commit (--reference SHA).") }
+        let result = try await ControlCell.checkReference(repo: URL(filePath: task.repo, directoryHint: .isDirectory), commit: reference,
+                                                          command: command,
+                                                          log: EvalPaths(env: env).folder.appending(path: "reference-\(AnalysisPaths.fileName(task.id)).log"),
+                                                          env: env, trash: trash, out: out)
+        var checked = task
+        checked.referenceGreen = result.passed
+        try save(checked, env: env)
+        return checked
     }
 
     public static func save(_ task: ControlTask, env: HarnessEnvironment) throws {
