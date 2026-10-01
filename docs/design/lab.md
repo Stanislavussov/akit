@@ -298,11 +298,15 @@ Lab screen shows the spread, not only the mean.
 
 ## Relation to other designs
 
-- **Session Insights** (`session-insights.md`, branch `session-insights`): this replaces
-  "AKit has no own eval runner". Skill-trigger evals still belong to skill-creator; Lab
-  measures whole sessions and setups. Update that doc when both are on master. Lab reuses
-  its path templates for picking the environment and, once merged, its SQLite index for
-  session analysis.
+- **Session Insights** (`session-insights.md`): this replaces "AKit has no own eval
+  runner" (that doc now says so). Skill-trigger evals still belong to skill-creator; Lab
+  measures whole sessions and setups. Lab reuses its path templates for picking the
+  environment; reading its SQLite index for session analysis is planned (`AKitLab` doesn't
+  depend on `AKitInsights` yet). The failure-signal rules move from `SessionAnalyzer` into
+  a shared `FailureSignals` in `AKitSessions`, so Lab and the index use one parser (step
+  11 there).
+- **Shared terms** (`definitions.md`): data tiers, `first_request_context`, harness
+  fingerprint, repo snapshot, failure signals and the statistics rules.
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 
