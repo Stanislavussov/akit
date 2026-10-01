@@ -203,7 +203,8 @@ private struct FixEvaluationView: View {
                 .frame(width: 200, height: 14)
             Text("\(side.failures) of \(side.sessions) sessions (95% \(AnalysisText.percent(side.interval.low))–\(AnalysisText.percent(side.interval.high)))")
                 .monospacedDigit()
-            Text(side.model ?? "").foregroundStyle(.secondary)
+            Text([side.model, side.harnessVersion.map { "harness \($0)" }].compactMap(\.self).joined(separator: " · "))
+                .foregroundStyle(.secondary)
         }
     }
 

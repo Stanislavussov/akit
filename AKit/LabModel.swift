@@ -96,7 +96,8 @@ extension AppModel {
     }
 
     /// Samples sessions of the index and queues an error analysis batch (`akit lab new analysis`).
-    func queueAnalysis(filter: Sampling.Filter, size: Int, notesAgent: LabAgent, matchingAgent: LabAgent, language: LabLanguage,
+    /// `notesAgent` nil: a reviewer of another model family, when the sending policy allows one.
+    func queueAnalysis(filter: Sampling.Filter, size: Int, notesAgent: LabAgent?, matchingAgent: LabAgent?, language: LabLanguage,
                        environment: LabEnvironment?) async throws -> LabRun {
         let akit = try await analysisAkit()
         let run = try await Task.detached {

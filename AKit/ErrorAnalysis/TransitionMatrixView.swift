@@ -85,6 +85,12 @@ struct TransitionMatrixSection: View {
                     }
                 }
             }
+            if report.matrixHidden == nil, !report.matrix.unlocated.isEmpty || !(other?.matrix.unlocated.isEmpty ?? true) {
+                Text("\(report.matrix.unlocated.count) sessions with failures but no decisive step are left out"
+                     + (other.map { " (\($0.matrix.unlocated.count) in the compared batch)" } ?? "") + ".")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .sheet(item: $drill) { MatrixDrillSheet(cell: $0) }
     }

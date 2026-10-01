@@ -337,8 +337,10 @@ struct NewLabRunSheet: View {
                                                             environment: environment, keep: keep)
                     if let first = runs.first { onQueued(first) }
                 case .analysis:
+                    var claude = model.defaultAgent(.claudeCode)
+                    claude.mode = .call
                     onQueued(try await model.queueAnalysis(filter: batch.filter, size: batch.size, notesAgent: batch.notesAgent,
-                                                           matchingAgent: batch.matchingAgent, language: batch.language,
+                                                           matchingAgent: batch.matchingAgent(defaultAgent: claude), language: batch.language,
                                                            environment: environment))
                 }
                 dismiss()

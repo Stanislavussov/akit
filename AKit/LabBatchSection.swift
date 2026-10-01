@@ -47,7 +47,12 @@ struct LabBatchSection: View {
                 }
             }
             .monospacedDigit()
-            if batch.paused {
+            if let reason = batch.pauseReason {
+                Label("The worker paused the batch: \(reason) Resume once that is sorted out.", systemImage: "exclamationmark.octagon")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if batch.paused {
                 Label("Paused: the worker stops after its current calls. Resume continues from the same place.", systemImage: "pause.circle")
                     .foregroundStyle(.orange)
             }
@@ -72,6 +77,7 @@ struct LabBatchSection: View {
         parts.append("notes by \(batch.notesAgent.label)")
         if batch.matchingAgent != batch.notesAgent { parts.append("matching by \(batch.matchingAgent.model)") }
         parts.append("\(coverage.done) of \(coverage.total) done" + (failed > 0 ? ", \(failed) failed" : ""))
+        parts.append(batch.estimate.map { String(format: "≈ $%.2f estimated when queued", $0) } ?? "no estimate when queued")
         return parts.joined(separator: " · ")
     }
 
@@ -86,7 +92,7 @@ struct LabBatchSection: View {
 
     private func actions(_ batch: Batch, failed: Int) -> some View {
         let active = model.labRuns.contains { $0.spec.batch == batch.runID && ($0.status == .queued || $0.status == .running) }
-        let unfinished = batch.sessions.contains { $0.status != .done } || !batch.clustered
+        let unfinished = batch.sessions.contains { $0.status != .done } || batch.unfinished
         return HStack {
             if active, !batch.paused {
                 Button("Pause", systemImage: "pause.circle") { act { try await model.pauseBatch(batch.runID) } }

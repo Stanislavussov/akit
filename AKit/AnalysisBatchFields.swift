@@ -14,6 +14,9 @@ struct AnalysisBatchDraft {
     var useTo = false
     var to = Date.now
     var size = 20
+    /// Automatic: a reviewer of another model family than the sampled sessions', when the
+    /// sending policy allows one (`Batches.defaultReviewer`).
+    var automatic = true
     var harness: LabHarness = .claudeCode
     var model = ""
     var effort = "high"
@@ -27,18 +30,22 @@ struct AnalysisBatchDraft {
         return Sampling.Filter(project: project, from: useFrom ? start : nil, to: useTo ? end : nil)
     }
 
-    var notesAgent: LabAgent {
-        LabAgent(harness: harness, model: model.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
+    /// nil: Automatic.
+    var notesAgent: LabAgent? {
+        automatic ? nil : LabAgent(harness: harness, model: model.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
     }
 
-    var matchingAgent: LabAgent {
-        var agent = notesAgent
+    /// nil: the notes agent matches too.
+    func matchingAgent(defaultAgent: LabAgent) -> LabAgent? {
         let name = matchingModel.trimmingCharacters(in: .whitespaces)
-        if !name.isEmpty { agent.model = name }
+        guard !name.isEmpty else { return notesAgent }
+        var agent = notesAgent ?? defaultAgent
+        agent.model = name
+        agent.mode = .call
         return agent
     }
 
-    var isValid: Bool { harness == .pi || !model.trimmingCharacters(in: .whitespaces).isEmpty }
+    var isValid: Bool { automatic || harness == .pi || !model.trimmingCharacters(in: .whitespaces).isEmpty }
 }
 
 /// The batch form of New Lab Run: project (from the session index), period, size, the notes
@@ -80,7 +87,14 @@ struct AnalysisBatchFields: View {
                 }
             }
             Stepper("Sessions: \(draft.size)", value: $draft.size, in: 1...200)
-            ReviewAgentFields(harness: $draft.harness, modelName: $draft.model, effort: $draft.effort)
+            Picker("Notes by", selection: $draft.automatic) {
+                Text("Automatic").tag(true)
+                Text("Choose…").tag(false)
+            }
+            .help("Automatic: a model of another family than the one that ran most sampled sessions, when the sending policy allows it; else Claude Code with your settings")
+            if !draft.automatic {
+                ReviewAgentFields(harness: $draft.harness, modelName: $draft.model, effort: $draft.effort)
+            }
             TextField("Matching model", text: $draft.matchingModel, prompt: Text("same as the notes"))
                 .help("The model that routes notes to modes; kept while its route acceptance holds")
             Picker("Language", selection: $draft.language) {
