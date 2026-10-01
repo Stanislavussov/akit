@@ -82,6 +82,11 @@ public enum IndexSchema {
           PRIMARY KEY(ts, note));
         CREATE INDEX marks_source ON marks(source_id);
         """,
+        // v5: the commit HEAD pointed to at a session's start, the base of control tasks.
+        // Rows imported before stay without it.
+        """
+        ALTER TABLE hook_events ADD COLUMN head TEXT;
+        """,
     ]
 
     /// Brings the database to the latest version. Refuses an index written by a newer akit.

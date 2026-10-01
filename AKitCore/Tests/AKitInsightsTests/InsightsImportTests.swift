@@ -914,4 +914,23 @@ struct InsightsImportTests {
         try again.execute("PRAGMA user_version = \(IndexSchema.migrations.count + 1)")
         #expect(throws: IndexDatabase.Failure.self) { _ = try IndexSchema.open(paths.database) }
     }
+
+    @Test func migrationV5AddsHeadAndKeepsHookEvents() throws {
+        // An index an akit of schema v4 wrote, with a hook event in it.
+        let old = try IndexDatabase(url: paths.database)
+        for (index, script) in IndexSchema.migrations.prefix(4).enumerated() {
+            try old.execute(script)
+            try old.execute("PRAGMA user_version = \(index + 1)")
+        }
+        try old.run("""
+            INSERT INTO hook_events(harness, session_id, ts, cwd, branch, source_id, parser_version)
+            VALUES('claude', 's1', 1, '/work/app', 'main', 1, 2)
+            """)
+
+        let database = try IndexSchema.open(paths.database)
+        #expect(try database.userVersion == 5)
+        let row = try #require(try database.rows("SELECT session_id, cwd, branch, head FROM hook_events").first)
+        #expect(row == [.text("s1"), .text("/work/app"), .text("main"), .null])
+        #expect(try IndexQueries.head(database, harness: "claude", sessionID: "s1") == nil)
+    }
 }

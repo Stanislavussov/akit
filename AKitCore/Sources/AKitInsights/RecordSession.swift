@@ -6,7 +6,7 @@ import Foundation
 /// `akit record-session --harness H`, run by the akit Claude plugin's SessionStart hook and by
 /// the Pi extension. Reads the hook's JSON (`session_id`, `cwd`, `transcript_path`, `source`)
 /// from stdin and appends one `session_start` line to the spool, with the repository the
-/// folder belongs to, read from `.git` files as text. Prints nothing (SessionStart output
+/// folder belongs to and the commit HEAD points to, read from `.git` files as text. Prints nothing (SessionStart output
 /// would land in the agent's context), starts no process, never fails.
 public enum RecordSession {
     /// The `akit` binary's entry for `record-session`, before anything else runs. The caller
@@ -64,6 +64,7 @@ public enum RecordSession {
                 line["common_dir"] = repository.commonDir
                 line["remote_id"] = repository.remoteID
                 line["branch"] = repository.branch
+                line["head"] = repository.head
             }
         }
         return line
@@ -79,6 +80,9 @@ public enum RecordSession {
         /// `github.com/owner/repo` from the main repository's `origin`.
         let remoteID: String?
         let branch: String?
+        /// The commit HEAD points to, the base of control tasks made from the session; nil on
+        /// an unborn branch.
+        let head: String?
     }
 
     /// Nearest `.git` at or above `cwd`. A `.git` file (a worktree) points to its gitdir, whose
@@ -116,11 +120,45 @@ public enum RecordSession {
             common = ((pointer.hasPrefix("/") ? pointer : gitdir + "/" + pointer) as NSString).standardizingPath
         }
         let remote = small(common + "/config").flatMap(originURL).flatMap(ProjectRecords.normalizedRemote)
+        let head = small(gitdir + "/HEAD", limit: 4096)?.trimmingCharacters(in: .whitespacesAndNewlines)
         var branch: String?
-        if let head = small(gitdir + "/HEAD")?.trimmingCharacters(in: .whitespacesAndNewlines), head.hasPrefix("ref: refs/heads/") {
+        if let head, head.hasPrefix("ref: refs/heads/") {
             branch = String(head.dropFirst("ref: refs/heads/".count))
         }
-        return Repository(gitdir: gitdir, commonDir: common, remoteID: remote, branch: branch)
+        return Repository(gitdir: gitdir, commonDir: common, remoteID: remote, branch: branch,
+                          head: head.flatMap { commit(head: $0, gitdir: gitdir, commonDir: common) })
+    }
+
+    /// The commit a HEAD file names: its sha when detached, else its ref resolved from the
+    /// loose ref file in the gitdir, then in the common dir (a worktree keeps its branches
+    /// there), then from the common dir's `packed-refs`. Text only, as git stores it; nil for
+    /// an unborn branch or anything that isn't a sha.
+    static func commit(head: String, gitdir: String, commonDir: String) -> String? {
+        guard head.hasPrefix("ref:") else { return sha(head) }
+        let ref = head.dropFirst("ref:".count).trimmingCharacters(in: .whitespaces)
+        // Only a path below refs/: a HEAD can't send the hook reading elsewhere.
+        guard ref.hasPrefix("refs/"), !ref.split(separator: "/").contains("..") else { return nil }
+        // A loose ref file, when there is one, is newer than its packed line.
+        for folder in gitdir == commonDir ? [gitdir] : [gitdir, commonDir] {
+            if let loose = small(folder + "/" + ref, limit: 256) { return sha(loose) }
+        }
+        // Bounded: a repository with many tags can have megabytes of packed refs.
+        guard let packed = small(commonDir + "/packed-refs", limit: 8 << 20) else { return nil }
+        // Lines are `<sha> <ref>`; the ref ends its line (a line cut at the limit doesn't
+        // match), and header (`#`) and peeled (`^<sha>`) lines hold no ` <ref>`. Searched as
+        // bytes: fast on megabytes, and only ASCII bytes bound the slices.
+        let bytes = packed.utf8
+        guard let match = bytes.firstRange(of: Array(" \(ref)\n".utf8)) else { return nil }
+        let start = bytes[..<match.lowerBound].lastIndex(of: UInt8(ascii: "\n")).map(bytes.index(after:)) ?? bytes.startIndex
+        return sha(packed[start..<match.lowerBound])
+    }
+
+    /// A full commit sha: 40 hex digits, 64 in a sha256 repository.
+    static func sha(_ text: some StringProtocol) -> String? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard value.utf8.count == 40 || value.utf8.count == 64,
+              value.utf8.allSatisfy({ (0x30...0x39).contains($0) || (0x61...0x66).contains($0) }) else { return nil }
+        return value
     }
 
     /// `gitdir: <path>` of a worktree's `.git` file.

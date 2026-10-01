@@ -1,7 +1,24 @@
+import AKitFoundation
 import Foundation
 
 /// Read-only questions to the index.
 public enum IndexQueries {
+    /// The commit HEAD pointed to when a session started: the first hook event of the session
+    /// that recorded one (a resumed session records another start, maybe at a later commit).
+    public static func head(_ database: IndexDatabase, harness: String, sessionID: String) throws -> String? {
+        try database.value("""
+            SELECT head FROM hook_events WHERE harness = ? AND session_id = ? AND head IS NOT NULL ORDER BY ts LIMIT 1
+            """, harness, sessionID)?.text
+    }
+
+    /// `head(_:harness:sessionID:)` from the index at its standard path, for callers that need
+    /// only this fact. nil when there is no index (none is created) or it can't be read.
+    public static func sessionHead(harness: String, sessionID: String, env: HarnessEnvironment) -> String? {
+        let url = InsightsPaths(env: env).database
+        guard FileManager.default.fileExists(atPath: url.path), let database = try? IndexSchema.open(url) else { return nil }
+        return (try? head(database, harness: harness, sessionID: sessionID)) ?? nil
+    }
+
     /// When each skill was first listed in a session. Exposure is always aggregated from the
     /// listing rows (one per listing and skill), never kept as a counter, so repeated initial
     /// listings and deltas count once.

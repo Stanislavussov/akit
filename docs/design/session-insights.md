@@ -182,7 +182,10 @@ folders that name a known repository.
   plugin is the adapter for memory injection.
 - The hook prints nothing (SessionStart output lands in the agent's context),
   reads `session_id`, `cwd`, `transcript_path` from stdin, only appends to the
-  spool file, and always exits 0.
+  spool file, and always exits 0. From `.git` files, read as text, the line also gets
+  the repository (`gitdir`, `common_dir`, `remote_id`), `branch` and `head`: the commit
+  HEAD points to (loose ref, then `packed-refs`), the base of control tasks made from
+  the session (see error-analysis.md).
 - Pi: an extension file in `~/.pi/agent/extensions/`, owned by AKit, same facts.
 - Safety net: launchd runs `akit sessions import` hourly (also parses the sessions).
 - The spool is one file per UTC day in `~/.akit/index/spool/`; each line is appended with
