@@ -26,6 +26,22 @@ extension AKitCLI {
           akit analysis validation [MODE] [--json]
           akit analysis tough MODE SESSION present|absent
                                           Decide a check's tough call (it becomes a label)
+
+        Fixes (failure and efficiency modes; you apply them, AKit never does):
+          akit analysis fix draft MODE --layer claude-md|agents-md|skill|hook|tool-description|environment
+                              --text TEXT|@FILE --expect TEXT --helped TEXT [--skill NAME] [--exemplar SESSION#NOTE]…
+                                          Write the fix down before any run: the text, what should change
+                                          in transcripts and the "helped" criterion
+          akit analysis fix applied MODE [--at YYYY-MM-DD]
+                                          Mark it applied: T, the anchor of before/after
+          akit analysis fix show MODE [--json]
+                                          The draft, and the mode's check before and after T: failure
+                                          rates with 95% intervals, P(after < before), Fisher's p, the
+                                          verdict (15+ sessions a side), the smallest detectable effect,
+                                          flags, regressions of other modes and the matrix difference
+          akit analysis fix status MODE confirmed|didnt-help|rejected [--reason TEXT]
+          A draft whose layer is a file (CLAUDE.md, AGENTS.md, a skill) can be tried on control
+          tasks: akit analysis control run TASK --fix MODE
         """
 
     static func analysisReports(_ command: String, _ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment,
@@ -122,6 +138,8 @@ extension AKitCLI {
                 where trust.level != .none && (id == nil || id == modeID) {
                     out("\(modeID): \(trust.level.rawValue)")
                 }
+            case "fix":
+                return try await fixCommand(&args, options: options, env: env, out: out)
             case "tough":
                 let target = try await mode(args.positional())
                 guard let session = args.positional(), let verdict = args.positional(), ["present", "absent"].contains(verdict) else {
@@ -137,6 +155,96 @@ extension AKitCLI {
             throw failure
         } catch {
             throw Failure(message: error.localizedDescription)
+        }
+        return 0
+    }
+
+    private static func fixCommand(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment,
+                                   out: (String) -> Void) async throws -> Int32 {
+        let store = ModeStore(env: env)
+        let action = args.positional()
+        guard let id = args.positional(), let mode = try await store.mode(id) else { throw Failure(message: "Which mode? akit analysis modes.") }
+        guard mode.kind.takesFixes else { throw Failure(message: "\(mode.name) is a success mode: it takes no fix.") }
+        let fixes = FixStore(env: env)
+        switch action {
+        case "draft":
+            guard let layer = args.value("--layer").flatMap(FixDraft.Layer.init(rawValue:)) else {
+                throw Failure(message: "--layer is \(FixDraft.Layer.allCases.map(\.rawValue).joined(separator: ", ")).")
+            }
+            guard var text = args.value("--text"), let expect = args.value("--expect"), let helped = args.value("--helped") else {
+                throw Failure(message: "Give --text, --expect (the change you expect in transcripts) and --helped (the criterion), before any run.")
+            }
+            let skill = args.value("--skill")
+            let exemplars = try args.values("--exemplar").map { text in
+                guard let ref = NoteRef(parsing: text) else { throw Failure(message: "--exemplar is SESSION#NOTE.") }
+                return ref
+            }
+            try args.finish()
+            if text.hasPrefix("@") {
+                guard let read = try? String(contentsOf: URL(filePath: String(text.dropFirst())), encoding: .utf8) else {
+                    throw Failure(message: "Can't read \(text.dropFirst()).")
+                }
+                text = read
+            }
+            guard layer != .skill || skill != nil else { throw Failure(message: "A skill fix needs --skill NAME.") }
+            try fixes.save(FixDraft(modeID: mode.id, layer: layer, skillName: skill, text: text, exemplars: exemplars,
+                                    expectedChange: expect, helpedCriterion: helped))
+            _ = try await store.setFix(mode.id, .draft)
+            out("Drafted a \(layer.title.lowercased()) for \(mode.name). Apply it yourself, then: akit analysis fix applied \(mode.id).")
+        case "applied":
+            let at = try args.value("--at").map { try day($0, "--at") } ?? .now
+            try args.finish()
+            guard fixes.load(mode.id) != nil else { throw Failure(message: "Draft the fix first: write down what should change before T.") }
+            _ = try await store.setFix(mode.id, .applied, at: at)
+            out("\(mode.name): fix applied at \(at.formatted(date: .abbreviated, time: .shortened)).")
+        case "status":
+            guard let status = args.positional().flatMap(Mode.FixStatus.init(rawValue:)), [.confirmed, .didntHelp, .rejected].contains(status) else {
+                throw Failure(message: "confirmed, didnt-help or rejected?")
+            }
+            let reason = args.value("--reason")
+            try args.finish()
+            _ = try await store.setFix(mode.id, status, reason: reason)
+            out("\(mode.name): \(status.title).")
+        case "show":
+            try args.finish()
+            let draft = fixes.load(mode.id)
+            let evaluation = try Fixes.evaluate(mode, env: env)
+            if options.json {
+                struct FixJSON: Encodable { let draft: FixDraft?; let evaluation: FixEvaluation? }
+                out(try labJSON(FixJSON(draft: draft, evaluation: evaluation)))
+                return 0
+            }
+            out("\(mode.name): fix \(mode.fix?.title ?? "none")")
+            if let draft {
+                out("\(draft.layer.title)\(draft.skillName.map { " \($0)" } ?? ""):\n\(draft.text)")
+                out("Expected change: \(draft.expectedChange)")
+                out("Helped when: \(draft.helpedCriterion)")
+            }
+            guard let evaluation else {
+                out(mode.fixAppliedAt == nil ? "Not applied yet." : "No check results for this mode: akit analysis check \(mode.id).")
+                return 0
+            }
+            func side(_ name: String, _ side: FixEvaluation.Side) -> String {
+                String(format: "%@: %d of %d sessions (95%% %.0f–%.0f%%)", name, side.failures, side.sessions, side.interval.low * 100, side.interval.high * 100)
+            }
+            out(side("Before T", evaluation.before))
+            out(side("After T", evaluation.after))
+            out(String(format: "P(after < before) %.3f · P(after > before) %.3f · Fisher p %.3f · %@", evaluation.probabilityLower,
+                       evaluation.probabilityHigher, evaluation.fisherP, evaluation.verdict.rawValue))
+            if let mde = evaluation.minimumDetectable {
+                out(String(format: "With these numbers only a drop to about %.0f%% or lower would show.", mde * 100))
+            }
+            for flag in evaluation.flags { out("! \(flag)") }
+            if let applied = mode.fixAppliedAt {
+                let rose = try Fixes.regressions(modes: try await store.list(), since: applied, env: env).filter { $0 != mode.id }
+                if !rose.isEmpty { out("Higher failure rate after T: \(rose.joined(separator: ", ")).") }
+                let difference = try Fixes.matrixDifference(appliedAt: applied, pool: NotesStore(env: env).all(), env: env)
+                for (key, cell) in difference.sorted(by: { $0.key < $1.key }) where !cell.dimmed && !cell.withinNoise {
+                    out(String(format: "Matrix %@: %+.0f%%", key.replacingOccurrences(of: "|", with: " → "), cell.change * 100))
+                }
+            }
+        default:
+            throw Failure(message: "akit analysis fix draft|applied|status|show MODE.")
         }
         return 0
     }

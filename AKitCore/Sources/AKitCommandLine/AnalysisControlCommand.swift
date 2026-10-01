@@ -29,7 +29,7 @@ extension AKitCLI {
           akit analysis control task remove ID
                                           Move a task's file to the Trash (its cells stay Lab runs)
           akit analysis control run TASK[,TASK…] [--setups baseline,variant] [--patch-file FILE]
-                              [--patch-text TEXT|@FILE] [--harness claude-code|pi] [--model M] [--effort E]
+                              [--patch-text TEXT|@FILE | --fix MODE] [--harness claude-code|pi] [--model M] [--effort E]
                               [--repeats N] [--read-only-setup] [--env orca|herdr|background] [--keep]
                               [--no-start]
                                           Queue N (3) cells of each task and setup, interleaved, each in an
@@ -151,8 +151,9 @@ extension AKitCLI {
 
     private static func runControl(_ args: inout Arguments, env: HarnessEnvironment, cwd: URL, out: (String) -> Void) async throws -> Int32 {
         let setupsText = args.value("--setups")
-        let patchFile = args.value("--patch-file")
-        let patchText = args.value("--patch-text")
+        var patchFile = args.value("--patch-file")
+        var patchText = args.value("--patch-text")
+        let fixMode = args.value("--fix")
         let harnessText = args.value("--harness")
         let model = args.value("--model")
         let effort = args.value("--effort")
@@ -174,6 +175,15 @@ extension AKitCLI {
         }
         guard harness == .pi || !agent.model.isEmpty else { throw Failure(message: "Which model? --model.") }
 
+        if let fixMode {
+            // The fix draft's text, in the file its layer names: the variant's one difference.
+            guard patchFile == nil, patchText == nil else { throw Failure(message: "--fix takes the patch from the draft; leave out --patch-file and --patch-text.") }
+            guard let draft = FixStore(env: env).load(fixMode), let fromDraft = draft.patch else {
+                throw Failure(message: "No fix draft for \(fixMode) whose layer is a file (CLAUDE.md, AGENTS.md or a skill).")
+            }
+            patchFile = fromDraft.file
+            patchText = fromDraft.text
+        }
         let patch: ControlPatch?
         switch (patchFile, patchText) {
         case (nil, nil): patch = nil
