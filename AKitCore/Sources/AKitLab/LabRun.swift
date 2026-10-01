@@ -9,6 +9,9 @@ public struct RunSpec: Codable, Sendable, Hashable {
         case review
         /// An agent redoes a commit in an isolated clone; hidden tests judge it.
         case replay
+        /// Error analysis over a batch of sessions: notes, verifier, matching and checks per
+        /// session, clustering at the end (`docs/design/error-analysis.md`, "Batch run").
+        case analysis
     }
 
     public var schema = 1
@@ -38,6 +41,10 @@ public struct RunSpec: Codable, Sendable, Hashable {
     public var agent: LabAgent?
     /// The language the review is written in; nil = English.
     public var language: LabLanguage?
+
+    // Error analysis batch: its file in ~/.akit/lab/analysis/batches. A resumed batch is a new
+    // run with the same batch.
+    public var batch: String?
 
     // Replay
     public var repo: String?
@@ -351,17 +358,35 @@ public struct RunResult: Codable, Sendable, Hashable {
     public var leaks: [String]?
     /// The agent's own error when it ended with one (a refused model call, no credit), masked.
     public var agentError: String?
+    /// An error analysis batch: sessions done, failed and in all when the run ended.
+    public var batch: BatchProgress?
 
     public init(metrics: SessionMetrics? = nil, tests: TestOutcome? = nil, review: ReviewStatus? = nil, leaks: [String]? = nil,
-                agentError: String? = nil) {
+                agentError: String? = nil, batch: BatchProgress? = nil) {
         self.metrics = metrics
         self.tests = tests
         self.review = review
         self.leaks = leaks
         self.agentError = agentError
+        self.batch = batch
     }
 
     public var leaked: Bool { !(leaks ?? []).isEmpty }
+}
+
+public struct BatchProgress: Codable, Sendable, Hashable {
+    public var done: Int
+    public var failed: Int
+    public var total: Int
+    /// Stopped by Pause; Resume continues from the same place.
+    public var paused: Bool
+
+    public init(done: Int, failed: Int, total: Int, paused: Bool) {
+        self.done = done
+        self.failed = failed
+        self.total = total
+        self.paused = paused
+    }
 }
 
 public enum ReviewStatus: String, Codable, Sendable {

@@ -36,6 +36,14 @@ extension AKitCLI {
                                           setup, lean = --setting-sources project. Model and effort
                                           default to ~/.claude/settings.json (else opus, high).
                                           --keep keeps the clone; otherwise it goes to the Trash
+          akit lab new analysis [--project ID|DIR] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--size N]
+                              [--harness claude-code|pi] [--model M] [--effort E] [--matching-model M]
+                              [--language en|ru|cs] [--env orca|herdr|background] [--no-start]
+                                          Error analysis over a sample of N (20) sessions of the index
+                                          (5+ requests each): a random quarter, the rest stratified by
+                                          cheap signals, harness and model. Per session notes, verifier
+                                          and matching, 2 at a time; clustering at the end. Sends notes
+                                          and transcripts under the sending policy
           akit lab task COMMIT [--repo DIR]
                                           Check a commit as a task now: its tests on the parent and on
                                           the commit (fail-to-pass, pass-to-pass). A replay does this
@@ -104,6 +112,42 @@ extension AKitCLI {
                 throw Failure(message: "Couldn't read \(file.path): \(error.localizedDescription)")
             }
             out(json ? try labJSON(metrics) : ([file.path] + MetricsText.lines(metrics)).joined(separator: "\n"))
+            return 0
+        case "new" where args.peek == "analysis":
+            _ = args.positional()
+            let project = args.value("--project")
+            let from = try args.value("--from").map { try day($0, "--from") }
+            let to = try args.value("--to").map { try day($0, "--to").addingTimeInterval(86_399) }
+            let size = try positiveNumber(args.value("--size"), "--size") ?? 20
+            let matchingModel = args.value("--matching-model")
+            try args.finish()
+            let environment = try labEnvironment(environmentText, env: env)
+            guard let harness = LabHarness(rawValue: harnessText ?? "claude-code") else { throw Failure(message: "--harness is claude-code or pi.") }
+            var agent = LabRuns.defaultAgent(harness, env: env)
+            agent.mode = .call
+            if let modelText { agent.model = modelText }
+            if let effortText { agent.effort = effortText }
+            guard harness.efforts.contains(agent.effort) else {
+                throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
+            }
+            var matching = agent
+            if let matchingModel { matching.model = matchingModel }
+            let language = try languageText.map { text in
+                guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is en, ru or cs.") }
+                return language
+            }
+            let projectFilter = project.map { text -> String in
+                text.contains("/") || text.hasPrefix("~") ? resolve(text, cwd: cwd, env: env).path : text
+            }
+            let run: LabRun
+            do {
+                run = try await Batches.new(filter: Sampling.Filter(project: projectFilter, from: from, to: to), size: size, notesAgent: agent,
+                                            matchingAgent: matching, language: language, environment: environment, akit: ownExecutable, env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            out("Queued \(run.id): \(run.spec.title), notes by \(agent.label) (\(run.spec.environment.title)).")
+            if !noStart { try await startNext(env: env, out: out) }
             return 0
         case "new" where args.peek == "replay":
             _ = args.positional()
@@ -358,7 +402,16 @@ extension AKitCLI {
         }
     }
 
-    private static func labEnvironment(_ text: String?, env: HarnessEnvironment) throws -> LabEnvironment? {
+    /// `2026-10-01` as the start of that day here.
+    static func day(_ text: String, _ option: String) throws -> Date {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: text) else { throw Failure(message: "\(option) is a day: YYYY-MM-DD.") }
+        return date
+    }
+
+    static func labEnvironment(_ text: String?, env: HarnessEnvironment) throws -> LabEnvironment? {
         guard let text else { return nil }
         guard let environment = LabEnvironment(rawValue: text) else {
             throw Failure(message: "--env is orca, herdr or background.")

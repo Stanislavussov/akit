@@ -10,6 +10,8 @@ public enum AnalysisRuns {
         switch run.spec.kind {
         case .review where run.spec.agent?.mode == .call:
             return try await review(run, env: env, phase: phase, out: out)
+        case .analysis:
+            return try await BatchRunner.execute(run, env: env, phase: phase, out: out)
         default:
             return nil
         }

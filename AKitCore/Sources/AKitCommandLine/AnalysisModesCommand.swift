@@ -33,6 +33,14 @@ extension AKitCLI {
                                           Route the whole note pool against one mode
           Options: --harness claude-code|pi, --model M, --effort E (default: Claude Code's settings)
 
+        Batches (each is a Lab run; queue one with akit lab new analysis):
+          akit analysis batch list [--json]
+          akit analysis batch show ID [--json]
+                                          Sample, per-session status, progress per step, coverage
+          akit analysis batch pause ID    Stop after the current calls
+          akit analysis batch resume ID [--retry-errors] [--env …]
+                                          Continue from the same place (and rerun failed sessions)
+
         The user's side:
           akit analysis queue [--json]    What waits for you: candidates, low-confidence routes, tough
                                           calls, spot checks, seeds that may be umbrellas
@@ -57,6 +65,8 @@ extension AKitCLI {
           akit analysis bootstrap first-modes [--yes]
                                           Cluster the labeled sessions' notes (yours and the model's)
                                           into the first candidate modes
+          akit analysis bootstrap notes [--harness …] [--model …] [--env …]
+                                          Queue the model's notes on the labeled sessions (a batch)
           akit analysis bootstrap map SESSION#hN MODE|unclear
           akit analysis bootstrap similar MODE [--yes]
                                           Find cases like your mapped notes in the pool
@@ -248,6 +258,8 @@ extension AKitCLI {
             return 0
         case "bootstrap":
             return try await fail { try await bootstrapCommand(&args, options: options, env: env, cwd: cwd, out: out) }
+        case "batch":
+            return try await fail { try await batchCommand(&args, options: options, env: env, out: out) }
         default:
             return nil
         }
@@ -372,6 +384,53 @@ extension AKitCLI {
         return 0
     }
 
+    private static func batchCommand(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment,
+                                     out: (String) -> Void) async throws -> Int32 {
+        let store = BatchStore(env: env)
+        switch args.positional() {
+        case "list":
+            try args.finish()
+            let batches = store.all()
+            if options.json { out(try labJSON(batches)); return 0 }
+            if batches.isEmpty { out("No batches. Queue one: akit lab new analysis.") }
+            for batch in batches {
+                let coverage = batch.coverage
+                let failed = batch.sessions.filter { $0.status == .error }.count
+                out("\(batch.runID)  \(coverage.done)/\(coverage.total) done\(failed > 0 ? ", \(failed) failed" : "")\(batch.paused ? ", paused" : "")"
+                    + "\(batch.clustered ? ", clustered" : "")  \(batch.filter.project ?? "all projects")")
+            }
+        case "show":
+            guard let id = args.positional(), let batch = store.load(id) else { throw Failure(message: "Which batch? akit analysis batch list.") }
+            try args.finish()
+            if options.json { out(try labJSON(batch)); return 0 }
+            let total = batch.sessions.count
+            out("Batch \(batch.runID) · \(batch.fixed ? "fixed sessions" : "sample of \(total), seed \(batch.seed)") · notes by \(batch.notesAgent.label)")
+            out("Progress: notes \(batch.progress(of: "notes"))/\(total), verifier \(batch.progress(of: "verifier"))/\(total), "
+                + "matching \(batch.progress(of: "matching"))/\(total), clustering \(batch.clustered ? "done" : "not yet")")
+            for session in batch.sessions {
+                out("  \(session.status.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0)) \(session.pick.sessionKey)  π=\(String(format: "%.2f", session.pick.inclusion)) \(session.pick.sampling)"
+                    + (session.message.map { "  — \($0)" } ?? ""))
+            }
+            if !batch.candidates.isEmpty { out("Candidates: \(batch.candidates.joined(separator: ", "))") }
+        case "pause":
+            guard let id = args.positional() else { throw Failure(message: "Which batch?") }
+            try args.finish()
+            try Batches.pause(id, env: env)
+            out("Batch \(id) stops after its current calls.")
+        case "resume":
+            guard let id = args.positional() else { throw Failure(message: "Which batch?") }
+            let retry = args.flag("--retry-errors")
+            let environment = try labEnvironment(args.value("--env"), env: env)
+            try args.finish()
+            let run = try await Batches.resume(id, retryErrors: retry, environment: environment, akit: ownExecutable, env: env)
+            out("Queued \(run.id): \(run.spec.title).")
+            _ = try? await LabQueue.startNext(env: env)
+        case let other:
+            throw Failure(message: "Unknown “akit analysis batch \(other ?? "")”. Run akit analysis --help.")
+        }
+        return 0
+    }
+
     private static func bootstrapCommand(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
                                          out: (String) -> Void) async throws -> Int32 {
         let labels = Bootstrap.LabelStore(env: env)
@@ -486,6 +545,18 @@ extension AKitCLI {
             let created = try await Clustering.apply(candidates, store: store, env: env)
             for mode in created { out("\(mode.id) [\(mode.status.title)] \(mode.name)") }
             out("Confirm or edit them, then map your notes: akit analysis bootstrap map SESSION#hN MODE.")
+        case "notes":
+            let environment = try labEnvironment(args.value("--env"), env: env)
+            try args.finish()
+            let done = reservations.all().filter { $0.labeledAt != nil }
+            guard !done.isEmpty else { throw Failure(message: "Finish labeling some sessions first.") }
+            var agent = try options.agent(env: env)
+            agent.mode = .call
+            let run = try await Batches.newFixed(sessions: done.map { ($0.sessionKey, $0.transcript) },
+                                                 title: "Bootstrap: model notes on \(done.count) labeled sessions", notesAgent: agent,
+                                                 environment: environment, akit: ownExecutable, env: env)
+            out("Queued \(run.id) (\(run.spec.environment.title)). Then pair them: akit analysis bootstrap pair SESSION.")
+            _ = try? await LabQueue.startNext(env: env)
         case "map":
             let note = args.positional().flatMap(NoteRef.init(parsing:))
             let mode = args.positional()
