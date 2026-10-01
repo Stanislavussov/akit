@@ -79,7 +79,7 @@ struct AnalysisData: Sendable {
         let confirmed = Set(pairings.filter(\.isConfirmed).map(\.sessionKey))
         let counted = labels.filter { confirmed.contains($0.sessionKey) }
         data.metrics = Bootstrap.metrics(labels: labels, notes: data.pool, pairings: pairings, phases: Bootstrap.phases(of: counted))
-        data.sinceLastChange = Bootstrap.sessionsSinceLastModeChange(labels, lastChange: try await store.history(limit: 1).first?.date)
+        data.sinceLastChange = Bootstrap.sessionsSinceLastModeChange(labels, lastChange: try await store.lastTaxonomyChange())
         data.testSessions = ValidationStore(env: env).testSessions()
         return data
     }

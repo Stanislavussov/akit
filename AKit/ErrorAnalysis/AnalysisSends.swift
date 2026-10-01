@@ -11,7 +11,7 @@ extension AnalysisSend {
         let items = data.unmatchedItems()
         return AnalysisSend(
             title: "Cluster Unmatched Notes",
-            detail: "One call over the \(AnalysisText.notes(items.count)) no mode fits: it proposes candidate modes. A candidate with notes from two sessions becomes a mode at once; the others wait for you.",
+            detail: "One call over the \(AnalysisText.notes(items.count)) no mode fits: it proposes candidate modes. The candidates wait for you; one also becomes a mode when a later session matches it.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in
             let store = ModeStore(env: env)
