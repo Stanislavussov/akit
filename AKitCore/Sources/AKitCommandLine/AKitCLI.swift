@@ -115,6 +115,8 @@ public enum AKitCLI {
         Lab (measure agent sessions; ~/.akit/lab, never in the brain):
           akit lab analyze SESSION        Calls, fresh tokens, context rent, friction and commits of one
                                           Claude Code session. akit lab --help lists the rest
+          akit analysis notes [SESSION]   Error analysis: a reviewed session's outcome, verified notes
+                                          and advice. akit analysis --help lists the rest
 
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
@@ -159,6 +161,9 @@ public enum AKitCLI {
             // Lab has its own options (--repo, --json, …); none of the brain's apply.
             if arguments.first == "lab" {
                 return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
+            }
+            if arguments.first == "analysis" {
+                return try await analysis(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err)
             }
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {

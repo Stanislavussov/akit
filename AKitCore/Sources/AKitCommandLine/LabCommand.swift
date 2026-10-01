@@ -1,4 +1,6 @@
 import AKitFoundation
+import AKitBrain
+import AKitErrorAnalysis
 import AKitLab
 import Foundation
 
@@ -47,6 +49,21 @@ extension AKitCLI {
           akit lab cancel ID              Stop a running run (its tab stays), or drop a queued one
           akit lab remove ID              Move a run's folder to the Trash
           akit lab run ID                 Do the run here (what the tab runs)
+
+        Sending policy (every model call that sends session data or code; Settings → Lab):
+          akit lab policy [--json]        This Mac's kind, allowed destinations, Pi accounts, scrub
+                                          patterns and monthly limit
+          akit lab policy check HARNESS [--model M]
+                                          Who that harness sends to now (account check) and whether
+                                          a Claude Code or Pi session may go there
+          akit lab policy allow HARNESS PROVIDER ACCOUNT ORG
+          akit lab policy remove HARNESS PROVIDER ACCOUNT ORG
+                                          Add or remove an allowed destination
+          akit lab policy pi-account PROVIDER ACCOUNT ORG
+                                          The account behind a Pi provider (Pi has no whoami)
+          akit lab policy limit DOLLARS|none
+                                          Monthly limit on recorded cost
+          akit lab sends [--json]         The send log: what went where, tokens, recorded cost
         """
 
     /// `akit` itself, for the tab command: `<akit> lab run ID`.
@@ -206,14 +223,125 @@ extension AKitCLI {
             }
             out("Moved \(run.folder.path) to the Trash.")
             return 0
+        case "policy":
+            return try await policy(&args, json: json, model: modelText, env: env, out: out)
+        case "sends":
+            try args.finish()
+            let records = SendLog.records(env: env)
+            if json {
+                out(try labJSON(records))
+            } else if records.isEmpty {
+                out("Nothing sent yet.")
+            } else {
+                out(records.map(sendLine).joined(separator: "\n"))
+                out(String(format: "This month: $%.2f recorded", SendLog.monthCost(records))
+                    + (LabSettings.load(env: env).monthlyLimit.map { String(format: " of a $%.2f limit.", $0) } ?? "."))
+            }
+            return 0
         case "run":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit lab run ID.") }
             try args.finish()
             // The worker prints from background threads, straight to the terminal that hosts it.
-            return await LabWorker.run(id: id, env: env, out: { LinePrinter.shared.print($0) })
+            return await LabWorker.run(id: id, env: env, execute: AnalysisRuns.execute, out: { LinePrinter.shared.print($0) })
         default:
             throw Failure(message: "Unknown “akit lab \(command ?? "")”. Run akit lab --help.")
         }
+    }
+
+    private static func policy(_ args: inout Arguments, json: Bool, model: String?, env: HarnessEnvironment,
+                               out: (String) -> Void) async throws -> Int32 {
+        var settings = LabSettings.load(env: env)
+        func harness(_ text: String?) throws -> LabHarness {
+            guard let text, let harness = LabHarness(rawValue: text) else { throw Failure(message: "HARNESS is claude-code or pi.") }
+            return harness
+        }
+        func destination() throws -> SendDestination {
+            let harness = try harness(args.positional())
+            guard let provider = args.positional(), let account = args.positional(), let org = args.positional() else {
+                throw Failure(message: "Give HARNESS PROVIDER ACCOUNT ORG.")
+            }
+            return SendDestination(harness: harness, provider: provider, account: account, org: org)
+        }
+        switch args.positional() {
+        case nil:
+            try args.finish()
+            let isWork = MachineProfile.load(home: env.homeDirectory).isWork
+            if json {
+                out(try labJSON(settings))
+                return 0
+            }
+            var lines = [isWork ? "Work Mac: session data goes only to the allowed list." :
+                            "Personal Mac: the same origin, plus the allowed list."]
+            lines.append("Allowed: " + (settings.allowedDestinations.isEmpty ? "none" : ""))
+            lines += settings.allowedDestinations.map { "  \($0.label)" }
+            lines.append("Pi accounts: " + (settings.piAccounts.isEmpty ? "none" : ""))
+            lines += settings.piAccounts.map { "  \($0.provider): \($0.account) · \($0.org)" }
+            lines.append("Scrub: e-mails \(settings.scrub.maskEmails ? "masked" : "kept"), \(settings.scrub.hosts.count) host patterns, "
+                         + "\(settings.scrub.extra.count) other patterns (scrub v\(Scrubber.version))")
+            lines.append("Monthly limit: " + (settings.monthlyLimit.map { String(format: "$%.2f", $0) } ?? "none"))
+            out(lines.joined(separator: "\n"))
+        case "check":
+            var agent = LabRuns.defaultAgent(try harness(args.positional()), env: env)
+            try args.finish()
+            if let model { agent.model = model }
+            let gate: SendGate
+            do {
+                gate = try await SendGate.open(agent: agent, env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            out("\(agent.harness.title) sends to \(gate.destination.label).")
+            for (name, origin) in [("A Claude Code session", SendOrigin.claudeSession),
+                                   ("A Pi session through \(gate.destination.provider)", .piSession(providers: [gate.destination.provider]))] {
+                let decision = gate.decide(origin)
+                out("\(name): \(decision.allowed ? "allowed" : "refused"). \(decision.reason)")
+            }
+        case "allow":
+            let entry = try destination()
+            try args.finish()
+            if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
+            try settings.save(env: env)
+            out("Allowed \(entry.label).")
+        case "remove":
+            let entry = try destination()
+            try args.finish()
+            let before = settings.allowedDestinations.count
+            settings.allowedDestinations.removeAll { $0.matches(entry) }
+            guard settings.allowedDestinations.count < before else { throw Failure(message: "\(entry.label) isn't on the list.") }
+            try settings.save(env: env)
+            out("Removed \(entry.label).")
+        case "pi-account":
+            guard let provider = args.positional(), let account = args.positional(), let org = args.positional() else {
+                throw Failure(message: "Give PROVIDER ACCOUNT ORG.")
+            }
+            try args.finish()
+            settings.piAccounts.removeAll { $0.provider.caseInsensitiveCompare(provider) == .orderedSame }
+            settings.piAccounts.append(PiAccount(provider: provider, account: account, org: org))
+            try settings.save(env: env)
+            out("Pi \(provider): \(account) · \(org).")
+        case "limit":
+            guard let text = args.positional() else { throw Failure(message: "Give DOLLARS or none.") }
+            try args.finish()
+            if text == "none" {
+                settings.monthlyLimit = nil
+            } else {
+                guard let value = Double(text), value >= 0 else { throw Failure(message: "The limit is a number of dollars, or none.") }
+                settings.monthlyLimit = value
+            }
+            try settings.save(env: env)
+            out("Monthly limit: " + (settings.monthlyLimit.map { String(format: "$%.2f", $0) } ?? "none") + ".")
+        case let other:
+            throw Failure(message: "Unknown “akit lab policy \(other ?? "")”. Run akit lab --help.")
+        }
+        return 0
+    }
+
+    private static func sendLine(_ record: SendRecord) -> String {
+        let date = record.date.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
+        let cost = record.usage.cost.map { String(format: "$%.3f", $0) } ?? "no cost recorded"
+        return "\(date)  \(record.purpose.padding(toLength: 9, withPad: " ", startingAt: 0))  \(record.harness.title) · \(record.provider) · "
+            + "\(record.account) · \(record.model)  in \(record.usage.input) cached \(record.usage.cached) out \(record.usage.output)  \(cost)"
+            + (record.session.map { "  \($0)" } ?? "")
     }
 
     private static func startNext(env: HarnessEnvironment, out: (String) -> Void) async throws {
@@ -310,7 +438,7 @@ extension AKitCLI {
     }
 
     /// A transcript path, or a Claude Code session id.
-    private static func transcript(_ argument: String, cwd: URL, env: HarnessEnvironment) throws -> URL {
+    static func transcript(_ argument: String, cwd: URL, env: HarnessEnvironment) throws -> URL {
         if argument.hasSuffix(".jsonl") || argument.contains("/") {
             let file = resolve(argument, cwd: cwd, env: env)
             guard FileManager.default.fileExists(atPath: file.path) else { throw Failure(message: "No file at \(file.path).") }

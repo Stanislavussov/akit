@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitModel
 import Foundation
 
 /// What a run does: `run.json`, written once when the run is queued.
@@ -26,6 +27,12 @@ public struct RunSpec: Codable, Sendable, Hashable {
 
     // Review
     public var reviewedTranscript: String?
+    /// The harness that recorded the reviewed session; Claude Code when missing (older runs).
+    public var reviewedHarness: HarnessID {
+        get { reviewedHarnessName.map { name in HarnessID.builtIn.first { $0.rawValue == name } ?? HarnessID(name, displayName: name) } ?? .claudeCode }
+        set { reviewedHarnessName = newValue == .claudeCode ? nil : newValue.rawValue }
+    }
+    var reviewedHarnessName: String?
     public var reviewedTitle: String?
     /// The harness and model that write the review; nil = Claude Code with your settings.
     public var agent: LabAgent?
@@ -200,7 +207,7 @@ public enum LabLanguage: String, Codable, Sendable, CaseIterable {
     }
 
     /// Added to the review instructions.
-    var instruction: String {
+    public var instruction: String {
         "Write the summary and the improvements (titles and details) in \(name). Keep JSON keys, file names, "
             + "commands, code and quoted text as they are."
     }
@@ -210,14 +217,33 @@ public enum LabLanguage: String, Codable, Sendable, CaseIterable {
 public struct LabSettings: Codable, Sendable, Hashable {
     /// The language new reviews are written in.
     public var reportLanguage: LabLanguage
+    /// Destinations session data may go to beyond the same origin; on a work Mac the only ones.
+    public var allowedDestinations: [SendDestination]
+    /// The account behind each Pi provider, entered by the user.
+    public var piAccounts: [PiAccount]
+    /// The user's own scrub patterns: internal hosts, e-mails, anything else.
+    public var scrub: Scrubber.OwnPatterns
+    /// Recorded cost per calendar month, in US dollars, shared by everything that calls a
+    /// model here; nil = no limit.
+    public var monthlyLimit: Double?
 
-    public init(reportLanguage: LabLanguage = .english) {
+    public init(reportLanguage: LabLanguage = .english, allowedDestinations: [SendDestination] = [], piAccounts: [PiAccount] = [],
+                scrub: Scrubber.OwnPatterns = Scrubber.OwnPatterns(), monthlyLimit: Double? = nil) {
         self.reportLanguage = reportLanguage
+        self.allowedDestinations = allowedDestinations
+        self.piAccounts = piAccounts
+        self.scrub = scrub
+        self.monthlyLimit = monthlyLimit
     }
 
+    /// Fields missing in older files take their defaults; a broken field doesn't lose the others.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         reportLanguage = (try? container.decodeIfPresent(LabLanguage.self, forKey: .reportLanguage)) ?? .english
+        allowedDestinations = (try? container.decodeIfPresent([SendDestination].self, forKey: .allowedDestinations)) ?? []
+        piAccounts = (try? container.decodeIfPresent([PiAccount].self, forKey: .piAccounts)) ?? []
+        scrub = (try? container.decodeIfPresent(Scrubber.OwnPatterns.self, forKey: .scrub)) ?? Scrubber.OwnPatterns()
+        monthlyLimit = try? container.decodeIfPresent(Double.self, forKey: .monthlyLimit)
     }
 
     static func file(env: HarnessEnvironment) -> URL { LabPaths(env: env).folder.appending(path: "settings.json") }

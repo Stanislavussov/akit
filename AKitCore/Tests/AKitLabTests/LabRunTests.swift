@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AKitBrain
 import AKitFoundation
 @testable import AKitLab
 
@@ -35,6 +36,9 @@ struct LabRunTests {
     func fakeClaude() throws {
         try write("bin/claude", #"""
             #!/bin/sh
+            if [ "$1 $2" = "auth status" ]; then
+              echo '{"loggedIn":true,"apiProvider":"firstParty","email":"me@example.com","orgName":"Me"}'; exit 0
+            fi
             printf '%s\n' "$@" > "$AKIT_LAB_DIR/args.txt"
             id=""; prev=""
             for a in "$@"; do [ "$prev" = "--session-id" ] && id="$a"; prev="$a"; done
@@ -88,13 +92,35 @@ struct LabRunTests {
         #expect(output.lines.contains("▸ Read transcript.md"))
         #expect(output.lines.contains("Agent finished · 2 turns · 5 sec"))
         #expect(output.lines.contains("Review: ok"))
+        #expect(SendLog.records(env: env).map(\.purpose) == ["review"])
+        #expect(SendLog.records(env: env).first?.account == "me@example.com")
 
         // A finished run can't start again.
         #expect(await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in }) == 2)
     }
 
+    @Test func workMacRefusesAReviewBeforeAnythingIsSent() async throws {
+        try fakeClaude()
+        try MachineProfile(kind: .work, name: "work").save(home: home)
+        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
+                                              akit: URL(filePath: "/usr/bin/true"), env: env)
+        let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in })
+        let done = try #require(LabStore.load(run.id, env: env))
+        #expect(code == 1 && done.status == .error)
+        #expect(done.message?.contains("work Mac") == true)
+        #expect(!fm.fileExists(atPath: run.folder.appending(path: "transcript.md").path))
+        #expect(!fm.fileExists(atPath: run.folder.appending(path: "args.txt").path))
+        #expect(SendLog.records(env: env).isEmpty)
+    }
+
     @Test func missingReviewIsReportedNotHidden() async throws {
-        try write("bin/claude", "#!/bin/sh\necho '{\"type\":\"result\",\"num_turns\":1}'\n", executable: true)
+        try write("bin/claude", #"""
+            #!/bin/sh
+            if [ "$1 $2" = "auth status" ]; then
+              echo '{"loggedIn":true,"apiProvider":"firstParty","email":"me@example.com","orgName":"Me"}'; exit 0
+            fi
+            echo '{"type":"result","num_turns":1}'
+            """#, executable: true)
         let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
                                               akit: URL(filePath: "/usr/bin/true"), env: env)
         let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in })
@@ -109,16 +135,21 @@ struct LabRunTests {
                                               akit: URL(filePath: "/usr/bin/true"), env: env)
         try write(".akit/lab/\(run.id)/sleep", "")
         let env = env
-        let worker = Task { await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in }) }
+        // A scope of its own: cancelling must not stop the runs of tests running alongside.
+        let scope = Cancellation.Scope()
+        let worker = Task {
+            await Cancellation.$scope.withValue(scope) {
+                await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in })
+            }
+        }
         // Wait for the agent phase, then cancel as SIGTERM would.
         for _ in 0..<100 where LabStore.load(run.id, env: env)?.state?.phase != .agent {
             try await Task.sleep(for: .milliseconds(100))
         }
         try await Task.sleep(for: .milliseconds(300))
         let started = Date.now
-        Cancellation.cancel()
+        scope.cancel()
         let code = await worker.value
-        Cancellation.reset()
         #expect(code == 1)
         #expect(Date.now.timeIntervalSince(started) < 10)
         let done = try #require(LabStore.load(run.id, env: env))
@@ -179,6 +210,7 @@ struct LabRunTests {
     @Test func reviewInPi() async throws {
         try write("bin/pi", #"""
             #!/bin/sh
+            if [ "$1 $2" = "auth check" ]; then echo '{"status":"ready","provider":"zai"}'; exit 0; fi
             printf '%s\n' "$@" > "$AKIT_LAB_DIR/args.txt"
             echo 'Warning: No project session found with id x; creating a new session with that id.' >&2
             echo '{"type":"session","version":3,"id":"s1","cwd":"/x"}'
@@ -190,6 +222,9 @@ struct LabRunTests {
             echo '{"type":"agent_settled"}'
             """#, executable: true)
         let agent = LabAgent(harness: .pi, model: "zai/glm-5", effort: "low", mode: .agent)
+        // A Claude Code session sent to Pi is cross-origin: it needs the allowed list.
+        let zai = SendDestination(harness: .pi, provider: "zai", account: "me", org: "me")
+        try LabSettings(allowedDestinations: [zai], piAccounts: [PiAccount(provider: "zai", account: "me", org: "me")]).save(env: env)
         let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, agent: agent, environment: .background,
                                               akit: URL(filePath: "/usr/bin/true"), env: env)
         let output = Output()
@@ -205,51 +240,6 @@ struct LabRunTests {
         #expect(output.lines.contains("Agent finished") && !output.lines.contains { $0.hasPrefix("Warning:") })
     }
 
-    @Test func reviewInOneClaudeCall() async throws {
-        // Reads the input on stdin, answers through a result event with structured output.
-        try write("bin/claude", #"""
-            #!/bin/sh
-            printf '%s\n' "$@" > "$HOME/args.txt"
-            cat > "$HOME/stdin.txt"
-            echo '{"type":"result","is_error":false,"result":"","structured_output":{"summary":"It went well.","improvements":[{"title":"A","evidence":"#3: 4 errors","detail":"a"},{"title":"B","detail":"b"},{"title":"C","detail":"c"},{"title":"D","detail":"d"}]}}'
-            """#, executable: true)
-        let agent = LabAgent(harness: .claudeCode, model: "haiku", effort: "low")
-        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: "Fix it", agent: agent, environment: .background,
-                                              akit: URL(filePath: "/usr/bin/true"), env: env)
-        let output = Output()
-        let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: output.add)
-        let done = try #require(LabStore.load(run.id, env: env))
-        #expect(code == 0 && done.result?.review == .ok && done.result?.agentError == nil, "\(output.lines)")
-        #expect(done.summary == "It went well.\n" && done.review?.findings.map(\.title) == ["A", "B", "C"])
-        #expect(done.review?.findings.map(\.evidence) == ["#3: 4 errors", nil, nil])
-        let args = read(home.appending(path: "args.txt")).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        #expect(args.contains("--safe-mode") && args.contains("--json-schema") && !args.contains("--restricted"))
-        let tools = try #require(args.firstIndex(of: "--tools"))
-        #expect(args[tools + 1] == "" && args.contains("haiku"))
-        let input = read(home.appending(path: "stdin.txt"))
-        #expect(input.contains("## AKit's numbers") && input.contains("[#0 user] Fix it"))
-        #expect(output.lines.contains("It went well."))
-    }
-
-    @Test func reviewInOnePiCall() async throws {
-        try write("bin/pi", #"""
-            #!/bin/sh
-            printf '%s\n' "$@" > "$HOME/args.txt"
-            echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Here: {\"summary\":\"Fine.\",\"improvements\":[]}"}],"stopReason":"stop"}}'
-            echo '{"type":"agent_settled"}'
-            """#, executable: true)
-        let agent = LabAgent(harness: .pi, model: "zai/glm-5", effort: "low")
-        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, agent: agent, environment: .background,
-                                              akit: URL(filePath: "/usr/bin/true"), env: env)
-        let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in })
-        let done = try #require(LabStore.load(run.id, env: env))
-        #expect(code == 0 && done.result?.review == .ok && done.summary == "Fine.\n" && done.review?.findings.isEmpty == true)
-        let args = read(home.appending(path: "args.txt")).split(separator: "\n").map(String.init)
-        #expect(args.contains("--no-tools") && args.contains("--no-context-files") && !args.contains("--tools"))
-        #expect(args.last == "@" + run.folder.appending(path: "review-input.md").path)
-        #expect(read(run.folder.appending(path: "review-input.md")).contains("## Transcript digest"))
-    }
-
     @Test func reviewLanguageFromLabSettings() async throws {
         #expect(LabSettings.load(env: env).reportLanguage == .english)
         try LabSettings(reportLanguage: .czech).save(env: env)
@@ -260,16 +250,6 @@ struct LabRunTests {
         let chosen = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, language: .russian,
                                                  environment: .background, akit: URL(filePath: "/usr/bin/true"), env: env)
         #expect(chosen.spec.language == .russian && LabStore.list(env: env).count == 2)
-        let flags = ReviewRun.callFlags(.claudeCode, input: home, language: .russian)
-        let prompt = try #require(flags.firstIndex(of: "--system-prompt").map { flags[$0 + 1] })
-        #expect(prompt.hasSuffix(LabLanguage.russian.instruction) && prompt.contains("in Russian"))
-    }
-
-    @Test func unreadableAnswerIsKept() throws {
-        let folder = home.appending(path: "answer")
-        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-        #expect(ReviewRun.write(answer: "Sorry, no JSON.", to: folder, out: { _ in }) != nil)
-        #expect(read(folder.appending(path: "answer.txt")) == "Sorry, no JSON." && ReviewRun.status(in: folder) == .missing)
     }
 
     @Test func oldAgentsDecodeAsAgentMode() throws {
