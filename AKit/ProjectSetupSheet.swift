@@ -368,19 +368,30 @@ struct ProjectSetupSheet: View {
                 ForEach(plan.render.warnings, id: \.self) {
                     Label($0, systemImage: "info.circle").foregroundStyle(.secondary).font(.callout).textSelection(.enabled)
                 }
-                HSplitView {
-                    changeList(plan).frame(minWidth: 280, idealWidth: 320)
-                    diff(plan).frame(minWidth: 300)
+                if plan.changes.allSatisfy({ $0.kind == .same }) && plan.canApply {
+                    ContentUnavailableView("\(plan.project.lastPathComponent) is up to date", systemImage: "checkmark.circle",
+                                           description: Text("All \(plan.changes.count) files already match the layers. Go back to change the answers."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    HSplitView {
+                        changeList(plan).frame(minWidth: 280, idealWidth: 320)
+                        diff(plan).frame(minWidth: 300)
+                    }
+                    .frame(maxHeight: .infinity)
                 }
             }
             HStack {
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3).textSelection(.enabled) }
                 Spacer()
                 Button("Back") { page = .form; error = nil }.keyboardShortcut(.cancelAction)
-                Button(isWorking ? "Applying…" : "Apply", action: apply)
-                    .keyboardShortcut(.defaultAction)
-                    // Only offers from the layers: Apply still records them as seen.
-                    .disabled(!(plan?.canApply ?? false) || isWorking || (pending.isEmpty && !hasOffers))
+                if plan?.changes.allSatisfy({ $0.kind == .same }) ?? false {
+                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                } else {
+                    Button(isWorking ? "Applying…" : "Apply", action: apply)
+                        .keyboardShortcut(.defaultAction)
+                        // Only offers from the layers: Apply still records them as seen.
+                        .disabled(!(plan?.canApply ?? false) || isWorking || (pending.isEmpty && !hasOffers))
+                }
             }
         }
     }
