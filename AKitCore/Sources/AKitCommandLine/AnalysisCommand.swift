@@ -21,7 +21,7 @@ extension AKitCLI {
                                           Run code checks over every indexed session (all of them
                                           without MODE): the share of sessions where each mode shows,
                                           with a 95% interval. Local, nothing is sent
-        """ + analysisModesUsage
+        """ + analysisModesUsage + analysisReportUsage
 
     static func analysis(_ arguments: [String], env: HarnessEnvironment, cwd: URL,
                          out: (String) -> Void, err: (String) -> Void) async throws -> Int32 {
@@ -35,6 +35,9 @@ extension AKitCLI {
                                       effort: args.value("--effort"))
         let command = args.positional()
         if let command, let code = try await analysisModes(command, &args, options: options, env: env, cwd: cwd, out: out) {
+            return code
+        }
+        if let command, let code = try await analysisReports(command, &args, options: options, env: env, out: out) {
             return code
         }
         switch command {

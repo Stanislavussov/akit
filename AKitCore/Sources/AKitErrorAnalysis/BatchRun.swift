@@ -158,6 +158,13 @@ enum BatchRunner {
         var found: [String: [Exemplar]] = [:]
         for mode in Matching.routable(modes) { found[mode.id] = try modeStore.exemplars(of: mode.id) }
         let exemplars = found
+        // Judges of active modes run on every session of the batch, as part of it.
+        var judged: [(mode: Mode, agent: LabAgent, gate: SendGate)] = []
+        for (id, judge) in ValidationStore(env: env).judges() {
+            guard let mode = modes.first(where: { $0.id == id && $0.isCurrent && $0.status == .active }) else { continue }
+            judged.append((mode, judge, judge == batch.notesAgent ? notesGate : try await SendGate.open(agent: judge, env: env)))
+        }
+        let judges = judged
         let config = NotesPipeline.Config(notes: batch.notesAgent, language: batch.language)
         let work = run.folder.appending(path: "work", directoryHint: .isDirectory)
 
@@ -168,8 +175,8 @@ enum BatchRunner {
             for _ in 0..<Batches.parallelism {
                 group.addTask {
                     while !Cancellation.isCancelled, let session = await state.next() {
-                        await process(session, batch: snapshot, config: config, modes: modes, exemplars: exemplars, notesGate: notesGate,
-                                      matchingGate: matchingGate, state: state, work: work, env: env, out: out)
+                        await process(session, batch: snapshot, config: config, modes: modes, exemplars: exemplars, judges: judges,
+                                      notesGate: notesGate, matchingGate: matchingGate, state: state, work: work, env: env, out: out)
                     }
                 }
             }
@@ -192,7 +199,7 @@ enum BatchRunner {
     /// notes → verifier → matching for one session. Any failure marks the session as an error
     /// with the reason; the earlier result of a retried session stays until this one succeeds.
     static func process(_ session: Batch.Session, batch: Batch, config: NotesPipeline.Config, modes: [Mode], exemplars: [String: [Exemplar]],
-                        notesGate: SendGate, matchingGate: SendGate, state: State, work: URL, env: HarnessEnvironment,
+                        judges: [(mode: Mode, agent: LabAgent, gate: SendGate)], notesGate: SendGate, matchingGate: SendGate, state: State, work: URL, env: HarnessEnvironment,
                         out: @escaping @Sendable (String) -> Void) async {
         let key = session.pick.sessionKey
         let harness: HarnessID = key.hasPrefix("pi:") ? .pi : .claudeCode
@@ -204,8 +211,12 @@ enum BatchRunner {
             await state.update(key) { $0.steps = ["notes", "verifier"] }
             _ = try await Matching.route(notes, modes: modes, exemplars: exemplars, agent: batch.matchingAgent, gate: matchingGate,
                                          origin: notes.origin, runID: batch.runID, workFolder: work, env: env)
+            for judge in judges {
+                try await Judges.run(mode: judge.mode, sessions: [(key, session.pick.file)], agent: judge.agent, gate: judge.gate,
+                                     runID: batch.runID, workFolder: work, env: env)
+            }
             await state.update(key) {
-                $0.steps = ["notes", "verifier", "matching"]
+                $0.steps = ["notes", "verifier", "matching"] + (judges.isEmpty ? [] : ["checks"])
                 $0.status = .done
                 $0.message = nil
             }

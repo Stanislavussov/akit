@@ -203,6 +203,8 @@ public struct CheckResults: Codable, Hashable, Sendable {
     /// The mode version the verdicts were made for; a newer version needs a new run.
     public var modeVersion: Int?
     public var kind: CodeCheck.Kind?
+    /// A judge's harness, model and prompt version; another one starts over.
+    public var judge: String?
     public var verdicts: [String: CheckVerdict]
 
     public init(modeID: String, modeVersion: Int? = nil, kind: CodeCheck.Kind? = nil, verdicts: [String: CheckVerdict] = [:]) {

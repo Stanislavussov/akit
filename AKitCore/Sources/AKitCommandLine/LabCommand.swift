@@ -532,7 +532,7 @@ extension AKitCLI {
 }
 
 /// Standard output for the worker, which prints from background threads.
-private final class LinePrinter: @unchecked Sendable {
+final class LinePrinter: @unchecked Sendable {
     static let shared = LinePrinter()
     private let lock = NSLock()
 
