@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
 import AKitProjectSetup
@@ -485,10 +486,13 @@ public enum AKitCLI {
         defer { withExtendedLifetime(lock) {} }
         let report = try await SessionImporter.importAndBind(env: env, projectsRoot: projectsRoot,
                                                              database: try IndexSchema.open(paths.database))
+        // Signals and the code checks of active modes follow every import, still under the lock.
+        let upkeep = await AnalysisUpkeep.afterImport(env: env)
         if options.json {
             out(encode(report))
         } else if !quiet {
             out(importText(report))
+            if let upkeep { out(upkeep) }
         }
         return 0
     }
