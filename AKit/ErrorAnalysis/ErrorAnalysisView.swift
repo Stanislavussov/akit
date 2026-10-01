@@ -6,7 +6,7 @@ import SwiftUI
 /// their cost first and go through the sending policy.
 struct ErrorAnalysisView: View {
     enum Tab: String, CaseIterable {
-        case modes, review, bootstrap, reports
+        case modes, review, bootstrap, reports, evals
 
         var title: String {
             switch self {
@@ -14,12 +14,13 @@ struct ErrorAnalysisView: View {
             case .review: "Review"
             case .bootstrap: "Bootstrap"
             case .reports: "Reports"
+            case .evals: "Evals"
             }
         }
     }
 
     @State private var analysis = AnalysisModel()
-    /// Snapshots: `--tab modes|review|bootstrap|reports`.
+    /// Snapshots: `--tab modes|review|bootstrap|reports|evals`.
     @State private var tab = DebugSnapshot.options?.tab.flatMap(Tab.init(rawValue:)) ?? .modes
     @State private var modeAction: ModeAction?
 
@@ -31,6 +32,7 @@ struct ErrorAnalysisView: View {
             case .review: ReviewQueueTab(action: $modeAction)
             case .bootstrap: BootstrapTab()
             case .reports: ReportsTab()
+            case .evals: EvalsTab()
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) { statusBar }
@@ -45,7 +47,7 @@ struct ErrorAnalysisView: View {
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
-                .help("Modes: the list of failure modes. Review: what waits for you. Bootstrap: your own notes on 30+ sessions. Reports: what a batch found.")
+                .help("Modes: the list of failure modes. Review: what waits for you. Bootstrap: your own notes on 30+ sessions. Reports: what a batch found. Evals: did a fix help on fixed tasks.")
             }
             ToolbarItem {
                 Button("History", systemImage: "clock.arrow.circlepath") { modeAction = .history }

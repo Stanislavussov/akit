@@ -21,7 +21,8 @@ import SwiftUI
 /// `--tab modes|review|bootstrap|reports` (`--tab review --add` opens Cluster Unmatched Notes' cost confirmation); on Modes `--select <mode id>` opens the mode's page, on Bootstrap
 /// `--select <session key>` opens its labeling view (`--query <step>` starts a note at that step); on Reports
 /// `--select <batch id>` picks the batch, `--query <batch id>` the one to compare, `--add` scrolls to the matrix and
-/// `--capture` shows the difference grid. Lab: `--tab analysis --add` opens New Lab Run on the batch form; `--select`
+/// `--capture` shows the difference grid. Evals: `--select <task id>[,<task id>…]`, `--add` opens Run Cells…,
+/// `--query fromSession|reproduction` a new task sheet. Lab: `--tab analysis --add` opens New Lab Run on the batch form; `--select`
 /// takes a batch run's or a control cell's id too.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
