@@ -144,6 +144,15 @@ struct NotesPipelineTests {
         let other = try await review(file, model: "sonnet")
         #expect(calls() == ["notes", "verifier", "notes", "verifier"])
         #expect(other.doneKeys["notes"] != first.doneKeys["notes"])
+        // A new verifier verdict replaces the old one when only the verifier reruns.
+        try fakeClaude(notes: notesAnswer, verdicts: ["verdicts": [["id": "n1", "steelman": "s", "supported": false, "reason": "Now rejected."],
+                                                                   ["id": "n3", "supported": true, "reason": "Now accepted."]]])
+        var stale = try #require(NotesStore(env: env).load(other.sessionKey))
+        stale.doneKeys["verifier"] = "old"
+        try NotesStore(env: env).save(stale)
+        let reverified = try await review(file, model: "sonnet")
+        #expect(reverified.notes.first { $0.id == "n1" }?.verdict?.reason == "Now rejected.")
+        #expect(reverified.notes.first { $0.id == "n3" }?.verdict?.accepted == true)
         #expect(NotesStore(env: env).all().count == 1)
     }
 

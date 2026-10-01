@@ -28,7 +28,7 @@ struct BatchTests {
               *"Fill the answer in this order"*)
                 echo notes >> "$HOME/calls.txt"
                 if grep -q "BROKEN" "$in" && [ ! -f "$HOME/fixed" ]; then echo '{"type":"result","is_error":false,"result":"no json"}'; exit 0; fi
-                ok '{"requirements":["Do the task"],"outcome":"partly","notes":[{"id":"n1","description":"Read a file whole","step":0,"quote":"Do task","severity":"low","faultLayer":"agent"},{"id":"n2","description":"Vague request","step":0,"quote":"task","severity":"low","faultLayer":"task-spec"}],"paragraph":"It went.","advice":[]}' ;;
+                ok '{"requirements":["Do the task"],"outcome":"partly","notes":[{"id":"n1","description":"Read a file whole","step":0,"quote":"Do the task","severity":"low","faultLayer":"agent"},{"id":"n2","description":"Vague request","step":0,"quote":"the task","severity":"low","faultLayer":"task-spec"}],"paragraph":"It went.","advice":[]}' ;;
               *"You check notes another reviewer"*)
                 echo verifier >> "$HOME/calls.txt"
                 ok '{"verdicts":[{"id":"n1","supported":true,"reason":"ok"},{"id":"n2","supported":true,"reason":"ok"}]}' ;;
@@ -86,8 +86,8 @@ struct BatchTests {
     }
 
     @Test func aBatchReviewsMatchesAndClusters() async throws {
-        for index in 1...5 { try session(index, text: "Do task \(index)") }
-        try session(6, text: "Do task BROKEN")
+        for index in 1...5 { try session(index, text: "Do the task \(index)") }
+        try session(6, text: "Do the task BROKEN")
         // Too short to sample: 1 request.
         try write(".claude/projects/-work-app/short.jsonl", #"{"type":"user","cwd":"/work/app","message":{"role":"user","content":"hi"}}"# + "\n")
         try await importSessions()
@@ -135,7 +135,7 @@ struct BatchTests {
     }
 
     @Test func reservedSessionsAreNeverSampled() async throws {
-        for index in 1...3 { try session(index, text: "Do task \(index)") }
+        for index in 1...3 { try session(index, text: "Do the task \(index)") }
         try await importSessions()
         let reserved = String(format: "claude:%08x-0000-4000-8000-%012x", 1, 1)
         try BootstrapReservations(env: env).save([.init(sessionKey: reserved, transcript: "/t")])

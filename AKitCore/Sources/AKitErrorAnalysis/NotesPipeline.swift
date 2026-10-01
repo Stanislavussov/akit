@@ -196,11 +196,15 @@ public enum NotesPipeline {
     static func verify(_ notes: SessionNotes, items: [TranscriptItem], config: Config, gate: SendGate, origin: SendOrigin, runID: String?,
                        workFolder: URL, env: HarnessEnvironment, out: @escaping @Sendable (String) -> Void) async throws -> SessionNotes {
         var result = notes
+        // Reused notes carry the verdicts of an earlier verifier: this one decides afresh.
+        for index in result.notes.indices where result.notes[index].source == .model { result.notes[index].verdict = nil }
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var toAsk: [Note] = []
         for index in result.notes.indices where result.notes[index].source == .model {
             let note = result.notes[index]
-            if let item = byID[note.step], QuoteMatcher.matches(quote: note.quote, in: item.text) {
+            if note.quote.trimmingCharacters(in: .whitespacesAndNewlines).count < minimumQuote {
+                result.notes[index].verdict = Verdict(accepted: false, reason: "The quote is too short to show anything.", by: .code)
+            } else if let item = byID[note.step], QuoteMatcher.matches(quote: note.quote, in: item.text) {
                 toAsk.append(note)
             } else {
                 result.notes[index].verdict = Verdict(accepted: false, reason: byID[note.step] == nil
@@ -238,20 +242,48 @@ public enum NotesPipeline {
         return result
     }
 
+    /// A quote this short ("null", "ok") matches almost any step and proves nothing.
+    static let minimumQuote = 8
+
+    /// Steps shown around the cited one, before and after.
+    static let neighbours = 3
+
     static func verifierInput(_ notes: [Note], items: [TranscriptItem], byID: [Int: TranscriptItem]) -> String {
         let users = items.filter { if case .user = $0.kind { true } else { false } }
             .map { "[#\($0.id) user] \($0.text)" }.joined(separator: "\n")
         let parts = notes.map { note -> String in
             let step = byID[note.step].map { "[#\($0.id) \(label($0.kind))] \(around(note.quote, in: $0.text))" } ?? ""
+            let index = items.firstIndex { $0.id == note.step }
+            func context(_ range: Range<Int>) -> String {
+                range.clamped(to: items.indices).compactMap { position -> String? in
+                    let item = items[position]
+                    if case .thinking = item.kind { return nil }
+                    return "[#\(item.id) \(label(item.kind))] \(EvidenceDigestCut.cut(item.text, to: 1200))"
+                }.joined(separator: "\n")
+            }
+            let before = index.map { context(($0 - neighbours)..<$0) } ?? ""
+            let after = index.map { context(($0 + 1)..<($0 + 1 + neighbours)) } ?? ""
             return """
                 ### \(note.id) (severity \(note.severity?.rawValue ?? "unknown"))
                 Claim: \(note.description)
                 Quote: \(note.quote)
+                Before:
+                \(before)
                 Step:
                 \(step)
+                After:
+                \(after)
                 """
         }
         return "## User turns\n\n\(users)\n\n## Notes\n\n" + parts.joined(separator: "\n\n") + "\n"
+    }
+
+    /// Neighbouring steps keep their start and end.
+    enum EvidenceDigestCut {
+        static func cut(_ text: String, to limit: Int) -> String {
+            guard text.count > limit else { return text }
+            return "\(text.prefix(limit / 2)) […\(text.count - limit) chars…] \(text.suffix(limit / 2))"
+        }
     }
 
     /// Up to ~6000 characters of a step, centred on the quote, so long outputs stay readable.

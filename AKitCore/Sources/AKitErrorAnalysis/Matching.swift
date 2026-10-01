@@ -172,7 +172,8 @@ public enum Matching {
         return (routes.filter { $0.review == .accepted }.count, routes.count)
     }
 
-    /// Accepted notes per mode (after merges) and the unmatched ones: "seen in k notes".
+    /// Accepted notes per mode (after merges) and the unmatched ones: "seen in k notes". A
+    /// low-confidence route counts only once the user accepted it.
     public static func seen(_ pool: [SessionNotes], modes: [Mode]) -> (byMode: [String: [NoteRef]], unmatched: [NoteRef]) {
         var byMode: [String: [NoteRef]] = [:]
         var unmatched: [NoteRef] = []
@@ -180,6 +181,7 @@ public enum Matching {
             let routes = currentRoutes(notes)
             for note in notes.accepted where note.source == .model {
                 let ref = NoteRef(sessionKey: notes.sessionKey, noteID: note.id)
+                if let route = routes[note.id], route.review == nil, route.by != .human, route.confidence < lowConfidence { continue }
                 if let mode = routes[note.id]?.modeID {
                     byMode[ModeStore.resolve(mode, in: modes), default: []].append(ref)
                 } else if routes[note.id] != nil {
