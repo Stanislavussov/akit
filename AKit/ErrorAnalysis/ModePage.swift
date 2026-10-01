@@ -17,17 +17,31 @@ struct ModePage: View {
 
     var body: some View {
         if let mode = analysis.data.mode(id) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    header(mode)
-                    if justConfirmed, mode.status == .active { followUps(mode) }
-                    definition(mode)
-                    check(mode)
-                    exemplars(mode)
-                    routed(mode)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        header(mode)
+                        if justConfirmed, mode.status == .active { followUps(mode) }
+                        definition(mode)
+                        check(mode)
+                        if mode.isCurrent, mode.status == .active {
+                            ModeJudgePanel(mode: mode).id("judge")
+                        }
+                        if mode.kind.takesFixes, mode.isCurrent {
+                            ModeFixPanel(mode: mode).id("fix")
+                        }
+                        exemplars(mode)
+                        routed(mode)
+                    }
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .task {
+                    // Snapshots: `--select <mode> --query judge|fix` scrolls to that panel.
+                    guard let panel = DebugSnapshot.options?.query, ["judge", "fix"].contains(panel) else { return }
+                    try? await Task.sleep(for: .milliseconds(400))
+                    proxy.scrollTo(panel, anchor: .top)
+                }
             }
             .sheet(isPresented: $addExemplar) { AddExemplarSheet(mode: mode) }
         }

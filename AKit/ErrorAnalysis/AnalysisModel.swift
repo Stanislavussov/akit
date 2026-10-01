@@ -128,6 +128,8 @@ final class AnalysisModel {
     var compareBatch: String? = DebugSnapshot.options?.tab == "reports" ? DebugSnapshot.options?.query : nil
     /// The last rebuild: all notes clustered from scratch, shown and never saved.
     var rebuild: [Clustering.Candidate]?
+    /// The last pool judge run per mode: sessions where the judge found the mode and no note did.
+    var judgeMissed: [String: [String]] = [:]
 
     var env: HarnessEnvironment { .current }
 

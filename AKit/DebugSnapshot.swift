@@ -18,7 +18,7 @@ import SwiftUI
 /// Lab: `--tab sends` shows the send log; with `--select <run id>` of a review, `--tab notes` opens its
 /// notes' disclosures and `--tab recheck` the Re-check sheet (`tools/demo-home.sh` has one). Settings: `--tab lab` (or `scrub`) scrolls to the sending
 /// policy, `--add` opens Add Destination, `--capture` checks the accounts. Error Analysis (`--section analysis`):
-/// `--tab modes|review|bootstrap|reports` (`--tab review --add` opens Cluster Unmatched Notes' cost confirmation); on Modes `--select <mode id>` opens the mode's page, on Bootstrap
+/// `--tab modes|review|bootstrap|reports` (`--tab review --add` opens Cluster Unmatched Notes' cost confirmation); on Modes `--select <mode id>` opens the mode's page (`--query judge|fix` scrolls to that panel, `--query fix --add` opens Draft Fix…), on Bootstrap
 /// `--select <session key>` opens its labeling view (`--query <step>` starts a note at that step); on Reports
 /// `--select <batch id>` picks the batch, `--query <batch id>` the one to compare, `--add` scrolls to the matrix and
 /// `--capture` shows the difference grid. Evals: `--select <task id>[,<task id>…]`, `--add` opens Run Cells…,

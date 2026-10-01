@@ -12,6 +12,8 @@ struct AnalysisSend: Identifiable {
     /// What goes out, in one sentence.
     let detail: String
     let characters: Int
+    /// The model that must answer (a mode's judge); nil: the user picks one.
+    var fixedAgent: LabAgent? = nil
     /// The call; returns the message for the screen.
     let work: @Sendable (LabAgent, SendGate, HarnessEnvironment) async throws -> String?
 }
@@ -32,7 +34,7 @@ struct AnalysisSendSheet: View {
     @State private var busy = false
 
     private var agent: LabAgent {
-        LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
+        send.fixedAgent ?? LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
     }
 
     var body: some View {
@@ -42,13 +44,18 @@ struct AnalysisSendSheet: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Form {
-                ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort)
+            if let fixed = send.fixedAgent {
+                Label("The mode's judge answers: \(fixed.label).", systemImage: "person.badge.shield.checkmark")
+                    .font(.callout)
+            } else {
+                Form {
+                    ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort)
+                }
+                .formStyle(.grouped)
+                .scrollDisabled(true)
+                .scrollContentBackground(.hidden)
+                .frame(height: 150)
             }
-            .formStyle(.grouped)
-            .scrollDisabled(true)
-            .scrollContentBackground(.hidden)
-            .frame(height: 150)
             Text("\(AnalysisText.size(send.characters).capitalizedFirst) to \(agent.label): \(AnalysisText.cost(characters: send.characters, agent: agent, records: records)).")
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
@@ -71,7 +78,7 @@ struct AnalysisSendSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(busy)
                 Button("Send", action: start)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || (harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty))
+                    .disabled(busy || (agent.harness == .claudeCode && agent.model.isEmpty))
             }
         }
         .padding(20)
