@@ -16,6 +16,10 @@ struct AnalysisSend: Identifiable {
     let work: @Sendable (LabAgent, SendGate, HarnessEnvironment) async throws -> String?
 }
 
+private extension String {
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
 struct AnalysisSendSheet: View {
     @Environment(AnalysisModel.self) private var analysis
     @Environment(\.dismiss) private var dismiss
@@ -45,7 +49,7 @@ struct AnalysisSendSheet: View {
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
             .frame(height: 150)
-            Text("About \(max(1, send.characters / 1000))K characters to \(agent.label): \(AnalysisText.cost(characters: send.characters, agent: agent, records: records)).")
+            Text("\(AnalysisText.size(send.characters).capitalizedFirst) to \(agent.label): \(AnalysisText.cost(characters: send.characters, agent: agent, records: records)).")
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
             Text("The sending policy in Settings → Lab decides whether it may go there; the monthly limit applies.")

@@ -6,11 +6,12 @@ import SwiftUI
 /// their cost first and go through the sending policy.
 struct ErrorAnalysisView: View {
     enum Tab: String, CaseIterable {
-        case modes
+        case modes, review
 
         var title: String {
             switch self {
             case .modes: "Modes"
+            case .review: "Review"
             }
         }
     }
@@ -25,6 +26,7 @@ struct ErrorAnalysisView: View {
         Group {
             switch tab {
             case .modes: ModesTab(action: $modeAction)
+            case .review: ReviewQueueTab(action: $modeAction)
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) { statusBar }
@@ -34,7 +36,7 @@ struct ErrorAnalysisView: View {
             ToolbarItem(placement: .navigation) {
                 Picker("Show", selection: $tab) {
                     ForEach(Tab.allCases, id: \.self) { tab in
-                        Text(tab.title).tag(tab)
+                        Text(tab == .review && analysis.data.queue.count > 0 ? "Review (\(analysis.data.queue.count))" : tab.title).tag(tab)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -53,7 +55,11 @@ struct ErrorAnalysisView: View {
         .sheet(item: $modeAction) { ModeActionSheet(action: $0) }
         .sheet(item: $analysis.send) { AnalysisSendSheet(send: $0) }
         .environment(analysis)
-        .task { await analysis.reload() }
+        .task {
+            await analysis.reload()
+            // Snapshots: `--tab review --add` opens the clustering confirmation.
+            if DebugSnapshot.options?.add == true, tab == .review { analysis.send = .cluster(analysis.data) }
+        }
         // Reviews finish outside AKit: their notes join the pool.
         .onChange(of: finishedReviews) { Task { await analysis.reload() } }
     }

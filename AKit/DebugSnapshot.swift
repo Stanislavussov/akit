@@ -18,7 +18,7 @@ import SwiftUI
 /// Lab: `--tab sends` shows the send log; with `--select <run id>` of a review, `--tab notes` opens its
 /// notes' disclosures and `--tab recheck` the Re-check sheet (`tools/demo-home.sh` has one). Settings: `--tab lab` (or `scrub`) scrolls to the sending
 /// policy, `--add` opens Add Destination, `--capture` checks the accounts. Error Analysis (`--section analysis`):
-/// `--tab modes|review|bootstrap`; on Modes `--select <mode id>` opens the mode's page, on Bootstrap
+/// `--tab modes|review|bootstrap` (`--tab review --add` opens Cluster Unmatched Notes' cost confirmation); on Modes `--select <mode id>` opens the mode's page, on Bootstrap
 /// `--select <session key>` opens its labeling view.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without

@@ -11,7 +11,7 @@ extension AnalysisSend {
         let items = data.unmatchedItems()
         return AnalysisSend(
             title: "Cluster Unmatched Notes",
-            detail: "One call over the \(items.count) notes no mode fits: it proposes candidate modes. A candidate with notes from two sessions becomes a mode at once; the others wait for you.",
+            detail: "One call over the \(AnalysisText.notes(items.count)) no mode fits: it proposes candidate modes. A candidate with notes from two sessions becomes a mode at once; the others wait for you.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in
             let store = ModeStore(env: env)
@@ -32,7 +32,7 @@ extension AnalysisSend {
         let id = mode.id
         return AnalysisSend(
             title: "Retro-match the Note Pool",
-            detail: "Asks whether each of the \(parts.flatMap(\.refs).count) notes in the pool fits \(mode.name). A note with no mode moves to it; a note routed elsewhere gets a second route for you to decide.",
+            detail: "Asks whether each of the \(AnalysisText.notes(parts.flatMap(\.refs).count)) in the pool fits \(mode.name). A note with no mode moves to it; a note routed elsewhere gets a second route for you to decide.",
             characters: parts.map(\.text.count).reduce(0, +)
         ) { agent, gate, env in
             guard let mode = try await ModeStore(env: env).mode(id) else { throw AnalysisFailure( "There is no mode \(id).") }
@@ -51,7 +51,7 @@ extension AnalysisSend {
             .reduce(0, +)
         return AnalysisSend(
             title: "Propose Pairs",
-            detail: "Sends your \(label.notes.count) notes and the model's \(notes.notes.count) (descriptions, steps and quotes) so the model pairs the ones about the same problem. You confirm the pairs.",
+            detail: "Sends your \(AnalysisText.notes(label.notes.count)) and the model's \(notes.notes.count) (descriptions, steps and quotes) so the model pairs the ones about the same problem. You confirm the pairs.",
             characters: characters
         ) { agent, gate, env in
             guard let label = Bootstrap.LabelStore(env: env).load(key), label.labeledAt != nil else {
@@ -90,7 +90,7 @@ extension AnalysisSend {
         let id = mode.id
         return AnalysisSend(
             title: "Find Similar Cases",
-            detail: "Sends your notes mapped to \(mode.name) and the \(items.count) notes of other reviewed sessions; the model lists the ones that show the same mode. You accept or reject each find.",
+            detail: "Sends your notes mapped to \(mode.name) and the \(AnalysisText.notes(items.count)) of other reviewed sessions; the model lists the ones that show the same mode. You accept or reject each find.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in
             guard let mode = try await ModeStore(env: env).mode(id) else { throw AnalysisFailure( "There is no mode \(id).") }

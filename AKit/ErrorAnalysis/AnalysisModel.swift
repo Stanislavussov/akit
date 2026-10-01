@@ -189,7 +189,17 @@ enum AnalysisText {
 
     /// "≈ $0.12" or why there is no estimate.
     static func cost(characters: Int, agent: LabAgent, records: [SendRecord]) -> String {
-        SendLog.estimate(characters: characters, harness: agent.harness, model: agent.model, records: records)
-            .map { String(format: "≈ $%.2f", $0) } ?? "no estimate yet (no recorded calls of this model)"
+        guard let cost = SendLog.estimate(characters: characters, harness: agent.harness, model: agent.model, records: records) else {
+            return "no estimate yet (no recorded calls of this model)"
+        }
+        return cost < 0.01 ? "≈ under $0.01" : String(format: "≈ $%.2f", cost)
     }
+
+    /// "about 800 characters", "about 12K characters".
+    static func size(_ characters: Int) -> String {
+        characters < 1000 ? "about \(characters) characters" : "about \(characters / 1000)K characters"
+    }
+
+    /// "1 note", "3 notes".
+    static func notes(_ count: Int) -> String { "\(count) \(count == 1 ? "note" : "notes")" }
 }
