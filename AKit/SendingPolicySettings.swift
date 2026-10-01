@@ -23,11 +23,11 @@ struct SendingPolicySections: View {
                   ? "Work Mac: session data goes only to the allowed list."
                   : "Personal Mac: session data goes to the same origin (the account that recorded it), plus the allowed list.",
                   systemImage: model.machine.isWork ? "building.2" : "house")
-            ForEach(Array(lab.allowedDestinations.enumerated()), id: \.offset) { index, destination in
+            ForEach(lab.allowedDestinations, id: \.self) { destination in
                 HStack {
                     Text(destination.label).textSelection(.enabled)
                     Spacer()
-                    Button("Remove", systemImage: "minus.circle") { lab.allowedDestinations.remove(at: index) }
+                    Button("Remove", systemImage: "minus.circle") { lab.allowedDestinations.removeAll { $0 == destination } }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                 }
@@ -53,17 +53,17 @@ struct SendingPolicySections: View {
             PolicyEntrySheet(request: request) { save($0, for: request) }
         }
         Section {
-            ForEach(Array(lab.piAccounts.enumerated()), id: \.offset) { index, account in
+            ForEach(lab.piAccounts, id: \.self) { account in
                 HStack {
                     Text("\(account.provider) · \(account.account) · \(account.org)").textSelection(.enabled)
                     Spacer()
                     Button("Edit", systemImage: "pencil") {
-                        editor = PolicyEntryEditor(kind: .piAccount(index: index), entry: SendDestination(
+                        editor = PolicyEntryEditor(kind: .piAccount(index: lab.piAccounts.firstIndex(of: account)), entry: SendDestination(
                             harness: .pi, provider: account.provider, account: account.account, org: account.org))
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.borderless)
-                    Button("Remove", systemImage: "minus.circle") { lab.piAccounts.remove(at: index) }
+                    Button("Remove", systemImage: "minus.circle") { lab.piAccounts.removeAll { $0 == account } }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                 }

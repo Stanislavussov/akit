@@ -192,7 +192,8 @@ command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
 EOF
 
-# Lab: a sending policy and a few logged sends (Settings → Lab, Lab → Sends).
+# Lab: a sending policy, a reviewed session with notes, and the sends behind it
+# (Settings → Lab, Lab → the review, Lab → Sends).
 ago() { date -u -v-"$1" +%Y-%m-%dT%H:%M:%S.000Z; }  # e.g. ago 2H
 file "$DEMO/.akit/lab/settings.json" <<'EOF'
 {
@@ -207,15 +208,81 @@ file "$DEMO/.akit/lab/settings.json" <<'EOF'
   "monthlyLimit": 20
 }
 EOF
-send() { # minutes ago, purpose, harness, provider, model, input, cached, output, cost (or null)
-    printf '{"account":"demo@example.com","date":"%s","harness":"%s","inputCharacters":%d,"model":"%s","org":"%s","provider":"%s","purpose":"%s","runID":"20260101-090000-demo","scrubVersion":1,"session":"claude:3f2b9c1e-demo-session","usage":{"cached":%d,"cost":%s,"input":%d,"output":%d}}\n' \
-        "$(ago "$1"M)" "$3" "$(( $6 * 4 ))" "$5" "$( [[ $4 == anthropic ]] && echo "Demo Org" || echo acme)" "$4" "$2" "$7" "$9" "$6" "$8" \
+
+# The reviewed Claude Code session.
+SESSION=3f2b9c1e-7a4d-4c1e-9b2a-5d8e6f0a1b2c
+WEATHER="$DEMO/Projects/weather-app"
+file "$DEMO/.claude/projects/${WEATHER//\//-}/$SESSION.jsonl" <<EOF
+{"type":"user","cwd":"$WEATHER","sessionId":"$SESSION","timestamp":"$(ago 3H)","uuid":"u1","message":{"role":"user","content":"Add a 5-day forecast screen. Keep the current screen as it is."}}
+{"type":"assistant","cwd":"$WEATHER","sessionId":"$SESSION","timestamp":"$(ago 3H)","uuid":"a1","message":{"role":"assistant","model":"claude-opus-4-5","content":[{"type":"text","text":"I'll add ForecastView and wire it into the tab bar."}],"usage":{"input_tokens":1200,"output_tokens":40}}}
+{"type":"user","cwd":"$WEATHER","sessionId":"$SESSION","timestamp":"$(ago 170M)","uuid":"u2","message":{"role":"user","content":"The current screen lost its refresh button."}}
+{"type":"ai-title","aiTitle":"Add a 5-day forecast screen"}
+EOF
+
+# A finished one-call review of it, and the notes it wrote.
+RUN=20261001-120000-demo
+file "$DEMO/.akit/lab/$RUN/run.json" <<EOF
+{"schema":1,"id":"$RUN","kind":"review","title":"Review: Add a 5-day forecast screen","createdAt":"$(ago 52M)",
+ "folder":"$WEATHER","environment":"background","akit":"$AKIT","sessionID":"00000000-0000-0000-0000-000000000001",
+ "reviewedTranscript":"$DEMO/.claude/projects/${WEATHER//\//-}/$SESSION.jsonl","reviewedTitle":"Add a 5-day forecast screen",
+ "agent":{"harness":"claude-code","model":"opus","effort":"high","mode":"call"},"language":"en","keep":false}
+EOF
+file "$DEMO/.akit/lab/$RUN/state.json" <<EOF
+{"status":"finished","phase":"metrics","startedAt":"$(ago 51M)","updatedAt":"$(ago 47M)"}
+EOF
+file "$DEMO/.akit/lab/$RUN/result.json" <<'EOF'
+{"schema":1,"review":"ok"}
+EOF
+file "$DEMO/.akit/lab/analysis/notes/claude_$SESSION.json" <<EOF
+{
+  "schema": 1, "sessionKey": "claude:$SESSION", "runID": "$RUN",
+  "transcript": "$DEMO/.claude/projects/${WEATHER//\//-}/$SESSION.jsonl", "title": "Add a 5-day forecast screen",
+  "project": "$WEATHER", "createdAt": "$(ago 47M)",
+  "requirements": ["A screen with a 5-day forecast", "The current screen stays as it is"],
+  "outcome": "partly",
+  "deviation": { "decisiveStep": 7, "observedStep": 16 },
+  "notes": [
+    { "id": "n1", "source": "model", "step": 7, "phase": "edit", "severity": "high", "faultLayer": "agent",
+      "description": "Rewrote CurrentView while adding the tab bar, although the user asked to keep it as it is.",
+      "quote": "Edit CurrentView.swift: replace body with TabView { … }",
+      "verdict": { "accepted": true, "by": "model", "reason": "The edit drops the toolbar that held the refresh button.",
+                   "steelman": "Moving the screen into a TabView is a normal way to add a second screen; the user may not mind." } },
+    { "id": "n2", "source": "model", "step": 16, "phase": "verify", "severity": "medium", "faultLayer": "agent", "symptomOf": "n1",
+      "description": "Reported the work done without opening the current screen again.",
+      "quote": "Done: ForecastView is in the tab bar.",
+      "verdict": { "accepted": true, "by": "model", "reason": "No build or preview between the edit and the report." } },
+    { "id": "n3", "source": "model", "step": 11, "phase": "explore", "severity": "low", "faultLayer": "harness",
+      "description": "Searched the whole home folder for the API client.",
+      "quote": "grep -r WeatherClient ~",
+      "verdict": { "accepted": false, "by": "code", "reason": "The quote isn't at step #11." } },
+    { "id": "n4", "source": "model", "step": 3, "phase": "plan", "severity": "low", "faultLayer": "task-spec",
+      "description": "The request didn't say which days the forecast starts from.",
+      "quote": "Add a 5-day forecast screen.",
+      "verdict": { "accepted": false, "by": "model", "reason": "Normative expectation: the user never asked about it." } }
+  ],
+  "paragraph": "The session added the forecast screen quickly, but the edit that wired it into a tab bar rewrote the current screen and dropped its refresh button. The report came before anyone looked at that screen again, so the user found the regression.",
+  "advice": [
+    { "title": "Name the screens that must not change, and check them before reporting", "evidence": "Step #7 replaced CurrentView's body; step #16 reported done.",
+      "detail": "A quick look at the screens the user named would have caught the lost button.", "noteIDs": ["n1", "n2"], "checkedByRepeating": false }
+  ],
+  "notesConfig": { "step": "notes", "harness": "claude-code", "model": "opus", "promptVersion": 1, "scrubVersion": 1, "extra": {} },
+  "verifierConfig": { "step": "verifier", "harness": "claude-code", "model": "opus", "promptVersion": 1, "scrubVersion": 1, "extra": {} },
+  "doneKeys": {}
+}
+EOF
+file "$DEMO/.akit/lab/$RUN/summary.md" < <(sed -n 's/^  "paragraph": "\(.*\)",$/\1/p' "$DEMO/.akit/lab/analysis/notes/claude_$SESSION.json")
+file "$DEMO/.akit/lab/$RUN/review.json" <<'EOF'
+{"findings":[{"title":"Name the screens that must not change, and check them before reporting","evidence":"Step #7 replaced CurrentView's body; step #16 reported done.","detail":"A quick look at the screens the user named would have caught the lost button."}]}
+EOF
+
+send() { # minutes ago, purpose, harness, provider, model, input, cached, output, cost (or null), run
+    printf '{"account":"demo@example.com","date":"%s","harness":"%s","inputCharacters":%d,"model":"%s","org":"%s","provider":"%s","purpose":"%s","runID":"%s","scrubVersion":1,"session":"claude:%s","usage":{"cached":%d,"cost":%s,"input":%d,"output":%d}}\n' \
+        "$(ago "$1"M)" "$3" "$(( $6 * 4 ))" "$5" "$( [[ $4 == anthropic ]] && echo "Demo Org" || echo acme)" "$4" "$2" "${10}" "$SESSION" "$7" "$9" "$6" "$8" \
         >> "$DEMO/.akit/lab/analysis/sends.jsonl"
 }
-mkdir -p "$DEMO/.akit/lab/analysis"
-send 50 notes claude-code anthropic opus 41200 0 3900 0.8123
-send 48 verifier claude-code anthropic opus 18600 12400 1200 0.2410
-send 20 notes pi github-copilot github-copilot/gpt-5 39800 0 4100 null
-send 18 verifier pi github-copilot github-copilot/gpt-5 17100 0 900 null
+send 50 notes claude-code anthropic opus 41200 0 3900 0.8123 "$RUN"
+send 48 verifier claude-code anthropic opus 18600 12400 1200 0.2410 "$RUN"
+send 90 notes pi github-copilot github-copilot/gpt-5 39800 0 4100 null 20261001-110000-demo
+send 88 verifier pi github-copilot github-copilot/gpt-5 17100 0 900 null 20261001-110000-demo
 
 echo "Demo home: $DEMO"

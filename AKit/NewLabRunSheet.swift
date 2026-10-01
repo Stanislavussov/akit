@@ -32,8 +32,6 @@ struct NewLabRunSheet: View {
     @State private var reviewModel = ""
     @State private var reviewEffort = "high"
     @State private var reviewMode: LabAgent.Mode = .call
-    /// Models to offer for the harness (Pi: the ones it has credentials for).
-    @State private var reviewModels: [String] = []
 
     // Replay
     @State private var repo: URL?
@@ -94,11 +92,6 @@ struct NewLabRunSheet: View {
             guard let folder = tabFolder else { return }
             suggested = await model.suggestedEnvironment(for: folder)
         }
-        .task {
-            if !model.labHarnesses.contains(harness), let first = model.labHarnesses.first { harness = first }
-            await loadAgent(harness)
-        }
-        .onChange(of: harness) { _, chosen in Task { await loadAgent(chosen) } }
         .task {
             let defaults = model.defaultModelAndEffort
             if modelName.isEmpty { modelName = defaults.model }
@@ -169,21 +162,7 @@ struct NewLabRunSheet: View {
             Text("Session: \(target.title)").fontWeight(.medium)
         }
         Form {
-            Picker("Harness", selection: $harness) {
-                ForEach(model.labHarnesses, id: \.self) { Text($0.title).tag($0) }
-            }
-            HStack {
-                TextField("Model", text: $reviewModel, prompt: Text(harness == .pi ? "Pi's default" : "opus"))
-                Menu("Models") {
-                    ForEach(reviewModels, id: \.self) { name in Button(name) { reviewModel = name } }
-                }
-                .fixedSize()
-                .disabled(reviewModels.isEmpty)
-                .help(harness == .pi ? "Models Pi has credentials for (pi --list-models)" : "Claude Code model aliases")
-            }
-            Picker(harness == .pi ? "Thinking" : "Effort", selection: $reviewEffort) {
-                ForEach(harness.efforts, id: \.self) { Text($0).tag($0) }
-            }
+            ReviewAgentFields(harness: $harness, modelName: $reviewModel, effort: $reviewEffort)
             Picker("How", selection: $reviewMode) {
                 ForEach(LabAgent.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
             }
@@ -194,17 +173,6 @@ struct NewLabRunSheet: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .frame(height: 215)
-    }
-
-    /// The chosen harness's defaults and models. `ProcessRunner` doesn't stop on cancel, so a
-    /// slow `pi --list-models` that ends after a switch back to Claude Code is dropped.
-    private func loadAgent(_ chosen: LabHarness) async {
-        let defaults = model.defaultAgent(chosen)
-        reviewModel = defaults.model
-        reviewEffort = chosen.efforts.contains(defaults.effort) ? defaults.effort : chosen.efforts[0]
-        reviewModels = []
-        let models = await model.labModels(for: chosen)
-        if harness == chosen { reviewModels = models }
     }
 
     private var reviewAgent: LabAgent {
