@@ -6,12 +6,13 @@ import SwiftUI
 /// their cost first and go through the sending policy.
 struct ErrorAnalysisView: View {
     enum Tab: String, CaseIterable {
-        case modes, review
+        case modes, review, bootstrap
 
         var title: String {
             switch self {
             case .modes: "Modes"
             case .review: "Review"
+            case .bootstrap: "Bootstrap"
             }
         }
     }
@@ -27,6 +28,7 @@ struct ErrorAnalysisView: View {
             switch tab {
             case .modes: ModesTab(action: $modeAction)
             case .review: ReviewQueueTab(action: $modeAction)
+            case .bootstrap: BootstrapTab()
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) { statusBar }
