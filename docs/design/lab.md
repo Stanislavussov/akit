@@ -303,6 +303,8 @@ Lab screen shows the spread, not only the mean.
   measures whole sessions and setups. Update that doc when both are on master. Lab reuses
   its path templates for picking the environment and, once merged, its SQLite index for
   session analysis.
+- **Error analysis** (`error-analysis.md`): failure modes across many sessions; the
+  one-session review becomes its first step.
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 
