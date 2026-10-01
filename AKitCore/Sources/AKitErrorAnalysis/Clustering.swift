@@ -181,4 +181,16 @@ public enum Clustering {
             }
         }
     }
+
+    /// After a rebuild from scratch: seeds whose routed notes fall into two or more of the new
+    /// clusters are flagged as umbrellas, too broad to count as one mode.
+    public static func umbrellas(_ candidates: [Candidate], pool: [SessionNotes], modes: [Mode]) -> [String] {
+        let seen = Matching.seen(pool, modes: modes).byMode
+        return modes.filter { $0.origin.isSeed && $0.isCurrent }.compactMap { mode in
+            let refs = Set(seen[mode.id] ?? [])
+            guard !refs.isEmpty else { return nil }
+            let clusters = candidates.filter { !refs.isDisjoint(with: $0.notes) }.count
+            return clusters >= 2 ? mode.id : nil
+        }
+    }
 }

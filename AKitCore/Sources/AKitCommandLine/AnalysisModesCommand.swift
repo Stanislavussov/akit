@@ -165,6 +165,8 @@ extension AKitCLI {
                                                               workFolder: analysisWork(env), env: env)
                 if rebuild {
                     for candidate in candidates { out("\(candidate.name): \(candidate.notes.count) notes — \(candidate.definition)") }
+                    let umbrellas = Clustering.umbrellas(candidates, pool: pool, modes: modes)
+                    if !umbrellas.isEmpty { out("Umbrella seeds (their notes fall into several clusters): \(umbrellas.joined(separator: ", ")).") }
                     out("A rebuild only compares; nothing was saved.")
                     return 0
                 }

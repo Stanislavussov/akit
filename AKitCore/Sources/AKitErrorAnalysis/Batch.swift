@@ -47,6 +47,10 @@ public struct Batch: Codable, Hashable, Sendable {
     public var clustered: Bool
     /// Asked to pause: the worker stops after the current calls.
     public var paused: Bool
+    /// "≈" cost when it was queued, from earlier batches' recorded cost per session.
+    public var estimate: Double?
+    /// Why the worker paused it on its own (an account that changed under it).
+    public var pauseReason: String?
 
     public init(runID: String, createdAt: Date = .now, filter: Sampling.Filter, size: Int, seed: UInt64, fixed: Bool = false,
                 notesAgent: LabAgent, matchingAgent: LabAgent, language: LabLanguage, sessions: [Session]) {

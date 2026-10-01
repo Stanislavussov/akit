@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import AKitInsights
+import AKitLab
 @testable import AKitErrorAnalysis
 
 struct SamplingTests {
@@ -75,5 +76,30 @@ struct SamplingTests {
         let corrected = try #require(Stats.bootstrapInterval(observations, labels: labels, iterations: 1000))
         #expect(corrected.high - corrected.low > plain.high - plain.low)
         #expect(Stats.bootstrapInterval(observations, iterations: 1000) == plain)
+    }
+
+    @Test func adHocReviewsHintTheNextSample() {
+        let sessions = (0..<40).map { session($0) } + (40..<50).map { session($0, harness: "pi", model: "gpt-6") }
+        var generator = SeededGenerator(seed: 2)
+        // Without a hint the small pi stratum may get nothing beyond its even share; with one it gets a pick first.
+        let picks = Sampling.sample(sessions, signals: [:], size: 4, hinted: ["pi|gpt|no-signals"], using: &generator)
+        #expect(picks.contains { $0.stratum == "pi|gpt|no-signals" && $0.sampling.hasPrefix("stratum:") })
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low")
+        var flagged = SessionNotes(sessionKey: "pi:s41", transcript: "/t", title: nil, project: nil, requirements: [], outcome: .no,
+                                   notes: [Note(id: "n1", source: .model, description: "d", step: 0, quote: "a long quote",
+                                                verdict: Verdict(accepted: true, reason: "", by: .model))],
+                                   deviation: Deviation(), paragraph: "", advice: [], notesConfig: StepConfig(step: "notes"),
+                                   verifierConfig: nil, doneKeys: [:], runID: "review-run")
+        let batch = Batch(runID: "batch-run", filter: Sampling.Filter(), size: 1, seed: 1, notesAgent: agent, matchingAgent: agent,
+                          language: .english, sessions: [])
+        #expect(Sampling.hintedStrata(pool: [flagged], batches: [batch], sessions: sessions, signals: [:]) == ["pi|gpt|no-signals"])
+        flagged.runID = "batch-run"
+        #expect(Sampling.hintedStrata(pool: [flagged], batches: [batch], sessions: sessions, signals: [:]).isEmpty)
+    }
+
+    @Test func reviewersOfAnotherFamily() {
+        #expect(Batches.vendor("opus") == "anthropic" && Batches.vendor("claude-sonnet-5-5") == "anthropic")
+        #expect(Batches.vendor("github-copilot/gpt-6.1-sol") == "openai" && Batches.vendor("gemini-3-pro") == "google")
+        #expect(Batches.vendor("opencode-go/qwen3.6-plus") == "qwen")
     }
 }

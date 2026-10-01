@@ -211,4 +211,17 @@ struct MatchingTests {
         // One seed takes all 12 routed notes: maybe an umbrella.
         #expect(queue.umbrellas.map(\.modeID) == ["large-file-read-whole"])
     }
+
+    @Test func umbrellaSeedsFromARebuild() async throws {
+        let modes = try await ModeStore(env: env).list()
+        var a = try pool("claude:a", notes: [("n1", "x"), ("n2", "y")])
+        a.routes = [Route(noteID: "n1", modeID: "false-premise", confidence: 0.9, by: .matching),
+                    Route(noteID: "n2", modeID: "false-premise", confidence: 0.9, by: .matching)]
+        let candidates = [Clustering.Candidate(name: "A", kind: .failure, definition: "d", include: [], exclude: [],
+                                               notes: [NoteRef(sessionKey: "claude:a", noteID: "n1")]),
+                          Clustering.Candidate(name: "B", kind: .failure, definition: "d", include: [], exclude: [],
+                                               notes: [NoteRef(sessionKey: "claude:a", noteID: "n2")])]
+        #expect(Clustering.umbrellas(candidates, pool: [a], modes: modes) == ["false-premise"])
+        #expect(Clustering.umbrellas(Array(candidates.prefix(1)), pool: [a], modes: modes).isEmpty)
+    }
 }

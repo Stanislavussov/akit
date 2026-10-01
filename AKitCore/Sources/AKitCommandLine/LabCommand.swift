@@ -122,16 +122,25 @@ extension AKitCLI {
             let matchingModel = args.value("--matching-model")
             try args.finish()
             let environment = try labEnvironment(environmentText, env: env)
-            guard let harness = LabHarness(rawValue: harnessText ?? "claude-code") else { throw Failure(message: "--harness is claude-code or pi.") }
-            var agent = LabRuns.defaultAgent(harness, env: env)
-            agent.mode = .call
-            if let modelText { agent.model = modelText }
-            if let effortText { agent.effort = effortText }
-            guard harness.efforts.contains(agent.effort) else {
-                throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
+            // No --harness or --model: a reviewer of another family than the sessions', when allowed.
+            var agent: LabAgent?
+            if harnessText != nil || modelText != nil || effortText != nil {
+                guard let harness = LabHarness(rawValue: harnessText ?? "claude-code") else { throw Failure(message: "--harness is claude-code or pi.") }
+                var chosen = LabRuns.defaultAgent(harness, env: env)
+                chosen.mode = .call
+                if let modelText { chosen.model = modelText }
+                if let effortText { chosen.effort = effortText }
+                guard harness.efforts.contains(chosen.effort) else {
+                    throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
+                }
+                agent = chosen
             }
             var matching = agent
-            if let matchingModel { matching.model = matchingModel }
+            if let matchingModel {
+                matching = matching ?? LabRuns.defaultAgent(.claudeCode, env: env)
+                matching?.model = matchingModel
+                matching?.mode = .call
+            }
             let language = try languageText.map { text in
                 guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is en, ru or cs.") }
                 return language
@@ -146,7 +155,10 @@ extension AKitCLI {
             } catch {
                 throw Failure(message: error.localizedDescription)
             }
-            out("Queued \(run.id): \(run.spec.title), notes by \(agent.label) (\(run.spec.environment.title)).")
+            let batch = BatchStore(env: env).load(run.id)
+            out("Queued \(run.id): \(run.spec.title), notes by \(batch?.notesAgent.label ?? "?") (\(run.spec.environment.title)).")
+            out(batch?.estimate.map { String(format: "≈ $%.2f at the recorded cost per reviewed session so far.", $0) }
+                ?? "No estimate yet: no session was reviewed with this model before.")
             if !noStart { try await startNext(env: env, out: out) }
             return 0
         case "new" where args.peek == "replay":

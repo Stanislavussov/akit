@@ -132,6 +132,17 @@ struct BatchTests {
         #expect(try await store.mode("large-file-read-whole")?.status == .active)
         // Done keys: the second batch reused the notes of sessions it shares with the first.
         #expect(calls.filter { $0 == "notes" }.count == before + 1)
+        // Recorded cost per reviewed session is the estimate of the next batch; the limit refuses one that would pass it.
+        #expect(Batches.estimate(sessions: 10, agent: agent, env: env) == nil)
+        try SendLog.append(SendRecord(purpose: "notes", session: "claude:x", runID: nil, destination: SendDestination(harness: .claudeCode,
+                                      provider: "anthropic", account: "me@example.com", org: "Me"), model: "opus", inputCharacters: 100,
+                                      usage: SendUsage(cost: 0.5)), env: env)
+        #expect(Batches.estimate(sessions: 10, agent: agent, env: env) == 5)
+        try LabSettings(monthlyLimit: 1).save(env: env)
+        await #expect(throws: (any Error).self) {
+            _ = try await Batches.new(filter: Sampling.Filter(project: "/work/app"), size: 3, notesAgent: agent, environment: .background,
+                                      akit: URL(filePath: "/usr/bin/true"), seed: 11, env: env)
+        }
     }
 
     @Test func reservedSessionsAreNeverSampled() async throws {
@@ -143,6 +154,12 @@ struct BatchTests {
                                         akit: URL(filePath: "/usr/bin/true"), env: env)
         let batch = try #require(BatchStore(env: env).load(run.id))
         #expect(batch.sessions.count == 2 && !batch.sessions.contains { $0.pick.sessionKey == reserved })
+    }
+
+    @Test func authorizationErrorsAreRecognized() {
+        #expect(BatchRunner.isAuthorizationError("API Error: 401 {\"error\":\"Unauthorized\"}"))
+        #expect(BatchRunner.isAuthorizationError("Claude Code is not logged in"))
+        #expect(!BatchRunner.isAuthorizationError("The notes answer isn't the JSON asked for."))
     }
 
     @Test func pauseStopsHandingOutSessions() async throws {

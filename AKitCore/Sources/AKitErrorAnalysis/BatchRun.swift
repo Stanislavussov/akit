@@ -16,7 +16,9 @@ public enum Batches {
 
     /// Samples sessions from the index and queues a Lab run for them. The sample is drawn
     /// now, so the run and its report always name the same sessions.
-    public static func new(filter: Sampling.Filter, size: Int = 20, notesAgent: LabAgent, matchingAgent: LabAgent? = nil,
+    /// `notesAgent` nil: a reviewer of another model family than the sampled sessions', when
+    /// the sending policy allows one (`defaultReviewer`).
+    public static func new(filter: Sampling.Filter, size: Int = 20, notesAgent: LabAgent?, matchingAgent: LabAgent? = nil,
                            language: LabLanguage? = nil, environment: LabEnvironment?, akit: URL, seed: UInt64? = nil,
                            env: HarnessEnvironment) async throws -> LabRun {
         guard let database = try AnalysisIndex.open(env: env) else {
@@ -24,14 +26,24 @@ public enum Batches {
         }
         try SignalScanner.refresh(env: env)
         let signals = try AnalysisIndex.signals(database).mapValues(\.signals)
-        let population = Sampling.population(try AnalysisIndex.sessions(database), filter: filter,
+        let indexed = try AnalysisIndex.sessions(database)
+        let population = Sampling.population(indexed, filter: filter,
                                              reserved: BootstrapReservations(env: env).keys().union(IndexedSessions.labKeys(env: env)))
         guard !population.isEmpty else { throw Failure(message: "No sessions match (at least \(Sampling.minimumRequests) requests each).") }
         let seed = seed ?? UInt64(Date.now.timeIntervalSince1970 * 1000)
         var generator = SeededGenerator(seed: seed)
-        let picks = Sampling.sample(population, signals: signals, size: size, using: &generator)
+        let hinted = Sampling.hintedStrata(pool: NotesStore(env: env).all(), batches: BatchStore(env: env).all(), sessions: indexed,
+                                           signals: signals)
+        let picks = Sampling.sample(population, signals: signals, size: size, hinted: hinted, using: &generator)
         let title = "Error analysis: \(filter.project.map { ($0 as NSString).lastPathComponent } ?? "all projects") · \(picks.count) sessions"
-        return try await queue(picks: picks, filter: filter, size: size, seed: seed, fixed: false, title: title, notesAgent: notesAgent,
+        let picked = Set(picks.map(\.sessionKey))
+        let reviewer: LabAgent
+        if let notesAgent {
+            reviewer = notesAgent
+        } else {
+            reviewer = await defaultReviewer(sessionModels: population.filter { picked.contains($0.key) }.compactMap(\.model), env: env)
+        }
+        return try await queue(picks: picks, filter: filter, size: size, seed: seed, fixed: false, title: title, notesAgent: reviewer,
                                matchingAgent: matchingAgent, language: language, environment: environment, akit: akit, env: env)
     }
 
@@ -52,8 +64,11 @@ public enum Batches {
                       env: HarnessEnvironment) async throws -> LabRun {
         let id = RunSpec.newID()
         let language = language ?? LabSettings.load(env: env).reportLanguage
-        let batch = Batch(runID: id, filter: filter, size: size, seed: seed, fixed: fixed, notesAgent: notesAgent,
+        var batch = Batch(runID: id, filter: filter, size: size, seed: seed, fixed: fixed, notesAgent: notesAgent,
                           matchingAgent: matchingAgent ?? notesAgent, language: language, sessions: picks.map { Batch.Session(pick: $0) })
+        // Before any model work: the estimate, and the monthly limit.
+        batch.estimate = estimate(sessions: picks.count, agent: notesAgent, env: env)
+        try SendLog.checkLimit(estimate: batch.estimate, settings: LabSettings.load(env: env), env: env)
         try BatchStore(env: env).save(batch)
         return try await queueRun(batchID: id, runID: id, title: title, environment: environment, akit: akit, env: env)
     }
@@ -66,6 +81,45 @@ public enum Batches {
         var spec = RunSpec(id: runID, kind: .analysis, title: title, folder: folder.path, environment: chosen, akit: akit.path)
         spec.batch = batchID
         return try LabStore.create(spec, env: env)
+    }
+
+    /// "≈" cost of reviewing `sessions` sessions with `agent`: the recorded cost of notes,
+    /// verifier and matching per reviewed session with the same model so far. nil until a
+    /// session was reviewed with it.
+    public static func estimate(sessions: Int, agent: LabAgent, env: HarnessEnvironment) -> Double? {
+        let records = SendLog.records(env: env).filter {
+            ["notes", "verifier", "matching"].contains($0.purpose) && $0.harness == agent.harness && $0.model == agent.model
+                && $0.session != nil && $0.usage.cost != nil
+        }
+        let bySession = Dictionary(grouping: records, by: { $0.session ?? "" }).mapValues { $0.compactMap(\.usage.cost).reduce(0, +) }
+        guard !bySession.isEmpty else { return nil }
+        return bySession.values.reduce(0, +) / Double(bySession.count) * Double(sessions)
+    }
+
+    /// The default reviewer for sessions of `models`: a model of another family than the one
+    /// that ran most of them, when such a destination is set up and the sending policy allows
+    /// it; otherwise Claude Code with your settings.
+    public static func defaultReviewer(sessionModels: [String], env: HarnessEnvironment) async -> LabAgent {
+        var claude = LabRuns.defaultAgent(.claudeCode, env: env)
+        claude.mode = .call
+        let families = Dictionary(grouping: sessionModels.map(vendor), by: { $0 })
+        guard let main = families.max(by: { $0.value.count < $1.value.count })?.key else { return claude }
+        if vendor(claude.model) != main { return claude }
+        guard env.findExecutable("pi") != nil else { return claude }
+        var pi = LabRuns.defaultAgent(.pi, env: env)
+        pi.mode = .call
+        guard !pi.model.isEmpty, vendor(pi.model) != main, let gate = try? await SendGate.open(agent: pi, env: env),
+              gate.decide(.claudeSession).allowed else { return claude }
+        return pi
+    }
+
+    /// The company behind a model name: `opus`, `claude-sonnet-5-5` → anthropic.
+    public static func vendor(_ model: String) -> String {
+        let name = model.lowercased().split(separator: "/").last.map(String.init) ?? model.lowercased()
+        if ["opus", "sonnet", "haiku"].contains(where: name.contains) || name.contains("claude") { return "anthropic" }
+        if name.hasPrefix("gpt") || name.hasPrefix("o1") || name.hasPrefix("o3") || name.hasPrefix("o4") { return "openai" }
+        if name.contains("gemini") { return "google" }
+        return String(name.prefix { $0.isLetter })
     }
 
     /// Asks a running batch to stop after its current calls.
@@ -82,6 +136,7 @@ public enum Batches {
         let store = BatchStore(env: env)
         guard var batch = store.load(batchID) else { throw Failure(message: "No batch \(batchID).") }
         batch.paused = false
+        batch.pauseReason = nil
         if retryErrors {
             // The old result of a failed session stays until the retry succeeds: notes files are
             // replaced only by a successful review.
@@ -100,6 +155,12 @@ public enum Batches {
 
 /// One batch run in its terminal tab.
 enum BatchRunner {
+    static func isAuthorizationError(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") || lower.contains("authentication")
+            || lower.contains("not logged in") || lower.contains("forbidden")
+    }
+
     /// The batch file is read and written by both workers; changes go through here.
     actor State {
         private(set) var batch: Batch
@@ -228,6 +289,25 @@ enum BatchRunner {
                 $0.message = message
             }
             out("✗ \(key): \(message)")
+            // After an authorization error the account is checked again; one that can't be
+            // determined, or that changed, stops the batch.
+            if isAuthorizationError(message) {
+                let reason: String?
+                do {
+                    let gate = try await SendGate.open(agent: batch.notesAgent, env: env)
+                    reason = gate.destination.matches(notesGate.destination) ? nil
+                        : "The account changed to \(gate.destination.label) during the batch."
+                } catch {
+                    reason = error.localizedDescription
+                }
+                if let reason {
+                    await state.finish {
+                        $0.paused = true
+                        $0.pauseReason = reason
+                    }
+                    out("Paused: \(reason)")
+                }
+            }
         }
     }
 

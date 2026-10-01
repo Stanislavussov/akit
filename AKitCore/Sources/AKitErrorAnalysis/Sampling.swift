@@ -7,6 +7,15 @@ import Foundation
 /// harness and the model. Every pick records its inclusion probability, so reports can weight
 /// it back (Horvitz–Thompson).
 public enum Sampling {
+    /// Strata of sessions whose ad-hoc review (not a batch) found accepted notes: where the
+    /// next batch should look for more like them.
+    public static func hintedStrata(pool: [SessionNotes], batches: [Batch], sessions: [IndexedSession],
+                                    signals: [String: SessionSignals]) -> Set<String> {
+        let batchRuns = Set(batches.map(\.runID))
+        let flagged = Set(pool.filter { !$0.noFailures && !($0.runID.map(batchRuns.contains) ?? false) }.map(\.sessionKey))
+        return Set(sessions.filter { flagged.contains($0.key) }.map { stratum($0, signals[$0.key]) })
+    }
+
     public struct Filter: Codable, Hashable, Sendable {
         /// A bound project id, or a folder the session ran in (prefix).
         public var project: String?
@@ -93,8 +102,10 @@ public enum Sampling {
     /// rest spread evenly over the strata (rare strata get as many as common ones, up to their
     /// size). Inclusion probability of a session in stratum h of size N_h, with r random picks
     /// of M sessions and n_h stratified picks: π ≈ r/M + n_h/N_h (capped at 1).
+    /// `hinted`: strata in which ad-hoc reviews found failures; each gets one stratified pick
+    /// first, so the next batch adds sessions like them.
     public static func sample<G: RandomNumberGenerator>(_ population: [IndexedSession], signals: [String: SessionSignals], size: Int,
-                                                        using generator: inout G) -> [Pick] {
+                                                        hinted: Set<String> = [], using generator: inout G) -> [Pick] {
         guard size > 0, !population.isEmpty else { return [] }
         let size = min(size, population.count)
         let strata = Dictionary(grouping: population) { stratum($0, signals[$0.key]) }
@@ -105,6 +116,11 @@ public enum Sampling {
         // Even allocation, then whatever a small stratum can't use goes to the others.
         var left = size - random
         var allocation = Dictionary(uniqueKeysWithValues: strata.keys.map { ($0, 0) })
+        for key in hinted.sorted() where left > 0 {
+            guard let members = strata[key], members.contains(where: { chosen[$0.key] == nil }) else { continue }
+            allocation[key, default: 0] += 1
+            left -= 1
+        }
         var open = strata.keys.sorted()
         while left > 0, !open.isEmpty {
             var progressed = false
