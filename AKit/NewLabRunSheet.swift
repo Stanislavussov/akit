@@ -4,13 +4,20 @@ import AKitSessions
 import AppKit
 import SwiftUI
 
-/// Queue Lab runs: a review of a session, or replays of a commit under one or more setups.
-/// From a session (Review in Terminal…) the kind and the session are already chosen.
+/// Queue Lab runs: a review of a session, replays of a commit under one or more setups, or
+/// an error analysis batch. From a session (Review in Terminal…) the kind and the session are
+/// already chosen.
 struct NewLabRunSheet: View {
     enum Kind: String, CaseIterable, Identifiable {
-        case review, replay
+        case review, replay, analysis
         var id: Self { self }
-        var title: String { self == .review ? "Review a Session" : "Replay a Commit" }
+        var title: String {
+            switch self {
+            case .review: "Review a Session"
+            case .replay: "Replay a Commit"
+            case .analysis: "Error Analysis Batch"
+            }
+        }
     }
 
     @Environment(AppModel.self) private var model
@@ -49,6 +56,9 @@ struct NewLabRunSheet: View {
     @State private var checking: String?
     @State private var checked: ReplayTask?
 
+    // Error analysis batch
+    @State private var batch = AnalysisBatchDraft()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("New Lab Run").font(.title2.bold())
@@ -63,6 +73,7 @@ struct NewLabRunSheet: View {
             switch kind {
             case .review: review
             case .replay: replay
+            case .analysis: AnalysisBatchFields(draft: $batch)
             }
             Picker("Open in", selection: $environment) {
                 Text(suggested.map { "Automatic (\($0.title))" } ?? "Automatic").tag(LabEnvironment?.none)
@@ -111,6 +122,7 @@ struct NewLabRunSheet: View {
         switch kind {
         case .review: target?.project
         case .replay: repo
+        case .analysis: HarnessEnvironment.current.homeDirectory
         }
     }
 
@@ -118,6 +130,7 @@ struct NewLabRunSheet: View {
         switch kind {
         case .review: "Queue and Start"
         case .replay: runCount == 1 ? "Queue 1 Run" : "Queue \(runCount) Runs"
+        case .analysis: "Sample and Queue"
         }
     }
 
@@ -128,6 +141,7 @@ struct NewLabRunSheet: View {
         case .review: target != nil && (harness == .pi || !reviewModel.trimmingCharacters(in: .whitespaces).isEmpty)
         case .replay: repo != nil && draft != nil && checking == nil && !setups.isEmpty
             && !modelName.trimmingCharacters(in: .whitespaces).isEmpty
+        case .analysis: batch.isValid
         }
     }
 
@@ -322,6 +336,10 @@ struct NewLabRunSheet: View {
                     let runs = try await model.queueReplays(commit: draft.commit, repo: repo, setups: setups, repeats: repeats,
                                                             environment: environment, keep: keep)
                     if let first = runs.first { onQueued(first) }
+                case .analysis:
+                    onQueued(try await model.queueAnalysis(filter: batch.filter, size: batch.size, notesAgent: batch.notesAgent,
+                                                           matchingAgent: batch.matchingAgent, language: batch.language,
+                                                           environment: environment))
                 }
                 dismiss()
             } catch {

@@ -36,11 +36,11 @@ struct LabView: View {
                 }
                 .pickerStyle(.segmented)
                 .fixedSize()
-                .help("Runs: reviews and replays. Sends: every model call that sent session data or code out.")
+                .help("Runs: reviews, replays, error analysis batches and control cells. Sends: every model call that sent session data or code out.")
             }
             ToolbarItem {
                 Button("New Run…", systemImage: "plus") { showNewRun = true }
-                    .help("Review a session, or replay a commit under different setups")
+                    .help("Review a session, replay a commit under different setups, or run an error analysis batch")
             }
         }
         .sheet(isPresented: $showNewRun) {
@@ -133,6 +133,13 @@ private struct LabRunRow: View {
                     Image(systemName: tests.status == .passed ? "checkmark.seal" : "xmark.seal")
                         .foregroundStyle(tests.status == .passed ? .green : .red)
                 }
+                if let control = run.result?.control {
+                    Image(systemName: control.flagged ? "flag" : control.passed ? "checkmark.seal" : "xmark.seal")
+                        .foregroundStyle(control.flagged ? .orange : control.passed ? .green : .red)
+                }
+                if let batch = run.result?.batch {
+                    Text("\(batch.done)/\(batch.total) done" + (batch.failed > 0 ? ", \(batch.failed) failed" : ""))
+                }
                 if let metrics = run.result?.metrics {
                     Text("\(UsageText.short(metrics.freshTokens)) fresh · \(metrics.calls) \(metrics.calls == 1 ? "call" : "calls")")
                 }
@@ -187,6 +194,17 @@ struct LabStatusBadge: View {
         case .finished: .green
         case .cancelled: .secondary
         case .error: .red
+        }
+    }
+}
+
+extension RunSpec.Kind {
+    var title: String {
+        switch self {
+        case .review: "Session review"
+        case .replay: "Replay task"
+        case .analysis: "Error analysis batch"
+        case .control: "Control cell"
         }
     }
 }
@@ -249,13 +267,18 @@ private struct LabRunDetail: View {
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                 }
-                if run.spec.kind == .review { review } else { replay }
+                switch run.spec.kind {
+                case .review: review
+                case .replay: replay
+                case .analysis: LabBatchSection(run: run, select: select)
+                case .control: LabControlSection(run: run)
+                }
                 if let metrics = run.result?.metrics {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("The run's own agent session").font(.title3.bold())
                         MetricsView(metrics: metrics)
                     }
-                } else if run.status == .finished {
+                } else if run.status == .finished, run.spec.kind != .analysis {
                     Text(run.spec.agent?.harness == .pi ? "AKit doesn't measure Pi sessions yet, so there are no numbers."
                          : "Claude Code wrote no transcript for this run, so there are no numbers.")
                         .foregroundStyle(.secondary)
@@ -274,7 +297,7 @@ private struct LabRunDetail: View {
                 LabStatusBadge(run: run)
             }
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
-                row("Kind", run.spec.kind == .review ? "Session review" : "Replay task")
+                row("Kind", run.spec.kind.title)
                 if let agent = run.spec.agent { row("Agent", agent.label) }
                 if let language = run.spec.language, language != .english { row("Language", language.name) }
                 row("Opens in", "\(run.spec.environment.title) · \(URL(filePath: run.spec.folder).tildePath)")

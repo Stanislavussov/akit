@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitHarnesses
 import AKitInsights
@@ -45,6 +46,8 @@ final class AppModel {
 
     /// A Lab run the Lab screen should select when it appears (set by "Show Review").
     var revealLabRun: String?
+    /// An error analysis batch the Reports tab should open when it appears (set by "Open Report").
+    var revealBatch: String?
 
     /// A brain skill the Brain screen should select when it appears (set by "Show in Brain").
     var revealBrainSkill: String?
@@ -401,6 +404,10 @@ final class AppModel {
     var labTasks: [String: ReplayTask] = [:]
     /// A start failed; the queue waits for Start instead of retrying on its own.
     var labAutoStartPaused = false
+    /// The batch files of error analysis runs, by batch id (reloaded with the runs).
+    var labBatches: [String: Batch] = [:]
+    /// The control tasks of control runs, by task id (reloaded with the runs).
+    var labControlTasks: [String: ControlTask] = [:]
 
     /// Lab metrics of one Claude Code session: transcript, then git for its commits.
     func analysis(of session: SessionSummary) async throws -> SessionMetrics {

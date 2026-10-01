@@ -16,6 +16,7 @@ struct BootstrapTab: View {
     /// Snapshots: `--select <session key>` opens its labeling view.
     @State private var selection: Selection? = DebugSnapshot.options?.select.map(Selection.session) ?? .overview
     @State private var showPick = false
+    @State private var showNotes = false
 
     var body: some View {
         HSplitView {
@@ -41,6 +42,7 @@ struct BootstrapTab: View {
             .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(isPresented: $showPick) { PickSessionsSheet() }
+        .sheet(isPresented: $showNotes) { QueueModelNotesSheet() }
     }
 
     private func title(of entry: BootstrapReservations.Entry) -> String {
@@ -56,9 +58,14 @@ struct BootstrapTab: View {
                 Text("Since the list of modes last changed: \(data.sinceLastChange) (stop after \(Bootstrap.stopAfter))")
                     .foregroundStyle(data.sinceLastChange >= Bootstrap.stopAfter ? .green : .secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Pick Sessions…", systemImage: "plus") { showPick = true }
-                    .controlSize(.small)
-                    .help("Reserve sessions to label: cluster representatives and random ones")
+                HStack {
+                    Button("Pick Sessions…", systemImage: "plus") { showPick = true }
+                        .help("Reserve sessions to label: cluster representatives and random ones")
+                    Button("Queue Model Notes…", systemImage: "flask") { showNotes = true }
+                        .disabled(data.labeledCount == 0)
+                        .help("One Lab batch: the model's notes on every labeled session, to pair with yours")
+                }
+                .controlSize(.small)
             }
             .font(.callout)
             .padding(12)

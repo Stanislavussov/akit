@@ -11,6 +11,7 @@ struct BootstrapFinishedView: View {
     let entry: BootstrapReservations.Entry
     let title: String
     @State private var showReview = false
+    @State private var showNotes = false
 
     var body: some View {
         let data = analysis.data
@@ -32,6 +33,7 @@ struct BootstrapFinishedView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .sheet(isPresented: $showReview) { BootstrapReviewSheet(entry: entry, title: title) }
+        .sheet(isPresented: $showNotes) { QueueModelNotesSheet() }
     }
 
     private func header(_ label: Bootstrap.Label) -> some View {
@@ -78,6 +80,8 @@ struct BootstrapFinishedView: View {
                     Text("No model has reviewed this session yet. Now that you have labeled it, one may.").foregroundStyle(.secondary)
                     Spacer()
                     Button("Review with Model…", systemImage: "flask") { showReview = true }
+                    Button("Queue Model Notes…") { showNotes = true }
+                        .help("One Lab batch over every labeled session, instead of one review each")
                 }
             }
         }

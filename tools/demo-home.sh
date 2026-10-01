@@ -305,7 +305,8 @@ file "$ANALYSIS/modes/modes.json" <<EOF
     "definition": "The agent edits Swift sources or project settings and reports the work done without building the app once after the last edit.",
     "include": ["Edits to .swift files, Info.plist or project.yml followed by a final report with no xcodebuild, swift build or make build in between"],
     "exclude": ["The agent says plainly that it didn't build", "Edits to comments or docs only"],
-    "scope": "general", "origin": "emergent", "version": 2, "status": "active", "createdAt": "$(ago 26H)", "confirmedAt": "$(ago 25H)", "batchMatches": [] }
+    "scope": "general", "origin": "emergent", "version": 2, "status": "active", "createdAt": "$(ago 70H)", "confirmedAt": "$(ago 69H)", "batchMatches": [],
+    "fix": "applied", "fixAppliedAt": "$(ago 1830M)" }
 ]
 EOF
 
@@ -425,5 +426,227 @@ file "$ANALYSIS/checks/overclaiming-completion.json" <<EOF
   "claude:demo-01": { "positive": false, "steps": [], "toughCall": false, "severe": false, "by": "code", "version": 1 }
 } }
 EOF
+
+# Error analysis batches: 60 reviewed notes-mac sessions in two batches of 30 (the older one
+# before the fix of no-build-after-swift-edit, the newer one after), their Lab runs, a judge
+# validated on test labels, a provisional one, the fix draft, and two control tasks with
+# finished cells (Error Analysis → Reports, Evals, a mode page; Lab → the batch and cells).
+BATCH_A=20260929-100000-ba01
+BATCH_B=20261001-080000-ba02
+batch_transcript() { # session id, prompt, hours ago
+    local id="$1" cwd="$NOTESMAC" at; at="$(ago "$3"H)"
+    file "$CLAUDE_NOTESMAC/$id.jsonl" <<EOF
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u1","message":{"role":"user","content":"$2"}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a1","message":{"role":"assistant","model":"claude-opus-4-5","content":[{"type":"thinking","thinking":"Look at the code first."},{"type":"text","text":"I'll look at the code first."}],"usage":{"input_tokens":900,"output_tokens":30}}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a2","message":{"role":"assistant","model":"claude-opus-4-5","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"$cwd/Sources/NotesList.swift"}}],"usage":{"input_tokens":950,"output_tokens":20}}}
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"struct NotesList: View { }"}]}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a3","message":{"role":"assistant","model":"claude-opus-4-5","content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"$cwd/Sources/NotesList.swift","old_string":"View { }","new_string":"View { List { } }"}}],"usage":{"input_tokens":1000,"output_tokens":40}}}
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"The file has been updated."}]}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a4","message":{"role":"assistant","model":"claude-opus-4-5","content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"swift build"}}],"usage":{"input_tokens":1050,"output_tokens":20}}}
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u4","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t3","is_error":true,"content":"error: no such module 'SwiftData'"}]}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a5","message":{"role":"assistant","model":"claude-opus-4-5","content":[{"type":"text","text":"The change is in place."}],"usage":{"input_tokens":1100,"output_tokens":20}}}
+{"type":"user","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"u5","message":{"role":"user","content":"Is it done?"}}
+{"type":"assistant","cwd":"$cwd","sessionId":"$id","timestamp":"$at","uuid":"a6","message":{"role":"assistant","model":"claude-opus-4-5","content":[{"type":"text","text":"Yes, done."}],"usage":{"input_tokens":1150,"output_tokens":10}}}
+{"type":"ai-title","aiTitle":"$2"}
+EOF
+}
+# Items: #3 Read (explore), #5 Edit (edit), #7 swift build (verify), #9 text (verify), #11 the report.
+batch_notes() { # key, title, outcome, decisive step or "", notes json, routes json
+    local deviation="{}"
+    [[ -n $4 ]] && deviation="{ \"decisiveStep\": $4 }"
+    file "$ANALYSIS/notes/${1//:/_}.json" <<EOF
+{ "schema": 1, "sessionKey": "$1", "transcript": "$CLAUDE_NOTESMAC/${1#claude:}.jsonl", "title": "$2", "project": "$NOTESMAC",
+  "createdAt": "$(ago 3H)", "requirements": [], "outcome": "$3", "deviation": $deviation, "paragraph": "", "advice": [],
+  "notes": $5,
+  "notesConfig": { "step": "notes", "harness": "claude-code", "model": "opus", "promptVersion": 1, "scrubVersion": 1, "extra": {} },
+  "verifierConfig": { "step": "verifier", "harness": "claude-code", "model": "opus", "promptVersion": 1, "scrubVersion": 1, "extra": {} },
+  "doneKeys": {}, "routes": $6 }
+EOF
+}
+note() { # step, phase, description, quote
+    printf '[ { "id": "n1", "source": "model", "step": %d, "phase": "%s", "severity": "medium", "description": "%s", "quote": "%s", %s } ]' "$1" "$2" "$3" "$4" "$ok"
+}
+route() { printf '[ { "noteID": "n1", "modeID": %s, "confidence": 0.86, "by": "matching" } ]' "$1"; }
+join() { local IFS=,; echo "$*"; }
+prompts=("Sort pinned notes first" "Add a search field" "Fix the sidebar selection" "Export notes as markdown" "Add a trash folder"
+         "Show word counts" "Rename the Archive tab" "Add iCloud sync settings" "Fix the toolbar layout" "Add keyboard shortcuts")
+judged=()   # no-build-after-swift-edit's judge: "key positive"
+large=()    # large-file-read-whole's code check
+picks_a=() picks_b=()
+for i in $(seq 1 60); do
+    id=$(printf '7d0c0000-0000-4000-8000-0000000000%02d' "$i"); key="claude:$id"; r=$((i % 10))
+    title="${prompts[$r]}"
+    batch_transcript "$id" "$title" "$i"
+    # The older sessions (31–60) are from before the fix; after it, builds follow Swift edits more often.
+    if (( i > 30 )); then
+        case $r in
+            0|1) kind=none ;; 2) kind=large ;; 3) kind=constraint ;; 4|5|6|7) kind=nobuild7 ;; 8) kind=nobuild9 ;; *) kind=retry ;;
+        esac
+    else
+        case $r in
+            0|1|2|3) kind=none ;; 4) kind=large ;; 5) kind=constraint ;; 6) kind=nobuild7 ;; 7|8) kind=report ;; *) kind=nobuild9 ;;
+        esac
+    fi
+    case $kind in
+        none) batch_notes "$key" "$title" achieved "" "[]" "[]" ;;
+        large) batch_notes "$key" "$title" achieved 3 "$(note 3 explore "Read the whole 48 KB Package.resolved for one version." "Read Package.resolved")" "$(route '"large-file-read-whole"')" ;;
+        constraint) batch_notes "$key" "$title" partly 5 "$(note 5 edit "Rewrote NotesList although the user asked to keep it." "Edit NotesList.swift")" "$(route '"user-constraint-violated"')" ;;
+        nobuild7) batch_notes "$key" "$title" no 7 "$(note 7 verify "Built an Xcode app with swift build, then moved on after it failed." "swift build")" "$(route '"no-build-after-swift-edit"')" ;;
+        nobuild9) batch_notes "$key" "$title" partly 9 "$(note 9 verify "Said the change is in place right after the build failed." "The change is in place.")" "$(route '"no-build-after-swift-edit"')" ;;
+        report) batch_notes "$key" "$title" partly 11 "$(note 11 report "Answered done without saying the build had failed." "Yes, done.")" "$(route null)" ;;
+        retry) batch_notes "$key" "$title" no 11 "$(note 11 report "Reported done after retrying the failing build twice unchanged." "Yes, done.")" "$(route null)" ;;
+    esac
+    if [[ $kind == nobuild* ]]; then judged+=("$key true"); else judged+=("$key false"); fi
+    if [[ $kind == large ]]; then large+=("$key true"); else large+=("$key false"); fi
+    if (( r < 3 )); then
+        inclusion=0.083; sampling=random
+    else
+        inclusion="0.$((20 + r * 5))"; sampling="stratum:claude|opus|$( ((r % 2)) && echo pushback || echo unverified-done)"
+    fi
+    status=done; steps='["notes", "verifier", "matching", "checks"]'; message=null
+    if (( i == 29 || i == 30 )); then status=error; steps='["notes"]'; message="\"The verifier's answer isn't the JSON asked for.\""; fi
+    pick=$(printf '{ "pick": { "sessionKey": "%s", "file": "%s", "inclusion": %s, "sampling": "%s", "stratum": "claude|opus|%s", "projectID": "acme/notes-mac" }, "status": "%s", "message": %s, "steps": %s }' \
+        "$key" "$CLAUDE_NOTESMAC/$id.jsonl" "$inclusion" "$sampling" "$r" "$status" "$message" "$steps")
+    if (( i > 30 )); then picks_a+=("$pick"); else picks_b+=("$pick"); fi
+done
+batch_file() { # id, created, picks, clustered, candidates
+    file "$ANALYSIS/batches/$1.json" <<EOF
+{ "schema": 1, "runID": "$1", "createdAt": "$2", "filter": {}, "size": 30, "seed": 1759312800000, "fixed": false,
+  "notesAgent": { "harness": "claude-code", "model": "opus", "effort": "high", "mode": "call" },
+  "matchingAgent": { "harness": "claude-code", "model": "sonnet", "effort": "high", "mode": "call" },
+  "language": "en", "sessions": [ $3 ], "spotCheck": [], "candidates": $5, "clustered": $4, "paused": false }
+EOF
+}
+batch_file "$BATCH_A" "$(ago 40H)" "$(join "${picks_a[@]}")" true '["asset-catalog-hand-edit"]'
+batch_file "$BATCH_B" "$(ago 4H)" "$(join "${picks_b[@]}")" false '[]'
+analysis_run() { # id, created, ended, done, failed
+    file "$DEMO/.akit/lab/$1/run.json" <<EOF
+{"schema":1,"id":"$1","kind":"analysis","title":"Error analysis: all projects · 30 sessions","createdAt":"$2","folder":"$DEMO",
+ "environment":"background","akit":"$AKIT","sessionID":"00000000-0000-0000-0000-0000000000a1","batch":"$1","keep":false}
+EOF
+    file "$DEMO/.akit/lab/$1/state.json" <<EOF
+{"status":"finished","phase":"metrics","startedAt":"$2","updatedAt":"$3"}
+EOF
+    file "$DEMO/.akit/lab/$1/result.json" <<EOF
+{"schema":1,"batch":{"done":$4,"failed":$5,"total":30,"paused":false}}
+EOF
+}
+analysis_run "$BATCH_A" "$(ago 40H)" "$(ago 38H)" 30 0
+analysis_run "$BATCH_B" "$(ago 4H)" "$(ago 3H)" 28 2
+
+# The session index (the fix's before/after reads it), then the checks over the sessions.
+"$AKIT" sessions import --quiet >/dev/null 2>&1 || true
+verdicts() { # checker, "key positive"...
+    local by="$1" first=1 entry parts; shift
+    for entry in "$@"; do
+        read -r -a parts <<< "$entry"
+        (( first )) || printf ',\n'
+        first=0
+        printf '  "%s": { "positive": %s, "steps": %s, "toughCall": false, "severe": false, "by": "%s", "version": 1 }' \
+            "${parts[0]}" "${parts[1]}" "$( [[ ${parts[1]} == true ]] && echo '[7]' || echo '[]')" "$by"
+    done
+}
+{
+    printf '{ "modeID": "large-file-read-whole", "modeVersion": 1, "kind": "mechanical", "verdicts": {\n'
+    verdicts code "${large[@]}"
+    for i in $(seq 1 48); do
+        positive=false; (( i % 7 == 0 )) && positive=true
+        printf ',\n  "claude:demo-%02d": { "positive": %s, "steps": [], "toughCall": false, "severe": false, "by": "code", "version": 1 }' "$i" "$positive"
+    done
+    printf '\n} }\n'
+} | file "$ANALYSIS/checks/large-file-read-whole.json"
+{
+    printf '{ "modeID": "no-build-after-swift-edit@judge", "modeVersion": 2, "judge": "claude-code|opus|1", "verdicts": {\n'
+    verdicts judge "${judged[@]}"
+    printf '\n} }\n'
+} | file "$ANALYSIS/checks/no-build-after-swift-edit_judge.json"
+constraint=()
+for entry in "${large[@]}"; do constraint+=("${entry% *} false"); done
+{
+    printf '{ "modeID": "user-constraint-violated@judge", "modeVersion": 1, "judge": "claude-code|sonnet|1", "verdicts": {\n'
+    verdicts judge "${constraint[@]}"
+    printf '\n} }\n'
+} | file "$ANALYSIS/checks/user-constraint-violated_judge.json"
+file "$ANALYSIS/labels/judges.json" <<'EOF'
+{ "no-build-after-swift-edit": { "harness": "claude-code", "model": "opus", "effort": "high", "mode": "call" },
+  "user-constraint-violated": { "harness": "claude-code", "model": "sonnet", "effort": "high", "mode": "call" } }
+EOF
+bools() { # count, how many true
+    local out=() k
+    for k in $(seq 1 "$1"); do if (( k <= $2 )); then out+=(true); else out+=(false); fi; done
+    echo "[$(join "${out[@]}")]"
+}
+file "$ANALYSIS/labels/validation.json" <<EOF
+{ "no-build-after-swift-edit": [
+    { "modeID": "no-build-after-swift-edit", "modeVersion": 2, "checker": "judge|claude-code|opus|1", "set": "dev",
+      "labels": { "onPositives": $(bools 10 9), "onNegatives": $(bools 12 1) }, "tprLow": 0.596, "tnrLow": 0.646, "toughLeftOut": 1, "unchecked": 0, "at": "$(ago 50H)" },
+    { "modeID": "no-build-after-swift-edit", "modeVersion": 2, "checker": "judge|claude-code|opus|1", "set": "test",
+      "labels": { "onPositives": $(bools 34 33), "onNegatives": $(bools 36 1) }, "tprLow": 0.851, "tnrLow": 0.858, "toughLeftOut": 2, "unchecked": 1, "at": "$(ago 48H)" } ],
+  "user-constraint-violated": [
+    { "modeID": "user-constraint-violated", "modeVersion": 1, "checker": "judge|claude-code|sonnet|1", "set": "test",
+      "labels": { "onPositives": $(bools 22 19), "onNegatives": $(bools 24 3) }, "tprLow": 0.666, "tnrLow": 0.690, "toughLeftOut": 0, "unchecked": 0, "at": "$(ago 47H)" } ] }
+EOF
+split_keys() { local out=() k; for k in $(seq "$1" "$2"); do out+=("\"claude:label-$k\""); done; echo "[$(join "${out[@]}")]"; }
+file "$ANALYSIS/labels/splits.json" <<EOF
+{ "no-build-after-swift-edit": { "train": $(split_keys 1 9), "dev": $(split_keys 10 33), "test": $(split_keys 34 105) } }
+EOF
+file "$ANALYSIS/fixes/no-build-after-swift-edit.json" <<EOF
+{ "modeID": "no-build-after-swift-edit", "layer": "claude-md",
+  "text": "After editing Swift files or project settings, build the app (make build) before you say the work is done. If the build fails, say so.",
+  "exemplars": [ { "sessionKey": "claude:6a1d0c3e-1111-4c1e-9b2a-000000000001", "noteID": "n1" }, { "sessionKey": "claude:$C", "noteID": "n1" } ],
+  "expectedChange": "A make build or xcodebuild call between the last Swift edit and the final report.",
+  "helpedCriterion": "The judge finds the mode in fewer sessions after T: P(after < before) of at least 0.95, 15+ sessions a side.",
+  "createdAt": "$(ago 31H)" }
+EOF
+
+# Controlled evals: two tasks in notes-mac and finished cells of a baseline and a variant.
+git -C "$NOTESMAC" add -A
+git -C "$NOTESMAC" commit -qm "Start notes-mac" || true
+BASE=$(git -C "$NOTESMAC" rev-parse HEAD)
+TASK1=show-pinned-notes-at-the-top-a1b2
+TASK2=rename-the-archive-tab-to-done-c3d4
+file "$DEMO/.akit/lab/evals/tasks/$TASK1.json" <<EOF
+{ "schema": 1, "id": "$TASK1", "title": "Show pinned notes at the top", "repo": "$NOTESMAC", "base": "$BASE",
+  "prompt": "Show pinned notes at the top", "source": { "session": { "key": "claude:$C" } }, "modeID": "no-build-after-swift-edit",
+  "oracle": { "tests": { "command": "make test" } }, "reference": "$BASE", "referenceGreen": true, "createdAt": "$(ago 26H)" }
+EOF
+file "$DEMO/.akit/lab/evals/tasks/$TASK2.json" <<EOF
+{ "schema": 1, "id": "$TASK2", "title": "Rename the Archive tab to Done", "repo": "$NOTESMAC", "base": "$BASE",
+  "prompt": "Rename the Archive tab to Done and read the settings file to find where tabs are named.", "source": { "reproduction": {} },
+  "modeID": "large-file-read-whole", "oracle": { "assertion": { "modeID": "large-file-read-whole" } }, "createdAt": "$(ago 25H)" }
+EOF
+PATCH='{ "file": "CLAUDE.md", "text": "After editing Swift files or project settings, build the app (make build) before you say the work is done. If the build fails, say so." }'
+AGENT='{ "harness": "claude-code", "model": "sonnet", "effort": "high", "mode": "call" }'
+cell() { # n, task, title, setup, repeat, passed, oracle, changed test files json
+    local id setup
+    id=$(printf '20261001-07%02d00-c%03d' "$1" "$1")
+    setup="{ \"name\": \"$4\", \"agent\": $AGENT, \"readOnly\": false }"
+    [[ $4 == variant ]] && setup="{ \"name\": \"variant\", \"agent\": $AGENT, \"patch\": $PATCH, \"readOnly\": false }"
+    file "$DEMO/.akit/lab/$id/run.json" <<EOF
+{"schema":1,"id":"$id","kind":"control","title":"Control $3 · $4 · $5/3","createdAt":"$(ago $((300 - $1 * 5))M)","folder":"$NOTESMAC",
+ "environment":"background","akit":"$AKIT","sessionID":"00000000-0000-0000-0000-00000000c$(printf '%03d' "$1")","agent":$AGENT,
+ "repo":"$NOTESMAC","repeatIndex":$5,"repeats":3,"keep":false,"controlTask":"$2","controlSetup":$setup}
+EOF
+    file "$DEMO/.akit/lab/$id/state.json" <<EOF
+{"status":"finished","phase":"metrics","startedAt":"$(ago $((299 - $1 * 5))M)","updatedAt":"$(ago $((296 - $1 * 5))M)"}
+EOF
+    file "$DEMO/.akit/lab/$id/result.json" <<EOF
+{"schema":1,"control":{"key":"demo-cell-$1","passed":$6,"oracle":"$7","testsDropped":false,"changedTestFiles":$8,"leaks":[],"checkSteps":[]}}
+EOF
+}
+n=0
+for rep in 1 2 3; do
+    for setup in baseline variant; do
+        n=$((n + 1)); passed=false; changed='[]'
+        if [[ $setup == variant || $rep == 2 ]]; then passed=true; fi
+        if [[ $setup == variant && $rep == 3 ]]; then changed='["Tests/NotesListTests.swift"]'; fi
+        oracle='tests failed (exit 1)'; [[ $passed == true ]] && oracle='tests passed (exit 0)'
+        cell $n "$TASK1" "Show pinned notes at the top" $setup $rep $passed "$oracle" "$changed"
+        n=$((n + 1)); passed=true
+        if [[ $setup == baseline && $rep == 2 ]]; then passed=false; fi
+        oracle='large-file-read-whole: not present'; [[ $passed == false ]] && oracle='large-file-read-whole: present (Package.resolved, 48 KB, no range)'
+        cell $n "$TASK2" "Rename the Archive tab to Done" $setup $rep $passed "$oracle" '[]'
+    done
+done
 
 echo "Demo home: $DEMO"
