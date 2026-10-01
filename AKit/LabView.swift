@@ -7,12 +7,50 @@ import SwiftUI
 /// Lab screen: the queue and past runs. Runs happen in a terminal tab (Orca, herdr) or in
 /// the background; this screen reads their folders in `~/.akit/lab` every two seconds.
 struct LabView: View {
+    enum Page: String, CaseIterable {
+        case runs, sends
+        var title: String { self == .runs ? "Runs" : "Sends" }
+    }
+
     @Environment(AppModel.self) private var model
     @State private var selection: LabRun.ID? = DebugSnapshot.options?.select
     @State private var showNewRun = DebugSnapshot.options?.add == true
     @State private var problem: String?
+    /// Snapshots: `--tab sends`.
+    @State private var page = DebugSnapshot.options?.tab.flatMap(Page.init(rawValue:)) ?? .runs
 
     var body: some View {
+        Group {
+            switch page {
+            case .runs: runs
+            case .sends: LabSendsView()
+            }
+        }
+        .navigationTitle("Lab")
+        .navigationSubtitle(subtitle)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("Show", selection: $page) {
+                    ForEach(Page.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Runs: reviews and replays. Sends: every model call that sent session data or code out.")
+            }
+            ToolbarItem {
+                Button("New Run…", systemImage: "plus") { showNewRun = true }
+                    .help("Review a session, or replay a commit under different setups")
+            }
+        }
+        .sheet(isPresented: $showNewRun) {
+            NewLabRunSheet(session: nil) { run in
+                page = .runs
+                selection = run.id
+            }
+        }
+    }
+
+    private var runs: some View {
         HSplitView {
             list
                 .frame(minWidth: 280, idealWidth: 340, maxWidth: 480)
@@ -32,14 +70,6 @@ struct LabView: View {
             }
             .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Lab")
-        .navigationSubtitle(subtitle)
-        .toolbar {
-            ToolbarItem {
-                Button("New Run…", systemImage: "plus") { showNewRun = true }
-                    .help("Review a session, or replay a commit under different setups")
-            }
-        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle")
@@ -48,9 +78,6 @@ struct LabView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.orange.opacity(0.15))
             }
-        }
-        .sheet(isPresented: $showNewRun) {
-            NewLabRunSheet(session: nil) { run in selection = run.id }
         }
         .task {
             // The app watches ~/.akit/lab all the time (RootView); this only picks a first run.

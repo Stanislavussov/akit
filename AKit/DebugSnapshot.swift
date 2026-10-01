@@ -15,6 +15,8 @@ import SwiftUI
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
+/// Lab: `--tab sends` shows the send log. Settings: `--tab lab` (or `scrub`) scrolls to the sending
+/// policy, `--add` opens Add Destination, `--capture` checks the accounts.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
 /// a value (`--add`, `--capture`, `--own-copy`, `--settings`) last: Cocoa pairs arguments as "-key value", and a

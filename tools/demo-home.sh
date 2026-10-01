@@ -192,4 +192,30 @@ command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
 EOF
 
+# Lab: a sending policy and a few logged sends (Settings → Lab, Lab → Sends).
+ago() { date -u -v-"$1" +%Y-%m-%dT%H:%M:%S.000Z; }  # e.g. ago 2H
+file "$DEMO/.akit/lab/settings.json" <<'EOF'
+{
+  "reportLanguage": "en",
+  "allowedDestinations": [
+    { "harness": "pi", "provider": "github-copilot", "account": "demo@example.com", "org": "acme" }
+  ],
+  "piAccounts": [
+    { "provider": "github-copilot", "account": "demo@example.com", "org": "acme" }
+  ],
+  "scrub": { "hosts": ["[a-z0-9.-]+\\.corp\\.acme\\.com"], "maskEmails": true, "extra": ["ACME-[0-9]{6}"] },
+  "monthlyLimit": 20
+}
+EOF
+send() { # minutes ago, purpose, harness, provider, model, input, cached, output, cost (or null)
+    printf '{"account":"demo@example.com","date":"%s","harness":"%s","inputCharacters":%d,"model":"%s","org":"%s","provider":"%s","purpose":"%s","runID":"20260101-090000-demo","scrubVersion":1,"session":"claude:3f2b9c1e-demo-session","usage":{"cached":%d,"cost":%s,"input":%d,"output":%d}}\n' \
+        "$(ago "$1"M)" "$3" "$(( $6 * 4 ))" "$5" "$( [[ $4 == anthropic ]] && echo "Demo Org" || echo acme)" "$4" "$2" "$7" "$9" "$6" "$8" \
+        >> "$DEMO/.akit/lab/analysis/sends.jsonl"
+}
+mkdir -p "$DEMO/.akit/lab/analysis"
+send 50 notes claude-code anthropic opus 41200 0 3900 0.8123
+send 48 verifier claude-code anthropic opus 18600 12400 1200 0.2410
+send 20 notes pi github-copilot github-copilot/gpt-5 39800 0 4100 null
+send 18 verifier pi github-copilot github-copilot/gpt-5 17100 0 900 null
+
 echo "Demo home: $DEMO"
