@@ -43,9 +43,10 @@ extension AKitCLI {
           akit analysis control compare TASK[,TASK…] [--json]
                                           pass@1 and pass^k per setup with 95% intervals, and for each
                                           variant the paired bootstrap over tasks: "helped" when at least
-                                          95% of its mass is on improvement (3+ repeats, 15+ cells a side).
-                                          Cells with dropped or changed tests, or that read the exemplar,
-                                          are left out
+                                          95% of its mass is on improvement (3+ repeats, 15+ cells a side)
+                                          and the applied fix is not worse in production; without
+                                          production data, no conclusion. Cells with dropped or changed
+                                          tests, or that read the exemplar, count as failed
         """
 
     static func analysisControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
