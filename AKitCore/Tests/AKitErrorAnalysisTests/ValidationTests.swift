@@ -175,7 +175,7 @@ struct ValidationTests {
     }
 
     /// A judge failure in a batch must fail the session (thrown); elsewhere the run goes on.
-    /// Results judged under another scrub version start over.
+    /// Another scrub version re-judges each session when it is judged next, and wipes nothing.
     @Test func judgeErrorsAndTheScrubVersion() async throws {
         try Data(#"""
             #!/bin/sh
@@ -194,22 +194,36 @@ struct ValidationTests {
             return ("claude:\(id)", file.path)
         }
         let good = try session(1, "Fine task"), broken = try session(2, "BROKEN task")
+        let unscrubbed = try session(3, "Fine task too"), other = try session(4, "Fine task, not in this run")
         let mode = try #require(try await ModeStore(env: env).mode("large-file-read-whole"))
         let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low", mode: .call)
         let gate = try await SendGate.open(agent: agent, env: env)
         let work = home.appending(path: "w")
 
-        // A verdict judged before the scrub version was part of the judge's key.
-        let info = JSONLines.fileInfo(URL(filePath: good.file))
+        // A file of the time the scrub version was part of the judge's key, with verdicts of an
+        // older scrubber and one that doesn't record it.
+        func old(_ session: (key: String, file: String), scrub: Int?) -> CheckVerdict {
+            let info = JSONLines.fileInfo(URL(filePath: session.file))
+            return CheckVerdict(positive: false, detail: "old", by: .judge, version: 1, fileSize: info.size,
+                                fileModified: info.modified.timeIntervalSince1970, scrubVersion: scrub)
+        }
         try CheckStore(env: env).update(Judges.resultsID(mode.id)) { results in
             results.modeVersion = mode.version
-            results.judge = "claude-code|opus|\(Judges.promptVersion)"
-            results.verdicts[good.key] = CheckVerdict(positive: false, detail: "old", by: .judge, version: 1, fileSize: info.size,
-                                                      fileModified: info.modified.timeIntervalSince1970)
+            results.judge = "claude-code|opus|\(Judges.promptVersion)|scrub \(Scrubber.version - 1)"
+            results.verdicts = [good.key: old(good, scrub: Scrubber.version - 1), unscrubbed.key: old(unscrubbed, scrub: nil),
+                                other.key: old(other, scrub: Scrubber.version - 1)]
         }
-        let results = try await Judges.run(mode: mode, sessions: [good, broken], agent: agent, gate: gate, runID: nil, workFolder: work, env: env)
+        // Only the older scrubber's verdicts are judged again, and only those the run asks for.
+        #expect(Set(Judges.pending(mode: mode, sessions: [good, unscrubbed, other], agent: agent, env: env)) == [good.key, other.key])
+        let results = try await Judges.run(mode: mode, sessions: [good, broken, unscrubbed], agent: agent, gate: gate, runID: nil,
+                                           workFolder: work, env: env)
         #expect(results.verdicts[good.key]?.detail == "new" && results.verdicts[good.key]?.severe == true)
-        #expect(results.judge?.hasSuffix("|scrub \(Scrubber.version)") == true && results.verdicts[broken.key] == nil)
+        #expect(results.verdicts[good.key]?.scrubVersion == Scrubber.version)
+        #expect(results.judge == "claude-code|opus|\(Judges.promptVersion)" && results.verdicts[broken.key] == nil)
+        // Not wiped: the other verdicts stay and count until they are judged again.
+        #expect(results.verdicts[unscrubbed.key]?.detail == "old" && results.verdicts[other.key]?.detail == "old")
+        #expect(results.rate().total == 3)
+        #expect(Judges.pending(mode: mode, sessions: [good, unscrubbed, other], agent: agent, env: env) == [other.key])
         await #expect(throws: Judges.Failure.self) {
             _ = try await Judges.run(mode: mode, sessions: [broken], agent: agent, gate: gate, runID: nil, workFolder: work, env: env,
                                      stopOnError: true)
@@ -243,6 +257,10 @@ struct ValidationTests {
         } throws: { error in
             (error as? Judges.Failure)?.message.contains("too long for one judge call") == true
         }
+        // In a batch it isn't an error either: no retry makes it fit.
+        let results = try await Judges.run(mode: mode, sessions: [("claude:\(id)", file.path)], agent: agent, gate: gate, runID: nil,
+                                           workFolder: home.appending(path: "w"), env: env, stopOnError: true)
+        #expect(results.verdicts.isEmpty)
         #expect(!fm.fileExists(atPath: sent.path))
     }
 }

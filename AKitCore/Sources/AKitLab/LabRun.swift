@@ -271,6 +271,26 @@ public struct LabSettings: Codable, Sendable, Hashable {
         (try? Data(contentsOf: file(env: env))).flatMap { try? JSONDecoder().decode(LabSettings.self, from: $0) } ?? LabSettings()
     }
 
+    /// The settings a send obeys: the allowed list, the scrub patterns and the monthly limit.
+    /// A file that exists but can't be read, or whose fields don't decode, would silently turn
+    /// them off with `load`'s defaults, so every send is refused until it is fixed.
+    public static func loadForSending(env: HarnessEnvironment) throws -> LabSettings {
+        let url = file(env: env)
+        guard FileManager.default.fileExists(atPath: url.path) else { return LabSettings() }
+        struct Strict: Decodable {
+            let allowedDestinations: [SendDestination]?
+            let piAccounts: [PiAccount]?
+            let scrub: Scrubber.OwnPatterns?
+            let monthlyLimit: Double?
+        }
+        guard let data = try? Data(contentsOf: url), (try? JSONDecoder().decode(Strict.self, from: data)) != nil,
+              let settings = try? JSONDecoder().decode(LabSettings.self, from: data) else {
+            throw SendAccounts.Failure(message: "Not sent: \(url.path) can't be read, so the allowed list, your scrub patterns and the "
+                                           + "monthly limit can't be checked. Fix or move the file, then try again.")
+        }
+        return settings
+    }
+
     /// Writes these settings whole; edits of what is on disk go through `update`.
     public func save(env: HarnessEnvironment) throws {
         try FileManager.default.createDirectory(at: LabPaths(env: env).folder, withIntermediateDirectories: true)

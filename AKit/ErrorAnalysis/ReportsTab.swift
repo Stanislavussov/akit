@@ -138,7 +138,8 @@ private struct ReportHeader: View {
         }
     }
 
-    /// Done of all; the rest is still running, waiting while paused, or failed.
+    /// Done of all; the rest is still running, waiting while paused, failed, or too long for
+    /// a digest (left out of the frequencies for good).
     private var coverage: String {
         guard let batch else { return report.coverage[0] < report.coverage[1] ? "sessions done; the rest aren't" : "sessions done" }
         let open = batch.sessions.filter { $0.status == .pending || $0.status == .running }.count
@@ -146,6 +147,7 @@ private struct ReportHeader: View {
         var parts = ["sessions done"]
         if open > 0 { parts.append(batch.paused ? "\(open) waiting, paused" : "\(open) still running") }
         if failed > 0 { parts.append("\(failed) failed") }
+        if batch.tooLong > 0 { parts.append("\(batch.tooLong) too long for a digest") }
         return parts.joined(separator: " · ")
     }
 

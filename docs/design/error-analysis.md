@@ -59,8 +59,9 @@ modes and review tough calls, but they don't label every session.
 
 ## Sampling (batch)
 
-The user picks a project and a period. AKit takes up to N sessions (default 20) from the
-session index; sessions with fewer than 5 requests are skipped.
+The user picks a project, a period and optionally the harness that ran the sessions
+(Claude Code or Pi). AKit takes up to N sessions (default 20) from the session index;
+sessions with fewer than 5 requests are skipped.
 
 - **Cheap signals.** The session index stores signals computed by code, no model call:
   - user interruptions;
@@ -96,7 +97,9 @@ transcript (see [Sending policy](#sending-policy)), and evidence is never cut aw
   replaced the earlier digest of `lab.md`.
 - **Over budget.** User turns and the stubs of failed tool results are never cut. When
   they alone pass the model's budget, the session isn't sent: the notes call and the judge
-  refuse it with a clear error, and nothing goes out.
+  refuse it with a clear error, and nothing goes out. In a batch such a session is "too
+  long for a digest": counted apart from failures, never retried, and named in the
+  coverage. A judge that refuses one doesn't fail the session's notes.
 - **No `get_step(n)` tool** (decided): the call stays tool-less, as in `lab.md`, so an
   injected transcript can't make it do anything. The [verifier](#verifier-second-pass)
   checks every quote in code against the full scrubbed transcript.
@@ -378,6 +381,13 @@ feeds a denominator.
   code check, or stay "observed" ("seen in k notes").
 - **Errors.** A judge error inside a batch fails the session (retried by "Retry errors");
   a pool run or a validation run goes on and leaves the session unchecked.
+- **Scrub version.** Each verdict records the scrub version of the transcript it read.
+  A newer scrubber doesn't drop a judge's verdicts: they keep counting (reports,
+  validation, Fixes) until each session is judged again, the next time a batch, a pool
+  run or a validation reaches it, and the cost shown before a run counts them. A verdict
+  made before the version was recorded counts as current: it is still evidence about the
+  same session, and judging every session again after an upgrade would spend money
+  nobody asked to spend. Another mode version, judge model or prompt starts over.
 
 ## Validation
 
@@ -489,15 +499,17 @@ example from edit → verify to verify → report.
 
 - **Lab run.** One "Error analysis" run in Lab, with progress k/N for each step (notes,
   verifier, matching, checks, clustering).
-- **Per-session status.** pending / running / done / error (with the reason). Invalid
-  output is an error, not a skip; so is a judge's error.
+- **Per-session status.** pending / running / done / error (with the reason) /
+  too-long. Invalid output is an error, not a skip; so is a judge's error. A session too
+  long for a digest is too-long: retrying can't make it fit, so "Retry errors" leaves it.
 - **Pipeline.** A session's verifier starts right after its notes, and its matching right
   after the verifier. Clustering is one call at the end, over everything done; the report
   shows coverage k/N if some sessions failed.
 - **Parallelism.** Fixed at 2, with exponential backoff on 429 (rate limit).
 - **Pause** stops after the current calls; resuming continues from the same place.
 - **Retry errors** reruns only the failed sessions, and an old result is deleted only
-  after the retry succeeds.
+  after the retry succeeds. A worker writes only the sessions it changed, so a retry
+  queued while an old run still works isn't written back to errors.
 
 ### Done key
 
@@ -521,7 +533,7 @@ alike:
   Changing one step's model changes its key and the keys of the steps that read its
   output, and nothing else. A new scrub version changes every key: the next review of each
   session (a batch, an ad-hoc review) re-runs its notes and verifier once, and judges
-  judge again.
+  judge it again (see [Checks](#checks): their old verdicts count until then).
 
 ## Models and budget
 
@@ -540,8 +552,16 @@ provider (`/login` in Pi once).
   when validation shows it is better.
 - **Different family.** By default, if the session ran on a model of the reviewer's
   family, AKit takes a model of another family when it can, but only among destinations
-  the [sending policy](#sending-policy) allows for the origin of every sampled session.
-  With none allowed, the batch isn't queued. The policy always wins.
+  the [sending policy](#sending-policy) allows. The first one allowed for the origin of
+  every session the filter matches wins. When none is (a project with Claude Code and Pi
+  sessions, each allowed only to its own harness), the one allowed for the most sessions
+  reviews the batch, and the sessions it may not get are left out of the population before
+  sampling. AKit says how many before queuing, and the batch records it. The batch isn't
+  queued only when no reviewer may get any of them. The policy always wins.
+- **A reviewer you pick** keeps every session. Before queuing, AKit says how many of the
+  sampled sessions the policy will refuse it (they fail, so the report covers fewer), and
+  queues only after a yes: a confirmation in the app, `--yes` for `akit lab new analysis`.
+  The harness filter (`--session-harness`) narrows a mixed project instead.
 - **Cache.** A stable prefix (system prompt + modes list) comes first in the request.
 - **Cost (recorded only).** Before any model work AKit shows an estimate, "≈" from the
   recorded cost of past calls of the same harness and model in the send log. A monthly
@@ -576,6 +596,9 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
 - **Account check** at the start of each review, batch and control run, and again after
   an authorization error. If the account can't be determined, or there is no plan or org
   data, the call is refused.
+- **Unreadable settings.** When Lab's `settings.json` exists but can't be read (or a field
+  such as the monthly limit doesn't decode), every send is refused with that reason: the
+  defaults would silently drop the allowed list, the scrub patterns and the limit.
   - **Claude Code:** `claude auth status --json` returns `email`, `orgId` and `orgName`,
     and no secrets.
   - **Pi** has no whoami (`pi auth check --json` gives only provider, status and reason).
@@ -591,8 +614,13 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
   - **Allowlist**: hex strings (SHAs, hashes, UUIDs) are allowlisted for the entropy
     detector.
   - **Weak passwords**: a value after a password's name (`db_password: Summer2024`,
-    `--password hunter22`, `PGPASSWORD=…`) is masked without the entropy gate, from 4
-    characters, unless it reads as code (a variable, placeholder, path, type or number).
+    `--password hunter22`, `PGPASSWORD=…`, `password: 123456`, `password=letmein`,
+    `IDENTIFIED BY '…'`, `PASSWORD '…'` in SQL, `mysql -pSecret`) is masked without the
+    entropy gate, from 4 characters, unless it reads as code (a variable like `input2`, a
+    placeholder like `<PASSWORD>`, a path, a type or a number other than a PIN) or as prose
+    about a flag (`the --password flag`). A word with no digit counts only right after
+    `=` with no space; `-p…` only after `mysql`, `mysqldump` or `mysqladmin`, since short
+    flags elsewhere mean other things.
   - **One rule list**: `SecretFilter` (what the screen masks) runs the Scrubber's own token
     and password rules, so the two never drift apart.
   - **Versioning**: the scrub version (now 4) is part of the [done key](#done-key).

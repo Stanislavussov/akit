@@ -105,10 +105,13 @@ enum DebugSnapshot {
             window.center()
         }
         try? await Task.sleep(for: .seconds(options.delay))
-        // An open sheet (e.g. `--add`) is its own window: capture it instead.
-        guard let main = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.sheetParent == nil }),
-              case let window = main.attachedSheet ?? main,
-              let view = window.contentView?.superview ?? window.contentView else {
+        // An open sheet (e.g. `--add`) is its own window, and so is an alert on it: capture the topmost.
+        guard var window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.sheetParent == nil }) else {
+            FileHandle.standardError.write(Data("snapshot: window not found\n".utf8))
+            exit(1)
+        }
+        while let sheet = window.attachedSheet { window = sheet }
+        guard let view = window.contentView?.superview ?? window.contentView else {
             FileHandle.standardError.write(Data("snapshot: window not found\n".utf8))
             exit(1)
         }

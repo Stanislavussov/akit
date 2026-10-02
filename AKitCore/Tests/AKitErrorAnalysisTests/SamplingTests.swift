@@ -19,6 +19,10 @@ struct SamplingTests {
         #expect(population.map(\.key) == ["claude:s1"])
         let byFolder = Sampling.population(sessions, filter: Sampling.Filter(project: "/work/app"), reserved: [])
         #expect(Set(byFolder.map(\.key)) == ["claude:s1", "claude:s3", "claude:s5", "claude:s6"])
+        // The harness that ran them: a mixed project's Pi sessions alone.
+        let mixed = sessions + [session(7, harness: "pi", model: "opencode-go/qwen3.6-plus")]
+        #expect(Sampling.population(mixed, filter: Sampling.Filter(project: "p1", harness: "pi"), reserved: []).map(\.key) == ["pi:s7"])
+        #expect(Sampling.population(mixed, filter: Sampling.Filter(project: "p1", harness: "claude"), reserved: []).count == 3)
     }
 
     @Test func stratifiedSampleWithARandomShare() {
@@ -120,5 +124,9 @@ struct SamplingTests {
         #expect(Batches.vendor("opencode-go/qwen3.6-plus") == "qwen")
         // On top of the sampling family: `claude-opus` and `claude-haiku` strata, one vendor.
         #expect(Batches.vendor("o4-mini") == "openai" && Batches.vendor("github-copilot/claude-haiku-5") == "anthropic")
+        // Bedrock ids lead with a region and a provider.
+        #expect(Sampling.family("us.anthropic.claude-opus-4-v1:0") == "claude-opus" && Batches.vendor("us.anthropic.claude-opus-4-v1:0") == "anthropic")
+        #expect(Batches.vendor("anthropic.claude-sonnet-4-5-20250929-v1:0") == "anthropic" && Sampling.family("meta.llama3-70b") == "llama")
+        #expect(Sampling.family("gpt-6.1-sol") == "gpt" && Sampling.family("opencode-go/qwen3.6-plus") == "qwen")
     }
 }

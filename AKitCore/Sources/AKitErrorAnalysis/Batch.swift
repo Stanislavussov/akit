@@ -7,6 +7,9 @@ import Foundation
 public struct Batch: Codable, Hashable, Sendable {
     public enum Status: String, Codable, Sendable {
         case pending, running, done, error
+        /// Its user turns and failed tool results alone pass the notes model's digest budget:
+        /// never sent, and not retried, since no retry makes it fit.
+        case tooLong = "too-long"
     }
 
     /// One session's way through notes → verifier → matching → checks.
@@ -54,6 +57,11 @@ public struct Batch: Codable, Hashable, Sendable {
     public var estimate: Double?
     /// Why the worker paused it on its own (an account that changed under it).
     public var pauseReason: String?
+    /// Sessions of the filter left out of the population before sampling, because the
+    /// automatic reviewer may not get them under the sending policy; nil when none were.
+    public var leftOut: Int?
+    /// The policy's reason for them.
+    public var leftOutReason: String?
 
     public init(runID: String, createdAt: Date = .now, filter: Sampling.Filter, size: Int, seed: UInt64, fixed: Bool = false,
                 notesAgent: LabAgent, matchingAgent: LabAgent, language: LabLanguage, sessions: [Session]) {
@@ -75,6 +83,12 @@ public struct Batch: Codable, Hashable, Sendable {
 
     /// Sessions done out of all: the report shows coverage k/N when some failed.
     public var coverage: (done: Int, total: Int) { (sessions.filter { $0.status == .done }.count, sessions.count) }
+
+    /// Sessions too long for a digest: left out of the frequencies for good, apart from failures.
+    public var tooLong: Int { sessions.filter { $0.status == .tooLong }.count }
+
+    /// Sessions a Resume would still work on: pending, running or failed.
+    public var hasOpenSessions: Bool { sessions.contains { $0.status != .done && $0.status != .tooLong } }
 
     /// Done sessions the end-of-batch work hasn't covered yet.
     public var unfinished: Bool {

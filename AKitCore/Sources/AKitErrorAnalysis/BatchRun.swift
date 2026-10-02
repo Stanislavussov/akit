@@ -14,39 +14,107 @@ public enum Batches {
     /// Two sessions at a time; 429s back off inside each call.
     public static let parallelism = 2
 
+    /// A drawn sample that isn't queued yet: what the app and `akit lab new analysis` show
+    /// before anything is sent.
+    public struct Sample: Sendable {
+        public let filter: Sampling.Filter
+        public let size: Int
+        public let seed: UInt64
+        public let picks: [Sampling.Pick]
+        public let notesAgent: LabAgent
+        /// Automatic: sessions of the filter left out before sampling, because the reviewer
+        /// may not get them.
+        public let leftOut: Int
+        /// A reviewer you chose: sampled sessions it may not get. The policy refuses them
+        /// before anything is sent, and they fail.
+        public let refused: Int
+        /// The policy's reason for those.
+        public let reason: String?
+
+        /// What to say before queuing, when sessions are left out or will be refused.
+        public var warning: String? {
+            if leftOut > 0 {
+                return "\(leftOut) sessions of the filter are left out of the sample: \(notesAgent.harness.title) reviews this batch "
+                    + "and may not get them. \(reason ?? "") Pick their harness under Sessions from to review them with a reviewer "
+                    + "allowed for them."
+            }
+            if refused > 0 {
+                return "\(refused) of the \(picks.count) sampled sessions may not go to \(notesAgent.label): \(reason ?? "") They are "
+                    + "refused before anything is sent and fail, so the report covers fewer sessions."
+            }
+            return nil
+        }
+    }
+
     /// Samples sessions from the index and queues a Lab run for them. The sample is drawn
     /// now, so the run and its report always name the same sessions.
     /// `notesAgent` nil: a reviewer of another model family than the sampled sessions', when
-    /// the sending policy allows one (`defaultReviewer`); none allowed for all of them throws.
+    /// the sending policy allows one (`defaultReviewer`).
     public static func new(filter: Sampling.Filter, size: Int = 20, notesAgent: LabAgent?, matchingAgent: LabAgent? = nil,
                            language: LabLanguage? = nil, environment: LabEnvironment?, akit: URL, seed: UInt64? = nil,
                            env: HarnessEnvironment) async throws -> LabRun {
+        let sample = try await draw(filter: filter, size: size, notesAgent: notesAgent, seed: seed, env: env)
+        return try await queue(sample, matchingAgent: matchingAgent, language: language, environment: environment, akit: akit, env: env)
+    }
+
+    /// Draws the sample without queuing it. `notesAgent` nil picks the reviewer from the
+    /// sessions the filter allows, and leaves out of them the ones it may not get, so the
+    /// sample holds only sessions that can be reviewed; throws only when it may get none.
+    /// A reviewer you chose keeps every session; `refused` says how many it may not get.
+    public static func draw(filter: Sampling.Filter, size: Int = 20, notesAgent: LabAgent?, seed: UInt64? = nil,
+                            env: HarnessEnvironment) async throws -> Sample {
         guard let database = try AnalysisIndex.open(env: env) else {
             throw Failure(message: "The session index is empty. Run akit sessions import first.")
         }
         try SignalScanner.refresh(env: env)
         let signals = try AnalysisIndex.signals(database).mapValues(\.signals)
         let indexed = try AnalysisIndex.sessions(database)
-        let population = Sampling.population(indexed, filter: filter,
+        var population = Sampling.population(indexed, filter: filter,
                                              reserved: BootstrapReservations(env: env).keys().union(IndexedSessions.labKeys(env: env)))
         guard !population.isEmpty else { throw Failure(message: "No sessions match (at least \(Sampling.minimumRequests) requests each).") }
+        let reviewer: LabAgent
+        var leftOut = 0
+        var reason: String?
+        if let notesAgent {
+            reviewer = notesAgent
+        } else {
+            let origins = population.map { SessionNotes.origin(sessionKey: $0.key, transcript: $0.file) }
+            let chosen = try await defaultReviewer(sessions: zip(population, origins).map { ($0.model, $1) }, env: env)
+            reviewer = chosen.agent
+            if !chosen.refused.isEmpty {
+                let kept = zip(population, origins).filter { !chosen.refused.contains($0.1) }.map(\.0)
+                leftOut = population.count - kept.count
+                reason = chosen.reason
+                population = kept
+            }
+        }
         let seed = seed ?? UInt64(Date.now.timeIntervalSince1970 * 1000)
         var generator = SeededGenerator(seed: seed)
         let hinted = Sampling.hintedStrata(pool: NotesStore(env: env).all(), batches: BatchStore(env: env).all(), sessions: indexed,
                                            signals: signals)
         let picks = Sampling.sample(population, signals: signals, size: size, hinted: hinted, using: &generator)
-        let title = "Error analysis: \(filter.project.map { ($0 as NSString).lastPathComponent } ?? "all projects") · \(picks.count) sessions"
-        let models = Dictionary(population.map { ($0.key, $0.model) }, uniquingKeysWith: { first, _ in first })
-        let reviewer: LabAgent
-        if let notesAgent {
-            reviewer = notesAgent
-        } else {
-            reviewer = try await defaultReviewer(sessions: picks.map { pick in
-                (models[pick.sessionKey] ?? nil, SessionNotes.origin(sessionKey: pick.sessionKey, transcript: pick.file))
-            }, env: env)
+        var refused = 0
+        // An account that can't be checked now fails the run at its start, as before.
+        if notesAgent != nil, let gate = try? await SendGate.open(agent: reviewer, env: env) {
+            let refusals = picks.map { gate.decide(SessionNotes.origin(sessionKey: $0.sessionKey, transcript: $0.file)) }.filter { !$0.allowed }
+            refused = refusals.count
+            reason = refusals.first?.reason
         }
-        return try await queue(picks: picks, filter: filter, size: size, seed: seed, fixed: false, title: title, notesAgent: reviewer,
-                               matchingAgent: matchingAgent, language: language, environment: environment, akit: akit, env: env)
+        return Sample(filter: filter, size: size, seed: seed, picks: picks, notesAgent: reviewer, leftOut: leftOut, refused: refused,
+                      reason: reason)
+    }
+
+    /// Queues a drawn sample as a batch.
+    public static func queue(_ sample: Sample, matchingAgent: LabAgent? = nil, language: LabLanguage? = nil, environment: LabEnvironment?,
+                             akit: URL, env: HarnessEnvironment) async throws -> LabRun {
+        let filter = sample.filter
+        let scope = (filter.project.map { ($0 as NSString).lastPathComponent } ?? "all projects")
+            + (filter.harness.map { " · \($0 == "pi" ? "Pi" : "Claude Code") sessions" } ?? "")
+        let title = "Error analysis: \(scope) · \(sample.picks.count) sessions"
+        return try await queue(picks: sample.picks, filter: filter, size: sample.size, seed: sample.seed, fixed: false, title: title,
+                               notesAgent: sample.notesAgent, matchingAgent: matchingAgent, language: language, environment: environment,
+                               akit: akit, env: env, leftOut: sample.leftOut > 0 ? sample.leftOut : nil,
+                               leftOutReason: sample.leftOut > 0 ? sample.reason : nil)
     }
 
     /// A batch over fixed sessions (the labeled bootstrap sessions), each with inclusion 1.
@@ -63,14 +131,16 @@ public enum Batches {
 
     static func queue(picks: [Sampling.Pick], filter: Sampling.Filter, size: Int, seed: UInt64, fixed: Bool, title: String,
                       notesAgent: LabAgent, matchingAgent: LabAgent?, language: LabLanguage?, environment: LabEnvironment?, akit: URL,
-                      env: HarnessEnvironment) async throws -> LabRun {
+                      env: HarnessEnvironment, leftOut: Int? = nil, leftOutReason: String? = nil) async throws -> LabRun {
         let id = RunSpec.newID()
         let language = language ?? LabSettings.load(env: env).reportLanguage
         var batch = Batch(runID: id, filter: filter, size: size, seed: seed, fixed: fixed, notesAgent: notesAgent,
                           matchingAgent: matchingAgent ?? notesAgent, language: language, sessions: picks.map { Batch.Session(pick: $0) })
+        batch.leftOut = leftOut
+        batch.leftOutReason = leftOutReason
         // Before any model work: the estimate, and the monthly limit.
         batch.estimate = estimate(sessions: picks.count, agent: notesAgent, env: env)
-        try SendLog.checkLimit(estimate: batch.estimate, settings: LabSettings.load(env: env), env: env)
+        try SendLog.checkLimit(estimate: batch.estimate, settings: LabSettings.loadForSending(env: env), env: env)
         try BatchStore(env: env).save(batch)
         return try await queueRun(batchID: id, runID: id, title: title, environment: environment, akit: akit, env: env)
     }
@@ -129,11 +199,22 @@ public enum Batches {
         return String(format: "%d sessions, ≈ $%.2f at the recorded cost per reviewed session so far (judges included).", sessions, estimate)
     }
 
-    /// The default reviewer for sampled sessions: Claude Code or Pi with your settings, a model
-    /// of another family than the one that ran most of them first, and only one the sending
-    /// policy allows for the origin of every session. Throws, before anything is sent, when
-    /// neither is allowed for all of them.
-    public static func defaultReviewer(sessions: [(model: String?, origin: SendOrigin)], env: HarnessEnvironment) async throws -> LabAgent {
+    /// The automatic reviewer, and the sessions it may not get.
+    public struct Reviewer: Sendable {
+        public let agent: LabAgent
+        /// Origins of the sessions the sending policy keeps from it: left out of the population.
+        public let refused: Set<SendOrigin>
+        /// The policy's reason for the first of them.
+        public let reason: String?
+    }
+
+    /// The default reviewer for these sessions: Claude Code or Pi with your settings, a model of
+    /// another family than the one that ran most of them first. The first one the sending
+    /// policy allows for every session's origin wins; when none is, the one allowed for the
+    /// most sessions, and the rest are left out (a project with Claude Code and Pi sessions,
+    /// each allowed only to its own harness). Throws, before anything is sent, only when
+    /// neither may get any of them.
+    public static func defaultReviewer(sessions: [(model: String?, origin: SendOrigin)], env: HarnessEnvironment) async throws -> Reviewer {
         var claude = LabRuns.defaultAgent(.claudeCode, env: env)
         claude.mode = .call
         var candidates = [claude]
@@ -146,22 +227,38 @@ public enum Batches {
         if let main = families.max(by: { $0.value.count < $1.value.count })?.key {
             candidates = candidates.filter { vendor($0.model) != main } + candidates.filter { vendor($0.model) == main }
         }
-        let origins = Set(sessions.map(\.origin))
         var refusals: [String] = []
+        var best: (reviewer: Reviewer, allowed: Int)?
         for agent in candidates {
             do {
                 let gate = try await SendGate.open(agent: agent, env: env)
-                if let refused = origins.map(gate.decide).first(where: { !$0.allowed }) {
-                    refusals.append("\(agent.harness.title): \(refused.reason)")
-                } else {
-                    return agent
+                var decisions: [SendOrigin: SendPolicy.Decision] = [:]
+                var refused = Set<SendOrigin>()
+                var reason: String?
+                var allowed = 0
+                for session in sessions {
+                    let decision = decisions[session.origin] ?? gate.decide(session.origin)
+                    decisions[session.origin] = decision
+                    if decision.allowed {
+                        allowed += 1
+                    } else {
+                        refused.insert(session.origin)
+                        reason = reason ?? decision.reason
+                    }
                 }
+                let reviewer = Reviewer(agent: agent, refused: refused, reason: reason)
+                if refused.isEmpty { return reviewer }
+                refusals.append("\(agent.harness.title): \(reason ?? "")")
+                if allowed > 0, allowed > best?.allowed ?? 0 { best = (reviewer, allowed) }
             } catch {
                 refusals.append("\(agent.harness.title): \(error.localizedDescription)")
             }
         }
-        throw Failure(message: "No reviewer may get every sampled session. " + refusals.joined(separator: " ")
-                          + " Pick the reviewer yourself, or narrow the sessions.")
+        guard let best else {
+            throw Failure(message: "No reviewer may get any of these sessions. " + refusals.joined(separator: " ")
+                              + " Pick the reviewer yourself, or narrow the sessions to another project or harness.")
+        }
+        return best.reviewer
     }
 
     /// The company behind a model, from its sampling family: `opus`, `claude-sonnet-5-5` → anthropic.
@@ -183,7 +280,7 @@ public enum Batches {
     public static func resume(_ batchID: String, retryErrors: Bool = false, environment: LabEnvironment?, akit: URL,
                               env: HarnessEnvironment) async throws -> LabRun {
         guard let current = BatchStore(env: env).load(batchID) else { throw Failure(message: "No batch \(batchID).") }
-        guard current.sessions.contains(where: { $0.status != .done }) || current.unfinished else {
+        guard current.hasOpenSessions || current.unfinished else {
             throw Failure(message: "The batch is done; nothing to resume.")
         }
         let batch = try BatchStore(env: env).update(batchID) { batch in
@@ -210,41 +307,53 @@ enum BatchRunner {
             || lower.contains("not logged in") || lower.contains("forbidden")
     }
 
+    /// "The session is too long for one call / one judge call": its digest passes the budget.
+    static func isTooLong(_ text: String) -> Bool {
+        text.hasPrefix("The session is too long for one ")
+    }
+
     /// The batch file is read and written by both workers; changes go through here.
     actor State {
         private(set) var batch: Batch
         let store: BatchStore
-        /// The pause as last read from the file: a pause this worker sets differs from it.
-        private var filePause: (paused: Bool, reason: String?)
+        /// The file as this worker last read or wrote it: what differs from it is this
+        /// worker's own change.
+        private var base: Batch
 
         init(batch: Batch, store: BatchStore) {
             self.batch = batch
             self.store = store
-            filePause = (batch.paused, batch.pauseReason)
+            base = batch
         }
 
-        /// Pause and resume are written into the file by another process (the app, `akit
-        /// analysis batch pause|resume`): read it before every write so neither is written over.
-        /// Only a pause this worker set itself (after an account problem) is added.
+        /// Pause, resume and "Retry errors" are written into the file by another process (the
+        /// app, `akit analysis batch pause|resume`): it is read before every write, and only
+        /// what this worker changed goes over it, session by session. A pause this worker set
+        /// itself (after an account problem) is added, never a resume.
         private func save() {
-            let mine = batch
-            let pausing = mine.paused && !filePause.paused
-            let ownReason = mine.pauseReason != filePause.reason ? mine.pauseReason : nil
+            let mine = batch, base = self.base
             if let saved = try? store.update(mine.runID, { disk in
-                let paused = disk.paused || pausing
-                let reason = paused ? disk.pauseReason ?? ownReason : nil
-                disk = mine
-                disk.paused = paused
-                disk.pauseReason = reason
+                for session in mine.sessions where !base.sessions.contains(session) {
+                    if let index = disk.sessions.firstIndex(where: { $0.pick.sessionKey == session.pick.sessionKey }) {
+                        disk.sessions[index] = session
+                    }
+                }
+                if mine.paused, !base.paused {
+                    disk.paused = true
+                    disk.pauseReason = disk.pauseReason ?? (mine.pauseReason != base.pauseReason ? mine.pauseReason : nil)
+                }
+                if mine.clustered != base.clustered { disk.clustered = mine.clustered }
+                if mine.candidates != base.candidates { disk.candidates = mine.candidates }
+                if mine.spotCheck != base.spotCheck { disk.spotCheck = mine.spotCheck }
+                if mine.finishedSessions != base.finishedSessions { disk.finishedSessions = mine.finishedSessions }
             }) {
                 sync(saved)
             }
         }
 
         private func sync(_ saved: Batch) {
-            batch.paused = saved.paused
-            batch.pauseReason = saved.pauseReason
-            filePause = (saved.paused, saved.pauseReason)
+            batch = saved
+            base = saved
         }
 
         func update(_ key: String, _ change: (inout Batch.Session) -> Void) {
@@ -328,7 +437,8 @@ enum BatchRunner {
         }
         let coverage = batch.coverage
         let failed = batch.sessions.filter { $0.status == .error }.count
-        out("Batch \(batchID): \(coverage.done) of \(coverage.total) sessions done\(failed > 0 ? ", \(failed) failed" : "")\(batch.paused ? ", paused" : "").")
+        out("Batch \(batchID): \(coverage.done) of \(coverage.total) sessions done\(failed > 0 ? ", \(failed) failed" : "")"
+            + "\(batch.tooLong > 0 ? ", \(batch.tooLong) too long for a digest" : "")\(batch.paused ? ", paused" : "").")
         return RunResult(batch: BatchProgress(done: coverage.done, failed: failed, total: coverage.total, paused: batch.paused))
     }
 
@@ -359,11 +469,13 @@ enum BatchRunner {
             out("✓ \(key): \(notes.outcome.title.lowercased()), \(notes.accepted.count) notes")
         } catch {
             let message = error is CancellationError ? "Cancelled." : error.localizedDescription
+            // Too long for a digest is no error to retry: it is counted apart.
+            let tooLong = isTooLong(message)
             await state.update(key) {
-                $0.status = error is CancellationError ? .pending : .error
+                $0.status = error is CancellationError ? .pending : tooLong ? .tooLong : .error
                 $0.message = message
             }
-            out("✗ \(key): \(message)")
+            out("\(tooLong ? "–" : "✗") \(key): \(message)")
             // After an authorization error the accounts are checked again; one that can't be
             // determined, or that changed, stops the batch.
             if isAuthorizationError(message) {
