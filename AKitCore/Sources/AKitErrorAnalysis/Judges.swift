@@ -104,8 +104,7 @@ public enum Judges {
                            out: @escaping @Sendable (String) -> Void = { _ in }) async throws -> CheckResults {
         let store = CheckStore(env: env)
         let id = resultsID(mode.id)
-        // The judge reads the scrubbed transcript: another scrub version judges again.
-        let judgeConfig = "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)|scrub \(Scrubber.version)"
+        let judgeConfig = config(agent)
         // Another mode version or judge starts over; verdicts of others are merged one by one,
         // so two batch workers judging at once never drop each other's.
         var results = try store.update(id) { results in
@@ -139,10 +138,16 @@ public enum Judges {
     /// judge on the file as it is. Only reads; for the cost shown before a run.
     public static func pending(mode: Mode, sessions: [(key: String, file: String)], agent: LabAgent, env: HarnessEnvironment) -> [String] {
         let results = CheckStore(env: env).load(resultsID(mode.id))
-        let current = results?.modeVersion == mode.version && results?.judge == "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)"
+        let current = results?.modeVersion == mode.version && results?.judge == config(agent)
         return sessions.filter { session in
             !(current && isJudged(results?.verdicts[session.key], file: URL(filePath: session.file)))
         }.map(\.key)
+    }
+
+    /// What a results file was judged with. The judge reads the scrubbed transcript: another
+    /// scrub version judges again.
+    static func config(_ agent: LabAgent) -> String {
+        "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)|scrub \(Scrubber.version)"
     }
 
     /// A verdict made on the file as it is now.
