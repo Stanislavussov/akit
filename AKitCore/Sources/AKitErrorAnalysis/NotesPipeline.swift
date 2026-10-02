@@ -107,6 +107,8 @@ public enum NotesPipeline {
                                      workFolder: workFolder, env: env, out: out)
             draft.verifierConfig = config.verifierStep
             draft.doneKeys["verifier"] = verifierKey
+            // The conclusion is this run's: the run that verified last owns the review.
+            draft.runID = runID
         }
         try store.saveReview(draft)
         return store.load(key.description) ?? draft

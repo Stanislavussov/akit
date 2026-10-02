@@ -38,7 +38,10 @@ struct ReviewNotesView: View {
                         Label("\(group.title) · \(group.notes.count)", systemImage: "tag")
                             .font(.headline)
                             .help(group.help)
-                        ForEach(group.notes) { NoteView(note: $0, collapsesQuote: true) }
+                        ForEach(group.notes) { note in
+                            NoteView(note: note, collapsesQuote: true,
+                                     unconfirmed: !group.id.isEmpty && types[note.id]?.confirmed == false)
+                        }
                             .padding(.leading, 22)
                     }
                 }
@@ -89,32 +92,25 @@ struct ReviewNotesView: View {
         .font(.body)
     }
 
-    /// Accepted notes by mode as the mode pages count them, the most notes first; routes
-    /// matching wasn't sure of and you haven't reviewed are their own "(unconfirmed)" groups;
-    /// notes no mode fits come last.
+    /// Accepted notes by mode as the mode pages count them, the most notes first; notes no
+    /// mode fits come last.
     private var groups: [(id: String, title: String, help: String, notes: [Note])] {
-        let types = notes.noteModes(modes)
-        let byGroup = Dictionary(grouping: notes.accepted) { note -> String in
-            guard let type = types[note.id], let mode = type.modeID else { return "" }
-            return (type.confirmed ? "" : "?") + mode
-        }
-        let named = byGroup.compactMap { key, notes -> (id: String, title: String, help: String, notes: [Note])? in
-            guard !key.isEmpty else { return nil }
-            let unconfirmed = key.hasPrefix("?")
-            let id = unconfirmed ? String(key.dropFirst()) : key
+        let byMode = Dictionary(grouping: notes.accepted) { types[$0.id]?.modeID ?? "" }
+        let named = byMode.compactMap { id, notes -> (id: String, title: String, help: String, notes: [Note])? in
+            guard !id.isEmpty else { return nil }
             let mode = modes.first { $0.id == id }
-            let help = (mode?.definition ?? "An error analysis mode")
-                + (unconfirmed ? "\n\nMatching wasn't sure: accept or move these notes on the Error Analysis screen, Review tab." : "")
-            return (key, (mode?.name ?? id) + (unconfirmed ? " (unconfirmed)" : ""), help, notes)
+            return (id, mode?.name ?? id, mode?.definition ?? "An error analysis mode", notes)
         }
         .sorted { ($0.notes.count, $1.title) > ($1.notes.count, $0.title) }
-        let untyped = byGroup[""].map {
+        let untyped = byMode[""].map {
             [(id: "", title: "No type yet",
               help: "No error analysis mode fits these notes yet, or they aren't matched yet; clustering on the Error Analysis screen can make one.",
               notes: $0)]
         } ?? []
         return named + untyped
     }
+
+    private var types: [String: (modeID: String?, confirmed: Bool)] { notes.noteModes(modes) }
 
     /// "Notes by Claude Code · opus; verified by Claude Code · opus".
     private var authors: String {
@@ -278,6 +274,8 @@ struct NoteView: View {
     let note: Note
     /// The quote behind a disclosure, for pages that lead with the descriptions.
     var collapsesQuote = false
+    /// Its mode is a low-confidence route you haven't reviewed.
+    var unconfirmed = false
     @State private var showSteelman = DebugSnapshot.options?.tab == "notes"
     @State private var showQuote = DebugSnapshot.options?.tab == "notes"
 
@@ -290,6 +288,10 @@ struct NoteView: View {
                 if let severity = note.severity { NoteTag(text: severity.rawValue.capitalized, color: severity.color) }
                 if let layer = note.faultLayer { NoteTag(text: layer.title, color: .purple) }
                 if note.source == .human { NoteTag(text: "Yours", color: .teal) }
+                if unconfirmed {
+                    NoteTag(text: "Type unconfirmed", color: .gray)
+                        .help("Matching wasn't sure of this type: accept or move it on the Error Analysis screen, Review tab. Mode pages don't count it yet.")
+                }
                 if let root = note.symptomOf {
                     Text("symptom of \(root)").font(.caption).foregroundStyle(.secondary)
                 }

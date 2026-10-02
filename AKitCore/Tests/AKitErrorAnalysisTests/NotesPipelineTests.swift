@@ -381,6 +381,25 @@ struct NotesPipelineTests {
         #expect(notes.noteModes(modes)["n3"]?.modeID == nil && notes.noteModes(modes)["n3"]?.confirmed == true)
     }
 
+    @Test func theRunThatVerifiesLastOwnsReusedNotes() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = try await SendGate.open(agent: agent, env: env)
+        func run(_ id: String, verifier: LabAgent) async throws -> SessionNotes {
+            try await NotesPipeline.review(NotesPipeline.Target(harness: .claudeCode, file: file, title: "Fix Foo"),
+                                           config: NotesPipeline.Config(notes: agent, verifier: verifier), notesGate: gate,
+                                           verifierGate: gate, runID: id, workFolder: home.appending(path: "work"), env: env, out: { _ in })
+        }
+        #expect(try await run("r1", verifier: agent).runID == "r1")
+        // Same notes and verifier: nothing runs, the review stays r1's.
+        #expect(try await run("r2", verifier: agent).runID == "r1")
+        // Notes reused, verifier run again: r3 wrote the conclusion.
+        let other = LabAgent(harness: .claudeCode, model: "sonnet", effort: "high")
+        #expect(try await run("r3", verifier: other).runID == "r3")
+        #expect(calls() == ["notes", "verifier", "verifier"])
+    }
+
     @Test func reVerifyingDropsTheOldConclusion() async throws {
         // The first review has a conclusion; a later verifier where no quote is found has none.
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
