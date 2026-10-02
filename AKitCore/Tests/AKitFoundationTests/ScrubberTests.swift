@@ -326,6 +326,35 @@ struct ScrubberTests {
         }
     }
 
+    @Test func passwordEdgesInProseCodeSqlAndMysql() {
+        // Prose about a flag, placeholders and variables stay, on screen too.
+        for text in [
+            "Pass the --password flag to log in.", "The --password option is required.", "Use --password <PASSWORD> here.",
+            "the --password argument isn't read", "password = input2", "password_timeout: 300000", "mysql -u root -p app",
+            "mysql -P 3306 -h db", "CREATE USER 'app'@'%' IDENTIFIED BY '<password>';", "ls -pSecret",
+        ] {
+            #expect(scrub(text).text == text, "\(text) → \(scrub(text).text)")
+            #expect(SecretFilter.masked(text) == text, "\(text) → \(SecretFilter.masked(text))")
+        }
+        let cases: [(String, String)] = [
+            ("password: " + "123456", "password: \(mask)"),
+            ("curl -d user=me&password=" + "letmein" + " https://x.example", "curl -d user=me&password=\(mask) https://x.example"),
+            ("CREATE USER 'app'@'%' IDENTIFIED BY '" + "hunter" + "';", "CREATE USER 'app'@'%' IDENTIFIED BY '\(mask)';"),
+            ("ALTER USER app IDENTIFIED WITH mysql_native_password BY \"" + "s3cr et" + "\"", "ALTER USER app IDENTIFIED WITH mysql_native_password BY \"\(mask)\""),
+            ("ALTER ROLE app WITH LOGIN PASSWORD '" + "letmein" + "';", "ALTER ROLE app WITH LOGIN PASSWORD '\(mask)';"),
+            ("mysql -u root -p" + "Secret" + " app", "mysql -u root -p\(mask) app"),
+            ("mysqldump -uroot -p'" + "Secret" + "' app > dump.sql", "mysqldump -uroot -p'\(mask)' app > dump.sql"),
+            ("deploy --password " + "letmein", "deploy --password \(mask)"),
+        ]
+        for (text, expected) in cases {
+            let result = scrub(text)
+            #expect(result.text == expected, "\(text) → \(result.text)")
+            #expect(result.counts.values.reduce(0, +) == 1, "\(text): \(result.counts)")
+            #expect(SecretFilter.masked(text) == expected, "\(text) → \(SecretFilter.masked(text))")
+            #expect(scrub(result.text).text == result.text && scrub(result.text).counts.isEmpty, "\(result.text) changes again")
+        }
+    }
+
     @Test func scrubbingScrubbedTextChangesNothing() {
         let own = Scrubber.OwnPatterns(hosts: [#"[a-z0-9.-]+\.corp\.example\.com"#], extra: [#"ACME-[0-9]{4}"#])
         let twilio = "S" + "K" + "3f9ac2b1e8d740a65b1c9d2e7f30a1b4"

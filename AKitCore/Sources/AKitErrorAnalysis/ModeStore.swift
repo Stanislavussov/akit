@@ -1,6 +1,6 @@
 import AKitBrain
 import AKitFoundation
-import Darwin
+import AKitLab
 import Foundation
 
 /// The list of modes and their exemplars (`docs/design/error-analysis.md`, "Modes" and
@@ -473,16 +473,7 @@ public struct ModeStore: Sendable {
     /// Waiting sleeps instead of blocking a thread.
     private func locked<T>(_ work: () async throws -> T) async throws -> T {
         try FileManager.default.createDirectory(at: paths.folder, withIntermediateDirectories: true)
-        let file = paths.folder.appending(path: ".modes.lock")
-        let descriptor = open(file.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
-        guard descriptor >= 0 else { throw Failure(message: "Can't open \(file.path).") }
-        defer { close(descriptor) }
-        while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
-            guard errno == EWOULDBLOCK || errno == EINTR else { throw Failure(message: "Can't lock \(file.path).") }
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        defer { flock(descriptor, LOCK_UN) }
-        return try await work()
+        return try await FileLock.holding(paths.folder.appending(path: ".modes.lock"), work)
     }
 
     // MARK: Checks

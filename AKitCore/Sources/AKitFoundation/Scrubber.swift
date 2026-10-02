@@ -197,31 +197,73 @@ public enum Scrubber {
 
     /// `--token VALUE`, `--api-key=VALUE`: secrets passed on a command line.
     private static let flagRule = Rule(
-        "cli-flag-secret", #"--(?:token|api-key|apikey|access-token|auth-token|password|secret|client-secret)(?:[ \t]+|=)["']?([^\s"'`]{8,})"#,
-        group: 1, hints: ["--"], options: .caseInsensitive
+        "cli-flag-secret", #"--(?:token|api-key|apikey|access-token|auth-token|password|secret|client-secret)([ \t]+|=)(["']?)([^\s"'`]{8,})"#,
+        group: 3, hints: ["--"], options: .caseInsensitive
     ) { text, match in
-        looksLikeSecretValue(text.substring(with: match.range(at: 1)), quoted: true, passwordLike: true, hashName: false)
+        let value = text.substring(with: match.range(at: 3))
+        if isProseAfterFlag(value, separator: text.substring(with: match.range(at: 1)), quote: text.substring(with: match.range(at: 2))) {
+            return false
+        }
+        return looksLikeSecretValue(value, quoted: true, passwordLike: true, hashName: false)
     }
 
     /// Weak passwords: entropy says nothing about `Summer2024` or `hunter22`, so after a
-    /// password's name (`db_password: …`, `PGPASSWORD=…`, `--password …`) the value is masked
-    /// unless it reads as code. `SecretFilter.masked` runs them too.
+    /// password's name (`db_password: …`, `PGPASSWORD=…`, `--password …`, `IDENTIFIED BY '…'`,
+    /// `mysql -p…`) the value is masked unless it reads as code. `SecretFilter.masked` runs them too.
     static let passwordRules: [Rule] = [
         Rule("password",
-             #"(passw(?:or)?d|passphrase|pwd)[\w.-]{0,20}?["']?[ \t]{0,3}(?::=|=>|=|:)[ \t]{0,3}(["'`]?)([^\s"'`,;&\[\]{}()<>\\]{4,})(["'`]?)"#,
-             group: 3, hints: ["pass", "pwd"], options: .caseInsensitive) { text, match in
-            let quote = text.substring(with: match.range(at: 2))
+             #"(passw(?:or)?d|passphrase|pwd)([\w.-]{0,20}?)(["']?[ \t]{0,3}(?::=|=>|=|:)[ \t]{0,3})(["'`]?)([^\s"'`,;&\[\]{}()<>\\]{4,})(["'`]?)"#,
+             group: 5, hints: ["pass", "pwd"], options: .caseInsensitive) { text, match in
+            let quote = text.substring(with: match.range(at: 4))
             // A quoted value is the whole string: `"Enter password"` is a label, not a password.
-            if !quote.isEmpty, text.substring(with: match.range(at: 4)) != quote { return false }
+            if !quote.isEmpty, text.substring(with: match.range(at: 6)) != quote { return false }
             // `str2bytes(x)` is a call.
-            let end = NSMaxRange(match.range(at: 3))
+            let end = NSMaxRange(match.range(at: 5))
             if quote.isEmpty, end < text.length, text.character(at: end) == UInt16(UInt8(ascii: "(")) { return false }
-            return looksLikePassword(text.substring(with: match.range(at: 3)), quoted: !quote.isEmpty)
+            // `password=letmein` (no space around `=`: a command line, a URL) holds a value;
+            // `password_length: 123456` doesn't hold a PIN, `password: 123456` does.
+            return looksLikePassword(text.substring(with: match.range(at: 5)), quoted: !quote.isEmpty,
+                                     tight: text.substring(with: match.range(at: 3)) == "=", bareName: match.range(at: 2).length == 0)
         },
-        Rule("password", #"--(?:[\w-]*-)?passw(?:or)?d(?:[ \t]+|=)["']?([^\s"'`\[\]]{4,})"#,
-             group: 1, hints: ["--"], options: .caseInsensitive) { text, match in
-            looksLikePassword(text.substring(with: match.range(at: 1)), quoted: true)
+        Rule("password", #"--(?:[\w-]*-)?passw(?:or)?d([ \t]+|=)(["']?)([^\s"'`\[\]]{4,})"#,
+             group: 3, hints: ["--"], options: .caseInsensitive) { text, match in
+            let value = text.substring(with: match.range(at: 3))
+            if isProseAfterFlag(value, separator: text.substring(with: match.range(at: 1)), quote: text.substring(with: match.range(at: 2))) {
+                return false
+            }
+            return looksLikePassword(value, quoted: true)
         },
+        // SQL: `CREATE USER … IDENTIFIED BY 'x'`, `ALTER ROLE … PASSWORD 'x'`.
+        Rule("password", #"\bIDENTIFIED[ \t]+(?:WITH[ \t]+[\w-]+[ \t]+)?BY(?:[ \t]+PASSWORD)?[ \t]+(['"])((?:(?!\1)[^\n]){1,256})\1"#,
+             group: 2, hints: ["identified"], options: .caseInsensitive) { text, match in
+            let value = text.substring(with: match.range(at: 2))
+            return !value.contains(SecretFilter.mask) && looksLikePassword(value, quoted: true)
+        },
+        Rule("password", #"\bPASSWORD[ \t]+'([^'\n]{1,256})'"#, group: 1, hints: ["pass"], options: .caseInsensitive) { text, match in
+            let value = text.substring(with: match.range(at: 1))
+            return !value.contains(SecretFilter.mask) && looksLikePassword(value, quoted: true)
+        },
+        // `mysql -pSecret`: the password is glued to `-p`. Only after mysql's own commands, where
+        // `-p` means a password; elsewhere short flags are too common to guess.
+        Rule("password", #"\bmysql(?:dump|admin)?\b[^\n|;&]{0,200}?[ \t]-p(["']?)([^\s"'`\[]{1,128})\1"#,
+             group: 2, hints: ["mysql"]) { text, match in
+            let value = text.substring(with: match.range(at: 2))
+            return !["$", "%", "<"].contains(where: value.hasPrefix)
+        },
+    ]
+
+    /// `--password flag`, `--password option`: a plain word after a flag and a space, in prose
+    /// about the flag. Quoted or after `=` it is a value.
+    static func isProseAfterFlag(_ value: String, separator: String, quote: String) -> Bool {
+        guard separator != "=", quote.isEmpty else { return false }
+        return proseWords.contains(value.lowercased().trimmingCharacters(in: .punctuationCharacters))
+    }
+
+    private static let proseWords: Set<String> = [
+        "flag", "flags", "option", "options", "argument", "arguments", "args", "param", "params", "parameter", "parameters",
+        "switch", "field", "prompt", "prompts", "value", "values", "input", "with", "without", "from", "that", "this", "which",
+        "instead", "only", "when", "then", "here", "there", "also", "will", "must", "should", "would", "could", "does", "doesn",
+        "takes", "expects", "accepts", "requires", "reads", "sets", "works", "first", "again", "later", "above", "below",
     ]
 
     /// The identifier just before a keyword match (`commit_` of `commit_sha_key`), up to 32 chars.
@@ -390,7 +432,8 @@ public enum Scrubber {
     static func looksLikeSecretValue(_ value: String, quoted: Bool, passwordLike: Bool, hashName: Bool) -> Bool {
         if isHexLike(value) { return value.count >= 20 && !hashName }
         if value.allSatisfy({ $0.isNumber || $0 == "." }) { return false }
-        for prefix in ["$", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
+        // `<PASSWORD>` is a placeholder.
+        for prefix in ["$", "<", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
         if value.contains("://") { return false }
         if !passwordLike, value.utf8.allSatisfy({ kind($0) == 0 || "-_.:/".utf8.contains($0) }) { return false }
         if !quoted {
@@ -402,18 +445,25 @@ public enum Scrubber {
 
     /// A value after a password's name, however weak, unless it reads as code: a type or
     /// keyword (`string`, `null`, `Int32`), a variable or placeholder (`$PW`, `${PW}`, `%s`,
-    /// `****`), a path, a dotted name (`os.environ`), a number. Unquoted, it needs a letter and
-    /// a digit, as weak passwords have (`Summer2024`); a quoted one is a string literal.
-    static func looksLikePassword(_ value: String, quoted: Bool) -> Bool {
-        for prefix in ["$", "%", "=", ">", "-", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
+    /// `****`, `<PASSWORD>`, `input2`), a path, a dotted name (`os.environ`), a number. Unquoted,
+    /// it needs a letter and a digit, as weak passwords have (`Summer2024`); a quoted one is a
+    /// string literal.
+    /// `tight`: right after `=` with no space (`password=letmein`), where a word is a value too.
+    /// `bareName`: the name is just the password's (`password: 123456`, not `password_length:`),
+    /// so six or more digits are a PIN.
+    static func looksLikePassword(_ value: String, quoted: Bool, tight: Bool = false, bareName: Bool = false) -> Bool {
+        for prefix in ["$", "%", "=", ">", "<", "-", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
         if value.contains("://") || Set(value).count == 1 { return false }
-        if value.allSatisfy({ $0.isNumber || $0 == "." }) { return false }
+        if value.allSatisfy({ $0.isNumber || $0 == "." }) { return bareName && value.count >= 6 && value.allSatisfy(\.isNumber) }
         let lower = value.lowercased()
         if codeWords.contains(lower) || lower.range(of: #"^(u?int|float|double|bytes?|char|varchar)[0-9]*$"#, options: .regularExpression) != nil {
             return false
         }
         if !quoted {
-            guard hasDigit(value), value.contains(where: \.isLetter), !isDottedIdentifier(value) else { return false }
+            // `password = input2` names a variable.
+            guard value.contains(where: \.isLetter), hasDigit(value) || tight, !isDottedIdentifier(value),
+                  lower.range(of: #"^(input|value|val|arg|param|field|var|tmp|temp|text|entry|data|item|res|result|str|new|old|user|form)[0-9]{0,2}$"#,
+                              options: .regularExpression) == nil else { return false }
         }
         return true
     }
