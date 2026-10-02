@@ -8,44 +8,63 @@ import SwiftUI
 struct ControlComparisonView: View {
     @Environment(AppModel.self) private var model
     let tasks: [ControlTask]
+    /// The comparison of the cells it was computed for: the bootstrap runs off the main
+    /// thread, once per change of the finished cells.
+    @State private var computed: (cells: [ControlComparison.Cell], comparison: ControlComparison)?
 
     var body: some View {
         let ids = Set(tasks.map(\.id))
         let runs = model.labRuns.filter { $0.spec.kind == .control && $0.spec.controlTask.map(ids.contains) == true }
         let open = runs.filter { $0.status == .queued || $0.status == .running }.count
-        let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs))
+        let cells = ControlComparison.Cell.of(runs)
         VStack(alignment: .leading, spacing: 12) {
             Text(tasks.count == 1 ? "Setups compared" : "Setups compared over \(tasks.count) tasks").font(.title3.bold())
-            if comparison.rows.isEmpty {
+            if let computed, computed.cells == cells {
+                results(computed.comparison, open: open)
+            } else if cells.isEmpty {
                 Text("No finished cells yet." + (open > 0 ? " \(open) queued or running." : " Run Cells… queues them in the Lab."))
                     .foregroundStyle(.secondary)
             } else {
-                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 8) {
-                    GridRow {
-                        Text("Setup")
-                        Text("pass@1").help("The chance one run passes: the mean of the tasks' pass rates")
-                        Text("pass^k").help("The share of tasks where all k runs passed")
-                        Text("Cells")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    Divider()
-                    ForEach(comparison.rows, id: \.setup) { row in
-                        setupRow(row)
-                    }
-                }
-                .font(.callout)
-                ForEach(comparison.paired, id: \.variant) { pair in
-                    PairedVerdict(pair: pair)
-                }
-                if open > 0 {
-                    Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
-                }
-                Text("Helped: at least 95% of the bootstrap over tasks on improvement, with 3+ repeats of every task and 15+ cells a side. Fixed before the run.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                ProgressView().controlSize(.small)
             }
+        }
+        .task(id: cells) {
+            guard computed?.cells != cells else { return }
+            let comparison = await Task.detached { ControlComparison.compare(cells) }.value
+            computed = (cells, comparison)
+        }
+    }
+
+    @ViewBuilder private func results(_ comparison: ControlComparison, open: Int) -> some View {
+        if comparison.rows.isEmpty {
+            Text("No finished cells yet." + (open > 0 ? " \(open) queued or running." : " Run Cells… queues them in the Lab."))
+                .foregroundStyle(.secondary)
+        } else {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    Text("Setup")
+                    Text("pass@1").help("The chance one run passes: the mean of the tasks' pass rates")
+                    Text("pass^k").help("The share of tasks where all k runs passed")
+                    Text("Cells")
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                Divider()
+                ForEach(comparison.rows, id: \.setup) { row in
+                    setupRow(row)
+                }
+            }
+            .font(.callout)
+            ForEach(comparison.paired, id: \.variant) { pair in
+                PairedVerdict(pair: pair)
+            }
+            if open > 0 {
+                Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
+            }
+            Text("Helped: at least 95% of the bootstrap over tasks on improvement, with 3+ repeats of every task and 15+ cells a side. Fixed before the run.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

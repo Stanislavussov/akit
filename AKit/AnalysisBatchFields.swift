@@ -23,6 +23,8 @@ struct AnalysisBatchDraft {
     /// Empty: the notes model matches too.
     var matchingModel = ""
     var language: LabLanguage = .english
+    /// How many sessions the filter can sample, once counted; nil while counting.
+    var sampled: Int?
 
     var filter: Sampling.Filter {
         let start = Calendar.current.startOfDay(for: from)
@@ -103,7 +105,7 @@ struct AnalysisBatchFields: View {
                 ForEach(LabLanguage.allCases, id: \.self) { Text($0.name).tag($0) }
             }
             if !estimate.isEmpty {
-                Label(estimate, systemImage: "dollarsign.circle")
+                Label(estimate, systemImage: draft.sampled == 0 ? "exclamationmark.triangle" : "dollarsign.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -116,10 +118,16 @@ struct AnalysisBatchFields: View {
             var agent = draft.notesAgent ?? LabRuns.defaultAgent(.claudeCode, env: env)
             agent.mode = .call
             let automatic = draft.automatic
-            estimate = await Task.detached {
-                Batches.estimateText(sessions: Batches.sampleSize(filter: filter, size: size, env: env), agent: agent, env: env)
-                    + (automatic ? " With your Claude Code model; the reviewer is picked when the sample is drawn." : "")
+            draft.sampled = nil
+            let (sampled, text) = await Task.detached {
+                let sampled = Batches.sampleSize(filter: filter, size: size, env: env)
+                return (sampled, Batches.estimateText(sessions: sampled, agent: agent, env: env)
+                    + (automatic ? " With your Claude Code model; the reviewer is picked when the sample is drawn." : ""))
             }.value
+            draft.sampled = sampled
+            estimate = sampled == 0
+                ? "No sessions of the index match: each needs \(Sampling.minimumRequests)+ requests, in the project and period chosen. Import sessions (akit sessions import) or widen the filter."
+                : text
         }
         .task {
             let env = HarnessEnvironment.current
