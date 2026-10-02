@@ -1,4 +1,4 @@
-import Darwin
+import AKitLab
 import Foundation
 
 /// The analysis folder's JSON files are written by the app, by `akit` in a terminal tab and
@@ -17,15 +17,7 @@ enum JSONFile {
 
     static func locked<R>(_ url: URL, _ body: () throws -> R) throws -> R {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let lock = url.appendingPathExtension("lock")
-        let descriptor = open(lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard descriptor >= 0 else { throw Failure(message: "Can't open \(lock.path).") }
-        defer { close(descriptor) }
-        while flock(descriptor, LOCK_EX) != 0 {
-            guard errno == EINTR else { throw Failure(message: "Can't lock \(lock.path).") }
-        }
-        defer { flock(descriptor, LOCK_UN) }
-        return try body()
+        return try FileLock.locked(url.appendingPathExtension("lock"), body)
     }
 
     static func write<T: Encodable>(_ value: T, to url: URL) throws {

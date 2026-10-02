@@ -30,10 +30,6 @@ public struct BootstrapReservations: Sendable {
         (try? Data(contentsOf: file)).flatMap { try? AnalysisJSON.decoder.decode([Entry].self, from: $0) } ?? []
     }
 
-    public func save(_ entries: [Entry]) throws {
-        try JSONFile.write(entries, to: file)
-    }
-
     /// Changes the reservations as they are on disk now, under their lock.
     public func update(_ change: (inout [Entry]) throws -> Void) throws {
         try JSONFile.update(file, empty: [Entry]()) { try change(&$0) }

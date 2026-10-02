@@ -165,6 +165,53 @@ struct SendPolicyTests {
         #expect(LabSettings.load(env: env) == changed)
     }
 
+    @Test func anEditOnACopyKeepsChangesMadeOnDiskMeanwhile() throws {
+        let work = SendDestination(harness: .claudeCode, provider: "anthropic", account: "me@work.example", org: "Work")
+        try LabSettings(allowedDestinations: [claudeAccount, work], piAccounts: [PiAccount(provider: "github-copilot", account: "me", org: "old")])
+            .save(env: env)
+        // The app's form loads its copy; then `akit lab policy` changes the file.
+        let old = LabSettings.load(env: env)
+        try LabSettings.update(env: env) { settings in
+            settings.allowedDestinations.removeAll { $0 == work }
+            settings.allowedDestinations.append(copilot)
+            settings.monthlyLimit = 5
+        }
+        // The form removes one entry, edits the Pi account and picks a language.
+        var new = old
+        new.allowedDestinations.removeAll { $0 == claudeAccount }
+        new.piAccounts = [PiAccount(provider: "github-copilot", account: "me", org: "acme")]
+        new.reportLanguage = .russian
+        let saved = try LabSettings.update(env: env) { $0.apply(from: old, to: new) }
+        #expect(saved.allowedDestinations == [copilot] && saved.monthlyLimit == 5 && saved.reportLanguage == .russian)
+        #expect(saved.piAccounts == [PiAccount(provider: "github-copilot", account: "me", org: "acme")])
+        #expect(LabSettings.load(env: env) == saved)
+    }
+
+    @Test func concurrentUpdatesAreNotLost() throws {
+        let env = env
+        DispatchQueue.concurrentPerform(iterations: 8) { index in
+            _ = try? LabSettings.update(env: env) {
+                $0.allowedDestinations.append(SendDestination(harness: .pi, provider: "p\(index)", account: "me", org: "o"))
+            }
+        }
+        #expect(Set(LabSettings.load(env: env).allowedDestinations.map(\.provider)) == Set((0..<8).map { "p\($0)" }))
+    }
+
+    @Test func anUnreadableSettingsFileIsNeverReplaced() throws {
+        try write(".akit/lab/settings.json", "not json")
+        #expect(throws: LabStore.Failure.self) {
+            try LabSettings.update(env: env) { $0.monthlyLimit = 1 }
+        }
+        #expect(try String(contentsOf: home.appending(path: ".akit/lab/settings.json"), encoding: .utf8) == "not json")
+        // A field that doesn't decode would be dropped by an edit: no limit at all after it.
+        let unreadableLimit = #"{"monthlyLimit": "ten"}"#
+        try write(".akit/lab/settings.json", unreadableLimit)
+        #expect(throws: LabStore.Failure.self) {
+            try LabSettings.update(env: env) { $0.allowedDestinations = [] }
+        }
+        #expect(try String(contentsOf: home.appending(path: ".akit/lab/settings.json"), encoding: .utf8) == unreadableLimit)
+    }
+
     // MARK: One model call
 
     /// A fake `claude` that answers `-p` with a JSON result and records its stdin.

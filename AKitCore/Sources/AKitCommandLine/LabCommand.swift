@@ -37,14 +37,19 @@ extension AKitCLI {
                                           default to ~/.claude/settings.json (else opus, high).
                                           --keep keeps the clone; otherwise it goes to the Trash
           akit lab new analysis [--project ID|DIR] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--size N]
-                              [--harness claude-code|pi] [--model M] [--effort E] [--matching-model M]
-                              [--language en|ru|cs] [--env orca|herdr|background] [--no-start] [--yes]
+                              [--session-harness claude-code|pi] [--harness claude-code|pi] [--model M]
+                              [--effort E] [--matching-model M] [--language en|ru|cs]
+                              [--env orca|herdr|background] [--no-start] [--yes]
                                           Error analysis over a sample of N (20) sessions of the index
-                                          (5+ requests each): a random quarter, the rest stratified by
-                                          cheap signals, harness and model. Per session notes, verifier
-                                          and matching, 2 at a time; clustering at the end. Sends notes
-                                          and transcripts under the sending policy. Shows how many
-                                          sessions and the ≈ cost first; --yes queues it
+                                          (5+ requests each; --session-harness: only those that harness
+                                          ran): a random quarter, the rest stratified by cheap signals,
+                                          harness and model. Per session notes, verifier and matching,
+                                          2 at a time; clustering at the end. Sends notes and
+                                          transcripts under the sending policy. Without --harness/--model
+                                          the reviewer is automatic, and sessions it may not get are left
+                                          out of the sample; a reviewer you pick keeps them, and they
+                                          fail. Shows the sessions, the reviewer, the ≈ cost and how many
+                                          are left out or refused first; --yes queues it
           akit lab task COMMIT [--repo DIR]
                                           Check a commit as a task now: its tests on the parent and on
                                           the commit (fail-to-pass, pass-to-pass). A replay does this
@@ -120,6 +125,14 @@ extension AKitCLI {
             let from = try args.value("--from").map { try day($0, "--from") }
             let to = try args.value("--to").map { try day($0, "--to").addingTimeInterval(86_399) }
             let size = try positiveNumber(args.value("--size"), "--size") ?? 20
+            // Which harness ran the sessions; --harness picks the reviewer.
+            let sessionHarness = try args.value("--session-harness").map { text -> String in
+                switch text {
+                case "claude-code", "claude": return "claude"
+                case "pi": return "pi"
+                default: throw Failure(message: "--session-harness is claude-code or pi.")
+                }
+            }
             let matchingModel = args.value("--matching-model")
             let yes = args.flag("--yes")
             try args.finish()
@@ -150,23 +163,23 @@ extension AKitCLI {
             let projectFilter = project.map { text -> String in
                 text.contains("/") || text.hasPrefix("~") ? resolve(text, cwd: cwd, env: env).path : text
             }
-            // Before any model work: how many sessions and what it would cost.
-            let filter = Sampling.Filter(project: projectFilter, from: from, to: to)
-            let estimateAgent = agent ?? { var claude = LabRuns.defaultAgent(.claudeCode, env: env); claude.mode = .call; return claude }()
-            let sessions = Batches.sampleSize(filter: filter, size: size, env: env)
-            guard sessions > 0 else {
+            // Before any model work: how many sessions, who reviews them, what it would cost, and
+            // the sessions left out or refused under the sending policy.
+            let filter = Sampling.Filter(project: projectFilter, from: from, to: to, harness: sessionHarness)
+            guard Batches.sampleSize(filter: filter, size: size, env: env) > 0 else {
                 throw Failure(message: "No sessions match (at least \(Sampling.minimumRequests) requests each). Run akit sessions import first?")
-            }
-            out(Batches.estimateText(sessions: sessions, agent: estimateAgent, env: env)
-                + (agent == nil ? " (with your Claude Code model; the reviewer is picked when the sample is drawn)" : ""))
-            guard yes else {
-                out("Run it again with --yes to queue it.")
-                return 0
             }
             let run: LabRun
             do {
-                run = try await Batches.new(filter: filter, size: size, notesAgent: agent,
-                                            matchingAgent: matching, language: language, environment: environment, akit: ownExecutable, env: env)
+                let sample = try await Batches.draw(filter: filter, size: size, notesAgent: agent, env: env)
+                out(Batches.estimateText(sessions: sample.picks.count, agent: sample.notesAgent, env: env) + " Notes by \(sample.notesAgent.label).")
+                if let warning = sample.warning { out("Warning: \(warning)") }
+                guard yes else {
+                    out("Run it again with --yes to queue it\(sample.refused > 0 ? " anyway" : ""); the sample is drawn again then.")
+                    return 0
+                }
+                run = try await Batches.queue(sample, matchingAgent: matching, language: language, environment: environment,
+                                              akit: ownExecutable, env: env)
             } catch {
                 throw Failure(message: error.localizedDescription)
             }
@@ -319,7 +332,7 @@ extension AKitCLI {
 
     private static func policy(_ args: inout Arguments, json: Bool, model: String?, env: HarnessEnvironment,
                                out: (String) -> Void) async throws -> Int32 {
-        var settings = LabSettings.load(env: env)
+        let settings = LabSettings.load(env: env)
         func harness(_ text: String?) throws -> LabHarness {
             guard let text, let harness = LabHarness(rawValue: text) else { throw Failure(message: "HARNESS is claude-code or pi.") }
             return harness
@@ -368,37 +381,41 @@ extension AKitCLI {
         case "allow":
             let entry = try destination()
             try args.finish()
-            if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
-            try settings.save(env: env)
+            try LabSettings.update(env: env) { settings in
+                if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
+            }
             out("Allowed \(entry.label).")
         case "remove":
             let entry = try destination()
             try args.finish()
-            let before = settings.allowedDestinations.count
-            settings.allowedDestinations.removeAll { $0.matches(entry) }
-            guard settings.allowedDestinations.count < before else { throw Failure(message: "\(entry.label) isn't on the list.") }
-            try settings.save(env: env)
+            try LabSettings.update(env: env) { settings in
+                let before = settings.allowedDestinations.count
+                settings.allowedDestinations.removeAll { $0.matches(entry) }
+                guard settings.allowedDestinations.count < before else { throw Failure(message: "\(entry.label) isn't on the list.") }
+            }
             out("Removed \(entry.label).")
         case "pi-account":
             guard let provider = args.positional(), let account = args.positional(), let org = args.positional() else {
                 throw Failure(message: "Give PROVIDER ACCOUNT ORG.")
             }
             try args.finish()
-            settings.piAccounts.removeAll { $0.provider.caseInsensitiveCompare(provider) == .orderedSame }
-            settings.piAccounts.append(PiAccount(provider: provider, account: account, org: org))
-            try settings.save(env: env)
+            try LabSettings.update(env: env) { settings in
+                settings.piAccounts.removeAll { $0.provider.caseInsensitiveCompare(provider) == .orderedSame }
+                settings.piAccounts.append(PiAccount(provider: provider, account: account, org: org))
+            }
             out("Pi \(provider): \(account) · \(org).")
         case "limit":
             guard let text = args.positional() else { throw Failure(message: "Give DOLLARS or none.") }
             try args.finish()
+            let limit: Double?
             if text == "none" {
-                settings.monthlyLimit = nil
+                limit = nil
             } else {
                 guard let value = Double(text), value >= 0 else { throw Failure(message: "The limit is a number of dollars, or none.") }
-                settings.monthlyLimit = value
+                limit = value
             }
-            try settings.save(env: env)
-            out("Monthly limit: " + (settings.monthlyLimit.map { String(format: "$%.2f", $0) } ?? "none") + ".")
+            try LabSettings.update(env: env) { $0.monthlyLimit = limit }
+            out("Monthly limit: " + (limit.map { String(format: "$%.2f", $0) } ?? "none") + ".")
         case let other:
             throw Failure(message: "Unknown “akit lab policy \(other ?? "")”. Run akit lab --help.")
         }

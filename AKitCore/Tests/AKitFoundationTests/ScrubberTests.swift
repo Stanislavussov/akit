@@ -285,9 +285,102 @@ struct ScrubberTests {
 
     @Test func secretFilterRunsToo() {
         // Low entropy for the generic rule, not at a line start for .env: SecretFilter catches it.
-        let result = scrub("run with DB_PASSWORD=hunter2hunter2 now")
-        #expect(result.text == "run with DB_PASSWORD=\(mask) now")
+        let result = scrub("run with API_TOKEN=hunter2hunter2 now")
+        #expect(result.text == "run with API_TOKEN=\(mask) now")
         #expect(result.counts["secret-filter"] == 1)
+    }
+
+    @Test func weakPasswordsAreMasked() {
+        let cases: [(String, String)] = [
+            ("db_password: " + "Summer2024", "db_password: \(mask)"),
+            ("password=" + "Welcome1!", "password=\(mask)"),
+            ("mysql -u root --password " + "hunter22" + " app", "mysql -u root --password \(mask) app"),
+            ("mysql --password=" + "hunter22", "mysql --password=\(mask)"),
+            ("password: " + "abc1234", "password: \(mask)"),
+            ("env PGPASSWORD=" + "Summer2024" + " psql -h db", "env PGPASSWORD=\(mask) psql -h db"),
+            ("env MYSQL_PWD=" + "abc1234" + " mysql", "env MYSQL_PWD=\(mask) mysql"),
+            (#"{"password": ""# + "letmein" + #""}"#, #"{"password": "\#(mask)"}"#),
+            ("let passwd = '" + "hunter" + "'", "let passwd = '\(mask)'"),
+            ("curl 'https://x.example/login?user=me&password=" + "pass1234" + "'", "curl 'https://x.example/login?user=me&password=\(mask)'"),
+            ("deploy --db-password " + "s3cret", "deploy --db-password \(mask)"),
+        ]
+        for (text, expected) in cases {
+            let result = scrub(text)
+            #expect(result.text == expected, "\(text) → \(result.text)")
+            #expect(result.counts.values.reduce(0, +) == 1, "\(text): \(result.counts)")
+        }
+    }
+
+    @Test func passwordNamesFollowedByCodeStay() {
+        for text in [
+            "password: string", "password: String", "password?: string;", "var password: String?", "password: str = None",
+            "password = None", "password: null", "\"password\": null", "password: undefined", "password: true",
+            "password: ${DB_PASSWORD}", "password: $DB_PASSWORD", "password = os.environ[\"DB_PASSWORD\"]",
+            "password = getpass()", "password = str2bytes(raw)", "password: z.string().min(8)", "password_min_length: 12",
+            "password: Int32", "password: user.password2", "password: \"********\"", "password: <your-password>",
+            "label: \"Password\", hint = \"Enter password\"", "docker login --password-stdin", "--password-file /run/secrets/db",
+            "if password == confirm2 {", "password: {{ .Values.dbPassword }}", "pwd: /Users/me/Projects/app",
+            "The password was wrong; try again with the new one.",
+        ] {
+            #expect(scrub(text).text == text, "\(text) → \(scrub(text).text)")
+        }
+    }
+
+    @Test func passwordEdgesInProseCodeSqlAndMysql() {
+        // Prose about a flag, placeholders and variables stay, on screen too.
+        for text in [
+            "Pass the --password flag to log in.", "The --password option is required.", "Use --password <PASSWORD> here.",
+            "the --password argument isn't read", "password = input2", "password_timeout: 300000", "mysql -u root -p app",
+            "mysql -P 3306 -h db", "CREATE USER 'app'@'%' IDENTIFIED BY '<password>';", "ls -pSecret",
+            "User(email=email, password=hashed_password)", "login(user, pw=new_pw)", "The --password defaults to empty.",
+            "find /var/lib/mysql -name '*.ibd' -print", "find . -path ./mysql -prune -o -type f",
+            "find /srv -name mysql -prune",
+        ] {
+            #expect(scrub(text).text == text, "\(text) → \(scrub(text).text)")
+            #expect(SecretFilter.masked(text) == text, "\(text) → \(SecretFilter.masked(text))")
+        }
+        let cases: [(String, String)] = [
+            ("password: " + "123456", "password: \(mask)"),
+            ("curl -d user=me&password=" + "letmein" + " https://x.example", "curl -d user=me&password=\(mask) https://x.example"),
+            ("CREATE USER 'app'@'%' IDENTIFIED BY '" + "hunter" + "';", "CREATE USER 'app'@'%' IDENTIFIED BY '\(mask)';"),
+            ("ALTER USER app IDENTIFIED WITH mysql_native_password BY \"" + "s3cr et" + "\"", "ALTER USER app IDENTIFIED WITH mysql_native_password BY \"\(mask)\""),
+            ("ALTER ROLE app WITH LOGIN PASSWORD '" + "letmein" + "';", "ALTER ROLE app WITH LOGIN PASSWORD '\(mask)';"),
+            ("mysql -u root -p" + "Secret" + " app", "mysql -u root -p\(mask) app"),
+            ("mysqldump -uroot -p'" + "Secret" + "' app > dump.sql", "mysqldump -uroot -p'\(mask)' app > dump.sql"),
+            ("deploy --password " + "letmein", "deploy --password \(mask)"),
+        ]
+        for (text, expected) in cases {
+            let result = scrub(text)
+            #expect(result.text == expected, "\(text) → \(result.text)")
+            #expect(result.counts.values.reduce(0, +) == 1, "\(text): \(result.counts)")
+            #expect(SecretFilter.masked(text) == expected, "\(text) → \(SecretFilter.masked(text))")
+            #expect(scrub(result.text).text == result.text && scrub(result.text).counts.isEmpty, "\(result.text) changes again")
+        }
+    }
+
+    @Test func scrubbingScrubbedTextChangesNothing() {
+        let own = Scrubber.OwnPatterns(hosts: [#"[a-z0-9.-]+\.corp\.example\.com"#], extra: [#"ACME-[0-9]{4}"#])
+        let twilio = "S" + "K" + "3f9ac2b1e8d740a65b1c9d2e7f30a1b4"
+        let texts = [
+            // An entropy-masked token next to a Twilio-shaped id: the mask's "secret" isn't a key word.
+            "blob q8Xv2LmN4pRt7Wz" + "K3yB9cD6fH1jG5sA0 \(twilio) end",
+            "gh" + "p_" + body + " and xo" + "xb-1234567890-" + body,
+            "connect postgres://admin:" + "s3cr3tP4ss" + "@db.corp.example.com:5432/app",
+            "Authorization: Bearer abc" + "DEF123ghi456JKL789\nBearer abc" + "DEF123ghi456JKL789",
+            "api_key = \"q8Xv2LmN" + "4pRt7Wz\"\nDB_PASSWORD: " + "Summer2024" + "\n--password " + "hunter22",
+            "DATABASE_URL=postgres://localhost/app\nAPP_NAME=storefront\nexport STRIPE_KEY=whatever",
+            "ssh build01.corp.example.com, mail jane.doe@example.org about ACME-1234",
+            "run with API_TOKEN=hunter2hunter2 now; {\"password\": \"" + "letmein1" + "\"}",
+            "-----BEGIN " + "RSA PRIVATE KEY-----\n" + body + body + "\n-----END RSA PRIVATE KEY-----",
+            "cookie: ey" + "JhbGciOiJIUzI1NiJ9" + ".ey" + "JzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        ]
+        #expect(scrub(texts[0]).text == "blob \(mask) \(twilio) end")
+        for text in texts {
+            let once = scrub(text, own: own).text
+            let twice = scrub(once, own: own)
+            #expect(twice.text == once, "\(text)\n→ \(once)\n→ \(twice.text)")
+            #expect(SecretFilter.masked(once) == once, "\(once)")
+        }
     }
 
     @Test func countsAddUpPerRule() {
@@ -368,7 +461,7 @@ struct ScrubberTests {
         for text in ["commit_sha: \(hex32)", "checksum_key = \(hex32)", "HEAD is \(hex32)", "request \(uuid) done"] {
             #expect(Scrubber.scrub(text).text == text, "\(text)")
         }
-        #expect(Scrubber.version == 3)
+        #expect(Scrubber.version == 4)
     }
 
     @Test func hashNamesMatchWholeParts() {

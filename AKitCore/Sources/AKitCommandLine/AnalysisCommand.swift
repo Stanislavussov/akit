@@ -44,6 +44,7 @@ extension AKitCLI {
         case "notes":
             let session = args.positional()
             try args.finish()
+            try options.refuseModelFlags("notes")
             let store = NotesStore(env: env)
             guard let session else {
                 let all = store.all().sorted { $0.createdAt > $1.createdAt }
@@ -61,6 +62,7 @@ extension AKitCLI {
             return 0
         case "signals":
             try args.finish()
+            try options.refuseModelFlags("signals")
             let result = try SignalScanner.refresh(env: env)
             guard result.total > 0 else { throw Failure(message: "The session index is empty. Run akit sessions import first.") }
             guard let database = try AnalysisIndex.open(env: env) else { return 0 }
@@ -80,13 +82,18 @@ extension AKitCLI {
             var ids: [String] = []
             while let id = args.positional() { ids.append(id) }
             try args.finish()
+            try options.refuseModelFlags("check")
             let checks = try ids.isEmpty ? CodeChecks.all : ids.map { id in
                 guard let check = CodeChecks.check(for: id) else {
                     throw Failure(message: "No code check for \(id). Code checks: \(CodeChecks.all.map(\.modeID).joined(separator: ", ")).")
                 }
                 return check
             }
-            let results = try CheckRunner.run(checks, env: env)
+            // With the modes' versions, as the import and batches run them: a run without
+            // them would make the next of those start the results over.
+            let modes = FileManager.default.fileExists(atPath: AnalysisPaths(env: env).modesFile.path) ? try await ModeStore(env: env).list() : []
+            let versions = Dictionary(modes.filter(\.isCurrent).map { ($0.id, $0.version) }, uniquingKeysWith: { first, _ in first })
+            let results = try CheckRunner.run(checks, modeVersions: versions, env: env)
             if json { out(try labJSON(results)); return 0 }
             for (check, result) in zip(checks, results) {
                 let rate = result.rate()
@@ -98,7 +105,7 @@ extension AKitCLI {
             }
             return 0
         case "control":
-            return try await analysisControl(&args, json: json, env: env, cwd: cwd, out: out, trash: trash)
+            return try await analysisControl(&args, options: options, env: env, cwd: cwd, out: out, trash: trash)
         case let other:
             throw Failure(message: "Unknown “akit analysis \(other ?? "")”. Run akit analysis --help.")
         }
@@ -110,7 +117,7 @@ extension AKitCLI {
         let path = resolve(text, cwd: cwd, env: env)
         // A Pi session log: its key comes from the file's header.
         if path.pathExtension == "jsonl", FileManager.default.fileExists(atPath: path.path),
-           let key = SessionKey.of(NotesPipeline.Target(harness: path.path.contains("/.pi/") ? .pi : .claudeCode, file: path).summary) {
+           let key = SessionKey.of(NotesPipeline.Target(harness: LabPaths.harness(ofTranscript: path), file: path).summary) {
             return key.description
         }
         let file = try transcript(text, cwd: cwd, env: env)
@@ -137,5 +144,17 @@ extension AKitCLI {
         }
         for (index, advice) in notes.advice.enumerated() { lines.append("\(index + 1). \(advice.title) (\(advice.noteIDs.joined(separator: ", ")))") }
         return lines.joined(separator: "\n")
+    }
+}
+
+extension AKitCLI.AnalysisOptions {
+    /// A command that sends nothing refuses `--harness`, `--model`, `--effort` and `--yes`
+    /// rather than ignoring them, so nobody thinks they took effect.
+    func refuseModelFlags(_ command: String) throws {
+        let given = [("--harness", harness != nil), ("--model", model != nil), ("--effort", effort != nil), ("--yes", yes)]
+            .filter(\.1).map(\.0)
+        guard given.isEmpty else {
+            throw AKitCLI.Failure(message: "akit analysis \(command) sends nothing to a model; leave out \(given.joined(separator: ", ")).")
+        }
     }
 }

@@ -59,8 +59,9 @@ modes and review tough calls, but they don't label every session.
 
 ## Sampling (batch)
 
-The user picks a project and a period. AKit takes up to N sessions (default 20) from the
-session index; sessions with fewer than 5 requests are skipped.
+The user picks a project, a period and optionally the harness that ran the sessions
+(Claude Code or Pi). AKit takes up to N sessions (default 20) from the session index;
+sessions with fewer than 5 requests are skipped.
 
 - **Cheap signals.** The session index stores signals computed by code, no model call:
   - user interruptions;
@@ -94,6 +95,11 @@ transcript (see [Sending policy](#sending-policy)), and evidence is never cut aw
   The target is an input under 272K tokens; the budget is per model: 360K chars (about
   90K tokens) by default, 1M chars for 1M-token windows. `EvidenceDigest` (AKitLab)
   replaced the earlier digest of `lab.md`.
+- **Over budget.** User turns and the stubs of failed tool results are never cut. When
+  they alone pass the model's budget, the session isn't sent: the notes call and the judge
+  refuse it with a clear error, and nothing goes out. In a batch such a session is "too
+  long for a digest": counted apart from failures, never retried, and named in the
+  coverage. A judge that refuses one doesn't fail the session's notes.
 - **No `get_step(n)` tool** (decided): the call stays tool-less, as in `lab.md`, so an
   injected transcript can't make it do anything. The [verifier](#verifier-second-pass)
   checks every quote in code against the full scrubbed transcript.
@@ -133,14 +139,12 @@ One structured call per session, fields in this order:
 4. **Paragraph.** 3–5 sentences, written from the transcript, not only from the notes.
 5. **Up to 3 improvements.** Generic advice as today (`lab.md`). Each cites the ids of the
    notes it rests on; advice whose notes are all rejected by the verifier is dropped.
-   Advice that rests on a tool's behaviour ("the tool returned garbage") says whether
-   that was checked by repeating the step. A one-call review never repeats steps, so
-   there it never was.
 
 A session with no problems is stored as "checked, no failures"; it counts in denominators.
 
-Re-reviewing the same session replaces its notes; it doesn't add to them. Whether a step
-can be skipped is decided by the [done key](#done-key).
+Re-reviewing the same session replaces its notes; it doesn't add to them. The user's route
+verdicts carry over to the new notes with the same step and the same quote (normalized).
+Whether a step can be skipped is decided by the [done key](#done-key).
 
 ### Verifier (second pass)
 
@@ -168,16 +172,26 @@ read the transcript. Recall is the main risk, so it is measured.
 
 1. **Choosing sessions.** At least 30 sessions. The agent picks them: representatives of
    clusters of the session index plus random ones. Picked sessions are marked
-   `reserved_for_bootstrap` at once and excluded from ad-hoc reviews and batches until the
-   user has labeled them. Otherwise the labeling would no longer be blind.
+   `reserved_for_bootstrap` at once. They are excluded from ad-hoc reviews until the user
+   has labeled them, otherwise the labeling would no longer be blind, and from batches for
+   good: a session can't be both the yardstick of the notes model and part of a sample.
 2. **Labeling.** The UI shows the scrubbed transcript; the user writes notes (`source: human`) with
    only: description, step, quote, the session's outcome, and the first point of deviation
    (`decisive_step`, and `observed_step` if it differs). Fault layer and root/symptom are
-   not asked of the human.
+   not asked of the human. Human note ids (`h1`, `h2`, …) are stable: a saved note keeps
+   its id when the label is reopened and edited, a new note gets a number never used in
+   that label, and deleting a note drops its mapping and its pairs.
 3. **Comparison.** The model's notes for the same sessions are then compared with the
-   user's. The model proposes pairs of notes; the user confirms them.
-   - **Recall** is the share of the user's problems the model found.
-   - **Precision** is the share of the model's notes the user agrees with.
+   user's. The model proposes pairs of notes; the user confirms them. Model note ids
+   (`n1`, …) are numbered afresh by every review, so a pairing records the notes done key
+   it was made on. A new review of the session moves the pairing and the user's spot
+   checks to the same notes (same step and quote, as for the user's route verdicts) and
+   drops what was about notes that are gone; metrics ignore a pairing made on other notes.
+   - **Recall** is the share of the user's problems the model found and the verifier
+     kept: confirmed pairs whose model note was accepted, the same notes that precision,
+     the pool and the reports use. Recall before the verifier (pairs with any model note)
+     is shown next to it: the difference is what the verifier's rejections cost.
+   - **Precision** is the share of the model's accepted notes the user agrees with.
    - **Deviation steps**: phase agreement and step agreement within ±3 steps are measured
      separately. The [transition matrix](#transition-matrix) uses phases only, and only
      when phase agreement is high enough.
@@ -187,11 +201,16 @@ read the transcript. Recall is the main risk, so it is measured.
    join them as candidates. The user confirms or edits them.
 5. **Mapping.** The user maps their own bootstrap notes to the confirmed modes by hand.
    Bootstrap labels are notes, not mode labels: they become labels for checks (and for
-   route acceptance) only through this mapping.
+   route acceptance) only through this mapping. A session is positive for a mode when one
+   of the user's notes maps to it, and negative only when every note of the session is
+   mapped (elsewhere, or to "unclear"); with a note not mapped yet it gives no negatives.
 6. **Similar cases.** After the first 30 sessions, the model searches the pool for cases
-   similar to each human note. Each accepted or rejected find is a cheap label for checks.
+   similar to each human note. Each accepted or rejected find is a cheap label for checks;
+   within a session, one accepted find makes it positive. Notes whose session may not go
+   to the destination are left out of the search, and it says how many.
 7. **Stop** after about 20 sessions in a row with no new mode and no change to an existing
-   one.
+   one. A clustering candidate is not a change of the list until it is confirmed (by the
+   user or by its second independent case).
 8. **Repeat** on 10–15 new sessions whenever the notes model or the notes prompt changes.
    Recall per notes model/prompt version is shown next to every report built from it.
 
@@ -199,8 +218,10 @@ read the transcript. Recall is the main risk, so it is measured.
 
 Runs after the verifier, on accepted notes only (async for an ad-hoc review). Input: the
 session's notes and the current modes (definitions, criteria, exemplars), never the
-transcript. Each note gets one mode with a confidence, or **"none fits"** (an explicit
-option, against anchoring).
+transcript. Exemplars are quotes from other sessions: one whose session may not go to the
+destination is left out, and the others' origins go with the call (the judge does the
+same). Each note gets one mode with a confidence, or **"none fits"** (an explicit option,
+against anchoring).
 
 Matching is a **router**: note → mode or candidate. It maintains the taxonomy (candidates,
 merge/split proposals, exemplars) and never feeds a denominator; frequencies come from
@@ -212,7 +233,9 @@ Low-confidence routes go to the human. Unmatched notes become candidates (step 3
 
 One call over all unmatched notes, at the end of a batch (and over the bootstrap notes, to
 get the first modes). It returns candidate modes (name, definition, include/exclude
-criteria, the notes in them).
+criteria, the notes in them). This call, retro-matching and the similar-case search leave
+out the notes whose session may not go to the destination and say "N of M notes left out";
+they fail only when no note is left.
 
 - A candidate from an ad-hoc review becomes a mode at its second independent case, or
   when confirmed in the UI.
@@ -234,7 +257,7 @@ criteria, the notes in them).
 | `kind` | `failure`, `success` or `efficiency` |
 | `definition` | 1–2 sentences |
 | `include`, `exclude` | criteria; without them the next run drifts and checks float |
-| `scope` | `general` (default) or `project:<id>`, narrowed with one UI button; used only in filters and reports, matching sees all modes |
+| `scope` | `general` (default) or `project:<id>`, narrowed with one UI button; used only in reports: a project's mode counts over the batch's sessions of that project and is left out of a report without them; matching, checks and judges see all modes |
 | `origin` | `seed-prior` (our observations), `seed-literature` (published studies), `emergent` |
 | `faultLayer` | model, harness, environment, grader, task spec |
 | `version` | bumped by any merge, split or definition edit; invalidates the mode's test metrics |
@@ -327,7 +350,8 @@ report was inaccurate in 22.58%. METR saw reward hacking in about 0.7% of runs.
   - proposals to merge or split modes;
   - low-confidence routes;
   - checks flagged `tough_call`;
-  - 5–10 notes picked at random for a precision spot check.
+  - 5–10 notes picked at random for a precision spot check; the answers give the
+    batch report's spot-check precision.
 - **Confirmed modes** with familiar exemplars aren't re-checked.
 - **First UI**: a table with rename / merge / reject / move-note actions.
 
@@ -352,8 +376,18 @@ feeds a denominator.
 - **Flags.** Besides pass/fail, every verdict carries `tough_call` (borderline) and
   `severe`. A tough call without human review is left out of TPR/TNR.
 - **Which modes get a judge.** Only a mode that is in the top 3 by "seen in k notes" or by
-  cost *and* has a fix in `draft` or `applied`. Other modes get a code check, or stay
-  "observed" ("seen in k notes").
+  cost *and* has a fix in `draft` or `applied`. Cost is what the notes seen in the mode
+  record, summed: the top 3 by tokens and the top 3 by steps both count. Other modes get a
+  code check, or stay "observed" ("seen in k notes").
+- **Errors.** A judge error inside a batch fails the session (retried by "Retry errors");
+  a pool run or a validation run goes on and leaves the session unchecked.
+- **Scrub version.** Each verdict records the scrub version of the transcript it read.
+  A newer scrubber doesn't drop a judge's verdicts: they keep counting (reports,
+  validation, Fixes) until each session is judged again, the next time a batch, a pool
+  run or a validation reaches it, and the cost shown before a run counts them. A verdict
+  made before the version was recorded counts as current: it is still evidence about the
+  same session, and judging every session again after an upgrade would spend money
+  nobody asked to spend. Another mode version, judge model or prompt starts over.
 
 ## Validation
 
@@ -362,7 +396,9 @@ measured only by route acceptance). Raw agreement is not used, because a judge c
 80% of the time while missing most real failures.
 
 - **Labels.** Sources in this order: bootstrap notes mapped to modes; accepted and rejected
-  finds of the similar-case search; `tough_call` cases sent to the human. Similar-case finds
+  finds of the similar-case search; `tough_call` cases sent to the human. The review queue
+  asks the tough calls of the verdicts that count (the judge's when one is enabled); code
+  checks never set the flag, so in practice they come from judges. Similar-case finds
   lean towards easy cases and may inflate TPR/TNR; the test set should keep a share of
   randomly sampled sessions.
 - **Split.** Labels are split into train (10%), dev (30%) and test (60%). Exemplars and
@@ -389,7 +425,9 @@ With a check, the report shows for each mode:
 - for a validated check, the share corrected by Rogan–Gladen applied to the weighted
   `p_obs`: θ = (p_obs + TNR − 1) / (TPR + TNR − 1), clipped to [0, 1];
 - a 95% interval by bootstrap that resamples the batch within its strata and, for a
-  validated check, the test labels behind TPR and TNR;
+  validated check, the test labels behind TPR and TNR. Strata with fewer than 2 picks are
+  pooled into one resampling group: a single pick resampled alone never varies, which made
+  the interval too narrow;
 - "below detection threshold" instead of a number when p_obs ≤ 1 − TNR.
 
 A mechanical code check has no correction; its interval covers the sampling only.
@@ -403,8 +441,14 @@ A mechanical code check has no correction; its interval covers the sampling only
     as frequent in successful sessions as in failed ones is a candidate for "not worth
     fixing".
 - **Modes without such a check**: "seen in k notes", no percentage.
-- **Also shown**: saturation, coverage k/N, notes recall of the notes model/prompt
-  version, verifier rejection rate, route acceptance of matching.
+- **Checked of N** for every mode: the batch's done sessions with a verdict of its check,
+  of those it counts over. An exact or validated mode with no verdict yet shows "—" and
+  says why (code checks run after imports and at the end of the batch).
+- **Scope.** A project's mode counts over the batch's sessions of its project only.
+- **Also shown**: saturation, coverage k/N (running, paused and failed sessions apart),
+  notes recall of the notes model/prompt version after the verifier, verifier rejection
+  rate and the spot-check precision, each with k/n, and route acceptance of matching,
+  which is pool-wide, not per batch.
 
 ### Saturation
 
@@ -429,10 +473,14 @@ example from edit → verify to verify → report.
   - the final message → report.
 
   Other Bash goes by its command (read-only → explore, writing → edit), else it takes the
-  phase of the previous step. Only understand and plan are labeled by the model.
+  phase of the previous step; before the first tool, code says understand. The model may
+  label a note's step understand or plan; nothing else.
 - **Rows and columns.** The column is the phase of the decisive step; the row is the phase
-  of the step just before it, not "the last completed phase": the agent loops, and
-  "completed" is blurry there. An extra "no failures" column shows the denominator.
+  of the step just before its action, not "the last completed phase": the agent loops, and
+  "completed" is blurry there. For a tool result the action starts at its call, so the
+  row is the step before the call; otherwise every failing test result sat on the
+  verify → verify diagonal. Parallel calls (call A, call B, result A) are matched to their
+  results in order, by tool name where the result has one. An extra "no failures" column shows the denominator.
 - **Gate.** The matrix and the funnel are shown only while the bootstrap's phase agreement
   for the current notes version is at least 70%; otherwise AKit says why they are hidden.
 - **Small N.** While a project has fewer than 50 sessions in batches, AKit shows a funnel
@@ -451,15 +499,17 @@ example from edit → verify to verify → report.
 
 - **Lab run.** One "Error analysis" run in Lab, with progress k/N for each step (notes,
   verifier, matching, checks, clustering).
-- **Per-session status.** pending / running / done / error (with the reason). Invalid
-  output is an error, not a skip.
+- **Per-session status.** pending / running / done / error (with the reason) /
+  too-long. Invalid output is an error, not a skip; so is a judge's error. A session too
+  long for a digest is too-long: retrying can't make it fit, so "Retry errors" leaves it.
 - **Pipeline.** A session's verifier starts right after its notes, and its matching right
   after the verifier. Clustering is one call at the end, over everything done; the report
   shows coverage k/N if some sessions failed.
 - **Parallelism.** Fixed at 2, with exponential backoff on 429 (rate limit).
 - **Pause** stops after the current calls; resuming continues from the same place.
 - **Retry errors** reruns only the failed sessions, and an old result is deleted only
-  after the retry succeeds.
+  after the retry succeeds. A worker writes only the sessions it changed, so a retry
+  queued while an old run still works isn't written back to errors.
 
 ### Done key
 
@@ -468,7 +518,12 @@ alike:
 
 `key(step) = hash(input) + hash(config of this step and of every step whose output it reads)`
 
-- **Input** is the transcript for session steps (the task for a control cell).
+- **Input** is the transcript for session steps (the task for a control cell); for the
+  notes it also holds AKit's numbers, exactly as the notes call sends them. The notes step
+  computes them itself, from a Claude Code transcript alone and scrubbed like it (no git:
+  whether a commit later reached the main branch isn't in the log and changes with the
+  repository), so an ad-hoc review and a batch send the same input and share notes. The
+  session's title isn't sent.
 - **Config** holds the model, prompt version and scrub version of each of those steps;
   for a code check, the check's code version. Judges and code checks read only the
   transcript, so a notes-model change never re-runs them.
@@ -476,7 +531,9 @@ alike:
   mode's check key, so renaming a mode never re-runs the blind notes.
 - **Skip or recompute.** A step whose key exists is skipped; otherwise it is recomputed.
   Changing one step's model changes its key and the keys of the steps that read its
-  output, and nothing else.
+  output, and nothing else. A new scrub version changes every key: the next review of each
+  session (a batch, an ad-hoc review) re-runs its notes and verifier once, and judges
+  judge it again (see [Checks](#checks): their old verdicts count until then).
 
 ## Models and budget
 
@@ -495,7 +552,16 @@ provider (`/login` in Pi once).
   when validation shows it is better.
 - **Different family.** By default, if the session ran on a model of the reviewer's
   family, AKit takes a model of another family when it can, but only among destinations
-  the [sending policy](#sending-policy) allows. The policy always wins.
+  the [sending policy](#sending-policy) allows. The first one allowed for the origin of
+  every session the filter matches wins. When none is (a project with Claude Code and Pi
+  sessions, each allowed only to its own harness), the one allowed for the most sessions
+  reviews the batch, and the sessions it may not get are left out of the population before
+  sampling. AKit says how many before queuing, and the batch records it. The batch isn't
+  queued only when no reviewer may get any of them. The policy always wins.
+- **A reviewer you pick** keeps every session. Before queuing, AKit says how many of the
+  sampled sessions the policy will refuse it (they fail, so the report covers fewer), and
+  queues only after a yes: a confirmation in the app, `--yes` for `akit lab new analysis`.
+  The harness filter (`--session-harness`) narrows a mixed project instead.
 - **Cache.** A stable prefix (system prompt + modes list) comes first in the request.
 - **Cost (recorded only).** Before any model work AKit shows an estimate, "≈" from the
   recorded cost of past calls of the same harness and model in the send log. A monthly
@@ -530,6 +596,9 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
 - **Account check** at the start of each review, batch and control run, and again after
   an authorization error. If the account can't be determined, or there is no plan or org
   data, the call is refused.
+- **Unreadable settings.** When Lab's `settings.json` exists but can't be read (or a field
+  such as the monthly limit doesn't decode), every send is refused with that reason: the
+  defaults would silently drop the allowed list, the scrub patterns and the limit.
   - **Claude Code:** `claude auth status --json` returns `email`, `orgId` and `orgName`,
     and no secrets.
   - **Pi** has no whoami (`pi auth check --json` gives only provider, status and reason).
@@ -544,7 +613,17 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
   - **Own patterns**: regexes for internal hosts and e-mails, and `.env` contents.
   - **Allowlist**: hex strings (SHAs, hashes, UUIDs) are allowlisted for the entropy
     detector.
-  - **Versioning**: the scrub version is part of the [done key](#done-key).
+  - **Weak passwords**: a value after a password's name (`db_password: Summer2024`,
+    `--password hunter22`, `PGPASSWORD=…`, `password: 123456`, `password=letmein`,
+    `IDENTIFIED BY '…'`, `PASSWORD '…'` in SQL, `mysql -pSecret`) is masked without the
+    entropy gate, from 4 characters, unless it reads as code (a variable like `input2`, a
+    placeholder like `<PASSWORD>`, a path, a type or a number other than a PIN) or as prose
+    about a flag (`the --password flag`). A word with no digit counts only right after
+    `=` with no space; `-p…` only after `mysql`, `mysqldump` or `mysqladmin`, since short
+    flags elsewhere mean other things.
+  - **One rule list**: `SecretFilter` (what the screen masks) runs the Scrubber's own token
+    and password rules, so the two never drift apart.
+  - **Versioning**: the scrub version (now 4) is part of the [done key](#done-key).
 - **Send log** (`sends.jsonl`): session, harness, provider, account, tokens (input,
   cached, output), the recorded cost and scrub version.
 
@@ -571,7 +650,9 @@ fix applied, an anchor like `akit stats mark`.
   - **Control set** (paired by task): the bootstrap over tasks of the per-task change in
     pass rate puts at least 95% of its mass on improvement.
   - **And not worse in production**: the mode's production check gives at most 50%
-    posterior probability that its failure rate rose after T.
+    posterior probability that its failure rate rose after T. A control set's "helped"
+    needs it too: without production data (no applied fix with check results, or fewer
+    than 15 sessions on a side of T) the control verdict is "no conclusion".
   - With N < 15 on a side there is no conclusion.
 - **Why not plain intervals.** CLT intervals understate the uncertainty at N ≈ 15–50 per
   group, and clustering by task changes the standard errors.
@@ -626,11 +707,13 @@ assertion over a control cell read events the same way.
    effects.
 3. **The oracle is guarded from day one.** The result records that the number of tests
    didn't drop, and that test and scoring files are unchanged (by diff). This is a direct
-   check of the seed "Weakening tests or oversight".
+   check of the seed "Weakening tests or oversight". A flagged cell counts as failed and is
+   not queued again, so a setup can't re-roll its bad outcomes away.
 4. **Statistics, not "+4 cells".** 21/30 against 25/30 gives p ≈ 0.36 by Fisher's exact
    test: compatible with noise. Two baseline runs in a row don't estimate the noise.
    - Unit: the pass rate per task over k ≥ 3 repeats.
-   - Comparison: paired by task (bootstrap over tasks), as in [Fixes](#fixes).
+   - Comparison: paired by task (bootstrap over tasks), with the production guard of
+     [Fixes](#fixes).
    - Shown: Wilson intervals, pass@1 (the chance one run passes) next to pass^k (the
      chance all k runs pass).
    - The set grows to 20–30 tasks before the number of repeats grows.
@@ -662,11 +745,15 @@ a minimal reproduction: the simplest request that triggers the mode.
   modes/exemplars/           # quotes from scrubbed transcripts, never exported
   notes/<session-key>.json   # outcome, notes (model and human, verifier verdicts),
                              # paragraph, advice, routes, done keys
-  checks/<mode-id>.json      # verdicts per session with tough_call and severe
-  labels/                    # bootstrap notes, reservations, mappings to modes,
-                             # train/dev/test splits, validation results
+  checks/<mode-id>.json      # code check verdicts per session
+  checks/<mode-id>@judge.json # judge verdicts per session with tough_call and severe
+  labels/                    # bootstrap notes, reservations, pairs, the label book
+                             # (mappings, finds, spot checks, tough calls), unclear,
+                             # judges, train/dev/test splits, validation results
   batches/<run-id>.json      # sample with inclusion probabilities, per-session status,
-                             # coverage, saturation, matrix
+                             # candidates, spot-check picks
+  fixes/<mode-id>.json       # fix drafts (the status lives in modes.json)
+  work/                      # input files of model calls made from the app
   sends.jsonl                # send log
 ~/.akit/lab/evals/           # control tasks and sets; cells are Lab runs
 ```
@@ -691,7 +778,10 @@ What differs from the text above, found while building or on real sessions:
 
 - **Verifier context.** The verifier sees the cited step and the three steps before and
   after it: on a real session it rejected claims that sum up a step with its neighbours
-  when it saw the step alone. Quotes under 8 characters are rejected in code.
+  when it saw the step alone. Quotes under 8 characters are rejected in code, and so is a
+  quote with elisions ("…") none of whose parts reaches 8 characters ("error … ok"). One
+  long part anchors the quote in its step and the short ones must still follow it there;
+  requiring every part to be long rejected valid quotes the prompt allows.
 - **Low-confidence routes** count in "seen in k notes" only after the user accepts them.
 - **Lab's own sessions** (replays, control cells, agent reviews) are left out of samples,
   bootstrap picks and check rates, so evals never enter production frequencies.
@@ -707,8 +797,12 @@ What differs from the text above, found while building or on real sessions:
 - **Clustering never confirms a mode.** Its candidates wait for the user; a candidate is
   promoted when a later session (matching, retro-matching or the user) routes a note to it.
   A seed is activated by two batches whose own matching routed two different sessions to it.
-- **Scrubber v2.** After a secret's name, long hex values and UUIDs are masked unless the
-  name says hash (sha, digest, commit, checksum, cache…); `--token VALUE` flags are masked.
+- **Scrubber v4.** After a secret's name, long hex values and UUIDs are masked unless the
+  name says hash (sha, digest, commit, checksum, cache…); `--token VALUE` flags are masked;
+  weak passwords after a password's name are masked (see [Sending policy](#sending-policy)).
+- **Same origin for Claude Code.** A Claude Code transcript doesn't record its account, so
+  same-origin compares the harness only: any signed-in Claude Code account counts (a
+  commented decision in `SendPolicy`).
 - **Concurrent writers.** Every file of the analysis folder is changed under a lock, as a
   read-modify-write of what is on disk, so the app, `akit` and two batch workers never save
   over each other.
@@ -718,6 +812,19 @@ What differs from the text above, found while building or on real sessions:
   the cells.
 
 Status per slice: all done 2026-10-01/02, with the review fixes above.
+
+Not built (yet):
+
+- **Manual calibration** of 5 red and 2 green control cells ([Controlled
+  evals](#controlled-evals), sanity checks); red cells of a fixed setup aren't offered for
+  review on their own either (a cell is a Lab run the user can open).
+- **Merge and split proposals** for modes in general: only seeds that absorb more than 30%
+  of the routed notes are flagged as umbrellas, and the rebuild marks groups that span
+  several modes. Merges and splits are the user's own.
+- **Control "helped"** needs production data, which exists only after the fix is applied
+  and only for tasks of a single mode, so a draft tried on control tasks before it is
+  applied ends at "no conclusion".
+- **Tough calls from code checks**: no code check sets the flag; only judges do.
 
 1. **Sending policy and cost.**
    - Allowed list with the account check: Settings → Lab.

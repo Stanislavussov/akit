@@ -66,12 +66,30 @@ struct ReportFrequencies: View {
                 }
                 .gridCellColumns(3)
             }
-            TrustBadge(level: mode.trust)
+            VStack(alignment: .leading, spacing: 2) {
+                TrustBadge(level: mode.trust)
+                Text("checked \(mode.checked)/\(mode.sessions)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .help("Sessions of the batch the check has a verdict on, of the done sessions it counts over (its project's only, for a mode of one project)")
+            }
         }
     }
 
     @ViewBuilder private func share(_ mode: ModeFrequency, scale: Double) -> some View {
-        if mode.belowDetectionThreshold {
+        if mode.checked == 0 {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("—").foregroundStyle(.secondary)
+                Text(mode.trust == .exact
+                     ? "The code check hasn't run on this batch's sessions yet: code checks run after each import and when the batch ends."
+                     : "The check has no verdict on this batch's sessions yet: a judge runs on each session as the batch reviews it, a code check after each import and when the batch ends.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: 240, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if mode.belowDetectionThreshold {
             Text("Below detection threshold")
                 .foregroundStyle(.secondary)
                 .help("The observed share is no higher than the check's false-positive rate (1 − TNR): the check can't tell it from zero")

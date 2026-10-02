@@ -13,8 +13,9 @@ extension AKitCLI {
                                           A batch's report (the latest without BATCH): frequencies from
                                           checks only (weighted and plain, by outcome, corrected for
                                           validated checks, 95% intervals), "seen in k notes" for the
-                                          rest, coverage, notes recall, verifier rejection, route
-                                          acceptance, saturation, and the transition matrix or funnel
+                                          rest, checked of N per mode, coverage, notes recall, verifier
+                                          rejection, spot-check precision, route acceptance,
+                                          saturation, and the transition matrix or funnel
           akit analysis judge enable MODE [--harness …] [--model …] [--effort …]
           akit analysis judge disable MODE
           akit analysis judge run MODE [--yes]
@@ -62,11 +63,11 @@ extension AKitCLI {
                 guard let batch = id.flatMap(batches.load) ?? (id == nil ? batches.latest() : nil) else {
                     throw Failure(message: id == nil ? "No batches yet: akit lab new analysis." : "No batch \(id ?? "").")
                 }
-                let report = try await buildReport(batch, env: env)
+                let report = try await Reports.build(batch, env: env)
                 var other: BatchReport?
                 if let compare {
                     guard let second = batches.load(compare) else { throw Failure(message: "No batch \(compare).") }
-                    other = try await buildReport(second, env: env)
+                    other = try await Reports.build(second, env: env)
                 }
                 if options.json { out(try labJSON(other.map { [report, $0] } ?? [report])); return 0 }
                 out(reportText(report))
@@ -86,10 +87,13 @@ extension AKitCLI {
                 switch action {
                 case "enable":
                     let agent = try options.agent(env: env)
-                    let seen = Matching.seen(NotesStore(env: env).all(), modes: try await modeStore.list()).byMode.mapValues(\.count)
-                    guard Judges.eligible(try await modeStore.list(), seen: seen).contains(where: { $0.id == target.id }) else {
-                        throw Failure(message: "Only a mode in the top 3 by notes with a fix drafted or applied gets a judge; "
-                                          + "\(target.name) isn't one. Other modes get a code check or stay \"seen in k notes\".")
+                    let modes = try await modeStore.list()
+                    let pool = NotesStore(env: env).all()
+                    let seen = Matching.seen(pool, modes: modes).byMode.mapValues(\.count)
+                    guard Judges.eligible(modes, seen: seen, cost: Judges.cost(pool, modes: modes)).contains(where: { $0.id == target.id }) else {
+                        throw Failure(message: "Only a mode in the top 3 by notes or by cost (the tokens or the steps its notes record) with a fix "
+                                          + "drafted or applied gets a judge; \(target.name) isn't one. Other modes get a code check or stay "
+                                          + "\"seen in k notes\".")
                     }
                     try store.setJudge(agent, for: target.id)
                     out("\(target.name) is judged by \(agent.label). Validate it: akit analysis validate \(target.id) dev.")
@@ -99,10 +103,18 @@ extension AKitCLI {
                 case "run":
                     guard let judge = store.judges()[target.id] else { throw Failure(message: "\(target.name) has no judge: akit analysis judge enable \(target.id).") }
                     let pool = NotesStore(env: env).all()
-                    guard try confirmCost(characters: pool.count * 60_000, agent: judge, what: "Judging \(pool.count) sessions for \(target.name)",
-                                          options: options, env: env, out: out) else { return 0 }
+                    let sessions = pool.map { (key: $0.sessionKey, file: $0.transcript) }
+                    // Only the sessions without a current verdict cost anything.
+                    let pending = Judges.pending(mode: target, sessions: sessions, agent: judge, env: env).count
+                    if pending > 0 {
+                        guard try confirmCost(characters: pending * 60_000, agent: judge,
+                                              what: "Judging \(pending) of \(pool.count) sessions for \(target.name)",
+                                              options: options, env: env, out: out) else { return 0 }
+                    } else {
+                        out("All \(pool.count) sessions have a current verdict for \(target.name); nothing is sent.")
+                    }
                     let gate = try await SendGate.open(agent: judge, env: env)
-                    let results = try await Judges.run(mode: target, sessions: pool.map { ($0.sessionKey, $0.transcript) }, agent: judge, gate: gate,
+                    let results = try await Judges.run(mode: target, sessions: sessions, agent: judge, gate: gate,
                                                        runID: nil, workFolder: analysisWork(env), env: env, out: { LinePrinter.shared.print($0) })
                     let missed = Judges.missedByNotes(results, modeID: target.id, pool: pool, modes: try await modeStore.list())
                     let rate = results.rate()
@@ -258,40 +270,40 @@ extension AKitCLI {
         return 0
     }
 
-    static func buildReport(_ batch: Batch, env: HarnessEnvironment) async throws -> BatchReport {
-        let modes = try await ModeStore(env: env).list()
-        let pool = NotesStore(env: env).all()
-        let labels = Bootstrap.LabelStore(env: env).all()
-        let metrics = Bootstrap.metrics(labels: labels, notes: pool, pairings: Bootstrap.PairingStore(env: env).all(),
-                                        phases: Bootstrap.phases(of: labels))
-        return Reports.build(batch, modes: modes, pool: pool, checks: modes.compactMap { Validation.verdicts(modeID: $0.id, env: env) },
-                             trust: Validation.trustMap(modes: modes, env: env), bootstrap: metrics, acceptance: Matching.acceptance(pool),
-                             allBatches: BatchStore(env: env).all(), phases: Reports.phases(of: batch))
-    }
-
     static func validationLine(_ result: ValidationResult) -> String {
         func pct(_ value: Double?) -> String { value.map { String(format: "%.0f%%", $0 * 100) } ?? "—" }
         return "\(result.modeID) v\(result.modeVersion) \(result.set.rawValue): TPR \(pct(result.tpr)) (low \(pct(result.tprLow)), "
             + "\(result.labels.onPositives.count) positives), TNR \(pct(result.tnr)) (low \(pct(result.tnrLow)), \(result.labels.onNegatives.count) negatives)"
-            + (result.toughLeftOut > 0 ? ", \(result.toughLeftOut) tough calls left out" : "") + (result.unchecked > 0 ? ", \(result.unchecked) unchecked" : "")
+            + (result.toughLeftOut > 0 ? ", \(result.toughLeftOut) tough calls left out (decide them: akit analysis queue)" : "") + (result.unchecked > 0 ? ", \(result.unchecked) unchecked" : "")
     }
 
     static func reportText(_ report: BatchReport) -> String {
         func pct(_ value: Double?) -> String { value.map { String(format: "%.0f%%", $0 * 100) } ?? "—" }
         var lines = ["Batch \(report.batchID): \(report.coverage[0]) of \(report.coverage[1]) sessions"
-                     + (report.coverage[0] < report.coverage[1] ? " (coverage \(report.coverage[0])/\(report.coverage[1]))" : "")]
-        lines.append("Notes \(report.notesVersion ?? "?"): bootstrap recall \(pct(report.notesRecall)), verifier rejected \(pct(report.verifierRejection)), "
+                     + (report.coverage[0] < report.coverage[1] ? " (coverage \(report.coverage[0])/\(report.coverage[1]))" : "")
+                     + (report.tooLong > 0 ? " · \(report.tooLong) too long for a digest (left out of the frequencies)" : "")]
+        if let leftOut = report.leftOut, leftOut > 0 {
+            lines.append("\(leftOut) sessions of the filter were left out before sampling: \(report.leftOutReason ?? "the reviewer may not get them")")
+        }
+        func counts(_ counts: [Int]?) -> String {
+            guard let counts, counts.count == 2 else { return "" }
+            return " (\(counts[0])/\(counts[1]))"
+        }
+        lines.append("Notes \(report.notesVersion ?? "?"): bootstrap recall \(pct(report.notesRecall))\(counts(report.notesRecallCounts)), "
+                     + "verifier rejected \(pct(report.verifierRejection))\(counts(report.verifierRejectionCounts)), "
                      + "routes accepted \(report.routeAcceptance[0]) of \(report.routeAcceptance[1])")
+        lines.append("Spot checks: precision \(pct(report.spotCheckPrecision))\(counts(report.spotCheckCounts))")
         lines.append("")
         for mode in report.modes {
+            let checked = " · checked \(mode.checked)/\(mode.sessions)"
             if mode.hasFrequency {
                 let value = mode.belowDetectionThreshold ? "below detection threshold" : pct(mode.corrected ?? mode.weighted)
                 let interval = mode.interval.map { " [\(pct($0.low))–\(pct($0.high))]" } ?? ""
                 lines.append("\(mode.name): \(value)\(interval) · plain \(pct(mode.unweighted)) · goal reached \(pct(mode.achieved)), not \(pct(mode.notAchieved))"
-                             + (mode.notWorthFixing ? " · as frequent when it went well: maybe not worth fixing" : ""))
+                             + checked + (mode.notWorthFixing ? " · as frequent when it went well: maybe not worth fixing" : ""))
             } else {
                 lines.append("\(mode.name): seen in \(mode.seenInNotes) notes"
-                             + (mode.trust == .provisional ? " · provisional check \(mode.positive)/\(mode.checked)" : ""))
+                             + (mode.trust == .provisional ? " · provisional check \(mode.positive)/\(mode.checked)" : "") + checked)
             }
         }
         lines.append("")

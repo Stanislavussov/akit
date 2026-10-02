@@ -67,6 +67,19 @@ public enum SecretFilter {
 
     /// Masks token-like values. Keys and surrounding text stay readable.
     public static func masked(_ text: String) -> String {
+        // The token shapes and passwords are the Scrubber's own rules, so the two never drift apart.
+        var counts: [String: Int] = [:]
+        var current = text as NSString
+        let present = Scrubber.presentHints(in: text)
+        for rule in Scrubber.rules + Scrubber.passwordRules {
+            current = Scrubber.apply(rule, to: current, present: present, counts: &counts)
+        }
+        return maskedNamedValues(current as String)
+    }
+
+    /// Values after a secret's name in environment and JSON style, which the Scrubber's own
+    /// keyword rule leaves to entropy.
+    static func maskedNamedValues(_ text: String) -> String {
         var result = text
         for (pattern, template) in patterns {
             let range = NSRange(result.startIndex..., in: result)
@@ -77,14 +90,6 @@ public enum SecretFilter {
     }
 
     private static let patterns: [(NSRegularExpression, String)] = [
-        (regex(#"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"#), mask),
-        (regex(#"\b(sk-ant-|sk-proj-|sk-)[A-Za-z0-9_-]{20,}"#), mask),
-        (regex(#"\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})"#), mask),
-        (regex(#"\bxox[abprs]-[A-Za-z0-9-]{10,}"#), mask),
-        (regex(#"\b(AKIA|ASIA)[0-9A-Z]{16}\b"#), mask),
-        (regex(#"\bAIza[0-9A-Za-z_-]{35}\b"#), mask),
-        (regex(#"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"#), mask), // JWT
-        (regex(#"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{16,}"#), "$1 \(mask)"),
         // Environment style: DB_PASSWORD=…, GITHUB_TOKEN="…" (upper-case names, no spaces around =,
         // so code like `API_KEY = os.environ["X"]` stays readable).
         (regex(#"\b([A-Z][A-Z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)=["']?)[^\s"'\[\]()]{8,}"#),

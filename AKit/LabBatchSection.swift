@@ -12,6 +12,7 @@ struct LabBatchSection: View {
     let select: (LabRun) -> Void
     @State private var error: String?
     @State private var busy = false
+    @State private var notesFor: SessionNotesTarget?
 
     var body: some View {
         if let id = run.spec.batch {
@@ -72,11 +73,14 @@ struct LabBatchSection: View {
         let failed = batch.sessions.filter { $0.status == .error }.count
         var parts = [batch.fixed ? "Fixed sessions (the labeled bootstrap ones)" : "A sample of \(batch.sessions.count) (asked \(batch.size), seed \(batch.seed))"]
         parts.append(batch.filter.project.map { "project \(URL(filePath: $0).lastPathComponent)" } ?? "all projects")
+        if let harness = batch.filter.harness { parts.append(harness == "pi" ? "Pi sessions" : "Claude Code sessions") }
         if let from = batch.filter.from { parts.append("from \(from.formatted(date: .abbreviated, time: .omitted))") }
         if let to = batch.filter.to { parts.append("to \(to.formatted(date: .abbreviated, time: .omitted))") }
         parts.append("notes by \(batch.notesAgent.label)")
         if batch.matchingAgent != batch.notesAgent { parts.append("matching by \(batch.matchingAgent.model)") }
-        parts.append("\(coverage.done) of \(coverage.total) done" + (failed > 0 ? ", \(failed) failed" : ""))
+        parts.append("\(coverage.done) of \(coverage.total) done" + (failed > 0 ? ", \(failed) failed" : "")
+                     + (batch.tooLong > 0 ? ", \(batch.tooLong) too long for a digest" : ""))
+        if let leftOut = batch.leftOut { parts.append("\(leftOut) left out before sampling: \(batch.notesAgent.harness.title) may not get them") }
         parts.append(batch.estimate.map { String(format: "≈ $%.2f estimated when queued", $0) } ?? "no estimate when queued")
         return parts.joined(separator: " · ")
     }
@@ -92,19 +96,19 @@ struct LabBatchSection: View {
 
     private func actions(_ batch: Batch, failed: Int) -> some View {
         let active = model.labRuns.contains { $0.spec.batch == batch.runID && ($0.status == .queued || $0.status == .running) }
-        let unfinished = batch.sessions.contains { $0.status != .done } || batch.unfinished
+        let unfinished = batch.hasOpenSessions || batch.unfinished
         return HStack {
             if active, !batch.paused {
                 Button("Pause", systemImage: "pause.circle") { act { try await model.pauseBatch(batch.runID) } }
                     .help("Stop after the current calls; Resume continues from the same place")
             }
             if !active, unfinished {
-                Button("Resume", systemImage: "play.circle") { resume(batch, retryErrors: false) }
-                    .help("Continue the batch as a new run, from where it stopped")
+                resumeMenu("Resume", icon: "play.circle", batch: batch, retryErrors: false)
+                    .help("Continue the batch as a new run, from where it stopped; the arrow picks where its tab opens")
             }
             if !active, failed > 0 {
-                Button("Retry Errors", systemImage: "arrow.clockwise") { resume(batch, retryErrors: true) }
-                    .help("Run only the \(failed) failed sessions again; their old results stay until a retry succeeds")
+                resumeMenu("Retry Errors", icon: "arrow.clockwise", batch: batch, retryErrors: true)
+                    .help("Run only the \(failed) failed sessions again; their old results stay until a retry succeeds. The arrow picks where its tab opens")
             }
             if batch.coverage.done > 0 {
                 Button("Open Report", systemImage: "chart.bar.doc.horizontal") {
@@ -129,6 +133,7 @@ struct LabBatchSection: View {
                     Text("π").help("Inclusion probability: how likely this sampling design was to pick the session")
                     Text("Sampled")
                     Text("Last step")
+                    Text("")
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -153,20 +158,43 @@ struct LabBatchSection: View {
                             .help(session.pick.stratum)
                         Text(session.steps.last ?? "—").foregroundStyle(.secondary).lineLimit(1)
                             .help(session.steps.joined(separator: " → "))
+                        if session.steps.contains("notes") {
+                            Button("Show Notes") { notesFor = SessionNotesTarget(sessionKey: session.pick.sessionKey) }
+                                .controlSize(.small)
+                                .help("Its outcome, notes, advice, routes and signals")
+                        } else {
+                            Text("")
+                        }
                     }
                 }
             }
             .font(.callout)
         }
+        .sheet(item: $notesFor) { SessionNotesSheet(sessionKey: $0.sessionKey, showsLabRun: false) }
     }
 
     private func title(_ session: Batch.Session) -> String {
         model.sessions.first { $0.file.path == session.pick.file }?.title ?? session.pick.sessionKey
     }
 
-    private func resume(_ batch: Batch, retryErrors: Bool) {
+    /// Resume or Retry Errors: a click opens the tab where AKit suggests; the menu picks
+    /// Orca, herdr or the background (`--env`).
+    private func resumeMenu(_ title: String, icon: String, batch: Batch, retryErrors: Bool) -> some View {
+        Menu {
+            ForEach(model.labEnvironments, id: \.self) { environment in
+                Button("\(title) in \(environment.title)") { resume(batch, retryErrors: retryErrors, environment: environment) }
+            }
+        } label: {
+            Label(title, systemImage: icon)
+        } primaryAction: {
+            resume(batch, retryErrors: retryErrors, environment: nil)
+        }
+        .fixedSize()
+    }
+
+    private func resume(_ batch: Batch, retryErrors: Bool, environment: LabEnvironment?) {
         act {
-            let queued = try await model.resumeBatch(batch.runID, retryErrors: retryErrors)
+            let queued = try await model.resumeBatch(batch.runID, retryErrors: retryErrors, environment: environment)
             select(queued)
         }
     }
@@ -181,7 +209,7 @@ struct LabBatchSection: View {
     }
 }
 
-/// pending / running / done / error as a small capsule.
+/// pending / running / done / error / too-long as a small capsule.
 struct BatchStatusBadge: View {
     let status: Batch.Status
 
@@ -200,6 +228,7 @@ struct BatchStatusBadge: View {
         case .running: .blue
         case .done: .green
         case .error: .red
+        case .tooLong: .orange
         }
     }
 }

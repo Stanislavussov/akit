@@ -1,9 +1,10 @@
 import Darwin
 import Foundation
 
-/// An exclusive `flock` on a file, shared between processes. Waiting doesn't block a thread.
-enum FileLock {
-    static func holding<T>(_ file: URL, _ work: () async throws -> T) async throws -> T {
+/// An exclusive `flock` on a file, shared between processes (Lab and the error analysis
+/// files). Waiting doesn't block a thread.
+public enum FileLock {
+    public static func holding<T>(_ file: URL, _ work: () async throws -> T) async throws -> T {
         let descriptor = open(file.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
         guard descriptor >= 0 else { throw LabStore.Failure(message: "Can't open \(file.path).") }
         defer { close(descriptor) }
@@ -13,5 +14,17 @@ enum FileLock {
         }
         defer { flock(descriptor, LOCK_UN) }
         return try await work()
+    }
+
+    /// The same lock around short file work (a read and a write): waits in place.
+    public static func locked<T>(_ file: URL, _ work: () throws -> T) throws -> T {
+        let descriptor = open(file.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else { throw LabStore.Failure(message: "Can't open \(file.path).") }
+        defer { close(descriptor) }
+        while flock(descriptor, LOCK_EX) != 0 {
+            guard errno == EINTR else { throw LabStore.Failure(message: "Can't lock \(file.path).") }
+        }
+        defer { flock(descriptor, LOCK_UN) }
+        return try work()
     }
 }

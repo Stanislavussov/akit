@@ -14,15 +14,12 @@ public enum NotesPipeline {
         public var file: URL
         public var title: String?
         public var project: URL?
-        /// AKit's numbers for the session (calls, tokens, errors), when it has them.
-        public var numbers: String?
 
-        public init(harness: HarnessID, file: URL, title: String? = nil, project: URL? = nil, numbers: String? = nil) {
+        public init(harness: HarnessID, file: URL, title: String? = nil, project: URL? = nil) {
             self.harness = harness
             self.file = file
             self.title = title
             self.project = project
-            self.numbers = numbers
         }
 
         public var summary: SessionSummary {
@@ -71,8 +68,14 @@ public enum NotesPipeline {
             throw Failure(message: "AKit can't name the session in \(target.file.path).")
         }
         let origin = SendOrigin.of(harness: target.harness, sessionFile: target.file)
-        let (items, scrubbedCounts) = try scrubbedItems(target, gate: notesGate)
-        let input = Data(items.map { "[#\($0.id)] \($0.text)" }.joined(separator: "\n").utf8)
+        var (items, scrubbedCounts) = try scrubbedItems(target, gate: notesGate)
+        let numbers = numbers(of: target, gate: notesGate)
+        if let numbers { scrubbedCounts.merge(numbers.counts, uniquingKeysWith: +) }
+        // The key holds what the notes call sends that comes from the session: the scrubbed
+        // transcript and AKit's numbers, both computed from the transcript alone, so a Lab
+        // review and a batch share notes.
+        var input = Data(items.map { "[#\($0.id)] \($0.text)" }.joined(separator: "\n").utf8)
+        if let numbers { input.append(Data("\n## AKit's numbers\n\(numbers.text)".utf8)) }
         let notesKey = DoneKey.make(input: input, configs: [config.notesStep])
         let verifierKey = DoneKey.make(input: input, configs: [config.notesStep, config.verifierStep])
         let store = NotesStore(env: env)
@@ -85,7 +88,7 @@ public enum NotesPipeline {
         } else {
             out("Writing notes with \(config.notes.label)…")
             var request = ModelCall.Request(agent: config.notes, purpose: "notes", system: NotesPrompts.notesSystem + "\n" + config.language.instruction,
-                                            input: notesInput(title: target.title, numbers: target.numbers, items: items, model: config.notes.model),
+                                            input: try notesInput(numbers: numbers?.text, items: items, model: config.notes.model),
                                             schema: NotesPrompts.notesSchema, origin: origin, session: key.description, runID: runID)
             request.scrubbed = scrubbedCounts
             let answer = try await ModelCall.run(request, gate: notesGate, folder: workFolder, env: env)
@@ -122,11 +125,36 @@ public enum NotesPipeline {
         return (items, counts)
     }
 
-    static func notesInput(title: String?, numbers: String?, items: [TranscriptItem], model: String) -> String {
-        let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: EvidenceDigest.budget(model: model))
+    /// AKit's numbers for the notes call: the metrics of a Claude Code transcript (calls,
+    /// tokens, errors, commits), scrubbed like the transcript; nil for other harnesses. From
+    /// the transcript alone: whether a commit reached the main branch is left out, it changes
+    /// with the repository, not with the session, and isn't in the log.
+    static func numbers(of target: Target, gate: SendGate) -> (text: String, counts: [String: Int])? {
+        guard target.harness == .claudeCode, let metrics = try? SessionAnalyzer.analyze(file: target.file),
+              let json = try? LabStore.encoder.encode(metrics) else { return nil }
+        let result = gate.scrub(String(decoding: json, as: UTF8.self))
+        return (result.text, result.counts)
+    }
+
+    /// Why a session isn't sent in one `call`: its user turns and failed tool results alone pass
+    /// `budget`. `BatchRunner.isTooLong` knows the message by its start.
+    static func tooLong(call: String, budget: Int, model: String, caller: String) -> String {
+        "The session is too long for one \(call): its user turns and failed tool results alone pass the "
+            + "\(budget)-character budget of \(model.isEmpty ? "the default model" : model), so it isn't sent."
+            + (budget < EvidenceDigest.largeBudget ? " A \(caller) with a 1M-token window may have room for it." : "")
+    }
+
+    /// The notes call's input: AKit's numbers and the transcript digest. The title isn't sent:
+    /// callers know it or not, and the transcript's own user turns say what the session was.
+    /// Refuses a session whose user turns and failed tool results alone pass the model's
+    /// budget: they are never cut, and a call over the budget may not fit the window.
+    static func notesInput(numbers: String?, items: [TranscriptItem], model: String) throws -> String {
+        let budget = EvidenceDigest.budget(model: model)
+        let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: budget)
+        guard !digest.overBudget else { throw Failure(message: tooLong(call: "call", budget: budget, model: model, caller: "model")) }
         let facts = numbers.map { "## AKit's numbers (computed from the transcript; trust them)\n\n\($0)\n\n" } ?? ""
         return """
-            # Session: \(title ?? "untitled")
+            # Session
 
             \(facts)## Transcript digest
 
@@ -208,7 +236,9 @@ public enum NotesPipeline {
         var toAsk: [Note] = []
         for index in result.notes.indices where result.notes[index].source == .model {
             let note = result.notes[index]
-            if note.quote.trimmingCharacters(in: .whitespacesAndNewlines).count < minimumQuote {
+            // One long part anchors the quote in its step, and the others must follow it there;
+            // "error … ok" is two words that match almost anywhere.
+            if (QuoteMatcher.parts(of: note.quote).map(\.count).max() ?? 0) < minimumQuote {
                 result.notes[index].verdict = Verdict(accepted: false, reason: "The quote is too short to show anything.", by: .code)
             } else if let item = byID[note.step], QuoteMatcher.matches(quote: note.quote, in: item.text) {
                 toAsk.append(note)
@@ -248,7 +278,8 @@ public enum NotesPipeline {
         return result
     }
 
-    /// A quote this short ("null", "ok") matches almost any step and proves nothing.
+    /// A quote this short ("null", "ok"), or one whose parts between elisions are all this
+    /// short, matches almost any step and proves nothing.
     static let minimumQuote = 8
 
     /// Steps shown around the cited one, before and after.
@@ -260,12 +291,9 @@ public enum NotesPipeline {
         let parts = notes.map { note -> String in
             let step = byID[note.step].map { "[#\($0.id) \(label($0.kind))] \(around(note.quote, in: $0.text))" } ?? ""
             let index = items.firstIndex { $0.id == note.step }
+            // Neighbouring steps cut as the digest cuts them (thinking left out).
             func context(_ range: Range<Int>) -> String {
-                range.clamped(to: items.indices).compactMap { position -> String? in
-                    let item = items[position]
-                    if case .thinking = item.kind { return nil }
-                    return "[#\(item.id) \(label(item.kind))] \(EvidenceDigestCut.cut(item.text, to: 1200))"
-                }.joined(separator: "\n")
+                range.clamped(to: items.indices).compactMap { EvidenceDigest.line(items[$0], cap: 1200) }.joined(separator: "\n")
             }
             let before = index.map { context(($0 - neighbours)..<$0) } ?? ""
             let after = index.map { context(($0 + 1)..<($0 + 1 + neighbours)) } ?? ""
@@ -282,14 +310,6 @@ public enum NotesPipeline {
                 """
         }
         return "## User turns\n\n\(users)\n\n## Notes\n\n" + parts.joined(separator: "\n\n") + "\n"
-    }
-
-    /// Neighbouring steps keep their start and end.
-    enum EvidenceDigestCut {
-        static func cut(_ text: String, to limit: Int) -> String {
-            guard text.count > limit else { return text }
-            return "\(text.prefix(limit / 2)) […\(text.count - limit) chars…] \(text.suffix(limit / 2))"
-        }
     }
 
     /// Up to ~6000 characters of a step, centred on the quote, so long outputs stay readable.
@@ -336,16 +356,16 @@ public enum NotesPipeline {
 /// `notes/<session-key>.json` files.
 public struct NotesStore: Sendable {
     let paths: AnalysisPaths
+    let env: HarnessEnvironment
 
-    public init(env: HarnessEnvironment) { paths = AnalysisPaths(env: env) }
+    public init(env: HarnessEnvironment) {
+        paths = AnalysisPaths(env: env)
+        self.env = env
+    }
 
     public func load(_ sessionKey: String) -> SessionNotes? {
         guard let data = try? Data(contentsOf: paths.notes(of: sessionKey)) else { return nil }
         return try? AnalysisJSON.decoder.decode(SessionNotes.self, from: data)
-    }
-
-    public func save(_ notes: SessionNotes) throws {
-        try JSONFile.write(notes, to: paths.notes(of: notes.sessionKey))
     }
 
     /// Changes a session's notes as they are on disk now, under its lock.
@@ -364,15 +384,81 @@ public struct NotesStore: Sendable {
 
     /// Saves a new review; when the notes on disk are the same notes (same done key), the
     /// routes written since this review began (the user's verdicts, clustering) are kept.
+    /// New notes (a grown session, another model) keep the user's verdicts on the notes that
+    /// are still there: a note is the same when its step and quote are. The bootstrap pairing
+    /// and the spot checks, which name model notes by id, move along the same way.
     func saveReview(_ review: SessionNotes) throws {
         let url = paths.notes(of: review.sessionKey)
         try JSONFile.locked(url) {
             var saved = review
-            if let current = JSONFile.read(SessionNotes.self, from: url), current.doneKeys["notes"] == review.doneKeys["notes"] {
+            let current = JSONFile.read(SessionNotes.self, from: url)
+            if let current, current.doneKeys["notes"] == review.doneKeys["notes"] {
                 saved.routes = current.routes
                 saved.doneKeys["matching"] = current.doneKeys["matching"]
+            } else if let current {
+                let carried = Self.userRoutes(of: current, carriedTo: review)
+                if !carried.isEmpty { saved.routes = (review.routes ?? []) + carried }
             }
             try AnalysisJSON.encoder.encode(saved).write(to: url, options: .atomic)
+            if current?.doneKeys["notes"] != review.doneKeys["notes"] {
+                try moveReferences(of: review.sessionKey, renamed: current.map { Self.renamed(from: $0, to: review) } ?? [:],
+                                   from: current?.doneKeys["notes"], to: review.doneKeys["notes"],
+                                   notesVersion: Bootstrap.notesVersion(review.notesConfig))
+            }
+        }
+    }
+
+    /// A model note is the same note in another review when its step and quote are.
+    static func identity(_ note: Note) -> String { "\(note.step)|\(QuoteMatcher.parts(of: note.quote).joined(separator: "…"))" }
+
+    /// Old model note id → the id of the same note in `new`; notes that are gone are left out.
+    static func renamed(from old: SessionNotes, to new: SessionNotes) -> [String: String] {
+        let newIDs = Dictionary(new.notes.filter { $0.source == .model }.map { (identity($0), $0.id) }, uniquingKeysWith: { first, _ in first })
+        return Dictionary(old.notes.filter { $0.source == .model }.compactMap { note in newIDs[identity(note)].map { (note.id, $0) } },
+                          uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The bootstrap pairing made on the old notes and the spot checks of this session, moved
+    /// to the new notes' ids; what was about a note that is gone is dropped. A pairing made on
+    /// still older notes, or for another notes model or prompt, is left alone: the metrics
+    /// ignore it, and its version's metrics stay about that version's notes.
+    func moveReferences(of sessionKey: String, renamed: [String: String], from oldKey: String?, to newKey: String?,
+                        notesVersion: String) throws {
+        try Bootstrap.PairingStore(env: env).update(sessionKey) { pairing in
+            guard pairing.notesKey == nil || pairing.notesKey == oldKey, pairing.notesVersion == notesVersion else { return }
+            func move(_ pairs: [Bootstrap.Pairing.Pair]) -> [Bootstrap.Pairing.Pair] {
+                pairs.compactMap { pair in renamed[pair.model].map { Bootstrap.Pairing.Pair(human: pair.human, model: $0) } }
+            }
+            pairing.notesKey = newKey
+            pairing.proposed = move(pairing.proposed)
+            pairing.confirmed = pairing.confirmed.map(move)
+            pairing.agreed = pairing.agreed?.compactMap { renamed[$0] }
+        }
+        let book = LabelBookStore(env: env)
+        func ofSession(_ key: String) -> NoteRef? { NoteRef(parsing: key).flatMap { $0.sessionKey == sessionKey ? $0 : nil } }
+        guard book.load().spotChecks.keys.contains(where: { ofSession($0) != nil }) else { return }
+        _ = try book.update { book in
+            var moved: [String: Bool] = [:]
+            for (key, agrees) in book.spotChecks {
+                guard let ref = ofSession(key) else {
+                    moved[key] = agrees
+                    continue
+                }
+                if let id = renamed[ref.noteID] { moved[NoteRef(sessionKey: sessionKey, noteID: id).description] = agrees }
+            }
+            book.spotChecks = moved
+        }
+    }
+
+    /// The routes the user reviewed or made in `old`, moved to the ids of the same notes in
+    /// `new`; routes of notes that are gone are dropped. Matching keeps them and routes only the rest.
+    static func userRoutes(of old: SessionNotes, carriedTo new: SessionNotes) -> [Route] {
+        let renamed = renamed(from: old, to: new)
+        return (old.routes ?? []).filter { $0.review != nil || $0.by == .human }.compactMap { route in
+            guard let id = renamed[route.noteID] else { return nil }
+            var moved = route
+            moved.noteID = id
+            return moved
         }
     }
 

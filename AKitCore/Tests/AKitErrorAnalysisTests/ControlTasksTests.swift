@@ -163,8 +163,15 @@ struct ControlTasksTests {
         let green = try await ControlTasks.reproduction(repo: repo, base: base, prompt: "Make x 2", modeID: nil,
                                                        oracle: .tests(command: "grep -q 'x = 2' Sources/x.swift"), reference: head, env: env)
         try ControlTasks.save(green, env: env)
+        // Written under the file's lock, like every other analysis file.
+        #expect(fm.fileExists(atPath: EvalPaths(env: env).task(green.id).appendingPathExtension("lock").path))
+        // A change saved while the check runs (here: before it, with a stale copy in hand) is kept.
+        var renamed = green
+        renamed.title = "Renamed meanwhile"
+        try ControlTasks.save(renamed, env: env)
         #expect(try await ControlTasks.checkReference(green, env: env, trash: remove).referenceGreen == true)
         #expect(ControlTasks.load(green.id, env: env)?.referenceGreen == true)
+        #expect(ControlTasks.load(green.id, env: env)?.title == "Renamed meanwhile")
         let red = try await ControlTasks.reproduction(repo: repo, base: base, prompt: "Make x 3", modeID: nil,
                                                      oracle: .tests(command: "grep -q 'x = 3' Sources/x.swift"), reference: head, env: env)
         #expect(try await ControlTasks.checkReference(red, env: env, trash: remove).referenceGreen == false)

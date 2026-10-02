@@ -29,13 +29,14 @@ struct NotesPipelineTests {
         if executable { try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
     }
 
-    /// user #0, Bash call #1, failing result #2, the agent's claim #3.
-    func session() throws -> URL {
+    /// user #0, Bash call #1, failing result #2, the agent's claim #3. `outputTokens` is
+    /// recorded usage: in AKit's numbers, not in the transcript's items.
+    func session(outputTokens: Int = 7) throws -> URL {
         try write(".claude/projects/-work/0f6c2b1e-1111-4222-8333-944445555666.jsonl", """
             {"type":"user","cwd":"/work","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"Fix the failing test in Foo."}}
             {"type":"assistant","timestamp":"2026-10-01T10:00:05Z","message":{"id":"m1","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"swift test"}}]}}
             {"type":"user","timestamp":"2026-10-01T10:00:09Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Exit code 1\\n2 tests failed"}]}}
-            {"type":"assistant","timestamp":"2026-10-01T10:00:12Z","message":{"id":"m2","model":"claude-opus-5-5","content":[{"type":"text","text":"Done, all tests pass."}]}}
+            {"type":"assistant","timestamp":"2026-10-01T10:00:12Z","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":\(outputTokens)},"content":[{"type":"text","text":"Done, all tests pass."}]}}
 
             """)
         return home.appending(path: ".claude/projects/-work/0f6c2b1e-1111-4222-8333-944445555666.jsonl")
@@ -90,10 +91,10 @@ struct NotesPipelineTests {
         ["id": "n3", "supported": false, "reason": "Running the suite was what the user asked for."],
     ]]
 
-    func review(_ file: URL, model: String = "opus") async throws -> SessionNotes {
+    func review(_ file: URL, model: String = "opus", title: String? = "Fix Foo") async throws -> SessionNotes {
         let agent = LabAgent(harness: .claudeCode, model: model, effort: "high")
         let gate = try await SendGate.open(agent: agent, env: env)
-        return try await NotesPipeline.review(NotesPipeline.Target(harness: .claudeCode, file: file, title: "Fix Foo"),
+        return try await NotesPipeline.review(NotesPipeline.Target(harness: .claudeCode, file: file, title: title),
                                               config: NotesPipeline.Config(notes: agent), notesGate: gate, verifierGate: gate,
                                               runID: nil, workFolder: home.appending(path: "work"), env: env, out: { _ in })
     }
@@ -122,7 +123,6 @@ struct NotesPipelineTests {
         #expect(notes.accepted.map(\.id) == ["n1"])
         // Advice resting only on rejected notes is dropped.
         #expect(notes.advice.map(\.title) == ["Report the last test result verbatim."])
-        #expect(notes.advice[0].checkedByRepeating == false)
 
         var saved = try #require(NotesStore(env: env).load(notes.sessionKey))
         // Dates are kept to the millisecond.
@@ -156,6 +156,141 @@ struct NotesPipelineTests {
         #expect(NotesStore(env: env).all().count == 1)
     }
 
+    @Test func theNotesKeyHoldsExactlyWhatTheNotesCallSends() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        // A batch knows no title; a Lab review does. The title isn't sent, AKit's numbers are
+        // computed from the transcript for both: one input, one key, the notes are shared.
+        let batch = try await review(file, title: nil)
+        let lab = try await review(file, title: "Fix Foo")
+        #expect(calls() == ["notes", "verifier"])
+        #expect(lab.doneKeys == batch.doneKeys)
+        let gate = try await SendGate.open(agent: LabAgent(harness: .claudeCode, model: "opus", effort: "high"), env: env)
+        let numbers = try #require(NotesPipeline.numbers(of: NotesPipeline.Target(harness: .claudeCode, file: file), gate: gate))
+        #expect(numbers.text.contains(#""toolErrors" : 1"#) && numbers.text.contains(#""outputTokens" : 7"#))
+        let (items, _) = try NotesPipeline.scrubbedItems(NotesPipeline.Target(harness: .claudeCode, file: file), gate: gate)
+        let input = try NotesPipeline.notesInput(numbers: numbers.text, items: items, model: "opus")
+        #expect(input.contains(numbers.text) && !input.contains("Fix Foo"))
+
+        // Other recorded numbers with the same transcript items are another input: the notes
+        // are written again.
+        _ = try session(outputTokens: 70)
+        let other = try await review(file)
+        #expect(calls() == ["notes", "verifier", "notes", "verifier"])
+        #expect(other.doneKeys["notes"] != lab.doneKeys["notes"])
+    }
+
+    @Test func aQuoteNeedsOneLongPart() async throws {
+        var answer = notesAnswer
+        answer["notes"] = [
+            ["id": "n1", "description": "Ignored the failure.", "step": 2, "quote": "Exit … failed", "severity": "low", "faultLayer": "agent"],
+            ["id": "n2", "description": "Ignored the failure.", "step": 2, "quote": "Exit code 1 … failed", "severity": "low", "faultLayer": "agent"],
+            ["id": "n3", "description": "Ignored the failure.", "step": 2, "quote": "failed … Exit code 1", "severity": "low", "faultLayer": "agent"],
+        ]
+        answer["advice"] = [[String: Any]]()
+        try fakeClaude(notes: answer, verdicts: ["verdicts": [["id": "n2", "supported": true, "reason": "#2 shows the failure."]]])
+        let notes = try await review(try session())
+        // Every part short: it proves nothing.
+        #expect(notes.notes.first { $0.id == "n1" }?.verdict == Verdict(accepted: false, reason: "The quote is too short to show anything.", by: .code))
+        // One part of 8+ characters anchors it; the short one must still follow it in the step.
+        #expect(notes.notes.first { $0.id == "n2" }?.verdict?.accepted == true)
+        #expect(notes.notes.first { $0.id == "n3" }?.verdict == Verdict(accepted: false, reason: "The quote isn't in step #2.", by: .code))
+    }
+
+    @Test func theUsersRouteVerdictsSurviveAReviewOfTheGrownSession() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        let first = try await review(file)
+        // The user accepted matching's route of n1; n3's route is matching's alone.
+        try NotesStore(env: env).update(first.sessionKey) { notes in
+            notes.routes = [Route(noteID: "n1", modeID: "overclaiming-completion", confidence: 0.4, by: .matching, review: .accepted, reviewedAt: .now),
+                            Route(noteID: "n3", modeID: nil, confidence: 0.9, by: .matching)]
+            notes.doneKeys["matching"] = "m"
+        }
+        // The session goes on, and the new review calls the same note (same step and quote) n7.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"type":"user","timestamp":"2026-10-01T10:01:00Z","message":{"role":"user","content":"Are you sure?"}}"#.utf8 + [10]))
+        try handle.close()
+        var grown = notesAnswer
+        grown["notes"] = [["id": "n7", "description": "Said the tests pass after they failed.", "step": 3, "quote": "“all tests pass”",
+                           "severity": "high", "faultLayer": "agent"]]
+        grown["advice"] = [[String: Any]]()
+        try fakeClaude(notes: grown, verdicts: ["verdicts": [["id": "n7", "steelman": "s", "supported": true, "reason": "#2 failed."]]])
+        let again = try await review(file)
+        #expect(calls() == ["notes", "verifier", "notes", "verifier"])
+        #expect(again.doneKeys["notes"] != first.doneKeys["notes"])
+        #expect(again.routes?.map(\.noteID) == ["n7"])
+        #expect(again.routes?.first?.review == .accepted && again.routes?.first?.modeID == "overclaiming-completion")
+        // Matching runs again for everything else.
+        #expect(again.doneKeys["matching"] == nil)
+    }
+
+    @Test func pairsAndSpotChecksFollowTheirNotesToANewReview() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        let first = try await review(file)
+        let key = first.sessionKey
+        // Made on the first review: n1 is "all tests pass", n3 is "swift test".
+        let made = Bootstrap.Pairing(sessionKey: key, notesVersion: Bootstrap.notesVersion(first.notesConfig), notesKey: first.doneKeys["notes"],
+                                     proposed: [.init(human: "h1", model: "n1"), .init(human: "h2", model: "n2")],
+                                     confirmed: [.init(human: "h1", model: "n1"), .init(human: "h2", model: "n2")], agreed: ["n1", "n3"])
+        try Bootstrap.PairingStore(env: env).save(made)
+        _ = try LabelBookStore(env: env).update { book in
+            book.spotChecks = ["\(key)#n1": true, "\(key)#n2": false, "\(key)#n3": false, "claude:other#n1": true]
+        }
+
+        // The session grows; the same model numbers the same notes differently, and n2 is gone.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"type":"user","timestamp":"2026-10-01T10:01:00Z","message":{"role":"user","content":"Are you sure?"}}"#.utf8 + [10]))
+        try handle.close()
+        var grown = notesAnswer
+        grown["notes"] = [
+            ["id": "n1", "description": "Ran the whole suite.", "step": 1, "quote": "swift test", "severity": "low", "faultLayer": "agent"],
+            ["id": "n2", "description": "Claimed success.", "step": 3, "quote": "all tests pass", "severity": "high", "faultLayer": "agent"],
+        ]
+        grown["advice"] = [[String: Any]]()
+        try fakeClaude(notes: grown, verdicts: ["verdicts": [["id": "n1", "supported": true, "reason": "r"],
+                                                             ["id": "n2", "steelman": "s", "supported": true, "reason": "r"]]])
+        let again = try await review(file)
+        #expect(again.doneKeys["notes"] != first.doneKeys["notes"])
+
+        let moved = try #require(Bootstrap.PairingStore(env: env).load(key))
+        #expect(moved.notesKey == again.doneKeys["notes"] && moved.isMade(on: again))
+        #expect(moved.confirmed == [.init(human: "h1", model: "n2")] && moved.proposed == moved.confirmed)
+        #expect(moved.agreed == ["n2", "n1"])
+        #expect(LabelBookStore(env: env).load().spotChecks == ["\(key)#n2": true, "\(key)#n1": false, "claude:other#n1": true])
+        // Old pairings without a key still decode, as made on the notes there now.
+        let old = #"{"notesVersion":"v","proposed":[],"sessionKey":"\#(key)"}"#
+        let decoded = try AnalysisJSON.decoder.decode(Bootstrap.Pairing.self, from: Data(old.utf8))
+        #expect(decoded.notesKey == nil && decoded.isMade(on: again))
+    }
+
+    @Test func pairsForAnotherNotesVersionStayWhereTheyAre() throws {
+        let key = "claude:00000000-0000-4000-8000-000000000009"
+        let made = Bootstrap.Pairing(sessionKey: key, notesVersion: "claude-code · opus · notes v1", notesKey: "k1",
+                                     proposed: [.init(human: "h1", model: "n1")], confirmed: [.init(human: "h1", model: "n1")], agreed: ["n1"])
+        try Bootstrap.PairingStore(env: env).save(made)
+        // Another model's review of the session: its version's metrics must stay about its own notes.
+        try NotesStore(env: env).moveReferences(of: key, renamed: ["n1": "n2"], from: "k1", to: "k2",
+                                                notesVersion: "pi · gpt · notes v1")
+        #expect(Bootstrap.PairingStore(env: env).load(key) == made)
+    }
+
+    @Test func verifierNeighboursAreCutAsTheDigestCutsThem() throws {
+        let long = "START " + String(repeating: "x", count: 3000) + " END"
+        let items = [TranscriptItem(id: 0, kind: .user, text: "Fix it", timestamp: nil),
+                     TranscriptItem(id: 1, kind: .thinking, text: "a private plan", timestamp: nil),
+                     TranscriptItem(id: 2, kind: .toolResult(name: "Bash", isError: false), text: long, timestamp: nil),
+                     TranscriptItem(id: 3, kind: .assistant, text: "All tests pass.", timestamp: nil)]
+        let note = Note(id: "n1", source: .model, description: "Claimed success.", step: 3, quote: "All tests pass")
+        let input = NotesPipeline.verifierInput([note], items: items, byID: Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) }))
+        let cut = try #require(EvidenceDigest.line(items[2], cap: 1200))
+        #expect(input.contains(cut) && cut.hasPrefix("[#2 result Bash] START ") && cut.hasSuffix(" END") && cut.contains("chars…]"))
+        #expect(!input.contains("a private plan"))
+    }
+
     @Test func aSessionWithNoProblemsIsCheckedWithNoFailures() async throws {
         var clean = notesAnswer
         clean["notes"] = [[String: Any]]()
@@ -167,6 +302,16 @@ struct NotesPipelineTests {
         // Nothing to verify: no verifier call.
         #expect(calls() == ["notes"])
         #expect(notes.doneKeys["verifier"] != nil)
+    }
+
+    @Test func aDigestOverTheBudgetIsNotSent() throws {
+        // 130 user turns of 3000 characters: ~390K, over the default budget and never cut.
+        let items = (0..<130).map { TranscriptItem(id: $0, kind: .user, text: String(repeating: "u", count: 3000), timestamp: nil) }
+        #expect(throws: NotesPipeline.Failure.self) {
+            _ = try NotesPipeline.notesInput(numbers: nil, items: items, model: "opus")
+        }
+        // A 1M-token window has room for it.
+        #expect(try NotesPipeline.notesInput(numbers: nil, items: items, model: "opus[1m]").contains("[#129 user]"))
     }
 
     @Test func invalidAnswersAreErrors() async throws {
@@ -232,8 +377,8 @@ struct NotesPipelineTests {
     @Test func reservedSessionsAreNotReviewed() async throws {
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
         let file = try session()
-        try BootstrapReservations(env: env).save([.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
-                                                         transcript: file.path)])
+        try BootstrapReservations(env: env).update { $0 += [.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
+                                                         transcript: file.path)] }
         let run = try await queueReview()
         let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, execute: AnalysisRuns.execute,
                                        out: { _ in })
@@ -245,8 +390,8 @@ struct NotesPipelineTests {
     @Test func agentReviewsOfReservedSessionsAreRefusedToo() async throws {
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
         let file = try session()
-        try BootstrapReservations(env: env).save([.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
-                                                         transcript: file.path)])
+        try BootstrapReservations(env: env).update { $0 += [.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
+                                                         transcript: file.path)] }
         let run = try await LabRuns.newReview(transcript: file, title: "Fix Foo",
                                               agent: LabAgent(harness: .claudeCode, model: "opus", effort: "high", mode: .agent),
                                               language: .english, environment: .background, akit: URL(filePath: "/usr/bin/true"), env: env)

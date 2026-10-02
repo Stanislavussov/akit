@@ -6,7 +6,6 @@ import SwiftUI
 /// and fix status, with every action on it.
 struct ModePage: View {
     @Environment(AnalysisModel.self) private var analysis
-    @Environment(AppModel.self) private var model
     let id: String
     @Binding var action: ModeAction?
     /// Opens another mode's page (the one it was merged into).
@@ -14,6 +13,7 @@ struct ModePage: View {
     @State private var justConfirmed = false
     @State private var showAllNotes = false
     @State private var addExemplar = false
+    @State private var notesFor: SessionNotesTarget?
 
     var body: some View {
         if let mode = analysis.data.mode(id) {
@@ -21,7 +21,7 @@ struct ModePage: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         header(mode)
-                        if justConfirmed, mode.status == .active { followUps(mode) }
+                        if justConfirmed, mode.status == .active { ConfirmedFollowUps(mode: mode) }
                         definition(mode)
                         check(mode)
                         if mode.isCurrent, mode.status == .active {
@@ -31,19 +31,24 @@ struct ModePage: View {
                             ModeFixPanel(mode: mode).id("fix")
                         }
                         exemplars(mode)
-                        routed(mode)
+                        routed(mode).id("seen")
                     }
                     .padding(20)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .task {
-                    // Snapshots: `--select <mode> --query judge|fix` scrolls to that panel.
-                    guard let panel = DebugSnapshot.options?.query, ["judge", "fix"].contains(panel) else { return }
+                    // Snapshots: `--select <mode> --query notes` opens the first routed note's session notes.
+                    if DebugSnapshot.options?.query == "notes", let ref = (analysis.data.seenByMode[id] ?? []).sorted().first {
+                        notesFor = SessionNotesTarget(sessionKey: ref.sessionKey)
+                    }
+                    // Snapshots: `--select <mode> --query judge|fix|seen` scrolls to that panel.
+                    guard let panel = DebugSnapshot.options?.query, ["judge", "fix", "seen"].contains(panel) else { return }
                     try? await Task.sleep(for: .milliseconds(400))
                     proxy.scrollTo(panel, anchor: .top)
                 }
             }
             .sheet(isPresented: $addExemplar) { AddExemplarSheet(mode: mode) }
+            .sheet(item: $notesFor) { SessionNotesSheet(sessionKey: $0.sessionKey) }
         }
     }
 
@@ -69,23 +74,6 @@ struct ModePage: View {
             }
             .controlSize(.small)
         }
-    }
-
-    /// After Confirm: the mode's check and retro-matching, as the design offers them.
-    private func followUps(_ mode: Mode) -> some View {
-        HStack {
-            Label("\(mode.name) is active. Next: count it over your sessions and find it in the notes already reviewed.",
-                  systemImage: "checkmark.seal")
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            if CodeChecks.check(for: mode.id) != nil {
-                Button("Run Check") { analysis.runCheck(mode) }
-            }
-            Button("Retro-match the Note Pool…") { analysis.send = .retro(mode, data: analysis.data) }
-        }
-        .controlSize(.small)
-        .padding(10)
-        .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func definition(_ mode: Mode) -> some View {
@@ -134,9 +122,8 @@ struct ModePage: View {
                 let results = analysis.data.checks[mode.id]
                 let seen = analysis.data.seenByMode[mode.id]?.count ?? 0
                 Text(check.summary).fixedSize(horizontal: false, vertical: true)
-                Text(check.kind == .mechanical
-                     ? "Mechanical: the check is the definition, exact by construction, so its rate is the mode's frequency."
-                     : "Heuristic — not validated: until it is, the mode's frequency is \"seen in \(seen) notes\", not this rate.")
+                Text(AnalysisText.checkTrust(check, trust: analysis.data.codeCheckTrust(mode), seen: seen,
+                                             judged: analysis.data.judges[mode.id] != nil))
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -204,22 +191,26 @@ struct ModePage: View {
             }
             ForEach(shown, id: \.self) { ref in
                 let found = analysis.data.note(ref)
-                HStack(alignment: .top) {
-                    PoolNoteView(ref: ref, data: analysis.data)
-                    VStack(alignment: .trailing, spacing: 4) {
-                        if let runID = found?.session.runID, model.labRuns.contains(where: { $0.id == runID }) {
-                            Button("Show Review") {
-                                model.revealLabRun = runID
-                                model.section = .lab
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top) {
+                        PoolNoteView(ref: ref, data: analysis.data)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            if found != nil {
+                                Button("Show Session Notes") { notesFor = SessionNotesTarget(sessionKey: ref.sessionKey) }
+                                    .help("The session's outcome, notes, advice, routes and signals")
+                            }
+                            if let found, exemplars.count < ModeStore.maxExemplars,
+                               !exemplars.contains(where: { $0.sessionKey == ref.sessionKey && $0.step == found.note.step }) {
+                                Button("Make Exemplar") { add(found.note, of: ref.sessionKey, to: mode) }
+                                    .disabled(analysis.data.testSessions.contains(ref.sessionKey))
                             }
                         }
-                        if let found, exemplars.count < ModeStore.maxExemplars,
-                           !exemplars.contains(where: { $0.sessionKey == ref.sessionKey && $0.step == found.note.step }) {
-                            Button("Make Exemplar") { add(found.note, of: ref.sessionKey, to: mode) }
-                                .disabled(analysis.data.testSessions.contains(ref.sessionKey))
-                        }
+                        .controlSize(.small)
                     }
-                    .controlSize(.small)
+                    // The route that put the note here: you can still reject it or move it.
+                    if let found, let route = Matching.currentRoutes(found.session)[ref.noteID] {
+                        RouteActions(ref: ref, route: route)
+                    }
                 }
             }
             if refs.count > shown.count {

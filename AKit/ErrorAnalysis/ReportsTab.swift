@@ -94,9 +94,9 @@ struct ReportsTab: View {
         defer { loading = false }
         do {
             let built = try await Task.detached { () -> (BatchReport, BatchReport?) in
-                let first = try await ReportBuilder.build(batch, env: env)
+                let first = try await Reports.build(batch, env: env)
                 var second: BatchReport?
-                if let compared { second = try await ReportBuilder.build(compared, env: env) }
+                if let compared { second = try await Reports.build(compared, env: env) }
                 return (first, second)
             }.value
             error = nil
@@ -108,21 +108,8 @@ struct ReportsTab: View {
     }
 }
 
-/// `buildReport` of `akit analysis report`: everything `Reports.build` needs, read from disk.
-enum ReportBuilder {
-    static func build(_ batch: Batch, env: HarnessEnvironment) async throws -> BatchReport {
-        let modes = try await ModeStore(env: env).list()
-        let pool = NotesStore(env: env).all()
-        let labels = Bootstrap.LabelStore(env: env).all()
-        let metrics = Bootstrap.metrics(labels: labels, notes: pool, pairings: Bootstrap.PairingStore(env: env).all(),
-                                        phases: Bootstrap.phases(of: labels))
-        return Reports.build(batch, modes: modes, pool: pool, checks: modes.compactMap { Validation.verdicts(modeID: $0.id, env: env) },
-                             trust: Validation.trustMap(modes: modes, env: env), bootstrap: metrics, acceptance: Matching.acceptance(pool),
-                             allBatches: BatchStore(env: env).all(), phases: Reports.phases(of: batch))
-    }
-}
-
-/// Coverage, the notes version and its bootstrap recall, verifier rejection, route acceptance.
+/// Coverage, the notes version and its bootstrap recall, verifier rejection and spot-check
+/// precision with their counts; route acceptance, which is over the whole pool, apart.
 private struct ReportHeader: View {
     let report: BatchReport
     let batch: Batch?
@@ -136,26 +123,49 @@ private struct ReportHeader: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            HStack(alignment: .top, spacing: 12) {
-                tile("Coverage", "\(report.coverage[0])/\(report.coverage[1])",
-                     report.coverage[0] < report.coverage[1] ? "sessions done; the rest failed" : "sessions done")
-                tile("Notes recall", AnalysisText.percent(report.notesRecall),
-                     report.notesVersion.map { "bootstrap, \($0)" } ?? "no notes version")
-                tile("Verifier rejected", AnalysisText.percent(report.verifierRejection), "of the model's notes")
-                tile("Routes accepted", report.routeAcceptance[1] == 0 ? "—" : "\(report.routeAcceptance[0])/\(report.routeAcceptance[1])",
-                     "of the routes you reviewed")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180, maximum: 220), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                tile("Coverage", "\(report.coverage[0])/\(report.coverage[1])", counts: nil, coverage)
+                tile("Notes recall", AnalysisText.percent(report.notesRecall), counts: report.notesRecallCounts,
+                     report.notesVersion.map { "of your bootstrap problems, found and kept by the verifier · \($0)" } ?? "no notes version")
+                tile("Verifier rejected", AnalysisText.percent(report.verifierRejection), counts: report.verifierRejectionCounts,
+                     "of the model's notes in this batch")
+                tile("Spot checks", AnalysisText.percent(report.spotCheckPrecision), counts: report.spotCheckCounts,
+                     report.spotCheckPrecision == nil ? "no spot checks yet: answer them on the Review tab"
+                                                      : "precision: notes you agreed are real problems")
+                tile("Routes accepted · whole pool", report.routeAcceptance[1] == 0 ? "—" : "\(report.routeAcceptance[0])/\(report.routeAcceptance[1])",
+                     counts: nil, "of the routes you reviewed in every batch, not just this one")
             }
         }
     }
 
-    private func tile(_ title: String, _ value: String, _ detail: String) -> some View {
+    /// Done of all; the rest is still running, waiting while paused, failed, or too long for
+    /// a digest (left out of the frequencies for good).
+    private var coverage: String {
+        guard let batch else { return report.coverage[0] < report.coverage[1] ? "sessions done; the rest aren't" : "sessions done" }
+        let open = batch.sessions.filter { $0.status == .pending || $0.status == .running }.count
+        let failed = batch.sessions.filter { $0.status == .error }.count
+        var parts = ["sessions done"]
+        if open > 0 { parts.append(batch.paused ? "\(open) waiting, paused" : "\(open) still running") }
+        if failed > 0 { parts.append("\(failed) failed") }
+        if batch.tooLong > 0 { parts.append("\(batch.tooLong) too long for a digest") }
+        if let leftOut = batch.leftOut, leftOut > 0 { parts.append("\(leftOut) left out before sampling") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func tile(_ title: String, _ value: String, counts: [Int]?, _ detail: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title2.weight(.semibold)).monospacedDigit()
-            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(value).font(.title2.weight(.semibold))
+                if let counts, counts.count == 2, counts[1] > 0 {
+                    Text("\(counts[0])/\(counts[1])").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .monospacedDigit()
+            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(3).fixedSize(horizontal: false, vertical: true)
         }
         .padding(10)
-        .frame(width: 190, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -259,11 +269,12 @@ extension AnalysisSend {
             let store = ModeStore(env: env)
             let items = Clustering.items(NotesStore(env: env).all())
             guard !items.isEmpty else { return "No notes to cluster." }
+            var leftOut: [String] = []
             let candidates = try await Clustering.cluster(items, existing: try await store.list(), rejected: try await store.rejectedNames(),
                                                           rebuild: true, agent: agent, gate: gate, runID: nil,
-                                                          workFolder: AnalysisModel.workFolder(env), env: env)
+                                                          workFolder: AnalysisModel.workFolder(env), env: env, out: { leftOut.append($0) })
             await MainActor.run { model.rebuild = candidates }
-            return "Clustered \(items.count) notes from scratch into \(candidates.count) groups; nothing was saved."
+            return withLeftOut("Clustered \(items.count) notes from scratch into \(candidates.count) groups; nothing was saved.", leftOut)
         }
     }
 }

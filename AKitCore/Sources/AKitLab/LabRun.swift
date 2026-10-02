@@ -271,9 +271,79 @@ public struct LabSettings: Codable, Sendable, Hashable {
         (try? Data(contentsOf: file(env: env))).flatMap { try? JSONDecoder().decode(LabSettings.self, from: $0) } ?? LabSettings()
     }
 
+    /// The settings a send obeys: the allowed list, the scrub patterns and the monthly limit.
+    /// A file that exists but can't be read, or whose fields don't decode, would silently turn
+    /// them off with `load`'s defaults, so every send is refused until it is fixed.
+    public static func loadForSending(env: HarnessEnvironment) throws -> LabSettings {
+        let url = file(env: env)
+        guard FileManager.default.fileExists(atPath: url.path) else { return LabSettings() }
+        guard let settings = (try? Data(contentsOf: url)).flatMap(strictly) else {
+            throw SendAccounts.Failure(message: "Not sent: \(url.path) can't be read, so the allowed list, your scrub patterns and the "
+                                           + "monthly limit can't be checked. Fix or move the file, then try again.")
+        }
+        return settings
+    }
+
+    /// Writes these settings whole; edits of what is on disk go through `update`.
     public func save(env: HarnessEnvironment) throws {
         try FileManager.default.createDirectory(at: LabPaths(env: env).folder, withIntermediateDirectories: true)
-        try LabStore.write(self, to: Self.file(env: env))
+        try FileLock.locked(Self.file(env: env).appendingPathExtension("lock")) { try LabStore.write(self, to: Self.file(env: env)) }
+    }
+
+    /// The settings in `data` when every field decodes: the lenient decoder drops a field it
+    /// can't read (`"monthlyLimit": "ten"`), which would turn the limit off.
+    static func strictly(_ data: Data) -> LabSettings? {
+        struct Strict: Decodable {
+            let allowedDestinations: [SendDestination]?
+            let piAccounts: [PiAccount]?
+            let scrub: Scrubber.OwnPatterns?
+            let monthlyLimit: Double?
+        }
+        guard (try? JSONDecoder().decode(Strict.self, from: data)) != nil else { return nil }
+        return try? JSONDecoder().decode(LabSettings.self, from: data)
+    }
+
+    /// Reads the file, lets `change` edit it and writes it back, all under the lock `save`
+    /// takes, so the app's Settings and `akit lab policy` never write over each other's edits.
+    /// A file that exists but can't be read is never replaced. Returns the settings now on disk.
+    @discardableResult
+    public static func update(env: HarnessEnvironment, _ change: (inout LabSettings) throws -> Void) throws -> LabSettings {
+        try FileManager.default.createDirectory(at: LabPaths(env: env).folder, withIntermediateDirectories: true)
+        let url = file(env: env)
+        return try FileLock.locked(url.appendingPathExtension("lock")) {
+            var settings = LabSettings()
+            if FileManager.default.fileExists(atPath: url.path) {
+                guard let read = (try? Data(contentsOf: url)).flatMap(strictly) else {
+                    throw LabStore.Failure(message: "\(url.path) can't be read; fix or move it before AKit changes it.")
+                }
+                settings = read
+            }
+            let before = settings
+            try change(&settings)
+            if settings != before { try LabStore.write(settings, to: url) }
+            return settings
+        }
+    }
+
+    /// Applies an edit made on a copy, from `old` to `new` (the app's Settings form), onto
+    /// these settings without undoing what changed here meanwhile: list entries are added and
+    /// removed one by one, other fields replaced only when the edit changed them.
+    public mutating func apply(from old: LabSettings, to new: LabSettings) {
+        if new.reportLanguage != old.reportLanguage { reportLanguage = new.reportLanguage }
+        if new.monthlyLimit != old.monthlyLimit { monthlyLimit = new.monthlyLimit }
+        if new.scrub.maskEmails != old.scrub.maskEmails { scrub.maskEmails = new.scrub.maskEmails }
+        if new.scrub.hosts != old.scrub.hosts { scrub.hosts = new.scrub.hosts }
+        if new.scrub.extra != old.scrub.extra { scrub.extra = new.scrub.extra }
+        allowedDestinations.removeAll { old.allowedDestinations.contains($0) && !new.allowedDestinations.contains($0) }
+        for entry in new.allowedDestinations where !old.allowedDestinations.contains(entry) {
+            if !allowedDestinations.contains(where: { $0.matches(entry) }) { allowedDestinations.append(entry) }
+        }
+        piAccounts.removeAll { old.piAccounts.contains($0) && !new.piAccounts.contains($0) }
+        // One account per provider: an added one replaces that provider's.
+        for account in new.piAccounts where !old.piAccounts.contains(account) {
+            piAccounts.removeAll { $0.provider.caseInsensitiveCompare(account.provider) == .orderedSame }
+            piAccounts.append(account)
+        }
     }
 }
 

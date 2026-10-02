@@ -1,5 +1,7 @@
 import Foundation
 import Testing
+import AKitFoundation
+import AKitSessions
 @testable import AKitErrorAnalysis
 @testable import AKitLab
 
@@ -26,10 +28,16 @@ struct ReportTests {
               })
     }
 
-    func mode(_ id: String) -> Mode {
-        var mode = Mode(id: id, name: id, definition: "d", origin: .seedPrior)
+    func mode(_ id: String, scope: Mode.Scope = .general) -> Mode {
+        var mode = Mode(id: id, name: id, definition: "d", scope: scope, origin: .seedPrior)
         mode.status = .active
         return mode
+    }
+
+    /// Phases where every step is its own action: the row is the previous step's phase.
+    func steps(_ steps: [Int: Phase]) -> SessionPhases {
+        let ids = steps.keys.sorted()
+        return SessionPhases(steps: steps, before: Dictionary(uniqueKeysWithValues: zip(ids.dropFirst(), ids).map { ($0, steps[$1]!) }))
     }
 
     @Test func frequenciesComeFromChecksWeightedAndByOutcome() {
@@ -82,14 +90,14 @@ struct ReportTests {
     @Test func matrixRowsColumnsAndDifference() {
         let pool = [notes("a", outcome: .no, decisive: 5, routes: ["m"]), notes("b", outcome: .no, decisive: 3, routes: ["m"]),
                     notes("c", outcome: .achieved, decisive: nil, routes: [])]
-        let phases: [String: [Int: Phase]] = ["a": [4: .edit, 5: .verify], "b": [1: .explore, 3: .edit]]
+        let phases = ["a": steps([4: .edit, 5: .verify]), "b": steps([1: .explore, 3: .edit])]
         let matrix = TransitionMatrix.build(pool, phases: phases)
         #expect(matrix.count(.edit, "verify") == 1 && matrix.count(.explore, "edit") == 1)
         #expect(matrix.count(.report, TransitionMatrix.noFailures) == 1)
         #expect(matrix.funnel["verify"] == 1 && matrix.funnel["edit"] == 1)
         #expect(matrix.sessions(.edit, "verify") == ["a"])
 
-        let after = TransitionMatrix.build([notes("a", outcome: .no, decisive: 5, routes: ["m"])], phases: ["a": [4: .verify, 5: .report]])
+        let after = TransitionMatrix.build([notes("a", outcome: .no, decisive: 5, routes: ["m"])], phases: ["a": steps([4: .verify, 5: .report])])
         let difference = TransitionMatrix.difference(before: matrix, after: after)
         #expect(difference["edit|verify"]?.change ?? 0 < 0)
         #expect(difference["edit|verify"]?.withinNoise == true && difference["edit|verify"]?.dimmed == true)
@@ -105,6 +113,73 @@ struct ReportTests {
         good.phaseAgreement = 0.75
         #expect(Reports.build(b, modes: [], pool: pool, checks: [], trust: [:], bootstrap: [good], acceptance: (0, 0), allBatches: [b],
                               phases: phases).matrixHidden == nil)
+    }
+
+    @Test func theRowOfAToolResultIsTheStepBeforeItsCall() {
+        let kinds: [(TranscriptItem.Kind, String)] = [
+            (.user, "Fix it"),
+            (.toolCall(name: "Edit"), #"{"file_path": "/x/a.swift"}"#),
+            (.toolResult(name: "Edit", isError: false), "updated"),
+            (.thinking, "now test"),
+            (.toolCall(name: "Bash"), JSONLines.pretty(["command": "swift test"])),
+            (.toolResult(name: "Bash", isError: true), "1 test failed"),
+            (.assistant, "All tests pass."),
+        ]
+        let items = kinds.enumerated().map { TranscriptItem(id: $0.offset, kind: $0.element.0, text: $0.element.1, timestamp: nil) }
+        let session = PhaseClassifier.session(items)
+        #expect(session.steps[5] == .verify && session.steps[6] == .report)
+        // The failing result's own call is verify too; the step before that call is edit.
+        #expect(session.before[5] == .edit && session.before[4] == .edit && session.before[2] == .understand)
+        #expect(session.before[6] == .verify && session.before[0] == nil)
+        let matrix = TransitionMatrix.build([notes("a", outcome: .no, decisive: 5, routes: ["m"]),
+                                             notes("b", outcome: .no, decisive: 4, routes: ["m"])],
+                                            phases: ["a": session, "b": session])
+        #expect(matrix.count(.edit, "verify") == 2 && matrix.count(.verify, "verify") == 0)
+    }
+
+    @Test func projectScopedModesCountOverTheirProjectOnly() {
+        let picks: [(String, String)] = [("a", "p"), ("b", "p"), ("c", "q"), ("d", "q")]
+        let b = Batch(runID: "b", createdAt: Date(timeIntervalSince1970: 0), filter: Sampling.Filter(), size: 4, seed: 1,
+                      notesAgent: agent, matchingAgent: agent, language: .english,
+                      sessions: picks.map {
+                          Batch.Session(pick: Sampling.Pick(sessionKey: $0.0, file: "/f", inclusion: 1, sampling: "random", stratum: "s",
+                                                            projectID: $0.1), status: .done)
+                      })
+        let pool = picks.map { notes($0.0, outcome: .no, decisive: nil, routes: ["large-file-read-whole"]) }
+        let check = CheckResults(modeID: "large-file-read-whole", verdicts: [
+            "a": CheckVerdict(positive: true, version: 1), "b": CheckVerdict(positive: false, version: 1),
+            "c": CheckVerdict(positive: true, version: 1), "d": CheckVerdict(positive: true, version: 1)])
+        func report(_ scope: Mode.Scope) -> BatchReport {
+            Reports.build(b, modes: [mode("large-file-read-whole", scope: scope)], pool: pool, checks: [check], trust: [:], bootstrap: [],
+                          acceptance: (0, 0), allBatches: [b], phases: [:])
+        }
+        let general = report(.general).modes[0]
+        #expect(general.sessions == 4 && general.checked == 4 && general.weighted == 0.75 && general.seenInNotes == 4)
+        let scoped = report(.project("p")).modes[0]
+        #expect(scoped.sessions == 2 && scoped.checked == 2 && scoped.weighted == 0.5 && scoped.seenInNotes == 2)
+        // A batch with none of the project's sessions leaves the mode out.
+        #expect(report(.project("elsewhere")).modes.isEmpty)
+    }
+
+    @Test func reportCarriesDenominatorsAndSpotCheckPrecision() {
+        let b = batch([("a", 1, "random"), ("b", 1, "random")])
+        var a = notes("a", outcome: .no, decisive: nil, routes: ["m", "m", nil])
+        a.notes[2].verdict = Verdict(accepted: false, reason: "no quote", by: .model)
+        let pool = [a, notes("b", outcome: .no, decisive: nil, routes: ["m"])]
+        let metrics = Bootstrap.Metrics(notesVersion: "claude-code · opus · notes v1", sessions: 30, recall: 0.8, recallCounts: [8, 10],
+                                        precision: 0.9, precisionCounts: [9, 10], phaseAgreement: 0.8, stepAgreement: 0.5,
+                                        deviationCounts: [8, 5, 10], outcomeAgreement: 1, outcomeCounts: [1, 1])
+        // Spot checks outside the batch don't count.
+        let spot = ["a#n0": true, "a#n1": false, "b#n0": true, "elsewhere#n0": false]
+        let report = Reports.build(b, modes: [mode("m")], pool: pool, checks: [], trust: [:], bootstrap: [metrics], acceptance: (0, 0),
+                                   allBatches: [b], phases: [:], spotChecks: spot)
+        #expect(report.notesRecall == 0.8 && report.notesRecallCounts == [8, 10])
+        #expect(report.verifierRejectionCounts == [1, 4] && report.verifierRejection == 0.25)
+        #expect(report.spotCheckCounts == [2, 3] && abs(report.spotCheckPrecision! - 2.0 / 3.0) < 1e-12)
+        // A mode without a check still has its N.
+        #expect(report.modes[0].checked == 0 && report.modes[0].sessions == 2)
+        let empty = Reports.build(b, modes: [], pool: pool, checks: [], trust: [:], bootstrap: [], acceptance: (0, 0), allBatches: [b], phases: [:])
+        #expect(empty.notesRecallCounts == nil && empty.spotCheckPrecision == nil && empty.spotCheckCounts == [0, 0])
     }
 
     @Test func failuresWithoutADecisiveStepAreUnlocatedNotNoFailures() {

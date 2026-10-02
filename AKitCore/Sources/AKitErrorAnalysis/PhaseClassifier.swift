@@ -10,6 +10,19 @@ public enum Phase: String, Codable, Sendable, CaseIterable {
     public var title: String { rawValue.capitalized }
 }
 
+/// One session's phases by code: what the transition matrix reads.
+public struct SessionPhases: Hashable, Sendable {
+    /// The phase of every step.
+    public var steps: [Int: Phase]
+    /// The phase of the step just before each step's action: the matrix's row.
+    public var before: [Int: Phase]
+
+    public init(steps: [Int: Phase], before: [Int: Phase]) {
+        self.steps = steps
+        self.before = before
+    }
+}
+
 /// Phases by code, from the tool each step used. Notes get their phase from their step `#n`
 /// here, never from the model, so the matrix doesn't depend on the notes model.
 public enum PhaseClassifier {
@@ -18,17 +31,16 @@ public enum PhaseClassifier {
     /// the session's last assistant text, which is the report.
     public static func phases(of items: [TranscriptItem]) -> [Int: Phase] {
         let report = items.last { $0.kind == .assistant }?.id
+        let calls = calls(of: items)
         var result: [Int: Phase] = [:]
         var previous = Phase.understand
-        var lastCall: Phase?
         for item in items {
             let phase: Phase
             switch item.kind {
             case .toolCall(let name):
                 phase = toolPhase(name, input: item.text) ?? previous
-                lastCall = phase
             case .toolResult:
-                phase = lastCall ?? previous
+                phase = calls[item.id].flatMap { result[$0] } ?? previous
             default:
                 phase = item.id == report ? .report : previous
             }
@@ -36,6 +48,53 @@ public enum PhaseClassifier {
             previous = phase
         }
         return result
+    }
+
+    /// The phases of a session's steps, and for every step the phase of the step just before
+    /// its action. A tool result is part of its call's action, so its row is the step before
+    /// that call: otherwise a failing test result would always sit in the verify → verify cell.
+    public static func session(_ items: [TranscriptItem]) -> SessionPhases {
+        let steps = phases(of: items)
+        let calls = calls(of: items)
+        var before: [Int: Phase] = [:]
+        var previous: Phase?
+        for item in items {
+            if case .toolResult = item.kind, let call = calls[item.id] {
+                before[item.id] = before[call]
+            } else {
+                before[item.id] = previous
+            }
+            previous = steps[item.id]
+        }
+        return SessionPhases(steps: steps, before: before)
+    }
+
+    /// Each tool result's call: the oldest call still waiting for a result, of the same tool
+    /// when the result names one. Parallel calls (call A, call B, result A, result B) get
+    /// their own results in order. A user turn ends the calls still waiting.
+    static func calls(of items: [TranscriptItem]) -> [Int: Int] {
+        var waiting: [(id: Int, name: String)] = []
+        var result: [Int: Int] = [:]
+        for item in items {
+            switch item.kind {
+            case .toolCall(let name):
+                waiting.append((item.id, name))
+            case .toolResult(let name, _):
+                guard let index = waiting.firstIndex(where: { $0.name == name }) ?? (waiting.isEmpty ? nil : 0) else { continue }
+                result[item.id] = waiting.remove(at: index).id
+            case .user:
+                waiting.removeAll()
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    /// The phases of a recorded session, read from its transcript file; nil when it can't be read.
+    public static func session(sessionKey: String, transcript: String) -> SessionPhases? {
+        let target = NotesPipeline.Target(harness: SessionKey.harness(of: sessionKey), file: URL(filePath: transcript))
+        return (try? SessionReader.transcript(of: target.summary)).map { session($0.items) }
     }
 
     static let exploreTools: Set = ["Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch",

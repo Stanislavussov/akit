@@ -1,14 +1,15 @@
 import Foundation
 
 /// The outgoing pass before AKit sends session text to a model. `SecretFilter.masked` keeps
-/// secrets off the screen; this is stronger because the text leaves the machine: gitleaks'
-/// default rules ported to Swift, a generic keyword rule and an entropy detector (both
-/// gated by entropy so code stays readable), `.env` dumps, and the user's own patterns
-/// (internal hosts, e-mails, anything else). Found keys are never verified online: that
-/// would send them to their provider. Keys, schemes and surrounding text stay readable.
+/// secrets off the screen with the same token shapes and password rules; this is stronger
+/// because the text leaves the machine: gitleaks' default rules ported to Swift, a generic
+/// keyword rule and an entropy detector (both gated by entropy so code stays readable),
+/// `.env` dumps, and the user's own patterns (internal hosts, e-mails, anything else). Found
+/// keys are never verified online: that would send them to their provider. Keys, schemes and
+/// surrounding text stay readable. Scrubbing scrubbed text again changes nothing.
 public enum Scrubber {
     /// Bumped whenever rules change; part of done keys and the send log.
-    public static let version = 3
+    public static let version = 4
     public static let hostMask = "[host hidden]"
     public static let emailMask = "[email hidden]"
 
@@ -43,10 +44,14 @@ public enum Scrubber {
         current = maskDotenv(current, counts: &counts)
         current = apply(genericRule, to: current, present: present, counts: &counts)
         current = apply(flagRule, to: current, present: present, counts: &counts)
+        for rule in passwordRules {
+            current = apply(rule, to: current, present: present, counts: &counts)
+        }
         current = apply(entropyRule, to: current, present: present, counts: &counts)
 
+        // SecretFilter's token shapes and passwords are the rules above; its named values aren't.
         let before = occurrences(of: SecretFilter.mask, in: current)
-        current = SecretFilter.masked(current as String) as NSString
+        current = SecretFilter.maskedNamedValues(current as String) as NSString
         let added = occurrences(of: SecretFilter.mask, in: current) - before
         if added > 0 { counts["secret-filter", default: 0] += added }
 
@@ -71,7 +76,7 @@ public enum Scrubber {
 
     // MARK: - Rules
 
-    private struct Rule: Sendable {
+    struct Rule: Sendable {
         let id: String
         let regex: NSRegularExpression
         /// The capture group that is masked; 0 masks the whole match. Text around it stays.
@@ -103,7 +108,8 @@ public enum Scrubber {
     /// Token shapes with a recognizable prefix or context, after gitleaks' default config.
     /// The constants are ours; a typo is a programming error, so they compile with `try!`.
     /// Every quantifier is on a single class or bounded, so nothing backtracks badly.
-    private static let rules: [Rule] = [
+    /// `SecretFilter.masked` runs them too: one list for the screen and the outgoing pass.
+    static let rules: [Rule] = [
         Rule("private-key",
              #"-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\s\S]{0,65536}?-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----"#,
              hints: ["PRIVATE KEY"]),
@@ -142,8 +148,9 @@ public enum Scrubber {
         Rule("npm-access-token", #"\bnpm_[A-Za-z0-9]{36,}"#, hints: ["npm_"]),
         Rule("pypi-upload-token", #"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}"#, hints: ["pypi-AgEIcHlwaS5vcmc"]),
         Rule("sendgrid-api-token", #"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"#, hints: ["SG."]),
-        // "SK" + 32 hex is too common to mask without a nearby Twilio-ish word.
-        Rule("twilio-api-key", #"(?i:twilio|api[_-]?key|key[_-]?sid|sid|secret)[^\n]{0,40}?\b(SK[0-9a-fA-F]{32})(?![0-9A-Za-z])"#,
+        // "SK" + 32 hex is too common to mask without a nearby Twilio-ish word. The word in a
+        // mask ("[secret hidden]") isn't one, so a second scrub finds nothing new.
+        Rule("twilio-api-key", #"(?<!\[)(?i:twilio|api[_-]?key|key[_-]?sid|sid|secret)[^\n]{0,40}?\b(SK[0-9a-fA-F]{32})(?![0-9A-Za-z])"#,
              group: 1, hints: ["SK"]),
         Rule("mailgun-private-api-token", #"\bkey-[a-f0-9]{32}(?![0-9A-Za-z])"#, hints: ["key-"]),
         Rule("shopify-token", #"\bshp(?:at|ss|ca|pa)_[a-fA-F0-9]{32}(?![0-9A-Za-z])"#, hints: ["shp"]),
@@ -190,11 +197,76 @@ public enum Scrubber {
 
     /// `--token VALUE`, `--api-key=VALUE`: secrets passed on a command line.
     private static let flagRule = Rule(
-        "cli-flag-secret", #"--(?:token|api-key|apikey|access-token|auth-token|password|secret|client-secret)(?:[ \t]+|=)["']?([^\s"'`]{8,})"#,
-        group: 1, hints: ["--"], options: .caseInsensitive
+        "cli-flag-secret", #"--(?:token|api-key|apikey|access-token|auth-token|password|secret|client-secret)([ \t]+|=)(["']?)([^\s"'`]{8,})"#,
+        group: 3, hints: ["--"], options: .caseInsensitive
     ) { text, match in
-        looksLikeSecretValue(text.substring(with: match.range(at: 1)), quoted: true, passwordLike: true, hashName: false)
+        let value = text.substring(with: match.range(at: 3))
+        if isProseAfterFlag(value, separator: text.substring(with: match.range(at: 1)), quote: text.substring(with: match.range(at: 2))) {
+            return false
+        }
+        return looksLikeSecretValue(value, quoted: true, passwordLike: true, hashName: false)
     }
+
+    /// Weak passwords: entropy says nothing about `Summer2024` or `hunter22`, so after a
+    /// password's name (`db_password: …`, `PGPASSWORD=…`, `--password …`, `IDENTIFIED BY '…'`,
+    /// `mysql -p…`) the value is masked unless it reads as code. `SecretFilter.masked` runs them too.
+    static let passwordRules: [Rule] = [
+        Rule("password",
+             #"(passw(?:or)?d|passphrase|pwd)([\w.-]{0,20}?)(["']?[ \t]{0,3}(?::=|=>|=|:)[ \t]{0,3})(["'`]?)([^\s"'`,;&\[\]{}()<>\\]{4,})(["'`]?)"#,
+             group: 5, hints: ["pass", "pwd"], options: .caseInsensitive) { text, match in
+            let quote = text.substring(with: match.range(at: 4))
+            // A quoted value is the whole string: `"Enter password"` is a label, not a password.
+            if !quote.isEmpty, text.substring(with: match.range(at: 6)) != quote { return false }
+            // `str2bytes(x)` is a call.
+            let end = NSMaxRange(match.range(at: 5))
+            if quote.isEmpty, end < text.length, text.character(at: end) == UInt16(UInt8(ascii: "(")) { return false }
+            // `password=letmein` (no space around `=`: a command line, a URL) holds a value;
+            // `password_length: 123456` doesn't hold a PIN, `password: 123456` does.
+            return looksLikePassword(text.substring(with: match.range(at: 5)), quoted: !quote.isEmpty,
+                                     tight: text.substring(with: match.range(at: 3)) == "=", bareName: match.range(at: 2).length == 0)
+        },
+        Rule("password", #"--(?:[\w-]*-)?passw(?:or)?d([ \t]+|=)(["']?)([^\s"'`\[\]]{4,})"#,
+             group: 3, hints: ["--"], options: .caseInsensitive) { text, match in
+            let value = text.substring(with: match.range(at: 3))
+            if isProseAfterFlag(value, separator: text.substring(with: match.range(at: 1)), quote: text.substring(with: match.range(at: 2))) {
+                return false
+            }
+            return looksLikePassword(value, quoted: true)
+        },
+        // SQL: `CREATE USER … IDENTIFIED BY 'x'`, `ALTER ROLE … PASSWORD 'x'`.
+        Rule("password", #"\bIDENTIFIED[ \t]+(?:WITH[ \t]+[\w-]+[ \t]+)?BY(?:[ \t]+PASSWORD)?[ \t]+(['"])((?:(?!\1)[^\n]){1,256})\1"#,
+             group: 2, hints: ["identified"], options: .caseInsensitive) { text, match in
+            let value = text.substring(with: match.range(at: 2))
+            return !value.contains(SecretFilter.mask) && looksLikePassword(value, quoted: true)
+        },
+        Rule("password", #"\bPASSWORD[ \t]+'([^'\n]{1,256})'"#, group: 1, hints: ["pass"], options: .caseInsensitive) { text, match in
+            let value = text.substring(with: match.range(at: 1))
+            return !value.contains(SecretFilter.mask) && looksLikePassword(value, quoted: true)
+        },
+        // `mysql -pSecret`: the password is glued to `-p`. Only after mysql's own commands, where
+        // `-p` means a password; elsewhere short flags are too common to guess.
+        // The command word, not a path (`find /var/lib/mysql -print`) nor a find primary after it.
+        Rule("password", #"(?:^|[\s;|&(])mysql(?:dump|admin)?[ \t][^\n|;&]{0,200}?[ \t]-p(["']?)([^\s"'`\[]{1,128})\1"#,
+             group: 2, hints: ["mysql"], options: .anchorsMatchLines) { text, match in
+            let value = text.substring(with: match.range(at: 2))
+            return !["$", "%", "<"].contains(where: value.hasPrefix) && !["rune", "rint", "rint0", "rintf", "ath", "erm"].contains(value)
+        },
+    ]
+
+    /// `--password flag`, `--password option`: a plain word after a flag and a space, in prose
+    /// about the flag. Quoted or after `=` it is a value.
+    static func isProseAfterFlag(_ value: String, separator: String, quote: String) -> Bool {
+        guard separator != "=", quote.isEmpty else { return false }
+        return proseWords.contains(value.lowercased().trimmingCharacters(in: .punctuationCharacters))
+    }
+
+    private static let proseWords: Set<String> = [
+        "flag", "flags", "option", "options", "argument", "arguments", "args", "param", "params", "parameter", "parameters",
+        "switch", "field", "prompt", "prompts", "value", "values", "input", "with", "without", "from", "that", "this", "which",
+        "instead", "only", "when", "then", "here", "there", "also", "will", "must", "should", "would", "could", "does", "doesn",
+        "takes", "expects", "accepts", "requires", "reads", "sets", "works", "first", "again", "later", "above", "below",
+        "defaults", "default", "is", "isn", "can", "may", "needs", "goes", "comes", "gets",
+    ]
 
     /// The identifier just before a keyword match (`commit_` of `commit_sha_key`), up to 32 chars.
     static func nameBefore(_ location: Int, in text: NSString) -> String {
@@ -253,7 +325,7 @@ public enum Scrubber {
 
     // MARK: - Applying
 
-    private static func apply(_ rule: Rule, to text: NSString, present: Set<String>,
+    static func apply(_ rule: Rule, to text: NSString, present: Set<String>,
                               counts: inout [String: Int]) -> NSString {
         if !rule.hints.isEmpty {
             let found = rule.regex.options.contains(.caseInsensitive)
@@ -269,7 +341,7 @@ public enum Scrubber {
 
     /// The case-sensitive hints that occur in the input, each found once with `memmem`.
     /// Checking the input is enough: masks never form a hint with the text around them.
-    private static func presentHints(in text: String) -> Set<String> {
+    static func presentHints(in text: String) -> Set<String> {
         var text = text
         return text.withUTF8 { haystack in
             Set(caseSensitiveHints.filter { hint in
@@ -282,7 +354,7 @@ public enum Scrubber {
     }
 
     private static let caseSensitiveHints: Set<String> = Set(
-        (rules + [genericRule, flagRule, entropyRule, emailRule])
+        (rules + passwordRules + [genericRule, flagRule, entropyRule, emailRule])
             .filter { !$0.regex.options.contains(.caseInsensitive) }
             .flatMap(\.hints)
     )
@@ -362,7 +434,8 @@ public enum Scrubber {
     static func looksLikeSecretValue(_ value: String, quoted: Bool, passwordLike: Bool, hashName: Bool) -> Bool {
         if isHexLike(value) { return value.count >= 20 && !hashName }
         if value.allSatisfy({ $0.isNumber || $0 == "." }) { return false }
-        for prefix in ["$", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
+        // `<PASSWORD>` is a placeholder.
+        for prefix in ["$", "<", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
         if value.contains("://") { return false }
         if !passwordLike, value.utf8.allSatisfy({ kind($0) == 0 || "-_.:/".utf8.contains($0) }) { return false }
         if !quoted {
@@ -371,6 +444,43 @@ public enum Scrubber {
         }
         return shannonEntropy(value) >= 3.0
     }
+
+    /// A value after a password's name, however weak, unless it reads as code: a type or
+    /// keyword (`string`, `null`, `Int32`), a variable or placeholder (`$PW`, `${PW}`, `%s`,
+    /// `****`, `<PASSWORD>`, `input2`), a path, a dotted name (`os.environ`), a number. Unquoted,
+    /// it needs a letter and a digit, as weak passwords have (`Summer2024`); a quoted one is a
+    /// string literal.
+    /// `tight`: right after `=` with no space (`password=letmein`), where a word is a value too.
+    /// `bareName`: the name is just the password's (`password: 123456`, not `password_length:`),
+    /// so six or more digits are a PIN.
+    static func looksLikePassword(_ value: String, quoted: Bool, tight: Bool = false, bareName: Bool = false) -> Bool {
+        for prefix in ["$", "%", "=", ">", "<", "-", "/", "~/", "./", "../"] where value.hasPrefix(prefix) { return false }
+        if value.contains("://") || Set(value).count == 1 { return false }
+        if value.allSatisfy({ $0.isNumber || $0 == "." }) { return bareName && value.count >= 6 && value.allSatisfy(\.isNumber) }
+        let lower = value.lowercased()
+        if codeWords.contains(lower) || lower.range(of: #"^(u?int|float|double|bytes?|char|varchar)[0-9]*$"#, options: .regularExpression) != nil {
+            return false
+        }
+        if !quoted {
+            // `password=hashed_password`, `pw = new_pw`: a keyword argument passing a variable.
+            if value.range(of: #"^[a-z][a-z0-9]*(_[a-z0-9]+)+$"#, options: .regularExpression) != nil,
+               lower.hasPrefix("hashed_") || ["password", "passwd", "pwd", "pw", "pass", "hash"].contains(where: lower.hasSuffix) {
+                return false
+            }
+            // `password = input2` names a variable.
+            guard value.contains(where: \.isLetter), hasDigit(value) || tight, !isDottedIdentifier(value),
+                  lower.range(of: #"^(input|value|val|arg|param|field|var|tmp|temp|text|entry|data|item|res|result|str|new|old|user|form)[0-9]{0,2}$"#,
+                              options: .regularExpression) == nil else { return false }
+        }
+        return true
+    }
+
+    /// Types, keywords and placeholders that follow a password's name in code and schemas.
+    private static let codeWords: Set<String> = [
+        "string", "str", "null", "nil", "none", "undefined", "true", "false", "bool", "boolean", "int", "integer", "number",
+        "text", "password", "passwd", "secret", "required", "optional", "any", "object", "bytes", "char", "varchar",
+        "securestring", "hidden", "redacted", "empty", "blank", "unknown", "void", "value",
+    ]
 
     /// A stand-alone run (≥ 24 chars): a digit and a letter, entropy ≥ 4.2, not hex or a
     /// UUID, and not made of words like an identifier or a path (`sha256HexDigestV2`,

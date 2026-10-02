@@ -66,10 +66,6 @@ public struct LabelBookStore: Sendable {
         (try? Data(contentsOf: file)).flatMap { try? AnalysisJSON.decoder.decode(LabelBook.self, from: $0) } ?? LabelBook()
     }
 
-    public func save(_ book: LabelBook) throws {
-        try JSONFile.write(book, to: file)
-    }
-
     public func update(_ change: (inout LabelBook) throws -> Void) throws -> LabelBook {
         try JSONFile.update(file, empty: LabelBook()) { book in
             try change(&book)
@@ -97,18 +93,23 @@ public struct ModeLabel: Codable, Hashable, Sendable {
 public enum ModeLabels {
     /// Labels for one mode (after merges), one per session; a bootstrap label wins over cheaper
     /// ones. Bootstrap: positive when one of the user's notes maps to the mode, negative when
-    /// the user finished labeling the session and none does.
+    /// the user finished labeling the session and mapped every note elsewhere (or to unclear);
+    /// a note not mapped yet leaves the session without a bootstrap label. Finds: within a
+    /// session, one accepted find makes it positive, whatever was rejected around it.
     public static func labels(for modeID: String, modes: [Mode], bootstrap: [Bootstrap.Label], book: LabelBook,
                               toughCalls: [String: Bool] = [:]) -> [ModeLabel] {
         var result: [String: ModeLabel] = [:]
         for (key, positive) in toughCalls { result[key] = ModeLabel(sessionKey: key, positive: positive, source: .toughCall) }
+        var finds: [String: Bool] = [:]
         for find in book.finds where ModeStore.resolve(find.modeID, in: modes) == modeID {
             guard let accepted = find.accepted else { continue }
-            result[find.ref.sessionKey] = ModeLabel(sessionKey: find.ref.sessionKey, positive: accepted, source: .similarCase)
+            finds[find.ref.sessionKey] = (finds[find.ref.sessionKey] ?? false) || accepted
         }
+        for (key, positive) in finds { result[key] = ModeLabel(sessionKey: key, positive: positive, source: .similarCase) }
         for label in bootstrap where label.labeledAt != nil {
             let mapped = label.notes.compactMap { book.mapping["\(label.sessionKey)#\($0.id)"] }
             let positive = mapped.contains { $0 != LabelBook.unclear && ModeStore.resolve($0, in: modes) == modeID }
+            guard positive || mapped.count == label.notes.count else { continue }
             result[label.sessionKey] = ModeLabel(sessionKey: label.sessionKey, positive: positive, source: .bootstrap)
         }
         return result.values.sorted { $0.sessionKey < $1.sessionKey }
@@ -130,7 +131,8 @@ extension Bootstrap {
     /// The first modes: one clustering call over the user's and the model's notes of the
     /// labeled bootstrap sessions. Seeds are in the list as candidates already.
     public static func firstModes(labels: [Label], pool: [SessionNotes], existing: [Mode], rejected: [String], agent: LabAgent,
-                                  gate: SendGate, workFolder: URL, env: HarnessEnvironment) async throws -> [Clustering.Candidate] {
+                                  gate: SendGate, workFolder: URL, env: HarnessEnvironment,
+                                  out: (String) -> Void) async throws -> [Clustering.Candidate] {
         let done = labels.filter { $0.labeledAt != nil }
         let keys = Set(done.map(\.sessionKey))
         var items: [Clustering.Item] = []
@@ -141,7 +143,7 @@ extension Bootstrap {
         }
         items += Clustering.items(pool.filter { keys.contains($0.sessionKey) })
         return try await Clustering.cluster(items, existing: existing, rejected: rejected, agent: agent, gate: gate, runID: nil,
-                                            workFolder: workFolder, env: env)
+                                            workFolder: workFolder, env: env, out: out)
     }
 
     static let similarSystem = """
@@ -157,18 +159,26 @@ extension Bootstrap {
         """#
 
     /// Searches the pool for cases similar to the user's notes mapped to `mode`; every find is
-    /// stored unreviewed, for the user to accept or reject (a cheap label for checks).
+    /// stored unreviewed, for the user to accept or reject (a cheap label for checks). Notes
+    /// whose session may not go to the gate's destination are left out, and `out` says how many.
     @discardableResult
     public static func findSimilar(mode: Mode, labels: [Label], pool: [SessionNotes], book: LabelBook, agent: LabAgent, gate: SendGate,
-                                   workFolder: URL, env: HarnessEnvironment) async throws -> [LabelBook.Find] {
-        let examples = labels.flatMap { label in
+                                   workFolder: URL, env: HarnessEnvironment, out: (String) -> Void) async throws -> [LabelBook.Find] {
+        let mapped = labels.flatMap { label in
             label.notes.filter { book.mapping["\(label.sessionKey)#\($0.id)"] == mode.id }.map { (label, $0) }
         }
+        let examples = mapped.filter { gate.decide(SessionNotes.origin(sessionKey: $0.0.sessionKey, transcript: $0.0.transcript)).allowed }
         guard let first = examples.first else {
-            throw Failure(message: "None of your bootstrap notes is mapped to \(mode.name) yet.")
+            throw Failure(message: mapped.isEmpty ? "None of your bootstrap notes is mapped to \(mode.name) yet."
+                                                  : "None of your notes mapped to \(mode.name) may be sent to \(agent.label).")
         }
         let labeled = Set(labels.map(\.sessionKey))
-        let candidates = Clustering.items(pool.filter { !labeled.contains($0.sessionKey) })
+        let pooled = Clustering.items(pool.filter { !labeled.contains($0.sessionKey) })
+        let candidates = pooled.filter { gate.decide($0.origin).allowed }
+        let leftOut = mapped.count - examples.count + pooled.count - candidates.count
+        if leftOut > 0 {
+            out("\(leftOut) of \(mapped.count + pooled.count) notes left out: their sessions may not be sent to \(agent.label).")
+        }
         guard !candidates.isEmpty else { return [] }
         let shown = examples.map { "- \($0.1.description)\n  quote: \($0.1.quote)" }.joined(separator: "\n")
         var finds: [LabelBook.Find] = []
@@ -198,8 +208,11 @@ extension Bootstrap {
 }
 
 extension SessionNotes {
-    /// The origin of a session from its key and transcript path.
-    public static func origin(sessionKey: String, transcript: String) -> SendOrigin {
-        SendOrigin.of(harness: SessionKey.harness(of: sessionKey), sessionFile: URL(filePath: transcript))
+    /// The origin of a session from its key and transcript path. Without the file a Pi
+    /// session has no known providers, so only the allowed list lets it out.
+    public static func origin(sessionKey: String, transcript: String?) -> SendOrigin {
+        let harness = SessionKey.harness(of: sessionKey)
+        guard let transcript else { return harness == .pi ? .piSession(providers: []) : .claudeSession }
+        return SendOrigin.of(harness: harness, sessionFile: URL(filePath: transcript))
     }
 }

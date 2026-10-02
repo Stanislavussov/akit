@@ -25,7 +25,8 @@ extension AKitCLI {
           akit analysis mode history      The commits of the modes repository
 
         The model side (each sends notes to a model: sending policy, cost estimate first):
-          akit analysis route SESSION     Match a reviewed session's accepted notes to modes
+          akit analysis route SESSION [--yes]
+                                          Match a reviewed session's accepted notes to modes
           akit analysis cluster [--rebuild] [--yes]
                                           Group the notes no mode fits into candidate modes; --rebuild
                                           groups all notes from scratch to compare with the list
@@ -137,10 +138,18 @@ extension AKitCLI {
             guard let notes = notesStore.load(key) else { throw Failure(message: "No notes for \(session); review it first.") }
             let agent = try options.agent(env: env)
             return try await fail {
-                let gate = try await SendGate.open(agent: agent, env: env)
                 let modes = try await store.list()
                 var exemplars: [String: [Exemplar]] = [:]
                 for mode in Matching.routable(modes) { exemplars[mode.id] = try store.exemplars(of: mode.id) }
+                var characters = notes.accepted.map { $0.description.count + $0.quote.count + 40 }.reduce(0, +)
+                for mode in Matching.routable(modes) {
+                    let criteria: Int = (mode.include + mode.exclude).joined().count
+                    let quotes: Int = (exemplars[mode.id] ?? []).map(\.quote.count).reduce(0, +)
+                    characters += mode.name.count + mode.definition.count + criteria + quotes + 40
+                }
+                guard try confirmCost(characters: characters, agent: agent, what: "Routing \(notes.accepted.count) notes of \(key)",
+                                      options: options, env: env, out: out) else { return 0 }
+                let gate = try await SendGate.open(agent: agent, env: env)
                 let routed = try await Matching.route(notes, modes: modes, exemplars: exemplars, agent: agent, gate: gate, origin: notes.origin,
                                                       runID: nil, workFolder: analysisWork(env), env: env)
                 for (id, route) in Matching.currentRoutes(routed).sorted(by: { $0.key < $1.key }) {
@@ -162,7 +171,7 @@ extension AKitCLI {
                 let gate = try await SendGate.open(agent: agent, env: env)
                 let candidates = try await Clustering.cluster(items, existing: modes, rejected: try await store.rejectedNames(),
                                                               rebuild: rebuild, agent: agent, gate: gate, runID: nil,
-                                                              workFolder: analysisWork(env), env: env)
+                                                              workFolder: analysisWork(env), env: env, out: out)
                 if rebuild {
                     for candidate in candidates { out("\(candidate.name): \(candidate.notes.count) notes — \(candidate.definition)") }
                     let umbrellas = Clustering.umbrellas(candidates, pool: pool, modes: modes)
@@ -189,7 +198,7 @@ extension AKitCLI {
                                       options: options, env: env, out: out) else { return 0 }
                 let gate = try await SendGate.open(agent: agent, env: env)
                 let fits = try await Matching.retroMatch(mode: mode, pool: pool, origins: origins, agent: agent, gate: gate,
-                                                         workFolder: analysisWork(env), env: env)
+                                                         workFolder: analysisWork(env), env: env, out: out)
                 out("\(fits.count) notes fit \(mode.name).")
                 return 0
             }
@@ -197,8 +206,8 @@ extension AKitCLI {
             try args.finish()
             return try await fail {
                 let modes = try await store.list()
-                let checks = modes.compactMap { CheckStore(env: env).load($0.id) }
-                let queue = ReviewQueue.build(modes: modes, pool: notesStore.all(), checks: checks, book: LabelBookStore(env: env).load(),
+                let queue = ReviewQueue.build(modes: modes, pool: notesStore.all(), checks: ReviewQueue.checks(modes: modes, env: env),
+                                              book: LabelBookStore(env: env).load(),
                                               spotCheck: BatchStore(env: env).latest()?.spotCheck ?? [])
                 if options.json {
                     struct QueueJSON: Encodable {
@@ -220,7 +229,9 @@ extension AKitCLI {
                 for item in queue.routes {
                     out("Route      \(item.ref) → \(item.route.modeID ?? "none fits") (\(String(format: "%.2f", item.route.confidence)))")
                 }
-                for call in queue.toughCalls { out("Tough call \(call.modeID) in \(call.sessionKey)") }
+                for call in queue.toughCalls {
+                    out("Tough call \(call.modeID) in \(call.sessionKey) — akit analysis tough \(call.modeID) \(call.sessionKey) present|absent")
+                }
                 for note in queue.spotChecks { out("Spot check \(note)") }
                 for umbrella in queue.umbrellas {
                     out(String(format: "Umbrella?  %@ takes %.0f%% of routed notes (%d): narrow or split it", umbrella.modeID, umbrella.share * 100, umbrella.notes))
@@ -402,7 +413,8 @@ extension AKitCLI {
             for batch in batches {
                 let coverage = batch.coverage
                 let failed = batch.sessions.filter { $0.status == .error }.count
-                out("\(batch.runID)  \(coverage.done)/\(coverage.total) done\(failed > 0 ? ", \(failed) failed" : "")\(batch.paused ? ", paused" : "")"
+                out("\(batch.runID)  \(coverage.done)/\(coverage.total) done\(failed > 0 ? ", \(failed) failed" : "")"
+                    + "\(batch.tooLong > 0 ? ", \(batch.tooLong) too long" : "")\(batch.paused ? ", paused" : "")"
                     + "\(batch.clustered ? ", clustered" : "")  \(batch.filter.project ?? "all projects")")
             }
         case "show":
@@ -413,6 +425,13 @@ extension AKitCLI {
             out("Batch \(batch.runID) · \(batch.fixed ? "fixed sessions" : "sample of \(total), seed \(batch.seed)") · notes by \(batch.notesAgent.label)")
             out("Progress: notes \(batch.progress(of: "notes"))/\(total), verifier \(batch.progress(of: "verifier"))/\(total), "
                 + "matching \(batch.progress(of: "matching"))/\(total), clustering \(batch.clustered ? "done" : "not yet")")
+            if batch.tooLong > 0 {
+                out("\(batch.tooLong) too long for a digest: never sent, not retried, and left out of the frequencies.")
+            }
+            if let leftOut = batch.leftOut {
+                out("\(leftOut) sessions of the filter were left out before sampling: \(batch.notesAgent.harness.title) may not get them."
+                    + (batch.leftOutReason.map { " \($0)" } ?? ""))
+            }
             for session in batch.sessions {
                 out("  \(session.status.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0)) \(session.pick.sessionKey)  π=\(String(format: "%.2f", session.pick.inclusion)) \(session.pick.sampling)"
                     + (session.message.map { "  — \($0)" } ?? ""))
@@ -528,6 +547,7 @@ extension AKitCLI {
             func pct(_ value: Double?) -> String { value.map { String(format: "%.0f%%", $0 * 100) } ?? "—" }
             for m in metrics {
                 out("\(m.notesVersion) (\(m.sessions) sessions): recall \(pct(m.recall)) (\(m.recallCounts[0])/\(m.recallCounts[1])), "
+                    + "before the verifier \(pct(m.recallBeforeVerifier)), "
                     + "precision \(pct(m.precision)) (\(m.precisionCounts[0])/\(m.precisionCounts[1])), "
                     + "decisive step: phase \(pct(m.phaseAgreement)), ±3 steps \(pct(m.stepAgreement)), outcome \(pct(m.outcomeAgreement))")
             }
@@ -547,7 +567,7 @@ extension AKitCLI {
             let gate = try await SendGate.open(agent: agent, env: env)
             let candidates = try await Bootstrap.firstModes(labels: all, pool: pool, existing: try await store.list(),
                                                             rejected: try await store.rejectedNames(), agent: agent, gate: gate,
-                                                            workFolder: analysisWork(env), env: env)
+                                                            workFolder: analysisWork(env), env: env, out: out)
             let created = try await Clustering.apply(candidates, store: store, env: env)
             for mode in created { out("\(mode.id) [\(mode.status.title)] \(mode.name)") }
             out("Confirm or edit them, then map your notes: akit analysis bootstrap map SESSION#hN MODE.")
@@ -587,7 +607,7 @@ extension AKitCLI {
                                   out: out) else { return 0 }
             let gate = try await SendGate.open(agent: agent, env: env)
             let finds = try await Bootstrap.findSimilar(mode: mode, labels: labels.all(), pool: pool, book: LabelBookStore(env: env).load(),
-                                                        agent: agent, gate: gate, workFolder: analysisWork(env), env: env)
+                                                        agent: agent, gate: gate, workFolder: analysisWork(env), env: env, out: out)
             for find in finds { out("\(find.ref)  — akit analysis bootstrap find \(find.ref) \(id) accept|reject") }
             if finds.isEmpty { out("No similar cases found.") }
         case "find":

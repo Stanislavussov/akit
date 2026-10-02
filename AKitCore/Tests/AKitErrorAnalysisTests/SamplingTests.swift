@@ -19,6 +19,10 @@ struct SamplingTests {
         #expect(population.map(\.key) == ["claude:s1"])
         let byFolder = Sampling.population(sessions, filter: Sampling.Filter(project: "/work/app"), reserved: [])
         #expect(Set(byFolder.map(\.key)) == ["claude:s1", "claude:s3", "claude:s5", "claude:s6"])
+        // The harness that ran them: a mixed project's Pi sessions alone.
+        let mixed = sessions + [session(7, harness: "pi", model: "opencode-go/qwen3.6-plus")]
+        #expect(Sampling.population(mixed, filter: Sampling.Filter(project: "p1", harness: "pi"), reserved: []).map(\.key) == ["pi:s7"])
+        #expect(Sampling.population(mixed, filter: Sampling.Filter(project: "p1", harness: "claude"), reserved: []).count == 3)
     }
 
     @Test func stratifiedSampleWithARandomShare() {
@@ -78,6 +82,23 @@ struct SamplingTests {
         #expect(Stats.bootstrapInterval(observations, iterations: 1000) == plain)
     }
 
+    @Test func singletonStrataAreCollapsedSoTheyVary() throws {
+        // 20 stratified picks, one per stratum: resampled within their own strata they would
+        // never vary and the interval would be a point.
+        let observations = (0..<20).map { Stats.Observation(positive: $0 % 2 == 0, inclusion: 0.5, group: "stratum:\($0)") }
+        let groups = Stats.resamplingGroups(observations)
+        #expect(groups.count == 1 && groups[0].count == 20)
+        let interval = try #require(Stats.bootstrapInterval(observations, iterations: 1000))
+        #expect(interval.low < 0.4 && interval.high > 0.6)
+        // Groups of 2 or more stay; a lone leftover joins the smallest of them.
+        let mixed = (0..<6).map { _ in Stats.Observation(positive: false, inclusion: 1, group: "random") }
+            + (0..<3).map { _ in Stats.Observation(positive: true, inclusion: 1, group: "stratum:a") }
+            + [Stats.Observation(positive: true, inclusion: 1, group: "stratum:b")]
+        #expect(Stats.resamplingGroups(mixed).map(\.count) == [6, 4])
+        let two = mixed + [Stats.Observation(positive: false, inclusion: 1, group: "stratum:c")]
+        #expect(Stats.resamplingGroups(two).map(\.count) == [6, 3, 2])
+    }
+
     @Test func adHocReviewsHintTheNextSample() {
         let sessions = (0..<40).map { session($0) } + (40..<50).map { session($0, harness: "pi", model: "gpt-6") }
         var generator = SeededGenerator(seed: 2)
@@ -101,5 +122,11 @@ struct SamplingTests {
         #expect(Batches.vendor("opus") == "anthropic" && Batches.vendor("claude-sonnet-5-5") == "anthropic")
         #expect(Batches.vendor("github-copilot/gpt-6.1-sol") == "openai" && Batches.vendor("gemini-3-pro") == "google")
         #expect(Batches.vendor("opencode-go/qwen3.6-plus") == "qwen")
+        // On top of the sampling family: `claude-opus` and `claude-haiku` strata, one vendor.
+        #expect(Batches.vendor("o4-mini") == "openai" && Batches.vendor("github-copilot/claude-haiku-5") == "anthropic")
+        // Bedrock ids lead with a region and a provider.
+        #expect(Sampling.family("us.anthropic.claude-opus-4-v1:0") == "claude-opus" && Batches.vendor("us.anthropic.claude-opus-4-v1:0") == "anthropic")
+        #expect(Batches.vendor("anthropic.claude-sonnet-4-5-20250929-v1:0") == "anthropic" && Sampling.family("meta.llama3-70b") == "llama")
+        #expect(Sampling.family("gpt-6.1-sol") == "gpt" && Sampling.family("opencode-go/qwen3.6-plus") == "qwen")
     }
 }

@@ -26,15 +26,18 @@ struct ControlComparisonTests {
         #expect(row.passHatK == 0.4)
     }
 
+    /// The mode's check in production before and after the fix: fewer failures after T.
+    let notWorse = Fixes.evaluate(modeID: "m", appliedAt: .now, before: (10, 20, "opus"), after: (4, 20, "opus"), trust: .exact)
+
     @Test func helpedNeedsMostOfTheBootstrapMassOnImprovement() throws {
         let all = cells(baseline, passes: [1, 1, 1, 1, 1]) + cells(variant, passes: [3, 3, 3, 3, 3])
-        let comparison = ControlComparison.compare(all)
+        let comparison = ControlComparison.compare(all, production: notWorse)
         #expect(comparison.rows.map(\.setup) == [baseline, variant])
         let pair = try #require(comparison.paired.first)
         #expect(pair.baseline == baseline && pair.variant == variant && pair.tasks == 5)
         #expect(pair.baselineCells == 15 && pair.variantCells == 15)
         #expect(abs(try #require(pair.meanChange) - 2.0 / 3.0) < 1e-9)
-        #expect(pair.improvementShare == 1 && pair.verdict == .helped)
+        #expect(pair.improvementShare == 1 && pair.verdict == .helped && pair.productionHigher == notWorse.probabilityHigher)
 
         // The same pass rates: no mass on improvement.
         let same = ControlComparison.compare(cells(baseline, passes: [2, 1, 3, 0, 2]) + cells(variant, passes: [2, 1, 3, 0, 2]))
@@ -47,6 +50,23 @@ struct ControlComparisonTests {
         #expect(share > 0.5 && share < 1)
         #expect(ControlComparison.compare(mixedCells).paired.first?.improvementShare == share)
         #expect(ControlComparison.compare(mixedCells, seed: 7).paired.first?.improvementShare != nil)
+    }
+
+    @Test func helpedAlsoNeedsTheFixNotWorseInProduction() throws {
+        let all = cells(baseline, passes: [1, 1, 1, 1, 1]) + cells(variant, passes: [3, 3, 3, 3, 3])
+        // No production signal yet (the fix isn't applied): no conclusion, though the control set shows it.
+        let unknown = try #require(ControlComparison.compare(all).paired.first)
+        #expect(unknown.verdict == .noConclusion && unknown.improvementShare == 1 && unknown.productionHigher == nil)
+        #expect(unknown.reason.contains("not worse in production isn't known"))
+        // Too few sessions after T.
+        let early = Fixes.evaluate(modeID: "m", appliedAt: .now, before: (10, 20, nil), after: (1, 5, nil), trust: .exact)
+        let few = try #require(ControlComparison.compare(all, production: early).paired.first)
+        #expect(few.verdict == .noConclusion && few.reason.contains("before 20, after 5") && few.productionHigher == nil)
+        // The mode's failure rate rose in production: not shown, however the control set looks.
+        let worse = Fixes.evaluate(modeID: "m", appliedAt: .now, before: (4, 20, nil), after: (10, 20, nil), trust: .exact)
+        let rose = try #require(ControlComparison.compare(all, production: worse).paired.first)
+        #expect(rose.verdict == .notShown && rose.reason.contains("in production") && rose.productionHigher == worse.probabilityHigher)
+        #expect(worse.probabilityHigher > Fixes.notWorseProbability)
     }
 
     @Test func tooFewRepeatsOrCellsGiveNoConclusion() throws {
@@ -64,16 +84,17 @@ struct ControlComparisonTests {
         #expect(apart.paired.first?.verdict == .noConclusion && apart.paired.first?.meanChange == nil)
     }
 
-    @Test func flaggedCellsAndReadOnlySetupsAreLeftOut() throws {
+    @Test func flaggedCellsCountAsFailedAndReadOnlySetupsAreLeftOut() throws {
         var all = cells(baseline, passes: [1, 1, 1, 1, 1]) + cells(variant, passes: [3, 3, 3, 3, 3])
-        // Passing variant cells that weakened tests don't count.
+        // Passing variant cells that weakened tests stay in, as failures: no re-roll makes them go away.
         all += (0..<5).map { ControlComparison.Cell(task: "t\($0)", setup: variant, passed: true, flagged: true) }
         let broken = ControlSetup(name: "read-only", agent: agent, readOnly: true)
         all += cells(broken, passes: [0, 0, 0, 0, 0])
-        let comparison = ControlComparison.compare(all)
+        let comparison = ControlComparison.compare(all, production: notWorse)
         let row = try #require(comparison.rows.first { $0.setup == variant })
-        #expect(row.cells == 15 && row.flagged == 5 && row.k == 3)
-        #expect(comparison.paired.count == 1 && comparison.paired[0].variantCells == 15)
+        #expect(row.cells == 20 && row.flagged == 5 && row.k == 4 && row.tasks.allSatisfy { $0.passed == 3 && $0.total == 4 })
+        #expect(abs(try #require(row.passAt1) - 0.75) < 1e-9 && row.passAt1Interval == Stats.wilson(15, 20))
+        #expect(comparison.paired.count == 1 && comparison.paired[0].variantCells == 20)
         #expect(comparison.rows.first { $0.setup == broken }?.passAt1 == 0)
     }
 

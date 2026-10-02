@@ -27,8 +27,9 @@ public enum ControlRuns {
     }
 
     /// Queues `repeats` cells of each task and setup, interleaved (1 of each, then 2 of each…)
-    /// so a partly done comparison is still fair. Cells whose key already has a finished,
-    /// unflagged result, or that are queued or running, are skipped.
+    /// so a partly done comparison is still fair. Cells whose key already has a finished result,
+    /// or that are queued or running, are skipped. A flagged cell isn't run again: it counts as
+    /// failed, so a re-roll can't make a bad outcome go away.
     public static func newControlRuns(tasks: [ControlTask], setups: [ControlSetup], repeats: Int, environment: LabEnvironment?,
                                       keep: Bool, akit: URL, env: HarnessEnvironment) async throws -> (runs: [LabRun], skipped: Int) {
         guard !tasks.isEmpty, !setups.isEmpty, repeats > 0 else {
@@ -41,8 +42,7 @@ public enum ControlRuns {
         }
         let existing = LabStore.list(env: env).filter { $0.spec.kind == .control }
         var done = Set(existing.compactMap { run -> String? in
-            guard run.status == .finished, let control = run.result?.control, !control.flagged else { return nil }
-            return control.key
+            run.status == .finished ? run.result?.control?.key : nil
         })
         let byID = Dictionary(tasks.map { ($0.id, $0) }) { first, _ in first }
         for run in existing where run.status == .queued || run.status == .running {

@@ -39,6 +39,26 @@ public enum Matching {
         }.joined(separator: "\n\n")
     }
 
+    /// The exemplars a call to `gate` may carry, with their origins. Exemplars are quotes from
+    /// other sessions, so the call carries their origins too; one whose session the policy
+    /// doesn't allow here, or whose session is unknown, is left out instead of failing the call.
+    static func sendable(_ exemplars: [String: [Exemplar]], gate: SendGate, env: HarnessEnvironment)
+        -> (exemplars: [String: [Exemplar]], origins: [SendOrigin]) {
+        let keys = Set(exemplars.values.joined().map(\.sessionKey))
+        guard !keys.isEmpty else { return (exemplars, []) }
+        let notes = NotesStore(env: env)
+        let reserved = Dictionary(BootstrapReservations(env: env).all().map { ($0.sessionKey, $0.transcript) },
+                                  uniquingKeysWith: { first, _ in first })
+        var origins: [String: SendOrigin] = [:]
+        for key in keys {
+            if let transcript = notes.load(key)?.transcript ?? reserved[key] {
+                origins[key] = SessionNotes.origin(sessionKey: key, transcript: transcript)
+            }
+        }
+        let allowed = exemplars.mapValues { list in list.filter { origins[$0.sessionKey].map { gate.decide($0).allowed } ?? false } }
+        return (allowed, Array(Set(allowed.values.joined().compactMap { origins[$0.sessionKey] })))
+    }
+
     static let system = """
         You sort notes about problems in recorded coding-agent sessions into failure modes. You
         get the notes of one session (description, step, quote) and the list of modes, each with
@@ -78,10 +98,11 @@ public enum Matching {
         let open = accepted.filter { note in !reviewed.contains { $0.noteID == note.id } }
         if !open.isEmpty, !routable(modes).isEmpty {
             let list = open.map { "- \($0.id) [#\($0.step)] \($0.description)\n  quote: \($0.quote)" }.joined(separator: "\n")
+            let shown = sendable(exemplars, gate: gate, env: env)
             let answer = try await ModelCall.run(
                 ModelCall.Request(agent: agent, purpose: "matching", system: system,
-                                  input: "## Modes\n\n\(modesText(modes, exemplars: exemplars))\n\n## Notes\n\n\(list)\n", schema: schema,
-                                  origin: origin, session: notes.sessionKey, runID: runID),
+                                  input: "## Modes\n\n\(modesText(modes, exemplars: shown.exemplars))\n\n## Notes\n\n\(list)\n", schema: schema,
+                                  origins: [origin] + shown.origins, session: notes.sessionKey, runID: runID),
                 gate: gate, folder: workFolder, env: env)
             routes += try parse(answer.text, notes: open, modes: modes)
         } else {
@@ -235,12 +256,23 @@ public enum Matching {
 
     /// Routes the whole pool against a newly confirmed mode. A note that had no mode moves to
     /// it; a note routed elsewhere gets a low-confidence second route for the user to decide.
-    /// Returns the notes that fit.
+    /// Returns the notes that fit. Notes of sessions whose origin may not go to `gate` are left
+    /// out, and `out` says how many; the call fails only when no note is left.
     @discardableResult
     public static func retroMatch(mode: Mode, pool: [SessionNotes], origins: [String: SendOrigin], agent: LabAgent, gate: SendGate,
-                                  workFolder: URL, env: HarnessEnvironment) async throws -> [NoteRef] {
+                                  workFolder: URL, env: HarnessEnvironment, out: (String) -> Void = { _ in }) async throws -> [NoteRef] {
+        let blocked = pool.filter { origins[$0.sessionKey].map { !gate.decide($0).allowed } ?? true }
+        let leftOut = blocked.flatMap(\.accepted).count
+        if leftOut > 0 {
+            let total = pool.flatMap(\.accepted).count
+            let reason = blocked.lazy.compactMap { origins[$0.sessionKey] }.first.map { gate.decide($0).reason }
+                ?? "their sessions have no known origin."
+            guard leftOut < total else { throw Failure(message: "Not sent: \(reason)") }
+            out("\(leftOut) of \(total) notes left out: \(reason)")
+        }
+        let keys = Set(blocked.map(\.sessionKey))
         var fits: [NoteRef: Double] = [:]
-        for part in retroInput(mode: mode, pool: pool, origins: origins) {
+        for part in retroInput(mode: mode, pool: pool.filter { !keys.contains($0.sessionKey) }, origins: origins) {
             let answer = try await ModelCall.run(
                 ModelCall.Request(agent: agent, purpose: "retro-matching", system: retroSystem, input: part.text, schema: retroSchema,
                                   origins: part.origins),

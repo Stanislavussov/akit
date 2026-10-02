@@ -23,6 +23,7 @@ struct BootstrapLabelingView: View {
     @State private var step = ""
     @State private var error: String?
     @State private var busy = false
+    @State private var confirmFinish = false
 
     var body: some View {
         HSplitView {
@@ -107,8 +108,7 @@ struct BootstrapLabelingView: View {
                 HStack {
                     Spacer()
                     Button("Save Draft") { save(finish: false) }.disabled(busy)
-                    Button("Finish") { save(finish: true) }
-                        .keyboardShortcut(.defaultAction)
+                    Button("Finish…") { finish() }
                         .disabled(busy || outcome == nil)
                         .help(outcome == nil ? "Give the session's outcome first" : "Done labeling: now a model may review it")
                 }
@@ -116,6 +116,26 @@ struct BootstrapLabelingView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .confirmationDialog("Finish labeling this session?", isPresented: $confirmFinish) {
+            Button("Finish") { save(finish: true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your \(AnalysisText.notes(notes.count)) and the outcome become the session's blind label. After this a model may review the session, and once it has, its notes show next to yours. You can reopen it later, but after you have seen the model's notes it is no longer blind.")
+        }
+    }
+
+    /// A note typed but not added would be lost: Finish waits until it is added or cleared.
+    private var draftNote: Bool {
+        !noteDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !quote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func finish() {
+        error = nil
+        guard !draftNote else {
+            error = "A note is still being written: Add Note, or Clear it, before you finish."
+            return
+        }
+        confirmFinish = true
     }
 
     private var newNote: some View {
@@ -139,6 +159,13 @@ struct BootstrapLabelingView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 80)
                 Spacer()
+                if draftNote {
+                    Button("Clear") {
+                        noteDescription = ""
+                        quote = ""
+                    }
+                    .help("Empty “What went wrong” and the quote")
+                }
                 Button("Add Note", systemImage: "plus", action: addNote)
                     .disabled(noteDescription.trimmingCharacters(in: .whitespaces).isEmpty || Int(step) == nil
                               || quote.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -148,7 +175,8 @@ struct BootstrapLabelingView: View {
 
     private func addNote() {
         guard let number = Int(step) else { return }
-        notes.append(Note(id: "h\(notes.count + 1)", source: .human, description: noteDescription.trimmingCharacters(in: .whitespacesAndNewlines),
+        // Saving gives a new note the next unused `hN` (a saved draft's notes keep theirs).
+        notes.append(Note(id: "", source: .human, description: noteDescription.trimmingCharacters(in: .whitespacesAndNewlines),
                           step: number, quote: quote.trimmingCharacters(in: .whitespacesAndNewlines)))
         noteDescription = ""
         quote = ""

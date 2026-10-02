@@ -10,6 +10,9 @@ struct ModeJudgePanel: View {
     @Environment(AnalysisModel.self) private var analysis
     let mode: Mode
     @State private var editJudge = false
+    @State private var confirmTest = false
+    /// Counting the sessions a pool run would judge (it reads every transcript's size).
+    @State private var counting = false
 
     private var data: AnalysisData { analysis.data }
     private var judge: LabAgent? { data.judges[mode.id] }
@@ -37,7 +40,7 @@ struct ModeJudgePanel: View {
 
     @ViewBuilder private var judgeRow: some View {
         let seen = data.seenByMode.mapValues(\.count)
-        let eligible = Judges.eligible(data.modes, seen: seen).contains { $0.id == mode.id }
+        let eligible = Judges.eligible(data.modes, seen: seen, cost: Judges.cost(data.pool, modes: data.modes)).contains { $0.id == mode.id }
         if let judge {
             HStack {
                 Label("Judged by \(judge.label)", systemImage: "person.badge.shield.checkmark")
@@ -66,7 +69,7 @@ struct ModeJudgePanel: View {
             }
         }
         if !eligible {
-            Text("Only a mode in the top 3 by notes with a fix drafted or applied gets a judge; this one isn't. Other modes get a code check or stay \"seen in k notes\".")
+            Text("Only a mode in the top 3 by notes or by cost (the tokens or the steps its notes record) with a fix drafted or applied gets a judge; this one isn't. Other modes get a code check or stay \"seen in k notes\".")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -81,8 +84,9 @@ struct ModeJudgePanel: View {
                 Text("Not run over the pool yet.").foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Run Judge over the Pool…", systemImage: "play") { analysis.send = .judgePool(mode, data: data, model: analysis) }
+            Button("Run Judge over the Pool…", systemImage: "play", action: judgePool)
                 .controlSize(.small)
+                .disabled(counting)
                 .help("Judge every reviewed session: where the mode is, and the cases the notes missed (a model call per session; the cost first)")
         }
         if let missed = analysis.judgeMissed[mode.id] {
@@ -109,11 +113,16 @@ struct ModeJudgePanel: View {
         } else {
             let testRan = results.contains { $0.set == .test }
             let validatable = judge != nil || check != nil
+            // A heuristic code check is validated on its verdicts over the index: they must be
+            // for this version of the mode, or every label would count as unchecked.
+            let unchecked = judge == nil && check?.kind == .heuristic && data.currentCheck(mode) == nil
             HStack {
                 Button("Validate on Dev…") { validate(.dev) }
-                    .disabled(!validatable)
-                Button("Validate on Test…") { validate(.test) }
-                    .disabled(!validatable || testRan)
+                    .disabled(!validatable || unchecked)
+                Button("Validate on Test…") {
+                    if judge == nil { confirmTest = true } else { validate(.test) }
+                }
+                .disabled(!validatable || testRan || unchecked)
                 if testRan {
                     Text("Test ran for v\(mode.version) with this check: iterate on dev; a change of the mode, model or prompt allows a new test run.")
                         .font(.caption)
@@ -121,9 +130,20 @@ struct ModeJudgePanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else if !validatable {
                     Text("Enable a judge first: there is no check to validate.").font(.caption).foregroundStyle(.secondary)
+                } else if unchecked {
+                    Text("Run the code check for v\(mode.version) first: validation reads its verdicts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .controlSize(.small)
+            .confirmationDialog("Validate on the test set?", isPresented: $confirmTest) {
+                Button("Validate on Test") { validate(.test) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The test set runs once for v\(mode.version) with this check: its TPR and TNR decide how far the check is trusted, and another test run needs a new version of the mode or of the check. Iterate on dev first. Nothing is sent: the code check's verdicts are read here.")
+            }
             ForEach([Validation.LabelSet.dev, .test], id: \.self) { set in
                 if let result = results.last(where: { $0.set == set }) { ValidationResultView(result: result) }
             }
@@ -135,6 +155,19 @@ struct ModeJudgePanel: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The pool judge's confirmation, with the cost of only the sessions it would judge.
+    private func judgePool() {
+        guard let judge else { return }
+        let mode = mode, env = analysis.env
+        let sessions = data.pool.map { (key: $0.sessionKey, file: $0.transcript) }
+        counting = true
+        Task {
+            let pending = await Task.detached { Judges.pending(mode: mode, sessions: sessions, agent: judge, env: env).count }.value
+            counting = false
+            analysis.send = .judgePool(mode, data: data, pending: pending, model: analysis)
         }
     }
 
@@ -217,10 +250,20 @@ private struct JudgeAgentSheet: View {
     @Environment(\.dismiss) private var dismiss
     let mode: Mode
     let current: LabAgent?
-    @State private var harness: LabHarness = .claudeCode
-    @State private var modelName = ""
-    @State private var effort = "high"
+    @State private var harness: LabHarness
+    @State private var modelName: String
+    @State private var effort: String
     @State private var error: String?
+    @State private var busy = false
+
+    /// Change…: the current judge preselected.
+    init(mode: Mode, current: LabAgent?) {
+        self.mode = mode
+        self.current = current
+        _harness = State(initialValue: current?.harness ?? .claudeCode)
+        _modelName = State(initialValue: current?.model ?? "")
+        _effort = State(initialValue: current?.effort ?? "high")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -230,7 +273,7 @@ private struct JudgeAgentSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Form {
-                ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort)
+                ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort, keepsValues: current != nil)
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
@@ -241,7 +284,7 @@ private struct JudgeAgentSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save", action: save)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(busy || (harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty))
             }
         }
         .padding(20)
@@ -251,6 +294,8 @@ private struct JudgeAgentSheet: View {
     private func save() {
         let agent = LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
         let id = mode.id, name = mode.name
+        busy = true
+        error = nil
         Task {
             do {
                 try await analysis.run { env in
@@ -261,18 +306,23 @@ private struct JudgeAgentSheet: View {
             } catch {
                 self.error = error.localizedDescription
             }
+            busy = false
         }
     }
 }
 
 extension AnalysisSend {
     /// `akit analysis judge run`: the mode's judge over every reviewed session.
-    static func judgePool(_ mode: Mode, data: AnalysisData, model: AnalysisModel) -> AnalysisSend {
+    /// `pending`: the sessions not judged before on an unchanged file; only they are sent.
+    static func judgePool(_ mode: Mode, data: AnalysisData, pending: Int, model: AnalysisModel) -> AnalysisSend {
         let id = mode.id
+        let skipped = data.pool.count - pending
         return AnalysisSend(
             title: "Run the Judge over the Pool",
-            detail: "Judges each of the \(data.pool.count) reviewed sessions for \(mode.name) (a digest of each transcript, secrets masked). Sessions judged before on an unchanged file are skipped. Then: where it finds the mode, and the cases the notes missed.",
-            characters: data.pool.count * 60_000,
+            detail: "Judges \(pending) of the \(data.pool.count) reviewed sessions for \(mode.name) (a digest of each transcript, secrets masked)"
+                + (skipped > 0 ? "; \(skipped) judged before on an unchanged file are skipped and cost nothing." : ".")
+                + " Then: where it finds the mode, and the cases the notes missed.",
+            characters: pending * 60_000,
             fixedAgent: data.judges[id]
         ) { agent, gate, env in
             let store = ModeStore(env: env)

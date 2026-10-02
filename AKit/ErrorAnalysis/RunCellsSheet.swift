@@ -104,6 +104,13 @@ struct RunCellsSheet: View {
             if variant, case .failure(let reason) = patch {
                 Label(reason.message, systemImage: "info.circle").foregroundStyle(.orange).font(.callout)
             }
+            if variant, !baseline {
+                Label("A variant is only compared with a baseline of the same agent: turn the baseline on. Cells already done are skipped, so it costs nothing where they ran before.",
+                      systemImage: "info.circle")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
                     .textSelection(.enabled)
@@ -115,7 +122,7 @@ struct RunCellsSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(cells == 1 ? "Queue 1 Cell" : "Queue \(cells) Cells", action: queue)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || cells == 0 || !redTasks.isEmpty || (variant && setups.allSatisfy { $0.patch == nil })
+                    .disabled(busy || cells == 0 || !redTasks.isEmpty || (variant && setups.allSatisfy { $0.patch == nil }) || (variant && !baseline)
                               || (harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty))
             }
         }
@@ -211,7 +218,7 @@ struct RunCellsSheet: View {
         let env = analysis.env
         Task {
             do {
-                try await Task.detached { try SendLog.checkLimit(estimate: estimate, settings: LabSettings.load(env: env), env: env) }.value
+                try await Task.detached { try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env) }.value
                 let queued = try await model.queueControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep)
                 let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
                 analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"

@@ -1,51 +1,89 @@
 import AKitErrorAnalysis
+import AKitFoundation
 import AKitLab
 import SwiftUI
 
 /// `akit analysis control compare`: pass@1 and pass^k per setup with Wilson intervals, and
-/// for each variant the paired bootstrap over tasks and its verdict. Flagged cells (dropped or
-/// changed tests, a leak) are left out and counted.
+/// for each variant the paired bootstrap over tasks and its verdict, guarded by the fix's
+/// production signal. Flagged cells (dropped or changed tests, a leak) count as failed.
 struct ControlComparisonView: View {
     @Environment(AppModel.self) private var model
     let tasks: [ControlTask]
+    /// The comparison of the cells it was computed for: the bootstrap and the production signal
+    /// (the mode's check before and after the fix) run off the main thread, once per change of
+    /// the finished cells.
+    @State private var computed: (cells: [ControlComparison.Cell], comparison: ControlComparison)?
+    /// Why the production signal couldn't be read; the comparison then has none.
+    @State private var productionError: String?
 
     var body: some View {
         let ids = Set(tasks.map(\.id))
         let runs = model.labRuns.filter { $0.spec.kind == .control && $0.spec.controlTask.map(ids.contains) == true }
         let open = runs.filter { $0.status == .queued || $0.status == .running }.count
-        let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs))
+        let cells = ControlComparison.Cell.of(runs)
         VStack(alignment: .leading, spacing: 12) {
             Text(tasks.count == 1 ? "Setups compared" : "Setups compared over \(tasks.count) tasks").font(.title3.bold())
-            if comparison.rows.isEmpty {
+            if let computed, computed.cells == cells {
+                results(computed.comparison, open: open)
+            } else if cells.isEmpty {
                 Text("No finished cells yet." + (open > 0 ? " \(open) queued or running." : " Run Cells… queues them in the Lab."))
                     .foregroundStyle(.secondary)
             } else {
-                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 8) {
-                    GridRow {
-                        Text("Setup")
-                        Text("pass@1").help("The chance one run passes: the mean of the tasks' pass rates")
-                        Text("pass^k").help("The share of tasks where all k runs passed")
-                        Text("Cells")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    Divider()
-                    ForEach(comparison.rows, id: \.setup) { row in
-                        setupRow(row)
-                    }
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: cells) {
+            guard computed?.cells != cells else { return }
+            let tasks = tasks
+            let result = await Task.detached { () -> (ControlComparison, String?) in
+                var production: FixEvaluation?
+                var failure: String?
+                do { production = try await ControlComparison.production(for: tasks, env: .current) } catch { failure = error.localizedDescription }
+                return (ControlComparison.compare(cells, production: production), failure)
+            }.value
+            computed = (cells, result.0)
+            productionError = result.1
+        }
+    }
+
+    @ViewBuilder private func results(_ comparison: ControlComparison, open: Int) -> some View {
+        if comparison.rows.isEmpty {
+            Text("No finished cells yet." + (open > 0 ? " \(open) queued or running." : " Run Cells… queues them in the Lab."))
+                .foregroundStyle(.secondary)
+        } else {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    Text("Setup")
+                    Text("pass@1").help("The chance one run passes: the mean of the tasks' pass rates")
+                    Text("pass^k").help("The share of tasks where all k runs passed")
+                    Text("Cells")
                 }
-                .font(.callout)
-                ForEach(comparison.paired, id: \.variant) { pair in
-                    PairedVerdict(pair: pair)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                Divider()
+                ForEach(comparison.rows, id: \.setup) { row in
+                    setupRow(row)
                 }
-                if open > 0 {
-                    Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
-                }
-                Text("Helped: at least 95% of the bootstrap over tasks on improvement, with 3+ repeats of every task and 15+ cells a side. Fixed before the run.")
+            }
+            .font(.callout)
+            ForEach(comparison.paired, id: \.variant) { pair in
+                PairedVerdict(pair: pair)
+            }
+            if open > 0 {
+                Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
+            }
+            if let productionError {
+                Label("The production signal couldn't be read: \(productionError)", systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Text("Helped: at least 95% of the bootstrap over tasks on improvement, with 3+ repeats of every task and 15+ cells a side, "
+                 + "and not worse in production: at most 50% that the mode's failure rate rose after the fix was applied, with 15+ checked sessions on each side. "
+                 + "Without production data (no applied fix yet) there is no conclusion. Fixed before the run.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -65,7 +103,7 @@ struct ControlComparisonView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(row.cells)").monospacedDigit()
                 if row.flagged > 0 {
-                    Label("\(row.flagged) flagged, left out", systemImage: "flag").font(.caption).foregroundStyle(.orange)
+                    Label("\(row.flagged) flagged, counted as failed", systemImage: "flag").font(.caption).foregroundStyle(.orange)
                 }
             }
         }

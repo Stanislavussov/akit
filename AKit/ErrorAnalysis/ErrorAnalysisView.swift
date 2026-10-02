@@ -1,4 +1,5 @@
 import AKitErrorAnalysis
+import AKitLab
 import SwiftUI
 
 /// Error Analysis: the list of failure modes, the user's review queue, and bootstrap
@@ -19,7 +20,7 @@ struct ErrorAnalysisView: View {
         }
     }
 
-    @State private var analysis = AnalysisModel()
+    @Environment(AnalysisModel.self) private var analysis
     /// Snapshots: `--tab modes|review|bootstrap|reports|evals`.
     @State private var tab = DebugSnapshot.options?.tab.flatMap(Tab.init(rawValue:)) ?? .modes
     @State private var modeAction: ModeAction?
@@ -64,7 +65,6 @@ struct ErrorAnalysisView: View {
         }
         .sheet(item: $modeAction) { ModeActionSheet(action: $0) }
         .sheet(item: $analysis.send) { AnalysisSendSheet(send: $0) }
-        .environment(analysis)
         .task(id: model.revealBatch) {
             // Lab → Open Report: this batch on the Reports tab.
             guard let batch = model.revealBatch else { return }
@@ -77,13 +77,20 @@ struct ErrorAnalysisView: View {
             // Snapshots: `--tab review --add` opens the clustering confirmation.
             if DebugSnapshot.options?.add == true, tab == .review { analysis.send = .cluster(analysis.data) }
         }
-        // Reviews finish outside AKit: their notes join the pool.
-        .onChange(of: finishedReviews) { Task { await analysis.reload() } }
+        // Reviews, batches and control cells finish outside AKit, and a running batch adds
+        // notes session by session: reload when any of that changes.
+        .onChange(of: labChanges) { Task { await analysis.reload() } }
     }
 
     @Environment(AppModel.self) private var model
 
-    private var finishedReviews: Int { model.labRuns.filter { $0.spec.kind == .review && $0.status == .finished }.count }
+    /// Finished review, batch and control runs, and every step a batch has done.
+    private var labChanges: [Int] {
+        let kinds: [RunSpec.Kind] = [.review, .analysis, .control]
+        let finished = kinds.map { kind in model.labRuns.filter { $0.spec.kind == kind && $0.status == .finished }.count }
+        let steps = model.labBatches.values.map { batch in batch.sessions.map(\.steps.count).reduce(0, +) + (batch.clustered ? 1 : 0) }
+        return finished + [steps.reduce(0, +)]
+    }
 
     private var subtitle: String {
         let data = analysis.data

@@ -58,6 +58,10 @@ struct ModesTab: View {
             Text("\(modes.count) modes · \(unmatched) \(unmatched == 1 ? "note fits" : "notes fit") none")
                 .foregroundStyle(.secondary)
             Spacer()
+            Button("Run All Checks", systemImage: "play") { analysis.runAllChecks() }
+                .controlSize(.small)
+                .disabled(analysis.progress != nil || !analysis.data.current.contains { CodeChecks.check(for: $0.id) != nil })
+                .help("Run the code check of every current mode over every indexed session, here on this Mac; nothing is sent")
         }
         .font(.callout)
         .padding(.horizontal, 12)
@@ -87,7 +91,7 @@ struct ModesTab: View {
                     .foregroundStyle(count == 0 ? .secondary : .primary)
             }
             .width(min: 60, ideal: 70)
-            TableColumn("Code check") { mode in CheckCell(mode: mode, results: data.checks[mode.id]) }
+            TableColumn("Code check") { mode in CheckCell(mode: mode, results: data.checks[mode.id], trust: data.codeCheckTrust(mode)) }
                 .width(min: 120, ideal: 210)
         }
         .contextMenu(forSelectionType: Mode.ID.self) { ids in
@@ -98,10 +102,11 @@ struct ModesTab: View {
     }
 }
 
-/// "3 of 40 (95% 2–20%) · mechanical", or "heuristic — not validated".
+/// "3 of 40 (95% 2–20%) · mechanical", or "heuristic — not validated" (or validated, provisional).
 private struct CheckCell: View {
     let mode: Mode
     let results: CheckResults?
+    let trust: CheckTrust.Level
 
     var body: some View {
         if let check = CodeChecks.check(for: mode.id) {
@@ -111,7 +116,7 @@ private struct CheckCell: View {
                 } else {
                     Text("not run").foregroundStyle(.secondary)
                 }
-                Text(check.kind == .mechanical ? "· mechanical" : "· heuristic — not validated")
+                Text("· " + AnalysisText.checkKind(check, trust: trust))
                     .foregroundStyle(.secondary)
             }
             .lineLimit(1)
@@ -147,18 +152,8 @@ struct ModeActions: View {
             Button("Confirm", systemImage: "checkmark.circle") {
                 let mode = mode
                 Task {
-                    do {
-                        try await analysis.run { env in
-                            let mode = try await ModeStore(env: env).confirm(id)
-                            return "\(mode.name) is active."
-                        }
-                    } catch {
-                        analysis.error = error.localizedDescription
-                        return
-                    }
                     // A confirmed mode's code check runs over every indexed session at once.
-                    analysis.runCheck(mode)
-                    confirmed?()
+                    if await analysis.confirm(mode) { confirmed?() }
                 }
             }
             .help("Make it an active mode: it shows in reports and gets a check")
@@ -181,5 +176,41 @@ struct ModeActions: View {
         } else {
             Button("Reject…", systemImage: "xmark.circle", role: .destructive) { action = .reject(mode) }
         }
+    }
+}
+
+/// After Confirm (on a mode page or the Review tab): the mode's check, which Confirm already
+/// started, and retro-matching, as the design offers them.
+struct ConfirmedFollowUps: View {
+    @Environment(AnalysisModel.self) private var analysis
+    let mode: Mode
+    /// The Review tab closes the banner; a mode page keeps it.
+    var close: (() -> Void)?
+
+    var body: some View {
+        HStack {
+            Label("\(mode.name) is active. Next: count it over your sessions and find it in the notes already reviewed.",
+                  systemImage: "checkmark.seal")
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            if CodeChecks.check(for: mode.id) != nil {
+                if let results = analysis.data.currentCheck(mode), let rate = AnalysisText.rate(results) {
+                    Text("Checked: \(rate)").foregroundStyle(.secondary).monospacedDigit()
+                } else {
+                    Button("Run Check") { analysis.runCheck(mode) }
+                        .disabled(analysis.progress != nil)
+                        .help(analysis.progress != nil ? "A check is running" : "Run the check over every indexed session; nothing is sent")
+                }
+            }
+            Button("Retro-match the Note Pool…") { analysis.send = .retro(mode, data: analysis.data) }
+            if let close {
+                Button("Dismiss", systemImage: "xmark", action: close)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+            }
+        }
+        .controlSize(.small)
+        .padding(10)
+        .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
     }
 }

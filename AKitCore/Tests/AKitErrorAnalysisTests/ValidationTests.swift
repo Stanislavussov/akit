@@ -96,7 +96,7 @@ struct ValidationTests {
             labels.append(Bootstrap.Label(sessionKey: "claude:\(id)", transcript: file.path, notes: index % 2 == 0 ? [h1] : [], outcome: .no,
                                           labeledAt: .now))
         }
-        try BootstrapReservations(env: env).save(entries)
+        try BootstrapReservations(env: env).update { $0 += entries }
         for label in labels { try Bootstrap.LabelStore(env: env).save(label) }
         var book = LabelBook()
         for label in labels where !label.notes.isEmpty { book.mapping["\(label.sessionKey)#h1"] = "large-file-read-whole" }
@@ -112,6 +112,20 @@ struct ValidationTests {
         #expect(test.tpr == 1 && test.tnr == 1)
         #expect(test.checker.hasPrefix("judge|claude-code|opus"))
         #expect(CheckStore(env: env).load(Judges.resultsID(mode.id))?.verdicts.isEmpty == false)
+        // The cost before a pool run counts only what would be judged: not the sessions judged
+        // on unchanged files, all of them for another judge, and a session whose file changed.
+        let all = entries.map { (key: $0.sessionKey, file: $0.transcript) }
+        let judged = Set(try #require(CheckStore(env: env).load(Judges.resultsID(mode.id))).verdicts.keys)
+        #expect(Set(Judges.pending(mode: mode, sessions: all, agent: agent, env: env)) == Set(all.map(\.key)).subtracting(judged))
+        var other = agent
+        other.model = "sonnet"
+        #expect(Judges.pending(mode: mode, sessions: all, agent: other, env: env).count == all.count)
+        let changed = try #require(all.first { judged.contains($0.key) })
+        let handle = try FileHandle(forWritingTo: URL(filePath: changed.file))
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n".utf8))
+        try handle.close()
+        #expect(Judges.pending(mode: mode, sessions: all, agent: agent, env: env).contains(changed.key))
         await #expect(throws: Judges.Failure.self) {
             _ = try await Validation.run(mode: mode, set: .test, modes: modes, gate: gate, workFolder: home.appending(path: "w"), env: env)
         }
@@ -133,8 +147,120 @@ struct ValidationTests {
             mode.fix = fix
             return mode
         }
-        let modes = [mode("a", fix: .draft), mode("b", fix: nil), mode("c", fix: .applied), mode("d", fix: .draft)]
+        let modes = [mode("a", fix: .draft), mode("b", fix: nil), mode("c", fix: .applied), mode("d", fix: .draft),
+                     mode("e", fix: .draft), mode("f", fix: .applied)]
         let seen = ["a": 10, "b": 9, "c": 8, "d": 1]
         #expect(Judges.eligible(modes, seen: seen).map(\.id) == ["a", "c"])
+        // Or in the top 3 by cost: by tokens (d) or by steps (e); f has no recorded cost.
+        let cost: [String: (tokens: Int, steps: Int)] = ["d": (50_000, 0), "e": (0, 12), "b": (90_000, 30)]
+        #expect(Judges.eligible(modes, seen: seen, cost: cost).map(\.id) == ["a", "c", "d", "e"])
+    }
+
+    @Test func costSumsTheNotesSeenInAMode() {
+        func note(_ id: String, tokens: Int?, steps: Int?) -> Note {
+            Note(id: id, source: .model, description: id, step: 1, quote: "q", costTokens: tokens, costSteps: steps,
+                 verdict: Verdict(accepted: true, reason: "", by: .model))
+        }
+        var notes = SessionNotes(sessionKey: "claude:a", transcript: "/t", title: nil, project: nil, requirements: [], outcome: .no,
+                                 notes: [note("n1", tokens: 1000, steps: 2), note("n2", tokens: nil, steps: 5), note("n3", tokens: 7, steps: 7)],
+                                 deviation: Deviation(), paragraph: "", advice: [],
+                                 notesConfig: StepConfig(step: "notes", harness: "claude-code", model: "opus", promptVersion: 1),
+                                 verifierConfig: nil, doneKeys: [:], runID: nil)
+        notes.routes = [Route(noteID: "n1", modeID: "m", confidence: 0.9, by: .matching),
+                        Route(noteID: "n2", modeID: "m", confidence: 0.9, by: .matching),
+                        // Waits for the user: not seen yet, so not counted.
+                        Route(noteID: "n3", modeID: "m", confidence: 0.3, by: .matching)]
+        let cost = Judges.cost([notes], modes: [Mode(id: "m", name: "m", definition: "d")])
+        #expect(cost["m"]?.tokens == 1000 && cost["m"]?.steps == 7)
+    }
+
+    /// A judge failure in a batch must fail the session (thrown); elsewhere the run goes on.
+    /// Another scrub version re-judges each session when it is judged next, and wipes nothing.
+    @Test func judgeErrorsAndTheScrubVersion() async throws {
+        try Data(#"""
+            #!/bin/sh
+            if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn":true,"email":"me@example.com","orgName":"Me"}'; exit 0; fi
+            in=$(mktemp); cat > "$in"
+            if grep -q "BROKEN" "$in"; then echo '{"type":"result","is_error":false,"result":"no json"}'; exit 0; fi
+            echo '{"type":"result","is_error":false,"result":"","structured_output":{"present":true,"steps":[0],"toughCall":false,"severe":true,"reason":"new"},"usage":{"input_tokens":1,"output_tokens":1}}'
+            """#.utf8).write(to: home.appending(path: "bin/claude"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/claude").path)
+        let folder = home.appending(path: ".claude/projects/-w")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        func session(_ index: Int, _ text: String) throws -> (key: String, file: String) {
+            let id = String(format: "%08x-0000-4000-8000-%012x", index, index)
+            let file = folder.appending(path: "\(id).jsonl")
+            try Data((#"{"type":"user","cwd":"/w","message":{"role":"user","content":"\#(text)"}}"# + "\n").utf8).write(to: file)
+            return ("claude:\(id)", file.path)
+        }
+        let good = try session(1, "Fine task"), broken = try session(2, "BROKEN task")
+        let unscrubbed = try session(3, "Fine task too"), other = try session(4, "Fine task, not in this run")
+        let mode = try #require(try await ModeStore(env: env).mode("large-file-read-whole"))
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low", mode: .call)
+        let gate = try await SendGate.open(agent: agent, env: env)
+        let work = home.appending(path: "w")
+
+        // A file of the time the scrub version was part of the judge's key, with verdicts of an
+        // older scrubber and one that doesn't record it.
+        func old(_ session: (key: String, file: String), scrub: Int?) -> CheckVerdict {
+            let info = JSONLines.fileInfo(URL(filePath: session.file))
+            return CheckVerdict(positive: false, detail: "old", by: .judge, version: 1, fileSize: info.size,
+                                fileModified: info.modified.timeIntervalSince1970, scrubVersion: scrub)
+        }
+        try CheckStore(env: env).update(Judges.resultsID(mode.id)) { results in
+            results.modeVersion = mode.version
+            results.judge = "claude-code|opus|\(Judges.promptVersion)|scrub \(Scrubber.version - 1)"
+            results.verdicts = [good.key: old(good, scrub: Scrubber.version - 1), unscrubbed.key: old(unscrubbed, scrub: nil),
+                                other.key: old(other, scrub: Scrubber.version - 1)]
+        }
+        // Only the older scrubber's verdicts are judged again, and only those the run asks for.
+        #expect(Set(Judges.pending(mode: mode, sessions: [good, unscrubbed, other], agent: agent, env: env)) == [good.key, other.key])
+        let results = try await Judges.run(mode: mode, sessions: [good, broken, unscrubbed], agent: agent, gate: gate, runID: nil,
+                                           workFolder: work, env: env)
+        #expect(results.verdicts[good.key]?.detail == "new" && results.verdicts[good.key]?.severe == true)
+        #expect(results.verdicts[good.key]?.scrubVersion == Scrubber.version)
+        #expect(results.judge == "claude-code|opus|\(Judges.promptVersion)" && results.verdicts[broken.key] == nil)
+        // Not wiped: the other verdicts stay and count until they are judged again.
+        #expect(results.verdicts[unscrubbed.key]?.detail == "old" && results.verdicts[other.key]?.detail == "old")
+        #expect(results.rate().total == 3)
+        #expect(Judges.pending(mode: mode, sessions: [good, unscrubbed, other], agent: agent, env: env) == [other.key])
+        await #expect(throws: Judges.Failure.self) {
+            _ = try await Judges.run(mode: mode, sessions: [broken], agent: agent, gate: gate, runID: nil, workFolder: work, env: env,
+                                     stopOnError: true)
+        }
+    }
+
+    /// Like the notes, a session whose user turns alone pass the judge's budget is refused
+    /// with a clear error, and nothing is sent.
+    @Test func aDigestOverTheBudgetIsNotJudged() async throws {
+        let sent = home.appending(path: "sent")
+        try Data(#"""
+            #!/bin/sh
+            if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn":true,"email":"me@example.com","orgName":"Me"}'; exit 0; fi
+            touch "\#(sent.path)"
+            echo '{"type":"result","is_error":false,"result":"","structured_output":{"present":true,"steps":[0],"toughCall":false,"severe":false,"reason":"r"},"usage":{"input_tokens":1,"output_tokens":1}}'
+            """#.utf8).write(to: home.appending(path: "bin/claude"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/claude").path)
+        let folder = home.appending(path: ".claude/projects/-w")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let id = "00000001-0000-4000-8000-000000000001"
+        let file = folder.appending(path: "\(id).jsonl")
+        // 130 user turns of 3000 characters: ~390K, over the default budget and never cut.
+        let turn = #"{"type":"user","cwd":"/w","message":{"role":"user","content":""# + String(repeating: "u", count: 3000) + #""}}"#
+        try Data((Array(repeating: turn, count: 130).joined(separator: "\n") + "\n").utf8).write(to: file)
+        let mode = try #require(try await ModeStore(env: env).mode("large-file-read-whole"))
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low", mode: .call)
+        let gate = try await SendGate.open(agent: agent, env: env)
+        await #expect {
+            _ = try await Judges.judge(mode: mode, exemplars: [], session: "claude:\(id)", file: file, agent: agent, gate: gate,
+                                       runID: nil, workFolder: home.appending(path: "w"), env: env)
+        } throws: { error in
+            (error as? Judges.Failure)?.message.contains("too long for one judge call") == true
+        }
+        // In a batch it isn't an error either: no retry makes it fit.
+        let results = try await Judges.run(mode: mode, sessions: [("claude:\(id)", file.path)], agent: agent, gate: gate, runID: nil,
+                                           workFolder: home.appending(path: "w"), env: env, stopOnError: true)
+        #expect(results.verdicts.isEmpty)
+        #expect(!fm.fileExists(atPath: sent.path))
     }
 }

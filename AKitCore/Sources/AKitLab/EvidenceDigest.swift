@@ -10,11 +10,11 @@ public enum EvidenceDigest {
     public struct Output: Sendable, Hashable {
         public let text: String
         /// The digest is longer than the budget: user turns and failed tools' stubs alone
-        /// don't fit, and those are never dropped.
+        /// don't fit, and those are never dropped. Callers don't send such a digest.
         public let overBudget: Bool
         /// Characters each other item was cut to (tool calls get half); the longest item's
         /// length when nothing was cut.
-        public let cap: Int
+        let cap: Int
     }
 
     /// About 90K tokens: fits every current model with room for the answer.
@@ -55,6 +55,12 @@ public enum EvidenceDigest {
             return output(entries.map { $0.line(cap: low) }, budget: budget, cap: low)
         }
         return output(droppingMiddle(entries, budget: budget), budget: budget, cap: floorCap)
+    }
+
+    /// One item as the digest shows it with this cap (`[#3 result Bash] …`); nil for thinking.
+    /// User turns are never cut.
+    public static func line(_ item: TranscriptItem, cap: Int) -> String? {
+        Entry(item)?.line(cap: cap)
     }
 
     /// Even the floor doesn't fit: keep the start and the end, where the task and the outcome

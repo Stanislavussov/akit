@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 import AKitFoundation
+import AKitInsights
+import AKitLab
 import AKitModel
 import AKitSessions
 @testable import AKitErrorAnalysis
@@ -43,6 +45,22 @@ struct SessionKeyTests {
         let data = try JSONEncoder().encode([key])
         #expect(String(decoding: data, as: UTF8.self) == #"["pi:a:b"]"#)
         #expect(try JSONDecoder().decode([SessionKey].self, from: data) == [key])
+    }
+
+    /// One rule from a key to its harness and origin, for index rows and notes alike.
+    @Test func harnessAndOriginComeFromTheKey() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "akit-key-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "s.jsonl")
+        try Data(#"{"type":"message","message":{"role":"assistant","provider":"github-copilot","content":[]}}"#.utf8 + [10]).write(to: file)
+        let row = IndexedSession(key: "pi:s", harness: "pi", nativeID: "s", file: file.path, cwd: nil, started: nil, lastActivity: nil,
+                                 requests: 1, model: nil, projectID: nil)
+        #expect(IndexedSessions.summary(row)?.harness == .pi)
+        #expect(SessionNotes.origin(sessionKey: "pi:s", transcript: file.path) == .piSession(providers: ["github-copilot"]))
+        // Without its file a Pi session has no known providers.
+        #expect(SessionNotes.origin(sessionKey: "pi:s", transcript: nil) == .piSession(providers: []))
+        #expect(SessionNotes.origin(sessionKey: "claude:s", transcript: nil) == .claudeSession)
     }
 }
 
@@ -99,6 +117,7 @@ struct QuoteMatcherTests {
         #expect(QuoteMatcher.matches(quote: "I'll run … so I'm done", in: transcript))
         #expect(QuoteMatcher.matches(quote: "\"I'll run...first try\"", in: transcript))
         #expect(!QuoteMatcher.matches(quote: "so I'm done … I'll run", in: transcript))
+        #expect(QuoteMatcher.parts(of: "“I'll run...  first try ”") == ["I'll run", "first try"])
     }
 
     @Test func emptyQuoteNeverMatches() {
