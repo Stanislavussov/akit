@@ -179,6 +179,100 @@ struct BatchTests {
         #expect(store.load("b1")?.sessions[0].status == .done)
     }
 
+    @Test func aResumeIsNotWrittenBackToPausedByAWorkerThatSawThePause() async throws {
+        let picks = (1...3).map { Sampling.Pick(sessionKey: "claude:s\($0)", file: "/f\($0)", inclusion: 1, sampling: "fixed", stratum: "fixed") }
+        let batch = Batch(runID: "b1", filter: Sampling.Filter(), size: 3, seed: 0, notesAgent: agent, matchingAgent: agent, language: .english,
+                          sessions: picks.map { Batch.Session(pick: $0) })
+        let store = BatchStore(env: env)
+        try store.save(batch)
+        let state = BatchRunner.State(batch: batch, store: store)
+        #expect(await state.next()?.pick.sessionKey == "claude:s1")
+        try Batches.pause("b1", env: env)
+        // The worker sees the pause, then the user resumes while its session still runs.
+        #expect(await state.next() == nil)
+        _ = try await Batches.resume("b1", environment: .background, akit: URL(filePath: "/usr/bin/true"), env: env)
+        await state.update("claude:s1") { $0.status = .done }
+        #expect(store.load("b1")?.paused == false && store.load("b1")?.sessions[0].status == .done)
+        #expect(await state.next()?.pick.sessionKey == "claude:s2")
+        // A pause the worker sets itself is saved, with its reason.
+        await state.finish {
+            $0.paused = true
+            $0.pauseReason = "The account changed."
+        }
+        #expect(store.load("b1")?.paused == true && store.load("b1")?.pauseReason == "The account changed.")
+    }
+
+    @Test func theEstimateCountsTheLatestReviewOfEachSession() throws {
+        let claude = SendDestination(harness: .claudeCode, provider: "anthropic", account: "me@example.com", org: "Me")
+        func record(_ purpose: String, _ session: String, _ cost: Double, at seconds: Double) throws {
+            try SendLog.append(SendRecord(date: Date(timeIntervalSince1970: seconds), purpose: purpose, session: session, runID: nil,
+                                          destination: claude, model: "opus", inputCharacters: 100, usage: SendUsage(cost: cost)), env: env)
+        }
+        // claude:a was reviewed twice: only the second review (0.3 + 0.1) counts.
+        try record("notes", "claude:a", 0.5, at: 1000)
+        try record("matching", "claude:a", 0.1, at: 1001)
+        try record("notes", "claude:a", 0.3, at: 2000)
+        try record("verifier", "claude:a", 0.1, at: 2001)
+        try record("notes", "claude:b", 0.6, at: 1500)
+        let estimate = try #require(Batches.estimate(sessions: 2, agent: agent, env: env))
+        #expect(abs(estimate - 1.0) < 1e-9)
+    }
+
+    /// A fake Pi signed in to opencode-go, whose default model is qwen.
+    func fakePi() throws {
+        try write("bin/pi", """
+            #!/bin/sh
+            case "$*" in
+              *"auth check --provider opencode-go"*) echo '{"status":"ready"}' ;;
+              *) echo '{"status":"not_ready"}' ;;
+            esac
+
+            """, executable: true)
+        try write(".pi/agent/settings.json", #"{"defaultProvider":"opencode-go","defaultModel":"qwen3.6-plus"}"#)
+        try LabSettings(piAccounts: [PiAccount(provider: "opencode-go", account: "me", org: "me")]).save(env: env)
+    }
+
+    @Test func theDefaultReviewerIsAllowedForEverySampledOrigin() async throws {
+        try fakePi()
+        let pi = SendOrigin.piSession(providers: ["opencode-go"])
+        // Claude sessions: Pi is another family but may not get them; Claude Code is their origin.
+        let claudeSessions: [(model: String?, origin: SendOrigin)] = [("claude-opus-5-5", .claudeSession), ("claude-opus-5-5", .claudeSession)]
+        #expect(try await Batches.defaultReviewer(sessions: claudeSessions, env: env).harness == .claudeCode)
+        // Pi sessions: Claude Code is another family but not their origin; Pi is.
+        let piSessions: [(model: String?, origin: SendOrigin)] = [("qwen3.6-plus", pi), ("qwen3.6-plus", pi)]
+        let reviewer = try await Batches.defaultReviewer(sessions: piSessions, env: env)
+        #expect(reviewer.harness == .pi && reviewer.model == "opencode-go/qwen3.6-plus")
+        // Both kinds: neither may get all of them, so nothing is queued.
+        await #expect(throws: Batches.Failure.self) {
+            _ = try await Batches.defaultReviewer(sessions: claudeSessions + piSessions, env: env)
+        }
+        // On the allowed list, Pi gets Claude sessions too, being of another family.
+        var settings = LabSettings.load(env: env)
+        settings.allowedDestinations = [SendDestination(harness: .pi, provider: "opencode-go", account: "me", org: "me")]
+        try settings.save(env: env)
+        #expect(try await Batches.defaultReviewer(sessions: claudeSessions, env: env).harness == .pi)
+        #expect(try await Batches.defaultReviewer(sessions: claudeSessions + piSessions, env: env).harness == .pi)
+    }
+
+    @Test func theAccountRecheckCoversEveryAgentOfTheBatch() async throws {
+        let now = SendDestination(harness: .claudeCode, provider: "anthropic", account: "me@example.com", org: "Me")
+        let before = SendDestination(harness: .claudeCode, provider: "anthropic", account: "old@example.com", org: "Me")
+        let judge = LabAgent(harness: .claudeCode, model: "sonnet", effort: "low", mode: .call)
+        func gate(_ destination: SendDestination) -> SendGate { SendGate(destination: destination, isWork: false, settings: LabSettings()) }
+        #expect(await BatchRunner.accountProblem([(agent, gate(now)), (judge, gate(now))], env: env) == nil)
+        // The notes agent's account is unchanged; the judge's isn't.
+        let problem = try #require(await BatchRunner.accountProblem([(agent, gate(now)), (judge, gate(before))], env: env))
+        #expect(problem.contains(judge.label) && problem.contains("me@example.com"))
+    }
+
+    @Test func onlyCurrentActiveModesRunTheirCodeChecks() {
+        var merged = Mode(id: "repeated-steps", name: "Repeated steps", definition: "d", status: .active)
+        merged.mergedInto = "large-file-read-whole"
+        let modes = [Mode(id: "large-file-read-whole", name: "Large file", definition: "d", status: .active), merged,
+                     Mode(id: "weakening-tests", name: "Weakening tests", definition: "d", status: .seedInactive)]
+        #expect(AnalysisUpkeep.activeChecks(modes).map(\.mode.id) == ["large-file-read-whole"])
+    }
+
     @Test func aBatchPausedWhileQueuedStaysPaused() async throws {
         for index in 1...3 { try session(index, text: "Do the task \(index)") }
         try await importSessions()

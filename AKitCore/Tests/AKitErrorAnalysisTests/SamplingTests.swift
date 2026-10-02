@@ -101,5 +101,7 @@ struct SamplingTests {
         #expect(Batches.vendor("opus") == "anthropic" && Batches.vendor("claude-sonnet-5-5") == "anthropic")
         #expect(Batches.vendor("github-copilot/gpt-6.1-sol") == "openai" && Batches.vendor("gemini-3-pro") == "google")
         #expect(Batches.vendor("opencode-go/qwen3.6-plus") == "qwen")
+        // On top of the sampling family: `claude-opus` and `claude-haiku` strata, one vendor.
+        #expect(Batches.vendor("o4-mini") == "openai" && Batches.vendor("github-copilot/claude-haiku-5") == "anthropic")
     }
 }
