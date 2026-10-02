@@ -133,12 +133,21 @@ final class AnalysisModel {
 
     var env: HarnessEnvironment { .current }
 
+    /// Counts reloads: a load that finishes after a newer one started is dropped, so slower
+    /// older reads never replace newer data.
+    private var generation = 0
+
     func reload() async {
         let env = env
-        do {
-            data = try await Task.detached { try await AnalysisData.load(env: env) }.value
-        } catch {
-            self.error = error.localizedDescription
+        generation += 1
+        let mine = generation
+        let result = await Task.detached { () -> Result<AnalysisData, any Error> in
+            do { return .success(try await AnalysisData.load(env: env)) } catch { return .failure(error) }
+        }.value
+        guard mine == generation else { return }
+        switch result {
+        case .success(let loaded): data = loaded
+        case .failure(let error): self.error = error.localizedDescription
         }
         loaded = true
     }
@@ -208,7 +217,8 @@ final class AnalysisModel {
     }
 
     /// Confirms a candidate or an inactive seed, then runs its code check over every indexed
-    /// session at once. False when confirming failed (the error is in the bar).
+    /// session: at once, or when the check running now is done (the bar says so). False when
+    /// confirming failed (the error is in the bar).
     @discardableResult
     func confirm(_ mode: Mode) async -> Bool {
         let id = mode.id
@@ -220,7 +230,15 @@ final class AnalysisModel {
             self.error = error.localizedDescription
             return false
         }
-        runCheck(mode)
+        guard progress != nil, CodeChecks.check(for: id) != nil else {
+            runCheck(mode)
+            return true
+        }
+        message = "\(mode.name) is active. Its code check starts when the one running now is done."
+        Task {
+            while progress != nil { try? await Task.sleep(for: .milliseconds(300)) }
+            runCheck(mode)
+        }
         return true
     }
 

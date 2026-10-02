@@ -66,6 +66,79 @@ struct BootstrapTests {
         #expect(BootstrapReservations(env: env).keys() == ["claude:a"])
     }
 
+    @Test func noteIdsStayPutWhenALabelIsReopenedAndEdited() throws {
+        let store = Bootstrap.LabelStore(env: env)
+        try BootstrapReservations(env: env).update { $0 += [.init(sessionKey: "claude:a", transcript: "/t/a.jsonl")] }
+        try store.save(label("claude:a", notes: [note("a", step: 1), note("b", step: 2), note("c", step: 3)]))
+        #expect(store.load("claude:a")?.notes.map(\.id) == ["h1", "h2", "h3"])
+        _ = try LabelBookStore(env: env).update { book in
+            book.mapping = ["claude:a#h1": "m-a", "claude:a#h2": "m-b", "claude:a#h3": "m-c", "claude:other#h2": "m-b"]
+        }
+        let pairs: [Bootstrap.Pairing.Pair] = [.init(human: "h1", model: "n1"), .init(human: "h2", model: "n2"), .init(human: "h3", model: "n3")]
+        try Bootstrap.PairingStore(env: env).save(Bootstrap.Pairing(sessionKey: "claude:a", notesVersion: "v", notesKey: "k", proposed: pairs,
+                                                                    confirmed: pairs, agreed: ["n1", "n2", "n3"]))
+
+        // Reopen for Editing, delete the middle note, add one, finish again.
+        var reopened = try #require(store.load("claude:a"))
+        reopened.labeledAt = nil
+        try store.save(reopened)
+        var edited = try #require(store.load("claude:a"))
+        edited.notes.remove(at: 1)
+        edited.notes.append(note("d", step: 4))
+        edited.labeledAt = .now
+        try store.save(edited)
+
+        let saved = try #require(store.load("claude:a"))
+        #expect(saved.notes.map(\.id) == ["h1", "h3", "h4"] && saved.notes.map(\.description) == ["a", "c", "d"])
+        // The deleted note's mapping and pairs are gone; the others stay on their notes.
+        #expect(LabelBookStore(env: env).load().mapping == ["claude:a#h1": "m-a", "claude:a#h3": "m-c", "claude:other#h2": "m-b"])
+        let pairing = try #require(Bootstrap.PairingStore(env: env).load("claude:a"))
+        #expect(pairing.confirmed == [.init(human: "h1", model: "n1"), .init(human: "h3", model: "n3")])
+        #expect(pairing.proposed == pairing.confirmed && pairing.agreed == ["n1", "n2", "n3"])
+        let modes = [Mode(id: "m-b", name: "B", definition: "d"), Mode(id: "m-c", name: "C", definition: "d")]
+        #expect(ModeLabels.labels(for: "m-b", modes: modes, bootstrap: [saved], book: LabelBookStore(env: env).load()).isEmpty)
+        #expect(ModeLabels.labels(for: "m-c", modes: modes, bootstrap: [saved], book: LabelBookStore(env: env).load()).map(\.positive) == [true])
+
+        // A deleted id is never given again, not even the last one.
+        var again = saved
+        again.notes.removeLast()
+        try store.save(again)
+        again = try #require(store.load("claude:a"))
+        again.notes.append(note("e", step: 5))
+        try store.save(again)
+        #expect(store.load("claude:a")?.notes.map(\.id) == ["h1", "h3", "h5"])
+    }
+
+    @Test func labelsSavedBeforeStableIdsStillLoad() throws {
+        let store = Bootstrap.LabelStore(env: env)
+        try BootstrapReservations(env: env).update { $0 += [.init(sessionKey: "claude:a", transcript: "/t/a.jsonl")] }
+        let old = #"{"deviation":{},"notes":[{"description":"a","id":"h1","quote":"q","source":"human","step":1},"#
+            + #"{"description":"b","id":"h2","quote":"q","source":"human","step":2}],"sessionKey":"claude:a","transcript":"/t/a.jsonl"}"#
+        try fm.createDirectory(at: store.folder, withIntermediateDirectories: true)
+        try Data(old.utf8).write(to: store.file("claude:a"))
+        var label = try #require(store.load("claude:a"))
+        #expect(label.notes.map(\.id) == ["h1", "h2"] && label.lastNoteNumber == nil)
+        label.notes.append(note("c", step: 3))
+        try store.save(label)
+        #expect(store.load("claude:a")?.notes.map(\.id) == ["h1", "h2", "h3"])
+    }
+
+    @Test func pairingsMadeOnOtherModelNotesDontCount() {
+        var h1 = note("a", step: 3); h1.id = "h1"
+        var reviewed = review("claude:a", notes: [modelNote("n1", step: 3, accepted: true)], outcome: .no, decisive: 3)
+        reviewed.doneKeys["notes"] = "now"
+        func pairing(_ key: String?) -> Bootstrap.Pairing {
+            Bootstrap.Pairing(sessionKey: "claude:a", notesVersion: "claude-code · opus · notes v1", notesKey: key, proposed: [],
+                              confirmed: [.init(human: "h1", model: "n1")], agreed: ["n1"])
+        }
+        let labels = [label("claude:a", notes: [h1])]
+        #expect(Bootstrap.metrics(labels: labels, notes: [reviewed], pairings: [pairing("now")]).first?.recallCounts == [1, 1])
+        // Saved before the key was recorded: counted as made on the notes there now.
+        #expect(Bootstrap.metrics(labels: labels, notes: [reviewed], pairings: [pairing(nil)]).first?.recallCounts == [1, 1])
+        // Made on an earlier review whose n1 was another note.
+        #expect(Bootstrap.metrics(labels: labels, notes: [reviewed], pairings: [pairing("before")]).first?.sessions == 0)
+    }
+
     func review(_ key: String, notes: [Note], outcome: Outcome, decisive: Int?) -> SessionNotes {
         SessionNotes(sessionKey: key, transcript: "", title: nil, project: nil, requirements: [], outcome: outcome, notes: notes,
                      deviation: Deviation(decisiveStep: decisive), paragraph: "", advice: [],

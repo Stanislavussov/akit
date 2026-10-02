@@ -175,9 +175,15 @@ read the transcript. Recall is the main risk, so it is measured.
 2. **Labeling.** The UI shows the scrubbed transcript; the user writes notes (`source: human`) with
    only: description, step, quote, the session's outcome, and the first point of deviation
    (`decisive_step`, and `observed_step` if it differs). Fault layer and root/symptom are
-   not asked of the human.
+   not asked of the human. Human note ids (`h1`, `h2`, …) are stable: a saved note keeps
+   its id when the label is reopened and edited, a new note gets a number never used in
+   that label, and deleting a note drops its mapping and its pairs.
 3. **Comparison.** The model's notes for the same sessions are then compared with the
-   user's. The model proposes pairs of notes; the user confirms them.
+   user's. The model proposes pairs of notes; the user confirms them. Model note ids
+   (`n1`, …) are numbered afresh by every review, so a pairing records the notes done key
+   it was made on. A new review of the session moves the pairing and the user's spot
+   checks to the same notes (same step and quote, as for the user's route verdicts) and
+   drops what was about notes that are gone; metrics ignore a pairing made on other notes.
    - **Recall** is the share of the user's problems the model found and the verifier
      kept: confirmed pairs whose model note was accepted, the same notes that precision,
      the pool and the reports use. Recall before the verifier (pairs with any model note)
@@ -463,7 +469,8 @@ example from edit → verify to verify → report.
   of the step just before its action, not "the last completed phase": the agent loops, and
   "completed" is blurry there. For a tool result the action starts at its call, so the
   row is the step before the call; otherwise every failing test result sat on the
-  verify → verify diagonal. An extra "no failures" column shows the denominator.
+  verify → verify diagonal. Parallel calls (call A, call B, result A) are matched to their
+  results in order, by tool name where the result has one. An extra "no failures" column shows the denominator.
 - **Gate.** The matrix and the funnel are shown only while the bootstrap's phase agreement
   for the current notes version is at least 70%; otherwise AKit says why they are hidden.
 - **Small N.** While a project has fewer than 50 sessions in batches, AKit shows a funnel
@@ -500,7 +507,11 @@ alike:
 `key(step) = hash(input) + hash(config of this step and of every step whose output it reads)`
 
 - **Input** is the transcript for session steps (the task for a control cell); for the
-  notes it also holds AKit's numbers computed from the transcript.
+  notes it also holds AKit's numbers, exactly as the notes call sends them. The notes step
+  computes them itself, from a Claude Code transcript alone and scrubbed like it (no git:
+  whether a commit later reached the main branch isn't in the log and changes with the
+  repository), so an ad-hoc review and a batch send the same input and share notes. The
+  session's title isn't sent.
 - **Config** holds the model, prompt version and scrub version of each of those steps;
   for a code check, the check's code version. Judges and code checks read only the
   transcript, so a notes-model change never re-runs them.
@@ -740,7 +751,9 @@ What differs from the text above, found while building or on real sessions:
 - **Verifier context.** The verifier sees the cited step and the three steps before and
   after it: on a real session it rejected claims that sum up a step with its neighbours
   when it saw the step alone. Quotes under 8 characters are rejected in code, and so is a
-  quote with an elision ("…") any part of which is under 8 characters.
+  quote with elisions ("…") none of whose parts reaches 8 characters ("error … ok"). One
+  long part anchors the quote in its step and the short ones must still follow it there;
+  requiring every part to be long rejected valid quotes the prompt allows.
 - **Low-confidence routes** count in "seen in k notes" only after the user accepts them.
 - **Lab's own sessions** (replays, control cells, agent reviews) are left out of samples,
   bootstrap picks and check rates, so evals never enter production frequencies.
