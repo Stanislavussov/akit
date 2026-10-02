@@ -156,7 +156,13 @@ public struct SessionNotes: Codable, Hashable, Sendable {
     public var outcome: Outcome
     public var notes: [Note]
     public var deviation: Deviation
+    /// What happened, written with the notes, before the verifier: it may still mention a
+    /// note the verifier rejected.
     public var paragraph: String
+    /// The review's conclusion in one or two plain sentences, written by the verifier from the
+    /// notes it accepted; nil before verifier prompt 3, when no note reached the verifier, or
+    /// when the verifier left it blank.
+    public var conclusion: String?
     public var advice: [Advice]
     /// Who wrote the notes and who verified them, and the done keys of both steps.
     public var notesConfig: StepConfig
@@ -195,6 +201,16 @@ public struct SessionNotes: Codable, Hashable, Sendable {
     public var rejected: [Note] { notes.filter { !$0.isAccepted } }
     /// "Checked, no failures": it still counts in denominators.
     public var noFailures: Bool { accepted.isEmpty }
+
+    /// Each routed note's mode as the mode pages count it: the current route
+    /// (`Matching.currentRoutes`), merges followed. nil mode: "none fits". Unconfirmed: a
+    /// low-confidence route the user hasn't reviewed, which "seen in k notes" leaves out.
+    public func noteModes(_ modes: [Mode]) -> [String: (modeID: String?, confirmed: Bool)] {
+        Matching.currentRoutes(self).mapValues { route in
+            (route.modeID.map { ModeStore.resolve($0, in: modes) },
+             route.review != nil || route.by == .human || route.confidence >= Matching.lowConfidence)
+        }
+    }
 }
 
 /// Where matching sent one note: a mode, a candidate, or "none fits". Matching is a router: it

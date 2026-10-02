@@ -2,19 +2,68 @@ import AKitErrorAnalysis
 import AKitLab
 import SwiftUI
 
-/// A one-call review's notes (`docs/design/error-analysis.md`, "Step 1" and "Verifier"):
-/// outcome, requirements, deviation steps "about here", the notes the verifier accepted,
-/// the rejected ones, then the paragraph and the advice with the notes it rests on.
+/// A one-call review's notes (`docs/design/error-analysis.md`, "Step 1" and "Verifier"),
+/// conclusion first: a card with the outcome, the problems by severity, the verifier's
+/// conclusion and the reviewed session's numbers; then what to change, the accepted notes
+/// grouped by error-analysis mode, and the rest (paragraph, requirements, deviation steps,
+/// rejected notes) under Details.
 struct ReviewNotesView: View {
     let notes: SessionNotes
+    /// Mode names and definitions for the notes' groups; without them a group shows its mode id.
+    var modes: [Mode] = []
+    /// The reviewed session's numbers (`analysis.json` of a Lab review).
+    var metrics: SessionMetrics?
+    /// On a Lab review run, which has Re-check with Another Model….
+    var inLabRun = false
     /// Snapshots: `--tab notes` opens the disclosures.
+    @State private var showDetails = DebugSnapshot.options?.tab == "notes"
     @State private var showRejected = DebugSnapshot.options?.tab == "notes"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            header
+            ConclusionCard(notes: notes, metrics: metrics, inLabRun: inLabRun)
+            if !notes.advice.isEmpty {
+                section("What to Change") {
+                    ForEach(Array(notes.advice.prefix(Review.limit).enumerated()), id: \.offset) { index, advice in
+                        AdviceView(number: index + 1, advice: advice)
+                    }
+                }
+            }
+            section("Problems by Type", spacing: 16) {
+                if notes.accepted.isEmpty {
+                    Text("Checked, no failures: the verifier accepted no notes.").foregroundStyle(.secondary)
+                }
+                ForEach(groups, id: \.id) { group in
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("\(group.title) · \(group.notes.count)", systemImage: "tag")
+                            .font(.headline)
+                            .help(group.help)
+                        ForEach(group.notes) { note in
+                            NoteView(note: note, collapsesQuote: true,
+                                     unconfirmed: !group.id.isEmpty && types[note.id]?.confirmed == false)
+                        }
+                            .padding(.leading, 22)
+                    }
+                }
+            }
+            .id("notes")
+            DisclosureGroup("Details: what happened, requirements, rejected notes", isExpanded: $showDetails) {
+                details.padding(.top, 10)
+            }
+            .font(.callout)
+        }
+    }
+
+    @ViewBuilder private var details: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(authors).foregroundStyle(.secondary).textSelection(.enabled)
             if !notes.paragraph.isEmpty {
-                MarkdownLines(text: notes.paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
+                section("What Happened", spacing: 3) {
+                    MarkdownLines(text: notes.paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
+                    Text("Written before the verifier: it may mention a rejected note.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             if !notes.requirements.isEmpty {
                 section("Requirements", spacing: 3) {
@@ -24,61 +73,44 @@ struct ReviewNotesView: View {
                 }
             }
             if !deviation.isEmpty {
-                section("Where it went off", spacing: 3) {
+                section("Where It Went Off", spacing: 3) {
                     ForEach(deviation, id: \.self) { Text($0) }
                     Text("Both steps are approximate: finding the exact step is hard even for people.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
-            section("Notes", spacing: 14) {
-                if notes.accepted.isEmpty {
-                    Text("Checked, no failures: the verifier accepted no notes.").foregroundStyle(.secondary)
-                }
-                ForEach(notes.accepted) { NoteView(note: $0) }
-                if !notes.rejected.isEmpty {
-                    DisclosureGroup("Rejected by the verifier (\(notes.rejected.count))", isExpanded: $showRejected) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(notes.rejected) { NoteView(note: $0) }
-                        }
-                        .padding(.top, 6)
+            if !notes.rejected.isEmpty {
+                DisclosureGroup("Rejected by the verifier (\(notes.rejected.count))", isExpanded: $showRejected) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(notes.rejected) { NoteView(note: $0) }
                     }
-                }
-            }
-            .id("notes")
-            section("What to Improve") {
-                if notes.advice.isEmpty {
-                    Text("Nothing worth changing.").foregroundStyle(.secondary)
-                }
-                ForEach(Array(notes.advice.prefix(Review.limit).enumerated()), id: \.offset) { index, advice in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(index + 1). \(advice.title)").fontWeight(.semibold)
-                        if !advice.evidence.isEmpty {
-                            Text("Evidence: \(advice.evidence)").foregroundStyle(.secondary)
-                        }
-                        Text(advice.detail).foregroundStyle(.secondary)
-                        if !advice.noteIDs.isEmpty {
-                            Text("Rests on \(advice.noteIDs.joined(separator: ", "))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
                 }
             }
         }
+        .font(.body)
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("Outcome").font(.title3.bold())
-                OutcomeBadge(outcome: notes.outcome)
-            }
-            Text(authors).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+    /// Accepted notes by mode as the mode pages count them, the most notes first; notes no
+    /// mode fits come last.
+    private var groups: [(id: String, title: String, help: String, notes: [Note])] {
+        let byMode = Dictionary(grouping: notes.accepted) { types[$0.id]?.modeID ?? "" }
+        let named = byMode.compactMap { id, notes -> (id: String, title: String, help: String, notes: [Note])? in
+            guard !id.isEmpty else { return nil }
+            let mode = modes.first { $0.id == id }
+            return (id, mode?.name ?? id, mode?.definition ?? "An error analysis mode", notes)
         }
+        .sorted { ($0.notes.count, $1.title) > ($1.notes.count, $0.title) }
+        let untyped = byMode[""].map {
+            [(id: "", title: "No type yet",
+              help: "No error analysis mode fits these notes yet, or they aren't matched yet; clustering on the Error Analysis screen can make one.",
+              notes: $0)]
+        } ?? []
+        return named + untyped
     }
+
+    private var types: [String: (modeID: String?, confirmed: Bool)] { notes.noteModes(modes) }
 
     /// "Notes by Claude Code · opus; verified by Claude Code · opus".
     private var authors: String {
@@ -101,6 +133,108 @@ struct ReviewNotesView: View {
             Text(title).font(.title3.bold())
             content()
         }
+    }
+}
+
+/// The review in a few seconds: outcome and problems in one line, the conclusion, and the
+/// reviewed session's size, on a background tinted by how it went.
+private struct ConclusionCard: View {
+    let notes: SessionNotes
+    let metrics: SessionMetrics?
+    let inLabRun: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(headline).font(.title3.bold())
+            if let conclusion = notes.conclusion {
+                Text(conclusion).font(.title3).fixedSize(horizontal: false, vertical: true)
+            } else if !notes.notes.isEmpty, notes.verifierConfig?.promptVersion ?? 0 < 3 {
+                // From verifier prompt 3 a missing conclusion means no note reached the
+                // verifier (or it left the conclusion blank), and the headline says it all.
+                Text(inLabRun
+                     ? "No conclusion yet: this review is older than conclusions. Re-check with the same model, effort and review language reuses the notes and reruns only the verifier and matching."
+                     : "No conclusion yet: this review is older than conclusions. The next review of this session writes one.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let size {
+                Text(size).font(.callout).foregroundStyle(.secondary)
+            }
+        }
+        .textSelection(.enabled)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.35)))
+    }
+
+    /// "✅ Done · 🟠 2 medium · ⚪ 1 low".
+    private var headline: String {
+        let outcome = switch notes.outcome {
+        case .achieved: "✅ Done"
+        case .partly: "🟡 Partly done"
+        case .no: "❌ Not done"
+        case .unclear: "❔ Unclear whether done"
+        }
+        let accepted = notes.accepted
+        guard !accepted.isEmpty else { return outcome + " · no problems found" }
+        let counts: [(Severity, String)] = [(.high, "🔴"), (.medium, "🟠"), (.low, "⚪")]
+        var parts = counts.compactMap { severity, mark -> String? in
+            let count = accepted.filter { $0.severity == severity }.count
+            return count > 0 ? "\(mark) \(count) \(severity.rawValue)" : nil
+        }
+        let unrated = accepted.filter { $0.severity == nil }.count
+        if unrated > 0 { parts.append("\(unrated) unrated") }
+        return ([outcome] + parts).joined(separator: " · ")
+    }
+
+    /// "⏱ 2 hr, 35 min · 164 calls · 515K fresh tokens · peak context 397K".
+    private var size: String? {
+        guard let metrics else { return nil }
+        var parts: [String] = []
+        if let wall = metrics.wallSeconds {
+            let minutes = Duration.seconds((Double(wall) / 60).rounded() * 60)
+            parts.append("⏱ " + (wall < 60 ? "\(wall) s" : minutes.formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))))
+        }
+        parts.append("\(UsageText.full(metrics.calls)) calls")
+        parts.append("\(UsageText.short(metrics.freshTokens)) fresh tokens")
+        parts.append("peak context \(UsageText.short(metrics.peakContext))")
+        return parts.joined(separator: " · ")
+    }
+
+    private var tint: Color {
+        switch notes.outcome {
+        case .achieved: notes.accepted.contains { $0.severity == .high } ? .orange : .green
+        case .partly: .orange
+        case .no: .red
+        case .unclear: .gray
+        }
+    }
+}
+
+/// One improvement: the advice, what it improves, and the evidence folded away.
+private struct AdviceView: View {
+    let number: Int
+    let advice: Advice
+    @State private var showEvidence = DebugSnapshot.options?.tab == "notes"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("👉 \(advice.title)").fontWeight(.semibold)
+            Text(advice.detail).foregroundStyle(.secondary)
+            if !advice.evidence.isEmpty {
+                DisclosureGroup("Evidence" + (advice.noteIDs.isEmpty ? "" : " (\(advice.noteIDs.joined(separator: ", ")))"),
+                                isExpanded: $showEvidence) {
+                    Text(advice.evidence)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 2)
+                }
+                .font(.callout)
+            }
+        }
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -138,7 +272,12 @@ struct OutcomeBadge: View {
 /// One note: id, step, phase, severity, fault layer, the description and the quote.
 struct NoteView: View {
     let note: Note
+    /// The quote behind a disclosure, for pages that lead with the descriptions.
+    var collapsesQuote = false
+    /// Its mode is a low-confidence route you haven't reviewed.
+    var unconfirmed = false
     @State private var showSteelman = DebugSnapshot.options?.tab == "notes"
+    @State private var showQuote = DebugSnapshot.options?.tab == "notes"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -149,12 +288,23 @@ struct NoteView: View {
                 if let severity = note.severity { NoteTag(text: severity.rawValue.capitalized, color: severity.color) }
                 if let layer = note.faultLayer { NoteTag(text: layer.title, color: .purple) }
                 if note.source == .human { NoteTag(text: "Yours", color: .teal) }
+                if unconfirmed {
+                    NoteTag(text: "Type unconfirmed", color: .gray)
+                        .help("Matching wasn't sure of this type: accept or move it on the Error Analysis screen, Review tab. Mode pages don't count it yet.")
+                }
                 if let root = note.symptomOf {
                     Text("symptom of \(root)").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Text(note.description).fixedSize(horizontal: false, vertical: true)
-            QuoteText(text: note.quote)
+            if collapsesQuote, !note.quote.isEmpty {
+                DisclosureGroup("Quote", isExpanded: $showQuote) {
+                    QuoteText(text: note.quote).padding(.top, 2)
+                }
+                .font(.callout)
+            } else {
+                QuoteText(text: note.quote)
+            }
             if let verdict = note.verdict {
                 if !verdict.accepted {
                     Label("\(verdict.by == .code ? "Rejected by code" : "Rejected by the verifier model"): \(verdict.reason)",

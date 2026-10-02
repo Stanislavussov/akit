@@ -4,7 +4,7 @@ import Foundation
 /// are part of the done keys: changing a prompt reruns that step and every step after it.
 enum NotesPrompts {
     static let notesVersion = 1
-    static let verifierVersion = 2
+    static let verifierVersion = 3
 
     static let notesSystem = """
         You review one recorded coding-agent session for AKit's error analysis. The input is a
@@ -92,13 +92,19 @@ enum NotesPrompts {
         For a note of high severity, first write the strongest argument that there is no
         problem here (steelman), then decide.
 
-        Answer {"verdicts":[{"id":"n1","steelman":"…","supported":true,"reason":"…"}]} with one
-        verdict per note; reason is one sentence.
+        Then write the review's conclusion for a busy reader, in one or two short plain
+        sentences: was the session good, the problem that cost the most (only from notes you
+        supported) and the one change worth making, if any. You get the outcome, the reviewer's
+        paragraph, its advice and the notes rejected before you; leave out whatever rests on a
+        rejected note. Don't retell the session and don't use step numbers.
+
+        Answer {"verdicts":[{"id":"n1","steelman":"…","supported":true,"reason":"…"}],
+        "conclusion":"…"} with one verdict per note; reason is one sentence.
         """
 
     static let verifierSchema = #"""
         {"type":"object","properties":{"verdicts":{"type":"array","items":{"type":"object","properties":{
           "id":{"type":"string"},"steelman":{"type":"string"},"supported":{"type":"boolean"},"reason":{"type":"string"}},
-          "required":["id","supported","reason"]}}},"required":["verdicts"]}
+          "required":["id","supported","reason"]}},"conclusion":{"type":"string"}},"required":["verdicts","conclusion"]}
         """#
 }

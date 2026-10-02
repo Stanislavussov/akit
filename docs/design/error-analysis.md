@@ -156,6 +156,16 @@ matching:
 2. **A model call** checks whether the quote supports the claim.
 3. **High-severity notes**: the verifier first writes the steelman argument "there is no
    problem here", then gives its verdict.
+4. **The conclusion** (verifier prompt 3): the same call ends with one or two plain
+   sentences for a busy reader (was the session good, the problem that cost most, the one
+   change worth making), from the notes it accepted only. It gets the outcome, the
+   paragraph, the advice and the notes code rejected, so the conclusion can't rest on a
+   rejected note the way the paragraph (written before the verifier) can. No note reaching
+   the verifier means no conclusion; the review page then leads with the outcome alone.
+   The review page shows it first, in a card with the outcome, the accepted notes by
+   severity and the session's numbers, then the advice, then the accepted notes grouped by
+   mode ("No type yet" when none fits); the paragraph, requirements, deviation steps and
+   rejected notes sit under Details.
 
 A note that fails is kept with `rejected_by_verifier` and the reason, and stays out of the
 pool. In Tang et al. only 53.9% of the extracted episodes survived such a second pass. The

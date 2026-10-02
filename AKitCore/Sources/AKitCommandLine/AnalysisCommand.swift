@@ -128,6 +128,7 @@ extension AKitCLI {
     static func notesText(_ notes: SessionNotes) -> String {
         var lines = ["\(notes.title ?? notes.sessionKey)", "Session  \(notes.sessionKey)", "Outcome  \(notes.outcome.title)",
                      "Notes by \(notes.notesConfig.harness ?? "?") · \(notes.notesConfig.model ?? "?")"]
+        if let conclusion = notes.conclusion { lines.append("Conclusion: \(conclusion)") }
         if !notes.requirements.isEmpty {
             lines.append("Requirements:")
             lines += notes.requirements.map { "  - \($0)" }
