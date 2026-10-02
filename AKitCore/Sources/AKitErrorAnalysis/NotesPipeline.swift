@@ -85,7 +85,7 @@ public enum NotesPipeline {
         } else {
             out("Writing notes with \(config.notes.label)…")
             var request = ModelCall.Request(agent: config.notes, purpose: "notes", system: NotesPrompts.notesSystem + "\n" + config.language.instruction,
-                                            input: notesInput(title: target.title, numbers: target.numbers, items: items, model: config.notes.model),
+                                            input: try notesInput(title: target.title, numbers: target.numbers, items: items, model: config.notes.model),
                                             schema: NotesPrompts.notesSchema, origin: origin, session: key.description, runID: runID)
             request.scrubbed = scrubbedCounts
             let answer = try await ModelCall.run(request, gate: notesGate, folder: workFolder, env: env)
@@ -122,8 +122,16 @@ public enum NotesPipeline {
         return (items, counts)
     }
 
-    static func notesInput(title: String?, numbers: String?, items: [TranscriptItem], model: String) -> String {
-        let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: EvidenceDigest.budget(model: model))
+    /// Refuses a session whose user turns and failed tool results alone pass the model's
+    /// budget: they are never cut, and a call over the budget may not fit the window.
+    static func notesInput(title: String?, numbers: String?, items: [TranscriptItem], model: String) throws -> String {
+        let budget = EvidenceDigest.budget(model: model)
+        let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: budget)
+        guard !digest.overBudget else {
+            throw Failure(message: "The session is too long for one call: its user turns and failed tool results alone pass the "
+                              + "\(budget)-character budget of \(model.isEmpty ? "the default model" : model), so it isn't sent."
+                              + (budget < EvidenceDigest.largeBudget ? " A model with a 1M-token window may have room for it." : ""))
+        }
         let facts = numbers.map { "## AKit's numbers (computed from the transcript; trust them)\n\n\($0)\n\n" } ?? ""
         return """
             # Session: \(title ?? "untitled")

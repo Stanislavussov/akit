@@ -10,11 +10,11 @@ public enum EvidenceDigest {
     public struct Output: Sendable, Hashable {
         public let text: String
         /// The digest is longer than the budget: user turns and failed tools' stubs alone
-        /// don't fit, and those are never dropped.
+        /// don't fit, and those are never dropped. Callers don't send such a digest.
         public let overBudget: Bool
         /// Characters each other item was cut to (tool calls get half); the longest item's
         /// length when nothing was cut.
-        public let cap: Int
+        let cap: Int
     }
 
     /// About 90K tokens: fits every current model with room for the answer.

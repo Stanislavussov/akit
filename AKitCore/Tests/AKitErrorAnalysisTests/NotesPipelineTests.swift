@@ -169,6 +169,16 @@ struct NotesPipelineTests {
         #expect(notes.doneKeys["verifier"] != nil)
     }
 
+    @Test func aDigestOverTheBudgetIsNotSent() throws {
+        // 130 user turns of 3000 characters: ~390K, over the default budget and never cut.
+        let items = (0..<130).map { TranscriptItem(id: $0, kind: .user, text: String(repeating: "u", count: 3000), timestamp: nil) }
+        #expect(throws: NotesPipeline.Failure.self) {
+            _ = try NotesPipeline.notesInput(title: "t", numbers: nil, items: items, model: "opus")
+        }
+        // A 1M-token window has room for it.
+        #expect(try NotesPipeline.notesInput(title: "t", numbers: nil, items: items, model: "opus[1m]").contains("[#129 user]"))
+    }
+
     @Test func invalidAnswersAreErrors() async throws {
         try fakeClaude(notes: ["nonsense": true], verdicts: verdicts)
         await #expect(throws: NotesPipeline.Failure.self) { _ = try await review(try session()) }
