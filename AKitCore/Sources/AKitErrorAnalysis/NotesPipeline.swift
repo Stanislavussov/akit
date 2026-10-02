@@ -72,7 +72,9 @@ public enum NotesPipeline {
         }
         let origin = SendOrigin.of(harness: target.harness, sessionFile: target.file)
         let (items, scrubbedCounts) = try scrubbedItems(target, gate: notesGate)
-        let input = Data(items.map { "[#\($0.id)] \($0.text)" }.joined(separator: "\n").utf8)
+        var input = Data(items.map { "[#\($0.id)] \($0.text)" }.joined(separator: "\n").utf8)
+        // AKit's numbers are part of the notes call's input too.
+        if let numbers = target.numbers { input.append(Data("\n## AKit's numbers\n\(numbers)".utf8)) }
         let notesKey = DoneKey.make(input: input, configs: [config.notesStep])
         let verifierKey = DoneKey.make(input: input, configs: [config.notesStep, config.verifierStep])
         let store = NotesStore(env: env)
@@ -216,7 +218,9 @@ public enum NotesPipeline {
         var toAsk: [Note] = []
         for index in result.notes.indices where result.notes[index].source == .model {
             let note = result.notes[index]
-            if note.quote.trimmingCharacters(in: .whitespacesAndNewlines).count < minimumQuote {
+            // Every part counts: "error … ok" is two words that match almost anywhere.
+            let parts = QuoteMatcher.parts(of: note.quote)
+            if parts.isEmpty || parts.contains(where: { $0.count < minimumQuote }) {
                 result.notes[index].verdict = Verdict(accepted: false, reason: "The quote is too short to show anything.", by: .code)
             } else if let item = byID[note.step], QuoteMatcher.matches(quote: note.quote, in: item.text) {
                 toAsk.append(note)
@@ -256,7 +260,8 @@ public enum NotesPipeline {
         return result
     }
 
-    /// A quote this short ("null", "ok") matches almost any step and proves nothing.
+    /// A quote, or a part of one between elisions, this short ("null", "ok") matches almost
+    /// any step and proves nothing.
     static let minimumQuote = 8
 
     /// Steps shown around the cited one, before and after.
@@ -268,12 +273,9 @@ public enum NotesPipeline {
         let parts = notes.map { note -> String in
             let step = byID[note.step].map { "[#\($0.id) \(label($0.kind))] \(around(note.quote, in: $0.text))" } ?? ""
             let index = items.firstIndex { $0.id == note.step }
+            // Neighbouring steps cut as the digest cuts them (thinking left out).
             func context(_ range: Range<Int>) -> String {
-                range.clamped(to: items.indices).compactMap { position -> String? in
-                    let item = items[position]
-                    if case .thinking = item.kind { return nil }
-                    return "[#\(item.id) \(label(item.kind))] \(EvidenceDigestCut.cut(item.text, to: 1200))"
-                }.joined(separator: "\n")
+                range.clamped(to: items.indices).compactMap { EvidenceDigest.line(items[$0], cap: 1200) }.joined(separator: "\n")
             }
             let before = index.map { context(($0 - neighbours)..<$0) } ?? ""
             let after = index.map { context(($0 + 1)..<($0 + 1 + neighbours)) } ?? ""
@@ -290,14 +292,6 @@ public enum NotesPipeline {
                 """
         }
         return "## User turns\n\n\(users)\n\n## Notes\n\n" + parts.joined(separator: "\n\n") + "\n"
-    }
-
-    /// Neighbouring steps keep their start and end.
-    enum EvidenceDigestCut {
-        static func cut(_ text: String, to limit: Int) -> String {
-            guard text.count > limit else { return text }
-            return "\(text.prefix(limit / 2)) […\(text.count - limit) chars…] \(text.suffix(limit / 2))"
-        }
     }
 
     /// Up to ~6000 characters of a step, centred on the quote, so long outputs stay readable.
@@ -352,10 +346,6 @@ public struct NotesStore: Sendable {
         return try? AnalysisJSON.decoder.decode(SessionNotes.self, from: data)
     }
 
-    public func save(_ notes: SessionNotes) throws {
-        try JSONFile.write(notes, to: paths.notes(of: notes.sessionKey))
-    }
-
     /// Changes a session's notes as they are on disk now, under its lock.
     @discardableResult
     public func update(_ sessionKey: String, _ change: (inout SessionNotes) throws -> Void) throws -> SessionNotes {
@@ -372,15 +362,37 @@ public struct NotesStore: Sendable {
 
     /// Saves a new review; when the notes on disk are the same notes (same done key), the
     /// routes written since this review began (the user's verdicts, clustering) are kept.
+    /// New notes (a grown session, another model) keep the user's verdicts on the notes that
+    /// are still there: a note is the same when its step and quote are.
     func saveReview(_ review: SessionNotes) throws {
         let url = paths.notes(of: review.sessionKey)
         try JSONFile.locked(url) {
             var saved = review
-            if let current = JSONFile.read(SessionNotes.self, from: url), current.doneKeys["notes"] == review.doneKeys["notes"] {
-                saved.routes = current.routes
-                saved.doneKeys["matching"] = current.doneKeys["matching"]
+            if let current = JSONFile.read(SessionNotes.self, from: url) {
+                if current.doneKeys["notes"] == review.doneKeys["notes"] {
+                    saved.routes = current.routes
+                    saved.doneKeys["matching"] = current.doneKeys["matching"]
+                } else {
+                    let carried = Self.userRoutes(of: current, carriedTo: review)
+                    if !carried.isEmpty { saved.routes = (review.routes ?? []) + carried }
+                }
             }
             try AnalysisJSON.encoder.encode(saved).write(to: url, options: .atomic)
+        }
+    }
+
+    /// The routes the user reviewed or made in `old`, moved to the ids of the same notes in
+    /// `new`; routes of notes that are gone are dropped. Matching keeps them and routes only the rest.
+    static func userRoutes(of old: SessionNotes, carriedTo new: SessionNotes) -> [Route] {
+        func identity(_ note: Note) -> String { "\(note.step)|\(QuoteMatcher.parts(of: note.quote).joined(separator: "…"))" }
+        let newIDs = Dictionary(new.notes.filter { $0.source == .model }.map { (identity($0), $0.id) }, uniquingKeysWith: { first, _ in first })
+        let renamed = Dictionary(old.notes.filter { $0.source == .model }.compactMap { note in newIDs[identity(note)].map { (note.id, $0) } },
+                                 uniquingKeysWith: { first, _ in first })
+        return (old.routes ?? []).filter { $0.review != nil || $0.by == .human }.compactMap { route in
+            guard let id = renamed[route.noteID] else { return nil }
+            var moved = route
+            moved.noteID = id
+            return moved
         }
     }
 

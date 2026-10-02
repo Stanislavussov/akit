@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitModel
 import Foundation
 
 /// Where Lab keeps its files on this Mac. Nothing here is ever part of the brain.
@@ -38,6 +39,11 @@ public struct LabPaths: Sendable {
             }
         }
         return [custom, ai].compactMap { $0 }.first { !$0.isEmpty }.map(SecretFilter.masked)
+    }
+
+    /// The harness that wrote a transcript: Pi for a file under `.pi/agent/sessions`, else Claude Code.
+    public static func harness(ofTranscript file: URL) -> HarnessID {
+        file.path.contains("/.pi/agent/sessions/") ? .pi : .claudeCode
     }
 
     /// The folder a Claude Code session ran in (`cwd` of its first lines).

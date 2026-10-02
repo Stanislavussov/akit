@@ -7,13 +7,7 @@ public enum QuoteMatcher {
     /// Case-sensitive after whitespace runs become one space and curly quotes straight ones.
     /// A quote with `…` or `...` elisions matches when its parts appear in order.
     public static func matches(quote: String, in text: String) -> Bool {
-        var quote = normalized(quote)
-        if quote.count >= 2, let first = quote.first, first == quote.last, first == "\"" || first == "'" {
-            quote = String(quote.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
-        }
-        let parts = quote.replacingOccurrences(of: "...", with: "…").components(separatedBy: "…")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        let parts = parts(of: quote)
         guard !parts.isEmpty else { return false }
         let text = normalized(text)
         var searchFrom = text.startIndex
@@ -22,6 +16,17 @@ public enum QuoteMatcher {
             searchFrom = found.upperBound
         }
         return true
+    }
+
+    /// The quote's parts between `…` or `...` elisions, normalized, without wrapping quotes.
+    static func parts(of quote: String) -> [String] {
+        var quote = normalized(quote)
+        if quote.count >= 2, let first = quote.first, first == quote.last, first == "\"" || first == "'" {
+            quote = String(quote.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        }
+        return quote.replacingOccurrences(of: "...", with: "…").components(separatedBy: "…")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
 
     static func normalized(_ text: String) -> String {

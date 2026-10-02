@@ -134,16 +134,12 @@ public struct Advice: Codable, Hashable, Sendable {
     public var detail: String
     /// The notes it rests on; advice whose notes were all rejected is dropped.
     public var noteIDs: [String]
-    /// Whether a claim about a tool's behaviour was checked by repeating the step. A
-    /// one-call review never repeats steps.
-    public var checkedByRepeating: Bool
 
-    public init(title: String, evidence: String, detail: String, noteIDs: [String], checkedByRepeating: Bool = false) {
+    public init(title: String, evidence: String, detail: String, noteIDs: [String]) {
         self.title = title
         self.evidence = evidence
         self.detail = detail
         self.noteIDs = noteIDs
-        self.checkedByRepeating = checkedByRepeating
     }
 }
 

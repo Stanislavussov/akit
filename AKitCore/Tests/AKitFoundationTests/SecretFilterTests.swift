@@ -20,6 +20,29 @@ struct SecretFilterTests {
         #expect(masked.contains("\"max_tokens\": 4096")) // short numbers are not secrets
     }
 
+    @Test func weakPasswordsAreMaskedOnScreenToo() {
+        let mask = SecretFilter.mask
+        #expect(SecretFilter.masked("db_password: " + "Summer2024") == "db_password: \(mask)")
+        #expect(SecretFilter.masked("password=" + "Welcome1!") == "password=\(mask)")
+        #expect(SecretFilter.masked("mysql --password " + "hunter22") == "mysql --password \(mask)")
+        #expect(SecretFilter.masked("PGPASSWORD=" + "abc1234" + " psql") == "PGPASSWORD=\(mask) psql")
+        #expect(SecretFilter.masked("password: string") == "password: string")
+        #expect(SecretFilter.masked("password: ${DB_PASSWORD}") == "password: ${DB_PASSWORD}")
+    }
+
+    /// The token shapes are the Scrubber's: what one masks, the other does too.
+    @Test func tokenShapesMatchTheScrubber() {
+        let body = "Zx9Kq2Lm8Np4Rt6Vw1Yb3H" + "c5Jd7Fg0Tq3Ws5EaUoP8iMn"
+        for token in ["xo" + "xe-1234567890-" + body, "gh" + "u_" + body, "github" + "_pat_" + "11ABCDEFG0" + body,
+                      "ey" + "JhbGciOiJIUzI1NiJ9" + ".ey" + "JzdWIiOiIxMjM0NTY3ODkwIn0" + "." + "sig", "ASIA" + "Q3EGRZ7XWL2N5PMY",
+                      "gl" + "pat-" + body, "np" + "m_" + body] {
+            #expect(SecretFilter.masked("value \(token) end") == "value \(SecretFilter.mask) end", "\(token)")
+            #expect(Scrubber.scrub("value \(token) end").text == "value \(SecretFilter.mask) end", "\(token)")
+        }
+        // Kebab-case names that start with "sk-" have no digit: not a key on either side.
+        #expect(SecretFilter.masked("npm run sk-build-production-bundle-now") == "npm run sk-build-production-bundle-now")
+    }
+
     @Test func environmentStyleNeedsUpperCaseName() {
         #expect(SecretFilter.masked("DB_PASSWORD=hunter2hunter2") == "DB_PASSWORD=[secret hidden]")
         #expect(SecretFilter.masked("echo tokenlen=${#TOKEN}") == "echo tokenlen=${#TOKEN}")

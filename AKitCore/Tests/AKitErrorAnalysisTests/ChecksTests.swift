@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import AKitFoundation
 import AKitInsights
+import AKitLab
 import AKitSessions
 @testable import AKitErrorAnalysis
 
@@ -125,6 +126,11 @@ struct ChecksTests {
         #expect(weak.check(SessionTranscript(items: skipped)).positive)
         let added = [item(1, .toolCall(name: "Edit"), json(["file_path": "/p/Tests/FooTests.swift", "old_string": "", "new_string": "@Test func b() {}"]))]
         #expect(!weak.check(SessionTranscript(items: added)).positive)
+        // A dropped assertion weakens the test too; which files are tests is the control cells' rule.
+        let assertion = [item(1, .toolCall(name: "Edit"), json(["file_path": "/p/tests/test_value.py",
+                                                                "old_string": "assert value == 2\nassert ok", "new_string": "assert ok"]))]
+        #expect(weak.check(SessionTranscript(items: assertion)).positive)
+        #expect(TestFiles.isTestFile("/p/tests/test_value.py") && !TestFiles.isTestFile("/p/Sources/Value.swift"))
 
         let long = CodeChecks.check(for: "long-session-not-reset")!
         var items = [item(0, .user, "Build A"), item(1, .toolCall(name: "Bash"), json(["command": "git commit -m A"])),

@@ -185,27 +185,29 @@ public enum ControlTasks {
                                                           command: command,
                                                           log: EvalPaths(env: env).folder.appending(path: "reference-\(AnalysisPaths.fileName(task.id)).log"),
                                                           env: env, trash: trash, out: out)
-        var checked = task
-        checked.referenceGreen = result.passed
-        try save(checked, env: env)
-        return checked
+        // Into the task as it is on disk now: the check takes minutes, and the file may have
+        // changed meanwhile.
+        let url = EvalPaths(env: env).task(task.id)
+        return try JSONFile.locked(url) {
+            var checked = JSONFile.read(ControlTask.self, from: url) ?? task
+            checked.referenceGreen = result.passed
+            try AnalysisJSON.encoder.encode(checked).write(to: url, options: .atomic)
+            return checked
+        }
     }
 
-    /// Where a task's session came from: Claude Code, or the Pi providers of its log (found
-    /// through the index; an unknown Pi log has no single origin, so only the allowed list
-    /// lets it out).
+    /// Where a task's session came from (`SessionNotes.origin`). Only a Pi log's providers
+    /// matter, so only Pi looks its file up in the index.
     public static func origin(of key: SessionKey, env: HarnessEnvironment) -> SendOrigin {
-        guard key.harness == "pi" else { return .claudeSession }
-        let file = (try? AnalysisIndex.open(env: env)).flatMap { $0 }.flatMap { database in
+        let file = key.harness != "pi" ? nil : (try? AnalysisIndex.open(env: env)).flatMap { $0 }.flatMap { database in
             (try? AnalysisIndex.sessions(database))?.first { $0.key == key.description }?.file
         }
-        return file.map { SendOrigin.of(harness: .pi, sessionFile: URL(filePath: $0)) } ?? .piSession(providers: [])
+        return SessionNotes.origin(sessionKey: key.description, transcript: file)
     }
 
+    /// Writes the task under its file's lock, so it never interleaves with another writer.
     public static func save(_ task: ControlTask, env: HarnessEnvironment) throws {
-        let paths = EvalPaths(env: env)
-        try FileManager.default.createDirectory(at: paths.tasks, withIntermediateDirectories: true)
-        try AnalysisJSON.encoder.encode(task).write(to: paths.task(task.id), options: .atomic)
+        try JSONFile.write(task, to: EvalPaths(env: env).task(task.id))
     }
 
     public static func load(_ id: String, env: HarnessEnvironment) -> ControlTask? {

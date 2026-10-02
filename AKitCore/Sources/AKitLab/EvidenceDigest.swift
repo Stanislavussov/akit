@@ -57,6 +57,12 @@ public enum EvidenceDigest {
         return output(droppingMiddle(entries, budget: budget), budget: budget, cap: floorCap)
     }
 
+    /// One item as the digest shows it with this cap (`[#3 result Bash] …`); nil for thinking.
+    /// User turns are never cut.
+    public static func line(_ item: TranscriptItem, cap: Int) -> String? {
+        Entry(item)?.line(cap: cap)
+    }
+
     /// Even the floor doesn't fit: keep the start and the end, where the task and the outcome
     /// are, and from the middle only user turns and the stubs of failed tool results.
     static func droppingMiddle(_ entries: [Entry], budget: Int) -> [String] {
