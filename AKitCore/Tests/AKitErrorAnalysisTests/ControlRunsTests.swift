@@ -204,11 +204,12 @@ struct ControlRunsTests {
         let task = task(repo, base, oracle: .tests(command: #"test "$(cat value.txt)" = 2"#))
         _ = try await runAll(task, [baseline, variant("- WEAKEN-TESTS")])
 
-        // The baseline's cell is done; the weakened one is flagged, so it runs again.
+        // Both first cells are done: the weakened one is flagged and counts as a failure, so it
+        // isn't run again.
         let again = try await ControlRuns.newControlRuns(tasks: [task], setups: [baseline, variant("- WEAKEN-TESTS")], repeats: 2,
                                                          environment: .background, keep: true, akit: URL(filePath: "/usr/bin/true"), env: env)
-        #expect(again.skipped == 1 && again.runs.count == 3)
-        #expect(again.runs.map { $0.spec.repeatIndex ?? 0 } == [1, 2, 2])
+        #expect(again.skipped == 2 && again.runs.count == 2)
+        #expect(again.runs.map { $0.spec.repeatIndex ?? 0 } == [2, 2])
         // Queued cells aren't queued twice.
         let twice = try await ControlRuns.newControlRuns(tasks: [task], setups: [baseline, variant("- WEAKEN-TESTS")], repeats: 2,
                                                          environment: .background, keep: true, akit: URL(filePath: "/usr/bin/true"), env: env)

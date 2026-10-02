@@ -92,7 +92,8 @@ extension AKitCLI {
             let tasks = try controlTasks(list, env: env)
             let ids = Set(tasks.map(\.id))
             let runs = LabStore.list(env: env).filter { $0.spec.kind == .control && $0.spec.controlTask.map(ids.contains) == true }
-            let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs))
+            let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs),
+                                                       production: try await ControlComparison.production(for: tasks, env: env))
             if json { out(try labJSON(comparison)); return 0 }
             let open = runs.filter { $0.status == .queued || $0.status == .running }.count
             out(comparisonText(comparison, tasks: tasks, open: open))
@@ -294,7 +295,7 @@ extension AKitCLI {
             lines.append(row.setup.label)
             let allPassed = row.tasks.filter { $0.passed == $0.total }.count
             lines.append("  pass@1 \(percent(row.passAt1)) (\(interval(row.passAt1Interval))) · pass^\(row.k) \(allPassed)/\(row.tasks.count) tasks"
-                         + " (\(interval(row.passHatKInterval))) · \(row.cells) cells" + (row.flagged > 0 ? ", \(row.flagged) flagged" : ""))
+                         + " (\(interval(row.passHatKInterval))) · \(row.cells) cells" + (row.flagged > 0 ? ", \(row.flagged) flagged (counted as failed)" : ""))
             for rate in row.tasks { lines.append("    \(rate.task)  \(rate.passed)/\(rate.total)") }
         }
         for pair in comparison.paired {

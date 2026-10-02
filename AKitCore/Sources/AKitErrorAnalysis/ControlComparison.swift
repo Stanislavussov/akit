@@ -1,9 +1,12 @@
+import AKitFoundation
 import AKitLab
 import Foundation
 
 /// Control cells per setup and the paired comparison of a fix (`docs/design/error-analysis.md`,
 /// "Controlled evals" and "Fixes"). The unit is a task's pass rate over its repeats, so a set
-/// of tasks is compared by task, not by pooled cells. Flagged cells (guard, leaks) are left out.
+/// of tasks is compared by task, not by pooled cells. A flagged cell (guard, leaks) counts as
+/// failed: its pass isn't trusted, and leaving it out (or running it again) would re-roll bad
+/// outcomes away.
 public struct ControlComparison: Codable, Sendable, Hashable {
     /// One finished cell.
     public struct Cell: Codable, Sendable, Hashable {
@@ -38,13 +41,14 @@ public struct ControlComparison: Codable, Sendable, Hashable {
 
     public struct Row: Codable, Sendable, Hashable {
         public var setup: ControlSetup
-        /// Per task, unflagged cells only, by task id.
+        /// Per task, by task id; flagged cells count as failed.
         public var tasks: [TaskRate]
         public var cells: Int
+        /// Cells counted as failed because they are flagged.
         public var flagged: Int
         /// The chance one run passes: the mean of the tasks' pass rates.
         public var passAt1: Double?
-        /// Wilson 95% interval of the unflagged cells' passes.
+        /// Wilson 95% interval of the cells' passes.
         public var passAt1Interval: Stats.Interval
         /// The fewest cells any task has: the k of pass^k.
         public var k: Int
@@ -80,6 +84,9 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var meanChange: Double?
         /// The share of bootstrap means above zero.
         public var improvementShare: Double?
+        /// The "not worse in production" guard: P(the mode's failure rate rose after the fix's T)
+        /// from its check over indexed sessions, when both sides have enough sessions.
+        public var productionHigher: Double?
         public var verdict: Verdict
         public var reason: String
     }
@@ -93,16 +100,27 @@ public struct ControlComparison: Codable, Sendable, Hashable {
 
     /// Rows per setup in order of first appearance; each variant (a setup with a patch) is
     /// paired with the baseline of the same agent (no patch, not read-only), else the first one.
-    public static func compare(_ cells: [Cell], iterations: Int = 2000, seed: UInt64 = 1) -> ControlComparison {
+    /// `production` is the fix's production signal (`production(for:env:)`): "helped" also
+    /// needs it not worse, so without it there is no conclusion.
+    public static func compare(_ cells: [Cell], production: FixEvaluation? = nil, iterations: Int = 2000,
+                               seed: UInt64 = 1) -> ControlComparison {
         var order: [ControlSetup] = []
         for cell in cells where !order.contains(cell.setup) { order.append(cell.setup) }
         let rows = order.map { setup in row(setup, cells: cells.filter { $0.setup == setup }) }
         let baselines = rows.filter { $0.setup.patch == nil && !$0.setup.readOnly }
         let paired = rows.filter { $0.setup.patch != nil && !$0.setup.readOnly }.compactMap { variant -> Paired? in
             guard let baseline = baselines.first(where: { $0.setup.agent == variant.setup.agent }) ?? baselines.first else { return nil }
-            return pair(baseline: baseline, variant: variant, iterations: iterations, seed: seed)
+            return pair(baseline: baseline, variant: variant, production: production, iterations: iterations, seed: seed)
         }
         return ControlComparison(rows: rows, paired: paired)
+    }
+
+    /// The production signal of the one mode the tasks are about: its fix judged by the mode's
+    /// check before and after T. nil when the tasks name no single mode or its fix isn't applied.
+    public static func production(for tasks: [ControlTask], env: HarnessEnvironment) async throws -> FixEvaluation? {
+        let modes = Set(tasks.compactMap(\.modeID))
+        guard modes.count == 1, let id = modes.first, let mode = try await ModeStore(env: env).mode(id) else { return nil }
+        return try Fixes.evaluate(mode, env: env)
     }
 
     /// A 95% bootstrap interval over tasks of the mean of per-task estimates (seeded), so the
@@ -118,26 +136,28 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     }
 
     static func row(_ setup: ControlSetup, cells: [Cell]) -> Row {
-        let counted = cells.filter { !$0.flagged }
-        let tasks = Dictionary(grouping: counted, by: \.task).map { task, cells in
-            TaskRate(task: task, passed: cells.filter(\.passed).count, total: cells.count)
+        func trusted(_ cell: Cell) -> Bool { cell.passed && !cell.flagged }
+        let tasks = Dictionary(grouping: cells, by: \.task).map { task, cells in
+            TaskRate(task: task, passed: cells.filter(trusted).count, total: cells.count)
         }.sorted { $0.task < $1.task }
-        let passed = counted.filter(\.passed).count
+        let passed = cells.filter(trusted).count
         let k = tasks.map(\.total).min() ?? 0
         // pass^k per task, unbiased when a task has more than k cells: C(c, k) / C(n, k).
         let hatK = tasks.map { task in task.passed < k ? 0 : exp(Stats.logChoose(task.passed, k) - Stats.logChoose(task.total, k)) }
         let passHatK = tasks.isEmpty ? nil : hatK.reduce(0, +) / Double(tasks.count)
-        return Row(setup: setup, tasks: tasks, cells: counted.count, flagged: cells.count - counted.count,
+        return Row(setup: setup, tasks: tasks, cells: cells.count, flagged: cells.filter(\.flagged).count,
                    passAt1: tasks.isEmpty ? nil : tasks.map(\.rate).reduce(0, +) / Double(tasks.count),
-                   passAt1Interval: Stats.wilson(passed, counted.count), k: k,
+                   passAt1Interval: Stats.wilson(passed, cells.count), k: k,
                    passHatK: passHatK,
                    passHatKInterval: interval(ofMean: hatK))
     }
 
     /// The paired bootstrap over tasks of the per-task change in pass rate (seeded, so the
     /// same cells give the same share). "Helped" is fixed before the run: ≥ 95% of the mass
-    /// on improvement, with at least 3 repeats of every task and 15 cells on each side.
-    static func pair(baseline: Row, variant: Row, iterations: Int, seed: UInt64) -> Paired {
+    /// on improvement, with at least 3 repeats of every task and 15 cells on each side, and not
+    /// worse in production: at most 50% that the mode's failure rate rose after T, with 15
+    /// sessions on each side.
+    static func pair(baseline: Row, variant: Row, production: FixEvaluation?, iterations: Int, seed: UInt64) -> Paired {
         let before = Dictionary(uniqueKeysWithValues: baseline.tasks.map { ($0.task, $0) })
         let shared = variant.tasks.compactMap { after in before[after.task].map { (before: $0, after: after) } }
         let baselineCells = shared.map(\.before.total).reduce(0, +)
@@ -146,6 +166,10 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         var result = Paired(baseline: baseline.setup, variant: variant.setup, tasks: shared.count, baselineCells: baselineCells,
                             variantCells: variantCells, meanChange: changes.isEmpty ? nil : changes.reduce(0, +) / Double(changes.count),
                             improvementShare: nil, verdict: .noConclusion, reason: "")
+        let measured = production.flatMap { production in
+            production.before.sessions >= Fixes.minimumPerSide && production.after.sessions >= Fixes.minimumPerSide ? production : nil
+        }
+        result.productionHigher = measured?.probabilityHigher
         guard !changes.isEmpty, iterations > 0 else {
             result.reason = "No task has cells of both setups."
             return result
@@ -165,8 +189,22 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         } else if baselineCells < minimumCells || variantCells < minimumCells {
             result.reason = "Fewer than \(minimumCells) cells on a side (baseline \(baselineCells), variant \(variantCells))."
         } else if share >= helpedShare {
-            result.verdict = .helped
-            result.reason = "\(percent) of the bootstrap mass on improvement (needs \(Int(helpedShare * 100))%)."
+            let control = "\(percent) of the bootstrap mass on improvement (needs \(Int(helpedShare * 100))%)"
+            if let measured {
+                let rose = String(format: "%.0f%%", 100 * measured.probabilityHigher)
+                if measured.probabilityHigher <= Fixes.notWorseProbability {
+                    result.verdict = .helped
+                    result.reason = "\(control), and not worse in production (\(rose) that the mode's failure rate rose after the fix)."
+                } else {
+                    result.verdict = .notShown
+                    result.reason = "\(control), but in production \(rose) that the mode's failure rate rose after the fix (at most 50%)."
+                }
+            } else if let production {
+                result.reason = "\(control); not worse in production needs \(Fixes.minimumPerSide) sessions with the mode's check on each side "
+                    + "of the fix (before \(production.before.sessions), after \(production.after.sessions))."
+            } else {
+                result.reason = "\(control); not worse in production isn't known: the tasks' mode has no applied fix with check results."
+            }
         } else {
             result.verdict = .notShown
             result.reason = "Only \(percent) of the bootstrap mass on improvement (needs \(Int(helpedShare * 100))%)."
