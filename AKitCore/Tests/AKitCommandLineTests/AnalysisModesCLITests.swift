@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import AKitErrorAnalysis
+@testable import AKitErrorAnalysis
 import AKitLab
 
 /// `akit analysis route|queue` against a temporary home. No model is called: there is no
@@ -9,10 +9,10 @@ extension AKitCLITests {
     func reviewedSession(_ key: String) throws {
         let note = Note(id: "n1", source: .model, description: "Read a 40 KB file whole", step: 3, quote: "cat big.json",
                         verdict: Verdict(accepted: true, reason: "", by: .model))
-        try NotesStore(env: env).save(SessionNotes(sessionKey: key, transcript: "/t/x.jsonl", title: nil, project: nil, requirements: [],
-                                                   outcome: .no, notes: [note], deviation: Deviation(), paragraph: "", advice: [],
-                                                   notesConfig: StepConfig(step: "notes", harness: "claude-code", model: "opus", promptVersion: 1),
-                                                   verifierConfig: nil, doneKeys: [:], runID: nil))
+        try NotesStore(env: env).saveReview(SessionNotes(sessionKey: key, transcript: "/t/x.jsonl", title: nil, project: nil, requirements: [],
+                                                         outcome: .no, notes: [note], deviation: Deviation(), paragraph: "", advice: [],
+                                                         notesConfig: StepConfig(step: "notes", harness: "claude-code", model: "opus", promptVersion: 1),
+                                                         verifierConfig: nil, doneKeys: [:], runID: nil))
     }
 
     @Test func routeAsksForTheCostBeforeSending() async throws {
