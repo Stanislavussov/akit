@@ -215,4 +215,34 @@ struct ValidationTests {
                                      stopOnError: true)
         }
     }
+
+    /// Like the notes, a session whose user turns alone pass the judge's budget is refused
+    /// with a clear error, and nothing is sent.
+    @Test func aDigestOverTheBudgetIsNotJudged() async throws {
+        let sent = home.appending(path: "sent")
+        try Data(#"""
+            #!/bin/sh
+            if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn":true,"email":"me@example.com","orgName":"Me"}'; exit 0; fi
+            touch "\#(sent.path)"
+            echo '{"type":"result","is_error":false,"result":"","structured_output":{"present":true,"steps":[0],"toughCall":false,"severe":false,"reason":"r"},"usage":{"input_tokens":1,"output_tokens":1}}'
+            """#.utf8).write(to: home.appending(path: "bin/claude"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/claude").path)
+        let folder = home.appending(path: ".claude/projects/-w")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let id = "00000001-0000-4000-8000-000000000001"
+        let file = folder.appending(path: "\(id).jsonl")
+        // 130 user turns of 3000 characters: ~390K, over the default budget and never cut.
+        let turn = #"{"type":"user","cwd":"/w","message":{"role":"user","content":""# + String(repeating: "u", count: 3000) + #""}}"#
+        try Data((Array(repeating: turn, count: 130).joined(separator: "\n") + "\n").utf8).write(to: file)
+        let mode = try #require(try await ModeStore(env: env).mode("large-file-read-whole"))
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low", mode: .call)
+        let gate = try await SendGate.open(agent: agent, env: env)
+        await #expect {
+            _ = try await Judges.judge(mode: mode, exemplars: [], session: "claude:\(id)", file: file, agent: agent, gate: gate,
+                                       runID: nil, workFolder: home.appending(path: "w"), env: env)
+        } throws: { error in
+            (error as? Judges.Failure)?.message.contains("too long for one judge call") == true
+        }
+        #expect(!fm.fileExists(atPath: sent.path))
+    }
 }

@@ -427,7 +427,8 @@ enum BatchRunner {
             var created: [Mode] = []
             if !items.isEmpty {
                 let candidates = try await Clustering.cluster(items, existing: modes, rejected: try await modeStore.rejectedNames(),
-                                                              agent: batch.matchingAgent, gate: gate, runID: batch.runID, workFolder: work, env: env)
+                                                              agent: batch.matchingAgent, gate: gate, runID: batch.runID, workFolder: work, env: env,
+                                                              out: { out("Clustering: \($0)") })
                 created = try await Clustering.apply(candidates, store: modeStore, env: env)
                 out("Clustering: \(created.count) candidate modes from \(items.count) unmatched notes.")
             }
