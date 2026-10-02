@@ -66,10 +66,6 @@ public struct LabelBookStore: Sendable {
         (try? Data(contentsOf: file)).flatMap { try? AnalysisJSON.decoder.decode(LabelBook.self, from: $0) } ?? LabelBook()
     }
 
-    public func save(_ book: LabelBook) throws {
-        try JSONFile.write(book, to: file)
-    }
-
     public func update(_ change: (inout LabelBook) throws -> Void) throws -> LabelBook {
         try JSONFile.update(file, empty: LabelBook()) { book in
             try change(&book)
@@ -97,18 +93,23 @@ public struct ModeLabel: Codable, Hashable, Sendable {
 public enum ModeLabels {
     /// Labels for one mode (after merges), one per session; a bootstrap label wins over cheaper
     /// ones. Bootstrap: positive when one of the user's notes maps to the mode, negative when
-    /// the user finished labeling the session and none does.
+    /// the user finished labeling the session and mapped every note elsewhere (or to unclear);
+    /// a note not mapped yet leaves the session without a bootstrap label. Finds: within a
+    /// session, one accepted find makes it positive, whatever was rejected around it.
     public static func labels(for modeID: String, modes: [Mode], bootstrap: [Bootstrap.Label], book: LabelBook,
                               toughCalls: [String: Bool] = [:]) -> [ModeLabel] {
         var result: [String: ModeLabel] = [:]
         for (key, positive) in toughCalls { result[key] = ModeLabel(sessionKey: key, positive: positive, source: .toughCall) }
+        var finds: [String: Bool] = [:]
         for find in book.finds where ModeStore.resolve(find.modeID, in: modes) == modeID {
             guard let accepted = find.accepted else { continue }
-            result[find.ref.sessionKey] = ModeLabel(sessionKey: find.ref.sessionKey, positive: accepted, source: .similarCase)
+            finds[find.ref.sessionKey] = (finds[find.ref.sessionKey] ?? false) || accepted
         }
+        for (key, positive) in finds { result[key] = ModeLabel(sessionKey: key, positive: positive, source: .similarCase) }
         for label in bootstrap where label.labeledAt != nil {
             let mapped = label.notes.compactMap { book.mapping["\(label.sessionKey)#\($0.id)"] }
             let positive = mapped.contains { $0 != LabelBook.unclear && ModeStore.resolve($0, in: modes) == modeID }
+            guard positive || mapped.count == label.notes.count else { continue }
             result[label.sessionKey] = ModeLabel(sessionKey: label.sessionKey, positive: positive, source: .bootstrap)
         }
         return result.values.sorted { $0.sessionKey < $1.sessionKey }
@@ -130,7 +131,8 @@ extension Bootstrap {
     /// The first modes: one clustering call over the user's and the model's notes of the
     /// labeled bootstrap sessions. Seeds are in the list as candidates already.
     public static func firstModes(labels: [Label], pool: [SessionNotes], existing: [Mode], rejected: [String], agent: LabAgent,
-                                  gate: SendGate, workFolder: URL, env: HarnessEnvironment) async throws -> [Clustering.Candidate] {
+                                  gate: SendGate, workFolder: URL, env: HarnessEnvironment,
+                                  out: (String) -> Void = { _ in }) async throws -> [Clustering.Candidate] {
         let done = labels.filter { $0.labeledAt != nil }
         let keys = Set(done.map(\.sessionKey))
         var items: [Clustering.Item] = []
@@ -141,7 +143,7 @@ extension Bootstrap {
         }
         items += Clustering.items(pool.filter { keys.contains($0.sessionKey) })
         return try await Clustering.cluster(items, existing: existing, rejected: rejected, agent: agent, gate: gate, runID: nil,
-                                            workFolder: workFolder, env: env)
+                                            workFolder: workFolder, env: env, out: out)
     }
 
     static let similarSystem = """

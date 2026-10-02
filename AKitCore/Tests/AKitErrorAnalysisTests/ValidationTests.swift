@@ -133,8 +133,72 @@ struct ValidationTests {
             mode.fix = fix
             return mode
         }
-        let modes = [mode("a", fix: .draft), mode("b", fix: nil), mode("c", fix: .applied), mode("d", fix: .draft)]
+        let modes = [mode("a", fix: .draft), mode("b", fix: nil), mode("c", fix: .applied), mode("d", fix: .draft),
+                     mode("e", fix: .draft), mode("f", fix: .applied)]
         let seen = ["a": 10, "b": 9, "c": 8, "d": 1]
         #expect(Judges.eligible(modes, seen: seen).map(\.id) == ["a", "c"])
+        // Or in the top 3 by cost: by tokens (d) or by steps (e); f has no recorded cost.
+        let cost: [String: (tokens: Int, steps: Int)] = ["d": (50_000, 0), "e": (0, 12), "b": (90_000, 30)]
+        #expect(Judges.eligible(modes, seen: seen, cost: cost).map(\.id) == ["a", "c", "d", "e"])
+    }
+
+    @Test func costSumsTheNotesSeenInAMode() {
+        func note(_ id: String, tokens: Int?, steps: Int?) -> Note {
+            Note(id: id, source: .model, description: id, step: 1, quote: "q", costTokens: tokens, costSteps: steps,
+                 verdict: Verdict(accepted: true, reason: "", by: .model))
+        }
+        var notes = SessionNotes(sessionKey: "claude:a", transcript: "/t", title: nil, project: nil, requirements: [], outcome: .no,
+                                 notes: [note("n1", tokens: 1000, steps: 2), note("n2", tokens: nil, steps: 5), note("n3", tokens: 7, steps: 7)],
+                                 deviation: Deviation(), paragraph: "", advice: [],
+                                 notesConfig: StepConfig(step: "notes", harness: "claude-code", model: "opus", promptVersion: 1),
+                                 verifierConfig: nil, doneKeys: [:], runID: nil)
+        notes.routes = [Route(noteID: "n1", modeID: "m", confidence: 0.9, by: .matching),
+                        Route(noteID: "n2", modeID: "m", confidence: 0.9, by: .matching),
+                        // Waits for the user: not seen yet, so not counted.
+                        Route(noteID: "n3", modeID: "m", confidence: 0.3, by: .matching)]
+        let cost = Judges.cost([notes], modes: [Mode(id: "m", name: "m", definition: "d")])
+        #expect(cost["m"]?.tokens == 1000 && cost["m"]?.steps == 7)
+    }
+
+    /// A judge failure in a batch must fail the session (thrown); elsewhere the run goes on.
+    /// Results judged under another scrub version start over.
+    @Test func judgeErrorsAndTheScrubVersion() async throws {
+        try Data(#"""
+            #!/bin/sh
+            if [ "$1 $2" = "auth status" ]; then echo '{"loggedIn":true,"email":"me@example.com","orgName":"Me"}'; exit 0; fi
+            in=$(mktemp); cat > "$in"
+            if grep -q "BROKEN" "$in"; then echo '{"type":"result","is_error":false,"result":"no json"}'; exit 0; fi
+            echo '{"type":"result","is_error":false,"result":"","structured_output":{"present":true,"steps":[0],"toughCall":false,"severe":true,"reason":"new"},"usage":{"input_tokens":1,"output_tokens":1}}'
+            """#.utf8).write(to: home.appending(path: "bin/claude"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/claude").path)
+        let folder = home.appending(path: ".claude/projects/-w")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        func session(_ index: Int, _ text: String) throws -> (key: String, file: String) {
+            let id = String(format: "%08x-0000-4000-8000-%012x", index, index)
+            let file = folder.appending(path: "\(id).jsonl")
+            try Data((#"{"type":"user","cwd":"/w","message":{"role":"user","content":"\#(text)"}}"# + "\n").utf8).write(to: file)
+            return ("claude:\(id)", file.path)
+        }
+        let good = try session(1, "Fine task"), broken = try session(2, "BROKEN task")
+        let mode = try #require(try await ModeStore(env: env).mode("large-file-read-whole"))
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low", mode: .call)
+        let gate = try await SendGate.open(agent: agent, env: env)
+        let work = home.appending(path: "w")
+
+        // A verdict judged before the scrub version was part of the judge's key.
+        let info = JSONLines.fileInfo(URL(filePath: good.file))
+        try CheckStore(env: env).update(Judges.resultsID(mode.id)) { results in
+            results.modeVersion = mode.version
+            results.judge = "claude-code|opus|\(Judges.promptVersion)"
+            results.verdicts[good.key] = CheckVerdict(positive: false, detail: "old", by: .judge, version: 1, fileSize: info.size,
+                                                      fileModified: info.modified.timeIntervalSince1970)
+        }
+        let results = try await Judges.run(mode: mode, sessions: [good, broken], agent: agent, gate: gate, runID: nil, workFolder: work, env: env)
+        #expect(results.verdicts[good.key]?.detail == "new" && results.verdicts[good.key]?.severe == true)
+        #expect(results.judge?.hasSuffix("|scrub \(Scrubber.version)") == true && results.verdicts[broken.key] == nil)
+        await #expect(throws: Judges.Failure.self) {
+            _ = try await Judges.run(mode: mode, sessions: [broken], agent: agent, gate: gate, runID: nil, workFolder: work, env: env,
+                                     stopOnError: true)
+        }
     }
 }

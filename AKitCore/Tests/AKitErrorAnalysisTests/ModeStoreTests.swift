@@ -73,11 +73,23 @@ struct ModeStoreTests {
         if let message { #expect(try await store.history(limit: 1).first?.message == message) }
     }
 
+    /// The bootstrap stop rule counts sessions after the last change of the list: a candidate
+    /// that clustering proposes isn't one until it is confirmed.
+    @Test func aCandidateIsNoTaxonomyChangeUntilConfirmed() async throws {
+        _ = try await store.list()
+        let seeded = try #require(try await store.lastTaxonomyChange())
+        try await Task.sleep(for: .milliseconds(1100))
+        try await store.create(mode("a"))
+        #expect(try await store.lastTaxonomyChange() == seeded)
+        try await store.confirm("a")
+        #expect(try #require(try await store.lastTaxonomyChange()) > seeded)
+    }
+
     @Test func everyChangeIsACommit() async throws {
         _ = try await store.list()
         var count = try await commits()
         try await store.create(mode("a"))
-        try await expectCommit(after: &count, "Add mode a: \"Name of a\"")
+        try await expectCommit(after: &count, "Add candidate mode a: \"Name of a\"")
         try await store.rename("a", to: "Full read of a 34 KB file")
         try await expectCommit(after: &count, "Rename mode a: \"Name of a\" → \"Full read of a 34 KB file\"")
         try await store.edit("a", definition: "New meaning.")
@@ -152,9 +164,9 @@ struct ModeStoreTests {
         let modes = try await store.list()
         #expect(modes.first { $0.id == "a" }?.mergedInto == "b")
         #expect(!modes.contains { ["a", "b"].contains($0.id) && $0.isCurrent })
-        #expect(try await store.resolve("a") == "c")
-        #expect(try await store.resolve("c") == "c")
-        #expect(try await store.resolve("unknown") == "unknown")
+        #expect(ModeStore.resolve("a", in: modes) == "c")
+        #expect(ModeStore.resolve("c", in: modes) == "c")
+        #expect(ModeStore.resolve("unknown", in: modes) == "unknown")
         await #expect(throws: ModeStore.Failure.self) { try await store.merge(["c"], into: "a") }
         await #expect(throws: ModeStore.Failure.self) { try await store.merge(["c"], into: "c") }
 

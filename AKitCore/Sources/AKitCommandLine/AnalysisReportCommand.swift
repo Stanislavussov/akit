@@ -86,9 +86,11 @@ extension AKitCLI {
                 switch action {
                 case "enable":
                     let agent = try options.agent(env: env)
-                    let seen = Matching.seen(NotesStore(env: env).all(), modes: try await modeStore.list()).byMode.mapValues(\.count)
-                    guard Judges.eligible(try await modeStore.list(), seen: seen).contains(where: { $0.id == target.id }) else {
-                        throw Failure(message: "Only a mode in the top 3 by notes with a fix drafted or applied gets a judge; "
+                    let modes = try await modeStore.list()
+                    let pool = NotesStore(env: env).all()
+                    let seen = Matching.seen(pool, modes: modes).byMode.mapValues(\.count)
+                    guard Judges.eligible(modes, seen: seen, cost: Judges.cost(pool, modes: modes)).contains(where: { $0.id == target.id }) else {
+                        throw Failure(message: "Only a mode in the top 3 by notes or by cost with a fix drafted or applied gets a judge; "
                                           + "\(target.name) isn't one. Other modes get a code check or stay \"seen in k notes\".")
                     }
                     try store.setJudge(agent, for: target.id)
@@ -273,7 +275,7 @@ extension AKitCLI {
         func pct(_ value: Double?) -> String { value.map { String(format: "%.0f%%", $0 * 100) } ?? "—" }
         return "\(result.modeID) v\(result.modeVersion) \(result.set.rawValue): TPR \(pct(result.tpr)) (low \(pct(result.tprLow)), "
             + "\(result.labels.onPositives.count) positives), TNR \(pct(result.tnr)) (low \(pct(result.tnrLow)), \(result.labels.onNegatives.count) negatives)"
-            + (result.toughLeftOut > 0 ? ", \(result.toughLeftOut) tough calls left out" : "") + (result.unchecked > 0 ? ", \(result.unchecked) unchecked" : "")
+            + (result.toughLeftOut > 0 ? ", \(result.toughLeftOut) tough calls left out (decide them: akit analysis queue)" : "") + (result.unchecked > 0 ? ", \(result.unchecked) unchecked" : "")
     }
 
     static func reportText(_ report: BatchReport) -> String {

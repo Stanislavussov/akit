@@ -32,10 +32,19 @@ public struct ReviewQueue: Sendable {
     public static let umbrellaShare = 0.3
     public static let umbrellaMinimum = 10
 
-    /// `spotCheck` are the notes picked for the latest run's precision spot check.
+    /// The verdicts the queue reads: for each mode the ones that count (`Validation.verdicts`:
+    /// the judge's when one is enabled, else the code check's), so a judge's tough calls reach
+    /// the user instead of only being left out of validation.
+    public static func checks(modes: [Mode], env: HarnessEnvironment) -> [CheckResults] {
+        modes.compactMap { Validation.verdicts(modeID: $0.id, env: env) }
+    }
+
+    /// `spotCheck` are the notes picked for the latest run's precision spot check; `checks`
+    /// come from `checks(modes:env:)`. Tough calls of merged or rejected modes aren't asked.
     public static func build(modes: [Mode], pool: [SessionNotes], checks: [CheckResults], book: LabelBook, spotCheck: [NoteRef] = [])
         -> ReviewQueue {
-        let tough = checks.flatMap { results in
+        let current = Set(modes.filter(\.isCurrent).map(\.id))
+        let tough = checks.filter { current.contains($0.modeID) }.flatMap { results in
             results.verdicts.filter { key, verdict in verdict.toughCall && book.toughCalls["\(results.modeID)|\(key)"] == nil }
                 .map { ToughCall(modeID: results.modeID, sessionKey: $0.key, verdict: $0.value) }
         }.sorted { ($0.modeID, $0.sessionKey) < ($1.modeID, $1.sessionKey) }
@@ -47,7 +56,7 @@ public struct ReviewQueue: Sendable {
             let share = Double(count) / Double(routed)
             return share > umbrellaShare ? Umbrella(modeID: mode.id, notes: count, share: share) : nil
         }
-        return ReviewQueue(candidates: modes.filter { $0.status == .candidate },
+        return ReviewQueue(candidates: modes.filter { $0.status == .candidate && $0.isCurrent },
                            routes: Matching.waitingRoutes(pool), toughCalls: tough,
                            spotChecks: spotCheck.filter { book.spotChecks[$0.description] == nil }, umbrellas: umbrellas)
     }
