@@ -36,7 +36,7 @@ public enum Sampling {
         /// The probability that this sampling design picks the session.
         public var inclusion: Double
         /// `random`, or `stratum:<key>`: how it was chosen. Bootstrap intervals resample
-        /// within these groups.
+        /// within these groups (those with a single pick collapsed into one).
         public var sampling: String
         /// The stratum the session belongs to (also for random picks).
         public var stratum: String

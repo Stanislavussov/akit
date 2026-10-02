@@ -73,7 +73,8 @@ public enum Stats {
     public struct Observation: Codable, Hashable, Sendable {
         public var positive: Bool
         public var inclusion: Double
-        /// The sampling group it was drawn in (`random`, `stratum:…`): bootstrap resamples within it.
+        /// The sampling group it was drawn in (`random`, `stratum:…`): bootstrap resamples within
+        /// it, or within the collapsed group when it holds a single pick.
         public var group: String
 
         public init(positive: Bool, inclusion: Double, group: String) {
@@ -123,7 +124,8 @@ public enum Stats {
         public var tnr: Double? { onNegatives.isEmpty ? nil : Double(onNegatives.filter { !$0 }.count) / Double(onNegatives.count) }
     }
 
-    /// A 95% interval by bootstrap: resamples the batch within its sampling groups and, for a
+    /// A 95% interval by bootstrap: resamples the batch within its sampling groups (see
+    /// `resamplingGroups`) and, for a
     /// validated check, the test labels behind TPR and TNR, then takes the 2.5th and 97.5th
     /// percentiles of the (corrected) weighted share.
     public static func bootstrapInterval(_ observations: [Observation], labels: CheckLabels? = nil, iterations: Int = 2000,
