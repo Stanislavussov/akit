@@ -175,9 +175,15 @@ read the transcript. Recall is the main risk, so it is measured.
 2. **Labeling.** The UI shows the scrubbed transcript; the user writes notes (`source: human`) with
    only: description, step, quote, the session's outcome, and the first point of deviation
    (`decisive_step`, and `observed_step` if it differs). Fault layer and root/symptom are
-   not asked of the human.
+   not asked of the human. Human note ids (`h1`, `h2`, …) are stable: a saved note keeps
+   its id when the label is reopened and edited, a new note gets a number never used in
+   that label, and deleting a note drops its mapping and its pairs.
 3. **Comparison.** The model's notes for the same sessions are then compared with the
-   user's. The model proposes pairs of notes; the user confirms them.
+   user's. The model proposes pairs of notes; the user confirms them. Model note ids
+   (`n1`, …) are numbered afresh by every review, so a pairing records the notes done key
+   it was made on. A new review of the session moves the pairing and the user's spot
+   checks to the same notes (same step and quote, as for the user's route verdicts) and
+   drops what was about notes that are gone; metrics ignore a pairing made on other notes.
    - **Recall** is the share of the user's problems the model found and the verifier
      kept: confirmed pairs whose model note was accepted, the same notes that precision,
      the pool and the reports use. Recall before the verifier (pairs with any model note)

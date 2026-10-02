@@ -175,7 +175,8 @@ struct BootstrapLabelingView: View {
 
     private func addNote() {
         guard let number = Int(step) else { return }
-        notes.append(Note(id: "h\(notes.count + 1)", source: .human, description: noteDescription.trimmingCharacters(in: .whitespacesAndNewlines),
+        // Saving gives a new note the next unused `hN` (a saved draft's notes keep theirs).
+        notes.append(Note(id: "", source: .human, description: noteDescription.trimmingCharacters(in: .whitespacesAndNewlines),
                           step: number, quote: quote.trimmingCharacters(in: .whitespacesAndNewlines)))
         noteDescription = ""
         quote = ""
@@ -245,8 +246,7 @@ struct BootstrapLabelingView: View {
                     try Bootstrap.LabelStore(env: env).save(label, items: items)
                     return finish ? "Finished labeling: \(label.notes.count) notes. A model may review the session now."
                         : "Saved a draft with \(label.notes.count) notes."
-                }
-            } catch {
+                }            } catch {
                 self.error = error.localizedDescription
             }
             busy = false

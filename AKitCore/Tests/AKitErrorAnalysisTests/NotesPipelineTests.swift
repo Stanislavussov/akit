@@ -208,6 +208,47 @@ struct NotesPipelineTests {
         #expect(again.doneKeys["matching"] == nil)
     }
 
+    @Test func pairsAndSpotChecksFollowTheirNotesToANewReview() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        let first = try await review(file)
+        let key = first.sessionKey
+        // Made on the first review: n1 is "all tests pass", n3 is "swift test".
+        let made = Bootstrap.Pairing(sessionKey: key, notesVersion: Bootstrap.notesVersion(first.notesConfig), notesKey: first.doneKeys["notes"],
+                                     proposed: [.init(human: "h1", model: "n1"), .init(human: "h2", model: "n2")],
+                                     confirmed: [.init(human: "h1", model: "n1"), .init(human: "h2", model: "n2")], agreed: ["n1", "n3"])
+        try Bootstrap.PairingStore(env: env).save(made)
+        _ = try LabelBookStore(env: env).update { book in
+            book.spotChecks = ["\(key)#n1": true, "\(key)#n2": false, "\(key)#n3": false, "claude:other#n1": true]
+        }
+
+        // The session grows; the same model numbers the same notes differently, and n2 is gone.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"type":"user","timestamp":"2026-10-01T10:01:00Z","message":{"role":"user","content":"Are you sure?"}}"#.utf8 + [10]))
+        try handle.close()
+        var grown = notesAnswer
+        grown["notes"] = [
+            ["id": "n1", "description": "Ran the whole suite.", "step": 1, "quote": "swift test", "severity": "low", "faultLayer": "agent"],
+            ["id": "n2", "description": "Claimed success.", "step": 3, "quote": "all tests pass", "severity": "high", "faultLayer": "agent"],
+        ]
+        grown["advice"] = [[String: Any]]()
+        try fakeClaude(notes: grown, verdicts: ["verdicts": [["id": "n1", "supported": true, "reason": "r"],
+                                                             ["id": "n2", "steelman": "s", "supported": true, "reason": "r"]]])
+        let again = try await review(file)
+        #expect(again.doneKeys["notes"] != first.doneKeys["notes"])
+
+        let moved = try #require(Bootstrap.PairingStore(env: env).load(key))
+        #expect(moved.notesKey == again.doneKeys["notes"] && moved.isMade(on: again))
+        #expect(moved.confirmed == [.init(human: "h1", model: "n2")] && moved.proposed == moved.confirmed)
+        #expect(moved.agreed == ["n2", "n1"])
+        #expect(LabelBookStore(env: env).load().spotChecks == ["\(key)#n2": true, "\(key)#n1": false, "claude:other#n1": true])
+        // Old pairings without a key still decode, as made on the notes there now.
+        let old = #"{"notesVersion":"v","proposed":[],"sessionKey":"\#(key)"}"#
+        let decoded = try AnalysisJSON.decoder.decode(Bootstrap.Pairing.self, from: Data(old.utf8))
+        #expect(decoded.notesKey == nil && decoded.isMade(on: again))
+    }
+
     @Test func verifierNeighboursAreCutAsTheDigestCutsThem() throws {
         let long = "START " + String(repeating: "x", count: 3000) + " END"
         let items = [TranscriptItem(id: 0, kind: .user, text: "Fix it", timestamp: nil),

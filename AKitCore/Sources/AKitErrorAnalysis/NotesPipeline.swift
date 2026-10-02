@@ -338,8 +338,12 @@ public enum NotesPipeline {
 /// `notes/<session-key>.json` files.
 public struct NotesStore: Sendable {
     let paths: AnalysisPaths
+    let env: HarnessEnvironment
 
-    public init(env: HarnessEnvironment) { paths = AnalysisPaths(env: env) }
+    public init(env: HarnessEnvironment) {
+        paths = AnalysisPaths(env: env)
+        self.env = env
+    }
 
     public func load(_ sessionKey: String) -> SessionNotes? {
         guard let data = try? Data(contentsOf: paths.notes(of: sessionKey)) else { return nil }
@@ -363,31 +367,72 @@ public struct NotesStore: Sendable {
     /// Saves a new review; when the notes on disk are the same notes (same done key), the
     /// routes written since this review began (the user's verdicts, clustering) are kept.
     /// New notes (a grown session, another model) keep the user's verdicts on the notes that
-    /// are still there: a note is the same when its step and quote are.
+    /// are still there: a note is the same when its step and quote are. The bootstrap pairing
+    /// and the spot checks, which name model notes by id, move along the same way.
     func saveReview(_ review: SessionNotes) throws {
         let url = paths.notes(of: review.sessionKey)
         try JSONFile.locked(url) {
             var saved = review
-            if let current = JSONFile.read(SessionNotes.self, from: url) {
-                if current.doneKeys["notes"] == review.doneKeys["notes"] {
-                    saved.routes = current.routes
-                    saved.doneKeys["matching"] = current.doneKeys["matching"]
-                } else {
-                    let carried = Self.userRoutes(of: current, carriedTo: review)
-                    if !carried.isEmpty { saved.routes = (review.routes ?? []) + carried }
-                }
+            let current = JSONFile.read(SessionNotes.self, from: url)
+            if let current, current.doneKeys["notes"] == review.doneKeys["notes"] {
+                saved.routes = current.routes
+                saved.doneKeys["matching"] = current.doneKeys["matching"]
+            } else if let current {
+                let carried = Self.userRoutes(of: current, carriedTo: review)
+                if !carried.isEmpty { saved.routes = (review.routes ?? []) + carried }
             }
             try AnalysisJSON.encoder.encode(saved).write(to: url, options: .atomic)
+            if current?.doneKeys["notes"] != review.doneKeys["notes"] {
+                try moveReferences(of: review.sessionKey, renamed: current.map { Self.renamed(from: $0, to: review) } ?? [:],
+                                   from: current?.doneKeys["notes"], to: review.doneKeys["notes"])
+            }
+        }
+    }
+
+    /// A model note is the same note in another review when its step and quote are.
+    static func identity(_ note: Note) -> String { "\(note.step)|\(QuoteMatcher.parts(of: note.quote).joined(separator: "…"))" }
+
+    /// Old model note id → the id of the same note in `new`; notes that are gone are left out.
+    static func renamed(from old: SessionNotes, to new: SessionNotes) -> [String: String] {
+        let newIDs = Dictionary(new.notes.filter { $0.source == .model }.map { (identity($0), $0.id) }, uniquingKeysWith: { first, _ in first })
+        return Dictionary(old.notes.filter { $0.source == .model }.compactMap { note in newIDs[identity(note)].map { (note.id, $0) } },
+                          uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The bootstrap pairing made on the old notes and the spot checks of this session, moved
+    /// to the new notes' ids; what was about a note that is gone is dropped. A pairing made on
+    /// still older notes is left alone: the metrics ignore it.
+    func moveReferences(of sessionKey: String, renamed: [String: String], from oldKey: String?, to newKey: String?) throws {
+        try Bootstrap.PairingStore(env: env).update(sessionKey) { pairing in
+            guard pairing.notesKey == nil || pairing.notesKey == oldKey else { return }
+            func move(_ pairs: [Bootstrap.Pairing.Pair]) -> [Bootstrap.Pairing.Pair] {
+                pairs.compactMap { pair in renamed[pair.model].map { Bootstrap.Pairing.Pair(human: pair.human, model: $0) } }
+            }
+            pairing.notesKey = newKey
+            pairing.proposed = move(pairing.proposed)
+            pairing.confirmed = pairing.confirmed.map(move)
+            pairing.agreed = pairing.agreed?.compactMap { renamed[$0] }
+        }
+        let book = LabelBookStore(env: env)
+        func ofSession(_ key: String) -> NoteRef? { NoteRef(parsing: key).flatMap { $0.sessionKey == sessionKey ? $0 : nil } }
+        guard book.load().spotChecks.keys.contains(where: { ofSession($0) != nil }) else { return }
+        _ = try book.update { book in
+            var moved: [String: Bool] = [:]
+            for (key, agrees) in book.spotChecks {
+                guard let ref = ofSession(key) else {
+                    moved[key] = agrees
+                    continue
+                }
+                if let id = renamed[ref.noteID] { moved[NoteRef(sessionKey: sessionKey, noteID: id).description] = agrees }
+            }
+            book.spotChecks = moved
         }
     }
 
     /// The routes the user reviewed or made in `old`, moved to the ids of the same notes in
     /// `new`; routes of notes that are gone are dropped. Matching keeps them and routes only the rest.
     static func userRoutes(of old: SessionNotes, carriedTo new: SessionNotes) -> [Route] {
-        func identity(_ note: Note) -> String { "\(note.step)|\(QuoteMatcher.parts(of: note.quote).joined(separator: "…"))" }
-        let newIDs = Dictionary(new.notes.filter { $0.source == .model }.map { (identity($0), $0.id) }, uniquingKeysWith: { first, _ in first })
-        let renamed = Dictionary(old.notes.filter { $0.source == .model }.compactMap { note in newIDs[identity(note)].map { (note.id, $0) } },
-                                 uniquingKeysWith: { first, _ in first })
+        let renamed = renamed(from: old, to: new)
         return (old.routes ?? []).filter { $0.review != nil || $0.by == .human }.compactMap { route in
             guard let id = renamed[route.noteID] else { return nil }
             var moved = route
