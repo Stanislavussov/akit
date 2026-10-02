@@ -170,6 +170,9 @@ struct LabRunTests {
         let named = try await LabRuns.newReview(transcript: try reviewedSession(), harness: .pi, title: "named",
                                                 environment: .background, akit: akit, env: env)
         #expect(LabStore.load(named.id, env: env)?.spec.reviewedHarness == .pi)
+        // The one path rule the CLI uses too: only Pi's session folder means Pi.
+        #expect(LabPaths.harness(ofTranscript: piFile) == .pi)
+        #expect(LabPaths.harness(ofTranscript: home.appending(path: ".pi/agent/skills/notes.jsonl")) == .claudeCode)
     }
 
     @Test func queueStartsOneRunAtATime() async throws {

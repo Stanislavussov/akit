@@ -31,14 +31,15 @@ extension AKitCLI {
           akit analysis control run TASK[,TASK…] [--setups baseline,variant] [--patch-file FILE]
                               [--patch-text TEXT|@FILE | --fix MODE] [--harness claude-code|pi] [--model M] [--effort E]
                               [--repeats N] [--read-only-setup] [--env orca|herdr|background] [--keep]
-                              [--no-start]
+                              [--no-start] [--yes]
                                           Queue N (3) cells of each task and setup, interleaved, each in an
                                           isolated clone of the task's base. baseline runs as is; every
                                           other setup appends --patch-text to --patch-file (CLAUDE.md,
                                           AGENTS.md, .claude/skills/NAME/SKILL.md) in its clone only.
                                           --read-only-setup adds a sanity setup with read-only tools that
                                           must fail. Cells already done (same task, setup, base, repeat)
-                                          are skipped. The agent defaults to Claude Code with your model
+                                          are skipped. The agent defaults to Claude Code with your model.
+                                          The number of cells and the ≈ cost first; --yes queues them
           akit analysis control compare TASK[,TASK…] [--json]
                                           pass@1 and pass^k per setup with 95% intervals, and for each
                                           variant the paired bootstrap over tasks: "helped" when at least
@@ -47,9 +48,13 @@ extension AKitCLI {
                                           are left out
         """
 
-    static func analysisControl(_ args: inout Arguments, json: Bool, env: HarnessEnvironment, cwd: URL,
+    static func analysisControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
                                 out: (String) -> Void, trash: (URL) throws -> URL?) async throws -> Int32 {
-        switch args.positional() {
+        let json = options.json
+        let command = args.positional()
+        // Only cells run an agent; the other commands take none of its flags.
+        if let command, command != "run" { try options.refuseModelFlags("control \(command)") }
+        switch command {
         case "task":
             switch args.positional() {
             case "new": return try await newControlTask(&args, env: env, cwd: cwd, out: out)
@@ -85,7 +90,7 @@ extension AKitCLI {
             out(tasks.isEmpty ? "No control tasks." : tasks.map(controlTaskLine).joined(separator: "\n"))
             return 0
         case "run":
-            return try await runControl(&args, env: env, cwd: cwd, out: out)
+            return try await runControl(&args, options: options, env: env, cwd: cwd, out: out)
         case "compare":
             guard let list = args.positional() else { throw Failure(message: "Which tasks? akit analysis control compare TASK[,TASK…].") }
             try args.finish()
@@ -149,14 +154,16 @@ extension AKitCLI {
         return 0
     }
 
-    private static func runControl(_ args: inout Arguments, env: HarnessEnvironment, cwd: URL, out: (String) -> Void) async throws -> Int32 {
+    /// `--harness`, `--model`, `--effort` and `--yes` were taken out of `args` by `akit analysis`.
+    private static func runControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
+                                   out: (String) -> Void) async throws -> Int32 {
         let setupsText = args.value("--setups")
         var patchFile = args.value("--patch-file")
         var patchText = args.value("--patch-text")
         let fixMode = args.value("--fix")
-        let harnessText = args.value("--harness")
-        let model = args.value("--model")
-        let effort = args.value("--effort")
+        let harnessText = options.harness
+        let model = options.model
+        let effort = options.effort
         let repeatsText = args.value("--repeats")
         let environmentText = args.value("--env")
         let readOnly = args.flag("--read-only-setup")
@@ -226,6 +233,10 @@ extension AKitCLI {
         } else {
             out("Up to \(cells) cells; no estimate yet (no recorded cost of control cells with \(agent.harness.title) · \(agent.model)).")
         }
+        guard options.yes else {
+            out("Run it again with --yes to queue them.")
+            return 0
+        }
         let queued: (runs: [LabRun], skipped: Int)
         do {
             queued = try await ControlRuns.newControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep,
@@ -270,7 +281,7 @@ extension AKitCLI {
         }
         let file = try transcript(text, cwd: cwd, env: env)
         let info = JSONLines.fileInfo(file)
-        return SessionSummary(harness: file.path.contains("/.pi/agent/sessions/") ? .pi : .claudeCode, file: file,
+        return SessionSummary(harness: LabPaths.harness(ofTranscript: file), file: file,
                               title: file.deletingPathExtension().lastPathComponent, project: LabPaths.folder(ofTranscript: file),
                               started: nil, modified: info.modified, size: info.size)
     }

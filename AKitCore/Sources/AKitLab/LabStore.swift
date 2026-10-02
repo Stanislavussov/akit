@@ -185,8 +185,8 @@ public enum LabStore {
 /// Queuing new runs.
 public enum LabRuns {
     /// A review of a recorded session, opened where the session ran (or in the home folder
-    /// when that is gone). `harness` recorded the session; nil = Pi for a file under
-    /// `.pi/agent/sessions`, else Claude Code. `environment` nil = suggested for that folder.
+    /// when that is gone). `harness` recorded the session; nil = `LabPaths.harness(ofTranscript:)`.
+    /// `environment` nil = suggested for that folder.
     /// `agent` nil = Claude Code with your settings; `language` nil = the one in Lab settings.
     public static func newReview(transcript: URL, harness: HarnessID? = nil, title: String?, agent: LabAgent? = nil,
                                  language: LabLanguage? = nil, environment: LabEnvironment?, akit: URL,
@@ -204,7 +204,7 @@ public enum LabRuns {
         var spec = RunSpec(id: RunSpec.newID(), kind: .review, title: "Review: \(name)", folder: folder.path,
                            environment: chosen, akit: akit.path, reviewedTranscript: transcript.path, reviewedTitle: title,
                            agent: agent, language: language ?? LabSettings.load(env: env).reportLanguage)
-        spec.reviewedHarness = harness ?? (transcript.path.contains("/.pi/agent/sessions/") ? .pi : .claudeCode)
+        spec.reviewedHarness = harness ?? LabPaths.harness(ofTranscript: transcript)
         return try LabStore.create(spec, env: env)
     }
 }
