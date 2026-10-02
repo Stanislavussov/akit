@@ -54,7 +54,8 @@ struct ModeFixPanel: View {
         HStack {
             Button(draft == nil ? "Draft Fix…" : "Edit Draft…", systemImage: "square.and.pencil") { sheet = .draft }
                 .help("Write down the change, what should change in transcripts and the \"helped\" criterion, before any run")
-            if draft != nil {
+            // T is set once; after that, Edit Draft's Start Over is the way back.
+            if draft != nil, mode.fixAppliedAt == nil {
                 Button("Mark Applied…", systemImage: "checkmark.circle") { sheet = .applied }
                     .help("You applied it: T, the anchor of before and after")
             }

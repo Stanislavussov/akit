@@ -84,6 +84,20 @@ public enum SendLog {
         guard written == line.count else { throw LabStore.Failure(message: "Couldn't write to \(url.path).") }
     }
 
+    /// Appends the record of an agent run, whose work is done already: a log that can't be
+    /// written doesn't undo the run, but it is said (the monthly limit would undercount).
+    /// Returns the message, nil when the record was written.
+    public static func appendAfterRun(_ record: SendRecord, env: HarnessEnvironment, out: (String) -> Void) -> String? {
+        do {
+            try append(record, env: env)
+            return nil
+        } catch {
+            let message = "The send log couldn't be written, so this run's cost isn't counted: \(error.localizedDescription)"
+            out(message)
+            return message
+        }
+    }
+
     /// Every record, oldest first; unreadable lines are skipped.
     public static func records(env: HarnessEnvironment) -> [SendRecord] {
         guard let data = try? Data(contentsOf: file(env: env)) else { return [] }

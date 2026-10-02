@@ -90,11 +90,6 @@ extension AKitCLI {
             guard let list = args.positional() else { throw Failure(message: "Which tasks? akit analysis control compare TASK[,TASK…].") }
             try args.finish()
             let tasks = try controlTasks(list, env: env)
-        // A test oracle that fails on its reference commit can't tell a fix from noise.
-        if let red = tasks.first(where: { $0.referenceGreen == false }) {
-            throw Failure(message: "The tests of \(red.id) fail on its reference commit; fix the test command or the reference first "
-                              + "(akit analysis control task check \(red.id)).")
-        }
             let ids = Set(tasks.map(\.id))
             let runs = LabStore.list(env: env).filter { $0.spec.kind == .control && $0.spec.controlTask.map(ids.contains) == true }
             let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs))

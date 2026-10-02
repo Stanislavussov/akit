@@ -178,4 +178,17 @@ struct BatchTests {
         #expect(store.load("b1")?.paused == true)
         #expect(store.load("b1")?.sessions[0].status == .done)
     }
+
+    @Test func aBatchPausedWhileQueuedStaysPaused() async throws {
+        for index in 1...3 { try session(index, text: "Do the task \(index)") }
+        try await importSessions()
+        let run = try await Batches.new(filter: Sampling.Filter(), size: 3, notesAgent: agent, environment: .background,
+                                        akit: URL(filePath: "/usr/bin/true"), seed: 1, env: env)
+        try Batches.pause(run.id, env: env)
+        #expect(await self.run(run) == 0)
+        #expect(calls.isEmpty)
+        let result = try #require(LabStore.load(run.id, env: env)?.result?.batch)
+        #expect(result.paused && result.done == 0)
+        #expect(BatchStore(env: env).load(run.id)?.paused == true)
+    }
 }

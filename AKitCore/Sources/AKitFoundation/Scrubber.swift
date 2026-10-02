@@ -8,7 +8,7 @@ import Foundation
 /// would send them to their provider. Keys, schemes and surrounding text stay readable.
 public enum Scrubber {
     /// Bumped whenever rules change; part of done keys and the send log.
-    public static let version = 2
+    public static let version = 3
     public static let hostMask = "[host hidden]"
     public static let emailMask = "[email hidden]"
 
@@ -184,7 +184,8 @@ public enum Scrubber {
         let keyword = text.substring(with: match.range(at: 1)).lowercased()
         return looksLikeSecretValue(text.substring(with: match.range(at: 3)), quoted: match.range(at: 2).length > 0,
                                     passwordLike: keyword.hasPrefix("pas") || keyword == "pwd" || keyword == "secret",
-                                    hashName: isHashName(nameBefore(match.range.location, in: text) + keyword))
+                                    hashName: !(keyword.hasPrefix("pas") || keyword == "pwd" || keyword == "secret")
+                                        && isHashName(nameBefore(match.range.location, in: text) + keyword))
     }
 
     /// `--token VALUE`, `--api-key=VALUE`: secrets passed on a command line.
@@ -206,9 +207,12 @@ public enum Scrubber {
         return text.substring(with: NSRange(location: start, length: location - start)).lowercased()
     }
 
-    /// A name for a hash, not a secret: its hex value is fine to send.
+    /// A name for a hash, not a secret: its hex value is fine to send. Whole parts of the name
+    /// only, so `SHARED_SECRET` or `COMMITTER_TOKEN` aren't taken for a hash.
     static func isHashName(_ name: String) -> Bool {
-        ["sha", "hash", "digest", "commit", "checksum", "etag", "revision", "cache"].contains(where: name.contains)
+        let parts = name.lowercased().split(whereSeparator: { $0 == "_" || $0 == "." || $0 == "-" }).map(String.init)
+        let hashes: Set<String> = ["sha", "sha1", "sha256", "sha512", "hash", "digest", "commit", "checksum", "etag", "revision", "cache"]
+        return parts.contains(where: hashes.contains)
     }
 
     /// Stand-alone random tokens without a known prefix.

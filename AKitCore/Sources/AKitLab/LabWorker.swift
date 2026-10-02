@@ -160,12 +160,13 @@ public enum ReviewRun {
         let outcome = try await AgentRun.run(prompt: agentPrompt + "\n\n" + language.instruction, spec: run.spec, in: run.folder,
                                              runFolder: run.folder, exposeRunFolder: true, extra: tools, env: env, out: out)
         guard !outcome.exit.cancelled else { throw CancellationError() }
-        try? SendLog.append(SendRecord(purpose: "review", session: file.path, runID: run.id, destination: gate.destination,
-                                       model: agent.model, inputCharacters: transcript.count, usage: outcome.usage), env: env)
+        let logError = SendLog.appendAfterRun(SendRecord(purpose: "review", session: file.path, runID: run.id, destination: gate.destination,
+                                                         model: agent.model, inputCharacters: transcript.count, usage: outcome.usage),
+                                              env: env, out: out)
 
         phase(.metrics)
         return RunResult(metrics: await LabWorker.ownMetrics(run.spec, project: run.folder, env: env),
-                         review: status(in: run.folder), agentError: outcome.error)
+                         review: status(in: run.folder), agentError: outcome.error ?? logError)
     }
 
     /// The session a review run names, which must still exist.
@@ -297,8 +298,9 @@ enum ReplayRun {
         let agent = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, exposeRunFolder: false,
                                            env: env, out: out)
         guard !agent.exit.cancelled else { throw CancellationError() }
-        try? SendLog.append(SendRecord(purpose: "replay", session: nil, runID: run.id, destination: gate.destination, model: model,
-                                       inputCharacters: task.prompt.count, usage: agent.usage), env: env)
+        let logError = SendLog.appendAfterRun(SendRecord(purpose: "replay", session: nil, runID: run.id, destination: gate.destination,
+                                                         model: model, inputCharacters: task.prompt.count, usage: agent.usage),
+                                              env: env, out: out)
 
         phase(.tests)
         out("Hidden tests: \(task.failToPass.count) fail-to-pass, \(task.passToPass.count) pass-to-pass.")
@@ -322,7 +324,7 @@ enum ReplayRun {
         let metrics = await LabWorker.ownMetrics(run.spec, project: work, env: env)
         let leaks = LabPaths.transcript(sessionID: run.spec.sessionID, env: env)
             .map { LeakCheck.leaks(in: $0, task: task, repo: repo, env: env) } ?? []
-        return RunResult(metrics: metrics, tests: outcome, leaks: leaks, agentError: agent.error)
+        return RunResult(metrics: metrics, tests: outcome, leaks: leaks, agentError: agent.error ?? logError)
     }
 
     static func outcome(_ task: ReplayTask, _ results: [TestName: SwiftTests.Outcome]) -> TestOutcome {

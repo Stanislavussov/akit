@@ -92,18 +92,11 @@ public enum Matching {
         let fresh = routes.filter { $0.by == .matching && $0.review == nil }
         // Merged into the notes as they are on disk now: routes the user reviewed or that
         // clustering and retro-matching added during the call stay.
-        do {
-            return try NotesStore(env: env).update(notes.sessionKey) { current in
-                let kept = (current.routes ?? []).filter { $0.review != nil || $0.by != .matching }
-                let taken = Set(kept.filter { $0.review != nil || $0.by == .human }.map(\.noteID))
-                current.routes = kept + fresh.filter { !taken.contains($0.noteID) }
-                current.doneKeys["matching"] = key
-            }
-        } catch {
-            result.routes = routes
-            result.doneKeys["matching"] = key
-            try NotesStore(env: env).save(result)
-            return result
+        return try NotesStore(env: env).update(notes.sessionKey) { current in
+            let kept = (current.routes ?? []).filter { $0.review != nil || $0.by != .matching }
+            let taken = Set(kept.filter { $0.review != nil || $0.by == .human }.map(\.noteID))
+            current.routes = kept + fresh.filter { !taken.contains($0.noteID) }
+            current.doneKeys["matching"] = key
         }
     }
 
@@ -285,6 +278,7 @@ public enum Matching {
                 notes.routes = routes
             }
         }
+        try await Clustering.promoteCandidates(store: ModeStore(env: env), env: env)
         return fits.keys.sorted()
     }
 }

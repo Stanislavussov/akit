@@ -180,6 +180,8 @@ private struct RouteCard: View {
         let text = analysis.data.note(ref)?.note.description ?? ""
         analysis.act { env in
             try Matching.review(ref, route: route, accept: accept, moveTo: moveTo, env: env)
+            // A note the user moved to a candidate may be its second independent case.
+            try await Clustering.promoteCandidates(store: ModeStore(env: env), env: env)
             if unclear { try UnclearNotes(env: env).add(UnclearNotes.Entry(sessionKey: ref.sessionKey, noteID: ref.noteID, text: text)) }
             let acceptance = Matching.acceptance(NotesStore(env: env).all())
             return "\(accept ? "Accepted" : "Rejected") the route. Route acceptance: \(acceptance.accepted) of \(acceptance.reviewed)."

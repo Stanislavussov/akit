@@ -23,7 +23,7 @@ struct ControlComparisonTests {
         #expect(abs(try #require(row.passAt1) - 3.0 / 5.0) < 1e-9)
         #expect(row.passAt1Interval == Stats.wilson(9, 15))
         // All 3 runs passed in 2 of 5 tasks.
-        #expect(row.passHatK == 0.4 && row.passHatKInterval == Stats.wilson(2, 5))
+        #expect(row.passHatK == 0.4)
     }
 
     @Test func helpedNeedsMostOfTheBootstrapMassOnImprovement() throws {
@@ -90,5 +90,14 @@ struct ControlComparisonTests {
                                                run("dddd", kind: .replay, status: .finished, passed: true)])
         #expect(cells == [ControlComparison.Cell(task: "t1", setup: baseline, passed: true),
                           ControlComparison.Cell(task: "t1", setup: baseline, passed: false, flagged: true)])
+    }
+
+    @Test func passHatKSitsInsideItsInterval() throws {
+        let setup = ControlSetup(name: "baseline", agent: LabAgent(harness: .claudeCode, model: "opus", effort: "low"))
+        // Tasks with more cells than k: the unbiased estimate is not the share of all-pass tasks.
+        let cells = (0..<6).flatMap { task in (0..<(task % 2 == 0 ? 3 : 5)).map { ControlComparison.Cell(task: "t\(task)", setup: setup, passed: $0 < 3) } }
+        let row = try #require(ControlComparison.compare(cells).rows.first)
+        let estimate = try #require(row.passHatK)
+        #expect(row.passHatKInterval.low <= estimate && estimate <= row.passHatKInterval.high)
     }
 }

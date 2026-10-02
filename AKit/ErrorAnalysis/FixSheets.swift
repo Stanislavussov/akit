@@ -138,11 +138,13 @@ struct FixDraftSheet: View {
                              exemplars: exemplars.sorted(), expectedChange: expected.trimmingCharacters(in: .whitespacesAndNewlines),
                              helpedCriterion: helped.trimmingCharacters(in: .whitespacesAndNewlines))
         let name = mode.name
+        let reset = startsOver
         Task {
             do {
                 try await analysis.run { env in
                     try FixStore(env: env).save(draft)
-                    _ = try await ModeStore(env: env).setFix(draft.modeID, .draft)
+                    // Past draft, saving is the Start Over the user confirmed.
+                    _ = try await ModeStore(env: env).setFix(draft.modeID, .draft, reset: reset)
                     return "Drafted a \(draft.layer.title.lowercased()) for \(name). Apply it yourself, then Mark Applied."
                 }
                 dismiss()

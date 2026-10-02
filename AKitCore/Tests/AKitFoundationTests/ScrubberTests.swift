@@ -368,6 +368,14 @@ struct ScrubberTests {
         for text in ["commit_sha: \(hex32)", "checksum_key = \(hex32)", "HEAD is \(hex32)", "request \(uuid) done"] {
             #expect(Scrubber.scrub(text).text == text, "\(text)")
         }
-        #expect(Scrubber.version == 2)
+        #expect(Scrubber.version == 3)
+    }
+
+    @Test func hashNamesMatchWholeParts() {
+        let hex32 = "3f2a9c4e8b7d6a5f" + "1e0c9b8a7d6e5f4c"
+        for text in ["SHARED_SECRET=\(hex32)", "REDIS_CACHE_PASSWORD=\(hex32)", "COMMITTER_TOKEN=\(hex32)"] {
+            #expect(!Scrubber.scrub(text).text.contains(hex32), "\(text)")
+        }
+        #expect(Scrubber.scrub("cache_key = \(hex32)").text.contains(hex32))
     }
 }

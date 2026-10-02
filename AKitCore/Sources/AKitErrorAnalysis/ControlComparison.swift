@@ -105,6 +105,18 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         return ControlComparison(rows: rows, paired: paired)
     }
 
+    /// A 95% bootstrap interval over tasks of the mean of per-task estimates (seeded), so the
+    /// interval is about the same number as the estimate.
+    static func interval(ofMean values: [Double], iterations: Int = 2000) -> Stats.Interval {
+        guard !values.isEmpty else { return Stats.Interval(low: 0, high: 1) }
+        var generator = SeededGenerator(seed: 17)
+        var means = (0..<iterations).map { _ in
+            (0..<values.count).map { _ in values[Int.random(in: 0..<values.count, using: &generator)] }.reduce(0, +) / Double(values.count)
+        }
+        means.sort()
+        return Stats.Interval(low: means[Int(0.025 * Double(iterations))], high: means[min(iterations - 1, Int(0.975 * Double(iterations)))])
+    }
+
     static func row(_ setup: ControlSetup, cells: [Cell]) -> Row {
         let counted = cells.filter { !$0.flagged }
         let tasks = Dictionary(grouping: counted, by: \.task).map { task, cells in
@@ -115,12 +127,11 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         // pass^k per task, unbiased when a task has more than k cells: C(c, k) / C(n, k).
         let hatK = tasks.map { task in task.passed < k ? 0 : exp(Stats.logChoose(task.passed, k) - Stats.logChoose(task.total, k)) }
         let passHatK = tasks.isEmpty ? nil : hatK.reduce(0, +) / Double(tasks.count)
-        let allPassed = tasks.filter { $0.passed == $0.total }.count
         return Row(setup: setup, tasks: tasks, cells: counted.count, flagged: cells.count - counted.count,
                    passAt1: tasks.isEmpty ? nil : tasks.map(\.rate).reduce(0, +) / Double(tasks.count),
                    passAt1Interval: Stats.wilson(passed, counted.count), k: k,
                    passHatK: passHatK,
-                   passHatKInterval: Stats.wilson(allPassed, tasks.count))
+                   passHatKInterval: interval(ofMean: hatK))
     }
 
     /// The paired bootstrap over tasks of the per-task change in pass rate (seeded, so the

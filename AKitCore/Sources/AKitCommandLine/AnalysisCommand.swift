@@ -37,7 +37,7 @@ extension AKitCLI {
         if let command, let code = try await analysisModes(command, &args, options: options, env: env, cwd: cwd, out: out) {
             return code
         }
-        if let command, let code = try await analysisReports(command, &args, options: options, env: env, out: out) {
+        if let command, let code = try await analysisReports(command, &args, options: options, env: env, cwd: cwd, out: out) {
             return code
         }
         switch command {

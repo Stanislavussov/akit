@@ -86,14 +86,38 @@ public enum Batches {
     /// "≈" cost of reviewing `sessions` sessions with `agent`: the recorded cost of notes,
     /// verifier and matching per reviewed session with the same model so far. nil until a
     /// session was reviewed with it.
+    /// The judges of active modes run on every session of a batch too: their recorded cost per
+    /// call is added.
     public static func estimate(sessions: Int, agent: LabAgent, env: HarnessEnvironment) -> Double? {
-        let records = SendLog.records(env: env).filter {
+        let all = SendLog.records(env: env)
+        let records = all.filter {
             ["notes", "verifier", "matching"].contains($0.purpose) && $0.harness == agent.harness && $0.model == agent.model
                 && $0.session != nil && $0.usage.cost != nil
         }
         let bySession = Dictionary(grouping: records, by: { $0.session ?? "" }).mapValues { $0.compactMap(\.usage.cost).reduce(0, +) }
         guard !bySession.isEmpty else { return nil }
-        return bySession.values.reduce(0, +) / Double(bySession.count) * Double(sessions)
+        var perSession = bySession.values.reduce(0, +) / Double(bySession.count)
+        for judge in ValidationStore(env: env).judges().values {
+            let costs = all.filter { $0.purpose == "judge" && $0.harness == judge.harness && $0.model == judge.model }.compactMap(\.usage.cost)
+            if !costs.isEmpty { perSession += costs.reduce(0, +) / Double(costs.count) }
+        }
+        return perSession * Double(sessions)
+    }
+
+    /// How many sessions a batch with this filter would review: the sample is at most `size`.
+    public static func sampleSize(filter: Sampling.Filter, size: Int, env: HarnessEnvironment) -> Int {
+        guard let database = try? AnalysisIndex.open(env: env), let indexed = try? AnalysisIndex.sessions(database) else { return 0 }
+        let population = Sampling.population(indexed, filter: filter,
+                                             reserved: BootstrapReservations(env: env).keys().union(IndexedSessions.labKeys(env: env)))
+        return min(size, population.count)
+    }
+
+    /// "≈ $1.20 for 20 sessions…", shown before any model work.
+    public static func estimateText(sessions: Int, agent: LabAgent, env: HarnessEnvironment) -> String {
+        guard let estimate = estimate(sessions: sessions, agent: agent, env: env) else {
+            return "\(sessions) sessions; no estimate yet: no session was reviewed with \(agent.harness.title) · \(agent.model) before."
+        }
+        return String(format: "%d sessions, ≈ $%.2f at the recorded cost per reviewed session so far (judges included).", sessions, estimate)
     }
 
     /// The default reviewer for sessions of `models`: a model of another family than the one
@@ -211,13 +235,17 @@ enum BatchRunner {
         guard let batchID = run.spec.batch, var batch = BatchStore(env: env).load(batchID) else {
             throw LabWorker.Failure(message: "The run names no batch.")
         }
+        // A batch paused while its run was still queued stays paused: Resume clears a pause.
+        if batch.paused {
+            out("Batch \(batchID) is paused; resume it to go on.")
+            let coverage = batch.coverage
+            return RunResult(batch: BatchProgress(done: coverage.done, failed: batch.sessions.filter { $0.status == .error }.count,
+                                                  total: coverage.total, paused: true))
+        }
         // A session left running by a run that died starts again.
-        for index in batch.sessions.indices where batch.sessions[index].status == .running { batch.sessions[index].status = .pending }
-        // Starting is resuming: the run clears an earlier pause.
-        batch.paused = false
-        batch.pauseReason = nil
-        let fresh = batch
-        try BatchStore(env: env).update(batchID) { $0 = fresh }
+        batch = try BatchStore(env: env).update(batchID) { batch in
+            for index in batch.sessions.indices where batch.sessions[index].status == .running { batch.sessions[index].status = .pending }
+        }
         let state = State(batch: batch, store: BatchStore(env: env))
 
         // Account checks once at the start; each session's own origin is checked per call.
@@ -348,6 +376,8 @@ enum BatchRunner {
                 let updated = try await modeStore.recordBatchMatch(mode.id, runID: batch.runID, sessions: matched[mode.id]?.sorted() ?? [])
                 if updated.status == .active, mode.status != .active { out("Seed \(mode.name) is now active (matched in two batches).") }
             }
+            // Candidates this batch's matching found again become modes, before new ones are made.
+            for mode in try await Clustering.promoteCandidates(store: modeStore, env: env) { out("Candidate \(mode.name) is now a mode.") }
             modes = try await modeStore.list()
             let items = Clustering.unmatchedItems(pool, modes: modes)
             var created: [Mode] = []

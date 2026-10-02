@@ -38,12 +38,13 @@ extension AKitCLI {
                                           --keep keeps the clone; otherwise it goes to the Trash
           akit lab new analysis [--project ID|DIR] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--size N]
                               [--harness claude-code|pi] [--model M] [--effort E] [--matching-model M]
-                              [--language en|ru|cs] [--env orca|herdr|background] [--no-start]
+                              [--language en|ru|cs] [--env orca|herdr|background] [--no-start] [--yes]
                                           Error analysis over a sample of N (20) sessions of the index
                                           (5+ requests each): a random quarter, the rest stratified by
                                           cheap signals, harness and model. Per session notes, verifier
                                           and matching, 2 at a time; clustering at the end. Sends notes
-                                          and transcripts under the sending policy
+                                          and transcripts under the sending policy. Shows how many
+                                          sessions and the ≈ cost first; --yes queues it
           akit lab task COMMIT [--repo DIR]
                                           Check a commit as a task now: its tests on the parent and on
                                           the commit (fail-to-pass, pass-to-pass). A replay does this
@@ -120,6 +121,7 @@ extension AKitCLI {
             let to = try args.value("--to").map { try day($0, "--to").addingTimeInterval(86_399) }
             let size = try positiveNumber(args.value("--size"), "--size") ?? 20
             let matchingModel = args.value("--matching-model")
+            let yes = args.flag("--yes")
             try args.finish()
             let environment = try labEnvironment(environmentText, env: env)
             // No --harness or --model: a reviewer of another family than the sessions', when allowed.
@@ -148,17 +150,24 @@ extension AKitCLI {
             let projectFilter = project.map { text -> String in
                 text.contains("/") || text.hasPrefix("~") ? resolve(text, cwd: cwd, env: env).path : text
             }
+            // Before any model work: how many sessions and what it would cost.
+            let filter = Sampling.Filter(project: projectFilter, from: from, to: to)
+            let estimateAgent = agent ?? { var claude = LabRuns.defaultAgent(.claudeCode, env: env); claude.mode = .call; return claude }()
+            out(Batches.estimateText(sessions: Batches.sampleSize(filter: filter, size: size, env: env), agent: estimateAgent, env: env)
+                + (agent == nil ? " (with your Claude Code model; the reviewer is picked when the sample is drawn)" : ""))
+            guard yes else {
+                out("Run it again with --yes to queue it.")
+                return 0
+            }
             let run: LabRun
             do {
-                run = try await Batches.new(filter: Sampling.Filter(project: projectFilter, from: from, to: to), size: size, notesAgent: agent,
+                run = try await Batches.new(filter: filter, size: size, notesAgent: agent,
                                             matchingAgent: matching, language: language, environment: environment, akit: ownExecutable, env: env)
             } catch {
                 throw Failure(message: error.localizedDescription)
             }
             let batch = BatchStore(env: env).load(run.id)
             out("Queued \(run.id): \(run.spec.title), notes by \(batch?.notesAgent.label ?? "?") (\(run.spec.environment.title)).")
-            out(batch?.estimate.map { String(format: "≈ $%.2f at the recorded cost per reviewed session so far.", $0) }
-                ?? "No estimate yet: no session was reviewed with this model before.")
             if !noStart { try await startNext(env: env, out: out) }
             return 0
         case "new" where args.peek == "replay":

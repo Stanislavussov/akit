@@ -145,11 +145,21 @@ struct ModeActions: View {
         let id = mode.id
         if mode.isCurrent, mode.status == .candidate || mode.status == .seedInactive {
             Button("Confirm", systemImage: "checkmark.circle") {
-                analysis.act { env in
-                    let mode = try await ModeStore(env: env).confirm(id)
-                    return "\(mode.name) is active."
+                let mode = mode
+                Task {
+                    do {
+                        try await analysis.run { env in
+                            let mode = try await ModeStore(env: env).confirm(id)
+                            return "\(mode.name) is active."
+                        }
+                    } catch {
+                        analysis.error = error.localizedDescription
+                        return
+                    }
+                    // A confirmed mode's code check runs over every indexed session at once.
+                    analysis.runCheck(mode)
+                    confirmed?()
                 }
-                confirmed?()
             }
             .help("Make it an active mode: it shows in reports and gets a check")
         }

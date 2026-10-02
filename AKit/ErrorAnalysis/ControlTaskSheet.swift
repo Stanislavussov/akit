@@ -28,6 +28,7 @@ struct NewControlTaskSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let fromSession: Bool
+    @State private var gitRepositories: [URL] = []
     @State private var query = ""
     @State private var source: String?
     @State private var repo: URL?
@@ -158,10 +159,17 @@ struct NewControlTaskSheet: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .frame(height: 230)
+        .task(id: model.projects) {
+            // Which projects are repositories: file checks, off the main thread.
+            let projects = model.projects
+            gitRepositories = await Task.detached {
+                projects.filter { FileManager.default.fileExists(atPath: $0.appending(path: ".git").path) }
+            }.value
+        }
     }
 
     private var repositories: [URL] {
-        var list = model.projects.filter { FileManager.default.fileExists(atPath: $0.appending(path: ".git").path) }
+        var list = gitRepositories
         if let repo, !list.contains(repo) { list.append(repo) }
         return list.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }

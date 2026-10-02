@@ -255,4 +255,29 @@ struct MatchingTests {
         }
         #expect(CheckStore(env: env).load("m")?.verdicts.count == 20)
     }
+
+    @Test func promotionNeedsANewAcceptedCase() async throws {
+        let store = ModeStore(env: env)
+        _ = try await store.create(Mode(id: "cand", name: "Cand", definition: "d"))
+        var a = try pool("claude:a", notes: [("n1", "x"), ("n2", "y")])
+        a.routes = [Route(noteID: "n1", modeID: "cand", confidence: 1, by: .clustering),
+                    // Matching again in a session it was made from: not a new case.
+                    Route(noteID: "n2", modeID: "cand", confidence: 0.9, by: .matching)]
+        try NotesStore(env: env).save(a)
+        var b = try pool("claude:b", notes: [("n1", "z")])
+        // A new session, but at low confidence and not accepted yet.
+        b.routes = [Route(noteID: "n1", modeID: "cand", confidence: 0.4, by: .matching)]
+        try NotesStore(env: env).save(b)
+        #expect(try await Clustering.promoteCandidates(store: store, env: env).isEmpty)
+        try Matching.review(NoteRef(sessionKey: "claude:b", noteID: "n1"), accept: true, env: env)
+        #expect(try await Clustering.promoteCandidates(store: store, env: env).map(\.id) == ["cand"])
+    }
+
+    @Test func anUnreadableFileIsNeverReplaced() throws {
+        let book = home.appending(path: ".akit/lab/analysis/labels/book.json")
+        try fm.createDirectory(at: book.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{ broken".utf8).write(to: book)
+        #expect(throws: (any Error).self) { _ = try LabelBookStore(env: env).update { $0.spotChecks["x"] = true } }
+        #expect(try String(contentsOf: book, encoding: .utf8) == "{ broken")
+    }
 }

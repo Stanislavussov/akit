@@ -281,12 +281,11 @@ public struct ModeStore: Sendable {
         }
     }
 
-    /// Records that a batch run matched a note to the mode (through merges). An inactive seed
-    /// with matches from two different batch runs becomes active; ad-hoc matches never come
-    /// here. The same run twice counts once.
+    /// Records that a batch run matched notes to the mode (through merges); `sessions` are the
+    /// sessions that batch's own matching routed to it. An inactive seed becomes active after
+    /// matches in two batches covering two different sessions; ad-hoc matches never come here.
+    /// The same run twice counts once.
     @discardableResult
-    /// `sessions`: the sessions of the batch routed to the mode by that batch's own matching.
-    /// A seed is activated by matches in two batches covering two different sessions.
     public func recordBatchMatch(_ id: String, runID: String, sessions: [String] = []) async throws -> Mode {
         try await change { modes in
             let resolved = Self.resolve(id, in: modes)
@@ -307,11 +306,17 @@ public struct ModeStore: Sendable {
     /// Moves the mode's fix along: open → draft → applied(T) → confirmed / didn't help /
     /// rejected (with a reason). Failure and efficiency modes only. `date` is T for `applied`.
     @discardableResult
-    public func setFix(_ id: String, _ status: Mode.FixStatus, reason: String? = nil, at date: Date = .now) async throws -> Mode {
+    /// Once a fix is applied, T and the criterion written before it stay: going back to a
+    /// draft or applying again moves T, so it needs `reset` (the user starting over).
+    public func setFix(_ id: String, _ status: Mode.FixStatus, reason: String? = nil, at date: Date = .now,
+                       reset: Bool = false) async throws -> Mode {
         try await change { modes in
             let index = try Self.index(of: id, in: modes)
             guard modes[index].kind.takesFixes else {
                 throw Failure(message: "Mode \(id) is a success mode; fixes apply to failure and efficiency modes.")
+            }
+            if [.open, .draft, .applied].contains(status), modes[index].fixAppliedAt != nil, !reset {
+                throw Failure(message: "The fix of \(id) was applied already; starting over would move T and its criterion.")
             }
             let reason = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
             if status == .rejected, reason?.isEmpty ?? true { throw Failure(message: "Say why the fix for \(id) is rejected.") }

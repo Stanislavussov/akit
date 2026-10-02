@@ -32,7 +32,7 @@ extension AKitCLI {
                               --text TEXT|@FILE --expect TEXT --helped TEXT [--skill NAME] [--exemplar SESSION#NOTE]… [--reset]
                                           Write the fix down before any run: the text, what should change
                                           in transcripts and the "helped" criterion
-          akit analysis fix applied MODE [--at YYYY-MM-DD]
+          akit analysis fix applied MODE [--at YYYY-MM-DD] [--reset]
                                           Mark it applied: T, the anchor of before/after
           akit analysis fix show MODE [--json]
                                           The draft, and the mode's check before and after T: failure
@@ -44,7 +44,7 @@ extension AKitCLI {
           tasks: akit analysis control run TASK --fix MODE
         """
 
-    static func analysisReports(_ command: String, _ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment,
+    static func analysisReports(_ command: String, _ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
                                 out: (String) -> Void) async throws -> Int32? {
         let modeStore = ModeStore(env: env)
         func mode(_ id: String?) async throws -> Mode {
@@ -140,7 +140,7 @@ extension AKitCLI {
                     out("\(modeID): \(trust.level.rawValue)")
                 }
             case "fix":
-                return try await fixCommand(&args, options: options, env: env, out: out)
+                return try await fixCommand(&args, options: options, env: env, cwd: cwd, out: out)
             case "tough":
                 let target = try await mode(args.positional())
                 guard let session = args.positional(), let verdict = args.positional(), ["present", "absent"].contains(verdict) else {
@@ -160,7 +160,7 @@ extension AKitCLI {
         return 0
     }
 
-    private static func fixCommand(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment,
+    private static func fixCommand(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
                                    out: (String) -> Void) async throws -> Int32 {
         let store = ModeStore(env: env)
         let action = args.positional()
@@ -188,7 +188,7 @@ extension AKitCLI {
             }
             try args.finish()
             if text.hasPrefix("@") {
-                guard let read = try? String(contentsOf: URL(filePath: String(text.dropFirst())), encoding: .utf8) else {
+                guard let read = try? String(contentsOf: resolve(String(text.dropFirst()), cwd: cwd, env: env), encoding: .utf8) else {
                     throw Failure(message: "Can't read \(text.dropFirst()).")
                 }
                 text = read
@@ -196,13 +196,14 @@ extension AKitCLI {
             guard layer != .skill || skill != nil else { throw Failure(message: "A skill fix needs --skill NAME.") }
             try fixes.save(FixDraft(modeID: mode.id, layer: layer, skillName: skill, text: text, exemplars: exemplars,
                                     expectedChange: expect, helpedCriterion: helped))
-            _ = try await store.setFix(mode.id, .draft)
+            _ = try await store.setFix(mode.id, .draft, reset: reset)
             out("Drafted a \(layer.title.lowercased()) for \(mode.name). Apply it yourself, then: akit analysis fix applied \(mode.id).")
         case "applied":
             let at = try args.value("--at").map { try day($0, "--at") } ?? .now
+            let reset = args.flag("--reset")
             try args.finish()
             guard fixes.load(mode.id) != nil else { throw Failure(message: "Draft the fix first: write down what should change before T.") }
-            _ = try await store.setFix(mode.id, .applied, at: at)
+            _ = try await store.setFix(mode.id, .applied, at: at, reset: reset)
             out("\(mode.name): fix applied at \(at.formatted(date: .abbreviated, time: .shortened)).")
         case "status":
             guard let status = args.positional().flatMap(Mode.FixStatus.init(rawValue:)), [.confirmed, .didntHelp, .rejected].contains(status) else {

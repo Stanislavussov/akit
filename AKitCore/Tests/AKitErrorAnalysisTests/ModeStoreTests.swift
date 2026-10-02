@@ -230,6 +230,11 @@ struct ModeStoreTests {
         await #expect(throws: ModeStore.Failure.self) { try await store.setFix("large-file-read-whole", .rejected) }
         let rejected = try await store.setFix("large-file-read-whole", .rejected, reason: "made it worse")
         #expect(rejected.fix == .rejected && rejected.fixReason == "made it worse" && rejected.fixAppliedAt == t)
+        // T stays: applying again or going back to a draft needs the user to start over.
+        await #expect(throws: ModeStore.Failure.self) { try await store.setFix("large-file-read-whole", .applied, at: .now) }
+        await #expect(throws: ModeStore.Failure.self) { try await store.setFix("large-file-read-whole", .draft) }
+        let restarted = try await store.setFix("large-file-read-whole", .draft, reset: true)
+        #expect(restarted.fix == .draft && restarted.fixAppliedAt == nil)
     }
 
     @Test func theUnclearBucketRoundTrips() throws {

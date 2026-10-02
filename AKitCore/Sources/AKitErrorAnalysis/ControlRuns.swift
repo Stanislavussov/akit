@@ -34,6 +34,11 @@ public enum ControlRuns {
         guard !tasks.isEmpty, !setups.isEmpty, repeats > 0 else {
             throw LabStore.Failure(message: "Pick at least one task, one setup and one repeat.")
         }
+        // A test oracle that fails on its reference commit can't tell a fix from noise.
+        if let red = tasks.first(where: { $0.referenceGreen == false }) {
+            throw LabStore.Failure(message: "The tests of \(red.id) fail on its reference commit; fix the test command or the reference "
+                                       + "first (akit analysis control task check \(red.id)).")
+        }
         let existing = LabStore.list(env: env).filter { $0.spec.kind == .control }
         var done = Set(existing.compactMap { run -> String? in
             guard run.status == .finished, let control = run.result?.control, !control.flagged else { return nil }
@@ -93,10 +98,11 @@ public enum ControlRuns {
                                               base: task.base, prompt: prompt, testCommand: testCommand, env: env,
                                               phase: phase, out: out)
         let session: String? = if case .session(let key) = task.source { key.description } else { nil }
-        try? SendLog.append(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,
-                                       model: setup.agent.model, inputCharacters: prompt.count, usage: facts.usage), env: env)
+        let logError = SendLog.appendAfterRun(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,
+                                                         model: setup.agent.model, inputCharacters: prompt.count, usage: facts.usage),
+                                              env: env, out: out)
         let control = outcome(task: task, setup: setup, repeatIndex: run.spec.repeatIndex ?? 1, facts: facts)
-        return RunResult(metrics: facts.metrics, leaks: control.leaks, agentError: facts.agentError, control: control)
+        return RunResult(metrics: facts.metrics, leaks: control.leaks, agentError: facts.agentError ?? logError, control: control)
     }
 
     /// The oracle's verdict on a cell, with its guard and leak flags.

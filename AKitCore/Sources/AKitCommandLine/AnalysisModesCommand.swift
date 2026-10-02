@@ -65,7 +65,7 @@ extension AKitCLI {
           akit analysis bootstrap first-modes [--yes]
                                           Cluster the labeled sessions' notes (yours and the model's)
                                           into the first candidate modes
-          akit analysis bootstrap notes [--harness …] [--model …] [--env …]
+          akit analysis bootstrap notes [--harness …] [--model …] [--env …] [--yes]
                                           Queue the model's notes on the labeled sessions (a batch)
           akit analysis bootstrap map SESSION#hN MODE|unclear
           akit analysis bootstrap similar MODE [--yes]
@@ -234,6 +234,10 @@ extension AKitCLI {
             // --move none: no mode fits; --move MODE: that mode; no --move: just rejected.
             let target: String?? = move.map { text -> String? in text == "none" ? nil : text }
             try Matching.review(note, accept: command == "accept", moveTo: target, env: env)
+            // A note moved to a candidate may be its second independent case.
+            for mode in try await fail({ try await Clustering.promoteCandidates(store: store, env: env) }) {
+                out("Candidate \(mode.name) is now a mode.")
+            }
             let acceptance = Matching.acceptance(notesStore.all())
             out("\(command == "accept" ? "Accepted" : "Rejected") the route of \(note). Route acceptance: \(acceptance.accepted) of \(acceptance.reviewed).")
             return 0
@@ -554,6 +558,11 @@ extension AKitCLI {
             guard !done.isEmpty else { throw Failure(message: "Finish labeling some sessions first.") }
             var agent = try options.agent(env: env)
             agent.mode = .call
+            out(Batches.estimateText(sessions: done.count, agent: agent, env: env))
+            guard options.yes else {
+                out("Run it again with --yes to queue it.")
+                return 0
+            }
             let run = try await Batches.newFixed(sessions: done.map { ($0.sessionKey, $0.transcript) },
                                                  title: "Bootstrap: model notes on \(done.count) labeled sessions", notesAgent: agent,
                                                  environment: environment, akit: ownExecutable, env: env)

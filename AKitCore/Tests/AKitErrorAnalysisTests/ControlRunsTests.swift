@@ -246,6 +246,18 @@ struct ControlRunsTests {
         #expect(ControlRuns.leaks(in: transcript([("read", #"{"path":"/Users/me/.pi/agent/sessions/x.jsonl"}"#)]), task: task) == ["the session history"])
         #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"git -C /work/repo log"}"#)]), task: task) == ["the real repository"])
     }
+
+    @Test func aRedReferenceBlocksQueuingCells() async throws {
+        let (repo, base) = try await repository()
+        var red = task(repo, base, oracle: .tests(command: "false"))
+        red.referenceGreen = false
+        try ControlTasks.save(red, env: env)
+        await #expect(throws: (any Error).self) {
+            _ = try await ControlRuns.newControlRuns(tasks: [red], setups: [ControlSetup(name: "baseline", agent: LabAgent(harness: .claudeCode, model: "opus", effort: "low"))],
+                                                     repeats: 1, environment: .background, keep: true, akit: URL(filePath: "/usr/bin/true"), env: env)
+        }
+        #expect(LabStore.list(env: env).isEmpty)
+    }
 }
 
 /// Worker output, collected from background threads.
@@ -254,4 +266,5 @@ final class Output: @unchecked Sendable {
     private var collected: [String] = []
     func add(_ line: String) { lock.withLock { collected.append(line) } }
     var lines: [String] { lock.withLock { collected } }
+
 }

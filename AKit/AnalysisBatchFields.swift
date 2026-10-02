@@ -60,6 +60,8 @@ struct AnalysisBatchFields: View {
 
     @Binding var draft: AnalysisBatchDraft
     @State private var projects: [ProjectOption] = []
+    /// How many sessions and ≈ what they cost, before anything is queued.
+    @State private var estimate = ""
 
     var body: some View {
         Text("AKit samples sessions of the index (\(Sampling.minimumRequests)+ requests each): a random quarter, the rest stratified by cheap signals, harness and model. For each session a model writes notes, a verifier checks them and matching routes them to modes, two sessions at a time; clustering runs once at the end. Transcripts and notes go out under the sending policy.")
@@ -100,13 +102,34 @@ struct AnalysisBatchFields: View {
             Picker("Language", selection: $draft.language) {
                 ForEach(LabLanguage.allCases, id: \.self) { Text($0.name).tag($0) }
             }
+            if !estimate.isEmpty {
+                Label(estimate, systemImage: "dollarsign.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .formStyle(.grouped)
+        .task(id: estimateKey) {
+            let env = HarnessEnvironment.current
+            let filter = draft.filter, size = draft.size
+            var agent = draft.notesAgent ?? LabRuns.defaultAgent(.claudeCode, env: env)
+            agent.mode = .call
+            let automatic = draft.automatic
+            estimate = await Task.detached {
+                Batches.estimateText(sessions: Batches.sampleSize(filter: filter, size: size, env: env), agent: agent, env: env)
+                    + (automatic ? " With your Claude Code model; the reviewer is picked when the sample is drawn." : "")
+            }.value
+        }
         .task {
             let env = HarnessEnvironment.current
             draft.language = LabSettings.load(env: env).reportLanguage
             projects = await Task.detached { Self.projects(env: env) }.value
         }
+    }
+
+    private var estimateKey: String {
+        "\(draft.filter.project ?? "")|\(draft.useFrom)\(draft.from)|\(draft.useTo)\(draft.to)|\(draft.size)|\(draft.automatic)|\(draft.harness)|\(draft.model)"
     }
 
     /// Bound projects first, then the folders sessions ran in, by how many sessions could be sampled.

@@ -160,6 +160,8 @@ public enum Clustering {
         var sessions: [String: (made: Set<String>, later: Set<String>)] = [:]
         for notes in NotesStore(env: env).all() {
             for route in Matching.currentRoutes(notes).values {
+                // A low-confidence route counts once the user accepted it.
+                if route.review == nil, route.by != .human, route.confidence < Matching.lowConfidence { continue }
                 guard let id = route.modeID.map({ ModeStore.resolve($0, in: modes) }) else { continue }
                 if route.by == .clustering { sessions[id, default: ([], [])].made.insert(notes.sessionKey) } else {
                     sessions[id, default: ([], [])].later.insert(notes.sessionKey)
@@ -168,7 +170,9 @@ public enum Clustering {
         }
         var promoted: [Mode] = []
         for mode in modes where mode.status == .candidate {
-            guard let cases = sessions[mode.id], !cases.later.isEmpty, cases.made.union(cases.later).count >= 2 else { continue }
+            // A new session, not one it was made from.
+            guard let cases = sessions[mode.id], !cases.later.subtracting(cases.made).isEmpty,
+                  cases.made.union(cases.later).count >= 2 else { continue }
             promoted.append(try await store.confirm(mode.id))
         }
         return promoted

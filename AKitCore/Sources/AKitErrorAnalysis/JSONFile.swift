@@ -36,7 +36,17 @@ enum JSONFile {
     @discardableResult
     static func update<T: Codable, R>(_ url: URL, empty: @autoclosure () -> T, _ change: (inout T) throws -> R) throws -> R {
         try locked(url) {
-            var value = read(T.self, from: url) ?? empty()
+            // A file that exists but can't be read is never replaced with an empty one: it may
+            // hold the test-once records, splits or reservations.
+            var value: T
+            if FileManager.default.fileExists(atPath: url.path) {
+                guard let read = read(T.self, from: url) else {
+                    throw Failure(message: "\(url.path) can't be read; fix or move it before AKit changes it.")
+                }
+                value = read
+            } else {
+                value = empty()
+            }
             let result = try change(&value)
             try AnalysisJSON.encoder.encode(value).write(to: url, options: .atomic)
             return result

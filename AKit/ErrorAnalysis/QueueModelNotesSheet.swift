@@ -14,6 +14,7 @@ struct QueueModelNotesSheet: View {
     @State private var effort = "high"
     @State private var error: String?
     @State private var busy = false
+    @State private var estimate = ""
 
     private var labeled: [BootstrapReservations.Entry] { analysis.data.reservations.filter { $0.labeledAt != nil } }
 
@@ -34,6 +35,10 @@ struct QueueModelNotesSheet: View {
             Text("Transcripts go out under the sending policy in Settings → Lab; the monthly limit applies.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if !estimate.isEmpty {
+                Label(estimate, systemImage: "dollarsign.circle").font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
                     .textSelection(.enabled)
@@ -49,6 +54,11 @@ struct QueueModelNotesSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .task(id: "\(harness)|\(modelName)") {
+            let agent = LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
+            let count = labeled.count
+            estimate = await Task.detached { Batches.estimateText(sessions: count, agent: agent, env: .current) }.value
+        }
     }
 
     private func queue() {
