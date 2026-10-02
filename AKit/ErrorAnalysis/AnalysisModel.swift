@@ -163,28 +163,65 @@ final class AnalysisModel {
     }
 
     /// Runs a mode's code check over every indexed session, locally, with a progress line.
+    /// Does nothing while another check runs.
     func runCheck(_ mode: Mode) {
         guard let check = CodeChecks.check(for: mode.id) else { return }
+        runChecks([check], versions: [mode.id: mode.version]) { results in
+            let rate = results.first?.rate()
+            return "Checked \(rate?.total ?? 0) sessions: the mode shows in \(rate?.positive ?? 0)."
+        }
+    }
+
+    /// `akit analysis check`: the code checks of every current mode, in one pass over the index.
+    func runAllChecks() {
+        let versions = Dictionary(data.current.map { ($0.id, $0.version) }, uniquingKeysWith: { first, _ in first })
+        let checks = CodeChecks.all.filter { versions[$0.modeID] != nil }
+        guard !checks.isEmpty else { return }
+        runChecks(checks, versions: versions) { results in
+            let total = results.first?.rate().total ?? 0
+            let shown = results.filter { $0.rate().positive > 0 }.count
+            return "Ran \(results.count) code checks over \(total) sessions: \(shown) of the modes show in at least one session."
+        }
+    }
+
+    private func runChecks(_ checks: [CodeCheck], versions: [String: Int], summary: @escaping @Sendable ([CheckResults]) -> String) {
+        guard progress == nil else { return }
         error = nil
         progress = "Checking indexed sessions…"
-        let id = mode.id, version = mode.version
         Task {
             defer { progress = nil }
             do {
                 try await run { env in
-                    let results = try CheckRunner.run([check], modeVersions: [id: version], env: env) { done, total in
+                    let results = try CheckRunner.run(checks, modeVersions: versions, env: env) { done, total in
                         guard done % 25 == 0 else { return }
                         Task { @MainActor in self.progress = "Checking \(done) of \(total) sessions…" }
                     }
                     guard let rate = results.first?.rate(), rate.total > 0 else {
                         return "No indexed sessions to check. Import them with akit sessions import (or akit insights install for an hourly import)."
                     }
-                    return "Checked \(rate.total) sessions: the mode shows in \(rate.positive)."
+                    return summary(results)
                 }
             } catch {
                 self.error = error.localizedDescription
             }
         }
+    }
+
+    /// Confirms a candidate or an inactive seed, then runs its code check over every indexed
+    /// session at once. False when confirming failed (the error is in the bar).
+    @discardableResult
+    func confirm(_ mode: Mode) async -> Bool {
+        let id = mode.id
+        error = nil
+        message = nil
+        do {
+            try await run { env in "\(try await ModeStore(env: env).confirm(id).name) is active." }
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+        runCheck(mode)
+        return true
     }
 
     /// Where analysis model calls keep their work files.
@@ -206,8 +243,45 @@ struct AnalysisFailure: Error, LocalizedError {
     var errorDescription: String? { message }
 }
 
+extension AnalysisData {
+    /// How far a mode's code check (not its judge) can be trusted, from its test runs.
+    func codeCheckTrust(_ mode: Mode) -> CheckTrust.Level {
+        Validation.trust(modeID: mode.id, modeVersion: mode.version, checker: Validation.checker(judge: nil, modeID: mode.id),
+                         results: validation[mode.id] ?? []).level
+    }
+
+    /// The code check's results when they were made for the mode's current version.
+    func currentCheck(_ mode: Mode) -> CheckResults? {
+        guard let results = checks[mode.id], results.modeVersion == mode.version, results.rate().total > 0 else { return nil }
+        return results
+    }
+}
+
 /// "3 of 40 (95% 2–20%)" for a check's rate.
 enum AnalysisText {
+    /// What a code check's rate means now: exact, validated, provisional or not validated.
+    static func checkTrust(_ check: CodeCheck, trust: CheckTrust.Level, seen: Int, judged: Bool) -> String {
+        if check.kind == .mechanical {
+            return "Mechanical: the check is the definition, exact by construction, so its rate is the mode's frequency."
+        }
+        let text = switch trust {
+        case .validated: "Heuristic — validated on the test set: reports show its rate corrected for its errors."
+        case .provisional: "Heuristic — provisional (20+ test labels per class): its rate is shown beside \"seen in \(seen) notes\", never as the frequency."
+        case .none, .exact: "Heuristic — not validated: until it is, the mode's frequency is \"seen in \(seen) notes\", not this rate."
+        }
+        return judged ? text + " The mode has a judge: reports go by the judge's validation, not this one." : text
+    }
+
+    /// "mechanical", "heuristic — validated", … for a table cell.
+    static func checkKind(_ check: CodeCheck, trust: CheckTrust.Level) -> String {
+        guard check.kind == .heuristic else { return "mechanical" }
+        return switch trust {
+        case .validated: "heuristic — validated"
+        case .provisional: "heuristic — provisional"
+        case .none, .exact: "heuristic — not validated"
+        }
+    }
+
     static func rate(_ results: CheckResults) -> String? {
         let rate = results.rate()
         guard rate.total > 0 else { return nil }

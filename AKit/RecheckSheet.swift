@@ -9,6 +9,9 @@ struct ReviewAgentFields: View {
     @Binding var harness: LabHarness
     @Binding var modelName: String
     @Binding var effort: String
+    /// Keeps the bound model and effort when it appears (a current choice to change), instead
+    /// of the harness's defaults; a switch of harness still picks the defaults.
+    var keepsValues = false
     /// Models to offer for the harness (Pi: the ones it has credentials for).
     @State private var models: [String] = []
 
@@ -18,7 +21,7 @@ struct ReviewAgentFields: View {
         }
         .task {
             if !model.labHarnesses.contains(harness), let first = model.labHarnesses.first { harness = first }
-            await load(harness)
+            await load(harness, keep: keepsValues)
         }
         .onChange(of: harness) { _, chosen in Task { await load(chosen) } }
         HStack {
@@ -37,10 +40,12 @@ struct ReviewAgentFields: View {
 
     /// The chosen harness's defaults and models. `ProcessRunner` doesn't stop on cancel, so a
     /// slow `pi --list-models` that ends after a switch back to Claude Code is dropped.
-    private func load(_ chosen: LabHarness) async {
-        let defaults = model.defaultAgent(chosen)
-        modelName = defaults.model
-        effort = chosen.efforts.contains(defaults.effort) ? defaults.effort : chosen.efforts[0]
+    private func load(_ chosen: LabHarness, keep: Bool = false) async {
+        if !keep {
+            let defaults = model.defaultAgent(chosen)
+            modelName = defaults.model
+            effort = chosen.efforts.contains(defaults.effort) ? defaults.effort : chosen.efforts[0]
+        }
         models = []
         let found = await model.labModels(for: chosen)
         if harness == chosen { models = found }

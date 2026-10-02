@@ -12,6 +12,7 @@ struct BootstrapFinishedView: View {
     let title: String
     @State private var showReview = false
     @State private var showNotes = false
+    @State private var confirmReopen = false
 
     var body: some View {
         let data = analysis.data
@@ -32,6 +33,14 @@ struct BootstrapFinishedView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .confirmationDialog("Reopen this label for editing?", isPresented: $confirmReopen) {
+            Button("Reopen") { reopen() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(analysis.data.notes(of: entry.sessionKey) != nil
+                 ? "You have seen the model's notes on this session: what you change now is no longer blind, and the recall and precision measured against your label lean toward the model. The label leaves the metrics until you finish it again, and no model may review the session meanwhile."
+                 : "The label goes back to a draft. It leaves the metrics until you finish it again, and no model may review the session meanwhile.")
+        }
         .sheet(isPresented: $showReview) { BootstrapReviewSheet(entry: entry, title: title) }
         .sheet(isPresented: $showNotes) { QueueModelNotesSheet() }
     }
@@ -44,6 +53,11 @@ struct BootstrapFinishedView: View {
                 if let date = label.labeledAt {
                     Text("Labeled \(date.formatted(date: .abbreviated, time: .shortened))").foregroundStyle(.secondary)
                 }
+                Spacer()
+                Button("Reopen for Editing…", systemImage: "pencil") { confirmReopen = true }
+                    .controlSize(.small)
+                    .disabled(activeRun != nil)
+                    .help(activeRun != nil ? "A model review of this session is queued or running" : "Back to a draft: change your notes, then Finish again")
             }
             let steps = [label.deviation.decisiveStep.map { "decided about step #\($0)" },
                          label.deviation.observedStep.map { "visible about step #\($0)" }].compactMap(\.self)
@@ -87,6 +101,17 @@ struct BootstrapFinishedView: View {
         }
         if let notes, let pairing {
             PairingEditor(label: label, notes: notes, pairing: pairing).id(pairing)
+        }
+    }
+
+    /// Saves the label as a draft again (`labeledAt` cleared): the session is reserved again.
+    private func reopen() {
+        guard var label = analysis.data.labels[entry.sessionKey] else { return }
+        label.labeledAt = nil
+        let draft = label
+        analysis.act { env in
+            try Bootstrap.LabelStore(env: env).save(draft)
+            return "Reopened the label as a draft. Finish it again when you are done."
         }
     }
 

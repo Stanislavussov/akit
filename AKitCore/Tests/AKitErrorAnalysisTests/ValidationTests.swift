@@ -112,6 +112,20 @@ struct ValidationTests {
         #expect(test.tpr == 1 && test.tnr == 1)
         #expect(test.checker.hasPrefix("judge|claude-code|opus"))
         #expect(CheckStore(env: env).load(Judges.resultsID(mode.id))?.verdicts.isEmpty == false)
+        // The cost before a pool run counts only what would be judged: not the sessions judged
+        // on unchanged files, all of them for another judge, and a session whose file changed.
+        let all = entries.map { (key: $0.sessionKey, file: $0.transcript) }
+        let judged = Set(try #require(CheckStore(env: env).load(Judges.resultsID(mode.id))).verdicts.keys)
+        #expect(Set(Judges.pending(mode: mode, sessions: all, agent: agent, env: env)) == Set(all.map(\.key)).subtracting(judged))
+        var other = agent
+        other.model = "sonnet"
+        #expect(Judges.pending(mode: mode, sessions: all, agent: other, env: env).count == all.count)
+        let changed = try #require(all.first { judged.contains($0.key) })
+        let handle = try FileHandle(forWritingTo: URL(filePath: changed.file))
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("\n".utf8))
+        try handle.close()
+        #expect(Judges.pending(mode: mode, sessions: all, agent: agent, env: env).contains(changed.key))
         await #expect(throws: Judges.Failure.self) {
             _ = try await Validation.run(mode: mode, set: .test, modes: modes, gate: gate, workFolder: home.appending(path: "w"), env: env)
         }

@@ -119,10 +119,7 @@ public enum Judges {
         let exemplars = train.isEmpty ? [] : try ModeStore(env: env).exemplars(of: mode.id).filter { train.contains($0.sessionKey) }
         for session in sessions {
             let file = URL(filePath: session.file)
-            let info = JSONLines.fileInfo(file)
-            if let old = results.verdicts[session.key], old.fileSize == info.size, old.fileModified == info.modified.timeIntervalSince1970 {
-                continue
-            }
+            if isJudged(results.verdicts[session.key], file: file) { continue }
             do {
                 let verdict = try await judge(mode: mode, exemplars: exemplars, session: session.key, file: file, agent: agent,
                                               gate: gate, runID: runID, workFolder: workFolder, env: env)
@@ -136,6 +133,23 @@ public enum Judges {
             }
         }
         return results
+    }
+
+    /// The sessions `run` would judge now: those without a verdict of this mode version and
+    /// judge on the file as it is. Only reads; for the cost shown before a run.
+    public static func pending(mode: Mode, sessions: [(key: String, file: String)], agent: LabAgent, env: HarnessEnvironment) -> [String] {
+        let results = CheckStore(env: env).load(resultsID(mode.id))
+        let current = results?.modeVersion == mode.version && results?.judge == "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)"
+        return sessions.filter { session in
+            !(current && isJudged(results?.verdicts[session.key], file: URL(filePath: session.file)))
+        }.map(\.key)
+    }
+
+    /// A verdict made on the file as it is now.
+    static func isJudged(_ verdict: CheckVerdict?, file: URL) -> Bool {
+        guard let verdict else { return false }
+        let info = JSONLines.fileInfo(file)
+        return verdict.fileSize == info.size && verdict.fileModified == info.modified.timeIntervalSince1970
     }
 
     /// A pool judge run: where the judge finds the mode, and how many of those cases the notes

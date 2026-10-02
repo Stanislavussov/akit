@@ -45,6 +45,9 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(SelfRebuild.self) private var rebuild
+    /// Error Analysis state lives as long as the window: the last pool judge run and rebuild
+    /// stay when you leave the section, until AKit quits. Lab sheets read it too.
+    @State private var analysis = AnalysisModel()
 
     var body: some View {
         @Bindable var model = model
@@ -70,6 +73,7 @@ struct RootView: View {
             case .brain: BrainView()
             }
         }
+        .environment(analysis)
         // Lab runs start and end outside AKit: keep the badge and the queue current.
         .task { if DebugSnapshot.options == nil { await model.watchLab() } else { await model.reloadLab() } }
         .overlay(alignment: .bottom) {

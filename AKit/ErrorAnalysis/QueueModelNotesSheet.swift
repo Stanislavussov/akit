@@ -15,6 +15,8 @@ struct QueueModelNotesSheet: View {
     @State private var error: String?
     @State private var busy = false
     @State private var estimate = ""
+    /// nil = the one suggested for the home folder.
+    @State private var environment: LabEnvironment?
 
     private var labeled: [BootstrapReservations.Entry] { analysis.data.reservations.filter { $0.labeledAt != nil } }
 
@@ -27,11 +29,15 @@ struct QueueModelNotesSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
             Form {
                 ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort)
+                Picker("Open in", selection: $environment) {
+                    Text("Automatic").tag(LabEnvironment?.none)
+                    ForEach(model.labEnvironments, id: \.self) { Text($0.title).tag(LabEnvironment?.some($0)) }
+                }
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
-            .frame(height: 150)
+            .frame(height: 190)
             Text("Transcripts go out under the sending policy in Settings → Lab; the monthly limit applies.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -66,9 +72,10 @@ struct QueueModelNotesSheet: View {
         error = nil
         let agent = LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
         let sessions = labeled.map { (key: $0.sessionKey, file: $0.transcript) }
+        let environment = environment
         Task {
             do {
-                let run = try await model.queueBootstrapNotes(sessions, agent: agent, environment: nil)
+                let run = try await model.queueBootstrapNotes(sessions, agent: agent, environment: environment)
                 analysis.message = "Queued \(run.spec.title) in the Lab."
                 dismiss()
             } catch {

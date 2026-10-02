@@ -141,7 +141,7 @@ struct NewLabRunSheet: View {
         case .review: target != nil && (harness == .pi || !reviewModel.trimmingCharacters(in: .whitespaces).isEmpty)
         case .replay: repo != nil && draft != nil && checking == nil && !setups.isEmpty
             && !modelName.trimmingCharacters(in: .whitespaces).isEmpty
-        case .analysis: batch.isValid
+        case .analysis: batch.isValid && (batch.sampled ?? 0) > 0
         }
     }
 

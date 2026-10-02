@@ -408,6 +408,9 @@ final class AppModel {
     var labBatches: [String: Batch] = [:]
     /// The control tasks of control runs, by task id (reloaded with the runs).
     var labControlTasks: [String: ControlTask] = [:]
+    /// When the send log last changed: model calls of the Error Analysis screen and the
+    /// `akit` command write it too, not only Lab runs (reloaded with the runs).
+    var labSendsChanged: Date?
 
     /// Lab metrics of one Claude Code session: transcript, then git for its commits.
     func analysis(of session: SessionSummary) async throws -> SessionMetrics {
