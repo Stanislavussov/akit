@@ -102,10 +102,18 @@ extension AKitCLI {
                 case "run":
                     guard let judge = store.judges()[target.id] else { throw Failure(message: "\(target.name) has no judge: akit analysis judge enable \(target.id).") }
                     let pool = NotesStore(env: env).all()
-                    guard try confirmCost(characters: pool.count * 60_000, agent: judge, what: "Judging \(pool.count) sessions for \(target.name)",
-                                          options: options, env: env, out: out) else { return 0 }
+                    let sessions = pool.map { (key: $0.sessionKey, file: $0.transcript) }
+                    // Like the app: only the sessions without a current verdict cost anything.
+                    let pending = Judges.pending(mode: target, sessions: sessions, agent: judge, env: env).count
+                    if pending > 0 {
+                        guard try confirmCost(characters: pending * 60_000, agent: judge,
+                                              what: "Judging \(pending) of \(pool.count) sessions for \(target.name)",
+                                              options: options, env: env, out: out) else { return 0 }
+                    } else {
+                        out("All \(pool.count) sessions have a current verdict for \(target.name); nothing is sent.")
+                    }
                     let gate = try await SendGate.open(agent: judge, env: env)
-                    let results = try await Judges.run(mode: target, sessions: pool.map { ($0.sessionKey, $0.transcript) }, agent: judge, gate: gate,
+                    let results = try await Judges.run(mode: target, sessions: sessions, agent: judge, gate: gate,
                                                        runID: nil, workFolder: analysisWork(env), env: env, out: { LinePrinter.shared.print($0) })
                     let missed = Judges.missedByNotes(results, modeID: target.id, pool: pool, modes: try await modeStore.list())
                     let rate = results.rate()

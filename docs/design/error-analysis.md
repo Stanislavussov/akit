@@ -99,7 +99,7 @@ transcript (see [Sending policy](#sending-policy)), and evidence is never cut aw
   they alone pass the model's budget, the session isn't sent: the notes call and the judge
   refuse it with a clear error, and nothing goes out. In a batch such a session is "too
   long for a digest": counted apart from failures, never retried, and named in the
-  coverage.
+  coverage. A judge that refuses one doesn't fail the session's notes.
 - **No `get_step(n)` tool** (decided): the call stays tool-less, as in `lab.md`, so an
   injected transcript can't make it do anything. The [verifier](#verifier-second-pass)
   checks every quote in code against the full scrubbed transcript.
@@ -375,6 +375,14 @@ feeds a denominator.
   code check, or stay "observed" ("seen in k notes").
 - **Errors.** A judge error inside a batch fails the session (retried by "Retry errors");
   a pool run or a validation run goes on and leaves the session unchecked.
+- **Scrub version.** Each verdict records the scrub version of the transcript it read.
+  A newer scrubber doesn't drop a judge's verdicts: they keep counting (reports,
+  validation, Fixes) until each session is judged again, the next time a batch, a pool
+  run or a validation reaches it, and the cost shown before a run counts them. A verdict
+  made before the version was recorded counts as current: it is still evidence about the
+  same session, and judging every session again after an upgrade would spend money
+  nobody asked to spend. Another mode version, judge model or prompt starts over.
+
 ## Validation
 
 This applies to every LLM judge and every heuristic code check (matching is a router and is
@@ -514,7 +522,7 @@ alike:
   Changing one step's model changes its key and the keys of the steps that read its
   output, and nothing else. A new scrub version changes every key: the next review of each
   session (a batch, an ad-hoc review) re-runs its notes and verifier once, and judges
-  judge again.
+  judge it again (see [Checks](#checks): their old verdicts count until then).
 
 ## Models and budget
 

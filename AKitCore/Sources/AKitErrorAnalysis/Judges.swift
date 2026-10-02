@@ -99,14 +99,15 @@ public enum Judges {
         let info = JSONLines.fileInfo(file)
         return CheckVerdict(positive: parsed.present, steps: parsed.steps ?? [], detail: parsed.reason.map(SecretFilter.masked),
                             toughCall: parsed.toughCall ?? false, severe: parsed.severe ?? false, by: .judge, version: promptVersion,
-                            fileSize: info.size, fileModified: info.modified.timeIntervalSince1970)
+                            fileSize: info.size, fileModified: info.modified.timeIntervalSince1970, scrubVersion: Scrubber.version)
     }
 
     /// Judges sessions and saves the verdicts with the judge's results (skipping sessions whose
     /// file, mode version, judge and scrub version are unchanged). Returns the results. A
     /// session the judge fails on stays unchecked and the run goes on (a pool run, validation);
     /// with `stopOnError` the error is thrown, so a batch marks the session as an error that
-    /// "Retry errors" picks up.
+    /// "Retry errors" picks up. A session too long for one judge call is never thrown: no retry
+    /// makes it fit, and it doesn't stop the batch from counting the session's notes.
     @discardableResult
     public static func run(mode: Mode, sessions: [(key: String, file: String)], agent: LabAgent, gate: SendGate, runID: String?,
                            workFolder: URL, env: HarnessEnvironment, stopOnError: Bool = false,
@@ -115,12 +116,13 @@ public enum Judges {
         let id = resultsID(mode.id)
         let judgeConfig = config(agent)
         // Another mode version or judge starts over; verdicts of others are merged one by one,
-        // so two batch workers judging at once never drop each other's.
+        // so two batch workers judging at once never drop each other's. Another scrub version
+        // doesn't: its verdicts stay and count until each session is judged again.
         var results = try store.update(id) { results in
-            if results.modeVersion != mode.version || results.judge != judgeConfig {
+            if results.modeVersion != mode.version || !sameJudge(results.judge, judgeConfig) {
                 results = CheckResults(modeID: id, modeVersion: mode.version)
-                results.judge = judgeConfig
             }
+            results.judge = judgeConfig
         }
         let train = Set(ValidationStore(env: env).splits()[mode.id]?.train ?? [])
         // Few-shot examples come only from train; with no train labels yet, none.
@@ -136,32 +138,41 @@ public enum Judges {
             } catch let failure as SendAccounts.Failure {
                 throw failure
             } catch {
-                if stopOnError { throw error }
+                if stopOnError, !BatchRunner.isTooLong(error.localizedDescription) { throw error }
                 out("\(session.key): \(error.localizedDescription)")
             }
         }
         return results
     }
 
-    /// The sessions `run` would judge now: those without a verdict of this mode version and
-    /// judge on the file as it is. Only reads; for the cost shown before a run.
+    /// The sessions `run` would judge now: those without a current verdict of this mode
+    /// version and judge on the file as it is. Only reads; for the cost shown before a run.
     public static func pending(mode: Mode, sessions: [(key: String, file: String)], agent: LabAgent, env: HarnessEnvironment) -> [String] {
         let results = CheckStore(env: env).load(resultsID(mode.id))
-        let current = results?.modeVersion == mode.version && results?.judge == config(agent)
+        let current = results?.modeVersion == mode.version && sameJudge(results?.judge, config(agent))
         return sessions.filter { session in
             !(current && isJudged(results?.verdicts[session.key], file: URL(filePath: session.file)))
         }.map(\.key)
     }
 
-    /// What a results file was judged with. The judge reads the scrubbed transcript: another
-    /// scrub version judges again.
+    /// What a results file was judged with: harness, model and prompt. The scrub version is
+    /// kept per verdict, so a scrubber change re-judges each session lazily instead of
+    /// dropping every verdict at once.
     static func config(_ agent: LabAgent) -> String {
-        "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)|scrub \(Scrubber.version)"
+        "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)"
     }
 
-    /// A verdict made on the file as it is now.
+    /// Files written while the scrub version was part of the config (`…|scrub 4`) have the same judge.
+    static func sameJudge(_ stored: String?, _ config: String) -> Bool {
+        stored.map { $0.components(separatedBy: "|scrub ").first == config } ?? false
+    }
+
+    /// A verdict made on the file as it is now, from a transcript scrubbed as now. A verdict
+    /// that doesn't record its scrub version (made before it was kept) counts as current: it is
+    /// still valid evidence about the session, the scrubber only masks a little more or less,
+    /// and judging every session again after an upgrade would cost money nobody asked to spend.
     static func isJudged(_ verdict: CheckVerdict?, file: URL) -> Bool {
-        guard let verdict else { return false }
+        guard let verdict, (verdict.scrubVersion ?? Scrubber.version) >= Scrubber.version else { return false }
         let info = JSONLines.fileInfo(file)
         return verdict.fileSize == info.size && verdict.fileModified == info.modified.timeIntervalSince1970
     }

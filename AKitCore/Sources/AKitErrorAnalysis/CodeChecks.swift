@@ -26,9 +26,12 @@ public struct CheckVerdict: Codable, Hashable, Sendable {
     /// The file state it was decided on: an unchanged file isn't checked again.
     public var fileSize: Int?
     public var fileModified: Double?
+    /// A judge's: the `Scrubber.version` of the transcript it read. nil in verdicts made before
+    /// it was recorded, which count as current (`Judges.isJudged`).
+    public var scrubVersion: Int?
 
     public init(positive: Bool, steps: [Int] = [], detail: String? = nil, toughCall: Bool = false, severe: Bool = false,
-                by: Checker = .code, version: Int, fileSize: Int? = nil, fileModified: Double? = nil) {
+                by: Checker = .code, version: Int, fileSize: Int? = nil, fileModified: Double? = nil, scrubVersion: Int? = nil) {
         self.positive = positive
         self.steps = steps
         self.detail = detail
@@ -38,6 +41,7 @@ public struct CheckVerdict: Codable, Hashable, Sendable {
         self.version = version
         self.fileSize = fileSize
         self.fileModified = fileModified
+        self.scrubVersion = scrubVersion
     }
 }
 
