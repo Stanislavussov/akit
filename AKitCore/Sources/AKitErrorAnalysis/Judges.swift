@@ -14,12 +14,29 @@ public enum Judges {
         public var errorDescription: String? { message }
     }
 
-    /// The modes that may get a judge: in the top 3 by "seen in k notes" and with a fix in
-    /// draft or applied (or matching the user's choice through `pinned`).
-    public static func eligible(_ modes: [Mode], seen: [String: Int]) -> [Mode] {
+    /// The modes that may get a judge: in the top 3 by "seen in k notes" or by cost, and with a
+    /// fix in draft or applied. Notes give their cost in tokens or in steps, so "by cost" is the
+    /// top 3 by the tokens and the top 3 by the steps of the notes seen in the mode (`cost`).
+    public static func eligible(_ modes: [Mode], seen: [String: Int], cost: [String: (tokens: Int, steps: Int)] = [:]) -> [Mode] {
         let current = modes.filter { $0.isCurrent && $0.status == .active }
-        let top = Set(current.sorted { (seen[$0.id] ?? 0, $1.id) > (seen[$1.id] ?? 0, $0.id) }.prefix(3).map(\.id))
-        return current.filter { top.contains($0.id) && ($0.fix == .draft || $0.fix == .applied) }
+        func top(_ value: (String) -> Int, recorded: Bool) -> [String] {
+            current.filter { !recorded || value($0.id) > 0 }.sorted { (value($0.id), $1.id) > (value($1.id), $0.id) }.prefix(3).map(\.id)
+        }
+        let picked = Set(top({ seen[$0] ?? 0 }, recorded: false) + top({ cost[$0]?.tokens ?? 0 }, recorded: true)
+                         + top({ cost[$0]?.steps ?? 0 }, recorded: true))
+        return current.filter { picked.contains($0.id) && ($0.fix == .draft || $0.fix == .applied) }
+    }
+
+    /// The recorded cost of the notes seen in each mode (after merges), summed.
+    public static func cost(_ pool: [SessionNotes], modes: [Mode]) -> [String: (tokens: Int, steps: Int)] {
+        let notes = Dictionary(pool.flatMap { session in session.notes.map { (NoteRef(sessionKey: session.sessionKey, noteID: $0.id), $0) } },
+                               uniquingKeysWith: { first, _ in first })
+        return Matching.seen(pool, modes: modes).byMode.mapValues { refs in
+            refs.reduce(into: (tokens: 0, steps: 0)) { sum, ref in
+                sum.tokens += notes[ref]?.costTokens ?? 0
+                sum.steps += notes[ref]?.costSteps ?? 0
+            }
+        }
     }
 
     static let system = """
@@ -77,13 +94,18 @@ public enum Judges {
     }
 
     /// Judges sessions and saves the verdicts with the judge's results (skipping sessions whose
-    /// file, mode version and judge are unchanged). Returns the results.
+    /// file, mode version, judge and scrub version are unchanged). Returns the results. A
+    /// session the judge fails on stays unchecked and the run goes on (a pool run, validation);
+    /// with `stopOnError` the error is thrown, so a batch marks the session as an error that
+    /// "Retry errors" picks up.
     @discardableResult
     public static func run(mode: Mode, sessions: [(key: String, file: String)], agent: LabAgent, gate: SendGate, runID: String?,
-                           workFolder: URL, env: HarnessEnvironment, out: @escaping @Sendable (String) -> Void = { _ in }) async throws -> CheckResults {
+                           workFolder: URL, env: HarnessEnvironment, stopOnError: Bool = false,
+                           out: @escaping @Sendable (String) -> Void = { _ in }) async throws -> CheckResults {
         let store = CheckStore(env: env)
         let id = resultsID(mode.id)
-        let judgeConfig = "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)"
+        // The judge reads the scrubbed transcript: another scrub version judges again.
+        let judgeConfig = "\(agent.harness.rawValue)|\(agent.model)|\(promptVersion)|scrub \(Scrubber.version)"
         // Another mode version or judge starts over; verdicts of others are merged one by one,
         // so two batch workers judging at once never drop each other's.
         var results = try store.update(id) { results in
@@ -105,10 +127,11 @@ public enum Judges {
                 let verdict = try await judge(mode: mode, exemplars: exemplars, session: session.key, file: file, agent: agent,
                                               gate: gate, runID: runID, workFolder: workFolder, env: env)
                 results = try store.update(id) { $0.verdicts[session.key] = verdict }
-                out("\(session.key): \(verdict.positive ? "present" : "absent")")
+                out("\(session.key): \(verdict.positive ? "present" : "absent")\(verdict.severe ? ", severe" : "")\(verdict.toughCall ? ", tough call" : "")")
             } catch let failure as SendAccounts.Failure {
                 throw failure
             } catch {
+                if stopOnError { throw error }
                 out("\(session.key): \(error.localizedDescription)")
             }
         }

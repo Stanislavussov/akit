@@ -86,9 +86,11 @@ extension AKitCLI {
                 switch action {
                 case "enable":
                     let agent = try options.agent(env: env)
-                    let seen = Matching.seen(NotesStore(env: env).all(), modes: try await modeStore.list()).byMode.mapValues(\.count)
-                    guard Judges.eligible(try await modeStore.list(), seen: seen).contains(where: { $0.id == target.id }) else {
-                        throw Failure(message: "Only a mode in the top 3 by notes with a fix drafted or applied gets a judge; "
+                    let modes = try await modeStore.list()
+                    let pool = NotesStore(env: env).all()
+                    let seen = Matching.seen(pool, modes: modes).byMode.mapValues(\.count)
+                    guard Judges.eligible(modes, seen: seen, cost: Judges.cost(pool, modes: modes)).contains(where: { $0.id == target.id }) else {
+                        throw Failure(message: "Only a mode in the top 3 by notes or by cost with a fix drafted or applied gets a judge; "
                                           + "\(target.name) isn't one. Other modes get a code check or stay \"seen in k notes\".")
                     }
                     try store.setJudge(agent, for: target.id)

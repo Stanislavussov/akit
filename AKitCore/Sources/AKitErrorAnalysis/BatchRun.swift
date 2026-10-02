@@ -314,7 +314,7 @@ enum BatchRunner {
                                          origin: notes.origin, runID: batch.runID, workFolder: work, env: env)
             for judge in judges {
                 try await Judges.run(mode: judge.mode, sessions: [(key, session.pick.file)], agent: judge.agent, gate: judge.gate,
-                                     runID: batch.runID, workFolder: work, env: env)
+                                     runID: batch.runID, workFolder: work, env: env, stopOnError: true)
             }
             await state.update(key) {
                 $0.steps = ["notes", "verifier", "matching"] + (judges.isEmpty ? [] : ["checks"])
