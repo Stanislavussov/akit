@@ -54,7 +54,7 @@ struct LabControlSection: View {
                 Text("The mode shows at " + control.checkSteps.map { "#\($0)" }.joined(separator: ", ")).foregroundStyle(.secondary)
             }
             if control.flagged {
-                Label("Flagged: comparisons leave this cell out.", systemImage: "flag")
+                Label("Flagged: comparisons count this cell as failed.", systemImage: "flag")
                     .foregroundStyle(.orange)
                     .fontWeight(.medium)
             }

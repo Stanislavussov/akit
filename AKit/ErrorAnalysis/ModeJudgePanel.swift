@@ -40,7 +40,7 @@ struct ModeJudgePanel: View {
 
     @ViewBuilder private var judgeRow: some View {
         let seen = data.seenByMode.mapValues(\.count)
-        let eligible = Judges.eligible(data.modes, seen: seen).contains { $0.id == mode.id }
+        let eligible = Judges.eligible(data.modes, seen: seen, cost: Judges.cost(data.pool, modes: data.modes)).contains { $0.id == mode.id }
         if let judge {
             HStack {
                 Label("Judged by \(judge.label)", systemImage: "person.badge.shield.checkmark")
@@ -69,7 +69,7 @@ struct ModeJudgePanel: View {
             }
         }
         if !eligible {
-            Text("Only a mode in the top 3 by notes with a fix drafted or applied gets a judge; this one isn't. Other modes get a code check or stay \"seen in k notes\".")
+            Text("Only a mode in the top 3 by notes or by cost (the tokens or the steps its notes record) with a fix drafted or applied gets a judge; this one isn't. Other modes get a code check or stay \"seen in k notes\".")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

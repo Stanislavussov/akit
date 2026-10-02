@@ -18,10 +18,13 @@ extension AnalysisSend {
             let modes = try await store.list()
             let items = Clustering.unmatchedItems(NotesStore(env: env).all(), modes: modes)
             guard !items.isEmpty else { return "No notes to cluster." }
+            var leftOut: [String] = []
             let candidates = try await Clustering.cluster(items, existing: modes, rejected: try await store.rejectedNames(), agent: agent,
-                                                          gate: gate, runID: nil, workFolder: AnalysisModel.workFolder(env), env: env)
+                                                          gate: gate, runID: nil, workFolder: AnalysisModel.workFolder(env), env: env,
+                                                          out: { leftOut.append($0) })
             let created = try await Clustering.apply(candidates, store: store, env: env)
-            return created.isEmpty ? "No new candidates." : "New: " + created.map { "\($0.name) (\($0.status.title))" }.joined(separator: ", ") + "."
+            return withLeftOut(created.isEmpty ? "No new candidates." : "New: " + created.map { "\($0.name) (\($0.status.title))" }.joined(separator: ", ") + ".",
+                               leftOut)
         }
     }
 
@@ -38,9 +41,10 @@ extension AnalysisSend {
             guard let mode = try await ModeStore(env: env).mode(id) else { throw AnalysisFailure( "There is no mode \(id).") }
             let pool = NotesStore(env: env).all()
             let origins = Dictionary(pool.map { ($0.sessionKey, $0.origin) }, uniquingKeysWith: { first, _ in first })
+            var leftOut: [String] = []
             let fits = try await Matching.retroMatch(mode: mode, pool: pool, origins: origins, agent: agent, gate: gate,
-                                                     workFolder: AnalysisModel.workFolder(env), env: env)
-            return "\(fits.count) notes fit \(mode.name)."
+                                                     workFolder: AnalysisModel.workFolder(env), env: env, out: { leftOut.append($0) })
+            return withLeftOut("\(fits.count) notes fit \(mode.name).", leftOut)
         }
     }
 
@@ -75,11 +79,13 @@ extension AnalysisSend {
             let labels = Bootstrap.LabelStore(env: env).all().filter { $0.labeledAt != nil }
             guard !labels.isEmpty else { throw AnalysisFailure( "Label some sessions first.") }
             let store = ModeStore(env: env)
+            var leftOut: [String] = []
             let candidates = try await Bootstrap.firstModes(labels: labels, pool: NotesStore(env: env).all(), existing: try await store.list(),
                                                             rejected: try await store.rejectedNames(), agent: agent, gate: gate,
-                                                            workFolder: AnalysisModel.workFolder(env), env: env)
+                                                            workFolder: AnalysisModel.workFolder(env), env: env, out: { leftOut.append($0) })
             let created = try await Clustering.apply(candidates, store: store, env: env)
-            return created.isEmpty ? "No new candidates." : "New: " + created.map(\.name).joined(separator: ", ") + ". Confirm or edit them, then map your notes."
+            return withLeftOut(created.isEmpty ? "No new candidates." : "New: " + created.map(\.name).joined(separator: ", ") + ". Confirm or edit them, then map your notes.",
+                               leftOut)
         }
     }
 
@@ -94,10 +100,17 @@ extension AnalysisSend {
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in
             guard let mode = try await ModeStore(env: env).mode(id) else { throw AnalysisFailure( "There is no mode \(id).") }
+            var leftOut: [String] = []
             let finds = try await Bootstrap.findSimilar(mode: mode, labels: Bootstrap.LabelStore(env: env).all(), pool: NotesStore(env: env).all(),
                                                         book: LabelBookStore(env: env).load(), agent: agent, gate: gate,
-                                                        workFolder: AnalysisModel.workFolder(env), env: env)
-            return finds.isEmpty ? "No similar cases found." : "\(finds.count) possible cases of \(mode.name) wait for your verdict."
+                                                        workFolder: AnalysisModel.workFolder(env), env: env, out: { leftOut.append($0) })
+            return withLeftOut(finds.isEmpty ? "No similar cases found." : "\(finds.count) possible cases of \(mode.name) wait for your verdict.",
+                               leftOut)
         }
+    }
+
+    /// The result, with what the call left out (notes whose session may not go to that model).
+    static func withLeftOut(_ result: String, _ leftOut: [String]) -> String {
+        ([result] + leftOut.map { $0.hasSuffix(".") ? $0 : $0 + "." }).joined(separator: " ")
     }
 }

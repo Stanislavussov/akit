@@ -1,16 +1,20 @@
 import AKitErrorAnalysis
+import AKitFoundation
 import AKitLab
 import SwiftUI
 
 /// `akit analysis control compare`: pass@1 and pass^k per setup with Wilson intervals, and
-/// for each variant the paired bootstrap over tasks and its verdict. Flagged cells (dropped or
-/// changed tests, a leak) are left out and counted.
+/// for each variant the paired bootstrap over tasks and its verdict, guarded by the fix's
+/// production signal. Flagged cells (dropped or changed tests, a leak) count as failed.
 struct ControlComparisonView: View {
     @Environment(AppModel.self) private var model
     let tasks: [ControlTask]
-    /// The comparison of the cells it was computed for: the bootstrap runs off the main
-    /// thread, once per change of the finished cells.
+    /// The comparison of the cells it was computed for: the bootstrap and the production signal
+    /// (the mode's check before and after the fix) run off the main thread, once per change of
+    /// the finished cells.
     @State private var computed: (cells: [ControlComparison.Cell], comparison: ControlComparison)?
+    /// Why the production signal couldn't be read; the comparison then has none.
+    @State private var productionError: String?
 
     var body: some View {
         let ids = Set(tasks.map(\.id))
@@ -30,8 +34,15 @@ struct ControlComparisonView: View {
         }
         .task(id: cells) {
             guard computed?.cells != cells else { return }
-            let comparison = await Task.detached { ControlComparison.compare(cells) }.value
-            computed = (cells, comparison)
+            let tasks = tasks
+            let result = await Task.detached { () -> (ControlComparison, String?) in
+                var production: FixEvaluation?
+                var failure: String?
+                do { production = try await ControlComparison.production(for: tasks, env: .current) } catch { failure = error.localizedDescription }
+                return (ControlComparison.compare(cells, production: production), failure)
+            }.value
+            computed = (cells, result.0)
+            productionError = result.1
         }
     }
 
@@ -61,7 +72,15 @@ struct ControlComparisonView: View {
             if open > 0 {
                 Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
             }
-            Text("Helped: at least 95% of the bootstrap over tasks on improvement, with 3+ repeats of every task and 15+ cells a side. Fixed before the run.")
+            if let productionError {
+                Label("The production signal couldn't be read: \(productionError)", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Helped: at least 95% of the bootstrap over tasks on improvement, with 3+ repeats of every task and 15+ cells a side, "
+                 + "and not worse in production: at most 50% that the mode's failure rate rose after the fix was applied, with 15+ checked sessions on each side. "
+                 + "Without production data (no applied fix yet) there is no conclusion. Fixed before the run.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -84,7 +103,7 @@ struct ControlComparisonView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(row.cells)").monospacedDigit()
                 if row.flagged > 0 {
-                    Label("\(row.flagged) flagged, left out", systemImage: "flag").font(.caption).foregroundStyle(.orange)
+                    Label("\(row.flagged) flagged, counted as failed", systemImage: "flag").font(.caption).foregroundStyle(.orange)
                 }
             }
         }
