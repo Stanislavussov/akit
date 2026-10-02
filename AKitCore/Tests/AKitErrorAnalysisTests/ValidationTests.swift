@@ -96,7 +96,7 @@ struct ValidationTests {
             labels.append(Bootstrap.Label(sessionKey: "claude:\(id)", transcript: file.path, notes: index % 2 == 0 ? [h1] : [], outcome: .no,
                                           labeledAt: .now))
         }
-        try BootstrapReservations(env: env).save(entries)
+        try BootstrapReservations(env: env).update { $0 += entries }
         for label in labels { try Bootstrap.LabelStore(env: env).save(label) }
         var book = LabelBook()
         for label in labels where !label.notes.isEmpty { book.mapping["\(label.sessionKey)#h1"] = "large-file-read-whole" }

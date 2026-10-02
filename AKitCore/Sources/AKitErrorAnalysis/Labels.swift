@@ -157,18 +157,24 @@ extension Bootstrap {
         """#
 
     /// Searches the pool for cases similar to the user's notes mapped to `mode`; every find is
-    /// stored unreviewed, for the user to accept or reject (a cheap label for checks).
+    /// stored unreviewed, for the user to accept or reject (a cheap label for checks). Notes
+    /// whose session may not go to the gate's destination are left out, and `out` says how many.
     @discardableResult
     public static func findSimilar(mode: Mode, labels: [Label], pool: [SessionNotes], book: LabelBook, agent: LabAgent, gate: SendGate,
-                                   workFolder: URL, env: HarnessEnvironment) async throws -> [LabelBook.Find] {
-        let examples = labels.flatMap { label in
+                                   workFolder: URL, env: HarnessEnvironment, out: (String) -> Void = { _ in }) async throws -> [LabelBook.Find] {
+        let mapped = labels.flatMap { label in
             label.notes.filter { book.mapping["\(label.sessionKey)#\($0.id)"] == mode.id }.map { (label, $0) }
         }
+        let examples = mapped.filter { gate.decide(SessionNotes.origin(sessionKey: $0.0.sessionKey, transcript: $0.0.transcript)).allowed }
         guard let first = examples.first else {
-            throw Failure(message: "None of your bootstrap notes is mapped to \(mode.name) yet.")
+            throw Failure(message: mapped.isEmpty ? "None of your bootstrap notes is mapped to \(mode.name) yet."
+                                                  : "None of your notes mapped to \(mode.name) may be sent to \(agent.label).")
         }
         let labeled = Set(labels.map(\.sessionKey))
-        let candidates = Clustering.items(pool.filter { !labeled.contains($0.sessionKey) })
+        let pooled = Clustering.items(pool.filter { !labeled.contains($0.sessionKey) })
+        let candidates = pooled.filter { gate.decide($0.origin).allowed }
+        let leftOut = mapped.count - examples.count + pooled.count - candidates.count
+        if leftOut > 0 { out("\(leftOut) notes are left out: their sessions may not be sent to \(agent.label).") }
         guard !candidates.isEmpty else { return [] }
         let shown = examples.map { "- \($0.1.description)\n  quote: \($0.1.quote)" }.joined(separator: "\n")
         var finds: [LabelBook.Find] = []

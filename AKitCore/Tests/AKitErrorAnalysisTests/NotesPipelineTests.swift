@@ -232,8 +232,8 @@ struct NotesPipelineTests {
     @Test func reservedSessionsAreNotReviewed() async throws {
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
         let file = try session()
-        try BootstrapReservations(env: env).save([.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
-                                                         transcript: file.path)])
+        try BootstrapReservations(env: env).update { $0 += [.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
+                                                         transcript: file.path)] }
         let run = try await queueReview()
         let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, execute: AnalysisRuns.execute,
                                        out: { _ in })
@@ -245,8 +245,8 @@ struct NotesPipelineTests {
     @Test func agentReviewsOfReservedSessionsAreRefusedToo() async throws {
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
         let file = try session()
-        try BootstrapReservations(env: env).save([.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
-                                                         transcript: file.path)])
+        try BootstrapReservations(env: env).update { $0 += [.init(sessionKey: "claude:" + file.deletingPathExtension().lastPathComponent,
+                                                         transcript: file.path)] }
         let run = try await LabRuns.newReview(transcript: file, title: "Fix Foo",
                                               agent: LabAgent(harness: .claudeCode, model: "opus", effort: "high", mode: .agent),
                                               language: .english, environment: .background, akit: URL(filePath: "/usr/bin/true"), env: env)
