@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitModel
 import AKitSessions
 import Foundation
 
@@ -26,6 +27,9 @@ public struct SessionKey: Hashable, Codable, Sendable, CustomStringConvertible {
         guard !harness.isEmpty, !nativeID.isEmpty else { return nil }
         self.init(harness: harness, nativeID: nativeID)
     }
+
+    /// The harness of a key's session: Pi for `pi:`, else Claude Code (the index reads only those).
+    public static func harness(of key: String) -> HarnessID { key.hasPrefix("pi:") ? .pi : .claudeCode }
 
     /// The key the index gives this session; nil for a harness the index doesn't read.
     /// Pi's key comes from the file's `session` header, so it reads the file's first line.

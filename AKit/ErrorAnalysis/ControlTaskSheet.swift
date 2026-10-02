@@ -228,7 +228,7 @@ struct NewControlTaskSheet: View {
         guard let transcript = source.transcript else {
             throw AnalysisFailure("\(source.key) isn't in the session index. Import sessions on the Sessions screen first.")
         }
-        return NotesPipeline.Target(harness: source.key.hasPrefix("pi:") ? .pi : .claudeCode, file: URL(filePath: transcript), title: source.title,
+        return NotesPipeline.Target(harness: SessionKey.harness(of: source.key), file: URL(filePath: transcript), title: source.title,
                                     project: source.project.map { URL(filePath: $0, directoryHint: .isDirectory) }).summary
     }
 }

@@ -47,7 +47,7 @@ public enum Judges {
     /// Judges one session. Exemplars come only from the train split.
     public static func judge(mode: Mode, exemplars: [Exemplar], session key: String, file: URL, agent: LabAgent, gate: SendGate,
                              runID: String?, workFolder: URL, env: HarnessEnvironment) async throws -> CheckVerdict {
-        let harness: HarnessID = key.hasPrefix("pi:") ? .pi : .claudeCode
+        let harness = SessionKey.harness(of: key)
         let summary = NotesPipeline.Target(harness: harness, file: file).summary
         let items = try SessionReader.transcript(of: summary).items.map {
             TranscriptItem(id: $0.id, kind: $0.kind, text: gate.scrub($0.text).text, timestamp: $0.timestamp)

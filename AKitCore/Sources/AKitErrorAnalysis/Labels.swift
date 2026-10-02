@@ -200,7 +200,6 @@ extension Bootstrap {
 extension SessionNotes {
     /// The origin of a session from its key and transcript path.
     public static func origin(sessionKey: String, transcript: String) -> SendOrigin {
-        let harness = SessionKey(parsing: sessionKey).flatMap { IndexedSessions.harness($0.harness) } ?? .claudeCode
-        return SendOrigin.of(harness: harness, sessionFile: URL(filePath: transcript))
+        SendOrigin.of(harness: SessionKey.harness(of: sessionKey), sessionFile: URL(filePath: transcript))
     }
 }

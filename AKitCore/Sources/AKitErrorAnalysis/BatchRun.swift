@@ -303,7 +303,7 @@ enum BatchRunner {
                         judges: [(mode: Mode, agent: LabAgent, gate: SendGate)], notesGate: SendGate, matchingGate: SendGate, state: State, work: URL, env: HarnessEnvironment,
                         out: @escaping @Sendable (String) -> Void) async {
         let key = session.pick.sessionKey
-        let harness: HarnessID = key.hasPrefix("pi:") ? .pi : .claudeCode
+        let harness = SessionKey.harness(of: key)
         let target = NotesPipeline.Target(harness: harness, file: URL(filePath: session.pick.file))
         do {
             guard FileManager.default.fileExists(atPath: session.pick.file) else { throw Batches.Failure(message: "The session file is gone.") }

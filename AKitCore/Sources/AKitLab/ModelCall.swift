@@ -26,21 +26,21 @@ public enum ModelCall {
         public var scrubbed: [String: Int]?
 
         public init(agent: LabAgent, purpose: String, system: String, input: String, schema: String? = nil, origins: [SendOrigin],
-                    runID: String? = nil) {
-            self.init(agent: agent, purpose: purpose, system: system, input: input, schema: schema, origin: .claudeSession, runID: runID)
-            self.origins = origins
-        }
-
-        public init(agent: LabAgent, purpose: String, system: String, input: String, schema: String? = nil, origin: SendOrigin,
                     session: String? = nil, runID: String? = nil) {
             self.agent = agent
             self.purpose = purpose
             self.system = system
             self.input = input
             self.schema = schema
-            origins = [origin]
+            self.origins = origins
             self.session = session
             self.runID = runID
+        }
+
+        public init(agent: LabAgent, purpose: String, system: String, input: String, schema: String? = nil, origin: SendOrigin,
+                    session: String? = nil, runID: String? = nil) {
+            self.init(agent: agent, purpose: purpose, system: system, input: input, schema: schema, origins: [origin], session: session,
+                      runID: runID)
         }
     }
 

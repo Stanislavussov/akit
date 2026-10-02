@@ -194,9 +194,6 @@ public struct SessionNotes: Codable, Hashable, Sendable {
     /// Where the session's data came from, for the sending policy of calls over its notes.
     public var origin: SendOrigin { Self.origin(sessionKey: sessionKey, transcript: transcript) }
 
-    /// The route of a note, if matching has routed it.
-    public func route(of noteID: String) -> Route? { routes?.first { $0.noteID == noteID } }
-
     /// Notes in the pool: accepted by the verifier.
     public var accepted: [Note] { notes.filter(\.isAccepted) }
     public var rejected: [Note] { notes.filter { !$0.isAccepted } }

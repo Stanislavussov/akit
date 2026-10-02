@@ -293,7 +293,7 @@ public enum Bootstrap {
     /// A reserved session's transcript items, as the labeling screen shows them (scrubbed with
     /// the user's own patterns too, like everything a model would see).
     public static func items(transcript: String, sessionKey: String, env: HarnessEnvironment) throws -> [TranscriptItem] {
-        let harness: HarnessID = sessionKey.hasPrefix("pi:") ? .pi : .claudeCode
+        let harness = SessionKey.harness(of: sessionKey)
         let settings = LabSettings.load(env: env)
         let summary = NotesPipeline.Target(harness: harness, file: URL(filePath: transcript)).summary
         return try SessionReader.transcript(of: summary).items.map {
@@ -306,7 +306,7 @@ public enum Bootstrap {
         var result: [String: [Int: Phase]] = [:]
         for label in labels {
             let file = URL(filePath: label.transcript)
-            let harness: HarnessID = label.sessionKey.hasPrefix("pi:") ? .pi : .claudeCode
+            let harness = SessionKey.harness(of: label.sessionKey)
             let target = NotesPipeline.Target(harness: harness, file: file)
             if let transcript = try? SessionReader.transcript(of: target.summary) {
                 result[label.sessionKey] = PhaseClassifier.phases(of: transcript.items)

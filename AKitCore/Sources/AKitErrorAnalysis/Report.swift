@@ -269,7 +269,7 @@ public enum Reports {
     public static func phases(of batch: Batch) -> [String: [Int: Phase]] {
         var result: [String: [Int: Phase]] = [:]
         for session in batch.sessions where session.status == .done {
-            let harness: HarnessID = session.pick.sessionKey.hasPrefix("pi:") ? .pi : .claudeCode
+            let harness = SessionKey.harness(of: session.pick.sessionKey)
             let summary = NotesPipeline.Target(harness: harness, file: URL(filePath: session.pick.file)).summary
             if let transcript = try? SessionReader.transcript(of: summary) {
                 result[session.pick.sessionKey] = PhaseClassifier.phases(of: transcript.items)

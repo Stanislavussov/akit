@@ -196,7 +196,7 @@ final class AnalysisModel {
 /// A session of a bootstrap reservation or a label as the readers want it.
 extension BootstrapReservations.Entry {
     var summary: SessionSummary {
-        NotesPipeline.Target(harness: sessionKey.hasPrefix("pi:") ? .pi : .claudeCode, file: URL(filePath: transcript)).summary
+        NotesPipeline.Target(harness: SessionKey.harness(of: sessionKey), file: URL(filePath: transcript)).summary
     }
 }
 
