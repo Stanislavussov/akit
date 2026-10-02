@@ -198,8 +198,11 @@ extension Bootstrap {
 }
 
 extension SessionNotes {
-    /// The origin of a session from its key and transcript path.
-    public static func origin(sessionKey: String, transcript: String) -> SendOrigin {
-        SendOrigin.of(harness: SessionKey.harness(of: sessionKey), sessionFile: URL(filePath: transcript))
+    /// The origin of a session from its key and transcript path. Without the file a Pi
+    /// session has no known providers, so only the allowed list lets it out.
+    public static func origin(sessionKey: String, transcript: String?) -> SendOrigin {
+        let harness = SessionKey.harness(of: sessionKey)
+        guard let transcript else { return harness == .pi ? .piSession(providers: []) : .claudeSession }
+        return SendOrigin.of(harness: harness, sessionFile: URL(filePath: transcript))
     }
 }

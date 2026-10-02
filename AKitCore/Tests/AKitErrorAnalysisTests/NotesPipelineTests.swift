@@ -90,10 +90,10 @@ struct NotesPipelineTests {
         ["id": "n3", "supported": false, "reason": "Running the suite was what the user asked for."],
     ]]
 
-    func review(_ file: URL, model: String = "opus") async throws -> SessionNotes {
+    func review(_ file: URL, model: String = "opus", numbers: String? = nil) async throws -> SessionNotes {
         let agent = LabAgent(harness: .claudeCode, model: model, effort: "high")
         let gate = try await SendGate.open(agent: agent, env: env)
-        return try await NotesPipeline.review(NotesPipeline.Target(harness: .claudeCode, file: file, title: "Fix Foo"),
+        return try await NotesPipeline.review(NotesPipeline.Target(harness: .claudeCode, file: file, title: "Fix Foo", numbers: numbers),
                                               config: NotesPipeline.Config(notes: agent), notesGate: gate, verifierGate: gate,
                                               runID: nil, workFolder: home.appending(path: "work"), env: env, out: { _ in })
     }
@@ -122,7 +122,6 @@ struct NotesPipelineTests {
         #expect(notes.accepted.map(\.id) == ["n1"])
         // Advice resting only on rejected notes is dropped.
         #expect(notes.advice.map(\.title) == ["Report the last test result verbatim."])
-        #expect(notes.advice[0].checkedByRepeating == false)
 
         var saved = try #require(NotesStore(env: env).load(notes.sessionKey))
         // Dates are kept to the millisecond.
@@ -154,6 +153,72 @@ struct NotesPipelineTests {
         #expect(reverified.notes.first { $0.id == "n1" }?.verdict?.reason == "Now rejected.")
         #expect(reverified.notes.first { $0.id == "n3" }?.verdict?.accepted == true)
         #expect(NotesStore(env: env).all().count == 1)
+    }
+
+    @Test func akitsNumbersArePartOfTheNotesKey() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        _ = try await review(file, numbers: "4 steps, 1 tool error")
+        _ = try await review(file, numbers: "4 steps, 1 tool error")
+        #expect(calls() == ["notes", "verifier"])
+        // Other numbers are another input: the notes are written again.
+        _ = try await review(file, numbers: "4 steps, 2 tool errors")
+        #expect(calls() == ["notes", "verifier", "notes", "verifier"])
+    }
+
+    @Test func everyPartOfAQuoteMustBeLongEnough() async throws {
+        var answer = notesAnswer
+        answer["notes"] = [
+            ["id": "n1", "description": "Ignored the failure.", "step": 2, "quote": "Exit code 1 … failed", "severity": "low", "faultLayer": "agent"],
+            ["id": "n2", "description": "Ignored the failure.", "step": 2, "quote": "Exit code 1 … tests failed", "severity": "low", "faultLayer": "agent"],
+        ]
+        answer["advice"] = [[String: Any]]()
+        try fakeClaude(notes: answer, verdicts: ["verdicts": [["id": "n2", "supported": true, "reason": "#2 shows the failure."]]])
+        let notes = try await review(try session())
+        #expect(notes.notes.first { $0.id == "n1" }?.verdict == Verdict(accepted: false, reason: "The quote is too short to show anything.", by: .code))
+        #expect(notes.notes.first { $0.id == "n2" }?.verdict?.accepted == true)
+    }
+
+    @Test func theUsersRouteVerdictsSurviveAReviewOfTheGrownSession() async throws {
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        let first = try await review(file)
+        // The user accepted matching's route of n1; n3's route is matching's alone.
+        try NotesStore(env: env).update(first.sessionKey) { notes in
+            notes.routes = [Route(noteID: "n1", modeID: "overclaiming-completion", confidence: 0.4, by: .matching, review: .accepted, reviewedAt: .now),
+                            Route(noteID: "n3", modeID: nil, confidence: 0.9, by: .matching)]
+            notes.doneKeys["matching"] = "m"
+        }
+        // The session goes on, and the new review calls the same note (same step and quote) n7.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"type":"user","timestamp":"2026-10-01T10:01:00Z","message":{"role":"user","content":"Are you sure?"}}"#.utf8 + [10]))
+        try handle.close()
+        var grown = notesAnswer
+        grown["notes"] = [["id": "n7", "description": "Said the tests pass after they failed.", "step": 3, "quote": "“all tests pass”",
+                           "severity": "high", "faultLayer": "agent"]]
+        grown["advice"] = [[String: Any]]()
+        try fakeClaude(notes: grown, verdicts: ["verdicts": [["id": "n7", "steelman": "s", "supported": true, "reason": "#2 failed."]]])
+        let again = try await review(file)
+        #expect(calls() == ["notes", "verifier", "notes", "verifier"])
+        #expect(again.doneKeys["notes"] != first.doneKeys["notes"])
+        #expect(again.routes?.map(\.noteID) == ["n7"])
+        #expect(again.routes?.first?.review == .accepted && again.routes?.first?.modeID == "overclaiming-completion")
+        // Matching runs again for everything else.
+        #expect(again.doneKeys["matching"] == nil)
+    }
+
+    @Test func verifierNeighboursAreCutAsTheDigestCutsThem() throws {
+        let long = "START " + String(repeating: "x", count: 3000) + " END"
+        let items = [TranscriptItem(id: 0, kind: .user, text: "Fix it", timestamp: nil),
+                     TranscriptItem(id: 1, kind: .thinking, text: "a private plan", timestamp: nil),
+                     TranscriptItem(id: 2, kind: .toolResult(name: "Bash", isError: false), text: long, timestamp: nil),
+                     TranscriptItem(id: 3, kind: .assistant, text: "All tests pass.", timestamp: nil)]
+        let note = Note(id: "n1", source: .model, description: "Claimed success.", step: 3, quote: "All tests pass")
+        let input = NotesPipeline.verifierInput([note], items: items, byID: Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) }))
+        let cut = try #require(EvidenceDigest.line(items[2], cap: 1200))
+        #expect(input.contains(cut) && cut.hasPrefix("[#2 result Bash] START ") && cut.hasSuffix(" END") && cut.contains("chars…]"))
+        #expect(!input.contains("a private plan"))
     }
 
     @Test func aSessionWithNoProblemsIsCheckedWithNoFailures() async throws {

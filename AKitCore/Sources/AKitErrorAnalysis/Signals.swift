@@ -76,15 +76,6 @@ public enum SignalScanner {
 
 /// Indexed sessions as session summaries the readers understand.
 public enum IndexedSessions {
-    /// The harness of an index row: `claude` → Claude Code, `pi` → Pi.
-    public static func harness(_ index: String) -> HarnessID? {
-        switch index {
-        case "claude": .claudeCode
-        case "pi": .pi
-        default: nil
-        }
-    }
-
     /// Index keys of the sessions Lab's own runs made: left out of samples, bootstrap picks and
     /// check rates, so evals never enter production frequencies.
     public static func labKeys(env: HarnessEnvironment) -> Set<String> {
@@ -92,11 +83,11 @@ public enum IndexedSessions {
     }
 
     public static func summary(_ session: IndexedSession) -> SessionSummary? {
-        guard let path = session.file, let harness = harness(session.harness) else { return nil }
+        guard let path = session.file else { return nil }
         let file = URL(filePath: path)
         guard FileManager.default.fileExists(atPath: path) else { return nil }
         let info = JSONLines.fileInfo(file)
-        return SessionSummary(harness: harness, file: file, title: file.deletingPathExtension().lastPathComponent,
+        return SessionSummary(harness: SessionKey.harness(of: session.key), file: file, title: file.deletingPathExtension().lastPathComponent,
                               project: session.cwd.map { URL(filePath: $0, directoryHint: .isDirectory) }, started: session.started,
                               modified: info.modified, size: info.size)
     }

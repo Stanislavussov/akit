@@ -82,6 +82,8 @@ struct ControlCellTests {
         try fm.removeItem(at: folder.appending(path: "py/test_value.py"))
         let after = TestFiles.state(of: folder)
         #expect(after.markers == 4)
+        // Assertions count as well: dropping one weakens the oracle as dropping a test does.
+        #expect(TestFiles.markers(in: "#expect(x)\nXCTAssertEqual(a, b)\nassert y\nexpect(z).toBe(1)") == 4)
         #expect(before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted() == ["Tests/ValueTests.swift", "py/test_value.py"])
     }
 
