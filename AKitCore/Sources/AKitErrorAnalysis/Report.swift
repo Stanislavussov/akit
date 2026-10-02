@@ -39,6 +39,9 @@ public struct ModeFrequency: Codable, Hashable, Sendable {
     public var trust: CheckTrust.Level
     /// Accepted notes routed to the mode in this batch.
     public var seenInNotes: Int
+    /// Done sessions of the batch the mode counts over (its project's only, for a
+    /// project-scoped mode): the N of "checked of N".
+    public var sessions: Int
     /// Sessions of the batch the check ran on, and its positives.
     public var checked: Int
     public var positive: Int
@@ -63,9 +66,9 @@ public struct ModeFrequency: Codable, Hashable, Sendable {
     }
 }
 
-/// The transition matrix (after Bryan Bischof): the row is the phase of the step before the
-/// decisive one, the column the phase of the decisive step; one more column counts sessions
-/// with no failure.
+/// The transition matrix (after Bryan Bischof): the row is the phase of the step just before
+/// the decisive step's action (before its call, for a tool result), the column the phase of
+/// the decisive step; one more column counts sessions with no failure.
 public struct TransitionMatrix: Codable, Hashable, Sendable {
     public static let noFailures = "no-failures"
 
@@ -88,11 +91,11 @@ public struct TransitionMatrix: Codable, Hashable, Sendable {
         return result
     }
 
-    public static func build(_ pool: [SessionNotes], phases: [String: [Int: Phase]]) -> TransitionMatrix {
+    public static func build(_ pool: [SessionNotes], phases: [String: SessionPhases]) -> TransitionMatrix {
         var cells: [String: [String]] = [:]
         var unlocated: [String] = []
         for notes in pool {
-            let sessionPhases = phases[notes.sessionKey] ?? [:]
+            let sessionPhases = phases[notes.sessionKey]
             if notes.noFailures {
                 cells["\(Phase.report.rawValue)|\(noFailures)", default: []].append(notes.sessionKey)
                 continue
@@ -103,8 +106,8 @@ public struct TransitionMatrix: Codable, Hashable, Sendable {
             }
             // The model may label only understand and plan; code labels the rest.
             let labeled = notes.notes.first { $0.step == step && ($0.phase == .understand || $0.phase == .plan) }?.phase
-            let column = labeled ?? sessionPhases[step] ?? .understand
-            let previous = sessionPhases.keys.filter { $0 < step }.max().flatMap { sessionPhases[$0] } ?? .understand
+            let column = labeled ?? sessionPhases?.steps[step] ?? .understand
+            let previous = sessionPhases?.before[step] ?? .understand
             cells["\(previous.rawValue)|\(column.rawValue)", default: []].append(notes.sessionKey)
         }
         return TransitionMatrix(cells: cells, sessions: pool.count, unlocated: unlocated)
@@ -141,10 +144,17 @@ public struct BatchReport: Codable, Hashable, Sendable {
     public var batchID: String
     public var coverage: [Int]
     public var notesVersion: String?
-    /// The bootstrap recall of the notes model and prompt version the batch used.
+    /// The bootstrap recall of the notes model and prompt version the batch used, and its
+    /// [found, the user's notes] (nil without bootstrap metrics for that version).
     public var notesRecall: Double?
-    /// Share of the model's notes the verifier rejected.
+    public var notesRecallCounts: [Int]?
+    /// Share of the model's notes the verifier rejected, and [rejected, model notes].
     public var verifierRejection: Double?
+    public var verifierRejectionCounts: [Int]
+    /// The notes' precision from the user's spot checks of this batch's notes, and [agreed,
+    /// checked].
+    public var spotCheckPrecision: Double?
+    public var spotCheckCounts: [Int]
     /// Routes the user accepted, of those reviewed.
     public var routeAcceptance: [Int]
     public var modes: [ModeFrequency]
@@ -175,11 +185,25 @@ public enum Reports {
     public static let rebuildEvery = 5
     public static let rebuildUnmatched = 0.15
 
+    /// The report of a batch, with everything `build` needs read from disk.
+    public static func build(_ batch: Batch, env: HarnessEnvironment) async throws -> BatchReport {
+        let modes = try await ModeStore(env: env).list()
+        let pool = NotesStore(env: env).all()
+        let labels = Bootstrap.LabelStore(env: env).all()
+        let metrics = Bootstrap.metrics(labels: labels, notes: pool, pairings: Bootstrap.PairingStore(env: env).all(),
+                                        phases: Bootstrap.phases(of: labels))
+        return build(batch, modes: modes, pool: pool, checks: modes.compactMap { Validation.verdicts(modeID: $0.id, env: env) },
+                     trust: Validation.trustMap(modes: modes, env: env), bootstrap: metrics, acceptance: Matching.acceptance(pool),
+                     allBatches: BatchStore(env: env).all(), phases: phases(of: batch), spotChecks: LabelBookStore(env: env).load().spotChecks)
+    }
+
     /// Builds the report of a batch. `trust` says how far each mode's check can be trusted;
-    /// `checks` are the verdicts of code checks and judges.
+    /// `checks` are the verdicts of code checks and judges; `spotChecks` the user's precision
+    /// spot checks (`<session>#<note>` → agrees). A project-scoped mode counts over the
+    /// batch's sessions of its project only, and is left out when the batch has none.
     public static func build(_ batch: Batch, modes: [Mode], pool: [SessionNotes], checks: [CheckResults], trust: [String: CheckTrust],
                              bootstrap: [Bootstrap.Metrics], acceptance: (accepted: Int, reviewed: Int), allBatches: [Batch],
-                             phases: [String: [Int: Phase]], seed: UInt64 = 1) -> BatchReport {
+                             phases: [String: SessionPhases], spotChecks: [String: Bool] = [:], seed: UInt64 = 1) -> BatchReport {
         let done = batch.sessions.filter { $0.status == .done }
         let keys = Set(done.map(\.pick.sessionKey))
         let notes = pool.filter { keys.contains($0.sessionKey) }
@@ -190,11 +214,16 @@ public enum Reports {
 
         var frequencies: [ModeFrequency] = []
         for mode in modes where mode.isCurrent && mode.status == .active {
+            var scoped = keys
+            if case .project(let project) = mode.scope {
+                scoped = Set(done.filter { $0.pick.projectID == project }.map(\.pick.sessionKey))
+                if scoped.isEmpty { continue }
+            }
             let results = checks.first { $0.modeID == mode.id }
             let level = trust[mode.id]?.level ?? (CodeChecks.check(for: mode.id)?.kind == .mechanical ? .exact : CheckTrust.Level.none)
             var observations: [Stats.Observation] = []
             var byOutcome: [Bool: [Stats.Observation]] = [:]
-            for key in keys {
+            for key in scoped {
                 guard let verdict = results?.verdicts[key], let pick = picks[key] else { continue }
                 let observation = Stats.Observation(positive: verdict.positive, inclusion: pick.inclusion, group: pick.sampling)
                 observations.append(observation)
@@ -212,8 +241,9 @@ public enum Reports {
             }
             let interval = (level == .exact || level == .validated) && !below
                 ? Stats.bootstrapInterval(observations, labels: level == .validated ? labels : nil, iterations: 1000, seed: seed) : nil
-            frequencies.append(ModeFrequency(modeID: mode.id, name: mode.name, trust: level, seenInNotes: seen.byMode[mode.id]?.count ?? 0,
-                                             checked: observations.count, positive: observations.filter(\.positive).count,
+            let seenInNotes = seen.byMode[mode.id]?.filter { scoped.contains($0.sessionKey) }.count ?? 0
+            frequencies.append(ModeFrequency(modeID: mode.id, name: mode.name, trust: level, seenInNotes: seenInNotes,
+                                             sessions: scoped.count, checked: observations.count, positive: observations.filter(\.positive).count,
                                              weighted: weighted, unweighted: Stats.unweightedShare(observations), corrected: corrected,
                                              interval: interval, belowDetectionThreshold: below,
                                              achieved: byOutcome[true].flatMap(Stats.weightedShare),
@@ -223,6 +253,9 @@ public enum Reports {
 
         let modelNotes = notes.flatMap { $0.notes.filter { $0.source == .model } }
         let rejected = modelNotes.filter { !$0.isAccepted }.count
+        let refs = Set(notes.flatMap { review in review.notes.filter { $0.source == .model }.map { "\(review.sessionKey)#\($0.id)" } })
+        let spotChecked = spotChecks.filter { refs.contains($0.key) }.values
+        let spotAgreed = spotChecked.filter { $0 }.count
         let routed = notes.flatMap { Matching.currentRoutes($0).values }
         func unmatchedShare(_ subset: [SessionNotes]) -> Double? {
             let routes = subset.flatMap { Matching.currentRoutes($0).values }
@@ -249,7 +282,8 @@ public enum Reports {
         }
 
         let matrix = TransitionMatrix.build(notes, phases: phases)
-        let agreement = bootstrap.first { $0.notesVersion == version }?.phaseAgreement
+        let measured = bootstrap.first { $0.notesVersion == version }
+        let agreement = measured?.phaseAgreement
         var hidden: String?
         if let agreement, agreement < phaseGate {
             hidden = String(format: "Hidden: the bootstrap's phase agreement for %@ is %.0f%%, below 70%%.", version ?? "these notes", agreement * 100)
@@ -258,22 +292,21 @@ public enum Reports {
         }
         let projectSessions = allBatches.filter { $0.filter.project == batch.filter.project }.flatMap(\.sessions).filter { $0.status == .done }
         return BatchReport(batchID: batch.runID, coverage: [done.count, batch.sessions.count], notesVersion: version,
-                           notesRecall: bootstrap.first { $0.notesVersion == version }?.recall,
+                           notesRecall: measured?.recall, notesRecallCounts: measured?.recallCounts,
                            verifierRejection: modelNotes.isEmpty ? nil : Double(rejected) / Double(modelNotes.count),
+                           verifierRejectionCounts: [rejected, modelNotes.count],
+                           spotCheckPrecision: spotChecked.isEmpty ? nil : Double(spotAgreed) / Double(spotChecked.count),
+                           spotCheckCounts: [spotAgreed, spotChecked.count],
                            routeAcceptance: [acceptance.accepted, acceptance.reviewed], modes: frequencies,
                            unmatchedShare: unmatched, newModes: newModes, projects: projects, rebuild: rebuild, matrix: matrix,
                            matrixHidden: hidden, showFunnel: Set(projectSessions.map(\.pick.sessionKey)).count < funnelBelow)
     }
 
     /// The phases of every step of the batch's sessions, by code.
-    public static func phases(of batch: Batch) -> [String: [Int: Phase]] {
-        var result: [String: [Int: Phase]] = [:]
+    public static func phases(of batch: Batch) -> [String: SessionPhases] {
+        var result: [String: SessionPhases] = [:]
         for session in batch.sessions where session.status == .done {
-            let harness = SessionKey.harness(of: session.pick.sessionKey)
-            let summary = NotesPipeline.Target(harness: harness, file: URL(filePath: session.pick.file)).summary
-            if let transcript = try? SessionReader.transcript(of: summary) {
-                result[session.pick.sessionKey] = PhaseClassifier.phases(of: transcript.items)
-            }
+            result[session.pick.sessionKey] = PhaseClassifier.session(sessionKey: session.pick.sessionKey, transcript: session.pick.file)
         }
         return result
     }

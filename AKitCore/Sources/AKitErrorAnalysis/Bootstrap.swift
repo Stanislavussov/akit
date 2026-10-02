@@ -318,12 +318,7 @@ public enum Bootstrap {
     public static func phases(of labels: [Label]) -> [String: [Int: Phase]] {
         var result: [String: [Int: Phase]] = [:]
         for label in labels {
-            let file = URL(filePath: label.transcript)
-            let harness = SessionKey.harness(of: label.sessionKey)
-            let target = NotesPipeline.Target(harness: harness, file: file)
-            if let transcript = try? SessionReader.transcript(of: target.summary) {
-                result[label.sessionKey] = PhaseClassifier.phases(of: transcript.items)
-            }
+            result[label.sessionKey] = PhaseClassifier.session(sessionKey: label.sessionKey, transcript: label.transcript)?.steps
         }
         return result
     }
