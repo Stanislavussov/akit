@@ -10,6 +10,19 @@ public enum Phase: String, Codable, Sendable, CaseIterable {
     public var title: String { rawValue.capitalized }
 }
 
+/// One session's phases by code: what the transition matrix reads.
+public struct SessionPhases: Hashable, Sendable {
+    /// The phase of every step.
+    public var steps: [Int: Phase]
+    /// The phase of the step just before each step's action: the matrix's row.
+    public var before: [Int: Phase]
+
+    public init(steps: [Int: Phase], before: [Int: Phase]) {
+        self.steps = steps
+        self.before = before
+    }
+}
+
 /// Phases by code, from the tool each step used. Notes get their phase from their step `#n`
 /// here, never from the model, so the matrix doesn't depend on the notes model.
 public enum PhaseClassifier {
@@ -36,6 +49,35 @@ public enum PhaseClassifier {
             previous = phase
         }
         return result
+    }
+
+    /// The phases of a session's steps, and for every step the phase of the step just before
+    /// its action. A tool result is part of its call's action, so its row is the step before
+    /// that call: otherwise a failing test result would always sit in the verify → verify cell.
+    public static func session(_ items: [TranscriptItem]) -> SessionPhases {
+        let steps = phases(of: items)
+        var before: [Int: Phase] = [:]
+        var previous: Phase?
+        var beforeLastCall: Phase?
+        for item in items {
+            switch item.kind {
+            case .toolCall:
+                beforeLastCall = previous
+                before[item.id] = previous
+            case .toolResult:
+                before[item.id] = beforeLastCall ?? previous
+            default:
+                before[item.id] = previous
+            }
+            previous = steps[item.id]
+        }
+        return SessionPhases(steps: steps, before: before)
+    }
+
+    /// The phases of a recorded session, read from its transcript file; nil when it can't be read.
+    public static func session(sessionKey: String, transcript: String) -> SessionPhases? {
+        let target = NotesPipeline.Target(harness: SessionKey.harness(of: sessionKey), file: URL(filePath: transcript))
+        return (try? SessionReader.transcript(of: target.summary)).map { session($0.items) }
     }
 
     static let exploreTools: Set = ["Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch",

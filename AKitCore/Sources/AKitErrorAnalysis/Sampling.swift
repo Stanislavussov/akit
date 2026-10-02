@@ -21,13 +21,11 @@ public enum Sampling {
         public var project: String?
         public var from: Date?
         public var to: Date?
-        public var harness: String?
 
-        public init(project: String? = nil, from: Date? = nil, to: Date? = nil, harness: String? = nil) {
+        public init(project: String? = nil, from: Date? = nil, to: Date? = nil) {
             self.project = project
             self.from = from
             self.to = to
-            self.harness = harness
         }
     }
 
@@ -38,7 +36,7 @@ public enum Sampling {
         /// The probability that this sampling design picks the session.
         public var inclusion: Double
         /// `random`, or `stratum:<key>`: how it was chosen. Bootstrap intervals resample
-        /// within these groups.
+        /// within these groups (those with a single pick collapsed into one).
         public var sampling: String
         /// The stratum the session belongs to (also for random picks).
         public var stratum: String
@@ -85,7 +83,6 @@ public enum Sampling {
     public static func population(_ sessions: [IndexedSession], filter: Filter, reserved: Set<String>) -> [IndexedSession] {
         sessions.filter { session in
             guard session.file != nil, session.requests >= minimumRequests, !reserved.contains(session.key) else { return false }
-            if let harness = filter.harness, session.harness != harness { return false }
             if let project = filter.project {
                 let bound = session.projectID == project
                 let ranThere = session.cwd.map { $0 == project || $0.hasPrefix(project.hasSuffix("/") ? project : project + "/") } ?? false

@@ -150,7 +150,7 @@ struct BatchTests {
         for index in 1...3 { try session(index, text: "Do the task \(index)") }
         try await importSessions()
         let reserved = String(format: "claude:%08x-0000-4000-8000-%012x", 1, 1)
-        try BootstrapReservations(env: env).save([.init(sessionKey: reserved, transcript: "/t")])
+        try BootstrapReservations(env: env).update { $0 += [.init(sessionKey: reserved, transcript: "/t")] }
         let run = try await Batches.new(filter: Sampling.Filter(), size: 10, notesAgent: agent, environment: .background,
                                         akit: URL(filePath: "/usr/bin/true"), env: env)
         let batch = try #require(BatchStore(env: env).load(run.id))

@@ -78,6 +78,23 @@ struct SamplingTests {
         #expect(Stats.bootstrapInterval(observations, iterations: 1000) == plain)
     }
 
+    @Test func singletonStrataAreCollapsedSoTheyVary() throws {
+        // 20 stratified picks, one per stratum: resampled within their own strata they would
+        // never vary and the interval would be a point.
+        let observations = (0..<20).map { Stats.Observation(positive: $0 % 2 == 0, inclusion: 0.5, group: "stratum:\($0)") }
+        let groups = Stats.resamplingGroups(observations)
+        #expect(groups.count == 1 && groups[0].count == 20)
+        let interval = try #require(Stats.bootstrapInterval(observations, iterations: 1000))
+        #expect(interval.low < 0.4 && interval.high > 0.6)
+        // Groups of 2 or more stay; a lone leftover joins the smallest of them.
+        let mixed = (0..<6).map { _ in Stats.Observation(positive: false, inclusion: 1, group: "random") }
+            + (0..<3).map { _ in Stats.Observation(positive: true, inclusion: 1, group: "stratum:a") }
+            + [Stats.Observation(positive: true, inclusion: 1, group: "stratum:b")]
+        #expect(Stats.resamplingGroups(mixed).map(\.count) == [6, 4])
+        let two = mixed + [Stats.Observation(positive: false, inclusion: 1, group: "stratum:c")]
+        #expect(Stats.resamplingGroups(two).map(\.count) == [6, 3, 2])
+    }
+
     @Test func adHocReviewsHintTheNextSample() {
         let sessions = (0..<40).map { session($0) } + (40..<50).map { session($0, harness: "pi", model: "gpt-6") }
         var generator = SeededGenerator(seed: 2)

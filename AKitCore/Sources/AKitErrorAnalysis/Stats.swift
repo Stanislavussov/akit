@@ -73,7 +73,8 @@ public enum Stats {
     public struct Observation: Codable, Hashable, Sendable {
         public var positive: Bool
         public var inclusion: Double
-        /// The sampling group it was drawn in (`random`, `stratum:…`): bootstrap resamples within it.
+        /// The sampling group it was drawn in (`random`, `stratum:…`): bootstrap resamples within
+        /// it, or within the collapsed group when it holds a single pick.
         public var group: String
 
         public init(positive: Bool, inclusion: Double, group: String) {
@@ -123,15 +124,15 @@ public enum Stats {
         public var tnr: Double? { onNegatives.isEmpty ? nil : Double(onNegatives.filter { !$0 }.count) / Double(onNegatives.count) }
     }
 
-    /// A 95% interval by bootstrap: resamples the batch within its sampling groups and, for a
+    /// A 95% interval by bootstrap: resamples the batch within its sampling groups (see
+    /// `resamplingGroups`) and, for a
     /// validated check, the test labels behind TPR and TNR, then takes the 2.5th and 97.5th
     /// percentiles of the (corrected) weighted share.
     public static func bootstrapInterval(_ observations: [Observation], labels: CheckLabels? = nil, iterations: Int = 2000,
                                          seed: UInt64 = 1) -> Interval? {
         guard !observations.isEmpty, iterations > 0 else { return nil }
         var generator = SeededGenerator(seed: seed)
-        // Groups in a fixed order, so the same seed gives the same interval.
-        let groups = Dictionary(grouping: observations, by: \.group).sorted { $0.key < $1.key }.map(\.value)
+        let groups = resamplingGroups(observations)
         var estimates: [Double] = []
         estimates.reserveCapacity(iterations)
         func resample<T>(_ values: [T]) -> [T] {
@@ -156,5 +157,23 @@ public enum Stats {
         estimates.sort()
         func percentile(_ p: Double) -> Double { estimates[min(estimates.count - 1, max(0, Int((p * Double(estimates.count)).rounded(.down))))] }
         return Interval(low: percentile(0.025), high: percentile(0.975))
+    }
+
+    /// The sampling groups the bootstrap resamples within, in a fixed order so the same seed
+    /// gives the same interval. A group of one never varies when resampled, and stratified
+    /// picks spread over many strata leave most groups that small, so the interval would come
+    /// out too narrow. Groups with fewer than 2 picks are collapsed into one (the collapsed
+    /// strata method of survey sampling for strata with a single unit); a collapsed group
+    /// that is still alone joins the smallest other group.
+    static func resamplingGroups(_ observations: [Observation]) -> [[Observation]] {
+        let sorted = Dictionary(grouping: observations, by: \.group).sorted { $0.key < $1.key }.map(\.value)
+        var groups = sorted.filter { $0.count >= 2 }
+        let collapsed = sorted.filter { $0.count < 2 }.flatMap { $0 }
+        if collapsed.count == 1, let smallest = groups.indices.min(by: { groups[$0].count < groups[$1].count }) {
+            groups[smallest] += collapsed
+        } else if !collapsed.isEmpty {
+            groups.append(collapsed)
+        }
+        return groups
     }
 }

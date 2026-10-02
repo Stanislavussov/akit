@@ -94,9 +94,9 @@ struct ReportsTab: View {
         defer { loading = false }
         do {
             let built = try await Task.detached { () -> (BatchReport, BatchReport?) in
-                let first = try await ReportBuilder.build(batch, env: env)
+                let first = try await Reports.build(batch, env: env)
                 var second: BatchReport?
-                if let compared { second = try await ReportBuilder.build(compared, env: env) }
+                if let compared { second = try await Reports.build(compared, env: env) }
                 return (first, second)
             }.value
             error = nil
@@ -105,20 +105,6 @@ struct ReportsTab: View {
         } catch {
             self.error = error.localizedDescription
         }
-    }
-}
-
-/// `buildReport` of `akit analysis report`: everything `Reports.build` needs, read from disk.
-enum ReportBuilder {
-    static func build(_ batch: Batch, env: HarnessEnvironment) async throws -> BatchReport {
-        let modes = try await ModeStore(env: env).list()
-        let pool = NotesStore(env: env).all()
-        let labels = Bootstrap.LabelStore(env: env).all()
-        let metrics = Bootstrap.metrics(labels: labels, notes: pool, pairings: Bootstrap.PairingStore(env: env).all(),
-                                        phases: Bootstrap.phases(of: labels))
-        return Reports.build(batch, modes: modes, pool: pool, checks: modes.compactMap { Validation.verdicts(modeID: $0.id, env: env) },
-                             trust: Validation.trustMap(modes: modes, env: env), bootstrap: metrics, acceptance: Matching.acceptance(pool),
-                             allBatches: BatchStore(env: env).all(), phases: Reports.phases(of: batch))
     }
 }
 

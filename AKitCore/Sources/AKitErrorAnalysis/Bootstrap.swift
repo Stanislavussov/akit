@@ -200,15 +200,23 @@ public enum Bootstrap {
         """#
 
     /// One call per session: the model proposes pairs of the user's notes and its own (all
-    /// model notes, rejected ones too: the verifier is measured as well).
+    /// model notes, rejected ones too: the verifier is measured as well). Proposing again keeps
+    /// what the user confirmed and agreed for the same notes version.
     public static func proposePairs(label: Label, notes: SessionNotes, agent: LabAgent, gate: SendGate, origin: SendOrigin,
                                     workFolder: URL, env: HarnessEnvironment) async throws -> Pairing {
         let version = notesVersion(notes.notesConfig)
-        guard !label.notes.isEmpty, !notes.notes.isEmpty else {
-            let pairing = Pairing(sessionKey: label.sessionKey, notesVersion: version, proposed: [])
-            try PairingStore(env: env).save(pairing)
+        let humans = Set(label.notes.map(\.id)), models = Set(notes.notes.map(\.id))
+        func save(_ proposed: [Pairing.Pair]) throws -> Pairing {
+            let store = PairingStore(env: env)
+            var pairing = Pairing(sessionKey: label.sessionKey, notesVersion: version, proposed: proposed)
+            if let previous = store.load(label.sessionKey), previous.notesVersion == version {
+                pairing.confirmed = previous.confirmed?.filter { humans.contains($0.human) && models.contains($0.model) }
+                pairing.agreed = previous.agreed?.filter(models.contains)
+            }
+            try store.save(pairing)
             return pairing
         }
+        guard !label.notes.isEmpty, !notes.notes.isEmpty else { return try save([]) }
         func list(_ notes: [Note]) -> String {
             notes.map { "- \($0.id) [#\($0.step)] \($0.description)\n  quote: \($0.quote)" }.joined(separator: "\n")
         }
@@ -221,24 +229,26 @@ public enum Bootstrap {
         guard let json = ModelCall.jsonObject(in: answer.text), let parsed = try? JSONDecoder().decode(Answer.self, from: json) else {
             throw Failure(message: "The pairing answer isn't the JSON asked for.")
         }
-        let humans = Set(label.notes.map(\.id)), models = Set(notes.notes.map(\.id))
         var usedHuman = Set<String>(), usedModel = Set<String>()
         let pairs = parsed.pairs.filter { pair in
             humans.contains(pair.human) && models.contains(pair.model) && usedHuman.insert(pair.human).inserted
                 && usedModel.insert(pair.model).inserted
         }
-        let pairing = Pairing(sessionKey: label.sessionKey, notesVersion: version, proposed: pairs)
-        try PairingStore(env: env).save(pairing)
-        return pairing
+        return try save(pairs)
     }
 
     /// Agreement between the user and the model for one notes version.
     public struct Metrics: Codable, Hashable, Sendable {
         public var notesVersion: String
         public var sessions: Int
-        /// Share of the user's problems the model found (confirmed pairs).
+        /// Share of the user's problems the model found and the verifier kept: confirmed pairs
+        /// whose model note was accepted. The pool and the reports hold accepted notes only.
         public var recall: Double?
         public var recallCounts: [Int]
+        /// The same before the verifier, over every model note: what the verifier's rejections
+        /// cost in recall.
+        public var recallBeforeVerifier: Double? = nil
+        public var recallBeforeVerifierCounts: [Int] = []
         /// Share of the model's accepted notes the user agrees with.
         public var precision: Double?
         public var precisionCounts: [Int]
@@ -257,16 +267,17 @@ public enum Bootstrap {
         let labelByKey = Dictionary(labels.filter { $0.labeledAt != nil }.map { ($0.sessionKey, $0) }, uniquingKeysWith: { first, _ in first })
         var result: [Metrics] = []
         for (version, group) in Dictionary(grouping: pairings.filter(\.isConfirmed), by: \.notesVersion).sorted(by: { $0.key < $1.key }) {
-            var found = 0, humanTotal = 0, agreed = 0, modelTotal = 0
+            var found = 0, foundBeforeVerifier = 0, humanTotal = 0, agreed = 0, modelTotal = 0
             var samePhase = 0, nearStep = 0, deviations = 0, sameOutcome = 0, outcomes = 0
             var sessions = 0
             for pairing in group {
                 guard let label = labelByKey[pairing.sessionKey], let review = byKey[pairing.sessionKey] else { continue }
                 sessions += 1
                 let confirmed = pairing.confirmed ?? []
-                humanTotal += label.notes.count
-                found += Set(confirmed.map(\.human)).count
                 let accepted = Set(review.accepted.map(\.id))
+                humanTotal += label.notes.count
+                foundBeforeVerifier += Set(confirmed.map(\.human)).count
+                found += Set(confirmed.filter { accepted.contains($0.model) }.map(\.human)).count
                 modelTotal += accepted.count
                 agreed += Set(pairing.agreed ?? []).intersection(accepted).count
                 if let human = label.deviation.decisiveStep, let model = review.deviation.decisiveStep {
@@ -282,6 +293,8 @@ public enum Bootstrap {
             }
             func share(_ a: Int, _ b: Int) -> Double? { b == 0 ? nil : Double(a) / Double(b) }
             result.append(Metrics(notesVersion: version, sessions: sessions, recall: share(found, humanTotal), recallCounts: [found, humanTotal],
+                                  recallBeforeVerifier: share(foundBeforeVerifier, humanTotal),
+                                  recallBeforeVerifierCounts: [foundBeforeVerifier, humanTotal],
                                   precision: share(agreed, modelTotal), precisionCounts: [agreed, modelTotal],
                                   phaseAgreement: share(samePhase, deviations), stepAgreement: share(nearStep, deviations),
                                   deviationCounts: [samePhase, nearStep, deviations],
@@ -305,12 +318,7 @@ public enum Bootstrap {
     public static func phases(of labels: [Label]) -> [String: [Int: Phase]] {
         var result: [String: [Int: Phase]] = [:]
         for label in labels {
-            let file = URL(filePath: label.transcript)
-            let harness = SessionKey.harness(of: label.sessionKey)
-            let target = NotesPipeline.Target(harness: harness, file: file)
-            if let transcript = try? SessionReader.transcript(of: target.summary) {
-                result[label.sessionKey] = PhaseClassifier.phases(of: transcript.items)
-            }
+            result[label.sessionKey] = PhaseClassifier.session(sessionKey: label.sessionKey, transcript: label.transcript)?.steps
         }
         return result
     }

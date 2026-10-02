@@ -539,6 +539,7 @@ extension AKitCLI {
             func pct(_ value: Double?) -> String { value.map { String(format: "%.0f%%", $0 * 100) } ?? "—" }
             for m in metrics {
                 out("\(m.notesVersion) (\(m.sessions) sessions): recall \(pct(m.recall)) (\(m.recallCounts[0])/\(m.recallCounts[1])), "
+                    + "before the verifier \(pct(m.recallBeforeVerifier)), "
                     + "precision \(pct(m.precision)) (\(m.precisionCounts[0])/\(m.precisionCounts[1])), "
                     + "decisive step: phase \(pct(m.phaseAgreement)), ±3 steps \(pct(m.stepAgreement)), outcome \(pct(m.outcomeAgreement))")
             }
@@ -598,7 +599,7 @@ extension AKitCLI {
                                   out: out) else { return 0 }
             let gate = try await SendGate.open(agent: agent, env: env)
             let finds = try await Bootstrap.findSimilar(mode: mode, labels: labels.all(), pool: pool, book: LabelBookStore(env: env).load(),
-                                                        agent: agent, gate: gate, workFolder: analysisWork(env), env: env)
+                                                        agent: agent, gate: gate, workFolder: analysisWork(env), env: env, out: out)
             for find in finds { out("\(find.ref)  — akit analysis bootstrap find \(find.ref) \(id) accept|reject") }
             if finds.isEmpty { out("No similar cases found.") }
         case "find":
