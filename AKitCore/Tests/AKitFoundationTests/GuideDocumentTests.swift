@@ -74,4 +74,20 @@ struct GuideDocumentTests {
             #expect(document.path(to: id) == [id], "no section \(id)")
         }
     }
+
+    /// The sidebar opens `docs/guides/screens.ru.md` at its group and screen ids
+    /// (`SidebarGroup`, `SidebarSection` raw values in the app).
+    @Test func theScreensGuideHasASectionPerSidebarItem() throws {
+        let file = URL(filePath: #filePath).deletingLastPathComponent()
+            .appending(path: "../../../docs/guides/screens.ru.md").standardizedFileURL
+        let document = GuideDocument.parse(try String(contentsOf: file, encoding: .utf8))
+        #expect(!document.title.isEmpty)
+        let screens = ["installed": ["overview", "skills", "skillsSh", "mcp"], "setup": ["brain"],
+                       "activity": ["sessions", "usage"], "improve": ["lab", "analysis"]]
+        for (group, ids) in screens {
+            #expect(document.path(to: group) == [group], "no section \(group)")
+            for id in ids { #expect(document.path(to: id) == [group, id], "no section \(id) in \(group)") }
+        }
+        #expect(document.path(to: "map") == ["map"])
+    }
 }

@@ -22,7 +22,7 @@ restart: build   ## quit this checkout's AKit, rebuild and start it again (in th
 test:   ## core tests (no UI)
 	cd AKitCore && swift test
 
-snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1] [SELECT=<layer>|project:<id>] [SETTINGS=1] [GUIDE=<section id>]
+snapshot: build   ## window snapshot without screen recording: make snapshot OUT=/tmp/akit.png [SECTION=overview] [QUERY=tdd] [DELAY=2] [PROJECT=akit] [HARNESS=pi] [BRAIN=<folder>] [TAB=setup] [OWN=1] [ADD=1] [CAPTURE=1] [SELECT=<layer>|project:<id>] [SETTINGS=1] [GUIDE=[screens:]<section id>]
 	# Ignore saved window state: a running AKit (or one closed without windows) must not
 	# stop the snapshot from opening its window. The running app is left alone.
 	# Flags without a value go last: Cocoa reads launch arguments as "-key value" pairs, so

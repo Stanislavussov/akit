@@ -54,6 +54,10 @@ struct OverviewView: View {
         }
         .toolbar {
             ToolbarItem {
+                GuideButton(guide: .screens, title: "Screens Guide",
+                            help: "What every screen is for and how they work together (in Russian)")
+            }
+            ToolbarItem {
                 Button("Add Harness…", systemImage: "plus") { editing = .new }
                     .help("Describe another harness (OpenCode, Goose, …) so AKit can show it")
             }
