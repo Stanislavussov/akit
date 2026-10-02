@@ -3,10 +3,12 @@ import SwiftUI
 
 /// The in-app guides: `docs/guides/<name>.ru.md`, copied into the app's `guides` folder.
 enum Guide: String, CaseIterable {
+    case screens
     case errorAnalysis = "error-analysis"
 
     var title: String {
         switch self {
+        case .screens: "AKit Screens"
         case .errorAnalysis: "Error Analysis"
         }
     }
@@ -27,8 +29,15 @@ final class GuideNavigator {
     /// Counts requests, so asking for the same section again scrolls back to it.
     private(set) var revision = 0
 
+    /// Snapshots: `--guide <section>` opens the Error Analysis guide, `--guide screens:<section>`
+    /// another one.
     init() {
-        if let id = DebugSnapshot.options?.guide { section = id.isEmpty ? nil : id }
+        guard var id = DebugSnapshot.options?.guide else { return }
+        if let colon = id.firstIndex(of: ":"), let named = Guide(rawValue: String(id[..<colon])) {
+            guide = named
+            id = String(id[id.index(after: colon)...])
+        }
+        section = id.isEmpty ? nil : id
     }
 
     func show(_ guide: Guide, section: String?) {
@@ -45,6 +54,7 @@ struct GuideButton: View {
     let guide: Guide
     var section: String?
     var title = "Guide"
+    var help = "How this screen works, button by button (in Russian)"
 
     var body: some View {
         Button(title, systemImage: "book") {
@@ -53,7 +63,7 @@ struct GuideButton: View {
         }
         // A word, not just an icon: this is the button for someone who doesn't know where to click.
         .labelStyle(.titleAndIcon)
-        .help("How this screen works, button by button (in Russian)")
+        .help(help)
     }
 }
 
