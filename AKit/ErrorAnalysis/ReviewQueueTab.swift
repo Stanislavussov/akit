@@ -8,6 +8,8 @@ import SwiftUI
 struct ReviewQueueTab: View {
     @Environment(AnalysisModel.self) private var analysis
     @Binding var action: ModeAction?
+    /// The candidate just confirmed here: its follow-ups show above the queue.
+    @State private var confirmed: Mode.ID?
 
     var body: some View {
         let data = analysis.data
@@ -15,13 +17,16 @@ struct ReviewQueueTab: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header(data)
+                if let id = confirmed, let mode = data.mode(id), mode.status == .active {
+                    ConfirmedFollowUps(mode: mode) { confirmed = nil }
+                }
                 if queue.isEmpty {
                     Label("Nothing waits for you.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
                 }
                 if !queue.candidates.isEmpty {
                     section("Candidate modes", count: queue.candidates.count,
                             help: "Found in the notes. Confirm the ones that are real and specific; merge or reject the rest.") {
-                        ForEach(queue.candidates) { CandidateCard(mode: $0, action: $action) }
+                        ForEach(queue.candidates) { mode in CandidateCard(mode: mode, action: $action) { confirmed = mode.id } }
                     }
                 }
                 if !queue.routes.isEmpty {
@@ -116,10 +121,10 @@ private struct CandidateCard: View {
     @Environment(AnalysisModel.self) private var analysis
     let mode: Mode
     @Binding var action: ModeAction?
+    let confirmed: () -> Void
 
     var body: some View {
         let seen = analysis.data.seenByMode[mode.id]?.count ?? 0
-        let id = mode.id
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(mode.name).fontWeight(.semibold)
@@ -128,7 +133,9 @@ private struct CandidateCard: View {
             Text(mode.definition).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Confirm", systemImage: "checkmark.circle") {
-                    analysis.act { env in "\(try await ModeStore(env: env).confirm(id).name) is active." }
+                    let mode = mode
+                    // As on the mode page: the check runs at once, and the follow-ups show above.
+                    Task { if await analysis.confirm(mode) { confirmed() } }
                 }
                 Button("Rename…") { action = .rename(mode) }
                 Button("Merge into…") { action = .merge(mode) }
@@ -157,22 +164,37 @@ private struct RouteCard: View {
             if let reason = route.reason, !reason.isEmpty {
                 Text(reason).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                Button("Accept", systemImage: "checkmark") { review(accept: true) }
-                Button("Reject", systemImage: "xmark") { review(accept: false) }
-                Menu("Move to…") {
-                    ForEach(data.current.filter { $0.id != route.modeID }) { mode in
-                        Button(mode.name) { review(accept: false, moveTo: .some(mode.id)) }
-                    }
-                    Divider()
-                    Button("None Fits") { review(accept: false, moveTo: .some(nil)) }
-                    Button("Unclear") { review(accept: false, moveTo: .some(nil), unclear: true) }
-                }
-                .fixedSize()
-            }
-            .controlSize(.small)
+            RouteActions(ref: ref, route: route)
         }
         .card()
+    }
+}
+
+/// Accept, Reject and Move to… for one route of a note (`akit analysis review`): on the
+/// Review tab for low-confidence routes, on a mode page for the notes routed to it.
+struct RouteActions: View {
+    @Environment(AnalysisModel.self) private var analysis
+    let ref: NoteRef
+    let route: Route
+
+    var body: some View {
+        HStack {
+            // A route you accepted or moved yourself has nothing left to accept.
+            if route.review == nil, route.by != .human {
+                Button("Accept", systemImage: "checkmark") { review(accept: true) }
+            }
+            Button("Reject", systemImage: "xmark") { review(accept: false) }
+            Menu("Move to…") {
+                ForEach(analysis.data.current.filter { $0.id != route.modeID }) { mode in
+                    Button(mode.name) { review(accept: false, moveTo: .some(mode.id)) }
+                }
+                Divider()
+                Button("None Fits") { review(accept: false, moveTo: .some(nil)) }
+                Button("Unclear") { review(accept: false, moveTo: .some(nil), unclear: true) }
+            }
+            .fixedSize()
+        }
+        .controlSize(.small)
     }
 
     private func review(accept: Bool, moveTo: String?? = nil, unclear: Bool = false) {

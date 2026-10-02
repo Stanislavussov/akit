@@ -15,6 +15,8 @@ struct ModeFixPanel: View {
     let mode: Mode
     /// Snapshots: `--query fix --add` opens the draft sheet.
     @State private var sheet: Sheet? = DebugSnapshot.options?.query == "fix" && DebugSnapshot.options?.add == true ? .draft : nil
+    /// Confirmed or Didn't Help, waiting for the user's go.
+    @State private var verdict: Mode.FixStatus?
 
     var body: some View {
         let draft = analysis.data.fixes[mode.id]
@@ -30,6 +32,15 @@ struct ModeFixPanel: View {
             actions(draft)
             if let draft { DraftView(draft: draft) }
             if mode.fixAppliedAt != nil { FixEvaluationView(mode: mode) }
+        }
+        .confirmationDialog(verdict == .confirmed ? "Mark the fix as confirmed?" : "Mark the fix as didn't help?",
+                            isPresented: Binding(get: { verdict != nil }, set: { if !$0 { verdict = nil } }), presenting: verdict) { status in
+            Button(status == .confirmed ? "Confirmed" : "Didn't Help") { setFix(status) }
+            Button("Cancel", role: .cancel) {}
+        } message: { status in
+            Text(status == .confirmed
+                 ? "Your verdict that the fix of \(mode.name) worked, saved with the mode and in History. Look at Before and after T first."
+                 : "Your verdict that the fix of \(mode.name) didn't help, saved with the mode and in History. Look at Before and after T first.")
         }
         .sheet(item: $sheet) { sheet in
             switch sheet {
@@ -77,14 +88,16 @@ struct ModeFixPanel: View {
     }
 
     private func status(_ title: String, _ status: Mode.FixStatus) -> some View {
-        Button(title) {
-            let id = mode.id, name = mode.name
-            analysis.act { env in
-                _ = try await ModeStore(env: env).setFix(id, status)
-                return "\(name): fix \(status.title)."
-            }
+        Button(title) { verdict = status }
+            .disabled(mode.fix == status)
+    }
+
+    private func setFix(_ status: Mode.FixStatus) {
+        let id = mode.id, name = mode.name
+        analysis.act { env in
+            _ = try await ModeStore(env: env).setFix(id, status)
+            return "\(name): fix \(status.title)."
         }
-        .disabled(mode.fix == status)
     }
 }
 
