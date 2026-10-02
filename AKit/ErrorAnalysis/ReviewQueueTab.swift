@@ -43,7 +43,7 @@ struct ReviewQueueTab: View {
                 }
                 if !queue.spotChecks.isEmpty {
                     section("Spot checks", count: queue.spotChecks.count,
-                            help: "Random accepted notes of the latest batch: is each a real problem? This measures the notes' precision.") {
+                            help: "Random accepted notes of the latest batch: is each a real problem? Your answers give the batch report's spot-check precision on the Reports tab.") {
                         ForEach(queue.spotChecks, id: \.self) { SpotCheckCard(ref: $0) }
                     }
                 }

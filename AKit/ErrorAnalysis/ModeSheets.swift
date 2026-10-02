@@ -171,7 +171,7 @@ private struct ScopeModeSheet: View {
 
     var body: some View {
         let id = mode.id, scope: Mode.Scope = general ? .general : .project(project.trimmingCharacters(in: .whitespaces))
-        ModeForm(title: "Scope of \(mode.name)", detail: "Scope only filters reports; matching sees every mode.", button: "Save",
+        ModeForm(title: "Scope of \(mode.name)", detail: "In reports, a mode of one project counts only over that project's sessions and is left out of reports with none of them. Matching, checks and judges still see every mode.", button: "Save",
                  enabled: general || !project.trimmingCharacters(in: .whitespaces).isEmpty) { env in
             "Scope: \(try await ModeStore(env: env).setScope(id, scope).scope)."
         } content: {

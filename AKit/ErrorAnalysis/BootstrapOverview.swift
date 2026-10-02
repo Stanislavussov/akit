@@ -32,7 +32,7 @@ struct BootstrapOverview: View {
     private func metrics(_ data: AnalysisData) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Agreement with the model").font(.title3.bold())
-            Text("Over labeled sessions with confirmed pairs, per notes model and prompt version. Recall is the share of your problems the model found; precision the share of its accepted notes you agree with.")
+            Text("Over labeled sessions with confirmed pairs, per notes model and prompt version. Recall is the share of your problems the model found and the verifier kept; before the verifier, the share it found at all. Precision is the share of its accepted notes you agree with.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -45,6 +45,7 @@ struct BootstrapOverview: View {
                         Text("Notes version")
                         Text("Sessions")
                         Text("Recall")
+                        Text("Before verifier")
                         Text("Precision")
                         Text("Phase")
                         Text("±3 steps")
@@ -58,6 +59,8 @@ struct BootstrapOverview: View {
                             Text(m.notesVersion)
                             Text("\(m.sessions)")
                             Text(share(m.recall, m.recallCounts[0], m.recallCounts[1]))
+                            Text(m.recallBeforeVerifierCounts.count == 2
+                                 ? share(m.recallBeforeVerifier, m.recallBeforeVerifierCounts[0], m.recallBeforeVerifierCounts[1]) : "—")
                             Text(share(m.precision, m.precisionCounts[0], m.precisionCounts[1]))
                             Text(share(m.phaseAgreement, m.deviationCounts[0], m.deviationCounts[2]))
                             Text(share(m.stepAgreement, m.deviationCounts[1], m.deviationCounts[2]))

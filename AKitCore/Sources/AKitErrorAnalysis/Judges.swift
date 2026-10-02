@@ -69,7 +69,16 @@ public enum Judges {
         let items = try SessionReader.transcript(of: summary).items.map {
             TranscriptItem(id: $0.id, kind: $0.kind, text: gate.scrub($0.text).text, timestamp: $0.timestamp)
         }
-        let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: EvidenceDigest.budget(model: agent.model)).text
+        // Like the notes: user turns and failed tool results are never cut, so a session whose
+        // kept parts alone pass the budget isn't sent.
+        let budget = EvidenceDigest.budget(model: agent.model)
+        let cut = EvidenceDigest.text(SessionTranscript(items: items), budget: budget)
+        guard !cut.overBudget else {
+            throw Failure(message: "The session is too long for one judge call: its user turns and failed tool results alone pass the "
+                              + "\(budget)-character budget of \(agent.model.isEmpty ? "the default model" : agent.model), so it isn't sent."
+                              + (budget < EvidenceDigest.largeBudget ? " A judge with a 1M-token window may have room for it." : ""))
+        }
+        let digest = cut.text
         // Exemplars are quotes from other sessions: only those whose origin may go here.
         let shown = Matching.sendable([mode.id: exemplars], gate: gate, env: env)
         let input = "## Mode\n\n\(Matching.modesText([mode], exemplars: shown.exemplars))\n\n## Transcript digest\n\n\(digest)\n"
