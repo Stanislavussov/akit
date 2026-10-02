@@ -44,7 +44,13 @@ struct SendingPolicySections: View {
             }
             ForEach(checks) { check in AccountCheckRow(check: check, allowed: lab.allowedDestinations) { add($0) } }
         } header: {
-            Text("Sending policy")
+            HStack {
+                Text("Sending policy")
+                Spacer()
+                GuideButton(guide: .errorAnalysis, section: "settings", title: "How It Works")
+                    .buttonStyle(.link)
+                    .font(.callout)
+            }
         } footer: {
             Text("Fill the list in by your company's policy for session data, not only for code. An entry is harness · provider · account · plan or organization; every review checks the account first.")
                 .foregroundStyle(.secondary)

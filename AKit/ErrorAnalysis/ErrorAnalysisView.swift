@@ -57,6 +57,10 @@ struct ErrorAnalysisView: View {
                 Button("Reload", systemImage: "arrow.clockwise") { Task { await analysis.reload() } }
                     .help("Read ~/.akit/lab/analysis again")
             }
+            ToolbarItem {
+                // The guide's sections are named like the tabs.
+                GuideButton(guide: .errorAnalysis, section: tab.rawValue)
+            }
         }
         .sheet(item: $modeAction) { ModeActionSheet(action: $0) }
         .sheet(item: $analysis.send) { AnalysisSendSheet(send: $0) }

@@ -113,7 +113,7 @@ struct FixDraftSheet: View {
         .confirmationDialog("Start the fix over?", isPresented: $confirmStartOver) {
             Button("Start Over", role: .destructive, action: save)
         } message: {
-            Text("The fix goes back to draft: T and the old criterion are dropped, and before/after starts again from the next Mark Applied.")
+            Text("The fix goes back to draft: T is dropped and before/after starts again from the next Mark Applied. The criterion is what you saved here.")
         }
     }
 

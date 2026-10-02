@@ -11,7 +11,8 @@ import SwiftUI
 /// Usage takes it as the period: week, month, quarter, year, all);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
 /// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet;
-/// `--settings` shows the Settings view in the main window;
+/// `--settings` shows the Settings view in the main window; `--guide <section id>` the guide window's
+/// view, opened at that section (`--query` fills its search field);
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
@@ -56,6 +57,8 @@ enum DebugSnapshot {
         var size: CGSize?
         /// Brain screen: the layer to select.
         var select: String?
+        /// Show the Error Analysis guide opened at this section instead of the sidebar window.
+        var guide: String?
     }
 
     static let options: Options? = {
@@ -84,7 +87,8 @@ enum DebugSnapshot {
                 let parts = text.split(separator: "x").compactMap { Double($0) }
                 return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : nil
             },
-            select: value("--select")
+            select: value("--select"),
+            guide: value("--guide")
         )
     }()
 

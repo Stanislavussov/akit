@@ -5,15 +5,24 @@ import SwiftUI
 struct AKitApp: App {
     @State private var model = AppModel()
     @State private var rebuild = SelfRebuild()
+    @State private var guides = GuideNavigator()
 
     var body: some Scene {
         WindowGroup("AKit") {
             Group {
-                // The Settings window can't be captured; `--settings` shows its view in the main one.
-                if DebugSnapshot.options?.settings == true { SettingsView() } else { RootView() }
+                // The Settings and Guide windows can't be captured; `--settings` and `--guide <section>`
+                // show their views in the main one.
+                if DebugSnapshot.options?.settings == true {
+                    SettingsView()
+                } else if DebugSnapshot.options?.guide != nil {
+                    GuideView()
+                } else {
+                    RootView()
+                }
             }
                 .environment(model)
                 .environment(rebuild)
+                .environment(guides)
                 .frame(minWidth: 820, minHeight: 520)
                 .task {
                     if SelfRebuild.requestedAtLaunch {
@@ -39,6 +48,9 @@ struct AKitApp: App {
                 Button("Refresh") { Task { await model.refresh() } }
                     .keyboardShortcut("r")
             }
+            CommandGroup(replacing: .help) {
+                GuideMenuItems(navigator: guides)
+            }
             CommandMenu("Develop") {
                 Button(rebuild.state == .building ? "Rebuilding…" : "Rebuild and Relaunch") {
                     Task { await rebuild.rebuildAndRelaunch() }
@@ -59,6 +71,13 @@ struct AKitApp: App {
         Settings {
             SettingsView()
                 .environment(model)
+                .environment(guides)
         }
+
+        Window("Guide", id: GuideView.windowID) {
+            GuideView()
+                .environment(guides)
+        }
+        .defaultSize(width: 760, height: 820)
     }
 }
