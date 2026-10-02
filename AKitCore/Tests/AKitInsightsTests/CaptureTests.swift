@@ -160,6 +160,97 @@ struct CaptureTests {
         #expect(line["common_dir"] as? String == root + "/repos/main/.git")
     }
 
+    @Test func resolvesHeadFromGitFilesWithoutGit() throws {
+        let commit = "0123456789abcdef0123456789abcdef01234567"
+        let other = "89abcdef0123456789abcdef0123456789abcdef"
+        try write("repos/main/.git/config", "[core]\n")
+        try write("repos/main/.git/worktrees/feature/commondir", "../..\n")
+        try write("wt/feature/.git", "gitdir: ../../repos/main/.git/worktrees/feature\n")
+        let root = home.resolvingSymlinksInPath().path
+        func head(_ folder: String) -> String? { RecordSession.repository(containing: root + "/" + folder)?.head }
+
+        // Detached: the sha itself (any case, trimmed).
+        try write("repos/main/.git/HEAD", commit.uppercased() + "\n")
+        #expect(head("repos/main") == commit)
+        // A sha256 repository's 64 digits.
+        try write("repos/main/.git/HEAD", String(repeating: "ab", count: 32) + "\n")
+        #expect(head("repos/main") == String(repeating: "ab", count: 32))
+
+        // A branch: unborn (no ref anywhere) → no head, but the branch.
+        try write("repos/main/.git/HEAD", "ref: refs/heads/main\n")
+        #expect(head("repos/main") == nil && RecordSession.repository(containing: root + "/repos/main")?.branch == "main")
+        // Packed only; header, peeled and other refs' lines don't match.
+        try write("repos/main/.git/packed-refs", """
+            # pack-refs with: peeled fully-peeled sorted\u{20}
+            \(other) refs/heads/main-old
+            \(commit) refs/heads/main
+            ^\(other)
+            \(other) refs/tags/v1
+
+            """)
+        #expect(head("repos/main") == commit)
+        // A loose ref wins over its packed line.
+        try write("repos/main/.git/refs/heads/main", other + "\n")
+        #expect(head("repos/main") == other)
+
+        // A worktree's branch lives in the common dir only.
+        try write("repos/main/.git/worktrees/feature/HEAD", "ref: refs/heads/feature-x\n")
+        #expect(head("wt/feature") == nil)
+        try write("repos/main/.git/refs/heads/feature-x", commit + "\n")
+        #expect(head("wt/feature") == commit)
+        // A per-worktree ref in its own gitdir comes first.
+        try write("repos/main/.git/worktrees/feature/HEAD", "ref: refs/bisect/bad\n")
+        try write("repos/main/.git/worktrees/feature/refs/bisect/bad", other + "\n")
+        try write("repos/main/.git/refs/bisect/bad", commit + "\n")
+        #expect(head("wt/feature") == other)
+
+        // Garbage: short, non-hex, non-ASCII digits, refs outside refs/, a broken loose ref.
+        for text in ["0123456789abcdef", String(commit.dropLast()) + "g", String(repeating: "\u{FF10}", count: 40),
+                     "ref: ../../../etc/passwd", "ref: refs/../../config", "ref:", "", "ref: refs/heads/broken"] {
+            try write("repos/main/.git/HEAD", text + "\n")
+            try write("repos/main/.git/refs/heads/broken", "not a sha\n")
+            #expect(head("repos/main") == nil, "\(text)")
+        }
+
+        // Through the hook: the head lands in the spool line.
+        try write("repos/main/.git/HEAD", commit + "\n")
+        RecordSession.run(harness: "claude", stdin: Data(#"{"session_id":"h1","cwd":"\#(root)/repos/main"}"#.utf8),
+                          env: env, now: Self.day(0))
+        RecordSession.run(harness: "claude", stdin: Data(#"{"session_id":"h2","cwd":"/nowhere"}"#.utf8),
+                          env: env, now: Self.day(0))
+        let lines = try spoolLines(Self.day(0))
+        #expect(lines.count == 2 && lines[0]["head"] as? String == commit && lines[1]["head"] == nil)
+    }
+
+    @Test func importedHeadIsTheFirstRecordedForTheSession() throws {
+        let first = "0123456789abcdef0123456789abcdef01234567"
+        let later = "89abcdef0123456789abcdef0123456789abcdef"
+        func start(_ id: String, head: String?, at date: Date) {
+            var line: [String: Any] = ["v": 1, "kind": "session_start", "harness": "claude", "session_id": id,
+                                       "ts": Spool.milliseconds(date)]
+            line["head"] = head
+            Spool.append(line, home: home, now: date)
+        }
+        // No index yet: nil, and none is created.
+        #expect(IndexQueries.sessionHead(harness: "claude", sessionID: "s1", env: env) == nil)
+        #expect(!fm.fileExists(atPath: paths.database.path))
+
+        start("s1", head: nil, at: Self.day(0, hours: 9))
+        start("s1", head: first, at: Self.day(0, hours: 10))
+        // Resumed later at a newer commit: the start's commit stays.
+        start("s1", head: later, at: Self.day(0, hours: 12))
+        start("s2", head: nil, at: Self.day(0, hours: 11))
+        try runImport(now: Self.day(0, hours: 13))
+
+        let db = try database()
+        #expect(try count("SELECT COUNT(*) FROM hook_events WHERE head IS NOT NULL") == 2)
+        #expect(try IndexQueries.head(db, harness: "claude", sessionID: "s1") == first)
+        #expect(try IndexQueries.head(db, harness: "pi", sessionID: "s1") == nil)
+        #expect(try IndexQueries.head(db, harness: "claude", sessionID: "s2") == nil)
+        #expect(IndexQueries.sessionHead(harness: "claude", sessionID: "s1", env: env) == first)
+        #expect(IndexQueries.sessionHead(harness: "claude", sessionID: "unknown", env: env) == nil)
+    }
+
     @Test func overlongLineDropsTranscriptAndCwd() throws {
         let long = "/" + String(repeating: "a", count: 5_000)
         RecordSession.run(harness: "pi", stdin: Data(#"{"cwd":"\#(long)","transcript_path":"/s/2026-09-20T10-00-00-000Z_abc123.jsonl"}"#.utf8),

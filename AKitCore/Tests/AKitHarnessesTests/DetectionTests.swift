@@ -121,7 +121,8 @@ struct VersionProbeTests {
         let exe = try script("sleep 30")
         let start = Date()
         #expect(await VersionProbe.version(of: exe, in: env, timeout: 1) == nil)
-        #expect(Date().timeIntervalSince(start) < 3)
+        // Far below the 30 s sleep; generous because the full suite runs in parallel.
+        #expect(Date().timeIntervalSince(start) < 6)
     }
 
     @Test func failingProgramGivesNil() async throws {

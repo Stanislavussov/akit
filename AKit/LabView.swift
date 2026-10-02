@@ -1,3 +1,4 @@
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitLab
 import AKitSessions
@@ -7,18 +8,56 @@ import SwiftUI
 /// Lab screen: the queue and past runs. Runs happen in a terminal tab (Orca, herdr) or in
 /// the background; this screen reads their folders in `~/.akit/lab` every two seconds.
 struct LabView: View {
+    enum Page: String, CaseIterable {
+        case runs, sends
+        var title: String { self == .runs ? "Runs" : "Sends" }
+    }
+
     @Environment(AppModel.self) private var model
     @State private var selection: LabRun.ID? = DebugSnapshot.options?.select
     @State private var showNewRun = DebugSnapshot.options?.add == true
     @State private var problem: String?
+    /// Snapshots: `--tab sends`.
+    @State private var page = DebugSnapshot.options?.tab.flatMap(Page.init(rawValue:)) ?? .runs
 
     var body: some View {
+        Group {
+            switch page {
+            case .runs: runs
+            case .sends: LabSendsView()
+            }
+        }
+        .navigationTitle("Lab")
+        .navigationSubtitle(subtitle)
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("Show", selection: $page) {
+                    ForEach(Page.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Runs: reviews, replays, error analysis batches and control cells. Sends: every model call that sent session data or code out.")
+            }
+            ToolbarItem {
+                Button("New Run…", systemImage: "plus") { showNewRun = true }
+                    .help("Review a session, replay a commit under different setups, or run an error analysis batch")
+            }
+        }
+        .sheet(isPresented: $showNewRun) {
+            NewLabRunSheet(session: nil) { run in
+                page = .runs
+                selection = run.id
+            }
+        }
+    }
+
+    private var runs: some View {
         HSplitView {
             list
                 .frame(minWidth: 280, idealWidth: 340, maxWidth: 480)
             Group {
                 if let run = model.labRuns.first(where: { $0.id == selection }) {
-                    LabRunDetail(run: run)
+                    LabRunDetail(run: run) { selection = $0.id }
                         .id(run.id)
                 } else {
                     ContentUnavailableView {
@@ -32,14 +71,6 @@ struct LabView: View {
             }
             .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Lab")
-        .navigationSubtitle(subtitle)
-        .toolbar {
-            ToolbarItem {
-                Button("New Run…", systemImage: "plus") { showNewRun = true }
-                    .help("Review a session, or replay a commit under different setups")
-            }
-        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if let problem {
                 Label(problem, systemImage: "exclamationmark.triangle")
@@ -49,12 +80,13 @@ struct LabView: View {
                     .background(.orange.opacity(0.15))
             }
         }
-        .sheet(isPresented: $showNewRun) {
-            NewLabRunSheet(session: nil) { run in selection = run.id }
-        }
         .task {
             // The app watches ~/.akit/lab all the time (RootView); this only picks a first run.
             await model.reloadLab()
+            if let reveal = model.revealLabRun {
+                selection = reveal
+                model.revealLabRun = nil
+            }
             if selection == nil { selection = model.labRuns.first?.id }
             problem = await model.labProblem()
         }
@@ -100,6 +132,13 @@ private struct LabRunRow: View {
                 if let tests = run.result?.tests {
                     Image(systemName: tests.status == .passed ? "checkmark.seal" : "xmark.seal")
                         .foregroundStyle(tests.status == .passed ? .green : .red)
+                }
+                if let control = run.result?.control {
+                    Image(systemName: control.flagged ? "flag" : control.passed ? "checkmark.seal" : "xmark.seal")
+                        .foregroundStyle(control.flagged ? .orange : control.passed ? .green : .red)
+                }
+                if let batch = run.result?.batch {
+                    Text("\(batch.done)/\(batch.total) done" + (batch.failed > 0 ? ", \(batch.failed) failed" : ""))
                 }
                 if let metrics = run.result?.metrics {
                     Text("\(UsageText.short(metrics.freshTokens)) fresh · \(metrics.calls) \(metrics.calls == 1 ? "call" : "calls")")
@@ -159,6 +198,17 @@ struct LabStatusBadge: View {
     }
 }
 
+extension RunSpec.Kind {
+    var title: String {
+        switch self {
+        case .review: "Session review"
+        case .replay: "Replay task"
+        case .analysis: "Error analysis batch"
+        case .control: "Control cell"
+        }
+    }
+}
+
 extension LabEnvironment {
     var icon: String {
         switch self {
@@ -173,10 +223,39 @@ extension LabEnvironment {
 private struct LabRunDetail: View {
     @Environment(AppModel.self) private var model
     let run: LabRun
+    /// Selects another run (a re-check just queued, the review that replaced these notes).
+    let select: (LabRun) -> Void
     @State private var error: String?
     @State private var confirmRemove = false
+    /// The review's notes file, when this run wrote the one saved for its session.
+    @State private var notes: SessionNotes?
+    /// The run whose review replaced this one's notes.
+    @State private var replacedBy: String?
+    /// Snapshots: `--tab recheck` opens the Re-check sheet.
+    @State private var showRecheck = DebugSnapshot.options?.tab == "recheck"
 
     var body: some View {
+        ScrollViewReader { proxy in
+            scroll
+                .task(id: notes) {
+                    // Snapshots: `--tab notes` scrolls to the review's notes.
+                    guard notes != nil, DebugSnapshot.options?.tab == "notes" else { return }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    proxy.scrollTo("notes", anchor: .top)
+                }
+        }
+        .task(id: run) { await loadNotes() }
+        .sheet(isPresented: $showRecheck) {
+            RecheckSheet(run: run) { select($0) }
+        }
+        .confirmationDialog("Move this run to the Trash?", isPresented: $confirmRemove) {
+            Button("Move to Trash", role: .destructive) { act { try await model.remove(run) } }
+        } message: {
+            Text("Its folder \(run.folder.tildePath) goes to the Trash, with everything the agent wrote there.")
+        }
+    }
+
+    private var scroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
@@ -188,13 +267,18 @@ private struct LabRunDetail: View {
                 if let error {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                 }
-                if run.spec.kind == .review { review } else { replay }
+                switch run.spec.kind {
+                case .review: review
+                case .replay: replay
+                case .analysis: LabBatchSection(run: run, select: select)
+                case .control: LabControlSection(run: run)
+                }
                 if let metrics = run.result?.metrics {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("The run's own agent session").font(.title3.bold())
                         MetricsView(metrics: metrics)
                     }
-                } else if run.status == .finished {
+                } else if run.status == .finished, run.spec.kind != .analysis {
                     Text(run.spec.agent?.harness == .pi ? "AKit doesn't measure Pi sessions yet, so there are no numbers."
                          : "Claude Code wrote no transcript for this run, so there are no numbers.")
                         .foregroundStyle(.secondary)
@@ -202,11 +286,6 @@ private struct LabRunDetail: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .confirmationDialog("Move this run to the Trash?", isPresented: $confirmRemove) {
-            Button("Move to Trash", role: .destructive) { act { try await model.remove(run) } }
-        } message: {
-            Text("Its folder \(run.folder.tildePath) goes to the Trash, with everything the agent wrote there.")
         }
     }
 
@@ -218,7 +297,7 @@ private struct LabRunDetail: View {
                 LabStatusBadge(run: run)
             }
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
-                row("Kind", run.spec.kind == .review ? "Session review" : "Replay task")
+                row("Kind", run.spec.kind.title)
                 if let agent = run.spec.agent { row("Agent", agent.label) }
                 if let language = run.spec.language, language != .english { row("Language", language.name) }
                 row("Opens in", "\(run.spec.environment.title) · \(URL(filePath: run.spec.folder).tildePath)")
@@ -249,6 +328,10 @@ private struct LabRunDetail: View {
                     Button("Start", systemImage: "play") { act { try await model.startLabQueue() } }
                         .help(model.labAutoStartPaused ? "The last start failed; start the next queued run again"
                               : "Start the next queued run if nothing is running")
+                }
+                if run.spec.kind == .review, run.status == .finished, run.spec.reviewedTranscript != nil {
+                    Button("Re-check with Another Model…", systemImage: "arrow.triangle.2.circlepath") { showRecheck = true }
+                        .help("Review the same session again with another model, for hard sessions")
                 }
                 Button("Show in Finder", systemImage: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([run.folder])
@@ -285,6 +368,27 @@ private struct LabRunDetail: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        if let replacedBy {
+            HStack {
+                Label("A later review of this session replaced its notes; here are this run's paragraph and improvements.",
+                      systemImage: "info.circle")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let later = model.labRuns.first(where: { $0.id == replacedBy }) {
+                    Button("Show Review") { select(later) }.controlSize(.small)
+                }
+            }
+        }
+        if let notes {
+            ReviewNotesView(notes: notes)
+        } else {
+            legacyReview
+        }
+    }
+
+    /// The paragraph and the improvements as the run wrote them: agent-mode reviews, and
+    /// reviews whose notes a later one replaced.
+    @ViewBuilder private var legacyReview: some View {
         if let summary = run.summary {
             MarkdownLines(text: summary.trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -358,6 +462,26 @@ private struct LabRunDetail: View {
             if comparison.rows.count > 1 || (comparison.rows.first?.runs ?? 0) > 1 {
                 ComparisonView(comparison: comparison)
             }
+        }
+    }
+
+    /// The notes saved for the reviewed session, read off the main thread once the run is
+    /// finished. A session keeps one notes file, so a later review's file isn't this run's.
+    private func loadNotes() async {
+        guard run.spec.kind == .review, run.status == .finished, let transcript = run.spec.reviewedTranscript else {
+            notes = nil
+            replacedBy = nil
+            return
+        }
+        let target = NotesPipeline.Target(harness: run.spec.reviewedHarness, file: URL(filePath: transcript), title: run.spec.reviewedTitle)
+        let env = HarnessEnvironment.current
+        let found = await Task.detached { SessionKey.of(target.summary).flatMap { NotesStore(env: env).load($0.description) } }.value
+        if let found, found.runID == nil || found.runID == run.id {
+            notes = found
+            replacedBy = nil
+        } else {
+            notes = nil
+            replacedBy = run.spec.agent?.mode == .call ? found?.runID : nil
         }
     }
 

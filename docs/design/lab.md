@@ -79,6 +79,8 @@ AKit UI ◀──(3) watches ~/.akit/lab/ and shows state and result
 | **Session analysis** | no | inside AKit, instant | cost, friction and context rent of one recorded session |
 | **Session review** | a model call or an agent | terminal | one paragraph plus 0 to 3 improvements |
 | **Replay task** | yes | terminal, N repeats × setups | hidden tests passed or not, and what it cost |
+| **Error analysis** | model calls | terminal | a batch of sessions: notes, verifier, matching, checks, clustering (`error-analysis.md`) |
+| **Control cell** | yes | terminal, repeats × setups | a control task's oracle (tests or a mode's check) and the guard (`error-analysis.md`) |
 
 Session analysis is plain computation over the transcript and git; it needs no
 terminal, no run folder and should be the first thing built.
@@ -173,9 +175,10 @@ Who writes what:
 - **Numbers come from `akit lab run`**, never from the agent: tokens, calls, context
   rent, tests, commits. An agent can't be trusted to report its own metrics.
 - **A review is one model call by default**: AKit sends its numbers and a digest of the
-  masked transcript (numbered items, long texts cut, thinking left out; tool results and
-  then the middle of the session go first when it is still over ~90K tokens), the model
-  answers with JSON, and AKit writes `review.json` and `summary.md` itself. The call goes
+  masked transcript (`EvidenceDigest`: numbered items, thinking left out, user turns
+  verbatim, other items cut to one cap that scales with the session, long tool output kept
+  as start, end and a stub with the exit code, error lines and failed-test count; the
+  budget is per model, ~90K tokens by default), the model answers with JSON, and AKit writes `review.json` and `summary.md` itself. The call goes
   through the harness with its own sign-in and model settings, never with keys AKit reads:
   Claude Code `-p --tools "" --safe-mode --system-prompt … --json-schema …` with the digest
   on stdin; Pi `-p --no-tools --no-skills --no-context-files --no-prompt-templates
@@ -190,7 +193,14 @@ Who writes what:
   of an injected transcript could write a file elsewhere; one model call has no such gap.
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
+- The earlier digest (fixed limits per kind, tool results dropped first) was replaced on
+  2026-10-01 by the evidence-preserving digest of `error-analysis.md`. When even the
+  smallest cap doesn't fit, the middle of the session goes, but never user turns or the
+  stubs of failed tool results.
 - Summaries and findings pass through `SecretFilter` before AKit shows them.
+- Since 2026-10-01 every call that sends session data or code goes through the sending
+  policy of `error-analysis.md` (allowed list, same origin, account check, scrub, monthly
+  limit, `sends.jsonl`); the one-call review is error analysis's notes and verifier.
 
 ## Replay tasks
 
@@ -307,6 +317,10 @@ Lab screen shows the spread, not only the mean.
   11 there).
 - **Shared terms** (`definitions.md`): data tiers, `first_request_context`, harness
   fingerprint, repo snapshot, failure signals and the statistics rules.
+- **Error analysis** (`error-analysis.md`): failure modes across many sessions, checks
+  per mode and controlled evals of fixes; the one-session review becomes its first step.
+  Its control sets are Lab runs too: control cells (kind `control`) built on replay's
+  isolated clone.
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 

@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitModel
 import Foundation
 
 /// What a run does: `run.json`, written once when the run is queued.
@@ -8,6 +9,12 @@ public struct RunSpec: Codable, Sendable, Hashable {
         case review
         /// An agent redoes a commit in an isolated clone; hidden tests judge it.
         case replay
+        /// Error analysis over a batch of sessions: notes, verifier, matching and checks per
+        /// session, clustering at the end (`docs/design/error-analysis.md`, "Batch run").
+        case analysis
+        /// One cell of a controlled eval: a control task in an isolated clone with one setup
+        /// (`ControlCell`); error analysis runs it (`docs/design/error-analysis.md`).
+        case control
     }
 
     public var schema = 1
@@ -26,11 +33,21 @@ public struct RunSpec: Codable, Sendable, Hashable {
 
     // Review
     public var reviewedTranscript: String?
+    /// The harness that recorded the reviewed session; Claude Code when missing (older runs).
+    public var reviewedHarness: HarnessID {
+        get { reviewedHarnessName.map { name in HarnessID.builtIn.first { $0.rawValue == name } ?? HarnessID(name, displayName: name) } ?? .claudeCode }
+        set { reviewedHarnessName = newValue == .claudeCode ? nil : newValue.rawValue }
+    }
+    var reviewedHarnessName: String?
     public var reviewedTitle: String?
     /// The harness and model that write the review; nil = Claude Code with your settings.
     public var agent: LabAgent?
     /// The language the review is written in; nil = English.
     public var language: LabLanguage?
+
+    // Error analysis batch: its file in ~/.akit/lab/analysis/batches. A resumed batch is a new
+    // run with the same batch.
+    public var batch: String?
 
     // Replay
     public var repo: String?
@@ -41,11 +58,17 @@ public struct RunSpec: Codable, Sendable, Hashable {
     /// Keep the clone instead of moving it to the Trash at the end.
     public var keep: Bool
 
+    // Control (with `repo`, `repeatIndex`, `repeats`, `keep`)
+    /// The control task's id (`~/.akit/lab/evals/tasks/<id>.json`).
+    public var controlTask: String?
+    public var controlSetup: ControlSetup?
+
     public init(id: String, kind: Kind, title: String, createdAt: Date = .now, folder: String,
                 environment: LabEnvironment, akit: String, sessionID: String = UUID().uuidString.lowercased(),
                 reviewedTranscript: String? = nil, reviewedTitle: String? = nil, agent: LabAgent? = nil, language: LabLanguage? = nil,
                 repo: String? = nil, commit: String? = nil,
-                setup: LabSetup? = nil, repeatIndex: Int? = nil, repeats: Int? = nil, keep: Bool = false) {
+                setup: LabSetup? = nil, repeatIndex: Int? = nil, repeats: Int? = nil, keep: Bool = false,
+                controlTask: String? = nil, controlSetup: ControlSetup? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -64,6 +87,8 @@ public struct RunSpec: Codable, Sendable, Hashable {
         self.repeatIndex = repeatIndex
         self.repeats = repeats
         self.keep = keep
+        self.controlTask = controlTask
+        self.controlSetup = controlSetup
     }
 
     /// `20260930-181502-a1b2`: sorts by creation time.
@@ -200,7 +225,7 @@ public enum LabLanguage: String, Codable, Sendable, CaseIterable {
     }
 
     /// Added to the review instructions.
-    var instruction: String {
+    public var instruction: String {
         "Write the summary and the improvements (titles and details) in \(name). Keep JSON keys, file names, "
             + "commands, code and quoted text as they are."
     }
@@ -210,14 +235,33 @@ public enum LabLanguage: String, Codable, Sendable, CaseIterable {
 public struct LabSettings: Codable, Sendable, Hashable {
     /// The language new reviews are written in.
     public var reportLanguage: LabLanguage
+    /// Destinations session data may go to beyond the same origin; on a work Mac the only ones.
+    public var allowedDestinations: [SendDestination]
+    /// The account behind each Pi provider, entered by the user.
+    public var piAccounts: [PiAccount]
+    /// The user's own scrub patterns: internal hosts, e-mails, anything else.
+    public var scrub: Scrubber.OwnPatterns
+    /// Recorded cost per calendar month, in US dollars, shared by everything that calls a
+    /// model here; nil = no limit.
+    public var monthlyLimit: Double?
 
-    public init(reportLanguage: LabLanguage = .english) {
+    public init(reportLanguage: LabLanguage = .english, allowedDestinations: [SendDestination] = [], piAccounts: [PiAccount] = [],
+                scrub: Scrubber.OwnPatterns = Scrubber.OwnPatterns(), monthlyLimit: Double? = nil) {
         self.reportLanguage = reportLanguage
+        self.allowedDestinations = allowedDestinations
+        self.piAccounts = piAccounts
+        self.scrub = scrub
+        self.monthlyLimit = monthlyLimit
     }
 
+    /// Fields missing in older files take their defaults; a broken field doesn't lose the others.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         reportLanguage = (try? container.decodeIfPresent(LabLanguage.self, forKey: .reportLanguage)) ?? .english
+        allowedDestinations = (try? container.decodeIfPresent([SendDestination].self, forKey: .allowedDestinations)) ?? []
+        piAccounts = (try? container.decodeIfPresent([PiAccount].self, forKey: .piAccounts)) ?? []
+        scrub = (try? container.decodeIfPresent(Scrubber.OwnPatterns.self, forKey: .scrub)) ?? Scrubber.OwnPatterns()
+        monthlyLimit = try? container.decodeIfPresent(Double.self, forKey: .monthlyLimit)
     }
 
     static func file(env: HarnessEnvironment) -> URL { LabPaths(env: env).folder.appending(path: "settings.json") }
@@ -325,17 +369,38 @@ public struct RunResult: Codable, Sendable, Hashable {
     public var leaks: [String]?
     /// The agent's own error when it ended with one (a refused model call, no credit), masked.
     public var agentError: String?
+    /// An error analysis batch: sessions done, failed and in all when the run ended.
+    public var batch: BatchProgress?
+    /// A control cell's oracle verdict and guard.
+    public var control: ControlOutcome?
 
     public init(metrics: SessionMetrics? = nil, tests: TestOutcome? = nil, review: ReviewStatus? = nil, leaks: [String]? = nil,
-                agentError: String? = nil) {
+                agentError: String? = nil, batch: BatchProgress? = nil, control: ControlOutcome? = nil) {
         self.metrics = metrics
         self.tests = tests
         self.review = review
         self.leaks = leaks
         self.agentError = agentError
+        self.batch = batch
+        self.control = control
     }
 
     public var leaked: Bool { !(leaks ?? []).isEmpty }
+}
+
+public struct BatchProgress: Codable, Sendable, Hashable {
+    public var done: Int
+    public var failed: Int
+    public var total: Int
+    /// Stopped by Pause; Resume continues from the same place.
+    public var paused: Bool
+
+    public init(done: Int, failed: Int, total: Int, paused: Bool) {
+        self.done = done
+        self.failed = failed
+        self.total = total
+        self.paused = paused
+    }
 }
 
 public enum ReviewStatus: String, Codable, Sendable {

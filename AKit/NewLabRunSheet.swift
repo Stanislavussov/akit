@@ -4,13 +4,20 @@ import AKitSessions
 import AppKit
 import SwiftUI
 
-/// Queue Lab runs: a review of a session, or replays of a commit under one or more setups.
-/// From a session (Review in Terminal…) the kind and the session are already chosen.
+/// Queue Lab runs: a review of a session, replays of a commit under one or more setups, or
+/// an error analysis batch. From a session (Review in Terminal…) the kind and the session are
+/// already chosen.
 struct NewLabRunSheet: View {
     enum Kind: String, CaseIterable, Identifiable {
-        case review, replay
+        case review, replay, analysis
         var id: Self { self }
-        var title: String { self == .review ? "Review a Session" : "Replay a Commit" }
+        var title: String {
+            switch self {
+            case .review: "Review a Session"
+            case .replay: "Replay a Commit"
+            case .analysis: "Error Analysis Batch"
+            }
+        }
     }
 
     @Environment(AppModel.self) private var model
@@ -32,8 +39,6 @@ struct NewLabRunSheet: View {
     @State private var reviewModel = ""
     @State private var reviewEffort = "high"
     @State private var reviewMode: LabAgent.Mode = .call
-    /// Models to offer for the harness (Pi: the ones it has credentials for).
-    @State private var reviewModels: [String] = []
 
     // Replay
     @State private var repo: URL?
@@ -51,6 +56,9 @@ struct NewLabRunSheet: View {
     @State private var checking: String?
     @State private var checked: ReplayTask?
 
+    // Error analysis batch
+    @State private var batch = AnalysisBatchDraft()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("New Lab Run").font(.title2.bold())
@@ -65,6 +73,7 @@ struct NewLabRunSheet: View {
             switch kind {
             case .review: review
             case .replay: replay
+            case .analysis: AnalysisBatchFields(draft: $batch)
             }
             Picker("Open in", selection: $environment) {
                 Text(suggested.map { "Automatic (\($0.title))" } ?? "Automatic").tag(LabEnvironment?.none)
@@ -95,11 +104,6 @@ struct NewLabRunSheet: View {
             suggested = await model.suggestedEnvironment(for: folder)
         }
         .task {
-            if !model.labHarnesses.contains(harness), let first = model.labHarnesses.first { harness = first }
-            await loadAgent(harness)
-        }
-        .onChange(of: harness) { _, chosen in Task { await loadAgent(chosen) } }
-        .task {
             let defaults = model.defaultModelAndEffort
             if modelName.isEmpty { modelName = defaults.model }
             effort = LabRuns.efforts.contains(defaults.effort) ? defaults.effort : "high"
@@ -118,6 +122,7 @@ struct NewLabRunSheet: View {
         switch kind {
         case .review: target?.project
         case .replay: repo
+        case .analysis: HarnessEnvironment.current.homeDirectory
         }
     }
 
@@ -125,6 +130,7 @@ struct NewLabRunSheet: View {
         switch kind {
         case .review: "Queue and Start"
         case .replay: runCount == 1 ? "Queue 1 Run" : "Queue \(runCount) Runs"
+        case .analysis: "Sample and Queue"
         }
     }
 
@@ -135,6 +141,7 @@ struct NewLabRunSheet: View {
         case .review: target != nil && (harness == .pi || !reviewModel.trimmingCharacters(in: .whitespaces).isEmpty)
         case .replay: repo != nil && draft != nil && checking == nil && !setups.isEmpty
             && !modelName.trimmingCharacters(in: .whitespaces).isEmpty
+        case .analysis: batch.isValid
         }
     }
 
@@ -169,21 +176,7 @@ struct NewLabRunSheet: View {
             Text("Session: \(target.title)").fontWeight(.medium)
         }
         Form {
-            Picker("Harness", selection: $harness) {
-                ForEach(model.labHarnesses, id: \.self) { Text($0.title).tag($0) }
-            }
-            HStack {
-                TextField("Model", text: $reviewModel, prompt: Text(harness == .pi ? "Pi's default" : "opus"))
-                Menu("Models") {
-                    ForEach(reviewModels, id: \.self) { name in Button(name) { reviewModel = name } }
-                }
-                .fixedSize()
-                .disabled(reviewModels.isEmpty)
-                .help(harness == .pi ? "Models Pi has credentials for (pi --list-models)" : "Claude Code model aliases")
-            }
-            Picker(harness == .pi ? "Thinking" : "Effort", selection: $reviewEffort) {
-                ForEach(harness.efforts, id: \.self) { Text($0).tag($0) }
-            }
+            ReviewAgentFields(harness: $harness, modelName: $reviewModel, effort: $reviewEffort)
             Picker("How", selection: $reviewMode) {
                 ForEach(LabAgent.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
             }
@@ -194,17 +187,6 @@ struct NewLabRunSheet: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .frame(height: 215)
-    }
-
-    /// The chosen harness's defaults and models. `ProcessRunner` doesn't stop on cancel, so a
-    /// slow `pi --list-models` that ends after a switch back to Claude Code is dropped.
-    private func loadAgent(_ chosen: LabHarness) async {
-        let defaults = model.defaultAgent(chosen)
-        reviewModel = defaults.model
-        reviewEffort = chosen.efforts.contains(defaults.effort) ? defaults.effort : chosen.efforts[0]
-        reviewModels = []
-        let models = await model.labModels(for: chosen)
-        if harness == chosen { reviewModels = models }
     }
 
     private var reviewAgent: LabAgent {
@@ -354,6 +336,12 @@ struct NewLabRunSheet: View {
                     let runs = try await model.queueReplays(commit: draft.commit, repo: repo, setups: setups, repeats: repeats,
                                                             environment: environment, keep: keep)
                     if let first = runs.first { onQueued(first) }
+                case .analysis:
+                    var claude = model.defaultAgent(.claudeCode)
+                    claude.mode = .call
+                    onQueued(try await model.queueAnalysis(filter: batch.filter, size: batch.size, notesAgent: batch.notesAgent,
+                                                           matchingAgent: batch.matchingAgent(defaultAgent: claude), language: batch.language,
+                                                           environment: environment))
                 }
                 dismiss()
             } catch {

@@ -15,6 +15,19 @@ struct SettingsView: View {
     @State private var labError: String?
 
     var body: some View {
+        ScrollViewReader { proxy in
+            form
+                .task {
+                    // Snapshots: `--tab lab` scrolls to the Lab and sending policy sections,
+                    // `--tab scrub` to the scrub patterns and the monthly limit.
+                    guard let tab = DebugSnapshot.options?.tab, ["lab", "scrub"].contains(tab) else { return }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    proxy.scrollTo(tab, anchor: .top)
+                }
+        }
+    }
+
+    private var form: some View {
         Form {
             Section {
                 ForEach(model.projectRoots, id: \.self) { root in
@@ -98,7 +111,7 @@ struct SettingsView: View {
                     Label(labError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
                 }
             } header: {
-                Text("Lab")
+                Text("Lab").id("lab")
             } footer: {
                 Text("The language of new session reviews: the paragraph and the improvements. Kept in ~/.akit/lab/settings.json, so akit lab new review uses it too (--language overrides).")
                     .foregroundStyle(.secondary)
@@ -111,6 +124,7 @@ struct SettingsView: View {
                     labError = "Couldn't save ~/.akit/lab/settings.json: \(error.localizedDescription)"
                 }
             }
+            SendingPolicySections(lab: $lab)
         }
         .formStyle(.grouped)
         .frame(width: 520)

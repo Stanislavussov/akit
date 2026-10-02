@@ -85,6 +85,7 @@ terminal (CI), every default is taken.
 | **MCP Servers** | Every configured MCP server per agent and project. Add one from a form or pasted JSON, edit or delete it; secret values go to the Keychain, never into config files and never on screen. |
 | **Sessions** | Saved conversations of every agent, newest first, with token use. Copy one as Markdown or JSON for evals or another agent. A Claude Code session also gets an Analysis tab (calls, fresh tokens, where the context went, friction, commits) and a button to have an agent review it. |
 | **Usage** | Tokens and cost per day and subscription, from the agents' own session files. Only what they recorded; the one exception, Claude Code sessions that saved no cost, is marked as an estimate. |
+| **Error Analysis** | Finds what goes wrong across many sessions: a model writes blind notes per session (checked by a verifier), you label a bootstrap set, notes are grouped into failure modes, and each mode's frequency comes from a code check or a validated judge, with intervals. Fixes are judged before/after and on control tasks. Session data goes only where Settings → Lab allows. |
 | **Lab** | Measures agent sessions. Runs start in an Orca or herdr tab (or in the background), one at a time: an agent reviews a session, or redoes a commit from its parent in an isolated clone under different setups while the commit's own tests judge it. Numbers come from the transcript and git, never from the agent. |
 | **Brain** | Your layers and skill library: create and edit layers, add skills to them, import skills, set up a project, remove things, sync with the remote. |
 
@@ -252,6 +253,15 @@ akit lab new review SESSION [--harness pi] [--model M]
 akit lab new replay COMMIT [--setups full,lean] [--repeats N]
                                                  redo a commit under setups; hidden tests judge it
 akit lab list / show ID / compare COMMIT         runs and their results
+akit lab policy / sends                          where session data may go; what was sent, at what cost
+
+akit lab new analysis [--project P] [--size N] [--yes]
+                                                 error analysis over a sample of sessions (shows the
+                                                 ≈ cost first; --yes queues it)
+akit analysis notes / modes / queue / report     notes per session, failure modes, what waits for you,
+                                                 frequencies with intervals and the transition matrix
+akit analysis bootstrap …                        label 30+ sessions yourself; recall of the model's notes
+akit analysis fix … / control …                  fix drafts, before/after, controlled evals on fixed tasks
 
 ANSWERS: --layers a,b  --set field=value  --unset field  --targets claude,pi  --answers FILE
 ```
@@ -269,6 +279,8 @@ projects folder. `akit --help` has the details.
 | `~/.akit/backups/<time>/` | every file AKit replaced, by path under `~` |
 | `~/.akit/machine.json`, `~/.akit/local/projects/` | this Mac's role; on a work Mac, its project records |
 | `~/.akit/lab/` | Lab runs (one folder each) and checked replay tasks |
+| `~/.akit/lab/analysis/` | error analysis: modes (a local git repo), notes, checks, labels, batches, the send log |
+| `~/.akit/lab/evals/` | control tasks |
 | `~/.agents/skills`, `~/.claude/skills` | skills from the core layer (the second links to the first) |
 | Keychain | MCP secret values you entered in AKit |
 

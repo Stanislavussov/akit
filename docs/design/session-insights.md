@@ -343,7 +343,10 @@ folders that name a known repository.
   reads `session_id`, `cwd`, `transcript_path`, `source`, `model` from stdin, only appends to the
   spool file, and always exits 0. It runs on every `source` (`startup`, `resume`,
   `clear`, `compact`, and `fork` since Claude Code 2.1.214), so one session can have
-  several lines.
+  several lines. From `.git` files, read as text, the line also gets the repository
+  (`gitdir`, `common_dir`, `remote_id`), `branch` and `head`: the commit HEAD points to
+  (loose ref, then `packed-refs`), the base of control tasks made from the session (see
+  error-analysis.md; built 2026-10-01, index schema v5).
 - Pi: an extension file in `~/.pi/agent/extensions/`, owned by AKit, same facts.
 - Safety net: launchd runs `akit sessions import` hourly (also parses the sessions).
 - The spool is one file per UTC day in `~/.akit/index/spool/`. Each line is appended with
@@ -365,9 +368,10 @@ went wrong. The index is where those facts can outlive the logs. Definitions are
   the chain from `cwd` to the repository root and the user's global one, and the names of
   skills set to `name-only` by `skillOverrides` (added in step 8). Nothing that runs git or reads
   large files.
-- **Repo snapshot.** Only `origin` and `HEAD` for now. `dirty` and `diff_hash` need
-  `git status` / `git diff`, which a hook can't wait for; they come with their first user,
-  the error analysis control sets, as a detached helper with a time limit.
+- **Repo snapshot.** Only `origin` and `HEAD` (HEAD is recorded since 2026-10-01, see
+  above). `dirty` and `diff_hash` need `git status` / `git diff`, which a hook can't wait
+  for. Error analysis decided against a detached helper (HEAD only; sessions that started
+  with uncommitted changes don't become control tasks), so they wait for another user.
 - **Hook, settings components.** Also hashes, at start, the `hooks` and `enabledPlugins`
   keys of `~/.claude/settings.json` and the project's `.claude/settings.json`, and the
   project's `.mcp.json` without `env` and `headers`. These are small files; their hashes
@@ -381,8 +385,12 @@ went wrong. The index is where those facts can outlive the logs. Definitions are
   are always there (listing, context files, harness version, model). The settings
   components are extra filters: two sessions must match on one only when both have it.
   A session imported without a hook line simply lacks them.
-- **Failure signals.** One parser in `AKitSessions`, which both Insights and Lab already
-  import: a `FailureSignals` reducer with its own version that takes transcript lines
+- **Failure signals.** Error analysis (2026-10-01) already keeps cheap per-session signals
+  (interrupts, pushbacks, tool errors, repeated calls, "done" with no check, length) in the
+  index's `signals` table (schema v6), computed by `AKitErrorAnalysis.SignalScanner` from
+  whole transcripts and refreshed after every import; this step should replace that with
+  the incremental reducer below and keep the table's columns. One parser in `AKitSessions`,
+  which both Insights and Lab already import: a `FailureSignals` reducer with its own version that takes transcript lines
   one at a time, so the importer feeds it incrementally. Lab's `SessionAnalyzer` moves
   its interrupt, rejection, error, compaction and re-read rules into it and calls it;
   the importer stores its counts per session. New in this step: `repeated_calls` (needs

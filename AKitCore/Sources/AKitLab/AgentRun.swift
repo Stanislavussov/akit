@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitSessions
 import Foundation
 
 /// One headless agent run: `claude -p` with stream-json output, or `pi -p --mode json` for a
@@ -43,6 +44,8 @@ enum AgentRun {
         /// The model's final answer: Claude Code's structured output or result text, Pi's
         /// last assistant text.
         let answer: String?
+        /// Tokens and cost the harness recorded, for the send log.
+        let usage: SendUsage
     }
 
     /// Runs the agent to the end (or the time limit). Throws when the harness can't start.
@@ -67,7 +70,7 @@ enum AgentRun {
         }
         guard let exit else { throw LabWorker.Failure(message: "Couldn't start \(command.path).") }
         if exit.timedOut { out("The agent was stopped after \(MetricsText.duration(Int(timeout))).") }
-        return Outcome(exit: exit, error: printer.error, answer: printer.answer)
+        return Outcome(exit: exit, error: printer.error, answer: printer.answer, usage: printer.usage)
     }
 }
 
@@ -81,6 +84,10 @@ final class StreamPrinter: @unchecked Sendable {
     private var failed = false
     private var lastError: String?
     private var lastAnswer: String?
+    private var recorded = SendUsage()
+
+    /// Tokens and cost the harness recorded: Claude Code's result event, Pi's answers.
+    var usage: SendUsage { lock.withLock { recorded } }
 
     /// The model's final answer, unmasked (AKit masks what it writes from it).
     var answer: String? { lock.withLock { lastAnswer } }
@@ -108,12 +115,18 @@ final class StreamPrinter: @unchecked Sendable {
             case .pi where object["type"] as? String == "message_end":
                 let message = object["message"] as? [String: Any] ?? [:]
                 if message["role"] as? String == "assistant" {
+                    if let usage = message["usage"] as? [String: Any] {
+                        let tokens = PiLogFormat.tokens(fromPiUsage: usage)
+                        recorded = recorded + SendUsage(input: tokens.input + tokens.cacheWrite, cached: tokens.cacheRead,
+                                                        output: tokens.output, cost: PiLogFormat.cost(fromPiUsage: usage))
+                    }
                     lastError = failed ? (message["errorMessage"] as? String).map { SecretFilter.masked(String($0.prefix(300))) } : nil
                     let text = (message["content"] as? [[String: Any]] ?? [])
                         .filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
                     if !text.isEmpty { lastAnswer = text }
                 }
             case .claudeCode where object["type"] as? String == "result":
+                recorded = ModelCall.claudeUsage(object)
                 lastError = object["is_error"] as? Bool == true
                     ? SecretFilter.masked(String((object["result"] as? String ?? "Claude Code stopped with an error.").prefix(300))) : nil
                 if let structured = object["structured_output"], JSONSerialization.isValidJSONObject(structured),

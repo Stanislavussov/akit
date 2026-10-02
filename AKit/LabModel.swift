@@ -1,3 +1,4 @@
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitLab
 import AKitSessions
@@ -34,14 +35,23 @@ extension AppModel {
 
     func reloadLab() async {
         let env = HarnessEnvironment.current
-        let (runs, tasks) = await Task.detached { () -> ([LabRun], [String: ReplayTask]) in
+        let (runs, tasks, batches, controlTasks) = await Task.detached {
+            () -> ([LabRun], [String: ReplayTask], [String: Batch], [String: ControlTask]) in
             let runs = LabStore.list(env: env)
             var tasks: [String: ReplayTask] = [:]
             for commit in Set(runs.compactMap(\.spec.commit)) { tasks[commit] = ReplayTasks.cached(commit, env: env) }
-            return (runs, tasks)
+            // Batch files change while a batch runs (progress per session), run.json doesn't.
+            let store = BatchStore(env: env)
+            var batches: [String: Batch] = [:]
+            for id in Set(runs.compactMap(\.spec.batch)) { batches[id] = store.load(id) }
+            var controlTasks: [String: ControlTask] = [:]
+            for id in Set(runs.compactMap(\.spec.controlTask)) { controlTasks[id] = ControlTasks.load(id, env: env) }
+            return (runs, tasks, batches, controlTasks)
         }.value
         if runs != labRuns { labRuns = runs }
         if tasks != labTasks { labTasks = tasks }
+        if batches != labBatches { labBatches = batches }
+        if controlTasks != labControlTasks { labControlTasks = controlTasks }
     }
 
     /// Keeps the Lab badge and the queue current while AKit runs: reloads the runs, and
@@ -83,6 +93,65 @@ extension AppModel {
                                                 environment: environment, keep: keep, akit: akit, env: .current)
         try? await startLabQueue()
         return runs
+    }
+
+    /// Samples sessions of the index and queues an error analysis batch (`akit lab new analysis`).
+    /// `notesAgent` nil: a reviewer of another model family, when the sending policy allows one.
+    func queueAnalysis(filter: Sampling.Filter, size: Int, notesAgent: LabAgent?, matchingAgent: LabAgent?, language: LabLanguage,
+                       environment: LabEnvironment?) async throws -> LabRun {
+        let akit = try await analysisAkit()
+        let run = try await Task.detached {
+            try await Batches.new(filter: filter, size: size, notesAgent: notesAgent, matchingAgent: matchingAgent, language: language,
+                                  environment: environment, akit: akit, env: .current)
+        }.value
+        try? await startLabQueue()
+        return run
+    }
+
+    /// A batch over the labeled bootstrap sessions (`akit analysis bootstrap notes`).
+    func queueBootstrapNotes(_ sessions: [(key: String, file: String)], agent: LabAgent, environment: LabEnvironment?) async throws -> LabRun {
+        let akit = try await analysisAkit()
+        let run = try await Task.detached {
+            try await Batches.newFixed(sessions: sessions, title: "Bootstrap: model notes on \(sessions.count) labeled sessions",
+                                       notesAgent: agent, environment: environment, akit: akit, env: .current)
+        }.value
+        try? await startLabQueue()
+        return run
+    }
+
+    /// Asks a running batch to stop after its current calls (`akit analysis batch pause`).
+    func pauseBatch(_ id: String) async throws {
+        try await Task.detached { try Batches.pause(id, env: .current) }.value
+        await reloadLab()
+    }
+
+    /// Continues a batch as a new run, or reruns only its failed sessions (`akit analysis batch resume`).
+    func resumeBatch(_ id: String, retryErrors: Bool) async throws -> LabRun {
+        let akit = try await analysisAkit()
+        let run = try await Task.detached {
+            try await Batches.resume(id, retryErrors: retryErrors, environment: nil, akit: akit, env: .current)
+        }.value
+        try? await startLabQueue()
+        return run
+    }
+
+    /// Queues control cells (`akit analysis control run`): repeats × tasks × setups.
+    func queueControlRuns(tasks: [ControlTask], setups: [ControlSetup], repeats: Int, environment: LabEnvironment?,
+                          keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
+        let akit = try await analysisAkit()
+        let queued = try await Task.detached {
+            try await ControlRuns.newControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep,
+                                                 akit: akit, env: .current)
+        }.value
+        if !queued.runs.isEmpty { try? await startLabQueue() }
+        return queued
+    }
+
+    /// The akit a batch or control run's tab runs; it must know the run kinds error analysis adds.
+    private func analysisAkit() async throws -> URL {
+        if let problem = await labProblem(needing: "analysis") { throw LabStore.Failure(message: problem) }
+        guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
+        return akit
     }
 
     func replayCandidates(in repo: URL) async -> [ReplayTasks.Candidate] {

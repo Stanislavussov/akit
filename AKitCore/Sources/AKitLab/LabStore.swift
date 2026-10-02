@@ -115,6 +115,12 @@ public enum LabStore {
             .sorted { $0.spec.createdAt > $1.spec.createdAt }
     }
 
+    /// Session ids of every run's own agent: Lab's sessions (replays, control cells, agent
+    /// reviews) are evals, never production sessions.
+    public static func sessionIDs(env: HarnessEnvironment) -> Set<String> {
+        Set(list(env: env).map(\.spec.sessionID))
+    }
+
     static func save(_ state: RunState, of id: String, env: HarnessEnvironment) throws {
         try write(state, to: LabPaths(env: env).run(id).appending(path: "state.json"))
     }

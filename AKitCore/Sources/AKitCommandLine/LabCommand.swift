@@ -1,4 +1,6 @@
 import AKitFoundation
+import AKitBrain
+import AKitErrorAnalysis
 import AKitLab
 import Foundation
 
@@ -34,6 +36,15 @@ extension AKitCLI {
                                           setup, lean = --setting-sources project. Model and effort
                                           default to ~/.claude/settings.json (else opus, high).
                                           --keep keeps the clone; otherwise it goes to the Trash
+          akit lab new analysis [--project ID|DIR] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--size N]
+                              [--harness claude-code|pi] [--model M] [--effort E] [--matching-model M]
+                              [--language en|ru|cs] [--env orca|herdr|background] [--no-start] [--yes]
+                                          Error analysis over a sample of N (20) sessions of the index
+                                          (5+ requests each): a random quarter, the rest stratified by
+                                          cheap signals, harness and model. Per session notes, verifier
+                                          and matching, 2 at a time; clustering at the end. Sends notes
+                                          and transcripts under the sending policy. Shows how many
+                                          sessions and the ≈ cost first; --yes queues it
           akit lab task COMMIT [--repo DIR]
                                           Check a commit as a task now: its tests on the parent and on
                                           the commit (fail-to-pass, pass-to-pass). A replay does this
@@ -47,6 +58,21 @@ extension AKitCLI {
           akit lab cancel ID              Stop a running run (its tab stays), or drop a queued one
           akit lab remove ID              Move a run's folder to the Trash
           akit lab run ID                 Do the run here (what the tab runs)
+
+        Sending policy (every model call that sends session data or code; Settings → Lab):
+          akit lab policy [--json]        This Mac's kind, allowed destinations, Pi accounts, scrub
+                                          patterns and monthly limit
+          akit lab policy check HARNESS [--model M]
+                                          Who that harness sends to now (account check) and whether
+                                          a Claude Code or Pi session may go there
+          akit lab policy allow HARNESS PROVIDER ACCOUNT ORG
+          akit lab policy remove HARNESS PROVIDER ACCOUNT ORG
+                                          Add or remove an allowed destination
+          akit lab policy pi-account PROVIDER ACCOUNT ORG
+                                          The account behind a Pi provider (Pi has no whoami)
+          akit lab policy limit DOLLARS|none
+                                          Monthly limit on recorded cost
+          akit lab sends [--json]         The send log: what went where, tokens, recorded cost
         """
 
     /// `akit` itself, for the tab command: `<akit> lab run ID`.
@@ -87,6 +113,66 @@ extension AKitCLI {
                 throw Failure(message: "Couldn't read \(file.path): \(error.localizedDescription)")
             }
             out(json ? try labJSON(metrics) : ([file.path] + MetricsText.lines(metrics)).joined(separator: "\n"))
+            return 0
+        case "new" where args.peek == "analysis":
+            _ = args.positional()
+            let project = args.value("--project")
+            let from = try args.value("--from").map { try day($0, "--from") }
+            let to = try args.value("--to").map { try day($0, "--to").addingTimeInterval(86_399) }
+            let size = try positiveNumber(args.value("--size"), "--size") ?? 20
+            let matchingModel = args.value("--matching-model")
+            let yes = args.flag("--yes")
+            try args.finish()
+            let environment = try labEnvironment(environmentText, env: env)
+            // No --harness or --model: a reviewer of another family than the sessions', when allowed.
+            var agent: LabAgent?
+            if harnessText != nil || modelText != nil || effortText != nil {
+                guard let harness = LabHarness(rawValue: harnessText ?? "claude-code") else { throw Failure(message: "--harness is claude-code or pi.") }
+                var chosen = LabRuns.defaultAgent(harness, env: env)
+                chosen.mode = .call
+                if let modelText { chosen.model = modelText }
+                if let effortText { chosen.effort = effortText }
+                guard harness.efforts.contains(chosen.effort) else {
+                    throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
+                }
+                agent = chosen
+            }
+            var matching = agent
+            if let matchingModel {
+                matching = matching ?? LabRuns.defaultAgent(.claudeCode, env: env)
+                matching?.model = matchingModel
+                matching?.mode = .call
+            }
+            let language = try languageText.map { text in
+                guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is en, ru or cs.") }
+                return language
+            }
+            let projectFilter = project.map { text -> String in
+                text.contains("/") || text.hasPrefix("~") ? resolve(text, cwd: cwd, env: env).path : text
+            }
+            // Before any model work: how many sessions and what it would cost.
+            let filter = Sampling.Filter(project: projectFilter, from: from, to: to)
+            let estimateAgent = agent ?? { var claude = LabRuns.defaultAgent(.claudeCode, env: env); claude.mode = .call; return claude }()
+            let sessions = Batches.sampleSize(filter: filter, size: size, env: env)
+            guard sessions > 0 else {
+                throw Failure(message: "No sessions match (at least \(Sampling.minimumRequests) requests each). Run akit sessions import first?")
+            }
+            out(Batches.estimateText(sessions: sessions, agent: estimateAgent, env: env)
+                + (agent == nil ? " (with your Claude Code model; the reviewer is picked when the sample is drawn)" : ""))
+            guard yes else {
+                out("Run it again with --yes to queue it.")
+                return 0
+            }
+            let run: LabRun
+            do {
+                run = try await Batches.new(filter: filter, size: size, notesAgent: agent,
+                                            matchingAgent: matching, language: language, environment: environment, akit: ownExecutable, env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            let batch = BatchStore(env: env).load(run.id)
+            out("Queued \(run.id): \(run.spec.title), notes by \(batch?.notesAgent.label ?? "?") (\(run.spec.environment.title)).")
+            if !noStart { try await startNext(env: env, out: out) }
             return 0
         case "new" where args.peek == "replay":
             _ = args.positional()
@@ -206,17 +292,128 @@ extension AKitCLI {
             }
             out("Moved \(run.folder.path) to the Trash.")
             return 0
+        case "policy":
+            return try await policy(&args, json: json, model: modelText, env: env, out: out)
+        case "sends":
+            try args.finish()
+            let records = SendLog.records(env: env)
+            if json {
+                out(try labJSON(records))
+            } else if records.isEmpty {
+                out("Nothing sent yet.")
+            } else {
+                out(records.map(sendLine).joined(separator: "\n"))
+                out(String(format: "This month: $%.2f recorded", SendLog.monthCost(records))
+                    + (LabSettings.load(env: env).monthlyLimit.map { String(format: " of a $%.2f limit.", $0) } ?? "."))
+            }
+            return 0
         case "run":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit lab run ID.") }
             try args.finish()
             // The worker prints from background threads, straight to the terminal that hosts it.
-            return await LabWorker.run(id: id, env: env, out: { LinePrinter.shared.print($0) })
+            return await LabWorker.run(id: id, env: env, execute: AnalysisRuns.execute, out: { LinePrinter.shared.print($0) })
         default:
             throw Failure(message: "Unknown “akit lab \(command ?? "")”. Run akit lab --help.")
         }
     }
 
-    private static func startNext(env: HarnessEnvironment, out: (String) -> Void) async throws {
+    private static func policy(_ args: inout Arguments, json: Bool, model: String?, env: HarnessEnvironment,
+                               out: (String) -> Void) async throws -> Int32 {
+        var settings = LabSettings.load(env: env)
+        func harness(_ text: String?) throws -> LabHarness {
+            guard let text, let harness = LabHarness(rawValue: text) else { throw Failure(message: "HARNESS is claude-code or pi.") }
+            return harness
+        }
+        func destination() throws -> SendDestination {
+            let harness = try harness(args.positional())
+            guard let provider = args.positional(), let account = args.positional(), let org = args.positional() else {
+                throw Failure(message: "Give HARNESS PROVIDER ACCOUNT ORG.")
+            }
+            return SendDestination(harness: harness, provider: provider, account: account, org: org)
+        }
+        switch args.positional() {
+        case nil:
+            try args.finish()
+            let isWork = MachineProfile.load(home: env.homeDirectory).isWork
+            if json {
+                out(try labJSON(settings))
+                return 0
+            }
+            var lines = [isWork ? "Work Mac: session data goes only to the allowed list." :
+                            "Personal Mac: the same origin, plus the allowed list."]
+            lines.append("Allowed: " + (settings.allowedDestinations.isEmpty ? "none" : ""))
+            lines += settings.allowedDestinations.map { "  \($0.label)" }
+            lines.append("Pi accounts: " + (settings.piAccounts.isEmpty ? "none" : ""))
+            lines += settings.piAccounts.map { "  \($0.provider): \($0.account) · \($0.org)" }
+            lines.append("Scrub: e-mails \(settings.scrub.maskEmails ? "masked" : "kept"), \(settings.scrub.hosts.count) host patterns, "
+                         + "\(settings.scrub.extra.count) other patterns (scrub v\(Scrubber.version))")
+            lines.append("Monthly limit: " + (settings.monthlyLimit.map { String(format: "$%.2f", $0) } ?? "none"))
+            out(lines.joined(separator: "\n"))
+        case "check":
+            var agent = LabRuns.defaultAgent(try harness(args.positional()), env: env)
+            try args.finish()
+            if let model { agent.model = model }
+            let gate: SendGate
+            do {
+                gate = try await SendGate.open(agent: agent, env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            out("\(agent.harness.title) sends to \(gate.destination.label).")
+            for (name, origin) in [("A Claude Code session", SendOrigin.claudeSession),
+                                   ("A Pi session through \(gate.destination.provider)", .piSession(providers: [gate.destination.provider]))] {
+                let decision = gate.decide(origin)
+                out("\(name): \(decision.allowed ? "allowed" : "refused"). \(decision.reason)")
+            }
+        case "allow":
+            let entry = try destination()
+            try args.finish()
+            if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
+            try settings.save(env: env)
+            out("Allowed \(entry.label).")
+        case "remove":
+            let entry = try destination()
+            try args.finish()
+            let before = settings.allowedDestinations.count
+            settings.allowedDestinations.removeAll { $0.matches(entry) }
+            guard settings.allowedDestinations.count < before else { throw Failure(message: "\(entry.label) isn't on the list.") }
+            try settings.save(env: env)
+            out("Removed \(entry.label).")
+        case "pi-account":
+            guard let provider = args.positional(), let account = args.positional(), let org = args.positional() else {
+                throw Failure(message: "Give PROVIDER ACCOUNT ORG.")
+            }
+            try args.finish()
+            settings.piAccounts.removeAll { $0.provider.caseInsensitiveCompare(provider) == .orderedSame }
+            settings.piAccounts.append(PiAccount(provider: provider, account: account, org: org))
+            try settings.save(env: env)
+            out("Pi \(provider): \(account) · \(org).")
+        case "limit":
+            guard let text = args.positional() else { throw Failure(message: "Give DOLLARS or none.") }
+            try args.finish()
+            if text == "none" {
+                settings.monthlyLimit = nil
+            } else {
+                guard let value = Double(text), value >= 0 else { throw Failure(message: "The limit is a number of dollars, or none.") }
+                settings.monthlyLimit = value
+            }
+            try settings.save(env: env)
+            out("Monthly limit: " + (settings.monthlyLimit.map { String(format: "$%.2f", $0) } ?? "none") + ".")
+        case let other:
+            throw Failure(message: "Unknown “akit lab policy \(other ?? "")”. Run akit lab --help.")
+        }
+        return 0
+    }
+
+    private static func sendLine(_ record: SendRecord) -> String {
+        let date = record.date.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
+        let cost = record.usage.cost.map { String(format: "$%.3f", $0) } ?? "no cost recorded"
+        return "\(date)  \(record.purpose.padding(toLength: 9, withPad: " ", startingAt: 0))  \(record.harness.title) · \(record.provider) · "
+            + "\(record.account) · \(record.model)  in \(record.usage.input) cached \(record.usage.cached) out \(record.usage.output)  \(cost)"
+            + (record.session.map { "  \($0)" } ?? "")
+    }
+
+    static func startNext(env: HarnessEnvironment, out: (String) -> Void) async throws {
         do {
             if let run = try await LabQueue.startNext(env: env) {
                 out("Started \(run.id) in \(run.spec.environment.title).")
@@ -230,7 +427,16 @@ extension AKitCLI {
         }
     }
 
-    private static func labEnvironment(_ text: String?, env: HarnessEnvironment) throws -> LabEnvironment? {
+    /// `2026-10-01` as the start of that day here.
+    static func day(_ text: String, _ option: String) throws -> Date {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: text) else { throw Failure(message: "\(option) is a day: YYYY-MM-DD.") }
+        return date
+    }
+
+    static func labEnvironment(_ text: String?, env: HarnessEnvironment) throws -> LabEnvironment? {
         guard let text else { return nil }
         guard let environment = LabEnvironment(rawValue: text) else {
             throw Failure(message: "--env is orca, herdr or background.")
@@ -310,7 +516,7 @@ extension AKitCLI {
     }
 
     /// A transcript path, or a Claude Code session id.
-    private static func transcript(_ argument: String, cwd: URL, env: HarnessEnvironment) throws -> URL {
+    static func transcript(_ argument: String, cwd: URL, env: HarnessEnvironment) throws -> URL {
         if argument.hasSuffix(".jsonl") || argument.contains("/") {
             let file = resolve(argument, cwd: cwd, env: env)
             guard FileManager.default.fileExists(atPath: file.path) else { throw Failure(message: "No file at \(file.path).") }
@@ -351,7 +557,7 @@ extension AKitCLI {
 }
 
 /// Standard output for the worker, which prints from background threads.
-private final class LinePrinter: @unchecked Sendable {
+final class LinePrinter: @unchecked Sendable {
     static let shared = LinePrinter()
     private let lock = NSLock()
 

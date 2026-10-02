@@ -4,7 +4,7 @@ import Foundation
 /// Pi session files: `<sessions>/--<cwd with - for />--/<time>_<uuid>.jsonl`.
 /// The first line is a `session` header (id, cwd); the other entries form a tree via
 /// `id`/`parentId` so branches live in one file. See docs/session-format.md in Pi.
-enum PiSessions {
+public enum PiSessions {
     typealias Object = JSONLines.Object
 
     static func list(folder: URL) -> [SessionSummary] {
@@ -53,6 +53,22 @@ enum PiSessions {
         // Usage counts every response in the file: abandoned branches were paid for too.
         for entry in entries {
             recordUsage(entry, in: &builder.usage)
+        }
+        return builder.transcript
+    }
+
+    /// Pi's `pi -p --mode json` stream (a Lab agent's `agent.jsonl`) as a transcript: each
+    /// finished message (`message_end`) goes through the same code as a message entry of the
+    /// session log, so a check reads a control cell exactly like an indexed session. A stream
+    /// has no branches; lines that aren't JSON (Pi's own notices) are skipped.
+    public static func transcript(ofStream lines: [String]) -> SessionTranscript {
+        var builder = TranscriptBuilder()
+        var secretCalls = Set<String>()
+        for line in lines where line.hasPrefix("{") {
+            guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? Object,
+                  event["type"] as? String == "message_end", let message = event["message"] as? Object else { continue }
+            addMessage(message, at: JSONLines.date(message["timestamp"]), secretCalls: &secretCalls, to: &builder)
+            recordUsage(["type": "message", "message": message], in: &builder.usage)
         }
         return builder.transcript
     }

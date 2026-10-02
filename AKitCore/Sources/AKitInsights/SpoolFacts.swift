@@ -6,7 +6,9 @@ import Foundation
 enum SpoolFacts {
     /// 2: `mark` lines. Spool files still on disk from parser 1 are read again, so marks an
     /// older akit counted as unknown are picked up.
-    static let parserVersion = 2
+    /// 3: `head` of session starts. Spool files still on disk from parser 2 are read again, so
+    /// heads an older importer dropped (a hook binary newer than the importer) are picked up.
+    static let parserVersion = 3
 
     /// What one line did.
     enum Outcome {
@@ -30,7 +32,7 @@ enum SpoolFacts {
         case "session_start":
             guard let harness = text("harness"), let session = text("session_id") else { return .malformed }
             try database.run(hookEventSQL, harness, session, ts, text("source"), text("cwd"), text("gitdir"), text("common_dir"),
-                             text("remote_id"), text("branch"), text("transcript"), sourceID, parserVersion)
+                             text("remote_id"), text("branch"), text("transcript"), text("head"), sourceID, parserVersion)
         case "apply":
             guard let project = text("project") else { return .malformed }
             try database.run(applySQL, project, ts, json(entry["layers"] ?? []), json(entry["skills"] ?? [:]), sourceID, parserVersion)
@@ -50,7 +52,7 @@ enum SpoolFacts {
     }
 
     static let hookEventSQL = FactWriter.upsert("hook_events", key: ["harness", "session_id", "ts"], identity: [],
-                                                values: ["source", "cwd", "gitdir", "common_dir", "remote_id", "branch", "transcript"])
+                                                values: ["source", "cwd", "gitdir", "common_dir", "remote_id", "branch", "transcript", "head"])
     static let applySQL = FactWriter.upsert("applies", key: ["project_id", "ts"], identity: [], values: ["layers", "skills"])
     static let markSQL = FactWriter.upsert("marks", key: ["ts", "note"], identity: [], values: [])
 }

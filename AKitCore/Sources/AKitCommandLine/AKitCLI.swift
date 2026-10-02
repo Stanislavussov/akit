@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
 import AKitProjectSetup
@@ -115,6 +116,8 @@ public enum AKitCLI {
         Lab (measure agent sessions; ~/.akit/lab, never in the brain):
           akit lab analyze SESSION        Calls, fresh tokens, context rent, friction and commits of one
                                           Claude Code session. akit lab --help lists the rest
+          akit analysis notes [SESSION]   Error analysis: a reviewed session's outcome, verified notes
+                                          and advice. akit analysis --help lists the rest
 
         This Mac (~/.akit/machine.json, never in the brain):
           akit machine                    Show whether this is a personal or a work Mac
@@ -159,6 +162,9 @@ public enum AKitCLI {
             // Lab has its own options (--repo, --json, …); none of the brain's apply.
             if arguments.first == "lab" {
                 return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
+            }
+            if arguments.first == "analysis" {
+                return try await analysis(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
             }
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {
@@ -480,10 +486,13 @@ public enum AKitCLI {
         defer { withExtendedLifetime(lock) {} }
         let report = try await SessionImporter.importAndBind(env: env, projectsRoot: projectsRoot,
                                                              database: try IndexSchema.open(paths.database))
+        // Signals and the code checks of active modes follow every import, still under the lock.
+        let upkeep = await AnalysisUpkeep.afterImport(env: env)
         if options.json {
             out(encode(report))
         } else if !quiet {
             out(importText(report))
+            if let upkeep { out(upkeep) }
         }
         return 0
     }

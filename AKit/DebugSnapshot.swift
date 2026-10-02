@@ -15,6 +15,15 @@ import SwiftUI
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
+/// Lab: `--tab sends` shows the send log; with `--select <run id>` of a review, `--tab notes` opens its
+/// notes' disclosures and `--tab recheck` the Re-check sheet (`tools/demo-home.sh` has one). Settings: `--tab lab` (or `scrub`) scrolls to the sending
+/// policy, `--add` opens Add Destination, `--capture` checks the accounts. Error Analysis (`--section analysis`):
+/// `--tab modes|review|bootstrap|reports` (`--tab review --add` opens Cluster Unmatched Notes' cost confirmation); on Modes `--select <mode id>` opens the mode's page (`--query judge|fix` scrolls to that panel, `--query fix --add` opens Draft Fix…), on Bootstrap
+/// `--select <session key>` opens its labeling view (`--query <step>` starts a note at that step); on Reports
+/// `--select <batch id>` picks the batch, `--query <batch id>` the one to compare, `--add` scrolls to the matrix and
+/// `--capture` shows the difference grid. Evals: `--select <task id>[,<task id>…]`, `--add` opens Run Cells…,
+/// `--query fromSession|reproduction` a new task sheet. Lab: `--tab analysis --add` opens New Lab Run on the batch form; `--select`
+/// takes a batch run's or a control cell's id too.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
 /// a value (`--add`, `--capture`, `--own-copy`, `--settings`) last: Cocoa pairs arguments as "-key value", and a

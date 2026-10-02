@@ -24,10 +24,13 @@ final class Watchdog: @unchecked Sendable {
 
     func start() {
         lock.withLock { running = true }
+        let scope = Cancellation.scope
         Thread.detachNewThread { [self] in
-            while lock.withLock({ running }) {
-                check()
-                Thread.sleep(forTimeInterval: 1)
+            Cancellation.$scope.withValue(scope) {
+                while lock.withLock({ running }) {
+                    check()
+                    Thread.sleep(forTimeInterval: 1)
+                }
             }
         }
     }

@@ -17,10 +17,14 @@ enum ChildProcess {
     /// `input`: a file for stdin (else /dev/null).
     static func run(_ executable: URL, arguments: [String], directory: URL, environment: [String: String], input: URL? = nil,
                     timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) async -> Exit? {
-        await withCheckedContinuation { continuation in
+        // The thread carries the caller's cancellation scope.
+        let scope = Cancellation.scope
+        return await withCheckedContinuation { continuation in
             Thread.detachNewThread {
-                continuation.resume(returning: runBlocking(executable, arguments: arguments, directory: directory,
-                                                           environment: environment, input: input, timeout: timeout, onLine: onLine))
+                continuation.resume(returning: Cancellation.$scope.withValue(scope) {
+                    runBlocking(executable, arguments: arguments, directory: directory, environment: environment, input: input,
+                                timeout: timeout, onLine: onLine)
+                })
             }
         }
     }
@@ -129,38 +133,62 @@ enum ChildProcess {
 }
 
 /// Cancelling a run: SIGTERM or SIGINT to `akit lab run` stops the current child's group,
-/// and no further child starts.
-enum Cancellation {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var cancelled = false
-    nonisolated(unsafe) private static var children = Set<pid_t>()
-    nonisolated(unsafe) private static var sources: [DispatchSourceSignal] = []
+/// and no further child starts. The state lives in a scope: the whole process by default
+/// (`akit lab run` does one run), a scope of its own where several runs share a process
+/// (tests run in parallel and one cancelling must not stop the others).
+public enum Cancellation {
+    public final class Scope: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        private var children = Set<pid_t>()
 
-    static var isCancelled: Bool { lock.withLock { cancelled } }
+        public init() {}
+
+        public var isCancelled: Bool { lock.withLock { cancelled } }
+
+        var groups: Set<pid_t> { lock.withLock { children } }
+
+        func track(_ pid: pid_t) {
+            let stop = lock.withLock { () -> Bool in
+                children.insert(pid)
+                return cancelled
+            }
+            if stop { kill(-pid, SIGTERM) }
+        }
+
+        func untrack(_ pid: pid_t) { lock.withLock { _ = children.remove(pid) } }
+
+        public func cancel() {
+            let pids = lock.withLock { () -> Set<pid_t> in
+                cancelled = true
+                return children
+            }
+            for pid in pids { kill(-pid, SIGTERM) }
+        }
+
+        public func reset() { lock.withLock { cancelled = false } }
+    }
+
+    /// The process's own scope: what the signal handlers cancel.
+    static let process = Scope()
+    @TaskLocal public static var scope = process
+
+    nonisolated(unsafe) private static var sources: [DispatchSourceSignal] = []
+    private static let sourcesLock = NSLock()
+
+    public static var isCancelled: Bool { scope.isCancelled }
 
     /// Process groups of the running children (each child leads its own group).
-    static var trackedGroups: Set<pid_t> { lock.withLock { children } }
+    static var trackedGroups: Set<pid_t> { scope.groups }
 
-    static func track(_ pid: pid_t) {
-        let stop = lock.withLock { () -> Bool in
-            children.insert(pid)
-            return cancelled
-        }
-        if stop { kill(-pid, SIGTERM) }
-    }
+    static func track(_ pid: pid_t) { scope.track(pid) }
 
-    static func untrack(_ pid: pid_t) { lock.withLock { _ = children.remove(pid) } }
+    static func untrack(_ pid: pid_t) { scope.untrack(pid) }
 
-    static func cancel() {
-        let pids = lock.withLock { () -> Set<pid_t> in
-            cancelled = true
-            return children
-        }
-        for pid in pids { kill(-pid, SIGTERM) }
-    }
+    static func cancel() { scope.cancel() }
 
     /// For tests.
-    static func reset() { lock.withLock { cancelled = false } }
+    public static func reset() { scope.reset() }
 
     /// Routes SIGTERM, SIGINT, SIGQUIT and SIGHUP (the tab was closed) to `cancel()`. The
     /// children are in their own process groups and never see these signals themselves.
@@ -168,9 +196,9 @@ enum Cancellation {
         for signalNumber in [SIGTERM, SIGINT, SIGQUIT, SIGHUP] {
             signal(signalNumber, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .global())
-            source.setEventHandler { cancel() }
+            source.setEventHandler { process.cancel() }
             source.resume()
-            lock.withLock { sources.append(source) }
+            sourcesLock.withLock { sources.append(source) }
         }
     }
 

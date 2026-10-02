@@ -9,6 +9,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case sessions
     case usage
     case lab
+    case analysis
     case brain
     var id: Self { self }
 
@@ -21,6 +22,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .sessions: "Sessions"
         case .usage: "Usage"
         case .lab: "Lab"
+        case .analysis: "Error Analysis"
         case .brain: "Brain"
         }
     }
@@ -34,6 +36,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .sessions: "bubble.left.and.bubble.right"
         case .usage: "chart.bar.xaxis"
         case .lab: "flask"
+        case .analysis: "stethoscope"
         case .brain: "brain"
         }
     }
@@ -63,6 +66,7 @@ struct RootView: View {
             case .sessions: SessionsView()
             case .usage: UsageView()
             case .lab: LabView()
+            case .analysis: ErrorAnalysisView()
             case .brain: BrainView()
             }
         }
