@@ -226,7 +226,7 @@ struct NewControlTaskSheet: View {
             return summary
         }
         guard let transcript = source.transcript else {
-            throw AnalysisFailure("\(source.key) isn't in the session index. Import sessions on the Sessions screen first.")
+            throw AnalysisFailure("\(source.key) isn't in the session index. Import sessions with akit sessions import first.")
         }
         return NotesPipeline.Target(harness: SessionKey.harness(of: source.key), file: URL(filePath: transcript), title: source.title,
                                     project: source.project.map { URL(filePath: $0, directoryHint: .isDirectory) }).summary

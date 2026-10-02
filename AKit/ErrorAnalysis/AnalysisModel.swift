@@ -177,7 +177,7 @@ final class AnalysisModel {
                         Task { @MainActor in self.progress = "Checking \(done) of \(total) sessions…" }
                     }
                     guard let rate = results.first?.rate(), rate.total > 0 else {
-                        return "No indexed sessions to check. Import them on the Sessions screen or with akit sessions import."
+                        return "No indexed sessions to check. Import them with akit sessions import (or akit insights install for an hourly import)."
                     }
                     return "Checked \(rate.total) sessions: the mode shows in \(rate.positive)."
                 }

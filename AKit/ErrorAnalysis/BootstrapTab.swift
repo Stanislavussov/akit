@@ -114,7 +114,7 @@ private struct PickSessionsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Pick Sessions to Label").font(.title2.bold())
-            Text("From the session index: half are representatives of its clusters (project × kind of session), the rest random. Picked sessions stay out of reviews and batches until you have labeled them, so your labels stay blind.")
+            Text("From the session index: half are representatives of its clusters (project × kind of session), the rest random. Picked sessions stay out of single reviews until you have labeled them, so your labels stay blind, and out of batches for good.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

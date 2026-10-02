@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitModel
 import Darwin
 import Foundation
 
@@ -183,11 +184,13 @@ public enum LabStore {
 
 /// Queuing new runs.
 public enum LabRuns {
-    /// A review of a recorded Claude Code session, opened where the session ran (or in
-    /// the home folder when that is gone). `environment` nil = suggested for that folder.
+    /// A review of a recorded session, opened where the session ran (or in the home folder
+    /// when that is gone). `harness` recorded the session; nil = Pi for a file under
+    /// `.pi/agent/sessions`, else Claude Code. `environment` nil = suggested for that folder.
     /// `agent` nil = Claude Code with your settings; `language` nil = the one in Lab settings.
-    public static func newReview(transcript: URL, title: String?, agent: LabAgent? = nil, language: LabLanguage? = nil,
-                                 environment: LabEnvironment?, akit: URL, env: HarnessEnvironment) async throws -> LabRun {
+    public static func newReview(transcript: URL, harness: HarnessID? = nil, title: String?, agent: LabAgent? = nil,
+                                 language: LabLanguage? = nil, environment: LabEnvironment?, akit: URL,
+                                 env: HarnessEnvironment) async throws -> LabRun {
         let ran = LabPaths.folder(ofTranscript: transcript)
         let folder = ran.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil } ?? env.homeDirectory
         let chosen: LabEnvironment
@@ -198,9 +201,10 @@ public enum LabRuns {
         }
         let title = title ?? LabPaths.title(ofTranscript: transcript)
         let name = title.map { JSONLines.titleLine($0, limit: 60) } ?? transcript.deletingPathExtension().lastPathComponent
-        let spec = RunSpec(id: RunSpec.newID(), kind: .review, title: "Review: \(name)", folder: folder.path,
+        var spec = RunSpec(id: RunSpec.newID(), kind: .review, title: "Review: \(name)", folder: folder.path,
                            environment: chosen, akit: akit.path, reviewedTranscript: transcript.path, reviewedTitle: title,
                            agent: agent, language: language ?? LabSettings.load(env: env).reportLanguage)
+        spec.reviewedHarness = harness ?? (transcript.path.contains("/.pi/agent/sessions/") ? .pi : .claudeCode)
         return try LabStore.create(spec, env: env)
     }
 }

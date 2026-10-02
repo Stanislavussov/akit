@@ -77,7 +77,7 @@ extension AppModel {
     func queueReview(of session: SessionSummary, agent: LabAgent, environment: LabEnvironment?) async throws -> LabRun {
         if let problem = await labProblem(needing: "--mode") { throw LabStore.Failure(message: problem) }
         guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
-        let run = try await LabRuns.newReview(transcript: session.file, title: session.title, agent: agent,
+        let run = try await LabRuns.newReview(transcript: session.file, harness: session.harness, title: session.title, agent: agent,
                                               environment: environment, akit: akit, env: .current)
         // Queued either way; a start that fails marks the run with the reason.
         try? await startLabQueue()

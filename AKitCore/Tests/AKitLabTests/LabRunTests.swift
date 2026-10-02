@@ -156,6 +156,22 @@ struct LabRunTests {
         #expect(done.status == .cancelled && done.result == nil)
     }
 
+    @Test func aReviewRecordsTheHarnessOfTheReviewedSession() async throws {
+        let akit = URL(filePath: "/usr/bin/true")
+        try write(".pi/agent/sessions/--work--/2026-10-01_s1.jsonl", #"{"type":"session","id":"s1","cwd":"/work"}"# + "\n")
+        let piFile = home.appending(path: ".pi/agent/sessions/--work--/2026-10-01_s1.jsonl")
+        // A Pi session file is read as Pi, a Claude Code one as Claude Code.
+        let pi = try await LabRuns.newReview(transcript: piFile, title: "pi", environment: .background, akit: akit, env: env)
+        #expect(pi.spec.reviewedHarness == .pi)
+        let claude = try await LabRuns.newReview(transcript: try reviewedSession(), title: "claude", environment: .background,
+                                                 akit: akit, env: env)
+        #expect(claude.spec.reviewedHarness == .claudeCode)
+        // The harness the app knows wins over the path.
+        let named = try await LabRuns.newReview(transcript: try reviewedSession(), harness: .pi, title: "named",
+                                                environment: .background, akit: akit, env: env)
+        #expect(LabStore.load(named.id, env: env)?.spec.reviewedHarness == .pi)
+    }
+
     @Test func queueStartsOneRunAtATime() async throws {
         // The "akit" the tab would run: records its arguments and exits.
         try write("bin/fake-akit", "#!/bin/sh\necho \"$@\" >> \"$HOME/launched.txt\"\n", executable: true)
