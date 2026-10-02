@@ -11,7 +11,12 @@ targets:
   AKit:
     type: application
     platform: macOS
-    sources: [AKit]
+    sources:
+      - AKit
+      # In-app guides (Help menu, Guide buttons): read from the bundle's guides folder.
+      - path: docs/guides
+        type: folder
+        buildPhase: resources
     dependencies:
       # One product per module the app imports (see AKitCore/Package.swift).
       - package: AKitCore

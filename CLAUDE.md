@@ -21,7 +21,10 @@ Pi and other harnesses read this file too.
 
 ## Project conventions
 
-- UI text, code comments and docs are English only.
+- UI text, code comments and docs are English only. One exception, at the user's request:
+  the in-app guides `docs/guides/<name>.ru.md` are in Russian (other languages may follow
+  as `<name>.<lang>.md`), with button and tab names quoted exactly as on screen. When a
+  screen of a guided area changes, update its guide in the same commit.
 - Xcode project is generated: edit `project.yml`, then `make generate`. Don't commit
   `AKit.xcodeproj`.
 - Logic lives in the Swift package in `AKitCore/`, one module per area (`AKitFoundation`,

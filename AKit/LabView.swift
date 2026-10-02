@@ -42,6 +42,9 @@ struct LabView: View {
                 Button("New Run…", systemImage: "plus") { showNewRun = true }
                     .help("Review a session, replay a commit under different setups, or run an error analysis batch")
             }
+            ToolbarItem {
+                GuideButton(guide: .errorAnalysis, section: "lab")
+            }
         }
         .sheet(isPresented: $showNewRun) {
             NewLabRunSheet(session: nil) { run in
