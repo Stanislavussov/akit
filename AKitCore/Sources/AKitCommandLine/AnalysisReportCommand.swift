@@ -279,7 +279,11 @@ extension AKitCLI {
     static func reportText(_ report: BatchReport) -> String {
         func pct(_ value: Double?) -> String { value.map { String(format: "%.0f%%", $0 * 100) } ?? "—" }
         var lines = ["Batch \(report.batchID): \(report.coverage[0]) of \(report.coverage[1]) sessions"
-                     + (report.coverage[0] < report.coverage[1] ? " (coverage \(report.coverage[0])/\(report.coverage[1]))" : "")]
+                     + (report.coverage[0] < report.coverage[1] ? " (coverage \(report.coverage[0])/\(report.coverage[1]))" : "")
+                     + (report.tooLong > 0 ? " · \(report.tooLong) too long for a digest (left out of the frequencies)" : "")]
+        if let leftOut = report.leftOut, leftOut > 0 {
+            lines.append("\(leftOut) sessions of the filter were left out before sampling: \(report.leftOutReason ?? "the reviewer may not get them")")
+        }
         func counts(_ counts: [Int]?) -> String {
             guard let counts, counts.count == 2 else { return "" }
             return " (\(counts[0])/\(counts[1]))"

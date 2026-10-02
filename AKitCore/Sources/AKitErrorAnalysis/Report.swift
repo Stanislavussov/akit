@@ -143,6 +143,11 @@ public struct TransitionMatrix: Codable, Hashable, Sendable {
 public struct BatchReport: Codable, Hashable, Sendable {
     public var batchID: String
     public var coverage: [Int]
+    /// Sessions too long for a digest: never reviewed, so out of the frequencies for good.
+    public var tooLong: Int = 0
+    /// Sessions of the filter left out before sampling (the reviewer may not get them), and why.
+    public var leftOut: Int?
+    public var leftOutReason: String?
     public var notesVersion: String?
     /// The bootstrap recall of the notes model and prompt version the batch used, and its
     /// [found, the user's notes] (nil without bootstrap metrics for that version).
@@ -291,7 +296,8 @@ public enum Reports {
             hidden = "Hidden: no bootstrap phase agreement for \(version ?? "these notes") yet; label and pair bootstrap sessions first."
         }
         let projectSessions = allBatches.filter { $0.filter.project == batch.filter.project }.flatMap(\.sessions).filter { $0.status == .done }
-        return BatchReport(batchID: batch.runID, coverage: [done.count, batch.sessions.count], notesVersion: version,
+        return BatchReport(batchID: batch.runID, coverage: [done.count, batch.sessions.count], tooLong: batch.tooLong,
+                           leftOut: batch.leftOut, leftOutReason: batch.leftOutReason, notesVersion: version,
                            notesRecall: measured?.recall, notesRecallCounts: measured?.recallCounts,
                            verifierRejection: modelNotes.isEmpty ? nil : Double(rejected) / Double(modelNotes.count),
                            verifierRejectionCounts: [rejected, modelNotes.count],

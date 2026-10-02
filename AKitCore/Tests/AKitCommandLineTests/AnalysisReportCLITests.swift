@@ -41,5 +41,23 @@ struct AnalysisReportCLITests {
         let lines = text.split(separator: "\n")
         #expect(lines.contains { $0.hasPrefix("Large file read whole: 50%") && $0.contains("checked 2/3") })
         #expect(lines.contains { $0.hasPrefix("Repeated steps: seen in 0 notes") && $0.contains("checked 0/3") })
+        #expect(!text.contains("too long") && !text.contains("left out before sampling"))
+    }
+
+    @Test func sessionsTooLongOrLeftOutBeforeSamplingAreNamed() {
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low", mode: .call)
+        var batch = Batch(runID: "b", createdAt: Date(timeIntervalSince1970: 0), filter: Sampling.Filter(), size: 2, seed: 1,
+                          notesAgent: agent, matchingAgent: agent, language: .english,
+                          sessions: [("a", Batch.Status.done), ("b", .tooLong)].map {
+                              Batch.Session(pick: Sampling.Pick(sessionKey: $0.0, file: "/f", inclusion: 1, sampling: "random", stratum: "s",
+                                                                projectID: "p"), status: $0.1)
+                          })
+        batch.leftOut = 4
+        batch.leftOutReason = "Pi may not get Claude Code sessions"
+        let report = Reports.build(batch, modes: [], pool: [], checks: [], trust: [:], bootstrap: [], acceptance: (0, 0),
+                                   allBatches: [batch], phases: [:])
+        let text = AKitCLI.reportText(report)
+        #expect(text.contains("1 of 2 sessions (coverage 1/2) · 1 too long for a digest (left out of the frequencies)"), "\(text)")
+        #expect(text.contains("4 sessions of the filter were left out before sampling: Pi may not get Claude Code sessions"), "\(text)")
     }
 }

@@ -148,6 +148,7 @@ private struct ReportHeader: View {
         if open > 0 { parts.append(batch.paused ? "\(open) waiting, paused" : "\(open) still running") }
         if failed > 0 { parts.append("\(failed) failed") }
         if batch.tooLong > 0 { parts.append("\(batch.tooLong) too long for a digest") }
+        if let leftOut = batch.leftOut, leftOut > 0 { parts.append("\(leftOut) left out before sampling") }
         return parts.joined(separator: " · ")
     }
 
