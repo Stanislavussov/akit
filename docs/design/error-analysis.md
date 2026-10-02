@@ -469,7 +469,8 @@ example from edit → verify to verify → report.
   of the step just before its action, not "the last completed phase": the agent loops, and
   "completed" is blurry there. For a tool result the action starts at its call, so the
   row is the step before the call; otherwise every failing test result sat on the
-  verify → verify diagonal. An extra "no failures" column shows the denominator.
+  verify → verify diagonal. Parallel calls (call A, call B, result A) are matched to their
+  results in order, by tool name where the result has one. An extra "no failures" column shows the denominator.
 - **Gate.** The matrix and the funnel are shown only while the bootstrap's phase agreement
   for the current notes version is at least 70%; otherwise AKit says why they are hidden.
 - **Small N.** While a project has fewer than 50 sessions in batches, AKit shows a funnel

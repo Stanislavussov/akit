@@ -115,6 +115,27 @@ struct PhaseClassifierTests {
         #expect(PhaseClassifier.phases(of: items) == [0: .verify, 1: .verify, 2: .verify, 3: .verify, 4: .report, 5: .explore])
     }
 
+    @Test func parallelCallsGetTheirOwnResults() {
+        // One assistant turn calls Read and Bash at once; their results come after both calls.
+        let items = [
+            TranscriptItem(id: 0, kind: .user, text: "Fix it", timestamp: nil),
+            TranscriptItem(id: 1, kind: .toolCall(name: "Read"), text: "{}", timestamp: nil),
+            TranscriptItem(id: 2, kind: .toolCall(name: "Bash"), text: bash("swift test"), timestamp: nil),
+            TranscriptItem(id: 3, kind: .toolResult(name: "Read", isError: false), text: "code", timestamp: nil),
+            TranscriptItem(id: 4, kind: .toolResult(name: "Bash", isError: true), text: "1 test failed", timestamp: nil),
+            // Two calls of one tool: results in call order.
+            TranscriptItem(id: 5, kind: .toolCall(name: "Bash"), text: bash("cat x"), timestamp: nil),
+            TranscriptItem(id: 6, kind: .toolCall(name: "Bash"), text: bash("make test"), timestamp: nil),
+            TranscriptItem(id: 7, kind: .toolResult(name: "Bash", isError: false), text: "x", timestamp: nil),
+            TranscriptItem(id: 8, kind: .toolResult(name: "Bash", isError: true), text: "failed", timestamp: nil),
+        ]
+        let session = PhaseClassifier.session(items)
+        #expect((1...8).map { session.steps[$0] } == [.explore, .verify, .explore, .verify, .explore, .verify, .explore, .verify])
+        // A result's row is the step before its own call.
+        #expect(session.before[3] == .understand && session.before[4] == .explore)
+        #expect(session.before[7] == .verify && session.before[8] == .explore)
+    }
+
     @Test func phaseTitles() {
         #expect(Phase.allCases.map(\.title) == ["Understand", "Explore", "Plan", "Edit", "Verify", "Report"])
     }
