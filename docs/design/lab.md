@@ -197,7 +197,9 @@ Who writes what:
   2026-10-01 by the evidence-preserving digest of `error-analysis.md`. When even the
   smallest cap doesn't fit, the middle of the session goes, but never user turns or the
   stubs of failed tool results.
-- Summaries and findings pass through `SecretFilter` before AKit shows them.
+- Summaries and findings pass through `SecretFilter` before AKit shows them. It runs the
+  scrubber's token and password rules, so weak passwords after a password's name are
+  masked too.
 - Since 2026-10-01 every call that sends session data or code goes through the sending
   policy of `error-analysis.md` (allowed list, same origin, account check, scrub, monthly
   limit, `sends.jsonl`); the one-call review is error analysis's notes and verifier.
