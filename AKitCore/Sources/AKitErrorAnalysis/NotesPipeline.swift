@@ -14,15 +14,12 @@ public enum NotesPipeline {
         public var file: URL
         public var title: String?
         public var project: URL?
-        /// AKit's numbers for the session (calls, tokens, errors), when it has them.
-        public var numbers: String?
 
-        public init(harness: HarnessID, file: URL, title: String? = nil, project: URL? = nil, numbers: String? = nil) {
+        public init(harness: HarnessID, file: URL, title: String? = nil, project: URL? = nil) {
             self.harness = harness
             self.file = file
             self.title = title
             self.project = project
-            self.numbers = numbers
         }
 
         public var summary: SessionSummary {
@@ -71,10 +68,14 @@ public enum NotesPipeline {
             throw Failure(message: "AKit can't name the session in \(target.file.path).")
         }
         let origin = SendOrigin.of(harness: target.harness, sessionFile: target.file)
-        let (items, scrubbedCounts) = try scrubbedItems(target, gate: notesGate)
+        var (items, scrubbedCounts) = try scrubbedItems(target, gate: notesGate)
+        let numbers = numbers(of: target, gate: notesGate)
+        if let numbers { scrubbedCounts.merge(numbers.counts, uniquingKeysWith: +) }
+        // The key holds what the notes call sends that comes from the session: the scrubbed
+        // transcript and AKit's numbers, both computed from the transcript alone, so a Lab
+        // review and a batch share notes.
         var input = Data(items.map { "[#\($0.id)] \($0.text)" }.joined(separator: "\n").utf8)
-        // AKit's numbers are part of the notes call's input too.
-        if let numbers = target.numbers { input.append(Data("\n## AKit's numbers\n\(numbers)".utf8)) }
+        if let numbers { input.append(Data("\n## AKit's numbers\n\(numbers.text)".utf8)) }
         let notesKey = DoneKey.make(input: input, configs: [config.notesStep])
         let verifierKey = DoneKey.make(input: input, configs: [config.notesStep, config.verifierStep])
         let store = NotesStore(env: env)
@@ -87,7 +88,7 @@ public enum NotesPipeline {
         } else {
             out("Writing notes with \(config.notes.label)…")
             var request = ModelCall.Request(agent: config.notes, purpose: "notes", system: NotesPrompts.notesSystem + "\n" + config.language.instruction,
-                                            input: try notesInput(title: target.title, numbers: target.numbers, items: items, model: config.notes.model),
+                                            input: try notesInput(numbers: numbers?.text, items: items, model: config.notes.model),
                                             schema: NotesPrompts.notesSchema, origin: origin, session: key.description, runID: runID)
             request.scrubbed = scrubbedCounts
             let answer = try await ModelCall.run(request, gate: notesGate, folder: workFolder, env: env)
@@ -124,9 +125,22 @@ public enum NotesPipeline {
         return (items, counts)
     }
 
+    /// AKit's numbers for the notes call: the metrics of a Claude Code transcript (calls,
+    /// tokens, errors, commits), scrubbed like the transcript; nil for other harnesses. From
+    /// the transcript alone: whether a commit reached the main branch is left out, it changes
+    /// with the repository, not with the session, and isn't in the log.
+    static func numbers(of target: Target, gate: SendGate) -> (text: String, counts: [String: Int])? {
+        guard target.harness == .claudeCode, let metrics = try? SessionAnalyzer.analyze(file: target.file),
+              let json = try? LabStore.encoder.encode(metrics) else { return nil }
+        let result = gate.scrub(String(decoding: json, as: UTF8.self))
+        return (result.text, result.counts)
+    }
+
+    /// The notes call's input: AKit's numbers and the transcript digest. The title isn't sent:
+    /// callers know it or not, and the transcript's own user turns say what the session was.
     /// Refuses a session whose user turns and failed tool results alone pass the model's
     /// budget: they are never cut, and a call over the budget may not fit the window.
-    static func notesInput(title: String?, numbers: String?, items: [TranscriptItem], model: String) throws -> String {
+    static func notesInput(numbers: String?, items: [TranscriptItem], model: String) throws -> String {
         let budget = EvidenceDigest.budget(model: model)
         let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: budget)
         guard !digest.overBudget else {
@@ -136,7 +150,7 @@ public enum NotesPipeline {
         }
         let facts = numbers.map { "## AKit's numbers (computed from the transcript; trust them)\n\n\($0)\n\n" } ?? ""
         return """
-            # Session: \(title ?? "untitled")
+            # Session
 
             \(facts)## Transcript digest
 
@@ -218,9 +232,9 @@ public enum NotesPipeline {
         var toAsk: [Note] = []
         for index in result.notes.indices where result.notes[index].source == .model {
             let note = result.notes[index]
-            // Every part counts: "error … ok" is two words that match almost anywhere.
-            let parts = QuoteMatcher.parts(of: note.quote)
-            if parts.isEmpty || parts.contains(where: { $0.count < minimumQuote }) {
+            // One long part anchors the quote in its step, and the others must follow it there;
+            // "error … ok" is two words that match almost anywhere.
+            if (QuoteMatcher.parts(of: note.quote).map(\.count).max() ?? 0) < minimumQuote {
                 result.notes[index].verdict = Verdict(accepted: false, reason: "The quote is too short to show anything.", by: .code)
             } else if let item = byID[note.step], QuoteMatcher.matches(quote: note.quote, in: item.text) {
                 toAsk.append(note)
@@ -260,8 +274,8 @@ public enum NotesPipeline {
         return result
     }
 
-    /// A quote, or a part of one between elisions, this short ("null", "ok") matches almost
-    /// any step and proves nothing.
+    /// A quote this short ("null", "ok"), or one whose parts between elisions are all this
+    /// short, matches almost any step and proves nothing.
     static let minimumQuote = 8
 
     /// Steps shown around the cited one, before and after.

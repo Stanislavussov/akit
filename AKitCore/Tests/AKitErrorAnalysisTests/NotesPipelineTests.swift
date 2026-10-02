@@ -29,13 +29,14 @@ struct NotesPipelineTests {
         if executable { try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
     }
 
-    /// user #0, Bash call #1, failing result #2, the agent's claim #3.
-    func session() throws -> URL {
+    /// user #0, Bash call #1, failing result #2, the agent's claim #3. `outputTokens` is
+    /// recorded usage: in AKit's numbers, not in the transcript's items.
+    func session(outputTokens: Int = 7) throws -> URL {
         try write(".claude/projects/-work/0f6c2b1e-1111-4222-8333-944445555666.jsonl", """
             {"type":"user","cwd":"/work","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"Fix the failing test in Foo."}}
             {"type":"assistant","timestamp":"2026-10-01T10:00:05Z","message":{"id":"m1","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"swift test"}}]}}
             {"type":"user","timestamp":"2026-10-01T10:00:09Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","is_error":true,"content":"Exit code 1\\n2 tests failed"}]}}
-            {"type":"assistant","timestamp":"2026-10-01T10:00:12Z","message":{"id":"m2","model":"claude-opus-5-5","content":[{"type":"text","text":"Done, all tests pass."}]}}
+            {"type":"assistant","timestamp":"2026-10-01T10:00:12Z","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":\(outputTokens)},"content":[{"type":"text","text":"Done, all tests pass."}]}}
 
             """)
         return home.appending(path: ".claude/projects/-work/0f6c2b1e-1111-4222-8333-944445555666.jsonl")
@@ -90,10 +91,10 @@ struct NotesPipelineTests {
         ["id": "n3", "supported": false, "reason": "Running the suite was what the user asked for."],
     ]]
 
-    func review(_ file: URL, model: String = "opus", numbers: String? = nil) async throws -> SessionNotes {
+    func review(_ file: URL, model: String = "opus", title: String? = "Fix Foo") async throws -> SessionNotes {
         let agent = LabAgent(harness: .claudeCode, model: model, effort: "high")
         let gate = try await SendGate.open(agent: agent, env: env)
-        return try await NotesPipeline.review(NotesPipeline.Target(harness: .claudeCode, file: file, title: "Fix Foo", numbers: numbers),
+        return try await NotesPipeline.review(NotesPipeline.Target(harness: .claudeCode, file: file, title: title),
                                               config: NotesPipeline.Config(notes: agent), notesGate: gate, verifierGate: gate,
                                               runID: nil, workFolder: home.appending(path: "work"), env: env, out: { _ in })
     }
@@ -155,28 +156,45 @@ struct NotesPipelineTests {
         #expect(NotesStore(env: env).all().count == 1)
     }
 
-    @Test func akitsNumbersArePartOfTheNotesKey() async throws {
+    @Test func theNotesKeyHoldsExactlyWhatTheNotesCallSends() async throws {
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
         let file = try session()
-        _ = try await review(file, numbers: "4 steps, 1 tool error")
-        _ = try await review(file, numbers: "4 steps, 1 tool error")
+        // A batch knows no title; a Lab review does. The title isn't sent, AKit's numbers are
+        // computed from the transcript for both: one input, one key, the notes are shared.
+        let batch = try await review(file, title: nil)
+        let lab = try await review(file, title: "Fix Foo")
         #expect(calls() == ["notes", "verifier"])
-        // Other numbers are another input: the notes are written again.
-        _ = try await review(file, numbers: "4 steps, 2 tool errors")
+        #expect(lab.doneKeys == batch.doneKeys)
+        let gate = try await SendGate.open(agent: LabAgent(harness: .claudeCode, model: "opus", effort: "high"), env: env)
+        let numbers = try #require(NotesPipeline.numbers(of: NotesPipeline.Target(harness: .claudeCode, file: file), gate: gate))
+        #expect(numbers.text.contains(#""toolErrors" : 1"#) && numbers.text.contains(#""outputTokens" : 7"#))
+        let (items, _) = try NotesPipeline.scrubbedItems(NotesPipeline.Target(harness: .claudeCode, file: file), gate: gate)
+        let input = try NotesPipeline.notesInput(numbers: numbers.text, items: items, model: "opus")
+        #expect(input.contains(numbers.text) && !input.contains("Fix Foo"))
+
+        // Other recorded numbers with the same transcript items are another input: the notes
+        // are written again.
+        _ = try session(outputTokens: 70)
+        let other = try await review(file)
         #expect(calls() == ["notes", "verifier", "notes", "verifier"])
+        #expect(other.doneKeys["notes"] != lab.doneKeys["notes"])
     }
 
-    @Test func everyPartOfAQuoteMustBeLongEnough() async throws {
+    @Test func aQuoteNeedsOneLongPart() async throws {
         var answer = notesAnswer
         answer["notes"] = [
-            ["id": "n1", "description": "Ignored the failure.", "step": 2, "quote": "Exit code 1 … failed", "severity": "low", "faultLayer": "agent"],
-            ["id": "n2", "description": "Ignored the failure.", "step": 2, "quote": "Exit code 1 … tests failed", "severity": "low", "faultLayer": "agent"],
+            ["id": "n1", "description": "Ignored the failure.", "step": 2, "quote": "Exit … failed", "severity": "low", "faultLayer": "agent"],
+            ["id": "n2", "description": "Ignored the failure.", "step": 2, "quote": "Exit code 1 … failed", "severity": "low", "faultLayer": "agent"],
+            ["id": "n3", "description": "Ignored the failure.", "step": 2, "quote": "failed … Exit code 1", "severity": "low", "faultLayer": "agent"],
         ]
         answer["advice"] = [[String: Any]]()
         try fakeClaude(notes: answer, verdicts: ["verdicts": [["id": "n2", "supported": true, "reason": "#2 shows the failure."]]])
         let notes = try await review(try session())
+        // Every part short: it proves nothing.
         #expect(notes.notes.first { $0.id == "n1" }?.verdict == Verdict(accepted: false, reason: "The quote is too short to show anything.", by: .code))
+        // One part of 8+ characters anchors it; the short one must still follow it in the step.
         #expect(notes.notes.first { $0.id == "n2" }?.verdict?.accepted == true)
+        #expect(notes.notes.first { $0.id == "n3" }?.verdict == Verdict(accepted: false, reason: "The quote isn't in step #2.", by: .code))
     }
 
     @Test func theUsersRouteVerdictsSurviveAReviewOfTheGrownSession() async throws {
@@ -279,10 +297,10 @@ struct NotesPipelineTests {
         // 130 user turns of 3000 characters: ~390K, over the default budget and never cut.
         let items = (0..<130).map { TranscriptItem(id: $0, kind: .user, text: String(repeating: "u", count: 3000), timestamp: nil) }
         #expect(throws: NotesPipeline.Failure.self) {
-            _ = try NotesPipeline.notesInput(title: "t", numbers: nil, items: items, model: "opus")
+            _ = try NotesPipeline.notesInput(numbers: nil, items: items, model: "opus")
         }
         // A 1M-token window has room for it.
-        #expect(try NotesPipeline.notesInput(title: "t", numbers: nil, items: items, model: "opus[1m]").contains("[#129 user]"))
+        #expect(try NotesPipeline.notesInput(numbers: nil, items: items, model: "opus[1m]").contains("[#129 user]"))
     }
 
     @Test func invalidAnswersAreErrors() async throws {

@@ -36,11 +36,12 @@ public enum AnalysisRuns {
                        out: @escaping @Sendable (String) -> Void) async throws -> RunResult {
         let file = try ReviewRun.reviewedFile(run)
         let agent = run.spec.agent ?? LabRuns.defaultAgent(.claudeCode, env: env)
-        var target = NotesPipeline.Target(harness: run.spec.reviewedHarness, file: file, title: run.spec.reviewedTitle,
+        let target = NotesPipeline.Target(harness: run.spec.reviewedHarness, file: file, title: run.spec.reviewedTitle,
                                           project: LabPaths.folder(ofTranscript: file))
         let gate = try await SendGate.open(agent: agent, env: env)
-        let metrics = try await ReviewRun.prepare(run, transcript: file, env: env).metrics
-        target.numbers = metrics.flatMap { try? String(decoding: LabStore.encoder.encode($0), as: UTF8.self) }
+        // The run's analysis.json for the Lab screen; the notes call computes its own numbers
+        // from the transcript, as a batch does, so both share notes.
+        _ = try await ReviewRun.prepare(run, transcript: file, env: env)
         guard !Cancellation.isCancelled else { throw CancellationError() }
 
         phase(.agent)
