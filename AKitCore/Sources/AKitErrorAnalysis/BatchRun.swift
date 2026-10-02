@@ -61,7 +61,7 @@ public enum Batches {
     /// sessions the filter allows, and leaves out of them the ones it may not get, so the
     /// sample holds only sessions that can be reviewed; throws only when it may get none.
     /// A reviewer you chose keeps every session; `refused` says how many it may not get.
-    public static func draw(filter: Sampling.Filter, size: Int = 20, notesAgent: LabAgent?, seed: UInt64? = nil,
+    public static func draw(filter: Sampling.Filter, size: Int, notesAgent: LabAgent?, seed: UInt64? = nil,
                             env: HarnessEnvironment) async throws -> Sample {
         guard let database = try AnalysisIndex.open(env: env) else {
             throw Failure(message: "The session index is empty. Run akit sessions import first.")
@@ -94,7 +94,7 @@ public enum Batches {
                                            signals: signals)
         let picks = Sampling.sample(population, signals: signals, size: size, hinted: hinted, using: &generator)
         var refused = 0
-        // An account that can't be checked now fails the run at its start, as before.
+        // An account that can't be checked now fails the run at its start.
         if notesAgent != nil, let gate = try? await SendGate.open(agent: reviewer, env: env) {
             let refusals = picks.map { gate.decide(SessionNotes.origin(sessionKey: $0.sessionKey, transcript: $0.file)) }.filter { !$0.allowed }
             refused = refusals.count
@@ -307,7 +307,7 @@ enum BatchRunner {
             || lower.contains("not logged in") || lower.contains("forbidden")
     }
 
-    /// "The session is too long for one call / one judge call": its digest passes the budget.
+    /// A `NotesPipeline.tooLong` message: the session's digest passes the budget.
     static func isTooLong(_ text: String) -> Bool {
         text.hasPrefix("The session is too long for one ")
     }

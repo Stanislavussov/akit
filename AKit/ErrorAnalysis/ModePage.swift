@@ -21,7 +21,7 @@ struct ModePage: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         header(mode)
-                        if justConfirmed, mode.status == .active { followUps(mode) }
+                        if justConfirmed, mode.status == .active { ConfirmedFollowUps(mode: mode) }
                         definition(mode)
                         check(mode)
                         if mode.isCurrent, mode.status == .active {
@@ -74,11 +74,6 @@ struct ModePage: View {
             }
             .controlSize(.small)
         }
-    }
-
-    /// After Confirm: the mode's check and retro-matching, as the design offers them.
-    private func followUps(_ mode: Mode) -> some View {
-        ConfirmedFollowUps(mode: mode)
     }
 
     private func definition(_ mode: Mode) -> some View {

@@ -74,9 +74,7 @@ public enum Judges {
         let budget = EvidenceDigest.budget(model: agent.model)
         let cut = EvidenceDigest.text(SessionTranscript(items: items), budget: budget)
         guard !cut.overBudget else {
-            throw Failure(message: "The session is too long for one judge call: its user turns and failed tool results alone pass the "
-                              + "\(budget)-character budget of \(agent.model.isEmpty ? "the default model" : agent.model), so it isn't sent."
-                              + (budget < EvidenceDigest.largeBudget ? " A judge with a 1M-token window may have room for it." : ""))
+            throw Failure(message: NotesPipeline.tooLong(call: "judge call", budget: budget, model: agent.model, caller: "judge"))
         }
         let digest = cut.text
         // Exemplars are quotes from other sessions: only those whose origin may go here.

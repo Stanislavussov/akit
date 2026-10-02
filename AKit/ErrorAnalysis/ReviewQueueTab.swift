@@ -134,7 +134,6 @@ private struct CandidateCard: View {
             HStack {
                 Button("Confirm", systemImage: "checkmark.circle") {
                     let mode = mode
-                    // As on the mode page: the check runs at once, and the follow-ups show above.
                     Task { if await analysis.confirm(mode) { confirmed() } }
                 }
                 Button("Rename…") { action = .rename(mode) }

@@ -219,7 +219,6 @@ final class AnalysisModel {
     /// Confirms a candidate or an inactive seed, then runs its code check over every indexed
     /// session: at once, or when the check running now is done (the bar says so). False when
     /// confirming failed (the error is in the bar).
-    @discardableResult
     func confirm(_ mode: Mode) async -> Bool {
         let id = mode.id
         error = nil

@@ -136,6 +136,14 @@ public enum NotesPipeline {
         return (result.text, result.counts)
     }
 
+    /// Why a session isn't sent in one `call`: its user turns and failed tool results alone pass
+    /// `budget`. `BatchRunner.isTooLong` knows the message by its start.
+    static func tooLong(call: String, budget: Int, model: String, caller: String) -> String {
+        "The session is too long for one \(call): its user turns and failed tool results alone pass the "
+            + "\(budget)-character budget of \(model.isEmpty ? "the default model" : model), so it isn't sent."
+            + (budget < EvidenceDigest.largeBudget ? " A \(caller) with a 1M-token window may have room for it." : "")
+    }
+
     /// The notes call's input: AKit's numbers and the transcript digest. The title isn't sent:
     /// callers know it or not, and the transcript's own user turns say what the session was.
     /// Refuses a session whose user turns and failed tool results alone pass the model's
@@ -143,11 +151,7 @@ public enum NotesPipeline {
     static func notesInput(numbers: String?, items: [TranscriptItem], model: String) throws -> String {
         let budget = EvidenceDigest.budget(model: model)
         let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: budget)
-        guard !digest.overBudget else {
-            throw Failure(message: "The session is too long for one call: its user turns and failed tool results alone pass the "
-                              + "\(budget)-character budget of \(model.isEmpty ? "the default model" : model), so it isn't sent."
-                              + (budget < EvidenceDigest.largeBudget ? " A model with a 1M-token window may have room for it." : ""))
-        }
+        guard !digest.overBudget else { throw Failure(message: tooLong(call: "call", budget: budget, model: model, caller: "model")) }
         let facts = numbers.map { "## AKit's numbers (computed from the transcript; trust them)\n\n\($0)\n\n" } ?? ""
         return """
             # Session

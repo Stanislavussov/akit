@@ -137,7 +137,7 @@ extension AppModel {
 
     /// Continues a batch as a new run, or reruns only its failed sessions (`akit analysis batch resume`).
     /// `environment` nil: the one suggested, as for a new batch.
-    func resumeBatch(_ id: String, retryErrors: Bool, environment: LabEnvironment? = nil) async throws -> LabRun {
+    func resumeBatch(_ id: String, retryErrors: Bool, environment: LabEnvironment?) async throws -> LabRun {
         let akit = try await analysisAkit()
         let run = try await Task.detached {
             try await Batches.resume(id, retryErrors: retryErrors, environment: environment, akit: akit, env: .current)

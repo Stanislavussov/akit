@@ -244,7 +244,7 @@ struct BootstrapTests {
                                                     agent: agent, gate: gate, workFolder: home.appending(path: "w"), env: env,
                                                     out: { lines.append($0) })
         #expect(finds.map(\.ref) == [NoteRef(sessionKey: "claude:c", noteID: "n1")])
-        #expect(lines.count == 1 && lines[0].hasPrefix("3 notes are left out"))
+        #expect(lines.count == 1 && lines[0].hasPrefix("3 of 5 notes left out"))
         #expect(LabelBookStore(env: env).load().finds.count == 1)
     }
 }

@@ -91,8 +91,9 @@ extension AKitCLI {
                     let pool = NotesStore(env: env).all()
                     let seen = Matching.seen(pool, modes: modes).byMode.mapValues(\.count)
                     guard Judges.eligible(modes, seen: seen, cost: Judges.cost(pool, modes: modes)).contains(where: { $0.id == target.id }) else {
-                        throw Failure(message: "Only a mode in the top 3 by notes or by cost with a fix drafted or applied gets a judge; "
-                                          + "\(target.name) isn't one. Other modes get a code check or stay \"seen in k notes\".")
+                        throw Failure(message: "Only a mode in the top 3 by notes or by cost (the tokens or the steps its notes record) with a fix "
+                                          + "drafted or applied gets a judge; \(target.name) isn't one. Other modes get a code check or stay "
+                                          + "\"seen in k notes\".")
                     }
                     try store.setJudge(agent, for: target.id)
                     out("\(target.name) is judged by \(agent.label). Validate it: akit analysis validate \(target.id) dev.")
@@ -103,7 +104,7 @@ extension AKitCLI {
                     guard let judge = store.judges()[target.id] else { throw Failure(message: "\(target.name) has no judge: akit analysis judge enable \(target.id).") }
                     let pool = NotesStore(env: env).all()
                     let sessions = pool.map { (key: $0.sessionKey, file: $0.transcript) }
-                    // Like the app: only the sessions without a current verdict cost anything.
+                    // Only the sessions without a current verdict cost anything.
                     let pending = Judges.pending(mode: target, sessions: sessions, agent: judge, env: env).count
                     if pending > 0 {
                         guard try confirmCost(characters: pending * 60_000, agent: judge,
