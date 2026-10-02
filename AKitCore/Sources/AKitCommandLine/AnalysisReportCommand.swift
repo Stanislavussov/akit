@@ -273,7 +273,7 @@ extension AKitCLI {
         func pct(_ value: Double?) -> String { value.map { String(format: "%.0f%%", $0 * 100) } ?? "—" }
         return "\(result.modeID) v\(result.modeVersion) \(result.set.rawValue): TPR \(pct(result.tpr)) (low \(pct(result.tprLow)), "
             + "\(result.labels.onPositives.count) positives), TNR \(pct(result.tnr)) (low \(pct(result.tnrLow)), \(result.labels.onNegatives.count) negatives)"
-            + (result.toughLeftOut > 0 ? ", \(result.toughLeftOut) tough calls left out" : "") + (result.unchecked > 0 ? ", \(result.unchecked) unchecked" : "")
+            + (result.toughLeftOut > 0 ? ", \(result.toughLeftOut) tough calls left out (decide them: akit analysis queue)" : "") + (result.unchecked > 0 ? ", \(result.unchecked) unchecked" : "")
     }
 
     static func reportText(_ report: BatchReport) -> String {

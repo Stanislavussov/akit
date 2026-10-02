@@ -43,14 +43,9 @@ public struct ModeStore: Sendable {
         try await list().filter { $0.status == .rejected }.map(\.name).sorted()
     }
 
-    /// The mode a result for `id` counts for today, following merges.
-    public func resolve(_ id: String) async throws -> String {
-        Self.resolve(id, in: try await list())
-    }
-
-    /// Follows `mergedInto` until a mode that wasn't merged, so past results are recounted
-    /// through merges. A cycle can't be made through `merge`, but a hand-edited file could
-    /// hold one; the walk stops at the first repeat.
+    /// The mode a result for `id` counts for today: follows `mergedInto` until a mode that
+    /// wasn't merged, so past results are recounted through merges. A cycle can't be made
+    /// through `merge`, but a hand-edited file could hold one; the walk stops at the first repeat.
     public static func resolve(_ id: String, in modes: [Mode]) -> String {
         let byID = Dictionary(modes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var current = id
@@ -68,10 +63,10 @@ public struct ModeStore: Sendable {
         }
     }
 
-    /// The newest commits of the modes repository: what changed in the list, and when.
     /// When the list of modes last changed: a mode added, renamed, edited, merged, split,
     /// rejected, restored, confirmed or activated. Batch bookkeeping, fixes and exemplars
-    /// don't count (the bootstrap stop rule waits for 20 sessions without such a change).
+    /// don't count (the bootstrap stop rule waits for 20 sessions without such a change), and
+    /// neither does a candidate clustering proposed: a new mode counts once it is confirmed.
     public func lastTaxonomyChange() async throws -> Date? {
         let changes = ["Add mode", "Add seed modes", "Rename mode", "Edit mode", "Merge modes", "Split mode", "Reject mode",
                        "Restore mode", "Confirm mode"]
@@ -80,6 +75,7 @@ public struct ModeStore: Sendable {
         }?.date
     }
 
+    /// The newest commits of the modes repository: what changed in the list, and when.
     public func history(limit: Int = 50) async throws -> [(date: Date, message: String)] {
         try await locked {
             _ = try await prepare()
@@ -105,7 +101,7 @@ public struct ModeStore: Sendable {
             if mode.origin == .emergent { mode.status = .candidate }
             if !mode.kind.takesFixes { mode.fix = nil }
             modes.append(mode)
-            return (mode, "Add mode \(mode.id): \"\(mode.name)\"")
+            return (mode, "Add \(mode.status == .candidate ? "candidate " : "")mode \(mode.id): \"\(mode.name)\"")
         }
     }
 

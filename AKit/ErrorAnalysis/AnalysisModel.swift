@@ -80,7 +80,7 @@ struct AnalysisData: Sendable {
         }
         data.book = LabelBookStore(env: env).load()
         data.unclear = UnclearNotes(env: env).all()
-        data.queue = ReviewQueue.build(modes: data.modes, pool: data.pool, checks: Array(data.checks.values), book: data.book,
+        data.queue = ReviewQueue.build(modes: data.modes, pool: data.pool, checks: ReviewQueue.checks(modes: data.modes, env: env), book: data.book,
                                        spotCheck: BatchStore(env: env).latest()?.spotCheck ?? [])
         (data.accepted, data.reviewed) = Matching.acceptance(data.pool)
         data.reservations = BootstrapReservations(env: env).all().sorted { $0.reservedAt < $1.reservedAt }

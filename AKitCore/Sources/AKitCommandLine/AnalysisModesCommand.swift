@@ -197,8 +197,8 @@ extension AKitCLI {
             try args.finish()
             return try await fail {
                 let modes = try await store.list()
-                let checks = modes.compactMap { CheckStore(env: env).load($0.id) }
-                let queue = ReviewQueue.build(modes: modes, pool: notesStore.all(), checks: checks, book: LabelBookStore(env: env).load(),
+                let queue = ReviewQueue.build(modes: modes, pool: notesStore.all(), checks: ReviewQueue.checks(modes: modes, env: env),
+                                              book: LabelBookStore(env: env).load(),
                                               spotCheck: BatchStore(env: env).latest()?.spotCheck ?? [])
                 if options.json {
                     struct QueueJSON: Encodable {
@@ -220,7 +220,9 @@ extension AKitCLI {
                 for item in queue.routes {
                     out("Route      \(item.ref) → \(item.route.modeID ?? "none fits") (\(String(format: "%.2f", item.route.confidence)))")
                 }
-                for call in queue.toughCalls { out("Tough call \(call.modeID) in \(call.sessionKey)") }
+                for call in queue.toughCalls {
+                    out("Tough call \(call.modeID) in \(call.sessionKey) — akit analysis tough \(call.modeID) \(call.sessionKey) present|absent")
+                }
                 for note in queue.spotChecks { out("Spot check \(note)") }
                 for umbrella in queue.umbrellas {
                     out(String(format: "Umbrella?  %@ takes %.0f%% of routed notes (%d): narrow or split it", umbrella.modeID, umbrella.share * 100, umbrella.notes))

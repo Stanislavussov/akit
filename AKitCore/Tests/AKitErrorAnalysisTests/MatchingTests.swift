@@ -192,6 +192,62 @@ struct MatchingTests {
         #expect(Bootstrap.sessionsSinceLastModeChange([labeled, clean], lastChange: Date.distantFuture) == 0)
     }
 
+    @Test func bootstrapLabelsNeedEveryNoteMappedAndOneAcceptedFindWins() async throws {
+        let modes = try await ModeStore(env: env).list()
+        func note(_ id: String) -> Note {
+            var note = Note(id: id, source: .human, description: id, step: 1, quote: "q")
+            note.id = id
+            return note
+        }
+        let half = Bootstrap.Label(sessionKey: "claude:half", transcript: "/t", notes: [note("h1"), note("h2")], outcome: .no, labeledAt: .now)
+        let unclear = Bootstrap.Label(sessionKey: "claude:unclear", transcript: "/t", notes: [note("h1"), note("h2")], outcome: .no, labeledAt: .now)
+        let shown = Bootstrap.Label(sessionKey: "claude:shown", transcript: "/t", notes: [note("h1"), note("h2")], outcome: .no, labeledAt: .now)
+        var book = LabelBook(mapping: ["claude:half#h1": "false-premise",
+                                       "claude:unclear#h1": "false-premise", "claude:unclear#h2": LabelBook.unclear,
+                                       "claude:shown#h1": "large-file-read-whole"])
+        let from = NoteRef(sessionKey: "claude:half", noteID: "h1")
+        // Accepted then rejected, and rejected then accepted: one accepted find is enough.
+        book.finds = [LabelBook.Find(ref: NoteRef(sessionKey: "claude:d", noteID: "n1"), modeID: "large-file-read-whole", from: from, accepted: true),
+                      LabelBook.Find(ref: NoteRef(sessionKey: "claude:d", noteID: "n2"), modeID: "large-file-read-whole", from: from, accepted: false),
+                      LabelBook.Find(ref: NoteRef(sessionKey: "claude:e", noteID: "n1"), modeID: "large-file-read-whole", from: from, accepted: false),
+                      LabelBook.Find(ref: NoteRef(sessionKey: "claude:e", noteID: "n2"), modeID: "large-file-read-whole", from: from, accepted: true),
+                      LabelBook.Find(ref: NoteRef(sessionKey: "claude:half", noteID: "n1"), modeID: "large-file-read-whole", from: from, accepted: true)]
+        let labels = ModeLabels.labels(for: "large-file-read-whole", modes: modes, bootstrap: [half, unclear, shown], book: book)
+        let byKey = Dictionary(uniqueKeysWithValues: labels.map { ($0.sessionKey, $0) })
+        // A note not mapped yet: no bootstrap negative, so the cheaper label stays.
+        #expect(byKey["claude:half"]?.source == .similarCase && byKey["claude:half"]?.positive == true)
+        #expect(byKey["claude:unclear"]?.source == .bootstrap && byKey["claude:unclear"]?.positive == false)
+        // One mapped note shows the mode even while another waits.
+        #expect(byKey["claude:shown"]?.source == .bootstrap && byKey["claude:shown"]?.positive == true)
+        #expect(byKey["claude:d"]?.positive == true && byKey["claude:e"]?.positive == true)
+        let other = ModeLabels.labels(for: "false-premise", modes: modes, bootstrap: [half, unclear, shown], book: book)
+        #expect(other.map(\.sessionKey) == ["claude:half", "claude:unclear"] && other.allSatisfy(\.positive))
+    }
+
+    @Test func aJudgesToughCallsReachTheQueue() async throws {
+        let store = ModeStore(env: env)
+        _ = try await store.create(Mode(id: "kept", name: "Kept", definition: "d"))
+        _ = try await store.create(Mode(id: "gone", name: "Gone", definition: "d"))
+        _ = try await store.create(Mode(id: "dropped", name: "Dropped", definition: "d"))
+        try await store.merge(["gone"], into: "kept")
+        try await store.reject("dropped", reason: "not a pattern")
+        let tough = CheckVerdict(positive: true, toughCall: true, by: .judge, version: 1)
+        try CheckStore(env: env).update(Judges.resultsID("false-premise")) { $0.verdicts["claude:a"] = tough }
+        try CheckStore(env: env).update("gone") { $0.verdicts["claude:b"] = tough }
+        func queue(_ book: LabelBook = LabelBook()) async throws -> ReviewQueue {
+            let modes = try await store.list()
+            return ReviewQueue.build(modes: modes, pool: [], checks: ReviewQueue.checks(modes: modes, env: env), book: book)
+        }
+        // Merged and rejected candidates aren't asked, nor tough calls of a merged mode.
+        #expect(try await queue().candidates.map(\.id) == ["kept"])
+        // No judge enabled: the judge's file doesn't count yet.
+        #expect(try await queue().toughCalls.isEmpty)
+        try ValidationStore(env: env).setJudge(agent, for: "false-premise")
+        let calls = try await queue().toughCalls
+        #expect(calls.map { "\($0.modeID)|\($0.sessionKey)" } == ["false-premise|claude:a"])
+        #expect(try await queue(LabelBook(toughCalls: ["false-premise|claude:a": false])).toughCalls.isEmpty)
+    }
+
     @Test func theQueueHoldsWhatWaitsForTheUser() async throws {
         let store = ModeStore(env: env)
         _ = try await store.create(Mode(id: "new-thing", name: "New thing", definition: "d"))

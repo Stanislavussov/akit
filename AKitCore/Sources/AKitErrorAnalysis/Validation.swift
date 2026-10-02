@@ -200,12 +200,7 @@ public struct ValidationStore: Sendable {
         (try? Data(contentsOf: folder.appending(path: name))).flatMap { try? AnalysisJSON.decoder.decode(T.self, from: $0) }
     }
 
-    private func write<T: Encodable>(_ value: T, _ name: String) throws {
-        try JSONFile.write(value, to: folder.appending(path: name))
-    }
-
     public func splits() -> [String: Split] { read("splits.json", as: [String: Split].self) ?? [:] }
-    public func save(_ splits: [String: Split]) throws { try write(splits, "splits.json") }
 
     /// Sessions in any mode's test set: never exemplars.
     public func testSessions() -> Set<String> { Set(splits().values.flatMap(\.test)) }
