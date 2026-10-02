@@ -71,7 +71,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .skills: "Every skill the agents see now, by where it lives. Brain skills are edited in Brain"
         case .skillsSh: "Find a public skill on skills.sh and install it into a folder; Import Skills… in Brain adds it to your library"
         case .mcp: "MCP servers per harness and project; edited in the harness configs, secrets in the Keychain"
-        case .sessions: "Saved conversations with token use; Analysis per session, Review in Terminal… starts a Lab run"
+        case .sessions: "Saved conversations, newest first; open one for its tokens and Analysis. Review in Terminal… starts a Lab run"
         case .usage: "Tokens and cost per day, summed from the same session files"
         case .lab: "The queue of runs that start an agent or a model: reviews, replays, analysis batches, control cells; Sends logs what went out"
         case .analysis: "Recurring failure modes across many sessions, their frequencies, and whether a fix helped; its batches run in Lab"
