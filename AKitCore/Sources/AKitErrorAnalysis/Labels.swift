@@ -131,7 +131,8 @@ extension Bootstrap {
     /// The first modes: one clustering call over the user's and the model's notes of the
     /// labeled bootstrap sessions. Seeds are in the list as candidates already.
     public static func firstModes(labels: [Label], pool: [SessionNotes], existing: [Mode], rejected: [String], agent: LabAgent,
-                                  gate: SendGate, workFolder: URL, env: HarnessEnvironment) async throws -> [Clustering.Candidate] {
+                                  gate: SendGate, workFolder: URL, env: HarnessEnvironment,
+                                  out: (String) -> Void = { _ in }) async throws -> [Clustering.Candidate] {
         let done = labels.filter { $0.labeledAt != nil }
         let keys = Set(done.map(\.sessionKey))
         var items: [Clustering.Item] = []
@@ -142,7 +143,7 @@ extension Bootstrap {
         }
         items += Clustering.items(pool.filter { keys.contains($0.sessionKey) })
         return try await Clustering.cluster(items, existing: existing, rejected: rejected, agent: agent, gate: gate, runID: nil,
-                                            workFolder: workFolder, env: env)
+                                            workFolder: workFolder, env: env, out: out)
     }
 
     static let similarSystem = """

@@ -73,15 +73,23 @@ public enum Clustering {
         return text + "## Notes\n\n\(notes)\n"
     }
 
+    /// Notes whose session may not go to `gate` are left out, and `out` says how many; the call
+    /// fails only when no note is left.
     public static func cluster(_ items: [Item], existing: [Mode], rejected: [String], rebuild: Bool = false, agent: LabAgent,
-                               gate: SendGate, runID: String?, workFolder: URL, env: HarnessEnvironment) async throws -> [Candidate] {
+                               gate: SendGate, runID: String?, workFolder: URL, env: HarnessEnvironment,
+                               out: (String) -> Void = { _ in }) async throws -> [Candidate] {
         guard !items.isEmpty else { return [] }
+        let sent = items.filter { gate.decide($0.origin).allowed }
+        if let blocked = items.first(where: { !gate.decide($0.origin).allowed }) {
+            if sent.isEmpty { try gate.check(blocked.origin) }
+            out("\(items.count - sent.count) of \(items.count) notes left out: \(gate.decide(blocked.origin).reason)")
+        }
         let answer = try await ModelCall.run(
             ModelCall.Request(agent: agent, purpose: "clustering", system: system,
-                              input: input(items, existing: Matching.routable(existing), rejected: rejected, rebuild: rebuild),
-                              schema: schema, origins: items.map(\.origin), runID: runID),
+                              input: input(sent, existing: Matching.routable(existing), rejected: rejected, rebuild: rebuild),
+                              schema: schema, origins: sent.map(\.origin), runID: runID),
             gate: gate, folder: workFolder, env: env)
-        return try parse(answer.text, known: Set(items.map(\.ref)))
+        return try parse(answer.text, known: Set(sent.map(\.ref)))
     }
 
     static func parse(_ text: String, known: Set<NoteRef>) throws -> [Candidate] {

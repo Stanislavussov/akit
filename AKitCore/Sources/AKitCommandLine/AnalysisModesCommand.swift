@@ -25,7 +25,8 @@ extension AKitCLI {
           akit analysis mode history      The commits of the modes repository
 
         The model side (each sends notes to a model: sending policy, cost estimate first):
-          akit analysis route SESSION     Match a reviewed session's accepted notes to modes
+          akit analysis route SESSION [--yes]
+                                          Match a reviewed session's accepted notes to modes
           akit analysis cluster [--rebuild] [--yes]
                                           Group the notes no mode fits into candidate modes; --rebuild
                                           groups all notes from scratch to compare with the list
@@ -137,10 +138,18 @@ extension AKitCLI {
             guard let notes = notesStore.load(key) else { throw Failure(message: "No notes for \(session); review it first.") }
             let agent = try options.agent(env: env)
             return try await fail {
-                let gate = try await SendGate.open(agent: agent, env: env)
                 let modes = try await store.list()
                 var exemplars: [String: [Exemplar]] = [:]
                 for mode in Matching.routable(modes) { exemplars[mode.id] = try store.exemplars(of: mode.id) }
+                var characters = notes.accepted.map { $0.description.count + $0.quote.count + 40 }.reduce(0, +)
+                for mode in Matching.routable(modes) {
+                    let criteria: Int = (mode.include + mode.exclude).joined().count
+                    let quotes: Int = (exemplars[mode.id] ?? []).map(\.quote.count).reduce(0, +)
+                    characters += mode.name.count + mode.definition.count + criteria + quotes + 40
+                }
+                guard try confirmCost(characters: characters, agent: agent, what: "Routing \(notes.accepted.count) notes of \(key)",
+                                      options: options, env: env, out: out) else { return 0 }
+                let gate = try await SendGate.open(agent: agent, env: env)
                 let routed = try await Matching.route(notes, modes: modes, exemplars: exemplars, agent: agent, gate: gate, origin: notes.origin,
                                                       runID: nil, workFolder: analysisWork(env), env: env)
                 for (id, route) in Matching.currentRoutes(routed).sorted(by: { $0.key < $1.key }) {
@@ -162,7 +171,7 @@ extension AKitCLI {
                 let gate = try await SendGate.open(agent: agent, env: env)
                 let candidates = try await Clustering.cluster(items, existing: modes, rejected: try await store.rejectedNames(),
                                                               rebuild: rebuild, agent: agent, gate: gate, runID: nil,
-                                                              workFolder: analysisWork(env), env: env)
+                                                              workFolder: analysisWork(env), env: env, out: out)
                 if rebuild {
                     for candidate in candidates { out("\(candidate.name): \(candidate.notes.count) notes — \(candidate.definition)") }
                     let umbrellas = Clustering.umbrellas(candidates, pool: pool, modes: modes)
@@ -189,7 +198,7 @@ extension AKitCLI {
                                       options: options, env: env, out: out) else { return 0 }
                 let gate = try await SendGate.open(agent: agent, env: env)
                 let fits = try await Matching.retroMatch(mode: mode, pool: pool, origins: origins, agent: agent, gate: gate,
-                                                         workFolder: analysisWork(env), env: env)
+                                                         workFolder: analysisWork(env), env: env, out: out)
                 out("\(fits.count) notes fit \(mode.name).")
                 return 0
             }
@@ -549,7 +558,7 @@ extension AKitCLI {
             let gate = try await SendGate.open(agent: agent, env: env)
             let candidates = try await Bootstrap.firstModes(labels: all, pool: pool, existing: try await store.list(),
                                                             rejected: try await store.rejectedNames(), agent: agent, gate: gate,
-                                                            workFolder: analysisWork(env), env: env)
+                                                            workFolder: analysisWork(env), env: env, out: out)
             let created = try await Clustering.apply(candidates, store: store, env: env)
             for mode in created { out("\(mode.id) [\(mode.status.title)] \(mode.name)") }
             out("Confirm or edit them, then map your notes: akit analysis bootstrap map SESSION#hN MODE.")

@@ -53,10 +53,12 @@ public enum Judges {
             TranscriptItem(id: $0.id, kind: $0.kind, text: gate.scrub($0.text).text, timestamp: $0.timestamp)
         }
         let digest = EvidenceDigest.text(SessionTranscript(items: items), budget: EvidenceDigest.budget(model: agent.model)).text
-        let input = "## Mode\n\n\(Matching.modesText([mode], exemplars: [mode.id: exemplars]))\n\n## Transcript digest\n\n\(digest)\n"
+        // Exemplars are quotes from other sessions: only those whose origin may go here.
+        let shown = Matching.sendable([mode.id: exemplars], gate: gate, env: env)
+        let input = "## Mode\n\n\(Matching.modesText([mode], exemplars: shown.exemplars))\n\n## Transcript digest\n\n\(digest)\n"
         let answer = try await ModelCall.run(
             ModelCall.Request(agent: agent, purpose: "judge", system: system, input: input, schema: schema,
-                              origin: SendOrigin.of(harness: harness, sessionFile: file), session: key, runID: runID),
+                              origins: [SendOrigin.of(harness: harness, sessionFile: file)] + shown.origins, session: key, runID: runID),
             gate: gate, folder: workFolder, env: env)
         struct Answer: Decodable {
             let present: Bool

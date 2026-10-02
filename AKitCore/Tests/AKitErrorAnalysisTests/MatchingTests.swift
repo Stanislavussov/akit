@@ -19,7 +19,7 @@ struct MatchingTests {
             if [ "$1 $2" = "auth status" ]; then
               echo '{"loggedIn":true,"apiProvider":"firstParty","email":"me@example.com","orgName":"Me"}'; exit 0
             fi
-            cat > /dev/null
+            cat > "$HOME/input.txt"
             case "$*" in
               *"You sort notes"*) f=matching ;;
               *"You group notes"*) f=clustering ;;
@@ -161,6 +161,67 @@ struct MatchingTests {
         // Routed elsewhere already: stays, and the user is asked.
         #expect(routes["n2"]?.modeID == "false-premise")
         #expect(Matching.waitingRoutes([saved]).map(\.route.modeID) == ["large-file-read-whole"])
+    }
+
+    var lastInput: String { (try? String(contentsOf: home.appending(path: "input.txt"), encoding: .utf8)) ?? "" }
+
+    /// Same origin: a Pi session's notes may not go to Claude Code, so its exemplar quotes stay
+    /// out of a Claude Code matching call, as do quotes from sessions AKit can't place.
+    @Test func exemplarsFromSessionsThatMayNotGoThereAreLeftOut() async throws {
+        let modes = try await ModeStore(env: env).list()
+        _ = try pool("claude:ex", notes: [("n1", "x")])
+        _ = try pool("pi:ex", notes: [("n1", "y")])
+        let exemplars = ["large-file-read-whole": [
+            Exemplar(modeID: "large-file-read-whole", sessionKey: "claude:ex", step: 1, quote: "CLAUDE-QUOTE"),
+            Exemplar(modeID: "large-file-read-whole", sessionKey: "pi:ex", step: 1, quote: "PI-QUOTE"),
+            Exemplar(modeID: "large-file-read-whole", sessionKey: "claude:unknown", step: 1, quote: "UNKNOWN-QUOTE"),
+        ]]
+        let gate = try await SendGate.open(agent: agent, env: env)
+        let shown = Matching.sendable(exemplars, gate: gate, env: env)
+        #expect(shown.exemplars["large-file-read-whole"]?.map(\.quote) == ["CLAUDE-QUOTE"] && shown.origins == [.claudeSession])
+
+        let notes = try pool("claude:a", notes: [("n1", "Read a 40 KB file whole")])
+        try answer("matching", ["routes": [["note": "n1", "mode": "large-file-read-whole", "confidence": 0.9]]])
+        _ = try await Matching.route(notes, modes: modes, exemplars: exemplars, agent: agent, gate: gate, origin: .claudeSession,
+                                     runID: nil, workFolder: home.appending(path: "w"), env: env)
+        #expect(lastInput.contains("CLAUDE-QUOTE") && !lastInput.contains("PI-QUOTE") && !lastInput.contains("UNKNOWN-QUOTE"))
+    }
+
+    /// A whole-pool call leaves out the notes whose origin may not go there and says how many;
+    /// it fails only when nothing is left.
+    @Test func poolCallsLeaveOutNotesThatMayNotGoThere() async throws {
+        let store = ModeStore(env: env)
+        let modes = try await store.list()
+        let claude = try pool("claude:a", notes: [("n1", "CLAUDE-NOTE")])
+        let pi = try pool("pi:b", notes: [("n1", "PI-NOTE"), ("n2", "PI-NOTE-2")])
+        let gate = try await SendGate.open(agent: agent, env: env)
+        var said: [String] = []
+        try answer("clustering", ["modes": [["name": "Lint ignored", "kind": "failure", "definition": "d", "include": [], "exclude": [],
+                                             "notes": ["claude:a#n1", "pi:b#n1"]]]])
+        let candidates = try await Clustering.cluster(Clustering.items([claude, pi]), existing: modes, rejected: [], agent: agent, gate: gate,
+                                                      runID: nil, workFolder: home.appending(path: "w"), env: env, out: { said.append($0) })
+        #expect(candidates.map(\.notes) == [[NoteRef(sessionKey: "claude:a", noteID: "n1")]])
+        #expect(lastInput.contains("CLAUDE-NOTE") && !lastInput.contains("PI-NOTE"))
+        #expect(said.count == 1 && said[0].hasPrefix("2 of 3 notes left out: "))
+        await #expect(throws: (any Error).self) {
+            _ = try await Clustering.cluster(Clustering.items([pi]), existing: modes, rejected: [], agent: agent, gate: gate,
+                                             runID: nil, workFolder: home.appending(path: "w"), env: env)
+        }
+
+        try answer("retro", ["fits": [["note": "claude:a#n1", "fits": true, "confidence": 0.9]]])
+        let mode = try #require(modes.first { $0.id == "large-file-read-whole" })
+        let origins = Dictionary(uniqueKeysWithValues: [claude, pi].map { ($0.sessionKey, $0.origin) })
+        let fits = try await Matching.retroMatch(mode: mode, pool: [claude, pi], origins: origins, agent: agent, gate: gate,
+                                                 workFolder: home.appending(path: "w"), env: env, out: { said.append($0) })
+        #expect(fits == [NoteRef(sessionKey: "claude:a", noteID: "n1")])
+        #expect(lastInput.contains("CLAUDE-NOTE") && !lastInput.contains("PI-NOTE"))
+        #expect(said.count == 2 && said[1].hasPrefix("2 of 3 notes left out: "))
+        // A session with no known origin is left out too, never sent unchecked.
+        await #expect(throws: (any Error).self) {
+            _ = try await Matching.retroMatch(mode: mode, pool: [claude], origins: [:], agent: agent, gate: gate,
+                                              workFolder: home.appending(path: "w"), env: env)
+        }
+        #expect(calls == ["clustering", "retro"])
     }
 
     @Test func labelsComeFromMappingFindsAndToughCalls() async throws {
