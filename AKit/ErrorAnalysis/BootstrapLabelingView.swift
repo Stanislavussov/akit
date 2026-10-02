@@ -246,7 +246,8 @@ struct BootstrapLabelingView: View {
                     try Bootstrap.LabelStore(env: env).save(label, items: items)
                     return finish ? "Finished labeling: \(label.notes.count) notes. A model may review the session now."
                         : "Saved a draft with \(label.notes.count) notes."
-                }            } catch {
+                }
+            } catch {
                 self.error = error.localizedDescription
             }
             busy = false

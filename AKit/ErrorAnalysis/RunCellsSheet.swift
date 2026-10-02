@@ -218,7 +218,7 @@ struct RunCellsSheet: View {
         let env = analysis.env
         Task {
             do {
-                try await Task.detached { try SendLog.checkLimit(estimate: estimate, settings: LabSettings.load(env: env), env: env) }.value
+                try await Task.detached { try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env) }.value
                 let queued = try await model.queueControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep)
                 let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
                 analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"

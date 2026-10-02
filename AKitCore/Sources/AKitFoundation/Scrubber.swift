@@ -245,10 +245,11 @@ public enum Scrubber {
         },
         // `mysql -pSecret`: the password is glued to `-p`. Only after mysql's own commands, where
         // `-p` means a password; elsewhere short flags are too common to guess.
-        Rule("password", #"\bmysql(?:dump|admin)?\b[^\n|;&]{0,200}?[ \t]-p(["']?)([^\s"'`\[]{1,128})\1"#,
-             group: 2, hints: ["mysql"]) { text, match in
+        // The command word, not a path (`find /var/lib/mysql -print`) nor a find primary after it.
+        Rule("password", #"(?:^|[\s;|&(])mysql(?:dump|admin)?[ \t][^\n|;&]{0,200}?[ \t]-p(["']?)([^\s"'`\[]{1,128})\1"#,
+             group: 2, hints: ["mysql"], options: .anchorsMatchLines) { text, match in
             let value = text.substring(with: match.range(at: 2))
-            return !["$", "%", "<"].contains(where: value.hasPrefix)
+            return !["$", "%", "<"].contains(where: value.hasPrefix) && !["rune", "rint", "rint0", "rintf", "ath", "erm"].contains(value)
         },
     ]
 
@@ -264,6 +265,7 @@ public enum Scrubber {
         "switch", "field", "prompt", "prompts", "value", "values", "input", "with", "without", "from", "that", "this", "which",
         "instead", "only", "when", "then", "here", "there", "also", "will", "must", "should", "would", "could", "does", "doesn",
         "takes", "expects", "accepts", "requires", "reads", "sets", "works", "first", "again", "later", "above", "below",
+        "defaults", "default", "is", "isn", "can", "may", "needs", "goes", "comes", "gets",
     ]
 
     /// The identifier just before a keyword match (`commit_` of `commit_sha_key`), up to 32 chars.
@@ -460,6 +462,11 @@ public enum Scrubber {
             return false
         }
         if !quoted {
+            // `password=hashed_password`, `pw = new_pw`: a keyword argument passing a variable.
+            if value.range(of: #"^[a-z][a-z0-9]*(_[a-z0-9]+)+$"#, options: .regularExpression) != nil,
+               lower.hasPrefix("hashed_") || ["password", "passwd", "pwd", "pw", "pass", "hash"].contains(where: lower.hasSuffix) {
+                return false
+            }
             // `password = input2` names a variable.
             guard value.contains(where: \.isLetter), hasDigit(value) || tight, !isDottedIdentifier(value),
                   lower.range(of: #"^(input|value|val|arg|param|field|var|tmp|temp|text|entry|data|item|res|result|str|new|old|user|form)[0-9]{0,2}$"#,

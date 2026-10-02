@@ -332,6 +332,9 @@ struct ScrubberTests {
             "Pass the --password flag to log in.", "The --password option is required.", "Use --password <PASSWORD> here.",
             "the --password argument isn't read", "password = input2", "password_timeout: 300000", "mysql -u root -p app",
             "mysql -P 3306 -h db", "CREATE USER 'app'@'%' IDENTIFIED BY '<password>';", "ls -pSecret",
+            "User(email=email, password=hashed_password)", "login(user, pw=new_pw)", "The --password defaults to empty.",
+            "find /var/lib/mysql -name '*.ibd' -print", "find . -path ./mysql -prune -o -type f",
+            "find /srv -name mysql -prune",
         ] {
             #expect(scrub(text).text == text, "\(text) → \(scrub(text).text)")
             #expect(SecretFilter.masked(text) == text, "\(text) → \(SecretFilter.masked(text))")

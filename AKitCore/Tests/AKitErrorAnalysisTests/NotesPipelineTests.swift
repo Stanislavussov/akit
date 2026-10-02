@@ -267,6 +267,17 @@ struct NotesPipelineTests {
         #expect(decoded.notesKey == nil && decoded.isMade(on: again))
     }
 
+    @Test func pairsForAnotherNotesVersionStayWhereTheyAre() throws {
+        let key = "claude:00000000-0000-4000-8000-000000000009"
+        let made = Bootstrap.Pairing(sessionKey: key, notesVersion: "claude-code · opus · notes v1", notesKey: "k1",
+                                     proposed: [.init(human: "h1", model: "n1")], confirmed: [.init(human: "h1", model: "n1")], agreed: ["n1"])
+        try Bootstrap.PairingStore(env: env).save(made)
+        // Another model's review of the session: its version's metrics must stay about its own notes.
+        try NotesStore(env: env).moveReferences(of: key, renamed: ["n1": "n2"], from: "k1", to: "k2",
+                                                notesVersion: "pi · gpt · notes v1")
+        #expect(Bootstrap.PairingStore(env: env).load(key) == made)
+    }
+
     @Test func verifierNeighboursAreCutAsTheDigestCutsThem() throws {
         let long = "START " + String(repeating: "x", count: 3000) + " END"
         let items = [TranscriptItem(id: 0, kind: .user, text: "Fix it", timestamp: nil),

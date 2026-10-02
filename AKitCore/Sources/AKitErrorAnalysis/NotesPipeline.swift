@@ -398,7 +398,8 @@ public struct NotesStore: Sendable {
             try AnalysisJSON.encoder.encode(saved).write(to: url, options: .atomic)
             if current?.doneKeys["notes"] != review.doneKeys["notes"] {
                 try moveReferences(of: review.sessionKey, renamed: current.map { Self.renamed(from: $0, to: review) } ?? [:],
-                                   from: current?.doneKeys["notes"], to: review.doneKeys["notes"])
+                                   from: current?.doneKeys["notes"], to: review.doneKeys["notes"],
+                                   notesVersion: Bootstrap.notesVersion(review.notesConfig))
             }
         }
     }
@@ -415,10 +416,12 @@ public struct NotesStore: Sendable {
 
     /// The bootstrap pairing made on the old notes and the spot checks of this session, moved
     /// to the new notes' ids; what was about a note that is gone is dropped. A pairing made on
-    /// still older notes is left alone: the metrics ignore it.
-    func moveReferences(of sessionKey: String, renamed: [String: String], from oldKey: String?, to newKey: String?) throws {
+    /// still older notes, or for another notes model or prompt, is left alone: the metrics
+    /// ignore it, and its version's metrics stay about that version's notes.
+    func moveReferences(of sessionKey: String, renamed: [String: String], from oldKey: String?, to newKey: String?,
+                        notesVersion: String) throws {
         try Bootstrap.PairingStore(env: env).update(sessionKey) { pairing in
-            guard pairing.notesKey == nil || pairing.notesKey == oldKey else { return }
+            guard pairing.notesKey == nil || pairing.notesKey == oldKey, pairing.notesVersion == notesVersion else { return }
             func move(_ pairs: [Bootstrap.Pairing.Pair]) -> [Bootstrap.Pairing.Pair] {
                 pairs.compactMap { pair in renamed[pair.model].map { Bootstrap.Pairing.Pair(human: pair.human, model: $0) } }
             }

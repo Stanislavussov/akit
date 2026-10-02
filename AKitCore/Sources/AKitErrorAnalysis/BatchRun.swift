@@ -35,8 +35,8 @@ public enum Batches {
         public var warning: String? {
             if leftOut > 0 {
                 return "\(leftOut) sessions of the filter are left out of the sample: \(notesAgent.harness.title) reviews this batch "
-                    + "and may not get them. \(reason ?? "") Pick their harness under Sessions from to review them with a reviewer "
-                    + "allowed for them."
+                    + "and may not get them. \(reason ?? "") Pick their harness (Sessions from, or --session-harness) to review "
+                    + "them with a reviewer allowed for them."
             }
             if refused > 0 {
                 return "\(refused) of the \(picks.count) sampled sessions may not go to \(notesAgent.label): \(reason ?? "") They are "

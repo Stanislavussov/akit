@@ -203,6 +203,13 @@ struct SendPolicyTests {
             try LabSettings.update(env: env) { $0.monthlyLimit = 1 }
         }
         #expect(try String(contentsOf: home.appending(path: ".akit/lab/settings.json"), encoding: .utf8) == "not json")
+        // A field that doesn't decode would be dropped by an edit: no limit at all after it.
+        let unreadableLimit = #"{"monthlyLimit": "ten"}"#
+        try write(".akit/lab/settings.json", unreadableLimit)
+        #expect(throws: LabStore.Failure.self) {
+            try LabSettings.update(env: env) { $0.allowedDestinations = [] }
+        }
+        #expect(try String(contentsOf: home.appending(path: ".akit/lab/settings.json"), encoding: .utf8) == unreadableLimit)
     }
 
     // MARK: One model call

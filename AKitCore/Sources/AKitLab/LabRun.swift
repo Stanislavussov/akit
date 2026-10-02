@@ -277,14 +277,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
     public static func loadForSending(env: HarnessEnvironment) throws -> LabSettings {
         let url = file(env: env)
         guard FileManager.default.fileExists(atPath: url.path) else { return LabSettings() }
-        struct Strict: Decodable {
-            let allowedDestinations: [SendDestination]?
-            let piAccounts: [PiAccount]?
-            let scrub: Scrubber.OwnPatterns?
-            let monthlyLimit: Double?
-        }
-        guard let data = try? Data(contentsOf: url), (try? JSONDecoder().decode(Strict.self, from: data)) != nil,
-              let settings = try? JSONDecoder().decode(LabSettings.self, from: data) else {
+        guard let settings = (try? Data(contentsOf: url)).flatMap(strictly) else {
             throw SendAccounts.Failure(message: "Not sent: \(url.path) can't be read, so the allowed list, your scrub patterns and the "
                                            + "monthly limit can't be checked. Fix or move the file, then try again.")
         }
@@ -297,6 +290,19 @@ public struct LabSettings: Codable, Sendable, Hashable {
         try FileLock.locked(Self.file(env: env).appendingPathExtension("lock")) { try LabStore.write(self, to: Self.file(env: env)) }
     }
 
+    /// The settings in `data` when every field decodes: the lenient decoder drops a field it
+    /// can't read (`"monthlyLimit": "ten"`), which would turn the limit off.
+    static func strictly(_ data: Data) -> LabSettings? {
+        struct Strict: Decodable {
+            let allowedDestinations: [SendDestination]?
+            let piAccounts: [PiAccount]?
+            let scrub: Scrubber.OwnPatterns?
+            let monthlyLimit: Double?
+        }
+        guard (try? JSONDecoder().decode(Strict.self, from: data)) != nil else { return nil }
+        return try? JSONDecoder().decode(LabSettings.self, from: data)
+    }
+
     /// Reads the file, lets `change` edit it and writes it back, all under the lock `save`
     /// takes, so the app's Settings and `akit lab policy` never write over each other's edits.
     /// A file that exists but can't be read is never replaced. Returns the settings now on disk.
@@ -307,7 +313,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
         return try FileLock.locked(url.appendingPathExtension("lock")) {
             var settings = LabSettings()
             if FileManager.default.fileExists(atPath: url.path) {
-                guard let read = (try? Data(contentsOf: url)).flatMap({ try? JSONDecoder().decode(LabSettings.self, from: $0) }) else {
+                guard let read = (try? Data(contentsOf: url)).flatMap(strictly) else {
                     throw LabStore.Failure(message: "\(url.path) can't be read; fix or move it before AKit changes it.")
                 }
                 settings = read
