@@ -263,12 +263,12 @@ private struct FunnelView: View {
     }
 }
 
-/// The sessions of one cell with their notes (step + quote), and their Lab review.
+/// The sessions of one cell with their notes (step + quote), and each session's full notes.
 private struct MatrixDrillSheet: View {
     @Environment(AnalysisModel.self) private var analysis
-    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let cell: MatrixCell
+    @State private var notesFor: SessionNotesTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -281,13 +281,10 @@ private struct MatrixDrillSheet: View {
                         Text(notes?.title ?? key).fontWeight(.medium).lineLimit(1)
                         if let outcome = notes?.outcome { OutcomeBadge(outcome: outcome) }
                         Spacer()
-                        if let runID = notes?.runID, model.labRuns.contains(where: { $0.id == runID }) {
-                            Button("Show in Lab") {
-                                model.revealLabRun = runID
-                                model.section = .lab
-                                dismiss()
-                            }
-                            .controlSize(.small)
+                        if notes != nil {
+                            Button("Show Session Notes") { notesFor = SessionNotesTarget(sessionKey: key) }
+                                .controlSize(.small)
+                                .help("The session's outcome, paragraph, all notes, advice, routes and signals")
                         }
                     }
                     if let notes {
@@ -315,5 +312,6 @@ private struct MatrixDrillSheet: View {
         }
         .padding(20)
         .frame(width: 640)
+        .sheet(item: $notesFor) { SessionNotesSheet(sessionKey: $0.sessionKey) }
     }
 }

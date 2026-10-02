@@ -12,6 +12,7 @@ struct LabBatchSection: View {
     let select: (LabRun) -> Void
     @State private var error: String?
     @State private var busy = false
+    @State private var notesFor: SessionNotesTarget?
 
     var body: some View {
         if let id = run.spec.batch {
@@ -99,12 +100,12 @@ struct LabBatchSection: View {
                     .help("Stop after the current calls; Resume continues from the same place")
             }
             if !active, unfinished {
-                Button("Resume", systemImage: "play.circle") { resume(batch, retryErrors: false) }
-                    .help("Continue the batch as a new run, from where it stopped")
+                resumeMenu("Resume", icon: "play.circle", batch: batch, retryErrors: false)
+                    .help("Continue the batch as a new run, from where it stopped; the arrow picks where its tab opens")
             }
             if !active, failed > 0 {
-                Button("Retry Errors", systemImage: "arrow.clockwise") { resume(batch, retryErrors: true) }
-                    .help("Run only the \(failed) failed sessions again; their old results stay until a retry succeeds")
+                resumeMenu("Retry Errors", icon: "arrow.clockwise", batch: batch, retryErrors: true)
+                    .help("Run only the \(failed) failed sessions again; their old results stay until a retry succeeds. The arrow picks where its tab opens")
             }
             if batch.coverage.done > 0 {
                 Button("Open Report", systemImage: "chart.bar.doc.horizontal") {
@@ -129,6 +130,7 @@ struct LabBatchSection: View {
                     Text("π").help("Inclusion probability: how likely this sampling design was to pick the session")
                     Text("Sampled")
                     Text("Last step")
+                    Text("")
                 }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -153,20 +155,43 @@ struct LabBatchSection: View {
                             .help(session.pick.stratum)
                         Text(session.steps.last ?? "—").foregroundStyle(.secondary).lineLimit(1)
                             .help(session.steps.joined(separator: " → "))
+                        if session.steps.contains("notes") {
+                            Button("Show Notes") { notesFor = SessionNotesTarget(sessionKey: session.pick.sessionKey) }
+                                .controlSize(.small)
+                                .help("Its outcome, notes, advice, routes and signals")
+                        } else {
+                            Text("")
+                        }
                     }
                 }
             }
             .font(.callout)
         }
+        .sheet(item: $notesFor) { SessionNotesSheet(sessionKey: $0.sessionKey, showsLabRun: false) }
     }
 
     private func title(_ session: Batch.Session) -> String {
         model.sessions.first { $0.file.path == session.pick.file }?.title ?? session.pick.sessionKey
     }
 
-    private func resume(_ batch: Batch, retryErrors: Bool) {
+    /// Resume or Retry Errors: a click opens the tab where AKit suggests; the menu picks
+    /// Orca, herdr or the background (`--env`).
+    private func resumeMenu(_ title: String, icon: String, batch: Batch, retryErrors: Bool) -> some View {
+        Menu {
+            ForEach(model.labEnvironments, id: \.self) { environment in
+                Button("\(title) in \(environment.title)") { resume(batch, retryErrors: retryErrors, environment: environment) }
+            }
+        } label: {
+            Label(title, systemImage: icon)
+        } primaryAction: {
+            resume(batch, retryErrors: retryErrors, environment: nil)
+        }
+        .fixedSize()
+    }
+
+    private func resume(_ batch: Batch, retryErrors: Bool, environment: LabEnvironment?) {
         act {
-            let queued = try await model.resumeBatch(batch.runID, retryErrors: retryErrors)
+            let queued = try await model.resumeBatch(batch.runID, retryErrors: retryErrors, environment: environment)
             select(queued)
         }
     }

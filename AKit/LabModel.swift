@@ -35,8 +35,8 @@ extension AppModel {
 
     func reloadLab() async {
         let env = HarnessEnvironment.current
-        let (runs, tasks, batches, controlTasks) = await Task.detached {
-            () -> ([LabRun], [String: ReplayTask], [String: Batch], [String: ControlTask]) in
+        let (runs, tasks, batches, controlTasks, sends) = await Task.detached {
+            () -> ([LabRun], [String: ReplayTask], [String: Batch], [String: ControlTask], Date?) in
             let runs = LabStore.list(env: env)
             var tasks: [String: ReplayTask] = [:]
             for commit in Set(runs.compactMap(\.spec.commit)) { tasks[commit] = ReplayTasks.cached(commit, env: env) }
@@ -46,12 +46,14 @@ extension AppModel {
             for id in Set(runs.compactMap(\.spec.batch)) { batches[id] = store.load(id) }
             var controlTasks: [String: ControlTask] = [:]
             for id in Set(runs.compactMap(\.spec.controlTask)) { controlTasks[id] = ControlTasks.load(id, env: env) }
-            return (runs, tasks, batches, controlTasks)
+            let sends = try? SendLog.file(env: env).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            return (runs, tasks, batches, controlTasks, sends)
         }.value
         if runs != labRuns { labRuns = runs }
         if tasks != labTasks { labTasks = tasks }
         if batches != labBatches { labBatches = batches }
         if controlTasks != labControlTasks { labControlTasks = controlTasks }
+        if sends != labSendsChanged { labSendsChanged = sends }
     }
 
     /// Keeps the Lab badge and the queue current while AKit runs: reloads the runs, and
@@ -126,10 +128,11 @@ extension AppModel {
     }
 
     /// Continues a batch as a new run, or reruns only its failed sessions (`akit analysis batch resume`).
-    func resumeBatch(_ id: String, retryErrors: Bool) async throws -> LabRun {
+    /// `environment` nil: the one suggested, as for a new batch.
+    func resumeBatch(_ id: String, retryErrors: Bool, environment: LabEnvironment? = nil) async throws -> LabRun {
         let akit = try await analysisAkit()
         let run = try await Task.detached {
-            try await Batches.resume(id, retryErrors: retryErrors, environment: nil, akit: akit, env: .current)
+            try await Batches.resume(id, retryErrors: retryErrors, environment: environment, akit: akit, env: .current)
         }.value
         try? await startLabQueue()
         return run

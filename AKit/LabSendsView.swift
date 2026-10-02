@@ -26,8 +26,10 @@ struct LabSendsView: View {
             Divider()
             footer
         }
-        // Runs write the log; reload whenever a run changes.
+        // Runs write the log; reload whenever a run changes (and on appear).
         .task(id: model.labRuns) { await load() }
+        // Model calls of the Error Analysis screen and of akit write it too.
+        .onChange(of: model.labSendsChanged) { Task { await load() } }
     }
 
     private var table: some View {
