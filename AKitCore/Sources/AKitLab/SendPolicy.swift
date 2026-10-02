@@ -217,9 +217,10 @@ public struct SendGate: Sendable {
         self.settings = settings
     }
 
-    /// Looks up the account behind `agent` now. Throws when it can't be determined.
+    /// Looks up the account behind `agent` now. Throws when it can't be determined, or when
+    /// the Lab settings can't be read (`LabSettings.loadForSending`).
     public static func open(agent: LabAgent, env: HarnessEnvironment) async throws -> SendGate {
-        let settings = LabSettings.load(env: env)
+        let settings = try LabSettings.loadForSending(env: env)
         let destination = try await SendAccounts.destination(of: agent, settings: settings, env: env)
         return SendGate(destination: destination, isWork: MachineProfile.load(home: env.homeDirectory).isWork, settings: settings)
     }

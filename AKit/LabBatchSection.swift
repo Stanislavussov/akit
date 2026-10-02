@@ -73,11 +73,14 @@ struct LabBatchSection: View {
         let failed = batch.sessions.filter { $0.status == .error }.count
         var parts = [batch.fixed ? "Fixed sessions (the labeled bootstrap ones)" : "A sample of \(batch.sessions.count) (asked \(batch.size), seed \(batch.seed))"]
         parts.append(batch.filter.project.map { "project \(URL(filePath: $0).lastPathComponent)" } ?? "all projects")
+        if let harness = batch.filter.harness { parts.append(harness == "pi" ? "Pi sessions" : "Claude Code sessions") }
         if let from = batch.filter.from { parts.append("from \(from.formatted(date: .abbreviated, time: .omitted))") }
         if let to = batch.filter.to { parts.append("to \(to.formatted(date: .abbreviated, time: .omitted))") }
         parts.append("notes by \(batch.notesAgent.label)")
         if batch.matchingAgent != batch.notesAgent { parts.append("matching by \(batch.matchingAgent.model)") }
-        parts.append("\(coverage.done) of \(coverage.total) done" + (failed > 0 ? ", \(failed) failed" : ""))
+        parts.append("\(coverage.done) of \(coverage.total) done" + (failed > 0 ? ", \(failed) failed" : "")
+                     + (batch.tooLong > 0 ? ", \(batch.tooLong) too long for a digest" : ""))
+        if let leftOut = batch.leftOut { parts.append("\(leftOut) left out before sampling: \(batch.notesAgent.harness.title) may not get them") }
         parts.append(batch.estimate.map { String(format: "≈ $%.2f estimated when queued", $0) } ?? "no estimate when queued")
         return parts.joined(separator: " · ")
     }
@@ -93,7 +96,7 @@ struct LabBatchSection: View {
 
     private func actions(_ batch: Batch, failed: Int) -> some View {
         let active = model.labRuns.contains { $0.spec.batch == batch.runID && ($0.status == .queued || $0.status == .running) }
-        let unfinished = batch.sessions.contains { $0.status != .done } || batch.unfinished
+        let unfinished = batch.hasOpenSessions || batch.unfinished
         return HStack {
             if active, !batch.paused {
                 Button("Pause", systemImage: "pause.circle") { act { try await model.pauseBatch(batch.runID) } }
@@ -206,7 +209,7 @@ struct LabBatchSection: View {
     }
 }
 
-/// pending / running / done / error as a small capsule.
+/// pending / running / done / error / too-long as a small capsule.
 struct BatchStatusBadge: View {
     let status: Batch.Status
 
@@ -225,6 +228,7 @@ struct BatchStatusBadge: View {
         case .running: .blue
         case .done: .green
         case .error: .red
+        case .tooLong: .orange
         }
     }
 }

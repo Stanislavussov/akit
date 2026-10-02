@@ -37,14 +37,19 @@ extension AKitCLI {
                                           default to ~/.claude/settings.json (else opus, high).
                                           --keep keeps the clone; otherwise it goes to the Trash
           akit lab new analysis [--project ID|DIR] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--size N]
-                              [--harness claude-code|pi] [--model M] [--effort E] [--matching-model M]
-                              [--language en|ru|cs] [--env orca|herdr|background] [--no-start] [--yes]
+                              [--session-harness claude-code|pi] [--harness claude-code|pi] [--model M]
+                              [--effort E] [--matching-model M] [--language en|ru|cs]
+                              [--env orca|herdr|background] [--no-start] [--yes]
                                           Error analysis over a sample of N (20) sessions of the index
-                                          (5+ requests each): a random quarter, the rest stratified by
-                                          cheap signals, harness and model. Per session notes, verifier
-                                          and matching, 2 at a time; clustering at the end. Sends notes
-                                          and transcripts under the sending policy. Shows how many
-                                          sessions and the ≈ cost first; --yes queues it
+                                          (5+ requests each; --session-harness: only those that harness
+                                          ran): a random quarter, the rest stratified by cheap signals,
+                                          harness and model. Per session notes, verifier and matching,
+                                          2 at a time; clustering at the end. Sends notes and
+                                          transcripts under the sending policy. Without --harness/--model
+                                          the reviewer is automatic, and sessions it may not get are left
+                                          out of the sample; a reviewer you pick keeps them, and they
+                                          fail. Shows the sessions, the reviewer, the ≈ cost and how many
+                                          are left out or refused first; --yes queues it
           akit lab task COMMIT [--repo DIR]
                                           Check a commit as a task now: its tests on the parent and on
                                           the commit (fail-to-pass, pass-to-pass). A replay does this
@@ -120,6 +125,14 @@ extension AKitCLI {
             let from = try args.value("--from").map { try day($0, "--from") }
             let to = try args.value("--to").map { try day($0, "--to").addingTimeInterval(86_399) }
             let size = try positiveNumber(args.value("--size"), "--size") ?? 20
+            // Which harness ran the sessions; --harness picks the reviewer.
+            let sessionHarness = try args.value("--session-harness").map { text -> String in
+                switch text {
+                case "claude-code", "claude": return "claude"
+                case "pi": return "pi"
+                default: throw Failure(message: "--session-harness is claude-code or pi.")
+                }
+            }
             let matchingModel = args.value("--matching-model")
             let yes = args.flag("--yes")
             try args.finish()
@@ -150,23 +163,23 @@ extension AKitCLI {
             let projectFilter = project.map { text -> String in
                 text.contains("/") || text.hasPrefix("~") ? resolve(text, cwd: cwd, env: env).path : text
             }
-            // Before any model work: how many sessions and what it would cost.
-            let filter = Sampling.Filter(project: projectFilter, from: from, to: to)
-            let estimateAgent = agent ?? { var claude = LabRuns.defaultAgent(.claudeCode, env: env); claude.mode = .call; return claude }()
-            let sessions = Batches.sampleSize(filter: filter, size: size, env: env)
-            guard sessions > 0 else {
+            // Before any model work: how many sessions, who reviews them, what it would cost, and
+            // the sessions left out or refused under the sending policy.
+            let filter = Sampling.Filter(project: projectFilter, from: from, to: to, harness: sessionHarness)
+            guard Batches.sampleSize(filter: filter, size: size, env: env) > 0 else {
                 throw Failure(message: "No sessions match (at least \(Sampling.minimumRequests) requests each). Run akit sessions import first?")
-            }
-            out(Batches.estimateText(sessions: sessions, agent: estimateAgent, env: env)
-                + (agent == nil ? " (with your Claude Code model; the reviewer is picked when the sample is drawn)" : ""))
-            guard yes else {
-                out("Run it again with --yes to queue it.")
-                return 0
             }
             let run: LabRun
             do {
-                run = try await Batches.new(filter: filter, size: size, notesAgent: agent,
-                                            matchingAgent: matching, language: language, environment: environment, akit: ownExecutable, env: env)
+                let sample = try await Batches.draw(filter: filter, size: size, notesAgent: agent, env: env)
+                out(Batches.estimateText(sessions: sample.picks.count, agent: sample.notesAgent, env: env) + " Notes by \(sample.notesAgent.label).")
+                if let warning = sample.warning { out("Warning: \(warning)") }
+                guard yes else {
+                    out("Run it again with --yes to queue it\(sample.refused > 0 ? " anyway" : ""); the sample is drawn again then.")
+                    return 0
+                }
+                run = try await Batches.queue(sample, matchingAgent: matching, language: language, environment: environment,
+                                              akit: ownExecutable, env: env)
             } catch {
                 throw Failure(message: error.localizedDescription)
             }

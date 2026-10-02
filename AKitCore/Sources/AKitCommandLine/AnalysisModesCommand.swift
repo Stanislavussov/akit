@@ -413,7 +413,8 @@ extension AKitCLI {
             for batch in batches {
                 let coverage = batch.coverage
                 let failed = batch.sessions.filter { $0.status == .error }.count
-                out("\(batch.runID)  \(coverage.done)/\(coverage.total) done\(failed > 0 ? ", \(failed) failed" : "")\(batch.paused ? ", paused" : "")"
+                out("\(batch.runID)  \(coverage.done)/\(coverage.total) done\(failed > 0 ? ", \(failed) failed" : "")"
+                    + "\(batch.tooLong > 0 ? ", \(batch.tooLong) too long" : "")\(batch.paused ? ", paused" : "")"
                     + "\(batch.clustered ? ", clustered" : "")  \(batch.filter.project ?? "all projects")")
             }
         case "show":
@@ -424,6 +425,13 @@ extension AKitCLI {
             out("Batch \(batch.runID) · \(batch.fixed ? "fixed sessions" : "sample of \(total), seed \(batch.seed)") · notes by \(batch.notesAgent.label)")
             out("Progress: notes \(batch.progress(of: "notes"))/\(total), verifier \(batch.progress(of: "verifier"))/\(total), "
                 + "matching \(batch.progress(of: "matching"))/\(total), clustering \(batch.clustered ? "done" : "not yet")")
+            if batch.tooLong > 0 {
+                out("\(batch.tooLong) too long for a digest: never sent, not retried, and left out of the frequencies.")
+            }
+            if let leftOut = batch.leftOut {
+                out("\(leftOut) sessions of the filter were left out before sampling: \(batch.notesAgent.harness.title) may not get them."
+                    + (batch.leftOutReason.map { " \($0)" } ?? ""))
+            }
             for session in batch.sessions {
                 out("  \(session.status.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0)) \(session.pick.sessionKey)  π=\(String(format: "%.2f", session.pick.inclusion)) \(session.pick.sampling)"
                     + (session.message.map { "  — \($0)" } ?? ""))

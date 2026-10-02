@@ -1,3 +1,4 @@
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitLab
 import AKitSessions
@@ -58,6 +59,8 @@ struct NewLabRunSheet: View {
 
     // Error analysis batch
     @State private var batch = AnalysisBatchDraft()
+    /// A drawn sample with sessions left out or refused, waiting for the user's yes.
+    @State private var confirming: Batches.Sample?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -115,6 +118,21 @@ struct NewLabRunSheet: View {
         }
         .onChange(of: candidates) {
             if commit.isEmpty, let query = DebugSnapshot.options?.query { commit = query }
+        }
+        .alert(confirming.map { $0.leftOut > 0 ? "Sessions Left Out" : "Sessions the Policy Refuses" } ?? "",
+               isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), presenting: confirming) { sample in
+            Button("Queue \(sample.picks.count) Sessions") { queueBatch(sample) }
+            Button("Cancel", role: .cancel) {}
+        } message: { sample in
+            Text(sample.warning ?? "")
+        }
+        // Snapshots: --capture draws an analysis sample to show its confirmation; nothing is queued.
+        .task(id: batch.sampled) {
+            guard DebugSnapshot.options?.capture == true, kind == .analysis, (batch.sampled ?? 0) > 0, confirming == nil else { return }
+            if let sample = try? await model.drawAnalysis(filter: batch.filter, size: batch.size, notesAgent: batch.notesAgent),
+               sample.warning != nil {
+                confirming = sample
+            }
         }
     }
 
@@ -337,12 +355,37 @@ struct NewLabRunSheet: View {
                                                             environment: environment, keep: keep)
                     if let first = runs.first { onQueued(first) }
                 case .analysis:
-                    var claude = model.defaultAgent(.claudeCode)
-                    claude.mode = .call
-                    onQueued(try await model.queueAnalysis(filter: batch.filter, size: batch.size, notesAgent: batch.notesAgent,
-                                                           matchingAgent: batch.matchingAgent(defaultAgent: claude), language: batch.language,
-                                                           environment: environment))
+                    // Sessions left out or refused under the sending policy are said first.
+                    let sample = try await model.drawAnalysis(filter: batch.filter, size: batch.size, notesAgent: batch.notesAgent)
+                    if sample.warning != nil {
+                        confirming = sample
+                        busy = false
+                        return
+                    }
+                    onQueued(try await queueAnalysis(sample))
                 }
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            busy = false
+        }
+    }
+
+    private func queueAnalysis(_ sample: Batches.Sample) async throws -> LabRun {
+        var claude = model.defaultAgent(.claudeCode)
+        claude.mode = .call
+        return try await model.queueAnalysis(sample, matchingAgent: batch.matchingAgent(defaultAgent: claude), language: batch.language,
+                                             environment: environment)
+    }
+
+    /// Queues the sample the user confirmed: the same sessions the warning counted.
+    private func queueBatch(_ sample: Batches.Sample) {
+        busy = true
+        error = nil
+        Task {
+            do {
+                onQueued(try await queueAnalysis(sample))
                 dismiss()
             } catch {
                 self.error = error.localizedDescription

@@ -228,7 +228,7 @@ extension AKitCLI {
             let estimate = costs.reduce(0, +) / Double(costs.count) * Double(cells)
             out(String(format: "Up to %d cells, ≈ $%.2f at the recorded cost of %d earlier cells.", cells, estimate, costs.count))
             do {
-                try SendLog.checkLimit(estimate: estimate, settings: LabSettings.load(env: env), env: env)
+                try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env)
             } catch {
                 throw Failure(message: error.localizedDescription)
             }

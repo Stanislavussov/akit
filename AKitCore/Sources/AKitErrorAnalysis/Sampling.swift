@@ -21,11 +21,14 @@ public enum Sampling {
         public var project: String?
         public var from: Date?
         public var to: Date?
+        /// The harness that ran the sessions, as the index names it: `claude` or `pi`.
+        public var harness: String?
 
-        public init(project: String? = nil, from: Date? = nil, to: Date? = nil) {
+        public init(project: String? = nil, from: Date? = nil, to: Date? = nil, harness: String? = nil) {
             self.project = project
             self.from = from
             self.to = to
+            self.harness = harness
         }
     }
 
@@ -70,9 +73,11 @@ public enum Sampling {
     }
 
     /// `claude-opus-5-5` → `claude-opus`, `github-copilot/gpt-6.1-sol` → `gpt`: strata by family,
-    /// not by every version.
+    /// not by every version. Bedrock's region and provider go first:
+    /// `us.anthropic.claude-opus-4-v1:0` → `claude-opus`.
     static func family(_ model: String) -> String {
-        let name = model.split(separator: "/").last.map(String.init) ?? model
+        var name = model.split(separator: "/").last.map(String.init) ?? model
+        while let match = name.prefixMatch(of: /[A-Za-z]+\.(?=[A-Za-z])/) { name = String(name[match.range.upperBound...]) }
         let parts = name.split(separator: "-")
         guard let first = parts.first else { return name }
         if first == "claude", parts.count > 1 { return "claude-\(parts[1])" }
@@ -83,6 +88,7 @@ public enum Sampling {
     public static func population(_ sessions: [IndexedSession], filter: Filter, reserved: Set<String>) -> [IndexedSession] {
         sessions.filter { session in
             guard session.file != nil, session.requests >= minimumRequests, !reserved.contains(session.key) else { return false }
+            if let harness = filter.harness, session.harness != harness { return false }
             if let project = filter.project {
                 let bound = session.projectID == project
                 let ranThere = session.cwd.map { $0 == project || $0.hasPrefix(project.hasSuffix("/") ? project : project + "/") } ?? false

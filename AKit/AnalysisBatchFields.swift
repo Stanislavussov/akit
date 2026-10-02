@@ -13,9 +13,11 @@ struct AnalysisBatchDraft {
     var from = Calendar.current.date(byAdding: .day, value: -30, to: .now) ?? .now
     var useTo = false
     var to = Date.now
+    /// The harness that ran the sessions, as the index names it (`claude`, `pi`); nil = both.
+    var sessionHarness: String?
     var size = 20
     /// Automatic: a reviewer of another model family than the sampled sessions', when the
-    /// sending policy allows one (`Batches.defaultReviewer`).
+    /// sending policy allows one (`Batches.defaultReviewer`); sessions it may not get are left out.
     var automatic = true
     var harness: LabHarness = .claudeCode
     var model = ""
@@ -29,7 +31,7 @@ struct AnalysisBatchDraft {
     var filter: Sampling.Filter {
         let start = Calendar.current.startOfDay(for: from)
         let end = Calendar.current.startOfDay(for: to).addingTimeInterval(86_399)
-        return Sampling.Filter(project: project, from: useFrom ? start : nil, to: useTo ? end : nil)
+        return Sampling.Filter(project: project, from: useFrom ? start : nil, to: useTo ? end : nil, harness: sessionHarness)
     }
 
     /// nil: Automatic.
@@ -90,12 +92,18 @@ struct AnalysisBatchFields: View {
                         .disabled(!draft.useTo)
                 }
             }
+            Picker("Sessions from", selection: $draft.sessionHarness) {
+                Text("All harnesses").tag(String?.none)
+                Text("Claude Code").tag(String?.some("claude"))
+                Text("Pi").tag(String?.some("pi"))
+            }
+            .help("Only sessions this harness ran. With Automatic, sessions the reviewer may not get under the sending policy are left out of the sample; pick their harness here to review them with a reviewer allowed for them")
             Stepper("Sessions: \(draft.size)", value: $draft.size, in: 1...200)
             Picker("Notes by", selection: $draft.automatic) {
                 Text("Automatic").tag(true)
                 Text("Choose…").tag(false)
             }
-            .help("Automatic: a model of another family than the one that ran most sampled sessions, when the sending policy allows it; else Claude Code with your settings")
+            .help("Automatic: a model of another family than the one that ran most sessions, when the sending policy allows it; else Claude Code with your settings. Sessions it may not get are left out, and you see how many before anything is queued. Choose…: every session stays, and you're asked first when the policy will refuse some")
             if !draft.automatic {
                 ReviewAgentFields(harness: $draft.harness, modelName: $draft.model, effort: $draft.effort)
             }
@@ -126,7 +134,7 @@ struct AnalysisBatchFields: View {
             }.value
             draft.sampled = sampled
             estimate = sampled == 0
-                ? "No sessions of the index match: each needs \(Sampling.minimumRequests)+ requests, in the project and period chosen. Import sessions (akit sessions import) or widen the filter."
+                ? "No sessions of the index match: each needs \(Sampling.minimumRequests)+ requests, in the project, harness and period chosen. Import sessions (akit sessions import) or widen the filter."
                 : text
         }
         .task {
@@ -137,7 +145,7 @@ struct AnalysisBatchFields: View {
     }
 
     private var estimateKey: String {
-        "\(draft.filter.project ?? "")|\(draft.useFrom)\(draft.from)|\(draft.useTo)\(draft.to)|\(draft.size)|\(draft.automatic)|\(draft.harness)|\(draft.model)"
+        "\(draft.filter.project ?? "")|\(draft.sessionHarness ?? "")|\(draft.useFrom)\(draft.from)|\(draft.useTo)\(draft.to)|\(draft.size)|\(draft.automatic)|\(draft.harness)|\(draft.model)"
     }
 
     /// Bound projects first, then the folders sessions ran in, by how many sessions could be sampled.
