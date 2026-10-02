@@ -305,9 +305,9 @@ public struct ModeStore: Sendable {
 
     /// Moves the mode's fix along: open → draft → applied(T) → confirmed / didn't help /
     /// rejected (with a reason). Failure and efficiency modes only. `date` is T for `applied`.
-    @discardableResult
     /// Once a fix is applied, T and the criterion written before it stay: going back to a
     /// draft or applying again moves T, so it needs `reset` (the user starting over).
+    @discardableResult
     public func setFix(_ id: String, _ status: Mode.FixStatus, reason: String? = nil, at date: Date = .now,
                        reset: Bool = false) async throws -> Mode {
         try await change { modes in

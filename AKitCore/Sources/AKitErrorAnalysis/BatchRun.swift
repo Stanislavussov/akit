@@ -97,7 +97,10 @@ public enum Batches {
         let bySession = Dictionary(grouping: records, by: { $0.session ?? "" }).mapValues { $0.compactMap(\.usage.cost).reduce(0, +) }
         guard !bySession.isEmpty else { return nil }
         var perSession = bySession.values.reduce(0, +) / Double(bySession.count)
-        for judge in ValidationStore(env: env).judges().values {
+        // Batches run the judges of active modes only.
+        let active = Set((JSONFile.read([Mode].self, from: AnalysisPaths(env: env).modesFile) ?? [])
+            .filter { $0.isCurrent && $0.status == .active }.map(\.id))
+        for (modeID, judge) in ValidationStore(env: env).judges() where active.contains(modeID) {
             let costs = all.filter { $0.purpose == "judge" && $0.harness == judge.harness && $0.model == judge.model }.compactMap(\.usage.cost)
             if !costs.isEmpty { perSession += costs.reduce(0, +) / Double(costs.count) }
         }

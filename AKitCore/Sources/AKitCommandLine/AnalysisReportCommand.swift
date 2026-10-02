@@ -194,9 +194,10 @@ extension AKitCLI {
                 text = read
             }
             guard layer != .skill || skill != nil else { throw Failure(message: "A skill fix needs --skill NAME.") }
+            // The status first: a fix applied meanwhile refuses before its draft is written over.
+            _ = try await store.setFix(mode.id, .draft, reset: reset)
             try fixes.save(FixDraft(modeID: mode.id, layer: layer, skillName: skill, text: text, exemplars: exemplars,
                                     expectedChange: expect, helpedCriterion: helped))
-            _ = try await store.setFix(mode.id, .draft, reset: reset)
             out("Drafted a \(layer.title.lowercased()) for \(mode.name). Apply it yourself, then: akit analysis fix applied \(mode.id).")
         case "applied":
             let at = try args.value("--at").map { try day($0, "--at") } ?? .now

@@ -142,9 +142,10 @@ struct FixDraftSheet: View {
         Task {
             do {
                 try await analysis.run { env in
-                    try FixStore(env: env).save(draft)
-                    // Past draft, saving is the Start Over the user confirmed.
+                    // Past draft, saving is the Start Over the user confirmed. The status first: if T
+                    // was set meanwhile, nothing is written over the draft fixed before it.
                     _ = try await ModeStore(env: env).setFix(draft.modeID, .draft, reset: reset)
+                    try FixStore(env: env).save(draft)
                     return "Drafted a \(draft.layer.title.lowercased()) for \(name). Apply it yourself, then Mark Applied."
                 }
                 dismiss()

@@ -153,7 +153,11 @@ extension AKitCLI {
             // Before any model work: how many sessions and what it would cost.
             let filter = Sampling.Filter(project: projectFilter, from: from, to: to)
             let estimateAgent = agent ?? { var claude = LabRuns.defaultAgent(.claudeCode, env: env); claude.mode = .call; return claude }()
-            out(Batches.estimateText(sessions: Batches.sampleSize(filter: filter, size: size, env: env), agent: estimateAgent, env: env)
+            let sessions = Batches.sampleSize(filter: filter, size: size, env: env)
+            guard sessions > 0 else {
+                throw Failure(message: "No sessions match (at least \(Sampling.minimumRequests) requests each). Run akit sessions import first?")
+            }
+            out(Batches.estimateText(sessions: sessions, agent: estimateAgent, env: env)
                 + (agent == nil ? " (with your Claude Code model; the reviewer is picked when the sample is drawn)" : ""))
             guard yes else {
                 out("Run it again with --yes to queue it.")

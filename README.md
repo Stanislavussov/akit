@@ -255,7 +255,9 @@ akit lab new replay COMMIT [--setups full,lean] [--repeats N]
 akit lab list / show ID / compare COMMIT         runs and their results
 akit lab policy / sends                          where session data may go; what was sent, at what cost
 
-akit lab new analysis [--project P] [--size N]   error analysis over a sample of sessions
+akit lab new analysis [--project P] [--size N] [--yes]
+                                                 error analysis over a sample of sessions (shows the
+                                                 ≈ cost first; --yes queues it)
 akit analysis notes / modes / queue / report     notes per session, failure modes, what waits for you,
                                                  frequencies with intervals and the transition matrix
 akit analysis bootstrap …                        label 30+ sessions yourself; recall of the model's notes
