@@ -89,7 +89,7 @@ struct NotesPipelineTests {
     let verdicts: [String: Any] = ["verdicts": [
         ["id": "n1", "steelman": "Maybe the agent saw a later green run.", "supported": true, "reason": "#2 shows 2 failed tests."],
         ["id": "n3", "supported": false, "reason": "Running the suite was what the user asked for."],
-    ]]
+    ], "conclusion": "  The agent reported success on failing tests. Report the last test result verbatim.\n"]
 
     func review(_ file: URL, model: String = "opus", title: String? = "Fix Foo") async throws -> SessionNotes {
         let agent = LabAgent(harness: .claudeCode, model: model, effort: "high")
@@ -123,6 +123,7 @@ struct NotesPipelineTests {
         #expect(notes.accepted.map(\.id) == ["n1"])
         // Advice resting only on rejected notes is dropped.
         #expect(notes.advice.map(\.title) == ["Report the last test result verbatim."])
+        #expect(notes.conclusion == "The agent reported success on failing tests. Report the last test result verbatim.")
 
         var saved = try #require(NotesStore(env: env).load(notes.sessionKey))
         // Dates are kept to the millisecond.
@@ -335,8 +336,64 @@ struct NotesPipelineTests {
                                  notes: [], deviation: Deviation(), paragraph: "", advice: [],
                                  notesConfig: StepConfig(step: "notes"), verifierConfig: nil, doneKeys: [:], runID: nil)
         #expect(notes.noFailures)
-        let verdicts = try NotesPipeline.parseVerdicts(#"Sure: {"verdicts":[{"id":"n1","supported":true,"reason":"ok"}]}"#)
-        #expect(verdicts["n1"]?.steelman == nil)
+        let answer = try NotesPipeline.parseVerifier(#"Sure: {"verdicts":[{"id":"n1","supported":true,"reason":"ok"}]}"#)
+        #expect(answer.verdicts["n1"]?.steelman == nil)
+        // An answer without a conclusion (or a blank one) still counts.
+        #expect(answer.conclusion == nil)
+        #expect(try NotesPipeline.parseVerifier(#"{"verdicts":[],"conclusion":"  "}"#).conclusion == nil)
+    }
+
+    @Test func theConclusionLeavesOutNotesRejectedInCode() {
+        let rejected = Note(id: "n2", source: .model, description: "Invented quote.", step: 2, quote: "everything is fine",
+                            verdict: Verdict(accepted: false, reason: "The quote isn't in step #2.", by: .code))
+        let review = SessionNotes(sessionKey: "k", transcript: "", title: nil, project: nil, requirements: [], outcome: .partly,
+                                  notes: [rejected], deviation: Deviation(), paragraph: "It went partly well.",
+                                  advice: [Advice(title: "Check first.", evidence: "", detail: "", noteIDs: ["n2"])],
+                                  notesConfig: StepConfig(step: "notes"), verifierConfig: nil, doneKeys: [:], runID: nil)
+        let input = NotesPipeline.verifierInput([], items: [], byID: [:], review: review)
+        #expect(input.contains("Outcome: partly"))
+        #expect(input.contains("Paragraph: It went partly well."))
+        #expect(input.contains("- Check first. (rests on n2)"))
+        #expect(input.contains("- n2: Invented quote. (The quote isn't in step #2.)"))
+    }
+
+    @Test func aNoteHasTheModeTheModePagesCountItIn() {
+        var notes = SessionNotes(sessionKey: "k", transcript: "", title: nil, project: nil, requirements: [], outcome: .no,
+                                 notes: [], deviation: Deviation(), paragraph: "", advice: [],
+                                 notesConfig: StepConfig(step: "notes"), verifierConfig: nil, doneKeys: [:], runID: nil)
+        var old = Mode(id: "old", name: "Old", definition: "d")
+        old.mergedInto = "new"
+        let modes = [old, Mode(id: "new", name: "New", definition: "d")]
+        #expect(notes.noteModes(modes).isEmpty)
+        notes.routes = [Route(noteID: "n1", modeID: "a", confidence: 0.7, by: .matching),
+                        // A retro "also fits" proposal doesn't replace the route.
+                        Route(noteID: "n1", modeID: "b", confidence: 0.59, by: .retro),
+                        Route(noteID: "n2", modeID: nil, confidence: 0.8, by: .matching, review: .accepted),
+                        // A later clustering route replaces an accepted "none fits", merges followed.
+                        Route(noteID: "n2", modeID: "old", confidence: 0.9, by: .clustering),
+                        Route(noteID: "n3", modeID: "a", confidence: 0.55, by: .matching)]
+        let types = notes.noteModes(modes)
+        #expect(types["n1"]?.modeID == "a" && types["n1"]?.confirmed == true)
+        #expect(types["n2"]?.modeID == "new")
+        // Low confidence and not reviewed: unconfirmed.
+        #expect(types["n3"]?.modeID == "a" && types["n3"]?.confirmed == false)
+        notes.routes?.append(Route(noteID: "n3", modeID: nil, confidence: 0.4, by: .human))
+        #expect(notes.noteModes(modes)["n3"]?.modeID == nil && notes.noteModes(modes)["n3"]?.confirmed == true)
+    }
+
+    @Test func reVerifyingDropsTheOldConclusion() async throws {
+        // The first review has a conclusion; a later verifier where no quote is found has none.
+        try fakeClaude(notes: notesAnswer, verdicts: verdicts)
+        let file = try session()
+        let first = try await review(file)
+        #expect(first.conclusion != nil)
+        var noQuotes = notesAnswer
+        noQuotes["notes"] = [["id": "n1", "description": "x", "step": 2, "quote": "nowhere in this step", "severity": "low",
+                              "faultLayer": "agent"]]
+        try fakeClaude(notes: noQuotes, verdicts: verdicts)
+        let second = try await review(file, model: "sonnet")
+        #expect(second.conclusion == nil)
+        #expect(NotesStore(env: env).load(second.sessionKey)?.conclusion == nil)
     }
 
     // MARK: As a Lab run

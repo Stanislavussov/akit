@@ -108,6 +108,11 @@ public enum LabStore {
                       review: review, summary: summary)
     }
 
+    /// A review's numbers for the session it reviewed (`analysis.json`, Claude Code sessions).
+    public static func reviewedMetrics(of run: LabRun) -> SessionMetrics? {
+        read(SessionMetrics.self, from: run.folder.appending(path: "analysis.json"))
+    }
+
     /// Every run, newest first.
     public static func list(env: HarnessEnvironment) -> [LabRun] {
         FileWalk.children(of: LabPaths(env: env).folder)

@@ -42,7 +42,7 @@ struct SessionNotesSheet: View {
                 if let notes = loaded.notes {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
-                            ReviewNotesView(notes: notes)
+                            ReviewNotesView(notes: notes, modes: loaded.modes)
                             routes(notes, modes: loaded.modes)
                             signals(loaded)
                         }

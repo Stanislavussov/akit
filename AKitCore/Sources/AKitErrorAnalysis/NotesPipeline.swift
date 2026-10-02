@@ -50,7 +50,7 @@ public enum NotesPipeline {
         var verifierStep: StepConfig {
             StepConfig(step: "verifier", harness: verifier.harness.rawValue, model: verifier.model,
                        promptVersion: NotesPrompts.verifierVersion, scrubVersion: Scrubber.version, codeVersion: nil,
-                       extra: ["effort": verifier.effort])
+                       extra: ["effort": verifier.effort, "language": language.rawValue])
         }
     }
 
@@ -226,12 +226,14 @@ public enum NotesPipeline {
     // MARK: Verifier
 
     /// Quotes first, in code, against the full scrubbed transcript; then one call for the claims
-    /// whose quotes were found. Advice whose notes are all rejected is dropped.
+    /// whose quotes were found, which also writes the conclusion. Advice whose notes are all
+    /// rejected is dropped.
     static func verify(_ notes: SessionNotes, items: [TranscriptItem], config: Config, gate: SendGate, origin: SendOrigin, runID: String?,
                        workFolder: URL, env: HarnessEnvironment, out: @escaping @Sendable (String) -> Void) async throws -> SessionNotes {
         var result = notes
         // Reused notes carry the verdicts of an earlier verifier: this one decides afresh.
         for index in result.notes.indices where result.notes[index].source == .model { result.notes[index].verdict = nil }
+        result.conclusion = nil
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var toAsk: [Note] = []
         for index in result.notes.indices where result.notes[index].source == .model {
@@ -251,11 +253,14 @@ public enum NotesPipeline {
         if !toAsk.isEmpty {
             out("Verifying \(toAsk.count) notes with \(config.verifier.label)…")
             let answer = try await ModelCall.run(
-                ModelCall.Request(agent: config.verifier, purpose: "verifier", system: NotesPrompts.verifierSystem,
-                                  input: verifierInput(toAsk, items: items, byID: byID), schema: NotesPrompts.verifierSchema,
+                ModelCall.Request(agent: config.verifier, purpose: "verifier",
+                                  system: NotesPrompts.verifierSystem + "\nWrite the conclusion in \(config.language.name).",
+                                  input: verifierInput(toAsk, items: items, byID: byID, review: result), schema: NotesPrompts.verifierSchema,
                                   origin: origin, session: notes.sessionKey, runID: runID),
                 gate: gate, folder: workFolder, env: env)
-            let verdicts = try parseVerdicts(answer.text)
+            let parsed = try parseVerifier(answer.text)
+            let verdicts = parsed.verdicts
+            result.conclusion = parsed.conclusion.map(SecretFilter.masked)
             for index in result.notes.indices where result.notes[index].verdict == nil && result.notes[index].source == .model {
                 let id = result.notes[index].id
                 guard let verdict = verdicts[id] else {
@@ -285,7 +290,7 @@ public enum NotesPipeline {
     /// Steps shown around the cited one, before and after.
     static let neighbours = 3
 
-    static func verifierInput(_ notes: [Note], items: [TranscriptItem], byID: [Int: TranscriptItem]) -> String {
+    static func verifierInput(_ notes: [Note], items: [TranscriptItem], byID: [Int: TranscriptItem], review: SessionNotes? = nil) -> String {
         let users = items.filter { if case .user = $0.kind { true } else { false } }
             .map { "[#\($0.id) user] \($0.text)" }.joined(separator: "\n")
         let parts = notes.map { note -> String in
@@ -310,6 +315,29 @@ public enum NotesPipeline {
                 """
         }
         return "## User turns\n\n\(users)\n\n## Notes\n\n" + parts.joined(separator: "\n\n") + "\n"
+            + (review.map { "\n" + reviewInput($0) } ?? "")
+    }
+
+    /// For the conclusion: the outcome, the paragraph, the advice and the notes rejected in
+    /// code, which the conclusion must leave out.
+    static func reviewInput(_ review: SessionNotes) -> String {
+        let rejected = review.notes.filter { $0.source == .model && $0.verdict?.accepted == false }
+            .map { "- \($0.id): \($0.description) (\($0.verdict?.reason ?? "rejected"))" }
+        let advice = review.advice.map { "- \($0.title) (rests on \($0.noteIDs.joined(separator: ", ")))" }
+        return """
+            ## Review to conclude
+
+            Outcome: \(review.outcome.rawValue)
+
+            Paragraph: \(review.paragraph)
+
+            Advice:
+            \(advice.isEmpty ? "(none)" : advice.joined(separator: "\n"))
+
+            Notes rejected before you:
+            \(rejected.isEmpty ? "(none)" : rejected.joined(separator: "\n"))
+
+            """
     }
 
     /// Up to ~6000 characters of a step, centred on the quote, so long outputs stay readable.
@@ -344,12 +372,18 @@ public enum NotesPipeline {
         let reason: String
     }
 
-    static func parseVerdicts(_ text: String) throws -> [String: RawVerdict] {
-        struct Answer: Decodable { let verdicts: [RawVerdict] }
+    /// The verdicts by note id and the conclusion (nil when missing or blank).
+    static func parseVerifier(_ text: String) throws -> (verdicts: [String: RawVerdict], conclusion: String?) {
+        struct Answer: Decodable {
+            let verdicts: [RawVerdict]
+            let conclusion: String?
+        }
         guard let json = ModelCall.jsonObject(in: text), let answer = try? JSONDecoder().decode(Answer.self, from: json) else {
             throw Failure(message: "The verifier's answer isn't the JSON asked for.")
         }
-        return Dictionary(answer.verdicts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let conclusion = answer.conclusion?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (Dictionary(answer.verdicts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }),
+                conclusion?.isEmpty == false ? conclusion : nil)
     }
 }
 

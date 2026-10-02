@@ -232,6 +232,9 @@ private struct LabRunDetail: View {
     @State private var confirmRemove = false
     /// The review's notes file, when this run wrote the one saved for its session.
     @State private var notes: SessionNotes?
+    /// Mode names for the notes' types, and the reviewed session's numbers.
+    @State private var modes: [Mode] = []
+    @State private var reviewedMetrics: SessionMetrics?
     /// The run whose review replaced this one's notes.
     @State private var replacedBy: String?
     /// Snapshots: `--tab recheck` opens the Re-check sheet.
@@ -383,7 +386,7 @@ private struct LabRunDetail: View {
             }
         }
         if let notes {
-            ReviewNotesView(notes: notes)
+            ReviewNotesView(notes: notes, modes: modes, metrics: reviewedMetrics, inLabRun: true)
         } else {
             legacyReview
         }
@@ -480,6 +483,10 @@ private struct LabRunDetail: View {
         let env = HarnessEnvironment.current
         let found = await Task.detached { SessionKey.of(target.summary).flatMap { NotesStore(env: env).load($0.description) } }.value
         if let found, found.runID == nil || found.runID == run.id {
+            let run = run
+            (modes, reviewedMetrics) = await Task.detached {
+                ((try? await ModeStore(env: env).list()) ?? [], LabStore.reviewedMetrics(of: run))
+            }.value
             notes = found
             replacedBy = nil
         } else {
