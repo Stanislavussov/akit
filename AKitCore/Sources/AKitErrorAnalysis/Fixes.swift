@@ -130,6 +130,8 @@ public struct FixEvaluation: Codable, Hashable, Sendable {
 public enum Fixes {
     public static let minimumPerSide = 15
     public static let helpedProbability = 0.95
+    /// "Not worse": at most this probability that the failure rate rose after T.
+    public static let notWorseProbability = 0.5
 
     /// Applies the rule to failure counts on both sides.
     public static func evaluate(modeID: String, appliedAt: Date, before: (failures: Int, sessions: Int, model: String?),
@@ -140,7 +142,7 @@ public enum Fixes {
         let verdict: FixEvaluation.Verdict
         if before.sessions < minimumPerSide || after.sessions < minimumPerSide {
             verdict = .noConclusion
-        } else if lower >= helpedProbability, higher <= 0.5 {
+        } else if lower >= helpedProbability, higher <= notWorseProbability {
             verdict = .helped
         } else {
             verdict = .notShown

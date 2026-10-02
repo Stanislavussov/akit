@@ -10,13 +10,26 @@ public enum AnalysisUpkeep {
         guard FileManager.default.fileExists(atPath: AnalysisPaths(env: env).modesFile.path) else { return nil }
         do {
             try SignalScanner.refresh(env: env)
-            let active = try await ModeStore(env: env).list().filter { $0.isCurrent && $0.status == .active }
-            let checks = active.compactMap { mode in CodeChecks.check(for: mode.id).map { (mode, $0) } }
-            guard !checks.isEmpty else { return nil }
-            try CheckRunner.run(checks.map(\.1), modeVersions: Dictionary(uniqueKeysWithValues: checks.map { ($0.0.id, $0.0.version) }), env: env)
-            return "Ran the code checks of \(checks.count) active modes over new sessions."
+            let checked = try runChecks(of: try await ModeStore(env: env).list(), env: env)
+            guard !checked.isEmpty else { return nil }
+            return "Ran the code checks of \(checked.count) active modes over new sessions."
         } catch {
             return "Error analysis upkeep failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Runs the code checks of the current, active modes (after an import and at the end of a
+    /// batch), each at its mode's version. Returns the ids of the modes checked.
+    static func runChecks(of modes: [Mode], env: HarnessEnvironment) throws -> [String] {
+        let checks = activeChecks(modes)
+        guard !checks.isEmpty else { return [] }
+        try CheckRunner.run(checks.map(\.check), modeVersions: Dictionary(uniqueKeysWithValues: checks.map { ($0.mode.id, $0.mode.version) }),
+                            env: env)
+        return checks.map(\.mode.id)
+    }
+
+    /// Merged and rejected modes have no checks of their own.
+    static func activeChecks(_ modes: [Mode]) -> [(mode: Mode, check: CodeCheck)] {
+        modes.filter { $0.isCurrent && $0.status == .active }.compactMap { mode in CodeChecks.check(for: mode.id).map { (mode, $0) } }
     }
 }

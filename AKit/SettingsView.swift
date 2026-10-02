@@ -116,9 +116,13 @@ struct SettingsView: View {
                 Text("The language of new session reviews: the paragraph and the improvements. Kept in ~/.akit/lab/settings.json, so akit lab new review uses it too (--language overrides).")
                     .foregroundStyle(.secondary)
             }
-            .onChange(of: lab) {
+            // `akit lab policy` may change the file while the form is open: only the form's own
+            // edit is applied, onto what is on disk now, and the form then shows the result.
+            .onAppear { lab = LabSettings.load(env: .current) }
+            .onChange(of: lab) { old, new in
                 do {
-                    try lab.save(env: .current)
+                    let saved = try LabSettings.update(env: .current) { $0.apply(from: old, to: new) }
+                    if saved != new { lab = saved }
                     labError = nil
                 } catch {
                     labError = "Couldn't save ~/.akit/lab/settings.json: \(error.localizedDescription)"

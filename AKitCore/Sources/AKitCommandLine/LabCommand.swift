@@ -319,7 +319,7 @@ extension AKitCLI {
 
     private static func policy(_ args: inout Arguments, json: Bool, model: String?, env: HarnessEnvironment,
                                out: (String) -> Void) async throws -> Int32 {
-        var settings = LabSettings.load(env: env)
+        let settings = LabSettings.load(env: env)
         func harness(_ text: String?) throws -> LabHarness {
             guard let text, let harness = LabHarness(rawValue: text) else { throw Failure(message: "HARNESS is claude-code or pi.") }
             return harness
@@ -368,37 +368,41 @@ extension AKitCLI {
         case "allow":
             let entry = try destination()
             try args.finish()
-            if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
-            try settings.save(env: env)
+            try LabSettings.update(env: env) { settings in
+                if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
+            }
             out("Allowed \(entry.label).")
         case "remove":
             let entry = try destination()
             try args.finish()
-            let before = settings.allowedDestinations.count
-            settings.allowedDestinations.removeAll { $0.matches(entry) }
-            guard settings.allowedDestinations.count < before else { throw Failure(message: "\(entry.label) isn't on the list.") }
-            try settings.save(env: env)
+            try LabSettings.update(env: env) { settings in
+                let before = settings.allowedDestinations.count
+                settings.allowedDestinations.removeAll { $0.matches(entry) }
+                guard settings.allowedDestinations.count < before else { throw Failure(message: "\(entry.label) isn't on the list.") }
+            }
             out("Removed \(entry.label).")
         case "pi-account":
             guard let provider = args.positional(), let account = args.positional(), let org = args.positional() else {
                 throw Failure(message: "Give PROVIDER ACCOUNT ORG.")
             }
             try args.finish()
-            settings.piAccounts.removeAll { $0.provider.caseInsensitiveCompare(provider) == .orderedSame }
-            settings.piAccounts.append(PiAccount(provider: provider, account: account, org: org))
-            try settings.save(env: env)
+            try LabSettings.update(env: env) { settings in
+                settings.piAccounts.removeAll { $0.provider.caseInsensitiveCompare(provider) == .orderedSame }
+                settings.piAccounts.append(PiAccount(provider: provider, account: account, org: org))
+            }
             out("Pi \(provider): \(account) · \(org).")
         case "limit":
             guard let text = args.positional() else { throw Failure(message: "Give DOLLARS or none.") }
             try args.finish()
+            let limit: Double?
             if text == "none" {
-                settings.monthlyLimit = nil
+                limit = nil
             } else {
                 guard let value = Double(text), value >= 0 else { throw Failure(message: "The limit is a number of dollars, or none.") }
-                settings.monthlyLimit = value
+                limit = value
             }
-            try settings.save(env: env)
-            out("Monthly limit: " + (settings.monthlyLimit.map { String(format: "$%.2f", $0) } ?? "none") + ".")
+            try LabSettings.update(env: env) { $0.monthlyLimit = limit }
+            out("Monthly limit: " + (limit.map { String(format: "$%.2f", $0) } ?? "none") + ".")
         case let other:
             throw Failure(message: "Unknown “akit lab policy \(other ?? "")”. Run akit lab --help.")
         }
