@@ -662,7 +662,9 @@ fix applied, an anchor like `akit stats mark`.
   - **And not worse in production**: the mode's production check gives at most 50%
     posterior probability that its failure rate rose after T. A control set's "helped"
     needs it too: without production data (no applied fix with check results, or fewer
-    than 15 sessions on a side of T) the control verdict is "no conclusion".
+    than 15 sessions on a side of T) the control verdict is "no conclusion". Layer evals
+    (`layer-evals.md`) give a layer its own verdict with an offline level that doesn't need
+    this guard; the mode's fix status keeps the rule.
   - With N < 15 on a side there is no conclusion.
 - **Why not plain intervals.** CLT intervals understate the uncertainty at N ≈ 15–50 per
   group, and clustering by task changes the standard errors.
@@ -680,6 +682,9 @@ Error analysis answers "what breaks and how often" on real sessions. Controlled 
 answer "did the fix help" on fixed tasks, where the mix of tasks can't move the number.
 They are Lab replay tasks (`lab.md`) extended in two ways: a task can be made from a
 session instead of a commit, and the agent can be Claude Code or Pi.
+
+A layer from the brain as the setup, instead of one patch, is designed in
+`layer-evals.md`; it adds an offline verdict level that doesn't need the production guard.
 
 **Mapping.**
 
@@ -712,7 +717,8 @@ assertion over a control cell read events the same way.
    "Isolation"). A cell whose tool calls read the original session history (the
    exemplar's own transcript) is flagged.
 2. **Traces are kept.** A cell is a Lab run with its own transcript: it can be reviewed,
-   but it never enters production frequencies (Lab runs are tagged `source: eval`). Red
+   but it never enters production frequencies (Lab's own sessions are left out by session
+   id, `IndexedSessions.labKeys`). Red
    cells of the fixed setup are offered for review, since new modes after a fix are side
    effects.
 3. **The oracle is guarded from day one.** The result records that the number of tests

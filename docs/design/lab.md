@@ -323,6 +323,8 @@ Lab screen shows the spread, not only the mean.
   per mode and controlled evals of fixes; the one-session review becomes its first step.
   Its control sets are Lab runs too: control cells (kind `control`) built on replay's
   isolated clone.
+- **Layer evals** (`layer-evals.md`): control cells whose setup renders a brain layer into
+  the clone, with the layer's own checks next to the oracle.
 - **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
   launchers live inside it.
 

@@ -125,6 +125,9 @@ files:
     when: reviewer_readme == true
 ```
 
+Designed, not built: `checks:`, patterns that measure what the layer promises to improve,
+used by layer evals (`layer-evals.md`, "Oracle and checks").
+
 `choice` and `multi` fields add `options: [...]`. A skill may be a bare name
 (`skills: [tdd]`, mode `auto`); `to` defaults to the template path. Field ids use
 letters, digits, `_` and `-`. An empty `layer.yaml` is a valid empty layer.
