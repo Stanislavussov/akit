@@ -17,6 +17,8 @@ struct InsightsView: View {
     @State private var dismissing: RecommendReport.Recommendation?
     /// What the last Apply or Dismiss did.
     @State private var notice: String?
+    /// Counts the loads started, so a superseded one can tell.
+    @State private var generation = 0
 
     var body: some View {
         Group {
@@ -104,6 +106,10 @@ struct InsightsView: View {
                 }
                 if let problem {
                     Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let trouble = model.machine.problem {
+                    Label(trouble, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 owners(report)
@@ -252,13 +258,14 @@ struct InsightsView: View {
         // Before the first scan the brain isn't loaded yet, and without it every layer skill looks unowned.
         guard model.lastScan != nil else { return }
         let env = HarnessEnvironment.current
-        let scope = project
+        // Loads overlap (a rescan during Import Now, two actions in a row) and an older one can
+        // finish last: only the newest may show its report and end the spinner.
+        generation += 1
+        let mine = generation
         isLoading = true
-        defer { isLoading = false }
         do {
-            let result = try await Recommender.load(env: env, brain: model.brain, project: scope, projectsRoot: model.projectsRoot)
-            // A report that arrives after the scope changed belongs to the old scope.
-            guard scope == project else { return }
+            let result = try await Recommender.load(env: env, brain: model.brain, project: project, projectsRoot: model.projectsRoot)
+            guard mine == generation else { return }
             loaded = result
             problem = nil
             // Snapshots: `--add` opens Apply… of the first layer patch.
@@ -266,9 +273,10 @@ struct InsightsView: View {
                 open(item, change: .manual)
             }
         } catch {
-            guard scope == project else { return }
+            guard mine == generation else { return }
             problem = error.localizedDescription
         }
+        isLoading = false
     }
 
     /// Opens the patch sheet: the recommended change, or `keep_auto` for Dismiss.
