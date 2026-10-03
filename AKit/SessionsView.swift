@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitInsights
 import AKitModel
 import AKitSessions
 import AppKit
@@ -12,14 +13,16 @@ struct SessionsView: View {
     @State private var query = ""
     /// nil = all harnesses.
     @State private var harness: HarnessID? = DebugSnapshot.options?.harness.map { HarnessID($0, displayName: $0) }
+    @State private var project = SessionProjectFilter.all
 
     var body: some View {
-        HSplitView {
-            list
+        let names = SessionProjects.names(of: model.sessionProjects.values)
+        return HSplitView {
+            list(names)
                 .frame(minWidth: 260, idealWidth: 320, maxWidth: 480)
             Group {
                 if let session = model.sessions.first(where: { $0.id == selection }) {
-                    SessionDetailView(session: session)
+                    SessionDetailView(session: session, projectID: projectID(of: session))
                 } else {
                     ContentUnavailableView("Select a session", systemImage: "bubble.left.and.bubble.right")
                 }
@@ -30,6 +33,19 @@ struct SessionsView: View {
         .navigationSubtitle(subtitle)
         .searchable(text: $query, placement: .toolbar, prompt: "Title or project")
         .toolbar {
+            ToolbarItem {
+                Picker("Project", selection: $project) {
+                    Text("All projects").tag(SessionProjectFilter.all)
+                    ForEach(projects(names), id: \.id) { item in
+                        Text("\(item.name)  (\(item.count))").tag(SessionProjectFilter.project(item.id))
+                    }
+                    if unboundCount > 0 || project == .none {
+                        Divider()
+                        Text("No project  (\(unboundCount))").tag(SessionProjectFilter.none)
+                    }
+                }
+                .help("Show sessions of one project: its main folder and all its worktrees")
+            }
             ToolbarItem {
                 Picker("Harness", selection: $harness) {
                     Text("All harnesses").tag(HarnessID?.none)
@@ -47,11 +63,24 @@ struct SessionsView: View {
         }
         .onAppear { selection = selection ?? filtered.first?.id }
         .onChange(of: model.sessions) { if selection.flatMap({ id in model.sessions.first { $0.id == id } }) == nil { selection = filtered.first?.id } }
+        .onChange(of: project) { keepSelectionListed() }
+        .onChange(of: harness) { keepSelectionListed() }
+        .onChange(of: model.sessionProjects, initial: true) {
+            // `--project <name>` in snapshot mode picks that project once the projects are known.
+            if project == .all, let name = DebugSnapshot.options?.project,
+               let id = names.first(where: { $0.value.caseInsensitiveCompare(name) == .orderedSame })?.key {
+                project = .project(id)
+                selection = filtered.first?.id
+            } else if case .project(let id) = project, names[id] == nil {
+                // The chosen project has no sessions any more.
+                project = .all
+            }
+        }
     }
 
-    private var list: some View {
+    private func list(_ names: [String: String]) -> some View {
         List(filtered, selection: $selection) { session in
-            SessionRow(session: session)
+            SessionRow(session: session, projectName: projectID(of: session).flatMap { names[$0] })
                 .tag(session.id)
                 .contextMenu {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
@@ -75,6 +104,31 @@ struct SessionsView: View {
         return model.sessions.map(\.harness).filter { seen.insert($0).inserted }.sorted()
     }
 
+    /// After a filter change the detail never shows a session the list hides.
+    private func keepSelectionListed() {
+        let listed = filtered
+        if !listed.contains(where: { $0.id == selection }) { selection = listed.first?.id }
+    }
+
+    private func projectID(of session: SessionSummary) -> String? {
+        session.project.flatMap { model.sessionProjects[$0.path] }
+    }
+
+    /// Projects that have at least one session, by name, with their session count.
+    private func projects(_ names: [String: String]) -> [(id: String, name: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for session in model.sessions {
+            if let id = projectID(of: session) { counts[id, default: 0] += 1 }
+        }
+        return counts.map { (id: $0.key, name: names[$0.key] ?? $0.key, count: $0.value) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Sessions outside every project: the home folder, temporary folders, deleted folders nobody knows.
+    private var unboundCount: Int {
+        model.sessions.count { projectID(of: $0) == nil }
+    }
+
     private var subtitle: String {
         filtered.count == model.sessions.count ? "\(model.sessions.count) sessions" : "\(filtered.count) of \(model.sessions.count)"
     }
@@ -82,15 +136,37 @@ struct SessionsView: View {
     private var filtered: [SessionSummary] {
         let q = query.trimmingCharacters(in: .whitespaces)
         return model.sessions.filter { session in
-            (harness == nil || session.harness == harness)
+            let id = projectID(of: session)
+            return (harness == nil || session.harness == harness)
+                && project.matches(id)
                 && (q.isEmpty || session.title.localizedCaseInsensitiveContains(q)
-                    || (session.project?.path.localizedCaseInsensitiveContains(q) ?? false))
+                    || (session.project?.path.localizedCaseInsensitiveContains(q) ?? false)
+                    || (id?.localizedCaseInsensitiveContains(q) ?? false))
+        }
+    }
+}
+
+/// Which sessions the Sessions screen lists, by project.
+private enum SessionProjectFilter: Hashable {
+    case all
+    /// Sessions bound to this project id: its main folder and its worktrees.
+    case project(String)
+    /// Sessions outside every project.
+    case none
+
+    func matches(_ id: String?) -> Bool {
+        switch self {
+        case .all: true
+        case .project(let chosen): id == chosen
+        case .none: id == nil
         }
     }
 }
 
 private struct SessionRow: View {
     let session: SessionSummary
+    /// Short name of the session's project, if it has one.
+    let projectName: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -101,7 +177,10 @@ private struct SessionRow: View {
             }
             HStack(spacing: 6) {
                 if let project = session.project {
-                    Label(project.lastPathComponent, systemImage: "folder")
+                    // A worktree shows its project first: "akit · bowhead".
+                    let folder = project.lastPathComponent
+                    let isOwnFolder = projectName.map { $0.caseInsensitiveCompare(folder) == .orderedSame } ?? true
+                    Label(isOwnFolder ? folder : "\(projectName ?? "") · \(folder)", systemImage: "folder")
                         .help(project.tildePath)
                 }
                 Spacer()
@@ -140,6 +219,8 @@ enum SessionDetailTab: String, CaseIterable, Identifiable {
 private struct SessionDetailView: View {
     @Environment(AppModel.self) private var model
     let session: SessionSummary
+    /// The project the session's folder belongs to, if any.
+    let projectID: String?
     @State private var transcript: SessionTranscript?
     @State private var error: String?
     @State private var copied = false
@@ -207,8 +288,11 @@ private struct SessionDetailView: View {
                 .help("Show the session file in Finder")
             }
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
+                if let projectID {
+                    row("Project", projectID)
+                }
                 if let project = session.project {
-                    row("Project", project.tildePath, monospaced: true)
+                    row("Folder", project.tildePath, monospaced: true)
                 }
                 if let started = session.started {
                     row("Started", started.formatted(date: .abbreviated, time: .shortened))

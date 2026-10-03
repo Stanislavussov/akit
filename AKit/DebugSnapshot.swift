@@ -5,7 +5,7 @@ import SwiftUI
 /// No Screen Recording permission needed — the app only draws its own window.
 ///
 ///   AKit.app/Contents/MacOS/AKit --snapshot /tmp/shot.png [--section overview] [--delay 2] [--query tdd]
-///     [--harness pi] [--capture] [--tab prompt]   (Sessions: harness filter, session tab)
+///     [--harness pi] [--project akit] [--capture] [--tab prompt]   (Sessions: harness and project filters, session tab)
 ///
 /// `--query` fills the search field of the section (skills.sh selects the first result;
 /// Usage takes it as the period: week, month, quarter, year, all);

@@ -23,6 +23,9 @@ final class AppModel {
     private(set) var skills: [Skill] = []
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
+    /// Session folder (`SessionSummary.project` path) → project id, worktrees under their
+    /// repository (from the last scan). Folders without a project are missing.
+    private(set) var sessionProjects: [String: String] = [:]
     /// Project folders the harnesses know about plus those found in `projectRoots`.
     private(set) var projects: [URL] = []
     /// MCP servers from the config files of all installed harnesses.
@@ -537,6 +540,12 @@ final class AppModel {
             async let brain = Brain.load(from: brainRoot)
             return (found, await skills, projects, await sessions, await mcp, await targets, await brain)
         }.value
+        // Before anything is shown: the session list and its projects change together.
+        let folders = Array(Set(sessions.compactMap { $0.project?.path }))
+        let projectsRoot = projectsRoot
+        let sessionProjects = await Task.detached {
+            SessionProjects.projectIDs(ofFolders: folders, env: env, projectsRoot: projectsRoot)
+        }.value
         self.brain = brain
         brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
         installations = found
@@ -550,6 +559,7 @@ final class AppModel {
             brainLinks = [:]
         }
         self.sessions = sessions
+        self.sessionProjects = sessionProjects
         mcpServers = mcp.servers
         mcpProblems = mcp.problems
         mcpWriteTargets = targets
