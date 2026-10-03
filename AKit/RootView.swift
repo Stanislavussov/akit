@@ -23,7 +23,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .installed: "What the agents have on this Mac right now: harnesses, skills, MCP servers"
         case .setup: "What the agents should have: your brain of skills and layers, rendered into projects"
         case .activity: "How the agents worked: their saved sessions, tokens and cost"
-        case .improve: "Why sessions went wrong and whether a fix helped"
+        case .improve: "What the setup costs unused, why sessions went wrong and whether a fix helped"
         }
     }
 
@@ -32,7 +32,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .installed: [.overview, .skills, .skillsSh, .mcp]
         case .setup: [.brain]
         case .activity: [.sessions, .usage]
-        case .improve: [.lab, .analysis]
+        case .improve: [.insights, .lab, .analysis]
         }
     }
 }
@@ -45,6 +45,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case mcp
     case sessions
     case usage
+    case insights
     case lab
     case analysis
     case brain
@@ -58,6 +59,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .mcp: "MCP Servers"
         case .sessions: "Sessions"
         case .usage: "Usage"
+        case .insights: "Insights"
         case .lab: "Lab"
         case .analysis: "Error Analysis"
         case .brain: "Brain"
@@ -73,6 +75,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .mcp: "MCP servers per harness and project; edited in the harness configs, secrets in the Keychain"
         case .sessions: "Saved conversations, newest first; open one for its tokens and Analysis. Review in Terminal… starts a Lab run"
         case .usage: "Tokens and cost per day, summed from the same session files"
+        case .insights: "What the skill list costs in every request and which skills the model never calls; Apply… makes one manual in its layer"
         case .lab: "The queue of runs that start an agent or a model: reviews, replays, analysis batches, control cells; Sends logs what went out"
         case .analysis: "Recurring failure modes across many sessions, their frequencies, and whether a fix helped; its batches run in Lab"
         case .brain: "Your git repo of skills and layers; Set Up Project… renders them into a project"
@@ -87,6 +90,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .mcp: "server.rack"
         case .sessions: "bubble.left.and.bubble.right"
         case .usage: "chart.bar.xaxis"
+        case .insights: "lightbulb"
         case .lab: "flask"
         case .analysis: "stethoscope"
         case .brain: "brain"
@@ -137,6 +141,7 @@ struct RootView: View {
             case .mcp: MCPView()
             case .sessions: SessionsView()
             case .usage: UsageView()
+            case .insights: InsightsView()
             case .lab: LabView()
             case .analysis: ErrorAnalysisView()
             case .brain: BrainView()

@@ -33,6 +33,9 @@ Pi and other harnesses read this file too.
   the `akit` command import only the modules they use. Tested with Swift Testing, one test
   target per module (`make test`). Tests use a temporary fake home and never touch real
   config files.
+- `docs/design/README.md` is the map of the design docs: what is built, the order of the
+  next steps and the open decisions. The commit that finishes a step updates its row there
+  and the status note of its design doc.
 - AKit only reads harness files unless a step explicitly adds safe writing
   (backup + diff first). Deleting moves things to the Trash.
 - Never display or copy secrets: auth.json files, tokens, MCP env/headers,

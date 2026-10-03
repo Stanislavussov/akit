@@ -51,7 +51,7 @@ public struct StatsReport: Encodable, Equatable {
         public let p90: Int
     }
 
-    public struct OwnerSummary: Encodable, Equatable {
+    public struct OwnerSummary: Encodable, Equatable, Sendable {
         public let owner: String
         public let skills: Int
         /// ≈ tokens per request if all of them are listed.

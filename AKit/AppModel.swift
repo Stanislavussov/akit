@@ -246,9 +246,14 @@ final class AppModel {
 
     /// The brain's id for a project folder (from its git remote).
     func projectID(for project: URL) async -> String {
+        await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: .current)
+    }
+
+    /// The first projects folder: project ids of folders without a git remote are relative to it
+    /// (the `akit` command reads the same setting).
+    var projectsRoot: URL {
         let env = HarnessEnvironment.current
-        let root = projectRoots.first.map(env.expand) ?? env.homeDirectory.appending(path: "Projects")
-        return await ProjectRecords.projectID(for: project, projectsRoot: root, env: env)
+        return projectRoots.first.map(env.expand) ?? env.homeDirectory.appending(path: "Projects")
     }
 
     /// Brain project ids found on this Mac → their folders: the home folder and every known project.

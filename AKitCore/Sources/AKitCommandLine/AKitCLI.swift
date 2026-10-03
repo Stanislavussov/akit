@@ -850,17 +850,14 @@ public enum AKitCLI {
         if let minDays = try positiveNumber(minDaysText, "--min-days") { recommendOptions.minDays = minDays }
         let machine = MachineProfile.load(home: env.homeDirectory)
         if let problem = machine.problem { err("akit: \(problem)") }
-        let database = try IndexSchema.open(InsightsPaths(env: env).database)
-        let imported = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
         if let projectArgument {
             recommendOptions.project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env)
         }
         let brainRoot = brainRoot(options, cwd: cwd, env: env)
         let brain = Brain.load(from: brainRoot)
-        var inputs = try await Recommender.inputs(env: env, database: database, brain: brain, project: recommendOptions.project,
-                                                  projectsRoot: projectsRoot, hostName: hostName, hardware: hardwareHash(),
-                                                  run: runner)
-        inputs.stats.importNotes = imported.notes
+        let (database, inputs) = try await Recommender.prepare(env: env, brain: brain, project: recommendOptions.project,
+                                                               projectsRoot: projectsRoot, hostName: hostName,
+                                                               hardware: hardwareHash(), run: runner)
         guard let subcommand, let id else {
             let report = try Recommender.recommend(database, options: recommendOptions, inputs: inputs)
             if options.json {
@@ -901,7 +898,8 @@ public enum AKitCLI {
             try await LayerPatch.commit(skill: recommendation.skill, layer: layer, change: .manual, before: patch.before, after: patch.after,
                                         brain: brain.root, machine: machine, env: env)
             var lines = ["Committed “\(LayerPatch.Change.manual.message(skill: recommendation.skill, layer: layer))”."]
-            let projects = projectsUsing(layer, brain: brain, home: env.homeDirectory)
+            let projects = Recommender.projectsUsing(layer, brain: brain, home: env.homeDirectory)
+                .map { $0.hasPrefix("home/") ? "\($0) (akit apply --home)" : $0 }
             if !projects.isEmpty { lines.append("Run akit plan/apply in: \(projects.joined(separator: ", ")).") }
             if let note = recommendation.action.text { lines.append(note) }
             out(lines.joined(separator: "\n"))
@@ -928,14 +926,6 @@ public enum AKitCLI {
                                                machine: machine, env: env)
         out("Saved in \(url.path).")
         return 0
-    }
-
-    /// Projects whose layers bring this one (the brain's and this Mac's records); a home folder as `akit apply --home`.
-    private static func projectsUsing(_ layer: String, brain: Brain, home: URL) -> [String] {
-        let saved = BrainRemove.savedAnswers(brain: brain, home: home)
-        let ids = Set(saved.filter { brain.layers(of: Brain.Project(id: $0.id, answers: $0.answers, brainCommit: nil)).contains(layer) }
-            .map(\.id))
-        return ids.sorted().map { $0.hasPrefix("home/") ? "\($0) (akit apply --home)" : $0 }
     }
 
     static func recommendText(_ report: RecommendReport, details: Bool) -> String {

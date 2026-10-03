@@ -12,7 +12,7 @@ import Foundation
 /// - Per-project advice: `<ProjectStore.current>/<id>/dismissed.json`, committed only when that
 ///   store is the brain's (so a work Mac's stay local).
 public enum Dismissals {
-    public struct Entry: Codable, Equatable {
+    public struct Entry: Codable, Equatable, Sendable {
         let id: String
         /// ISO 8601.
         let at: String

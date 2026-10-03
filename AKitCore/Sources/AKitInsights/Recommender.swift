@@ -4,8 +4,8 @@ import Foundation
 
 /// `akit recommend`: auto skills the model never calls. The JSON (`version` 1) is the contract for
 /// `/akit` and a later Insights screen. Counts are recorded; sizes are estimates (≈).
-public struct RecommendReport: Encodable, Equatable {
-    public struct Rule: Encodable, Equatable {
+public struct RecommendReport: Encodable, Equatable, Sendable {
+    public struct Rule: Encodable, Equatable, Sendable {
         let name: String
         public let minSessions: Int
         public let minDistinctDays: Int
@@ -13,12 +13,12 @@ public struct RecommendReport: Encodable, Equatable {
         public let bindings: [String]
     }
 
-    public struct Summary: Encodable, Equatable {
+    public struct Summary: Encodable, Equatable, Sendable {
         /// ≈ tokens per request of the skills listed in scope, by owner (as in `akit stats`).
         public let approxContextPerRequestByOwner: [StatsReport.OwnerSummary]
     }
 
-    public struct Owner: Encodable, Equatable {
+    public struct Owner: Encodable, Equatable, Sendable {
         public let kind: String
         public let name: String?
 
@@ -31,7 +31,7 @@ public struct RecommendReport: Encodable, Equatable {
         private enum CodingKeys: String, CodingKey { case kind, name }
     }
 
-    public struct Scope: Encodable, Equatable {
+    public struct Scope: Encodable, Equatable, Sendable {
         /// nil: every session, on every Mac.
         public let project: String?
 
@@ -43,7 +43,7 @@ public struct RecommendReport: Encodable, Equatable {
         private enum CodingKeys: String, CodingKey { case project }
     }
 
-    public struct Action: Encodable, Equatable {
+    public struct Action: Encodable, Equatable, Sendable {
         /// `layerPatch`, or the advice: `disablePluginInProject`, `disablePluginGlobally`, `unusedPluginSkills`
         /// (information: some of a plugin's skills are used), `importManual`, `applyUnmanaged`, `reapply`,
         /// `listInLayer`, `editByHand`.
@@ -55,7 +55,7 @@ public struct RecommendReport: Encodable, Equatable {
         public var text: String?
     }
 
-    public struct Machine: Encodable, Equatable {
+    public struct Machine: Encodable, Equatable, Sendable {
         public let name: String
         /// ISO 8601: when its summary was published (this Mac: its last import).
         public let updated: String?
@@ -72,7 +72,7 @@ public struct RecommendReport: Encodable, Equatable {
     }
 
     /// How this Mac's counted sessions are bound to the project: their methods and the lowest confidence.
-    public struct Binding: Encodable, Equatable {
+    public struct Binding: Encodable, Equatable, Sendable {
         public let methods: [String]
         public let confidence: String?
 
@@ -85,7 +85,7 @@ public struct RecommendReport: Encodable, Equatable {
         private enum CodingKeys: String, CodingKey { case methods, confidence }
     }
 
-    public struct Evidence: Encodable, Equatable {
+    public struct Evidence: Encodable, Equatable, Sendable {
         /// Main sessions it was listed in, on every Mac in scope.
         public let sessions: Int
         /// Distinct local calendar days it was listed, on every Mac in scope.
@@ -128,7 +128,7 @@ public struct RecommendReport: Encodable, Equatable {
         }
     }
 
-    public struct Recommendation: Encodable, Equatable {
+    public struct Recommendation: Encodable, Equatable, Sendable {
         public let id: String
         /// `patch` (a layer.yaml edit, `akit recommend apply`) or `advice`.
         public let type: String
@@ -157,7 +157,7 @@ public struct RecommendReport: Encodable, Equatable {
         private enum CodingKeys: String, CodingKey { case id, type, stale, owner, skill, scope, action, evidence }
     }
 
-    public struct NoData: Encodable, Equatable {
+    public struct NoData: Encodable, Equatable, Sendable {
         public let skill: String
         /// `piOnly`: only Pi sees it or calls it, and Pi records no skill list.
         let reason: String

@@ -726,6 +726,23 @@ extension RecommenderTests {
         #expect(await akit("recommend", "apply", "r-0000000000").code == 2)
     }
 
+    /// The Insights screen reads what `akit recommend` prints: the same ids, the patch behind
+    /// Apply…, the scopes its picker offers and the projects a patch must be applied in again.
+    @Test func theScreenLoadsTheSameReport() async throws {
+        try await setUpHome()
+        try listedSessions(["tdd"], in: try database())
+        let listed = try recommendations(await akit("recommend", "--details", "--json")).compactMap { $0["id"] as? String }
+        let brain = try #require(Brain.load(from: brainRoot))
+        let loaded = try await Recommender.load(env: env, brain: brain, project: nil, projectsRoot: home.appending(path: "Projects"),
+                                                hostName: "TestMac.local", hardware: "test-hardware")
+        #expect(!listed.isEmpty && loaded.report.recommendations.map(\.id) == listed)
+        let patch = try #require(loaded.report.recommendations.first?.patch)
+        #expect(patch.after.contains("mode: manual") && !patch.before.contains("mode: manual"))
+        #expect(loaded.projects == ["home/testmac"])
+        #expect(Recommender.projectsUsing("core", brain: brain, home: home) == ["home/testmac"])
+        #expect(Recommender.projectsUsing("absent", brain: brain, home: home).isEmpty)
+    }
+
     @Test func noBrainMeansAdviceOnly() async throws {
         try await setUpHome(brain: false)
         let db = try database()

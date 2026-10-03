@@ -1,9 +1,15 @@
 # Shared definitions: Session insights, Lab, Error analysis
 
 Status: 2026-10-01. One place for the terms that `session-insights.md`, `lab.md` and
-the error analysis design (`error-analysis.md`, on its own branch, not on master yet)
-use, so a field means the same thing in the index, in a Lab
-result and in an analysis step. A design doc links here instead of defining these again.
+the error analysis design (`error-analysis.md`) use, so a field means the same thing in
+the index, in a Lab result and in an analysis step. A design doc links here instead of
+defining these again.
+
+Checked against the code on 2026-10-03. Built: the data tiers with the sending policy,
+session and request keys, `first_request_context`, exposures with `desc_hash`, `origin`
+and `commit` of the repo snapshot. Not built: name-only reasons and "over budget", the
+harness fingerprint, `dirty` and `diff_hash`, the shared `FailureSignals` parser. Each
+section below says so where it applies.
 
 ## Data tiers
 
@@ -18,18 +24,15 @@ What AKit keeps or sends, by how close it is to message text.
   of reviews and error analysis. Local only, opt-in, never in the brain.
 - **Tier 2: egress.** A transcript or a digest sent to an LLM provider (a Lab review, an
   error analysis step, a judge), only when the user starts that step.
-  - Today: a Lab review sends its masked digest through the harness the user picked,
-    with that harness's own sign-in and provider (`lab.md`). There is no allowed list
-    and no work-machine check yet.
-  - Planned: the sending policy of the error analysis design: an allowed list of
-    destinations (harness + provider + account + org), checked before every send,
-    empty by default on a work machine. Building it is that design's first step and
-    closes the gap above.
+  - Every send goes through the sending policy of `error-analysis.md` (built
+    2026-10-01): the scrubbed digest goes through the harness the user picked, with that
+    harness's own sign-in and provider, and only to a destination on the allowed list
+    (harness + provider + account + org), checked before every send. The list is empty
+    by default on a work machine.
 
 The sentence every design uses: *AKit never uploads sessions anywhere; a transcript
-reaches an LLM provider only in a review or analysis step the user starts, and, once
-the sending policy is built, only to a destination it allows (none by default on a work
-machine).* Claude Code's own `/insights` sends transcripts to a model too; AKit says it
+reaches an LLM provider only in a review or analysis step the user starts, and only to a
+destination the sending policy allows (none by default on a work machine).* Claude Code's own `/insights` sends transcripts to a model too; AKit says it
 plainly instead of claiming "sessions never leave the machine".
 
 ## Session and request
@@ -61,9 +64,17 @@ plainly instead of claiming "sessions never leave the machine".
   budget (1% of the context window by default).
 - **Over budget**: a listing with at least one `budget` exposure.
 
+Status: exposures and `desc_hash` are in the index. The name-only reasons, "over budget"
+and the described-only denominator are step 8 of `session-insights.md`, not built: stats,
+recommendations and summaries still count name-only exposures.
+
 ## Harness fingerprint
 
 What the agent ran with, as a hash, so two sessions can be compared "under the same setup".
+
+Status: designed, not built. No fingerprint is computed in code (step 11 of
+`session-insights.md`). Layer evals design a second, narrower one, the home fingerprint
+(`layer-evals.md`, "Baseline"); it is not built either.
 
 - Components, each hashed on its own:
   - `listing`: the text of the initial `skill_listing` after that start event (from the
@@ -94,7 +105,9 @@ type git, origin, commit, dirty).
   whether the work tree had changes, and the sha256 of `git diff HEAD` when it did.
   The diff itself is never stored. `origin` and `commit` are recorded from the start;
   `dirty` and `diff_hash` come with their first user (control sets), since they need
-  git to run, which a session hook can't wait for.
+  git to run, which a session hook can't wait for. Status: `origin` and `commit` are in
+  the hook line since 2026-10-01; `dirty` and `diff_hash` are not built, and error
+  analysis decided to do without them (HEAD only).
 - A session can be a control task (Lab replay, error analysis control sets) only when it
   is clean, or dirty with a `diff_hash` (then it is marked as not reproducible from the
   commit alone).
@@ -104,9 +117,20 @@ type git, origin, commit, dirty).
 Per-session counts from structural markers only, never from reading message text. They
 are sampling strata for review and error analysis, not verdicts. Each count is stored
 with the version of the parser that produced it. One parser computes them:
-`FailureSignals` in `AKitSessions` (planned; today the rules live in Lab's
-`SessionAnalyzer`), fed one transcript line at a time, used by Lab and by the index
-import alike.
+`FailureSignals` in `AKitSessions`, fed one transcript line at a time, used by Lab and by
+the index import alike.
+
+Status: `FailureSignals` is not built. Today two parsers exist, and the table below is the
+target, not what either of them stores:
+
+- Lab's `SessionAnalyzer` counts `interrupts`, `rejected`, `tool_errors`, `compactions`
+  and `rereads` for one transcript; nothing is stored in the index.
+- `AKitErrorAnalysis.SignalScanner` fills the index table `signals` (schema v6):
+  `interrupts`, `pushbacks`, `tool_errors`, `repeated_calls`, `unverified_done`,
+  `user_turns`, `steps`.
+- They differ: Lab counts an interrupt when the text starts with the marker, the scanner
+  when the text contains it; the scanner's `repeated_calls` counts every repeat of a tool
+  call with the same input anywhere in the session, not "3 or more in a row".
 
 | Signal | Counted from | Known noise |
 |---|---|---|

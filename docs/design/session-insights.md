@@ -10,6 +10,24 @@ Insights screen, fingerprints and failure signals, more outcomes, a reconciliati
 are designed, not built. Terms shared with Lab and Error analysis are in
 [`definitions.md`](definitions.md).
 
+Checked against the code on 2026-10-03:
+
+- Steps 1–7 are built. Until the Insights screen they were commands only.
+- Step 10, first slice (2026-10-03): the Insights screen (sidebar, Improve group) shows the
+  context by owner and the recommendations of a scope, with **Apply…** (the `layer.yaml`
+  diff, then a commit in the brain), **Dismiss…** and **Import Now**. It reads
+  `Recommender.load`, the same calls as `akit recommend --details`; the layer-users query
+  moved into `AKitInsights` (`Recommender.projectsUsing`).
+- Still to do in step 10: the skills table, Changes with marks, capture status and install,
+  Plan for the layer's projects after Apply, and the app's Sync publishing summaries (only
+  `akit sync` does). The app uses none of `InsightsStats`, `BeforeAfter` or
+  `CaptureInstaller` yet.
+- Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
+  (2026-10-01), and the index has a `signals` table, filled by
+  `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.
+- The opt-in store for eval examples (`manual_call_examples`) is in the index; the export
+  to skill-creator (step 12) is not built.
+
 ## Goal
 
 Find what the harness config costs in every request and is not used, and turn it
@@ -512,6 +530,9 @@ Too much for one user on a few Macs, or against a decision above:
 - OpenCode and Codex before they are really used.
 
 ## Order
+
+Status: 1–7 built, the first slice of 10 built, 8, 9 and 11–13 not built (see the status
+note at the top).
 
 0. By hand, today: `"cleanupPeriodDays": 365` in `~/.claude/settings.json`.
    Optionally disable the `marketing` and `customer-support` plugins where they
