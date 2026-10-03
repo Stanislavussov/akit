@@ -2,9 +2,10 @@
 
 Status: design 2026-10-01 (decided in a grilling session, reviewed against the evals
 literature, then revised against 2025–2026 practice); open questions decided the same day
-(see [Decisions](#decisions)); implementation started 2026-10-01 on branch
-`error-analysis`. Extends Lab (`lab.md`): the one-session review becomes the first step of
-this pipeline.
+(see [Decisions](#decisions)). Built 2026-10-01/02, all eight slices, and merged to
+master (tag `v2026.10.02`); what differs from the design and what is not built is listed
+under [Implementation plan](#implementation-plan). Extends Lab (`lab.md`): the one-session
+review becomes the first step of this pipeline.
 
 ## Goal
 

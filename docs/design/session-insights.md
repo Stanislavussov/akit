@@ -10,6 +10,17 @@ Insights screen, fingerprints and failure signals, more outcomes, a reconciliati
 are designed, not built. Terms shared with Lab and Error analysis are in
 [`definitions.md`](definitions.md).
 
+Checked against the code on 2026-10-03:
+
+- Steps 1–7 are built, as commands only. The app has no Insights screen and uses none of
+  `InsightsStats`, `Recommender`, `BeforeAfter` or `CaptureInstaller`; its brain Sync
+  doesn't publish summaries (only `akit sync` does).
+- Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
+  (2026-10-01), and the index has a `signals` table, filled by
+  `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.
+- The opt-in store for eval examples (`manual_call_examples`) is in the index; the export
+  to skill-creator (step 12) is not built.
+
 ## Goal
 
 Find what the harness config costs in every request and is not used, and turn it
@@ -512,6 +523,8 @@ Too much for one user on a few Macs, or against a decision above:
 - OpenCode and Codex before they are really used.
 
 ## Order
+
+Status: 1–7 built, 8–13 not built (see the status note at the top).
 
 0. By hand, today: `"cleanupPeriodDays": 365` in `~/.claude/settings.json`.
    Optionally disable the `marketing` and `customer-support` plugins where they

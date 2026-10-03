@@ -6,6 +6,11 @@ below were carried out on 2026-09-29. The umbrella `AKitCore` target is gone: th
 package folder is still `AKitCore/`, and the app and the `akit` command import the
 modules directly.
 
+Checked against `Package.swift` on 2026-10-03: the dependency table in 1.1 matches the
+code. Two modules were added after the split, `AKitLab` and `AKitErrorAnalysis` (15
+library targets now); the table has them, the graph does not. Planned, not built:
+`AKitErrorAnalysis → AKitRender` for layer evals (`layer-evals.md`).
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -80,6 +85,9 @@ AKitSkillsSh  AKitBrain ── Yams
                   │
          akit (exe)      AKit (app → every feature module except Render)
 ```
+
+Not drawn: `AKitLab` and `AKitErrorAnalysis`, added after the split. Both sit below
+`AKitCommandLine`; their dependencies are in the table.
 
 Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list):
 

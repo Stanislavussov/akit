@@ -1,6 +1,13 @@
 # Layers: per-project harness setup
 
-Status: design agreed 2026-09-25. Steps 2 (brain) and 3 (project form + render) are implemented.
+Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
+[Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
+
+Also built, though not roadmap steps: work machines, the "project owns its files" update
+rules, `keep_auto`, `override`, the home folder render (`akit apply --home`), brain sync,
+import of skills into the brain, the layer editor, and removing layers, skills and
+projects. Not built: MCP in layers, JSON merge, the `/akit-setup` draft,
+`machines/<name>.yaml`, `checks:`.
 
 ## Goal
 
@@ -45,7 +52,8 @@ brain/
     lock.json                  # brain commit each file was rendered from
     usage/<machine id>.json    # this project's skill use per day, one file per Mac
     dismissed.json             # recommendations dismissed for this project
-  machines/<name>.yaml         # which harnesses and core layer per machine
+  machines/<name>.yaml         # which harnesses and core layer per machine (not built: the
+                               # folder is created, no code reads it)
   plugins/                     # local Claude marketplace with the akit plugin (session hook)
   insights/
     machines/<file>.json       # skill use per day per Mac (<id>, or <pseudonym> on a work Mac)
@@ -179,8 +187,8 @@ profile. Differences per harness go through `when: target == "claude"`.
 
 - Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;
   sections are glued in layer order (`requires` first, then selection order).
-- JSON (later: `.mcp.json`, settings): deep merge of keys. Two layers setting the
-  same key to different values is an error, shown in the form before Apply.
+- JSON (later: `.mcp.json`, settings; not built): deep merge of keys. Two layers setting
+  the same key to different values is an error, shown in the form before Apply.
 - Whole files and skills: two layers bringing the same path is an error, unless
   one of them sets `override: true` (that one wins; `mode: off` + override drops
   a skill). Output paths must be unique and never inside `.git`.
@@ -219,6 +227,10 @@ This replaces the earlier plan of a 3-way merge and "detach".
 
 ## Agent draft
 
+Status: not built. What exists instead: every new brain starts with the manual `/akit`
+skill in the core layer, so an agent can already create layers and set up a project
+through the `akit` command, without a draft file.
+
 `/akit-setup` is a `manual` skill in the core layer. It reads
 `~/.akit/registry/layers/*/layer.yaml`, asks about missing fields and writes
 `.akit/draft.json` in the project (hidden via `.git/info/exclude`). The draft has
@@ -228,19 +240,28 @@ and deletes the draft. The form works without the agent.
 
 ## MCP (step after v1)
 
+Status: not built.
+
 Layers may bring MCP servers, merged into `.mcp.json`. Secrets are written only
 as `${VAR}` references; the real values come from Keychain.
 
 ## Roadmap
 
-1. Safe write: backup + diff viewer + Apply. (Done for MCP; to be shared with render.)
+1. Safe write: backup + diff viewer + Apply. (Done, for MCP and for the render.)
 2. Brain repo + layers read-only in AKit (done: Brain screen, checks, Create Brain Repo); move the global skill library from
-   `~/.agents/skills` into the brain; core layer with `manual` skills.
+   `~/.agents/skills` into the brain (done: Import Skills…); core layer with `manual`
+   skills (done; it is rendered into the home folder with `akit apply --home`).
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end. (Done.)
-4. MCP in layers.
-5. `/akit-setup` agent draft.
-6. Updates: 3-way merge + publish back.
+4. MCP in layers. (Not built.)
+5. `/akit-setup` agent draft. (Not built; the `/akit` skill covers the agent-driven
+   setup, see "Agent draft".)
+6. Updates. (Done 2026-09-28 as "the project owns its files", see "Updates". The 3-way
+   merge and "publish back" of this step's first version were dropped.)
+
+Buttons still missing in the app for things the `akit` command does: applying the core
+layer to the home folder (`akit apply --home`; the Brain screen only tells the user to run
+it) and forgetting a project.
 
 ## Open questions
 
@@ -248,5 +269,5 @@ as `${VAR}` references; the real values come from Keychain.
   `disable-model-invocation` not verified yet.
 - Pi has no native MCP (only via `pi-mcp-adapter`).
 - Subagents in layers: low priority, format stays open for them.
-- Rendering the core layer into the home folder (then the old `~/.agents/skills`
-  copies can go).
+- Rendering the core layer into the home folder: done (`akit apply --home`, command
+  only).

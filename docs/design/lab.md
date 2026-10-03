@@ -1,8 +1,13 @@
 # Lab: measuring how well agent sessions work
 
-Status: design proposal 2026-09-28; implementation started 2026-09-30 (see
-[Implementation plan](#implementation-plan-v1)). Replaces the Session Insights
+Status: design proposal 2026-09-28; v1 built 2026-09-30, all four steps of the
+[Implementation plan](#implementation-plan-v1), and merged. Error analysis
+(`error-analysis.md`, built 2026-10-01/02) added the run kinds "error analysis" and
+"control cell", the sending policy and the evidence digest. Replaces the Session Insights
 decision "AKit has no own eval runner" (see [Relation to other designs](#relation-to-other-designs)).
+
+Not built (checked against the code on 2026-10-03): reading the session index for session
+analysis, the shared `FailureSignals` parser, Pi replays, task sets in the brain.
 
 ## Goal
 
@@ -325,8 +330,8 @@ Lab screen shows the spread, not only the mean.
   isolated clone.
 - **Layer evals** (`layer-evals.md`): control cells whose setup renders a brain layer into
   the clone, with the layer's own checks next to the oracle.
-- **Module split** (`architecture.md`, on hold): Lab is its own module (`AKitLab`);
-  launchers live inside it.
+- **Module split** (`architecture.md`, done 2026-09-29): Lab is its own module
+  (`AKitLab`); launchers live inside it.
 
 ## Implementation plan (v1)
 
@@ -335,7 +340,8 @@ and ends with `make build`, `make test` and a snapshot of the screens it touches
 is kept here.
 
 1. **Session analysis** — status: done 2026-09-30.
-   - New module `AKitLab` (Foundation, Model, Sessions). `SessionAnalyzer.analyze(file)`
+   - New module `AKitLab` (Foundation, Model, Sessions; later also Brain, to know
+     whether this Mac is a work Mac). `SessionAnalyzer.analyze(file)`
      reads one Claude Code transcript in order: API calls (one per `message.id`, main
      chain only; subagent calls and fresh tokens are counted apart), fresh and cache-read
      tokens, peak and baseline (first-call) context, context rent, tool errors, re-reads
@@ -419,7 +425,8 @@ is kept here.
 ## Open questions
 
 - Which few numbers belong on a run's card, and which only in details.
-- herdr: focusing a pane that runs a headless `claude -p` (no agent detected) needs a
-  check against the real tool before step 2.
+- herdr: focusing a pane that runs a headless `claude -p` (no agent detected) still needs
+  a check against the real tool. Step 2 is built and was checked with real Orca and
+  background runs only.
 - Whether task sets live in the brain repo (shared between Macs) or only in `~/.akit/lab`.
 - Pi and other harnesses after v1: session id and headless flags differ.
