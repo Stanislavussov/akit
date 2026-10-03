@@ -7,7 +7,7 @@ import Foundation
 /// (comments, order, line endings) stays as it is; the result is read back through
 /// `LayerManifest.parse` and must differ from the old layer in that one field only.
 public enum LayerPatch {
-    public enum Change: Equatable {
+    public enum Change: Equatable, Sendable {
         /// `mode: auto` → `mode: manual`.
         case manual
         /// `keep_auto: true`.

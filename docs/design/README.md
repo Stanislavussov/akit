@@ -43,7 +43,7 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 |---|---|---|---|---|
 | [`architecture.md`](architecture.md) | Which module owns what? | `AKitCore/Package.swift` | all 25 steps; 15 modules | — |
 | [`layers.md`](layers.md) | How does a project get exactly the setup it needs? | Brain screen; `akit plan` / `apply` | roadmap 1–3, update rules, work machines, home render | MCP in layers, JSON merge, `/akit-setup` draft, `machines/<name>.yaml` |
-| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | commands only: `akit stats`, `akit recommend`, `akit insights` | steps 1–7 | steps 8–13; the Insights screen |
+| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen (recommendations); `akit stats`, `akit recommend`, `akit insights` | steps 1–7; step 10, first slice | steps 8, 9, 11–13; the rest of the Insights screen |
 | [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4 | index as a source, Pi replays |
 | [`error-analysis.md`](error-analysis.md) | What goes wrong again and again, and did the fix help? | Error Analysis screen; `akit analysis` | slices 1–8 | manual calibration of cells, merge/split proposals |
 | [`layer-evals.md`](layer-evals.md) | Does layer X make the agent's work better? | — | nothing (design only) | slices 1–9 |
@@ -57,8 +57,8 @@ The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`
 |---|---|
 | Give a project its setup | Brain → Set Up Project… |
 | Update the home folder from the core layer | `akit apply --home` (no button yet) |
-| See which skills cost context and are never called | `akit stats`, `akit recommend` (no screen yet) |
-| Check that a change reduced the context | `akit stats changes`, `akit stats mark "<note>"` |
+| See which skills cost context and are never called | Insights (Apply… makes a layer skill manual); the full skills table: `akit stats` |
+| Check that a change reduced the context | `akit stats changes`, `akit stats mark "<note>"` (no screen yet) |
 | See where one session's tokens went | Sessions → Analysis |
 | Get a short review of one session | Sessions → Review in Terminal… |
 | Compare setups on a past commit | Lab → New Run… (replay) |
@@ -72,7 +72,7 @@ design doc and this table say so.
 | # | Step | Design | Why at this place |
 |---|---|---|---|
 | 0 | No code: label the bootstrap sessions, run one batch, write one fix draft | `error-analysis.md` | Error analysis is built and has no active mode yet. Its results show which of the later steps are needed |
-| 1 | Insights screen; the app's Sync publishes summaries | `session-insights.md`, step 10 | The whole feature has no button. Almost no new logic: three pieces move from the command line module into `AKitInsights` |
+| 1 | Insights screen. Built 2026-10-03: recommendations with Apply… and Dismiss…. Left: the skills table, Changes, capture install, Plan after Apply, and the app's Sync publishing summaries | `session-insights.md`, step 10 | The feature had no button. Almost no new logic: the pieces move from the command line module into `AKitInsights` |
 | 2 | Buttons for "apply the core layer to the home folder" and "forget project" | `layers.md`, Roadmap | Same rule: every operation needs a button. Small |
 | 3 | Count only exposures with a description | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
