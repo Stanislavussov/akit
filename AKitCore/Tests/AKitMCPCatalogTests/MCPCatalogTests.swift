@@ -199,7 +199,7 @@ struct MCPCatalogTests {
     }
 
     @Test(arguments: [("/path/to/dir", "{/path/to/dir}"), ("host:port", "{host_port}"), ("--dir", "{dir}"),
-                      ("<path>", "{<path>}"), ("{x}", "{_x_}"), ("  ", "{value}"), ("api key (optional)", "{api key (optional)}")])
+                      ("<path>", "{<path>}"), ("{x}", "{_x_}"), ("  ", "{value}"), ("123", "{value}"), ("api key (optional)", "{api key (optional)}")])
     func hintsOfAnyShapeBecomePlaceholdersThatBlockPreview(hint: String, expected: String) {
         let word = CatalogDraft.placeholder(hint)
         #expect(word == expected)
@@ -218,6 +218,9 @@ struct MCPCatalogTests {
         #expect(try server(inURL).options[0].unsupported?.contains("secret inside its URL ({workspace})") == true)
         let namedInURL = #"{"server":{"name":"a/four","remotes":[{"type":"sse","url":"https://mcp.a.example/sse?api_key={api_key}"}]}}"#
         #expect(try server(namedInURL).options[0].unsupported != nil)
+        // A secret flag without a value or a hint: the user would add the key after it.
+        let bare = #"{"server":{"name":"a/eight","packages":[{"registryType":"npm","identifier":"eight","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"named","name":"--api-key","isRequired":true,"isSecret":true}]}]}}"#
+        #expect(try server(bare).options[0].unsupported != nil)
         // Only the hint names the credential.
         let hinted = #"{"server":{"name":"a/six","packages":[{"registryType":"npm","identifier":"six","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"positional","isRequired":true,"valueHint":"api_key"}]}]}}"#
         #expect(try server(hinted).options[0].unsupported != nil)

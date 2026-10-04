@@ -97,7 +97,8 @@ public enum CatalogDraft {
     static func placeholder(_ hint: String) -> String {
         let cleaned = String(hint.map { "{}:\"$".contains($0) || $0.isNewline ? "_" : $0 })
             .trimmingCharacters(in: CharacterSet(charactersIn: "- "))
-        return "{\(cleaned.isEmpty ? "value" : cleaned)}"
+        // `placeholders(in:)` wants a letter; a hint without one (`123`) gets a word.
+        return "{\(cleaned.contains { $0.isASCII && $0.isLetter } ? cleaned : "value")}"
     }
 
     /// The text is one `{name}` and nothing else.

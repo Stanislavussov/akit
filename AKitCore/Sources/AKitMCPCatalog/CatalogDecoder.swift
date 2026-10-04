@@ -226,7 +226,7 @@ enum CatalogDecoder {
             let typed = open || (!added.isEmpty && argument.value?.text == nil)
             let secret = argument.isSecret == true || [name, hint].compactMap { $0 }.contains(where: isCredentialName)
                 || (argument.variables ?? [:]).values.contains { $0.value?.isSecret == true }
-            if typed, secret, named ? added.count > 1 : true {
+            if typed, secret {
                 result.secret = result.secret ?? name ?? hint ?? "a value"
             }
             result.open = result.open || open

@@ -105,6 +105,11 @@ Snapshot: `make snapshot SECTION=mcp TAB=catalog QUERY=context7 ADD=1`; with
   value is a `{placeholder}` in the Arguments line).
 - A local copy of the whole registry, if it gets fast enough to download.
 - A check for a newer version of a pinned package.
+- Known gaps of the secret rules (review, 2026-10-04): an unmarked URL part or argument with
+  a short name (`{key}`, `--key`) is not refused; a hint such as `max_tokens` refuses an
+  option that holds no secret; a docker tag other than `latest` that moves (`img:1`) gets no
+  warning.
+- The ticked values and the edited name of a catalog entry are reset by a look at the Form tab.
 - Secret arguments through a `${VAR}` reference (works only with the env.sh secret mode today).
 - `uvx --from` for packages whose program has another name than the package.
 - Docker: keeping the `-e NAME` arguments in step with the Environment rows after the form
