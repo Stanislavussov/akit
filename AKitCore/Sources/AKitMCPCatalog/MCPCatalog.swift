@@ -15,14 +15,18 @@ public enum MCPCatalog {
     /// download fails, the old copy is returned together with the reason.
     public static func directory(home: URL, now: Date = .now, refresh: Bool = false,
                                  fetch: MCPCatalogClient.Fetch = MCPCatalogClient.network) async -> Directory {
-        var cache = MCPCatalogCache.load(home: home)
+        let cache = MCPCatalogCache.load(home: home)
         if !refresh, let saved = cache.directory, cache.isFresh(saved, now: now) {
             return Directory(servers: saved.servers, savedAt: saved.savedAt, problem: nil)
         }
         do {
             let servers = try await MCPCatalogClient.directory(fetch: fetch)
-            cache.directory = MCPCatalogCache.Entry(savedAt: now, servers: servers)
-            try? cache.save(home: home)
+            // An empty answer must not replace a good saved list for a day.
+            guard !servers.isEmpty else { throw MCPCatalogClient.Failure.server("The directory sent an empty list.") }
+            // Read again: a registry search may have been saved while this download waited.
+            var latest = MCPCatalogCache.load(home: home)
+            latest.directory = MCPCatalogCache.Entry(savedAt: now, servers: servers)
+            try? latest.save(home: home)
             return Directory(servers: servers, savedAt: now, problem: nil)
         } catch {
             return Directory(servers: cache.directory?.servers ?? [], savedAt: cache.directory?.savedAt,

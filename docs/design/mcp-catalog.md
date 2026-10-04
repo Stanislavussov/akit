@@ -1,7 +1,7 @@
 # MCP catalog: add a server without looking up its config
 
-Status: built 2026-10-04 (MCP Servers → Catalog…, module `AKitMCPCatalog`). Not built:
-see [Later](#later).
+Status: built 2026-10-04 (MCP Servers → Catalog…, module `AKitMCPCatalog`), with the fixes
+of one code review (secrets in arguments, warnings, tolerant reading). Not built: see [Later](#later).
 
 ## Goal
 
@@ -50,9 +50,20 @@ registry under its own heading with a warning on every entry.
 - **Secrets are never taken from the catalog and never prefilled.** A value is a secret when
   the entry says so or when its name looks like a credential (`MCPDraft.looksSecret`);
   it goes to the Keychain like any other MCP secret.
+- **A secret never goes into Arguments or the URL.** What is typed there is written into
+  the file as it is. An option that needs a secret there (an argument or URL part marked
+  secret, or named like one: `--api-key`, `{token}`) is shown as not supported, with the
+  reason. Secrets in environment variables and headers are supported.
+- **What an entry adds is pointed out.** Arguments an entry brings for the runner
+  (`npx --registry …`, `docker -v …`) change what runs, so the option carries a warning with
+  the exact words. A value the catalog prefills is named in the option and in the form's
+  notes ("Prefilled by the catalog: …"). A package name that reads as an option is dropped.
+  A catalog value may fill one part of a URL only if it is a plain name (letters, digits,
+  `.`, `_`, `-`), so it can't bring a host or a path of its own.
 - **Packages are pinned to the listed version** (`npx -y pkg@1.2.3`, `uvx pkg==1.2.3`,
   `docker run … image:1.2.3`): what the user saw in Preview is what runs. Updating is a
-  new pass through the catalog or an edit of the version.
+  new pass through the catalog or an edit of the version. An entry without a version
+  number (none, `latest`, a tag such as `next`) carries the warning "No version is pinned".
 - **`{placeholders}` block Preview.** A URL part, an argument or a plain value that the
   entry leaves open (`https://{api_host}/mcp`, `--dir {folder}`) stays visible in the form,
   and Preview refuses until it is replaced (`CatalogDraft.problems`). This is checked only
@@ -92,4 +103,8 @@ Snapshot: `make snapshot SECTION=mcp TAB=catalog QUERY=context7 ADD=1`; with
   value is a `{placeholder}` in the Arguments line).
 - A local copy of the whole registry, if it gets fast enough to download.
 - A check for a newer version of a pinned package.
+- Secret arguments through a `${VAR}` reference (works only with the env.sh secret mode today).
+- `uvx --from` for packages whose program has another name than the package.
+- Docker: keeping the `-e NAME` arguments in step with the Environment rows after the form
+  is filled (today a note in the form says to do it by hand).
 - Catalog entries in layers (waits for "MCP in layers", `layers.md`).

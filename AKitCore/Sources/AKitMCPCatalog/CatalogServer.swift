@@ -106,12 +106,14 @@ public struct CatalogOption: Identifiable, Hashable, Sendable, Codable {
     public let parameters: [CatalogParameter]
     /// Why AKit can't fill the form for this option; nil when it can.
     public let unsupported: String?
+    /// What the user should check before adding it (extra runner arguments, no pinned version).
+    public let cautions: [String]
     /// One line for a picker, e.g. `Remote · mcp.context7.com` or `Local · npx @upstash/context7-mcp 4.1.1`.
     public let label: String
 
     public init(id: String, kind: Kind, transport: Transport, url: String = "", command: String = "",
                 leadingArguments: [String] = [], trailingArguments: [String] = [], passesEnvironmentByFlag: Bool = false,
-                parameters: [CatalogParameter] = [], unsupported: String? = nil, label: String) {
+                parameters: [CatalogParameter] = [], unsupported: String? = nil, cautions: [String] = [], label: String) {
         self.id = id
         self.kind = kind
         self.transport = transport
@@ -122,6 +124,7 @@ public struct CatalogOption: Identifiable, Hashable, Sendable, Codable {
         self.passesEnvironmentByFlag = passesEnvironmentByFlag
         self.parameters = parameters
         self.unsupported = unsupported
+        self.cautions = cautions
         self.label = label
     }
 }

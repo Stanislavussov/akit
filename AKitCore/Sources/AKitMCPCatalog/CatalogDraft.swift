@@ -16,16 +16,14 @@ public enum CatalogDraft {
         }
         switch option.kind {
         case .remote:
-            var url = option.url
-            for parameter in chosen where parameter.place == .url {
-                if let value = parameter.defaultValue { url = url.replacingOccurrences(of: "{\(parameter.name)}", with: value) }
-            }
-            // Nothing but a placeholder: an empty field, which the form asks for by itself.
-            if isWholePlaceholder(url) { url = "" }
-            return MCPDraft(name: name, transport: option.transport == .sse ? .sse : .http, url: url, headers: values(.header))
+            return MCPDraft(name: name, transport: option.transport == .sse ? .sse : .http, url: url(of: option), headers: values(.header))
         case .package:
             let environment = values(.environment)
-            let flags = option.passesEnvironmentByFlag ? environment.flatMap { ["-e", $0.key] } : []
+            // Docker hands a variable to the container only when an `-e NAME` argument names it.
+            let flags = option.passesEnvironmentByFlag
+                ? environment.filter { $0.key.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil }
+                    .flatMap { ["-e", $0.key] }
+                : []
             return MCPDraft(name: name, transport: .stdio, command: option.command,
                             arguments: option.leadingArguments + flags + option.trailingArguments, environment: environment)
         }
@@ -33,7 +31,11 @@ public enum CatalogDraft {
 
     /// One line per parameter of the form, saying what to type there.
     public static func notes(for option: CatalogOption, including included: Set<CatalogParameter.ID> = []) -> [String] {
-        parameters(of: option, including: included).map { parameter in
+        var notes = option.cautions
+        if option.passesEnvironmentByFlag {
+            notes.append("The container gets a variable only through an “-e NAME” argument: when you add or remove a variable, change Arguments too.")
+        }
+        return notes + parameters(of: option, including: included).map { parameter in
             var line = switch parameter.place {
             case .url: isWholePlaceholder(option.url) ? "URL: type the address of your own server" : "{\(parameter.name)} in the URL"
             case .header: "Header \(parameter.name)"
@@ -46,6 +48,8 @@ public enum CatalogDraft {
             if !parameter.choices.isEmpty { line += ": one of " + parameter.choices.joined(separator: ", ") }
             let details = parameter.details.trimmingCharacters(in: .whitespacesAndNewlines)
             if !details.isEmpty { line += ". " + details }
+            // A value the catalog put into the form is named, so it can't slip in unseen.
+            if parameter.template == nil, let value = prefilled(parameter) { line += " Prefilled by the catalog: \(value)" }
             return line
         }
     }
@@ -73,6 +77,29 @@ public enum CatalogDraft {
         return result
     }
 
+    /// The value the catalog puts into the form for a parameter; nil for secrets and empty fields.
+    public static func prefilled(_ parameter: CatalogParameter) -> String? {
+        guard !parameter.isSecret, let value = parameter.template ?? parameter.defaultValue, !value.isEmpty else { return nil }
+        return value
+    }
+
+    /// The URL the form gets: the entry's URL with the catalog's own values put in.
+    public static func url(of option: CatalogOption) -> String {
+        var url = option.url
+        for parameter in option.parameters where parameter.place == .url {
+            if let value = parameter.defaultValue { url = url.replacingOccurrences(of: "{\(parameter.name)}", with: value) }
+        }
+        // Nothing but a placeholder: an empty field, which the form asks for by itself.
+        return isWholePlaceholder(url) ? "" : url
+    }
+
+    /// A `{word}` for the user to replace, from a hint of any shape (`/path/to/dir`, `--dir`).
+    static func placeholder(_ hint: String) -> String {
+        let cleaned = String(hint.map { "{}:\"$".contains($0) || $0.isNewline ? "_" : $0 })
+            .trimmingCharacters(in: CharacterSet(charactersIn: "- "))
+        return "{\(cleaned.isEmpty ? "value" : cleaned)}"
+    }
+
     /// The text is one `{name}` and nothing else.
     static func isWholePlaceholder(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -80,9 +107,9 @@ public enum CatalogDraft {
             && trimmed.dropFirst().dropLast().allSatisfy { $0 != "{" && $0 != "}" }
     }
 
-    /// Names of `{name}` parts. `${VAR}` and `{env:VAR}` are references, not placeholders.
+    /// Names of `{name}` parts. `${VAR}` and `{env:VAR}` are references, not placeholders; neither is JSON.
     static func placeholders(in text: String) -> [String] {
-        let pattern = try! NSRegularExpression(pattern: #"(?<!\$)\{([A-Za-z][A-Za-z0-9_ .-]*)\}"#)
+        let pattern = try! NSRegularExpression(pattern: #"(?<!\$)\{([^{}:"$]+)\}"#)
         let range = NSRange(text.startIndex..., in: text)
         var names: [String] = []
         for match in pattern.matches(in: text, range: range) {

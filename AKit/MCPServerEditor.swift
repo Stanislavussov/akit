@@ -20,9 +20,16 @@ struct MCPServerEditor: View {
 
     let mode: Mode
 
+    init(mode: Mode) {
+        self.mode = mode
+        // The sheet is made once per request, so this seeds the tab once.
+        if case .add(_, true) = mode { _input = State(initialValue: .catalog) } else { _input = State(initialValue: .form) }
+    }
+
     private enum Input: String, CaseIterable { case form = "Form", json = "JSON", catalog = "Catalog" }
 
-    @State private var input: Input = .form
+    @State private var input: Input
+    @State private var catalogQuery = DebugSnapshot.options?.tab == "catalog" ? DebugSnapshot.options?.query ?? "" : ""
     @State private var draft = MCPDraft()
     @State private var argumentLine = ""
     @State private var json = ""
@@ -63,10 +70,7 @@ struct MCPServerEditor: View {
             }
         }
         .frame(width: 680, height: 640)
-        .onAppear {
-            if case .add(_, true) = mode { input = .catalog }
-            loadTargets()
-        }
+        .onAppear(perform: loadTargets)
         // Opened before the first scan finished: fill the places once it has.
         .onChange(of: model.lastScan) { if targets.isEmpty { loadTargets() } }
     }
@@ -92,7 +96,7 @@ struct MCPServerEditor: View {
             switch input {
             case .form: form
             case .json: jsonInput
-            case .catalog: MCPCatalogPane(onUse: useCatalog)
+            case .catalog: MCPCatalogPane(onUse: useCatalog, query: $catalogQuery)
             }
             Divider()
             footer

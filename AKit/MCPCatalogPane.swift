@@ -9,8 +9,9 @@ import SwiftUI
 struct MCPCatalogPane: View {
     /// The chosen entry as a form, with a line per value the user still has to type.
     let onUse: (MCPDraft, [String]) -> Void
+    /// Owned by the sheet, so the search survives a look at the Form tab.
+    @Binding var query: String
 
-    @State private var query = DebugSnapshot.options?.tab == "catalog" ? DebugSnapshot.options?.query ?? "" : ""
     @State private var directory: [CatalogServer] = []
     @State private var directoryProblem: String?
     @State private var isLoadingDirectory = true
@@ -20,6 +21,8 @@ struct MCPCatalogPane: View {
     /// The registry query in flight.
     @State private var searching: String?
     @State private var registryError: String?
+    /// Bumped by Try Again: the same query is searched once more.
+    @State private var attempt = 0
     @State private var selection: CatalogServer.ID?
 
     private var home: URL { HarnessEnvironment.current.homeDirectory }
@@ -58,7 +61,7 @@ struct MCPCatalogPane: View {
             }
         }
         .task { await loadDirectory(refresh: false) }
-        .task(id: key) { await searchRegistry() }
+        .task(id: "\(attempt) \(key)") { await searchRegistry() }
         .onChange(of: shown.map(\.id)) { keepSelectionVisible() }
     }
 
@@ -92,6 +95,9 @@ struct MCPCatalogPane: View {
             status("Type a name to search the registry too.", systemImage: "magnifyingglass")
         } else if let registryError, registryQuery == key {
             status("Search failed: \(registryError)", systemImage: "wifi.exclamationmark")
+            Button("Try Again") { registryQuery = nil; attempt += 1 }
+                .buttonStyle(.link)
+                .font(.caption)
         } else if searching != nil || registryQuery != key {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
@@ -287,6 +293,9 @@ private struct MCPCatalogDetail: View {
             } else {
                 Text(option.label)
             }
+            ForEach(option.cautions, id: \.self) { caution in
+                Label(caution, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+            }
             if let reason = option.unsupported {
                 Label(reason, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             } else {
@@ -326,6 +335,10 @@ private struct MCPCatalogDetail: View {
                             Text(parameter.details).font(.caption).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        if let value = CatalogDraft.prefilled(parameter) {
+                            Text("Prefilled by the catalog: \(value)").font(.caption.monospaced()).foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
                 .toggleStyle(.checkbox)
@@ -362,7 +375,9 @@ private struct MCPCatalogDetail: View {
 
     private func commandLine(_ option: CatalogOption) -> String {
         let draft = CatalogDraft.draft(of: option, name: trimmedName, including: included)
-        return option.kind == .remote ? option.url : ([draft.command] + [MCPDraft.joinArguments(draft.arguments)]).joined(separator: " ")
+        // What the form gets, not the entry's template: a value the catalog puts in must be visible here.
+        if option.kind == .remote { return draft.url.isEmpty ? option.url : draft.url }
+        return [draft.command, MCPDraft.joinArguments(draft.arguments)].joined(separator: " ")
     }
 
     private func notes(_ option: CatalogOption) -> [String] {

@@ -135,13 +135,18 @@ struct MCPCatalogTests {
         let draft = CatalogDraft.draft(of: option, name: "armor", including: ["environment:ARMOR_BASE_URL"])
         #expect(draft.command == "uvx")
         #expect(draft.arguments == ["armor-mcp==0.6.1", "serve", "--profile", "domains", "--dir", "{folder}"])
+        #expect(option.cautions.isEmpty)
         #expect(draft.environment.map(\.key) == ["ARMOR_API_KEY", "ARMOR_BASE_URL"])
         // The host can be changed in the form: a plain value, prefilled with the default.
         #expect(draft.environment[1].value == "https://api.example" && !draft.environment[1].isSecret)
         #expect(CatalogDraft.problems(in: draft) == ["Replace {folder} in Arguments."])
 
         let oci = #"{"server":{"name":"a/spot","packages":[{"registryType":"oci","identifier":"docker.io/a/spotdb","version":"0.1.0","transport":{"type":"stdio"},"runtimeArguments":[{"type":"named","name":"-v","default":"~/.spot:/data"}],"environmentVariables":[{"name":"SPOT_TOKEN","isRequired":true}]}]}}"#
-        let docker = CatalogDraft.draft(of: try server(oci).options[0], name: "spot")
+        let spot = try server(oci).options[0]
+        // Arguments the entry adds for docker are pointed out, and so is the `-e` rule.
+        #expect(spot.cautions == ["The entry adds its own arguments for docker: -v ~/.spot:/data. They change what runs: check them."])
+        #expect(CatalogDraft.notes(for: spot).count == 3)
+        let docker = CatalogDraft.draft(of: spot, name: "spot")
         #expect(docker.command == "docker")
         #expect(docker.arguments == ["run", "-i", "--rm", "-e", "SPOT_TOKEN", "-v", "~/.spot:/data", "docker.io/a/spotdb:0.1.0"])
         // No isSecret mark in the entry: the name decides.
@@ -165,7 +170,7 @@ struct MCPCatalogTests {
         #expect(CatalogDraft.problems(in: draft) == ["Replace {api_host} in the URL.", "Replace {region} in X-Region."])
         #expect(CatalogDraft.notes(for: option) == [
             "{api_host} in the URL: one of api.a.example, api.eu.a.example. Region host.",
-            "{tenant} in the URL",
+            "{tenant} in the URL Prefilled by the catalog: main",
             "Header Authorization: type Bearer <token>",
             "Header X-Region: type <region>",
         ])
@@ -189,6 +194,96 @@ struct MCPCatalogTests {
     @Test func referencesAreNotPlaceholders() {
         #expect(CatalogDraft.placeholders(in: "https://${HOST}/{env:TOKEN}/{tenant}/{tenant}") == ["tenant"])
         #expect(CatalogDraft.placeholders(in: #"{"json": true}"#).isEmpty)
+        #expect(CatalogDraft.placeholders(in: "{_x} {1st} {/path/to/dir}") == ["_x", "1st", "/path/to/dir"])
+    }
+
+    @Test(arguments: [("/path/to/dir", "{/path/to/dir}"), ("host:port", "{host_port}"), ("--dir", "{dir}"),
+                      ("<path>", "{<path>}"), ("{x}", "{_x_}"), ("  ", "{value}"), ("api key (optional)", "{api key (optional)}")])
+    func hintsOfAnyShapeBecomePlaceholdersThatBlockPreview(hint: String, expected: String) {
+        let word = CatalogDraft.placeholder(hint)
+        #expect(word == expected)
+        #expect(CatalogDraft.placeholders(in: word).count == 1)
+    }
+
+    // MARK: - Untrusted entries
+
+    @Test func secretsInArgumentsOrUrlMakeAnOptionUnsupported() throws {
+        // What the user types into Arguments or the URL is written into the file as it is.
+        let flagged = #"{"server":{"name":"a/one","packages":[{"registryType":"npm","identifier":"one","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"positional","isRequired":true,"isSecret":true,"valueHint":"license"}]}]}}"#
+        #expect(try server(flagged).options[0].unsupported?.contains("secret as a command-line argument (license)") == true)
+        let named = #"{"server":{"name":"a/two","packages":[{"registryType":"npm","identifier":"two","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"named","name":"--api-key","isRequired":true,"valueHint":"key"}]}]}}"#
+        #expect(try server(named).options[0].unsupported?.contains("--api-key") == true)
+        let inURL = #"{"server":{"name":"a/three","remotes":[{"type":"streamable-http","url":"https://mcp.a.example/{workspace}/mcp","variables":{"workspace":{"isSecret":true}}}]}}"#
+        #expect(try server(inURL).options[0].unsupported?.contains("secret inside its URL ({workspace})") == true)
+        let namedInURL = #"{"server":{"name":"a/four","remotes":[{"type":"sse","url":"https://mcp.a.example/sse?api_key={api_key}"}]}}"#
+        #expect(try server(namedInURL).options[0].unsupported != nil)
+        // A fixed word the entry gives is not the user's secret.
+        let fixed = #"{"server":{"name":"a/five","packages":[{"registryType":"npm","identifier":"five","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"named","name":"--auth-mode","value":"oauth"}]}]}}"#
+        #expect(try server(fixed).options[0].unsupported == nil)
+    }
+
+    @Test func headerWithASecretPartIsASecret() throws {
+        let entry = #"{"server":{"name":"a/ws","remotes":[{"type":"streamable-http","url":"https://a.example/mcp","headers":[{"name":"X-Workspace","isRequired":true,"value":"{id}","variables":{"id":{"isSecret":true}}}]}]}}"#
+        let draft = CatalogDraft.draft(of: try server(entry).options[0], name: "ws")
+        #expect(draft.headers[0].isSecret && draft.headers[0].value.isEmpty)
+    }
+
+    @Test func namedLikeASecretButDeclaredPlainWithADefaultStaysPlain() throws {
+        let entry = #"{"server":{"name":"a/t","packages":[{"registryType":"npm","identifier":"t","version":"1.0.0","transport":{"type":"stdio"},"environmentVariables":[{"name":"SESSION_TIMEOUT","isRequired":true,"isSecret":false,"default":30},{"name":"SESSION_ID","isRequired":true,"isSecret":false},{"name":"SESSION_TIMEOUT","default":"99"}]}]}}"#
+        let option = try server(entry).options[0]
+        // The repeated name is read once.
+        #expect(option.parameters.map(\.name) == ["SESSION_TIMEOUT", "SESSION_ID"])
+        let draft = CatalogDraft.draft(of: option, name: "t")
+        #expect(!draft.environment[0].isSecret && draft.environment[0].value == "30")
+        #expect(draft.environment[1].isSecret)
+        #expect(CatalogDraft.notes(for: option) == ["SESSION_TIMEOUT Prefilled by the catalog: 30", "SESSION_ID"])
+    }
+
+    @Test func runnerOptionsFromAnEntryAreRefusedOrPointedOut() throws {
+        // A package name that reads as an option is not a package.
+        let dash = #"{"server":{"name":"a/dash","packages":[{"registryType":"npm","identifier":"--call=evil","transport":{"type":"stdio"}}],"remotes":[{"type":"sse","url":"https://a.example/sse"}]}}"#
+        #expect(try server(dash).options.map(\.kind) == [.remote])
+        let extra = #"{"server":{"name":"a/extra","packages":[{"registryType":"npm","identifier":"good","version":"1.0.0","transport":{"type":"stdio"},"runtimeArguments":[{"type":"positional","value":"-y"},{"type":"named","name":"--registry","value":"https://evil.example"}]}]}}"#
+        let option = try server(extra).options[0]
+        #expect(CatalogDraft.draft(of: option, name: "extra").arguments == ["-y", "--registry", "https://evil.example", "good@1.0.0"])
+        #expect(option.cautions == ["The entry adds its own arguments for npx: --registry https://evil.example. They change what runs: check them."])
+    }
+
+    @Test func unpinnedPackagesCarryACaution() throws {
+        func option(_ fields: String) throws -> CatalogOption {
+            try server(#"{"server":{"name":"a/p","packages":[{\#(fields),"transport":{"type":"stdio"}}]}}"#).options[0]
+        }
+        let caution = ["No version is pinned: the newest release runs at every start."]
+        #expect(try option(#""registryType":"npm","identifier":"p""#).cautions == caution)
+        #expect(try option(#""registryType":"npm","identifier":"p","version":"latest""#).cautions == caution)
+        let tag = try option(#""registryType":"npm","identifier":"p","version":"next""#)
+        #expect(tag.cautions == caution && tag.trailingArguments == ["p@next"])
+        #expect(try option(#""registryType":"pypi","identifier":"p""#).cautions == caution)
+        #expect(try option(#""registryType":"oci","identifier":"ghcr.io/a/p""#).cautions == caution)
+        #expect(try option(#""registryType":"oci","identifier":"host:5000/a/p@sha256:abc""#).trailingArguments == ["host:5000/a/p@sha256:abc"])
+        #expect(try option(#""registryType":"oci","identifier":"host:5000/a/p","version":"1.2.0""#).trailingArguments == ["host:5000/a/p:1.2.0"])
+    }
+
+    @Test func urlDefaultsCannotBringAHostOfTheirOwn() throws {
+        let entry = #"{"server":{"name":"a/u","remotes":[{"type":"streamable-http","url":"https://{tenant}.good.example/mcp","variables":{"tenant":{"default":"evil.example/x?","choices":["eu","evil.example/"]}}}]}}"#
+        let option = try server(entry).options[0]
+        #expect(option.label == "Remote · {tenant}.good.example/mcp")
+        #expect(option.parameters[0].defaultValue == nil && option.parameters[0].choices == ["eu"])
+        #expect(CatalogDraft.draft(of: option, name: "u").url == "https://{tenant}.good.example/mcp")
+    }
+
+    @Test func oddFieldsDoNotDropAnEntry() throws {
+        // Fields of another type than expected read as missing.
+        let odd = #"{"server":{"name":"app.linear/linear","title":7,"repository":"https://github.com/x","remotes":[{"type":"streamable-http","url":"https://mcp.linear.app/mcp","headers":[{"name":"X-Team","isRequired":"yes","choices":"a"}]}]},"_meta":{"com.anthropic.api/mcp-registry":{"displayName":"Linear","isAuthless":"false","worksWith":[{"id":"claude-code"}]},"io.modelcontextprotocol.registry/official":"active"}}"#
+        let server = try server(odd, source: .directory)
+        #expect(server.title == "Linear" && server.needsSignIn == nil && server.listsClaudeCode == nil)
+        #expect(server.options[0].parameters.map(\.name) == ["X-Team"])
+    }
+
+    @Test func aDirectoryPageNobodyCanReadIsAnError() {
+        #expect(throws: MCPCatalogClient.Failure.self) {
+            try MCPCatalogClient.decode(page([#"{"entry":{"name":"a/b"}}"#, #"{"entry":{"name":"a/c"}}"#]), source: .directory)
+        }
     }
 
     // MARK: - Search
@@ -260,6 +355,49 @@ struct MCPCatalogTests {
         let later = await MCPCatalog.directory(home: home, now: monday.addingTimeInterval(25 * 3600), fetch: network.fetch)
         #expect(later.servers == first.servers && later.savedAt == monday && later.problem != nil)
         #expect(network.calls.count == 2)
+    }
+
+    @Test func anEmptyDirectoryAnswerKeepsTheSavedList() async throws {
+        let network = FakeNetwork()
+        network.set(MCPCatalogClient.directoryURL(), page([Self.linear]))
+        let monday = Date(timeIntervalSince1970: 1_790_000_000)
+        _ = await MCPCatalog.directory(home: home, now: monday, fetch: network.fetch)
+        network.set(MCPCatalogClient.directoryURL(), page([]))
+        let later = await MCPCatalog.directory(home: home, now: monday, refresh: true, fetch: network.fetch)
+        #expect(later.servers.map(\.name) == ["app.linear/linear"] && later.problem != nil)
+        #expect(MCPCatalogCache.load(home: home).directory?.servers.count == 1)
+    }
+
+    @Test func directoryDownloadKeepsSearchesSavedMeanwhile() async throws {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let home = home
+        // The download answers only after a search was saved.
+        let fetch: MCPCatalogClient.Fetch = { [linear = Self.linear] _ in
+            var cache = MCPCatalogCache.load(home: home)
+            cache.remember(search: "context7", servers: [], now: now)
+            try cache.save(home: home)
+            return Data(#"{"servers":[\#(linear)],"metadata":{}}"#.utf8)
+        }
+        _ = await MCPCatalog.directory(home: home, now: now, fetch: fetch)
+        let saved = MCPCatalogCache.load(home: home)
+        #expect(saved.directory?.servers.count == 1 && saved.searches["context7"] != nil)
+    }
+
+    @Test func directoryPagingStopsAtTheLimit() async throws {
+        // Every page names a new cursor.
+        let counter = Counter()
+        let fetch: MCPCatalogClient.Fetch = { [linear = Self.linear] _ in
+            let page = counter.next()
+            return Data(#"{"servers":[\#(linear)],"metadata":{"nextCursor":"p\#(page)"}}"#.utf8)
+        }
+        let servers = try await MCPCatalogClient.directory(fetch: fetch)
+        #expect(servers.count == 1 && counter.value == MCPCatalogClient.maximumDirectoryPages)
+    }
+
+    final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var value = 0
+        func next() -> Int { lock.withLock { value += 1; return value } }
     }
 
     @Test func registrySearchIsAskedOncePerQuery() async throws {
