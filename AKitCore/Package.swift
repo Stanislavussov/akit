@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "AKitSessions", targets: ["AKitSessions"]),
         .library(name: "AKitUsage", targets: ["AKitUsage"]),
         .library(name: "AKitMCP", targets: ["AKitMCP"]),
+        .library(name: "AKitMCPCatalog", targets: ["AKitMCPCatalog"]),
         .library(name: "AKitBrain", targets: ["AKitBrain"]),
         .library(name: "AKitInsights", targets: ["AKitInsights"]),
         .library(name: "AKitProjectSetup", targets: ["AKitProjectSetup"]),
@@ -36,6 +37,8 @@ let package = Package(
         .target(name: "AKitSessions", dependencies: ["AKitFoundation", "AKitModel"]),
         .target(name: "AKitUsage", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions"]),
         .target(name: "AKitMCP", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        // Public catalogs of MCP servers; fills the Add Server form (docs/design/mcp-catalog.md).
+        .target(name: "AKitMCPCatalog", dependencies: ["AKitMCP"]),
         .target(name: "AKitBrain", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "Yams"]),
         .target(name: "AKitInsights", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
         // The rulesync seam: sees only the brain's ProjectBundle and RenderResult.
@@ -55,6 +58,7 @@ let package = Package(
         .testTarget(name: "AKitSessionsTests", dependencies: ["AKitSessions", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitUsageTests", dependencies: ["AKitUsage", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitMCPTests", dependencies: ["AKitMCP", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .testTarget(name: "AKitMCPCatalogTests", dependencies: ["AKitMCPCatalog", "AKitMCP"]),
         .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitProjectSetup", "AKitCommandLine"]),
         .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitProjectSetup", "AKitCommandLine"]),
         .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain"]),

@@ -41,12 +41,13 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 
 | Document | Question it answers | Where it shows | Built | Not built |
 |---|---|---|---|---|
-| [`architecture.md`](architecture.md) | Which module owns what? | `AKitCore/Package.swift` | all 25 steps; 15 modules | — |
+| [`architecture.md`](architecture.md) | Which module owns what? | `AKitCore/Package.swift` | all 25 steps; 16 modules | — |
 | [`layers.md`](layers.md) | How does a project get exactly the setup it needs? | Brain screen; `akit plan` / `apply` | roadmap 1–3, update rules, work machines, home render | MCP in layers, JSON merge, `/akit-setup` draft, `machines/<name>.yaml` |
 | [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen (recommendations); `akit stats`, `akit recommend`, `akit insights` | steps 1–7; step 10, first slice | steps 8, 9, 11–13; the rest of the Insights screen |
 | [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4 | index as a source, Pi replays |
 | [`error-analysis.md`](error-analysis.md) | What goes wrong again and again, and did the fix help? | Error Analysis screen; `akit analysis` | slices 1–8 | manual calibration of cells, merge/split proposals |
 | [`layer-evals.md`](layer-evals.md) | Does layer X make the agent's work better? | — | nothing (design only) | slices 1–9 |
+| [`mcp-catalog.md`](mcp-catalog.md) | How to add an MCP server without looking up its config? | MCP Servers → Catalog… | search in two public catalogs, filling the Add Server form (2026-10-04) | marks for configured servers, arguments as values, version checks |
 | [`definitions.md`](definitions.md) | What does a shared term mean? | — | tiers, sending policy, keys | fingerprint, shared `FailureSignals`, `dirty` / `diff_hash` |
 
 The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`).
@@ -56,6 +57,7 @@ The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`
 | To do this | Use |
 |---|---|
 | Give a project its setup | Brain → Set Up Project… |
+| Add an MCP server from a public catalog | MCP Servers → Catalog… |
 | Update the home folder from the core layer | `akit apply --home` (no button yet) |
 | See which skills cost context and are never called | Insights (Apply… makes a layer skill manual); the full skills table: `akit stats` |
 | Check that a change reduced the context | `akit stats changes`, `akit stats mark "<note>"` (no screen yet) |

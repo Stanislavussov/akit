@@ -10,7 +10,8 @@ import SwiftUI
 /// `--query` fills the search field of the section (skills.sh selects the first result;
 /// Usage takes it as the period: week, month, quarter, year, all);
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
-/// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet;
+/// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet
+/// (`--query <json>` fills its form, `--tab preview` shows the plan; `--tab catalog` opens its catalog search, `--query` is the search text, `--select <server name>` picks a result and `--capture` fills the form from it);
 /// `--settings` shows the Settings view in the main window; `--guide <section id>` the guide window's
 /// view, opened at that section (`--query` fills its search field);
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;

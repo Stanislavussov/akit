@@ -190,6 +190,13 @@ extension MCPDraft {
     }
 }
 
+// MARK: - Secret names
+
+extension MCPDraft {
+    /// Whether a variable or header name reads like a credential (`API_KEY`, `Authorization`).
+    public static func looksSecret(name: String) -> Bool { MCPValues.looksSecret(name: name) }
+}
+
 // MARK: - Arguments as one line
 
 extension MCPDraft {

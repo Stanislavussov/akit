@@ -10,7 +10,8 @@ struct MCPView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: MCPServer.ID?
     @State private var query = DebugSnapshot.options?.add == true ? "" : DebugSnapshot.options?.query ?? ""
-    @State private var editor: EditorRequest? = DebugSnapshot.options?.add == true ? EditorRequest(mode: .add(project: nil)) : nil
+    @State private var editor: EditorRequest? = DebugSnapshot.options?.add == true
+        ? EditorRequest(mode: .add(project: nil, catalog: DebugSnapshot.options?.tab == "catalog")) : nil
 
     var body: some View {
         @Bindable var model = model
@@ -77,8 +78,14 @@ struct MCPView: View {
                     .help("Rescan config files (⌘R)")
             }
             ToolbarItem {
+                Button("Catalog…", systemImage: "books.vertical") {
+                    editor = EditorRequest(mode: .add(project: chosenProject, catalog: true))
+                }
+                .help("Find a server in the public MCP catalogs and fill the Add Server form from it")
+            }
+            ToolbarItem {
                 Button("Add Server…", systemImage: "plus") { editor = EditorRequest(mode: .add(project: chosenProject)) }
-                    .help("Add an MCP server from a form or pasted JSON")
+                    .help("Add an MCP server from a form, pasted JSON or the catalog")
             }
         }
         .sheet(item: $editor) { request in

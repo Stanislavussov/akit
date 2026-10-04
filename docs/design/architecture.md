@@ -7,8 +7,8 @@ package folder is still `AKitCore/`, and the app and the `akit` command import t
 modules directly.
 
 Checked against `Package.swift` on 2026-10-03: the dependency table in 1.1 matches the
-code. Two modules were added after the split, `AKitLab` and `AKitErrorAnalysis` (15
-library targets now); the table has them, the graph does not. Planned, not built:
+code. Three modules were added after the split, `AKitLab`, `AKitErrorAnalysis` and
+`AKitMCPCatalog` (2026-10-04; 16 library targets now); the table has them, the graph does not. Planned, not built:
 `AKitErrorAnalysis → AKitRender` for layer evals (`layer-evals.md`).
 
 ## Goal
@@ -49,6 +49,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitSessions` | Lists saved sessions, reads transcripts, reads or captures system prompts, and reads the line format of Claude and Pi session files. | `Sessions/*` except JSONLines; `SystemPromptAccess` (from `Adapters/HarnessAdapter.swift`); per-harness dispatch taken out of the adapters (see 1.2); new `ClaudeLogFormat` and `PiLogFormat` (line readers shared with Usage and Insights, fix 24) |
 | `AKitUsage` | Token usage and subscription limits for each harness. | `Usage/*`; `extension ClaudeSessions` / `extension PiSessions` in `HarnessUsage.swift` become `enum ClaudeUsage` / `enum PiUsage` |
 | `AKitMCP` | Reads, edits and writes MCP servers, including Keychain secrets. | `MCP/*` except ConfigText and MCPSource |
+| `AKitMCPCatalog` | Public catalogs of MCP servers (added 2026-10-04, `mcp-catalog.md`): reads the Anthropic directory and the MCP Registry, and turns an entry into an `MCPDraft` for the Add Server form. Writes nothing but its own cache. | new |
 | `AKitBrain` | The brain repo: layers, `layer.yaml`, fields, answers, sync, import, remove, create and edit layers, brain links of installed skills, this Mac's profile (work or personal), project ids and stored answers/locks. Turns layers and answers into a harness-neutral `ProjectBundle`. | `Brain/Brain.swift`, `Layer.swift`, `LayerManifest.swift`, `LayerWriter.swift`, `LayerEditor.swift`, `BrainSetup.swift`, `BrainSync.swift`, `BrainImport.swift`, `BrainRemove.swift`, `BrainLinks.swift`, `AKitSkill.swift`; `Machine.swift` (`MachineProfile`, `ProjectStore`) without `MachineProfile.change`; `ProjectAnswers`/`FieldValue`, render steps 1–2 plus template/skill selection, `skillsFolder` and `projectSource` from `Render.swift`; new `ProjectRecords.swift` (ids, `Lock`, saved answers and locks, from `ProjectSetup.swift`); new `CapturePlugin.swift` (plugin files from `CaptureInstaller`); new `BrainGit.swift` (git identity checks from `WorkFilter`) |
 | `AKitInsights` | Session insights: the local SQLite index of session facts, import, capture hooks (Claude plugin, Pi extension, launchd), project binding, `akit stats`, per-Mac usage summaries in the brain, recommendations with layer patches, before/after measurement. | `Insights/*` (28 files); new `Insights/MachineChange.swift`: `MachineProfile.change` and `hasOwnGitIdentity` as an `extension MachineProfile` (fix 18) |
 | `AKitRender` | **The swappable part.** Turns a `ProjectBundle` into harness files: `.agents/skills/<name>/…`, a glued `AGENTS.md`, the `CLAUDE.md` shim, the `.claude/skills` link, the manual-only skill header, clash checks. Pure: it writes nothing. | Render steps 3–5 of `Brain/Render.swift` |
@@ -101,6 +102,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitSessions` | Foundation, Model |
 | `AKitUsage` | Foundation, Model, Sessions |
 | `AKitMCP` | Foundation, Model, Harnesses |
+| `AKitMCPCatalog` | MCP (the `MCPDraft` it fills) |
 | `AKitBrain` | Foundation, Model, Skills, Yams |
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Brain |

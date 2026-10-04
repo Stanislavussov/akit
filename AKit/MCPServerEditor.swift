@@ -1,14 +1,16 @@
 import AKitFoundation
 import AKitMCP
+import AKitMCPCatalog
 import AKitModel
 import SwiftUI
 
-/// Sheet for adding, editing or deleting an MCP server: fill the form or paste JSON, pick
-/// where it goes, check the diff, Apply. Secret values go to the Keychain, never into the file.
+/// Sheet for adding, editing or deleting an MCP server: fill the form, paste JSON or pick a
+/// server from the catalog, choose where it goes, check the diff, Apply. Secret values go to the Keychain, never into the file.
 struct MCPServerEditor: View {
     enum Mode {
         /// New server; the project preselects where it goes (the MCP screen's filter).
-        case add(project: URL?)
+        /// `catalog` opens the sheet on the catalog search.
+        case add(project: URL?, catalog: Bool = false)
         case edit(MCPServer)
         case remove(MCPServer)
     }
@@ -18,7 +20,7 @@ struct MCPServerEditor: View {
 
     let mode: Mode
 
-    private enum Input: String, CaseIterable { case form = "Form", json = "JSON" }
+    private enum Input: String, CaseIterable { case form = "Form", json = "JSON", catalog = "Catalog" }
 
     @State private var input: Input = .form
     @State private var draft = MCPDraft()
@@ -26,6 +28,10 @@ struct MCPServerEditor: View {
     @State private var json = ""
     @State private var jsonError: String?
     @State private var pasted: [MCPDraft] = []
+    /// The form was filled from the catalog: what each value is for, shown above the form.
+    @State private var catalogNotes: [String] = []
+    /// The form came from the catalog: its `{placeholders}` must be replaced before Preview.
+    @State private var fromCatalog = false
     @State private var targets: [MCPWriteTarget] = []
     @State private var targetID: MCPWriteTarget.ID?
     @State private var secretMode: MCPSecretMode = .keychainLookup
@@ -57,7 +63,10 @@ struct MCPServerEditor: View {
             }
         }
         .frame(width: 680, height: 640)
-        .onAppear(perform: loadTargets)
+        .onAppear {
+            if case .add(_, true) = mode { input = .catalog }
+            loadTargets()
+        }
         // Opened before the first scan finished: fill the places once it has.
         .onChange(of: model.lastScan) { if targets.isEmpty { loadTargets() } }
     }
@@ -75,7 +84,7 @@ struct MCPServerEditor: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 160)
+                    .frame(width: 240)
                 }
             }
             .padding([.horizontal, .top], 20)
@@ -83,6 +92,7 @@ struct MCPServerEditor: View {
             switch input {
             case .form: form
             case .json: jsonInput
+            case .catalog: MCPCatalogPane(onUse: useCatalog)
             }
             Divider()
             footer
@@ -91,6 +101,13 @@ struct MCPServerEditor: View {
 
     private var form: some View {
         Form {
+            if !catalogNotes.isEmpty {
+                Section("From the Catalog") {
+                    ForEach(catalogNotes, id: \.self) { note in
+                        Text(note).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }
+            }
             Section {
                 TextField("Name", text: $draft.name, prompt: Text("grafana"))
                 Picker("Transport", selection: $draft.transport) {
@@ -235,7 +252,7 @@ struct MCPServerEditor: View {
                 .keyboardShortcut(.cancelAction)
             Button("Preview…") { makePlan() }
                 .keyboardShortcut(.defaultAction)
-                .disabled(input == .json || selectedTarget == nil)
+                .disabled(input != .form || selectedTarget == nil)
         }
         .padding(16)
     }
@@ -321,7 +338,7 @@ struct MCPServerEditor: View {
     private func loadTargets() {
         targets = model.mcpTargets()
         switch mode {
-        case .add(let project): preselect(project)
+        case .add(let project, _): preselect(project)
         case .edit(let server):
             guard let target = MCPWriter.target(of: server, in: targets) else {
                 if model.lastScan != nil { error = "AKit can't edit this file." }
@@ -361,7 +378,7 @@ struct MCPServerEditor: View {
         targetID = (projectTarget ?? targets.first { $0.blockedReason == nil })?.id
         secretMode = selectedTarget?.isShared == true ? .environment : .keychainLookup
         // Snapshot mode: `--query <json>` fills the form, `--tab preview` shows the plan.
-        if let options = DebugSnapshot.options, !targets.isEmpty, let text = options.query {
+        if let options = DebugSnapshot.options, !targets.isEmpty, options.tab != "catalog", let text = options.query {
             json = text
             readJSON()
             if options.tab == "preview" { makePlan() }
@@ -382,11 +399,25 @@ struct MCPServerEditor: View {
     private func use(_ server: MCPDraft) {
         draft = server
         argumentLine = MCPDraft.joinArguments(server.arguments)
+        catalogNotes = []
+        fromCatalog = false
+        error = nil
         input = .form
+    }
+
+    private func useCatalog(_ server: MCPDraft, notes: [String]) {
+        use(server)
+        catalogNotes = notes
+        fromCatalog = true
     }
 
     private func makePlan() {
         guard let target = selectedTarget else { return }
+        // A catalog entry's `{parts}` are for the user to fill; written as they are, the server wouldn't start.
+        if fromCatalog, let open = CatalogDraft.problems(in: draft).first {
+            error = open
+            return
+        }
         do {
             plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode, replacing: editing?.name,
                                       openedText: openedText, keychain: KeychainSecretStore(),
