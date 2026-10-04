@@ -75,7 +75,7 @@ enum CatalogDecoder {
         for name in parts {
             let variable = raw.variables?[name]?.value
             // A secret typed into the URL would be written into the file as it is.
-            if variable?.isSecret == true || MCPDraft.looksSecret(name: name) {
+            if variable?.isSecret == true || isCredentialName(name) {
                 unsupported = "This server takes a secret inside its URL ({\(name)}). " + noSecretsInFiles
             }
             parameters.append(CatalogParameter(place: .url, name: name, details: variable?.description ?? "", isRequired: true,
@@ -90,6 +90,15 @@ enum CatalogDecoder {
                              parameters: parameters, unsupported: unsupported, label: "Remote · \(host)")
     }
 
+    private static let credentialName = try! NSRegularExpression(
+        pattern: #"(?i)(token|secret|passw|pwd|api[-_ ]?key|access[-_ ]?key|private[-_ ]?key|credential|bearer)"#)
+
+    /// A name that can only be a credential (`--api-key`, `{token}`). `MCPDraft.looksSecret` is
+    /// wider (`--keyword`, `{project_key}`): good for choosing the Keychain, too wide for refusing an option.
+    static func isCredentialName(_ name: String) -> Bool {
+        credentialName.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
+    }
+
     /// A catalog value may fill one part of a URL, never add a host, a path or a query of its own.
     private static func urlPart(_ value: String) -> String? {
         value.range(of: "^[A-Za-z0-9._-]+$", options: .regularExpression) == nil ? nil : value
@@ -100,10 +109,13 @@ enum CatalogDecoder {
         let template = raw.value?.text.flatMap { CatalogDraft.placeholders(in: $0).isEmpty ? nil : $0 }
         let fallback = template == nil ? raw.value?.text ?? raw.default?.text : raw.default?.text
         // An entry without the mark still gets the Keychain when the name looks like a credential,
-        // or when a part of its value is marked secret. An explicit "not secret" with a default
-        // (`SESSION_TIMEOUT` = 30) stays a plain value.
-        let namedSecret = MCPDraft.looksSecret(name: name) && !(raw.isSecret == false && fallback != nil)
+        // or when a part of its value is marked secret or named like one. An explicit "not secret"
+        // with a real default (`SESSION_TIMEOUT` = 30) stays a plain value; a name that can only be
+        // a credential (`GITHUB_TOKEN`) is a secret whatever the entry says.
+        let declaredPlain = raw.isSecret == false && !(fallback ?? "").isEmpty
+        let namedSecret = isCredentialName(name) || (MCPDraft.looksSecret(name: name) && !declaredPlain)
         let secretPart = (raw.variables ?? [:]).values.contains { $0.value?.isSecret == true }
+            || CatalogDraft.placeholders(in: template ?? "").contains(where: MCPDraft.looksSecret(name:))
         return CatalogParameter(place: place, name: name, details: raw.description ?? "",
                                 isRequired: raw.isRequired ?? false,
                                 isSecret: raw.isSecret == true || namedSecret || secretPart,
@@ -123,8 +135,8 @@ enum CatalogDecoder {
               // A name that reads as an option would change what the runner does.
               !identifier.hasPrefix("-"), !identifier.contains(where: \.isWhitespace) else { return nil }
         let listed = text(raw.version).flatMap { $0.lowercased() == "latest" ? nil : $0 }
-        // Only a number pins; a tag such as `next` moves.
-        let version = listed.flatMap { $0.first?.isNumber == true || $0.hasPrefix("v") ? $0 : nil }
+        // Only a full version pins; `1`, `1.x` or a tag such as `next` moves.
+        let version = listed.flatMap { $0.range(of: #"^v?\d+\.\d+\.\d+"#, options: .regularExpression) == nil ? nil : $0 }
         let hint = text(raw.runtimeHint)?.lowercased()
         let runtime = words(raw.runtimeArguments)
         let own = words(raw.packageArguments)
@@ -150,9 +162,10 @@ enum CatalogDecoder {
             command = hint == "podman" ? "podman" : "docker"
             leading = ["run", "-i", "--rm"]
             byFlag = true
-            let tagged = identifier.split(separator: "/").last.map { $0.contains(":") || $0.contains("@") } ?? false
+            let image = String(identifier.split(separator: "/").last ?? "")
+            let tagged = image.contains(":") || image.contains("@")
             trailing = runtime.words + [tagged ? identifier : (version ?? listed).map { "\(identifier):\($0)" } ?? identifier]
-            if !tagged, version == nil { cautions.append(unpinned) }
+            if tagged ? image.hasSuffix(":latest") : version == nil { cautions.append(unpinned) }
         default:
             unsupported = "AKit can't start “\(type)” packages. The server's repository says how to set it up."
         }
@@ -167,6 +180,9 @@ enum CatalogDecoder {
         if unsupported == nil, let secret = runtime.secret ?? own.secret {
             unsupported = "This server takes a secret as a command-line argument (\(secret)). " + noSecretsInFiles
         }
+        if unsupported == nil, runtime.open || own.open {
+            cautions.append("Arguments are written into the file as they are: don't put a secret there.")
+        }
         trailing += own.words
         let shown = [command.isEmpty ? type : command, identifier, version ?? listed].compactMap { $0 }.joined(separator: " ")
         return CatalogOption(id: id, kind: .package, transport: .stdio, command: command, leadingArguments: leading,
@@ -180,6 +196,8 @@ enum CatalogDecoder {
         var words: [String] = []
         /// An argument the user would have to type a secret into.
         var secret: String?
+        /// Some word is a `{placeholder}` for the user to replace.
+        var open = false
     }
 
     /// Command-line words of registry arguments. A required argument without a value becomes a
@@ -202,12 +220,16 @@ enum CatalogDecoder {
             } else if required {
                 added = [CatalogDraft.placeholder(hint ?? name ?? "value")]
             }
-            // The user fills this word in, and what goes into Arguments is written into the file.
+            // What goes into Arguments is written into the file. The user types the word when it is
+            // a placeholder, and also when the entry only suggests a value (`default`), not fixes it.
             let open = added.contains { !CatalogDraft.placeholders(in: $0).isEmpty }
-            if open, argument.isSecret == true || name.map(MCPDraft.looksSecret(name:)) == true
-                || (argument.variables ?? [:]).values.contains(where: { $0.value?.isSecret == true }) {
+            let typed = open || (!added.isEmpty && argument.value?.text == nil)
+            let secret = argument.isSecret == true || [name, hint].compactMap { $0 }.contains(where: isCredentialName)
+                || (argument.variables ?? [:]).values.contains { $0.value?.isSecret == true }
+            if typed, secret, named ? added.count > 1 : true {
                 result.secret = result.secret ?? name ?? hint ?? "a value"
             }
+            result.open = result.open || open
             result.words += added
         }
         return result
@@ -279,6 +301,16 @@ private struct Fields {
         guard let container else { return nil }
         return (try? container.decodeIfPresent(Value.self, forKey: Key(name))) ?? nil
     }
+
+    /// A boolean, also when it is written as `"true"` or `1`.
+    func flag(_ name: String) -> Bool? {
+        let loose: LooseText? = self(name)
+        switch loose?.text?.lowercased() {
+        case "true", "1", "yes": return true
+        case "false", "0", "no": return false
+        default: return nil
+        }
+    }
 }
 
 private struct RawEntry: Decodable {
@@ -316,7 +348,7 @@ private struct RawEntry: Decodable {
             oneLiner = fields("oneLiner")
             documentation = fields("documentation")
             slug = fields("slug")
-            isAuthless = fields("isAuthless")
+            isAuthless = fields.flag("isAuthless")
             worksWith = fields("worksWith")
         }
     }
@@ -379,7 +411,7 @@ private struct RawVariable: Decodable {
         description = fields("description")
         `default` = fields("default")
         choices = fields("choices")
-        isSecret = fields("isSecret")
+        isSecret = fields.flag("isSecret")
     }
 }
 
@@ -399,8 +431,8 @@ private struct RawInput: Decodable {
         description = fields("description")
         value = fields("value")
         `default` = fields("default")
-        isRequired = fields("isRequired")
-        isSecret = fields("isSecret")
+        isRequired = fields.flag("isRequired")
+        isSecret = fields.flag("isSecret")
         choices = fields("choices")
         variables = fields("variables")
     }
@@ -451,8 +483,8 @@ private struct RawArgument: Decodable {
         value = fields("value")
         `default` = fields("default")
         valueHint = fields("valueHint")
-        isRequired = fields("isRequired")
-        isSecret = fields("isSecret")
+        isRequired = fields.flag("isRequired")
+        isSecret = fields.flag("isSecret")
         variables = fields("variables")
     }
 }

@@ -9,8 +9,9 @@ import SwiftUI
 struct MCPCatalogPane: View {
     /// The chosen entry as a form, with a line per value the user still has to type.
     let onUse: (MCPDraft, [String]) -> Void
-    /// Owned by the sheet, so the search survives a look at the Form tab.
+    /// Owned by the sheet, so the search and the chosen server survive a look at the Form tab.
     @Binding var query: String
+    @Binding var selection: CatalogServer.ID?
 
     @State private var directory: [CatalogServer] = []
     @State private var directoryProblem: String?
@@ -23,7 +24,6 @@ struct MCPCatalogPane: View {
     @State private var registryError: String?
     /// Bumped by Try Again: the same query is searched once more.
     @State private var attempt = 0
-    @State private var selection: CatalogServer.ID?
 
     private var home: URL { HarnessEnvironment.current.homeDirectory }
 

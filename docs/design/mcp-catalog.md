@@ -52,8 +52,10 @@ registry under its own heading with a warning on every entry.
   it goes to the Keychain like any other MCP secret.
 - **A secret never goes into Arguments or the URL.** What is typed there is written into
   the file as it is. An option that needs a secret there (an argument or URL part marked
-  secret, or named like one: `--api-key`, `{token}`) is shown as not supported, with the
-  reason. Secrets in environment variables and headers are supported.
+  secret, or with a name that can only be a credential: `--api-key`, `{token}`) is shown as
+  not supported, with the reason. Secrets in environment variables and headers are
+  supported; there a wider name check chooses the Keychain, and a credential name stays a
+  secret even when the entry says it is not one.
 - **What an entry adds is pointed out.** Arguments an entry brings for the runner
   (`npx --registry …`, `docker -v …`) change what runs, so the option carries a warning with
   the exact words. A value the catalog prefills is named in the option and in the form's

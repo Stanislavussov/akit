@@ -30,6 +30,7 @@ struct MCPServerEditor: View {
 
     @State private var input: Input
     @State private var catalogQuery = DebugSnapshot.options?.tab == "catalog" ? DebugSnapshot.options?.query ?? "" : ""
+    @State private var catalogSelection: CatalogServer.ID?
     @State private var draft = MCPDraft()
     @State private var argumentLine = ""
     @State private var json = ""
@@ -96,7 +97,7 @@ struct MCPServerEditor: View {
             switch input {
             case .form: form
             case .json: jsonInput
-            case .catalog: MCPCatalogPane(onUse: useCatalog, query: $catalogQuery)
+            case .catalog: MCPCatalogPane(onUse: useCatalog, query: $catalogQuery, selection: $catalogSelection)
             }
             Divider()
             footer

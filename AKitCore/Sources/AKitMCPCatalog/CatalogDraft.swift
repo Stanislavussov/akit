@@ -109,7 +109,8 @@ public enum CatalogDraft {
 
     /// Names of `{name}` parts. `${VAR}` and `{env:VAR}` are references, not placeholders; neither is JSON.
     static func placeholders(in text: String) -> [String] {
-        let pattern = try! NSRegularExpression(pattern: #"(?<!\$)\{([^{}:"$]+)\}"#)
+        // At least one letter inside: `{0}` and `{ }` are text, not something to fill in.
+        let pattern = try! NSRegularExpression(pattern: #"(?<!\$)\{([^{}:"$]*[A-Za-z][^{}:"$]*)\}"#)
         let range = NSRange(text.startIndex..., in: text)
         var names: [String] = []
         for match in pattern.matches(in: text, range: range) {

@@ -135,7 +135,7 @@ struct MCPCatalogTests {
         let draft = CatalogDraft.draft(of: option, name: "armor", including: ["environment:ARMOR_BASE_URL"])
         #expect(draft.command == "uvx")
         #expect(draft.arguments == ["armor-mcp==0.6.1", "serve", "--profile", "domains", "--dir", "{folder}"])
-        #expect(option.cautions.isEmpty)
+        #expect(option.cautions == ["Arguments are written into the file as they are: don't put a secret there."])
         #expect(draft.environment.map(\.key) == ["ARMOR_API_KEY", "ARMOR_BASE_URL"])
         // The host can be changed in the form: a plain value, prefilled with the default.
         #expect(draft.environment[1].value == "https://api.example" && !draft.environment[1].isSecret)
@@ -195,6 +195,7 @@ struct MCPCatalogTests {
         #expect(CatalogDraft.placeholders(in: "https://${HOST}/{env:TOKEN}/{tenant}/{tenant}") == ["tenant"])
         #expect(CatalogDraft.placeholders(in: #"{"json": true}"#).isEmpty)
         #expect(CatalogDraft.placeholders(in: "{_x} {1st} {/path/to/dir}") == ["_x", "1st", "/path/to/dir"])
+        #expect(CatalogDraft.placeholders(in: "{0} { } {}").isEmpty)
     }
 
     @Test(arguments: [("/path/to/dir", "{/path/to/dir}"), ("host:port", "{host_port}"), ("--dir", "{dir}"),
@@ -217,15 +218,32 @@ struct MCPCatalogTests {
         #expect(try server(inURL).options[0].unsupported?.contains("secret inside its URL ({workspace})") == true)
         let namedInURL = #"{"server":{"name":"a/four","remotes":[{"type":"sse","url":"https://mcp.a.example/sse?api_key={api_key}"}]}}"#
         #expect(try server(namedInURL).options[0].unsupported != nil)
-        // A fixed word the entry gives is not the user's secret.
-        let fixed = #"{"server":{"name":"a/five","packages":[{"registryType":"npm","identifier":"five","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"named","name":"--auth-mode","value":"oauth"}]}]}}"#
-        #expect(try server(fixed).options[0].unsupported == nil)
+        // Only the hint names the credential.
+        let hinted = #"{"server":{"name":"a/six","packages":[{"registryType":"npm","identifier":"six","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"positional","isRequired":true,"valueHint":"api_key"}]}]}}"#
+        #expect(try server(hinted).options[0].unsupported != nil)
+        // A suggested value is one the user replaces with the real token.
+        let suggested = #"{"server":{"name":"a/seven","packages":[{"registryType":"npm","identifier":"seven","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"named","name":"--token","isRequired":true,"isSecret":"true","default":"YOUR_TOKEN"}]}]}}"#
+        #expect(try server(suggested).options[0].unsupported?.contains("--token") == true)
+        // A fixed word the entry gives is not the user's secret, and names that only sound like one stay usable.
+        let fixed = #"{"server":{"name":"a/five","remotes":[{"type":"sse","url":"https://a.example/{project_key}/sse"}],"packages":[{"registryType":"npm","identifier":"five","version":"1.0.0","transport":{"type":"stdio"},"packageArguments":[{"type":"named","name":"--auth-mode","value":"oauth"},{"type":"named","name":"--keyword","isRequired":true,"valueHint":"kw"},{"type":"named","name":"--key-file","isRequired":true,"valueHint":"path"}]}]}}"#
+        #expect(try server(fixed).options.map { $0.unsupported == nil } == [true, true])
     }
 
     @Test func headerWithASecretPartIsASecret() throws {
         let entry = #"{"server":{"name":"a/ws","remotes":[{"type":"streamable-http","url":"https://a.example/mcp","headers":[{"name":"X-Workspace","isRequired":true,"value":"{id}","variables":{"id":{"isSecret":true}}}]}]}}"#
         let draft = CatalogDraft.draft(of: try server(entry).options[0], name: "ws")
         #expect(draft.headers[0].isSecret && draft.headers[0].value.isEmpty)
+        // No variables block: the placeholder's name decides.
+        let bare = #"{"server":{"name":"a/ws2","remotes":[{"type":"streamable-http","url":"https://a.example/mcp","headers":[{"name":"X-Workspace","isRequired":true,"value":"{api_key}"}]}]}}"#
+        #expect(CatalogDraft.draft(of: try server(bare).options[0], name: "ws2").headers[0].isSecret)
+    }
+
+    @Test func credentialNamesStaySecretWhateverTheEntrySays() throws {
+        let entry = #"{"server":{"name":"a/gh","packages":[{"registryType":"npm","identifier":"gh","version":"1.0.0","transport":{"type":"stdio"},"environmentVariables":[{"name":"GITHUB_TOKEN","isRequired":true,"isSecret":false,"default":""},{"name":"API_KEY","isRequired":true,"isSecret":false,"default":"changeme"},{"name":"SESSION_NAME","isRequired":true,"isSecret":false,"default":""},{"name":"REGION","isRequired":"true","isSecret":"true"}]}]}}"#
+        let draft = CatalogDraft.draft(of: try server(entry).options[0], name: "gh")
+        #expect(draft.environment.map(\.key) == ["GITHUB_TOKEN", "API_KEY", "SESSION_NAME", "REGION"])
+        // The last one has its flags written as strings.
+        #expect(draft.environment.allSatisfy { $0.isSecret && $0.value.isEmpty })
     }
 
     @Test func namedLikeASecretButDeclaredPlainWithADefaultStaysPlain() throws {
@@ -258,6 +276,10 @@ struct MCPCatalogTests {
         #expect(try option(#""registryType":"npm","identifier":"p","version":"latest""#).cautions == caution)
         let tag = try option(#""registryType":"npm","identifier":"p","version":"next""#)
         #expect(tag.cautions == caution && tag.trailingArguments == ["p@next"])
+        // npm reads `p@1` as a range.
+        #expect(try option(#""registryType":"npm","identifier":"p","version":"1""#).cautions == caution)
+        #expect(try option(#""registryType":"npm","identifier":"p","version":"1.2.3""#).cautions.isEmpty)
+        #expect(try option(#""registryType":"oci","identifier":"ghcr.io/a/p:latest""#).cautions == caution)
         #expect(try option(#""registryType":"pypi","identifier":"p""#).cautions == caution)
         #expect(try option(#""registryType":"oci","identifier":"ghcr.io/a/p""#).cautions == caution)
         #expect(try option(#""registryType":"oci","identifier":"host:5000/a/p@sha256:abc""#).trailingArguments == ["host:5000/a/p@sha256:abc"])
@@ -276,7 +298,8 @@ struct MCPCatalogTests {
         // Fields of another type than expected read as missing.
         let odd = #"{"server":{"name":"app.linear/linear","title":7,"repository":"https://github.com/x","remotes":[{"type":"streamable-http","url":"https://mcp.linear.app/mcp","headers":[{"name":"X-Team","isRequired":"yes","choices":"a"}]}]},"_meta":{"com.anthropic.api/mcp-registry":{"displayName":"Linear","isAuthless":"false","worksWith":[{"id":"claude-code"}]},"io.modelcontextprotocol.registry/official":"active"}}"#
         let server = try server(odd, source: .directory)
-        #expect(server.title == "Linear" && server.needsSignIn == nil && server.listsClaudeCode == nil)
+        // A flag written as a string is still read; a list of another shape is not.
+        #expect(server.title == "Linear" && server.needsSignIn == true && server.listsClaudeCode == nil)
         #expect(server.options[0].parameters.map(\.name) == ["X-Team"])
     }
 
