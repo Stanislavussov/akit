@@ -741,6 +741,26 @@ extension RecommenderTests {
         #expect(loaded.projects == ["home/testmac"])
         #expect(Recommender.projectsUsing("core", brain: brain, home: home) == ["home/testmac"])
         #expect(Recommender.projectsUsing("absent", brain: brain, home: home).isEmpty)
+        // Its skills table is `akit stats --details` of the same window.
+        let stats = try #require(try JSONSerialization.jsonObject(with: Data(await akit("stats", "--details", "--days", "7", "--json").out.utf8))
+                                 as? [String: Any])
+        let week = try await Recommender.load(env: env, brain: brain, project: nil, days: 7, projectsRoot: home.appending(path: "Projects"),
+                                              hostName: "TestMac.local", hardware: "test-hardware")
+        #expect(week.stats.window.days == 7 && loaded.stats.window.days == InsightsStats.defaultDays)
+        #expect(!week.stats.skills.isEmpty
+                && week.stats.skills.map(\.name) == (stats["skills"] as? [[String: Any]])?.compactMap { $0["name"] as? String })
+        #expect(week.stats.skills.map(\.approxContextSpace) == (stats["skills"] as? [[String: Any]])?.compactMap { $0["approxContextSpace"] as? Int })
+        // Its Changes are akit stats changes: the same anchors.
+        let changes = try #require(try JSONSerialization.jsonObject(with: Data(await akit("stats", "changes", "--json").out.utf8))
+                                   as? [String: Any])
+        let anchors = (changes["changes"] as? [[String: Any]])?.compactMap { $0["anchor"] as? String }
+        #expect(loaded.changes.changes.map(\.anchor) == anchors, "\(changes)")
+        // A mark is Mac-wide: a project's Changes show it next to that project's applies.
+        try Spool.mark("Disabled a plugin", at: Date().addingTimeInterval(-60), home: home)
+        let scoped = try await Recommender.load(env: env, brain: brain, project: "home/testmac", projectsRoot: home.appending(path: "Projects"),
+                                                hostName: "TestMac.local", hardware: "test-hardware")
+        #expect(scoped.changes.changes.contains { $0.anchor == "mark" && $0.note == "Disabled a plugin" }, "\(scoped.changes)")
+        #expect(scoped.changes.changes.allSatisfy { $0.anchor == "mark" || $0.project == "home/testmac" })
     }
 
     @Test func noBrainMeansAdviceOnly() async throws {

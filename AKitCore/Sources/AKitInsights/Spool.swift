@@ -92,3 +92,28 @@ public enum Spool {
         Int64((date.timeIntervalSince1970 * 1000).rounded(.down))
     }
 }
+
+// MARK: - Marks
+
+extension Spool {
+    public struct MarkFailure: Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+    }
+
+    public static let maxNoteLength = 500
+
+    /// A change made by hand (`akit stats mark`, the Insights screen's Add Mark…): one spool line
+    /// the next import turns into a before/after anchor at `date`. Returns the note as written.
+    @discardableResult
+    public static func mark(_ note: String, at date: Date, home: URL, now: Date = Date()) throws(MarkFailure) -> String {
+        let text = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw MarkFailure(message: "The note is empty.") }
+        guard text.count <= maxNoteLength else { throw MarkFailure(message: "The note is longer than \(maxNoteLength) characters.") }
+        guard date <= now else { throw MarkFailure(message: "The time is in the future.") }
+        guard append(["v": lineVersion, "kind": "mark", "note": text, "ts": milliseconds(date)], home: home, now: now) else {
+            throw MarkFailure(message: "Couldn't write the mark into \(InsightsPaths(home: home).spool.path); nothing was marked.")
+        }
+        return text
+    }
+}

@@ -244,6 +244,28 @@ extension BeforeAfterTests {
                                                 .init(date: midnight, kind: "mark", project: nil, note: "Settings")])
     }
 
+    /// The Insights screen's Add Mark… writes the same line as akit stats mark, and refuses the same notes.
+    @Test func spoolMarkChecksTheNoteAndTime() throws {
+        let now = Date()
+        func refused(_ note: String, at date: Date) -> String? {
+            do {
+                try Spool.mark(note, at: date, home: home, now: now)
+                return nil
+            } catch {
+                return error.message
+            }
+        }
+        #expect(refused("  ", at: now) == "The note is empty.")
+        #expect(refused(String(repeating: "x", count: 501), at: now) == "The note is longer than 500 characters.")
+        #expect(refused("Later", at: now.addingTimeInterval(60)) == "The time is in the future.")
+        #expect(!FileManager.default.fileExists(atPath: InsightsPaths(home: home).spool.path), "nothing was marked")
+        #expect(try Spool.mark("  Turned off a plugin \n", at: now.addingTimeInterval(-3600), home: home, now: now) == "Turned off a plugin")
+        let file = InsightsPaths(home: home).spool.appending(path: Spool.fileName(for: now))
+        let line = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        #expect(line["kind"] as? String == "mark" && line["note"] as? String == "Turned off a plugin")
+        #expect((line["ts"] as? NSNumber)?.int64Value == Spool.milliseconds(now.addingTimeInterval(-3600)))
+    }
+
     @Test func statsMarkAndChangesParse() async throws {
         let noNote = await akit("stats", "mark")
         #expect(noNote.code == 2 && noNote.err.contains("akit stats mark \"<note>\""), "\(noNote)")
@@ -273,10 +295,10 @@ extension BeforeAfterTests {
         #expect(calibration["source"] as? String == "defaults" && calibration["latin"] as? Double == 4)
         let change = try #require((object["changes"] as? [[String: Any]])?.first)
         #expect(change["anchor"] as? String == "mark" && change["status"] as? String == "notEnoughData" && change["reason"] is String)
-        // A project shows its own applies only.
+        // A project shows its own applies and the marks, which are Mac-wide.
         let project = try #require(try JSONSerialization.jsonObject(with: Data(await akit("stats", "changes", "--project", Self.project, "--json").out.utf8))
                                    as? [String: Any])
-        #expect((project["changes"] as? [Any])?.isEmpty == true)
+        #expect((project["changes"] as? [[String: Any]])?.map { $0["anchor"] as? String } == ["mark"], "\(project)")
         let text = await akit("stats", "changes")
         #expect(text.code == 0 && text.out.contains("mark “Disabled marketing” (all sessions on this Mac)")
                 && text.out.contains("not enough data: no sessions") && text.out.contains("≈ sizes use k 4.0 Latin (default"), "\(text)")

@@ -1,13 +1,13 @@
 # Session insights: trim the harness config from real usage
 
-Status: design agreed 2026-09-26 (grilling session). Steps 0–7 of the Order are
-implemented: SQLite index and import, capture (Claude plugin, Pi extension, hourly
+Status: design agreed 2026-09-26 (grilling session). Steps 0–7 and 10 of the Order
+are implemented: SQLite index and import, capture (Claude plugin, Pi extension, hourly
 import), project binding, `akit stats`, per-machine summaries, `akit recommend`
-(apply, dismiss), and before/after measurement with k calibration (`akit stats changes`,
-`akit stats mark`). Revised 2026-10-01 after a review against Claude Code's own tools and
-open-source session analyzers: steps 8–13 (described exposures, plugin token costs, the
-Insights screen, fingerprints and failure signals, more outcomes, a reconciliation check)
-are designed, not built. Terms shared with Lab and Error analysis are in
+(apply, dismiss), before/after measurement with k calibration (`akit stats changes`,
+`akit stats mark`), and the Insights screen (2026-10-07). Revised 2026-10-01 after a review
+against Claude Code's own tools and open-source session analyzers: steps 8, 9 and 11–13
+(described exposures, plugin token costs, fingerprints and failure signals, more outcomes,
+a reconciliation check) are designed, not built. Terms shared with Lab and Error analysis are in
 [`definitions.md`](definitions.md).
 
 Checked against the code on 2026-10-03:
@@ -24,8 +24,24 @@ Checked against the code on 2026-10-03:
 - Install capture and Sync (2026-10-06): the line has **Install Capture…** (one plan per
   part, `CaptureInstaller.partPlans`; only the checked parts run), and the app's brain Sync
   publishes summaries through `InsightsSync`, the sequence `akit sync` runs too.
-- Still to do in step 10: the skills table, Changes with marks, and Plan for the layer's
-  projects after Apply. The app uses neither `InsightsStats` nor `BeforeAfter` yet.
+- Skills table (2026-10-07): the screen shows `akit stats --details` of the scope, with a
+  7 / 30 / 90 days picker; `Recommender.load` returns it next to the recommendations. It sits
+  below the recommendations, so the actions come first.
+- Changes (2026-10-07): the screen shows `akit stats changes` of the scope
+  (`BeforeAfter.report`, shared with the CLI) with the calibration line, and **Add Mark…**
+  writes a mark through `Spool.mark`, as `akit stats mark`.
+- Plan after Apply (2026-10-07): after a committed `mode: manual` patch the screen lists the
+  layer's projects; **Plan…** opens Set Up Project for a project folder on this Mac, where the
+  change is a diff until Apply. A home folder still says `akit apply --home` (the Home button
+  is step 2 of the design map).
+- Step 10 is built except these smaller items of its plan below, left until someone needs
+  them: **Copy command** / **Show in Skills** on advice cards, **Sync first** in the Apply
+  sheet, and the expected-vs-observed delta and "deviates" flags in Changes (they wait for
+  step 9).
+- Loading the screen measures every anchor and saves the k when it changed, as
+  `akit stats changes` does; so opening the screen can move the ≈ numbers `akit recommend`
+  and `akit stats` print next. A project's Changes show its applies and every mark (marks
+  are Mac-wide).
 - Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
   (2026-10-01), and the index has a `signals` table, filled by
   `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.
@@ -547,7 +563,7 @@ Too much for one user on a few Macs, or against a decision above:
 
 ## Order
 
-Status: 1–7 built, the first slice of 10 built, 8, 9 and 11–13 not built (see the status
+Status: 1–7 and 10 built, 8, 9 and 11–13 not built (see the status
 note at the top).
 
 0. By hand, today: `"cleanupPeriodDays": 365` in `~/.claude/settings.json`.
