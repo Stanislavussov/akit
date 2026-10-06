@@ -48,6 +48,15 @@ every Mac.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Stanislavussov/akit/master/install.sh)"
 ```
 
+> **❗ On a work Mac, run it with `AKIT_MACHINE=work` the first time:**
+>
+> ```sh
+> AKIT_MACHINE=work /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Stanislavussov/akit/master/install.sh)"
+> ```
+>
+> It must be set before anything is saved: it keeps that Mac's project records out of your
+> brain (see [A work Mac](#a-work-mac)). A plain install on a work Mac is a personal one.
+
 Needs macOS 15 or later and git (`xcode-select --install` if it's missing). The script
 downloads the latest release into `~/Applications/AKit.app` and `~/.local/bin/akit` (no
 Xcode needed), adds `~/.local/bin` to your PATH, and starts `akit setup`, which asks a few
