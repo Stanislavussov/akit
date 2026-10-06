@@ -10,6 +10,10 @@ struct InsightsView: View {
     @Environment(AppModel.self) private var model
     /// nil: every session on this Mac, with the other Macs' summaries. Snapshots: `--select <project id>`.
     @State private var project: String? = DebugSnapshot.options?.select
+    /// The skills table's window; recommendations keep the rule's own.
+    @State private var days = InsightsStats.defaultDays
+    /// The skills table shows the first `shortTable` rows until Show All.
+    @State private var allSkills = false
     @State private var loaded: Recommender.Loaded?
     @State private var isLoading = false
     @State private var problem: String?
@@ -29,7 +33,7 @@ struct InsightsView: View {
     var body: some View {
         Group {
             if let loaded {
-                content(loaded.report)
+                content(loaded)
             } else if let problem {
                 ContentUnavailableView {
                     Label("Couldn't read the session index", systemImage: "exclamationmark.triangle")
@@ -54,6 +58,13 @@ struct InsightsView: View {
                 .fixedSize()
                 .help("All sessions on this Mac with the other Macs' summaries, or only the sessions bound to one project")
             }
+            ToolbarItem(placement: .navigation) {
+                Picker("Window", selection: $days) {
+                    ForEach([7, 30, 90], id: \.self) { Text("\($0) Days").tag($0) }
+                }
+                .fixedSize()
+                .help("The days the Skills table counts; recommendations always use their rule's own window")
+            }
             ToolbarItem {
                 if isLoading {
                     ProgressView().controlSize(.small)
@@ -68,7 +79,7 @@ struct InsightsView: View {
             }
         }
         // Every rescan (launch, ⌘R, a commit made here) loads again: the brain decides who owns a skill.
-        .task(id: LoadKey(project: project, scan: model.lastScan)) { await load() }
+        .task(id: LoadKey(project: project, days: days, scan: model.lastScan)) { await load() }
         // Its status runs `claude` and `launchctl`: off the main thread, each time the screen appears
         // or the brain changes (the Claude plugin lives there).
         .task(id: CaptureKey(brain: model.brain?.root, checks: captureChecks)) {
@@ -108,8 +119,9 @@ struct InsightsView: View {
 
     // MARK: Content
 
-    private func content(_ report: RecommendReport) -> some View {
-        ScrollView {
+    private func content(_ loaded: Recommender.Loaded) -> some View {
+        let report = loaded.report
+        return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let notice {
                     HStack(alignment: .firstTextBaseline) {
@@ -133,6 +145,7 @@ struct InsightsView: View {
                 if let capture { captureLine(capture) }
                 owners(report)
                 recommendations(report)
+                skills(loaded.stats)
                 footer(report)
             }
             .padding(20)
@@ -267,6 +280,65 @@ struct InsightsView: View {
         }
     }
 
+    /// Rows the Skills table shows before Show All.
+    static let shortTable = 15
+
+    /// `akit stats --details`: every skill listed in the window, by ≈ context space.
+    private func skills(_ stats: StatsReport) -> some View {
+        let summary = stats.summary
+        let rows = allSkills ? stats.skills : Array(stats.skills.prefix(Self.shortTable))
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(Self.statsLine(stats)).font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if stats.skills.isEmpty {
+                    Text("No skill listings in this window.").foregroundStyle(.secondary)
+                } else {
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 5) {
+                        GridRow {
+                            Text("Skill")
+                            Text("Owner")
+                            Text("Listed").gridColumnAlignment(.trailing)
+                            Text("Model calls").gridColumnAlignment(.trailing)
+                            Text("User calls").gridColumnAlignment(.trailing)
+                            Text("≈ Tokens").gridColumnAlignment(.trailing)
+                            Text("≈ Context space").gridColumnAlignment(.trailing)
+                        }
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        Divider().gridCellUnsizedAxes(.horizontal)
+                        ForEach(rows, id: \.name) { skill in
+                            GridRow {
+                                Text(skill.name).lineLimit(1).truncationMode(.middle)
+                                    .help("Counted since \(Self.day(skill.windowStart)), the start of its current description or of the window")
+                                Text([Self.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))
+                                    .lineLimit(1).foregroundStyle(.secondary)
+                                Text("\(skill.listedSessions) · \(Self.count(skill.listedDays, "day"))")
+                                    .help("Sessions where it was listed, on how many days")
+                                Text(Self.modelCalls(skill))
+                                Text("\(skill.userCalls)")
+                                Text("≈ \(ContextSize.short(skill.approxTokens))")
+                                    .help("Its description in every request where it is listed")
+                                Text("≈ \(ContextSize.short(skill.approxContextSpace))")
+                                    .help("≈ description tokens × requests, summed over the sessions where it was listed")
+                            }
+                            .font(.callout.monospacedDigit())
+                        }
+                    }
+                    if stats.skills.count > Self.shortTable {
+                        Button(allSkills ? "Show Fewer" : "Show All \(stats.skills.count) Skills") { allSkills.toggle() }
+                            .buttonStyle(.link)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
+        } label: {
+            Text("Skills, Last \(stats.window.days) Days").font(.headline)
+        }
+        .help(summary.sessions == 0 ? "" : "The same numbers as akit stats --details")
+    }
+
     private func footer(_ report: RecommendReport) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if report.hiddenByDismissal > 0 {
@@ -290,6 +362,7 @@ struct InsightsView: View {
 
     private struct LoadKey: Equatable {
         let project: String?
+        let days: Int
         let scan: Date?
     }
 
@@ -308,7 +381,8 @@ struct InsightsView: View {
         let mine = generation
         isLoading = true
         do {
-            let result = try await Recommender.load(env: env, brain: model.brain, project: project, projectsRoot: model.projectsRoot)
+            let result = try await Recommender.load(env: env, brain: model.brain, project: project, days: days,
+                                                    projectsRoot: model.projectsRoot)
             guard mine == generation else { return }
             loaded = result
             problem = nil
@@ -351,8 +425,32 @@ struct InsightsView: View {
 
     // MARK: Text
 
-    /// `3 sessions`, `1 day`.
-    static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+    /// Sessions, requests, the recorded first-request context and the listing's share of each request.
+    static func statsLine(_ stats: StatsReport) -> String {
+        let summary = stats.summary
+        var parts = ["\(count(summary.sessions, "session")), \(count(summary.requests, "request"))"]
+        if summary.sessions > 0 {
+            parts.append("first-request context median \(ContextSize.short(summary.firstRequestContext.median)), "
+                         + "p90 \(ContextSize.short(summary.firstRequestContext.p90)) tokens (recorded)")
+            parts.append("skill listing ≈ \(ContextSize.short(summary.approxListingTokensPerRequest)) tokens per request")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// `3 (12%)`, with Pi's reads of the skill after it.
+    static func modelCalls(_ skill: StatsReport.SkillStats) -> String {
+        var text = "\(skill.modelCalls) (\(Int((skill.callRate * 100).rounded()))%)"
+        if skill.piModelCalls > 0 { text += " + Pi \(skill.piModelCalls)" }
+        return text
+    }
+
+    /// The local day of an ISO 8601 time.
+    static func day(_ iso: String) -> String {
+        (try? Date(iso, strategy: .iso8601)).map { $0.formatted(date: .abbreviated, time: .omitted) } ?? iso
+    }
+
+    /// `3 sessions`, `1 day`, `10,980 requests`.
+    static func count(_ n: Int, _ noun: String) -> String { "\(n.formatted()) \(noun)\(n == 1 ? "" : "s")" }
 
     /// An owner kind as the command's text output says it.
     static func ownerTitle(_ kind: String) -> String {

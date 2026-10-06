@@ -8,14 +8,14 @@ import Foundation
 /// window of days, for this Mac's sessions or one project's. The JSON (`version` 1) is the
 /// contract for `/akit` and a later Insights screen. Sizes are estimates (≈), marked as such;
 /// counts and first-request context are recorded.
-public struct StatsReport: Encodable, Equatable {
-    public struct Window: Encodable, Equatable {
+public struct StatsReport: Encodable, Equatable, Sendable {
+    public struct Window: Encodable, Equatable, Sendable {
         let from: String
         let to: String
         public let days: Int
     }
 
-    public struct Scope: Encodable, Equatable {
+    public struct Scope: Encodable, Equatable, Sendable {
         /// nil: every session on this Mac.
         public let project: String?
         /// Binding confidences that count a session as the project's.
@@ -30,7 +30,7 @@ public struct StatsReport: Encodable, Equatable {
         private enum CodingKeys: String, CodingKey { case project, bindings }
     }
 
-    public struct ImportState: Encodable, Equatable {
+    public struct ImportState: Encodable, Equatable, Sendable {
         /// When the index last read a file; nil before the first import.
         let last: String?
         /// Another import held the lock, so the index was read as it was.
@@ -46,7 +46,7 @@ public struct StatsReport: Encodable, Equatable {
     }
 
     /// Recorded: input + cache read + cache write of each session's first main request.
-    public struct FirstRequestContext: Encodable, Equatable {
+    public struct FirstRequestContext: Encodable, Equatable, Sendable {
         public let median: Int
         public let p90: Int
     }
@@ -58,7 +58,7 @@ public struct StatsReport: Encodable, Equatable {
         public let approxTokens: Int
     }
 
-    public struct Summary: Encodable, Equatable {
+    public struct Summary: Encodable, Equatable, Sendable {
         public let sessions: Int
         public let requests: Int
         public let firstRequestContext: FirstRequestContext
@@ -67,7 +67,7 @@ public struct StatsReport: Encodable, Equatable {
         public let byOwner: [OwnerSummary]
     }
 
-    public struct Owner: Encodable, Equatable {
+    public struct Owner: Encodable, Equatable, Sendable {
         public let kind: String
         public let name: String?
 
@@ -85,7 +85,7 @@ public struct StatsReport: Encodable, Equatable {
         private enum CodingKeys: String, CodingKey { case kind, name }
     }
 
-    public struct SkillStats: Encodable, Equatable {
+    public struct SkillStats: Encodable, Equatable, Sendable {
         public let name: String
         public let owner: Owner
         /// Main sessions where it was listed (subagent runs are no sessions).
@@ -118,7 +118,7 @@ public struct StatsReport: Encodable, Equatable {
         }
     }
 
-    public struct Omitted: Encodable, Equatable {
+    public struct Omitted: Encodable, Equatable, Sendable {
         public let skills: Int
     }
 

@@ -741,6 +741,15 @@ extension RecommenderTests {
         #expect(loaded.projects == ["home/testmac"])
         #expect(Recommender.projectsUsing("core", brain: brain, home: home) == ["home/testmac"])
         #expect(Recommender.projectsUsing("absent", brain: brain, home: home).isEmpty)
+        // Its skills table is `akit stats --details` of the same window.
+        let stats = try #require(try JSONSerialization.jsonObject(with: Data(await akit("stats", "--details", "--days", "7", "--json").out.utf8))
+                                 as? [String: Any])
+        let week = try await Recommender.load(env: env, brain: brain, project: nil, days: 7, projectsRoot: home.appending(path: "Projects"),
+                                              hostName: "TestMac.local", hardware: "test-hardware")
+        #expect(week.stats.window.days == 7 && loaded.stats.window.days == InsightsStats.defaultDays)
+        #expect(!week.stats.skills.isEmpty
+                && week.stats.skills.map(\.name) == (stats["skills"] as? [[String: Any]])?.compactMap { $0["name"] as? String })
+        #expect(week.stats.skills.map(\.approxContextSpace) == (stats["skills"] as? [[String: Any]])?.compactMap { $0["approxContextSpace"] as? Int })
     }
 
     @Test func noBrainMeansAdviceOnly() async throws {

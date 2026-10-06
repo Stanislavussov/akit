@@ -24,8 +24,11 @@ Checked against the code on 2026-10-03:
 - Install capture and Sync (2026-10-06): the line has **Install Capture…** (one plan per
   part, `CaptureInstaller.partPlans`; only the checked parts run), and the app's brain Sync
   publishes summaries through `InsightsSync`, the sequence `akit sync` runs too.
-- Still to do in step 10: the skills table, Changes with marks, and Plan for the layer's
-  projects after Apply. The app uses neither `InsightsStats` nor `BeforeAfter` yet.
+- Skills table (2026-10-07): the screen shows `akit stats --details` of the scope, with a
+  7 / 30 / 90 days picker; `Recommender.load` returns it next to the recommendations. It sits
+  below the recommendations, so the actions come first.
+- Still to do in step 10: Changes with marks, and Plan for the layer's projects after Apply.
+  The app doesn't use `BeforeAfter` yet.
 - Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
   (2026-10-01), and the index has a `signals` table, filled by
   `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.

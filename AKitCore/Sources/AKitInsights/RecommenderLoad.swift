@@ -19,19 +19,24 @@ extension Recommender {
     public struct Loaded: Sendable {
         /// Every recommendation of the scope (no top N).
         public let report: RecommendReport
+        /// `akit stats --details` of the scope over the last `days`: every listed skill.
+        public let stats: StatsReport
         /// Projects the scope picker offers.
         public let projects: [String]
         public let lastImport: Date?
     }
 
-    /// A quick import, then the report of a scope (`project` nil: every session on every Mac).
-    public static func load(env: HarnessEnvironment, brain: Brain?, project: String?, projectsRoot: URL,
+    /// A quick import, then the report of a scope (`project` nil: every session on every Mac), and
+    /// its skill stats over the last `days` (recommendations keep the rule's own window).
+    public static func load(env: HarnessEnvironment, brain: Brain?, project: String?, days: Int = InsightsStats.defaultDays,
+                            projectsRoot: URL,
                             hostName: String = ProcessInfo.processInfo.hostName,
                             hardware: String? = MachineProfile.currentHardwareHash(), run: CommandRunner? = nil) async throws -> Loaded {
         let (database, inputs) = try await prepare(env: env, brain: brain, project: project, projectsRoot: projectsRoot,
                                                    hostName: hostName, hardware: hardware, run: run)
         let options = Options(project: project, top: nil)
         return Loaded(report: try recommend(database, options: options, inputs: inputs),
+                      stats: try InsightsStats.report(database, options: .init(days: days, project: project, top: nil), inputs: inputs.stats),
                       projects: try knownProjects(database, brain: brain, home: env.homeDirectory, bindings: options.bindings),
                       lastImport: inputs.lastImport)
     }
