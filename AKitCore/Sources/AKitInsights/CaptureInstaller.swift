@@ -154,6 +154,19 @@ extension CaptureInstaller {
         return plan
     }
 
+    /// The parts a plan writes to or runs commands for.
+    public func parts(in plan: Plan) -> [Part] {
+        let urls = plan.writes.map(\.url)
+        let tools = plan.commands.map { $0.executable.lastPathComponent }
+        return Part.allCases.filter { part in
+            switch part {
+            case .claude: tools.contains("claude") || urls.contains { url in brainRoot.map { url.path.hasPrefix($0.path + "/") } ?? false }
+            case .pi: urls.contains(piExtension)
+            case .launchd: urls.contains(agentPlist) || tools.contains(Self.launchctl.lastPathComponent)
+            }
+        }
+    }
+
     private func planClaude(into plan: inout Plan) async {
         guard let brain = brainRoot else {
             plan.notes.append("No brain: the Claude plugin lives in the brain (akit init or akit setup first).")

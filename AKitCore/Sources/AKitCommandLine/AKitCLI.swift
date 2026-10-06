@@ -15,7 +15,8 @@ public enum AKitCLI {
         Setup (a new Mac; asks a few questions, Enter takes the default):
           akit setup [--repo REPO] [--yes] [--skip-home]
                                           Get your brain (clone REPO, or $AKIT_BRAIN_REPO) or create
-                                          one, remember the projects folder, put core into ~
+                                          one, remember the projects folder, put core into ~,
+                                          set up session capture (akit insights install)
 
         Brain:
           akit init                       Create a brain: core layer with the /akit skill, git repo
@@ -225,7 +226,7 @@ public enum AKitCLI {
                     do {
                         try await Onboarding.run(.init(brainRepo: repo, skipHome: options.skipHome, cwd: cwd), root: brainRoot, env: env,
                                                  io: .init(ask: options.yes ? nil : ask, say: say), preferences: prefs,
-                                                 hostName: hostName, installedTargets: installedTargets, trash: trash)
+                                                 hostName: hostName, installedTargets: installedTargets, trash: trash, runner: runner)
                         return nil
                     } catch {
                         return error.localizedDescription

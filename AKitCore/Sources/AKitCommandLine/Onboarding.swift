@@ -1,12 +1,14 @@
 import AKitBrain
 import AKitFoundation
 import AKitHarnesses
+import AKitInsights
 import AKitProjectSetup
 import Foundation
 
 /// `akit setup`: the questions a new Mac needs answered, each with a default (Enter), then
 /// the work: get or create the brain, optionally give it a private GitHub repo, remember
-/// the projects folder, and put the core layer into the home folder. Safe to run again.
+/// the projects folder, put the core layer into the home folder, and set up session capture.
+/// Safe to run again.
 public enum Onboarding {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -52,7 +54,7 @@ public enum Onboarding {
 
     public static func run(_ options: Options, root: URL, env: HarnessEnvironment, io: IO, preferences: Preferences,
                            hostName: String, installedTargets: [String],
-                           trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
+                           trash: (URL) throws -> URL? = Trash.move, runner: CommandRunner? = nil) async throws(Failure) {
         try await brain(options, root: root, env: env, io: io)
         projectsFolder(io: io, preferences: preferences)
         if options.skipHome {
@@ -60,6 +62,7 @@ public enum Onboarding {
         } else {
             try await home(root: root, env: env, io: io, hostName: hostName, installedTargets: installedTargets, trash: trash)
         }
+        await capture(root: root, env: env, io: io, trash: trash, runner: runner)
         io.say("""
 
             Done. Open a project and ask your agent: /akit set up this project
@@ -213,6 +216,57 @@ public enum Onboarding {
         io.say("Home folder: \(skills) skill\(skills == 1 ? "" : "s") from the core layer for \(answers.targets.joined(separator: ", "))"
                + (outcome.backup.map { " (backup: \($0.path))" } ?? "") + ".")
         if !skipped.isEmpty { io.say(keptNote) }
+    }
+
+    /// Session capture (`akit insights install`): asked once while none of it is on this Mac;
+    /// once any part is there, kept current without a question, so running the install again
+    /// is an upgrade. A Pi extension AKit didn't write is left alone. Never fails setup.
+    static func capture(root: URL, env: HarnessEnvironment, io: IO, trash: (URL) throws -> URL?,
+                        runner: CommandRunner?) async {
+        let installer = CaptureInstaller(env: env, brainRoot: Brain.load(from: root) != nil ? root : nil, run: runner)
+        let status = await installer.status()
+        let installed = status.claude.installedVersion != nil || status.launchd.present
+            || status.pi.state == "current" || status.pi.state == "outdated"
+        var plan = await installer.installPlan()
+        // Only `akit insights install --only pi` replaces a file of someone else's (with a backup).
+        let foreign = plan.writes.filter(\.backup)
+        plan.writes.removeAll(where: \.backup)
+        let refused = plan.refused + foreign.map { "\($0.url.path) was not written by AKit; left alone (akit insights install --only pi replaces it, with a backup)." }
+        let parts = installer.parts(in: plan).map(captureName).joined(separator: ", ")
+        var lines: [String] = []
+        defer { io.say((lines + refused.map { "  not set up: \($0)" }).joined(separator: "\n")) }
+
+        guard !plan.isEmpty else {
+            lines = installed ? ["Session capture: on."]
+                : ["Session capture: nothing to set up on this Mac."] + plan.notes.map { "  note: \($0)" }
+            return
+        }
+        if !installed, !yes(io.ask?("Record sessions as they start (\(parts))? [Y/n]"), default: true) {
+            lines = ["Session capture: off. Later: akit insights install --yes"]
+            return
+        }
+        let failures: [String]
+        do {
+            failures = try await installer.execute(plan, trash: trash)
+        } catch {
+            lines = ["Session capture: not set up. \(error.localizedDescription) Later: akit insights install --yes"]
+            return
+        }
+        if !failures.isEmpty {
+            lines = ["Session capture: set up with problems (akit insights status shows what is on):"] + failures.map { "  \($0)" }
+        } else if installed {
+            lines = ["Session capture: updated (\(parts))."]
+        } else {
+            lines = ["Session capture: on (\(parts))."] + plan.notes.map { "  note: \($0)" }
+        }
+    }
+
+    static func captureName(_ part: CaptureInstaller.Part) -> String {
+        switch part {
+        case .claude: "Claude plugin"
+        case .pi: "Pi extension"
+        case .launchd: "hourly import"
+        }
     }
 
     /// Moves each skill in `~/.claude/skills` into `~/.agents/skills` (a skill already there
