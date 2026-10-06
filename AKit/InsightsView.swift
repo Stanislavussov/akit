@@ -19,6 +19,8 @@ struct InsightsView: View {
     @State private var notice: String?
     /// Counts the loads started, so a superseded one can tell.
     @State private var generation = 0
+    /// Set when session capture is off or out of date on this Mac.
+    @State private var captureNotice: String?
 
     var body: some View {
         Group {
@@ -63,6 +65,12 @@ struct InsightsView: View {
         }
         // Every rescan (launch, ⌘R, a commit made here) loads again: the brain decides who owns a skill.
         .task(id: LoadKey(project: project, scan: model.lastScan)) { await load() }
+        // Its status runs `claude` and `launchctl`: off the main thread, each time the screen appears
+        // or the brain changes (the Claude plugin lives there).
+        .task(id: model.brain?.root) {
+            let brain = model.brain?.root
+            captureNotice = await Task.detached { await Self.captureNotice(env: .current, brain: brain) }.value
+        }
         .sheet(item: $patch) { patch in
             InsightsPatchSheet(patch: patch) { notice = $0 }
         }
@@ -112,6 +120,11 @@ struct InsightsView: View {
                     Label(trouble, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if let captureNotice {
+                    Label(captureNotice, systemImage: "record.circle").foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
                 owners(report)
                 recommendations(report)
                 footer(report)
@@ -127,7 +140,7 @@ struct InsightsView: View {
         return GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 if owners.isEmpty {
-                    Text("No skill listing recorded in this scope yet. Import Now reads the session files on this Mac; akit insights install records new sessions as they start.")
+                    Text("No skill listing recorded in this scope yet. Import Now reads the session files on this Mac; akit setup (or akit insights install) records new sessions as they start.")
                         .foregroundStyle(.secondary)
                 } else {
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
@@ -306,6 +319,12 @@ struct InsightsView: View {
     }
 
     // MARK: Text
+
+    /// A line when session capture (`akit insights install`) is off or out of date on this Mac.
+    nonisolated static func captureNotice(env: HarnessEnvironment, brain: URL?) async -> String? {
+        let status = await CaptureInstaller(env: env, brainRoot: brain).status()
+        return CaptureNotice.text(status: status, brainPresent: brain != nil)
+    }
 
     /// `3 sessions`, `1 day`.
     static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }

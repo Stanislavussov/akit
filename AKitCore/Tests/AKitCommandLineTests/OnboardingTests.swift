@@ -1,17 +1,51 @@
 import Foundation
 import Testing
 import AKitBrain
-import AKitFoundation
+@testable import AKitFoundation
 @testable import AKitCommandLine
+@testable import AKitInsights
 
 /// `akit setup` on a new Mac, in a temporary fake home, with scripted answers.
 struct OnboardingTests {
     let home: URL
     let fm = FileManager.default
+    let commands = FakeCommands()
 
     init() throws {
         home = fm.temporaryDirectory.appending(path: "akit-setup-\(UUID().uuidString)")
         try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        // An installed akit (make install-cli) for the hourly import; never run.
+        let akit = home.appending(path: ".local/bin/akit")
+        try fm.createDirectory(at: akit.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: akit)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: akit.path)
+        commands.gitEnvironment = env.variables
+    }
+
+    /// Stands in for `launchctl` (and a `claude` that isn't there): records every call; the agent
+    /// is loaded once bootstrapped. Nothing runs for real except git.
+    final class FakeCommands: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls: [String] = []
+        private var loaded = false
+        var gitEnvironment: [String: String] = [:]
+
+        var all: [String] { lock.withLock { calls } }
+
+        var runner: CommandRunner {
+            { executable, arguments, directory, timeout in
+                if executable.lastPathComponent == "git" {
+                    return await ProcessRunner.run(executable, arguments: arguments, directory: directory,
+                                                   environment: self.gitEnvironment, timeout: timeout)
+                }
+                let missing: Bool = self.lock.withLock {
+                    self.calls.append(([executable.lastPathComponent] + arguments).joined(separator: " "))
+                    if arguments.first == "bootstrap" { self.loaded = true }
+                    return arguments.first == "print" && !self.loaded
+                }
+                return ProcessRunner.Result(exitedNormally: true, status: missing ? 113 : 0, timedOut: false, output: "")
+            }
+        }
     }
 
     var env: HarnessEnvironment {
@@ -39,18 +73,30 @@ struct OnboardingTests {
         var out: [String] = []
         let code = await AKitCLI.run(["setup"] + arguments, env: env, cwd: home, hostName: "TestMac.local", installedTargets: ["claude"],
                                      out: { out.append($0) }, err: { out.append($0) },
-                                     trash: { url in
-                                         let target = home.appending(path: "Trash/\(UUID().uuidString)")
-                                         try fm.createDirectory(at: target, withIntermediateDirectories: true)
-                                         try fm.moveItem(at: url, to: target.appending(path: url.lastPathComponent))
-                                         return target
-                                     },
+                                     trash: trash,
                                      ask: answers == nil ? nil : { question in
                                          session.questions.append(question)
                                          return session.answers.isEmpty ? "" : session.answers.removeFirst()
                                      },
-                                     preferences: .init(projectsRoot: { session.projectsRoot }, setProjectsRoot: { session.projectsRoot = $0 }))
+                                     preferences: .init(projectsRoot: { session.projectsRoot }, setProjectsRoot: { session.projectsRoot = $0 }),
+                                     runner: commands.runner)
         return (code, out.joined(separator: "\n"), session)
+    }
+
+    /// Runs another akit command, without a terminal.
+    func akit(_ arguments: String...) async -> (code: Int32, out: String) {
+        var out: [String] = []
+        let code = await AKitCLI.run(arguments, env: env, cwd: home, out: { out.append($0) }, err: { out.append($0) },
+                                     trash: trash, runner: commands.runner)
+        return (code, out.joined(separator: "\n"))
+    }
+
+    /// The fake Trash: a folder inside the fake home.
+    func trash(_ url: URL) throws -> URL? {
+        let target = home.appending(path: "Trash/\(UUID().uuidString)")
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try fm.moveItem(at: url, to: target.appending(path: url.lastPathComponent))
+        return target
     }
 
     func read(_ path: String) -> String? { try? String(contentsOf: home.appending(path: path), encoding: .utf8) }
@@ -74,11 +120,12 @@ struct OnboardingTests {
         #expect(result.session.projectsRoot == "~/Projects")
         #expect(read(".agents/skills/akit/SKILL.md")?.contains("disable-model-invocation: true") == true)
         #expect(result.out.contains("/akit set up this project"))
+        #expect(fm.fileExists(atPath: plist.path) && result.out.contains("Session capture: on (hourly import)."), "\(result.out)")
 
         // Again: nothing to do, nothing asked.
         let again = await setup(answers: [], session: result.session)
         #expect(again.code == 0 && again.session.questions.isEmpty, "\(again.session.questions) \(again.out)")
-        #expect(again.out.contains("nothing new"))
+        #expect(again.out.contains("nothing new") && again.out.contains("Session capture: on."))
     }
 
     @Test func onAWorkMacTheHomeRecordStaysOffTheBrain() async throws {
@@ -100,7 +147,7 @@ struct OnboardingTests {
 
         let result = await setup(answers: [remote.path, "~/Code"])
         #expect(result.code == 0, "\(result.out)")
-        #expect(result.session.questions.count == 2)
+        #expect(result.session.questions.count == 3)  // repo, projects folder, session capture
         #expect(result.session.projectsRoot == "~/Code")
         #expect(await BrainSync.status(of: brain, env: env, fetch: false)?.hasRemote == true)
         #expect(read(".agents/skills/akit/SKILL.md") != nil)
@@ -112,7 +159,7 @@ struct OnboardingTests {
 
         let retried = await setup(answers: [home.appending(path: "missing.git").path, ""])
         #expect(retried.code == 0, "\(retried.out)")
-        #expect(retried.session.questions.count == 3)  // repo, another repo, projects folder
+        #expect(retried.session.questions.count == 4)  // repo, another repo, projects folder, session capture
         #expect(Brain.load(from: brain) != nil)
     }
 
@@ -123,7 +170,7 @@ struct OnboardingTests {
 
         let kept = await setup(answers: ["", "", "n"])
         #expect(kept.code == 0, "\(kept.out)")
-        #expect(kept.session.questions.last?.contains("Replace them") == true)
+        #expect(kept.session.questions.contains { $0.contains("Replace them") })
         #expect(read(mine) == "my own\n")
 
         let replaced = await setup(answers: ["y"], session: kept.session)
@@ -132,9 +179,14 @@ struct OnboardingTests {
     }
 
     @Test func skipHomeLeavesTheHomeFolderAlone() async throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
         let result = await setup(["--skip-home", "--yes"], answers: ["should not be asked"])
         #expect(result.code == 0 && result.session.questions.isEmpty)
         #expect(!fm.fileExists(atPath: home.appending(path: ".agents").path))
+        // Session capture writes into ~ too: skipped as well.
+        #expect(!fm.fileExists(atPath: plist.path) && read(piExtension) == nil)
+        #expect(!commands.all.contains { $0.hasPrefix("launchctl bootstrap") })
+        #expect(result.out.contains("Session capture: skipped. Later: akit insights install --yes"), "\(result.out)")
     }
 
     @Test func claudesOwnSkillsFolderIsMovedOnlyAfterAYes() async throws {
@@ -172,4 +224,102 @@ struct OnboardingTests {
         #expect(result.session.projectsRoot == "~/Code")
     }
 
+    // MARK: Session capture
+
+    var plist: URL { home.appending(path: "Library/LaunchAgents/dev.ussov.akit.sessions-import.plist") }
+    let piExtension = ".pi/agent/extensions/akit-record.ts"
+    let captureQuestion = "Record sessions as they start"
+
+    @Test func captureIsOfferedOnceAndInstalled() async throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        let result = await setup(answers: [])
+        #expect(result.code == 0, "\(result.out)")
+        #expect(result.session.questions.last == "\(captureQuestion) (Pi extension, hourly import)? [Y/n]")
+        #expect(read(piExtension) == CaptureInstaller.piExtensionText)
+        #expect(fm.fileExists(atPath: plist.path))
+        #expect(commands.all.contains("launchctl bootstrap gui/\(getuid()) \(plist.path)"), "\(commands.all)")
+        #expect(result.out.contains("Session capture: on (Pi extension, hourly import)."), "\(result.out)")
+
+        let again = await setup(answers: [], session: result.session)
+        #expect(!again.session.questions.contains { $0.hasPrefix(captureQuestion) })
+        #expect(again.out.contains("Session capture: on.") && !again.out.contains("updated"), "\(again.out)")
+    }
+
+    @Test func captureDeclinedWritesNothing() async throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        let result = await setup(answers: ["", "", "n"])  // brain, projects folder, capture
+        #expect(result.code == 0, "\(result.out)")
+        #expect(result.session.questions.last?.hasPrefix(captureQuestion) == true)
+        #expect(read(piExtension) == nil && !fm.fileExists(atPath: plist.path))
+        #expect(!commands.all.contains { $0.hasPrefix("launchctl bootstrap") })
+        #expect(result.out.contains("Session capture: off."))
+
+        // The no is remembered: not asked again, nothing installed, even with every default taken.
+        let rerun = await setup(["--yes"], session: result.session)
+        #expect(rerun.code == 0, "\(rerun.out)")
+        #expect(rerun.out.contains("Session capture: off (your choice). Later: akit insights install --yes"), "\(rerun.out)")
+        #expect(read(piExtension) == nil && !fm.fileExists(atPath: plist.path))
+        let asked = await setup(answers: [], session: result.session)
+        #expect(!asked.session.questions.contains { $0.hasPrefix(captureQuestion) || $0.hasPrefix(addQuestion) })
+
+        // Installing by hand undoes the no.
+        let installed = await akit("insights", "install", "--yes")
+        #expect(installed.code == 0, "\(installed.out)")
+        #expect(read(piExtension) == CaptureInstaller.piExtensionText && fm.fileExists(atPath: plist.path))
+        #expect(InsightsPaths(env: env).readSettings()["capture"] == nil)
+        let after = await setup(answers: [], session: result.session)
+        #expect(after.out.contains("Session capture: on."), "\(after.out)")
+
+        // Uninstalling is a no: the next setup doesn't put capture back.
+        let removed = await akit("insights", "uninstall", "--yes")
+        #expect(removed.code == 0, "\(removed.out)")
+        #expect(read(piExtension) == nil)
+        #expect(InsightsPaths(env: env).readSettings()["capture"] as? Bool == false)
+        let kept = await setup(["--yes"], session: result.session)
+        #expect(kept.out.contains("Session capture: off (your choice)."), "\(kept.out)")
+        #expect(read(piExtension) == nil && !fm.fileExists(atPath: plist.path))
+    }
+
+    let addQuestion = "Also record sessions with"
+
+    @Test func outdatedCaptureIsUpdatedWithoutAQuestion() async throws {
+        try write(piExtension, "// \(CaptureInstaller.marker)\n// an older one\n")
+        let result = await setup(answers: ["", "", "n"])  // brain, projects folder, adding the hourly import
+        #expect(result.code == 0, "\(result.out)")
+        #expect(!result.session.questions.contains { $0.hasPrefix(captureQuestion) }, "\(result.session.questions)")
+        #expect(read(piExtension) == CaptureInstaller.piExtensionText)
+        // A part that isn't there is asked for, never added silently.
+        #expect(result.session.questions.last == "\(addQuestion) the hourly import? [Y/n]", "\(result.session.questions)")
+        #expect(!fm.fileExists(atPath: plist.path) && !commands.all.contains { $0.hasPrefix("launchctl bootstrap") })
+        #expect(result.out.contains("Session capture: updated (Pi extension)."), "\(result.out)")
+
+        // That no is remembered too; the Pi extension is still kept current.
+        let again = await setup(answers: [], session: result.session)
+        #expect(!again.session.questions.contains { $0.hasPrefix(addQuestion) }, "\(again.session.questions)")
+        #expect(!fm.fileExists(atPath: plist.path) && again.out.contains("Session capture: on."), "\(again.out)")
+    }
+
+    @Test func aPartInstalledByHandIsKeptAndTheOthersAreAskedFor() async throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        let pi = await akit("insights", "install", "--only", "pi", "--yes")
+        #expect(pi.code == 0 && read(piExtension) == CaptureInstaller.piExtensionText, "\(pi.out)")
+
+        let result = await setup(answers: [])
+        #expect(result.code == 0, "\(result.out)")
+        #expect(!result.session.questions.contains { $0.hasPrefix(captureQuestion) }, "\(result.session.questions)")
+        #expect(result.session.questions.last == "\(addQuestion) the hourly import? [Y/n]", "\(result.session.questions)")
+        #expect(fm.fileExists(atPath: plist.path))
+        #expect(result.out.contains("Session capture: updated (hourly import)."), "\(result.out)")
+    }
+
+    @Test func aForeignPiExtensionIsLeftAlone() async throws {
+        try write(piExtension, "// my own\n")
+        let result = await setup(answers: [])
+        #expect(result.code == 0, "\(result.out)")
+        #expect(result.session.questions.last == "\(captureQuestion) (hourly import)? [Y/n]")
+        #expect(read(piExtension) == "// my own\n")
+        #expect(!fm.fileExists(atPath: home.appending(path: ".akit/backups").path))
+        #expect(fm.fileExists(atPath: plist.path))
+        #expect(result.out.contains("not set up: \(home.appending(path: piExtension).path) was not written by AKit; left alone"), "\(result.out)")
+    }
 }

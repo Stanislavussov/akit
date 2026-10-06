@@ -74,7 +74,7 @@ design doc and this table say so.
 | # | Step | Design | Why at this place |
 |---|---|---|---|
 | 0 | No code: label the bootstrap sessions, run one batch, write one fix draft | `error-analysis.md` | Error analysis is built and has no active mode yet. Its results show which of the later steps are needed |
-| 1 | Insights screen. Built 2026-10-03: recommendations with Apply… and Dismiss…. Left: the skills table, Changes, capture install, Plan after Apply, and the app's Sync publishing summaries | `session-insights.md`, step 10 | The feature had no button. Almost no new logic: the pieces move from the command line module into `AKitInsights` |
+| 1 | Insights screen. Built 2026-10-03: recommendations with Apply… and Dismiss…. `akit setup` installs capture and the screen says when it is off (2026-10-06). Left: the skills table, Changes, an Install capture button, Plan after Apply, and the app's Sync publishing summaries | `session-insights.md`, step 10 | The feature had no button. Almost no new logic: the pieces move from the command line module into `AKitInsights` |
 | 2 | Buttons for "apply the core layer to the home folder" and "forget project" | `layers.md`, Roadmap | Same rule: every operation needs a button. Small |
 | 3 | Count only exposures with a description | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
