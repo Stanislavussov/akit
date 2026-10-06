@@ -603,6 +603,7 @@ public enum AKitCLI {
                              out: (String) -> Void) throws -> Int32 {
         let text = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { throw Failure(message: "Use: akit stats mark \"<note>\" [--at DATE], e.g. akit stats mark \"Disabled the marketing plugin\".") }
+        guard text.count <= Spool.maxNoteLength else { throw Failure(message: "The note is longer than \(Spool.maxNoteLength) characters.") }
         var date = now
         if let atText {
             guard let parsed = BeforeAfter.date(from: atText) else {
@@ -626,7 +627,7 @@ public enum AKitCLI {
         func signed(_ n: Int) -> String { n > 0 ? "+" + short(n) : short(n) }
         var lines = ["First-request context (recorded tokens) of sessions within \(Int(BeforeAfter.window / 86_400)) days before and "
                      + "after each change, with the same harness version and model"
-                     + (project.map { ", applies of \($0)" } ?? "") + ":"]
+                     + (project.map { ", applies of \($0) and marks" } ?? "") + ":"]
         if report.changes.isEmpty {
             lines.append("No changes yet: akit apply records one, akit stats mark \"<note>\" [--at DATE] one made by hand.")
         }

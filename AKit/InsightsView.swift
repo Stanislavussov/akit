@@ -14,13 +14,18 @@ struct InsightsView: View {
     @State private var days = InsightsStats.defaultDays
     /// The skills table shows the first `shortTable` rows until Show All.
     @State private var allSkills = false
+    /// The Changes list shows the newest `shortChanges` until Show All.
+    @State private var allChanges = false
     @State private var loaded: Recommender.Loaded?
     @State private var isLoading = false
     @State private var problem: String?
     @State private var patch: InsightsPatch?
     @State private var dismissing: RecommendReport.Recommendation?
     /// What the last Apply or Dismiss did.
-    @State private var notice: String?
+    /// Any new notice drops the previous Plan… list; the patch sheet sets its own after it.
+    @State private var notice: String? {
+        didSet { toPlan = [] }
+    }
     /// Projects a committed layer patch reaches only after they are set up again (Plan… buttons under the notice).
     @State private var toPlan: [String] = []
     /// The project Plan… opened in Set Up Project.
@@ -147,7 +152,6 @@ struct InsightsView: View {
                             Spacer()
                             Button("Close", systemImage: "xmark") {
                                 self.notice = nil
-                                toPlan = []
                             }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
@@ -184,8 +188,10 @@ struct InsightsView: View {
             ForEach(toPlan, id: \.self) { id in
                 HStack(alignment: .firstTextBaseline) {
                     Text(id).font(.callout.monospaced())
-                    if id.hasPrefix("home/") {
-                        Text("run akit apply --home in Terminal").font(.callout).foregroundStyle(.secondary)
+                    if id == ProjectRecords.homeID(machineName: model.machine.homeName) {
+                        Text("this Mac's home folder: run akit apply --home in Terminal").font(.callout).foregroundStyle(.secondary)
+                    } else if id.hasPrefix("home/") {
+                        Text("another Mac's home folder: run akit apply --home there").font(.callout).foregroundStyle(.secondary)
                     } else if let folder = model.brainProjectFolders[id] {
                         Button("Plan…") { planning = PlanRequest(folder: folder) }
                             .help("Open Set Up Project for \(folder.tildePath): the change as a diff, then Apply")
@@ -332,6 +338,8 @@ struct InsightsView: View {
 
     /// Rows the Skills table shows before Show All.
     static let shortTable = 15
+    /// Changes shown before Show All.
+    static let shortChanges = 8
 
     /// `akit stats --details`: every skill listed in the window, by ≈ context space.
     private func skills(_ stats: StatsReport) -> some View {
@@ -400,8 +408,14 @@ struct InsightsView: View {
                 if report.changes.isEmpty {
                     Text("No changes yet.").foregroundStyle(.secondary)
                 }
-                ForEach(Array(report.changes.enumerated().reversed()), id: \.offset) { _, change in
-                    changeRow(change)
+                let newest = Array(report.changes.reversed())
+                ForEach(allChanges ? newest : Array(newest.prefix(Self.shortChanges)), id: \.key) { changeRow($0) }
+                if newest.count > Self.shortChanges {
+                    Button(allChanges ? "Show Fewer" : "Show All \(newest.count) Changes") { allChanges.toggle() }
+                        .buttonStyle(.link)
+                }
+                ForEach(report.notes, id: \.self) { note in
+                    Label(note, systemImage: "info.circle").font(.callout).foregroundStyle(.secondary)
                 }
                 Text(Self.calibrationText(report.calibration)).font(.footnote).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -654,7 +668,7 @@ struct InsightsPatchSheet: View {
             .frame(height: 220)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
             if isManual, !projects.isEmpty {
-                Text("It takes effect after these are set up again: \(projects.joined(separator: ", ")). After Commit, Plan… next to each opens its setup.")
+                Text("It takes effect after these are set up again: \(projects.joined(separator: ", ")). After Commit, the screen lists them; Plan… opens a project's setup.")
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -919,4 +933,9 @@ struct AddMarkSheet: View {
             self.error = error.message
         }
     }
+}
+
+extension ChangesReport.Change {
+    /// One change in the list: its time, kind and project or note.
+    var key: String { "\(date.timeIntervalSince1970)|\(anchor)|\(project ?? note ?? "")" }
 }

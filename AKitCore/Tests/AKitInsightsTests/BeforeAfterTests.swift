@@ -295,10 +295,10 @@ extension BeforeAfterTests {
         #expect(calibration["source"] as? String == "defaults" && calibration["latin"] as? Double == 4)
         let change = try #require((object["changes"] as? [[String: Any]])?.first)
         #expect(change["anchor"] as? String == "mark" && change["status"] as? String == "notEnoughData" && change["reason"] is String)
-        // A project shows its own applies only.
+        // A project shows its own applies and the marks, which are Mac-wide.
         let project = try #require(try JSONSerialization.jsonObject(with: Data(await akit("stats", "changes", "--project", Self.project, "--json").out.utf8))
                                    as? [String: Any])
-        #expect((project["changes"] as? [Any])?.isEmpty == true)
+        #expect((project["changes"] as? [[String: Any]])?.map { $0["anchor"] as? String } == ["mark"], "\(project)")
         let text = await akit("stats", "changes")
         #expect(text.code == 0 && text.out.contains("mark “Disabled marketing” (all sessions on this Mac)")
                 && text.out.contains("not enough data: no sessions") && text.out.contains("≈ sizes use k 4.0 Latin (default"), "\(text)")

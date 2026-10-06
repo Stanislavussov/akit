@@ -755,6 +755,12 @@ extension RecommenderTests {
                                    as? [String: Any])
         let anchors = (changes["changes"] as? [[String: Any]])?.compactMap { $0["anchor"] as? String }
         #expect(loaded.changes.changes.map(\.anchor) == anchors, "\(changes)")
+        // A mark is Mac-wide: a project's Changes show it next to that project's applies.
+        try Spool.mark("Disabled a plugin", at: Date().addingTimeInterval(-60), home: home)
+        let scoped = try await Recommender.load(env: env, brain: brain, project: "home/testmac", projectsRoot: home.appending(path: "Projects"),
+                                                hostName: "TestMac.local", hardware: "test-hardware")
+        #expect(scoped.changes.changes.contains { $0.anchor == "mark" && $0.note == "Disabled a plugin" }, "\(scoped.changes)")
+        #expect(scoped.changes.changes.allSatisfy { $0.anchor == "mark" || $0.project == "home/testmac" })
     }
 
     @Test func noBrainMeansAdviceOnly() async throws {

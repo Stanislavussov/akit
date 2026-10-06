@@ -33,7 +33,15 @@ Checked against the code on 2026-10-03:
 - Plan after Apply (2026-10-07): after a committed `mode: manual` patch the screen lists the
   layer's projects; **Plan…** opens Set Up Project for a project folder on this Mac, where the
   change is a diff until Apply. A home folder still says `akit apply --home` (the Home button
-  is step 2 of the design map). Step 10 is built.
+  is step 2 of the design map).
+- Step 10 is built except these smaller items of its plan below, left until someone needs
+  them: **Copy command** / **Show in Skills** on advice cards, **Sync first** in the Apply
+  sheet, and the expected-vs-observed delta and "deviates" flags in Changes (they wait for
+  step 9).
+- Loading the screen measures every anchor and saves the k when it changed, as
+  `akit stats changes` does; so opening the screen can move the ≈ numbers `akit recommend`
+  and `akit stats` print next. A project's Changes show its applies and every mark (marks
+  are Mac-wide).
 - Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
   (2026-10-01), and the index has a `signals` table, filled by
   `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.

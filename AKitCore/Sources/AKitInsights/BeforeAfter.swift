@@ -289,20 +289,25 @@ public enum BeforeAfter {
 
 extension BeforeAfter {
     /// `akit stats changes` and the Insights screen's Changes: every anchor measured, and the k
-    /// they give saved (only under the import lock), then the anchors of `project` (its applies)
-    /// or all of them.
+    /// they give saved when it changed (only under the import lock), then the anchors of
+    /// `project` (its applies, and the marks, which are Mac-wide) or all of them.
     public static func report(_ database: IndexDatabase, env: HarnessEnvironment, descriptions: [String: String], project: String?,
                               notes: [String] = []) throws -> ChangesReport {
         let changes = try changes(database, descriptions: descriptions)
         // Every anchor calibrates, whatever the report shows.
         let calibration = ContextCalibration.calibration(from: changes)
         var notes = notes
-        if let lock = try ImportLock.acquire(InsightsPaths(env: env).lock) {
+        let stored = try ContextSize.calibration(database)
+        // Neither calibrated: the defaults apply and nothing is stored either way.
+        let unchanged = stored.isCalibrated || calibration.isCalibrated ? stored == calibration : true
+        if unchanged {
+            // Nothing to write, so no lock taken: an import starting now isn't kept waiting.
+        } else if let lock = try ImportLock.acquire(InsightsPaths(env: env).lock) {
             try withExtendedLifetime(lock) { try ContextCalibration.save(calibration, database: database) }
         } else {
             notes.append("calibration not saved: an import is running; run akit stats changes again later")
         }
-        return ChangesReport(version: 1, changes: project.map { id in changes.filter { $0.project == id } } ?? changes,
+        return ChangesReport(version: 1, changes: project.map { id in changes.filter { $0.project == id || $0.anchor == "mark" } } ?? changes,
                              calibration: ContextCalibration.summary(calibration), notes: notes)
     }
 }
