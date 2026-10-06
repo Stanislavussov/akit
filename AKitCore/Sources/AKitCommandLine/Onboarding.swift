@@ -59,10 +59,11 @@ public enum Onboarding {
         projectsFolder(io: io, preferences: preferences)
         if options.skipHome {
             io.say("Home folder: skipped. Later: akit apply --home")
+            io.say("Session capture: skipped. Later: akit insights install --yes")
         } else {
             try await home(root: root, env: env, io: io, hostName: hostName, installedTargets: installedTargets, trash: trash)
+            await capture(root: root, env: env, io: io, trash: trash, runner: runner)
         }
-        await capture(root: root, env: env, io: io, trash: trash, runner: runner)
         io.say("""
 
             Done. Open a project and ask your agent: /akit set up this project
@@ -218,54 +219,103 @@ public enum Onboarding {
         if !skipped.isEmpty { io.say(keptNote) }
     }
 
-    /// Session capture (`akit insights install`): asked once while none of it is on this Mac;
-    /// once any part is there, kept current without a question, so running the install again
-    /// is an upgrade. A Pi extension AKit didn't write is left alone. Never fails setup.
+    /// Session capture (`akit insights install`): asked once while none of it is on this Mac,
+    /// and a no is remembered (`CaptureInstaller.Choice`). Once a part is there, the parts there
+    /// are kept current without a question, so running the install again is an upgrade; a part
+    /// that could join (say Claude Code, installed since) is asked for once. A Pi extension AKit
+    /// didn't write is left alone. Never fails setup.
     static func capture(root: URL, env: HarnessEnvironment, io: IO, trash: (URL) throws -> URL?,
                         runner: CommandRunner?) async {
         let installer = CaptureInstaller(env: env, brainRoot: Brain.load(from: root) != nil ? root : nil, run: runner)
         let status = await installer.status()
-        let installed = status.claude.installedVersion != nil || status.launchd.present
-            || status.pi.state == "current" || status.pi.state == "outdated"
-        var plan = await installer.installPlan()
+        var choice = installer.choice
+        var lines: [String] = [], refused: [String] = []
+        defer { io.say((lines + refused.map { "  not set up: \($0)" }).joined(separator: "\n")) }
+        let later = "Later: akit insights install --yes"
+        func remember() {
+            do {
+                try installer.save(choice)
+            } catch {
+                lines.append("  (couldn't save this answer in \(InsightsPaths(env: env).settings.path): \(error.localizedDescription))")
+            }
+        }
+        guard !choice.declined else {
+            lines = ["Session capture: off (your choice). \(later)"]
+            return
+        }
+
+        let installed = CaptureInstaller.installedParts(status)
+        var parts = installed
+        if !installed.isEmpty {
+            // Parts that could join the ones there: asked once, a no is remembered.
+            var offered: [CaptureInstaller.Part] = []
+            for part in CaptureInstaller.Part.allCases where !installed.contains(part) && !choice.skipped.contains(part) {
+                let joins = switch part {
+                case .claude: status.claude.claudeFound
+                case .pi: status.pi.found && status.pi.state == "missing"
+                case .launchd: true
+                }
+                if joins, installer.parts(in: await installer.installPlan(only: part)).contains(part) { offered.append(part) }
+            }
+            if !offered.isEmpty {
+                let names = CaptureNotice.list(offered.map(joiningName))
+                if yes(io.ask?("Also record sessions with \(names)? [Y/n]"), default: true) {
+                    parts += offered
+                } else {
+                    choice.skipped.formUnion(offered)
+                    remember()
+                }
+            }
+        }
+        var plan = await installer.installPlan(parts: parts.isEmpty ? CaptureInstaller.Part.allCases : parts)
         // Only `akit insights install --only pi` replaces a file of someone else's (with a backup).
         let foreign = plan.writes.filter(\.backup)
         plan.writes.removeAll(where: \.backup)
-        let refused = plan.refused + foreign.map { "\($0.url.path) was not written by AKit; left alone (akit insights install --only pi replaces it, with a backup)." }
-        let parts = installer.parts(in: plan).map(captureName).joined(separator: ", ")
-        var lines: [String] = []
-        defer { io.say((lines + refused.map { "  not set up: \($0)" }).joined(separator: "\n")) }
+        refused = plan.refused + foreign.map { "\($0.url.path) was not written by AKit; left alone (akit insights install --only pi replaces it, with a backup)." }
+        let names = installer.parts(in: plan).map { captureName($0, claudeFound: status.claude.claudeFound) }.joined(separator: ", ")
 
         guard !plan.isEmpty else {
-            lines = installed ? ["Session capture: on."]
-                : ["Session capture: nothing to set up on this Mac."] + plan.notes.map { "  note: \($0)" }
+            lines = (installed.isEmpty ? ["Session capture: nothing to set up on this Mac."] + plan.notes.map { "  note: \($0)" }
+                     : ["Session capture: on."]) + lines
             return
         }
-        if !installed, !yes(io.ask?("Record sessions as they start (\(parts))? [Y/n]"), default: true) {
-            lines = ["Session capture: off. Later: akit insights install --yes"]
+        if installed.isEmpty, !yes(io.ask?("Record sessions as they start (\(names))? [Y/n]"), default: true) {
+            choice.declined = true
+            remember()
+            lines = ["Session capture: off. \(later)"] + lines
             return
         }
         let failures: [String]
         do {
             failures = try await installer.execute(plan, trash: trash)
         } catch {
-            lines = ["Session capture: not set up. \(error.localizedDescription) Later: akit insights install --yes"]
+            lines = ["Session capture: not set up. \(error.localizedDescription) \(later)"] + lines
             return
         }
         if !failures.isEmpty {
-            lines = ["Session capture: set up with problems (akit insights status shows what is on):"] + failures.map { "  \($0)" }
-        } else if installed {
-            lines = ["Session capture: updated (\(parts))."]
+            lines = ["Session capture: set up with problems (akit insights status shows what is on):"] + failures.map { "  \($0)" } + lines
+        } else if !installed.isEmpty {
+            lines = ["Session capture: updated (\(names))."] + lines
         } else {
-            lines = ["Session capture: on (\(parts))."] + plan.notes.map { "  note: \($0)" }
+            lines = ["Session capture: on (\(names))."] + plan.notes.map { "  note: \($0)" } + lines
         }
     }
 
-    static func captureName(_ part: CaptureInstaller.Part) -> String {
+    /// A part in the setup summary. Without Claude Code on this Mac only the brain gets the plugin.
+    static func captureName(_ part: CaptureInstaller.Part, claudeFound: Bool) -> String {
         switch part {
-        case .claude: "Claude plugin"
+        case .claude: claudeFound ? "Claude plugin" : "plugin files in the brain"
         case .pi: "Pi extension"
         case .launchd: "hourly import"
+        }
+    }
+
+    /// A part offered to join the ones there.
+    static func joiningName(_ part: CaptureInstaller.Part) -> String {
+        switch part {
+        case .claude: "Claude Code (plugin)"
+        case .pi: "Pi (extension)"
+        case .launchd: "the hourly import"
         }
     }
 

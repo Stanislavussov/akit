@@ -88,6 +88,14 @@ struct OnboardingTests {
         return (code, out.joined(separator: "\n"), session)
     }
 
+    /// Runs another akit command, without a terminal.
+    func akit(_ arguments: String...) async -> (code: Int32, out: String) {
+        var out: [String] = []
+        let code = await AKitCLI.run(arguments, env: env, cwd: home, out: { out.append($0) }, err: { out.append($0) },
+                                     trash: { _ in nil }, runner: commands.runner)
+        return (code, out.joined(separator: "\n"))
+    }
+
     func read(_ path: String) -> String? { try? String(contentsOf: home.appending(path: path), encoding: .utf8) }
 
     func write(_ path: String, _ text: String) throws {
@@ -168,9 +176,14 @@ struct OnboardingTests {
     }
 
     @Test func skipHomeLeavesTheHomeFolderAlone() async throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
         let result = await setup(["--skip-home", "--yes"], answers: ["should not be asked"])
         #expect(result.code == 0 && result.session.questions.isEmpty)
         #expect(!fm.fileExists(atPath: home.appending(path: ".agents").path))
+        // Session capture writes into ~ too: skipped as well.
+        #expect(!fm.fileExists(atPath: plist.path) && read(piExtension) == nil)
+        #expect(!commands.all.contains { $0.hasPrefix("launchctl bootstrap") })
+        #expect(result.out.contains("Session capture: skipped. Later: akit insights install --yes"), "\(result.out)")
     }
 
     @Test func claudesOwnSkillsFolderIsMovedOnlyAfterAYes() async throws {
@@ -237,15 +250,54 @@ struct OnboardingTests {
         #expect(read(piExtension) == nil && !fm.fileExists(atPath: plist.path))
         #expect(!commands.all.contains { $0.hasPrefix("launchctl bootstrap") })
         #expect(result.out.contains("Session capture: off."))
+
+        // The no is remembered: not asked again, nothing installed, even with every default taken.
+        let rerun = await setup(["--yes"], session: result.session)
+        #expect(rerun.code == 0, "\(rerun.out)")
+        #expect(rerun.out.contains("Session capture: off (your choice). Later: akit insights install --yes"), "\(rerun.out)")
+        #expect(read(piExtension) == nil && !fm.fileExists(atPath: plist.path))
+        let asked = await setup(answers: [], session: result.session)
+        #expect(!asked.session.questions.contains { $0.hasPrefix(captureQuestion) || $0.hasPrefix(addQuestion) })
+
+        // Installing by hand undoes the no.
+        let installed = await akit("insights", "install", "--yes")
+        #expect(installed.code == 0, "\(installed.out)")
+        #expect(read(piExtension) == CaptureInstaller.piExtensionText && fm.fileExists(atPath: plist.path))
+        #expect(InsightsPaths(env: env).readSettings()["capture"] == nil)
+        let after = await setup(answers: [], session: result.session)
+        #expect(after.out.contains("Session capture: on."), "\(after.out)")
     }
+
+    let addQuestion = "Also record sessions with"
 
     @Test func outdatedCaptureIsUpdatedWithoutAQuestion() async throws {
         try write(piExtension, "// \(CaptureInstaller.marker)\n// an older one\n")
-        let result = await setup(answers: [])
+        let result = await setup(answers: ["", "", "n"])  // brain, projects folder, adding the hourly import
         #expect(result.code == 0, "\(result.out)")
         #expect(!result.session.questions.contains { $0.hasPrefix(captureQuestion) }, "\(result.session.questions)")
         #expect(read(piExtension) == CaptureInstaller.piExtensionText)
-        #expect(result.out.contains("Session capture: updated (Pi extension, hourly import)."), "\(result.out)")
+        // A part that isn't there is asked for, never added silently.
+        #expect(result.session.questions.last == "\(addQuestion) the hourly import? [Y/n]", "\(result.session.questions)")
+        #expect(!fm.fileExists(atPath: plist.path) && !commands.all.contains { $0.hasPrefix("launchctl bootstrap") })
+        #expect(result.out.contains("Session capture: updated (Pi extension)."), "\(result.out)")
+
+        // That no is remembered too; the Pi extension is still kept current.
+        let again = await setup(answers: [], session: result.session)
+        #expect(!again.session.questions.contains { $0.hasPrefix(addQuestion) }, "\(again.session.questions)")
+        #expect(!fm.fileExists(atPath: plist.path) && again.out.contains("Session capture: on."), "\(again.out)")
+    }
+
+    @Test func aPartInstalledByHandIsKeptAndTheOthersAreAskedFor() async throws {
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        let pi = await akit("insights", "install", "--only", "pi", "--yes")
+        #expect(pi.code == 0 && read(piExtension) == CaptureInstaller.piExtensionText, "\(pi.out)")
+
+        let result = await setup(answers: [])
+        #expect(result.code == 0, "\(result.out)")
+        #expect(!result.session.questions.contains { $0.hasPrefix(captureQuestion) }, "\(result.session.questions)")
+        #expect(result.session.questions.last == "\(addQuestion) the hourly import? [Y/n]", "\(result.session.questions)")
+        #expect(fm.fileExists(atPath: plist.path))
+        #expect(result.out.contains("Session capture: updated (hourly import)."), "\(result.out)")
     }
 
     @Test func aForeignPiExtensionIsLeftAlone() async throws {

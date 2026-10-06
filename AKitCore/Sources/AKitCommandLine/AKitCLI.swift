@@ -814,6 +814,17 @@ public enum AKitCLI {
             throw Failure(message: usage)
         }
         out(insightsPlanText(plan))
+        if subcommand == "install", options.yes, !dryRun {
+            // Installing by hand undoes a no given in akit setup, for what it installs.
+            var choice = installer.choice
+            choice.declined = false
+            choice.skipped.subtract(only.map { [$0] } ?? CaptureInstaller.Part.allCases)
+            do {
+                try installer.save(choice)
+            } catch {
+                err("akit: couldn't update \(InsightsPaths(env: env).settings.path): \(error.localizedDescription)")
+            }
+        }
         let refused: Int32 = plan.refused.isEmpty ? 0 : 1
         guard !plan.isEmpty else { return refused }
         guard options.yes, !dryRun else {

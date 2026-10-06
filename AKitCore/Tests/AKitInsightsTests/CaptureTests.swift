@@ -715,6 +715,91 @@ struct CaptureTests {
         #expect(foreign.out.contains("was not written by AKit") && fm.fileExists(atPath: extensionFile.path))
     }
 
+    @Test func piOnThePathWithoutItsFolderGetsTheExtension() async throws {
+        try write("bin/pi", "#!/bin/sh\nexit 0\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/pi").path)
+        #expect(!fm.fileExists(atPath: home.appending(path: ".pi").path))
+        let fake = FakeRunner(gitEnvironment: env.variables)
+        let installer = CaptureInstaller(env: installerEnv, brainRoot: nil, run: fake.runner)
+        #expect(installer.piFound && !CaptureInstaller(env: env, brainRoot: nil, run: fake.runner).piFound)
+        #expect(await installer.status().pi.found)
+        let result = await cli("insights", "install", "--only", "pi", "--yes", runner: fake)
+        #expect(result.code == 0 && result.out.contains("FOLDER \(extensionFile.deletingLastPathComponent().path)"), "\(result)")
+        #expect(try String(contentsOf: extensionFile, encoding: .utf8) == CaptureInstaller.piExtensionText)
+    }
+
+    @Test func aNewerPluginInTheBrainIsNeverOverwritten() async throws {
+        try await BrainSetup.create(at: brainRoot, env: env)
+        try fakeClaude()
+        let manifest = brainRoot.appending(path: "plugins/akit/.claude-plugin/plugin.json")
+        var json = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: manifest)) as? [String: Any])
+        json["version"] = "99.0.0"
+        let newer = try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+        try newer.write(to: manifest)
+        let pluginList = #"[{"id":"akit@akit-brain","version":"99.0.0","enabled":true}]"#
+        let fake = FakeRunner(pluginList: pluginList, marketplaces: #"[{"name":"akit-brain"}]"#, gitEnvironment: env.variables)
+        let plan = await CaptureInstaller(env: installerEnv, brainRoot: brainRoot, run: fake.runner).installPlan(only: .claude)
+        #expect(plan.writes.isEmpty && plan.commitPaths.isEmpty && plan.commands.isEmpty, "\(plan.writes.map(\.url)) \(plan.commands.map(\.display))")
+        #expect(plan.notes.contains { $0.contains("99.0.0, newer than this akit's \(CaptureInstaller.pluginVersion)") }, "\(plan.notes)")
+        #expect(try Data(contentsOf: manifest) == newer)
+        // Not installed in Claude Code yet: installed from the brain as it is.
+        let fresh = FakeRunner(marketplaces: #"[{"name":"akit-brain"}]"#, gitEnvironment: env.variables)
+        let install = await CaptureInstaller(env: installerEnv, brainRoot: brainRoot, run: fresh.runner).installPlan(only: .claude)
+        #expect(install.writes.isEmpty && install.commands.map(\.display) == ["claude plugin install akit@akit-brain"])
+    }
+
+    @Test func aWorkMacCommitsThePluginWithTheBrainsOwnIdentityUnsigned() async throws {
+        try await oldBrain()
+        try fakeClaude()
+        try MachineProfile(kind: .work).save(home: home)
+        let git = URL(filePath: "/usr/bin/git")
+        let fake = FakeRunner(gitEnvironment: env.variables)
+
+        // No name and email of its own: nothing goes into the brain, Claude isn't touched.
+        let refused = await cli("insights", "install", "--only", "claude", "--yes", runner: fake)
+        #expect(refused.code == 1 && refused.out.contains("not added to the brain from this work Mac"), "\(refused)")
+        #expect(!fm.fileExists(atPath: brainRoot.appending(path: "plugins").path))
+        #expect(!fake.commands.contains { $0.hasPrefix("claude plugin marketplace add") || $0.hasPrefix("claude plugin install") })
+
+        // Its own identity, and signing on (no key here, so a signed commit would fail): the
+        // commit carries the brain's identity, not the environment's, and isn't signed.
+        for arguments in [["config", "user.name", "Personal"], ["config", "user.email", "personal@example.com"],
+                          ["config", "commit.gpgsign", "true"]] {
+            #expect(await fake.runner(git, arguments, brainRoot, 10)?.succeeded == true)
+        }
+        let done = await cli("insights", "install", "--only", "claude", "--yes", runner: fake)
+        #expect(done.code == 0, "\(done)")
+        let log = try #require(await fake.runner(git, ["log", "-1", "--format=%s|%an <%ae>|%cn <%ce>"], brainRoot, 10))
+        #expect(log.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                == "Add the akit Claude plugin|Personal <personal@example.com>|Personal <personal@example.com>", "\(log.output)")
+        #expect(fake.commands.contains("claude plugin install akit@akit-brain"))
+    }
+
+    @Test func noticeNamesWhatIsOffAndRespectsANo() {
+        func status(claudeFound: Bool = true, installed: String? = nil, mismatch: Bool = false, pi: String = "missing",
+                    piFound: Bool = true, loaded: Bool = false, declined: Bool = false,
+                    skipped: [CaptureInstaller.Part] = []) -> CaptureInstaller.Status {
+            .init(claude: .init(brainVersion: nil, installedVersion: installed, enabled: nil, claudeFound: claudeFound, versionMismatch: mismatch),
+                  pi: .init(path: "/p", state: pi, found: piFound),
+                  launchd: .init(plist: "/l", present: loaded, loaded: loaded, program: nil),
+                  lastSpoolLine: nil, lastImport: nil, declined: declined, skipped: skipped)
+        }
+        let tail = ". Run akit setup (or akit insights install --yes) in Terminal."
+        #expect(CaptureNotice.text(status: status(), brainPresent: true)
+                == "Session capture is off for Claude Code, Pi and the hourly import" + tail)
+        #expect(CaptureNotice.text(status: status(piFound: false), brainPresent: true)
+                == "Session capture is off for Claude Code and the hourly import" + tail)
+        // No Claude Code on this Mac: no Claude line, not even for a version mismatch.
+        #expect(CaptureNotice.text(status: status(claudeFound: false, mismatch: true, pi: "outdated"), brainPresent: true)
+                == "Session capture is off for the hourly import; out of date for Pi" + tail)
+        #expect(CaptureNotice.text(status: status(installed: "0.9.0", mismatch: true, pi: "current", loaded: true), brainPresent: true)
+                == "Session capture is out of date for Claude Code" + tail)
+        #expect(CaptureNotice.text(status: status(installed: "1.0.0", pi: "current", loaded: true), brainPresent: true) == nil)
+        // Said no in akit setup: no line; a part said no to isn't listed.
+        #expect(CaptureNotice.text(status: status(declined: true), brainPresent: true) == nil)
+        #expect(CaptureNotice.text(status: status(skipped: [.claude, .launchd]), brainPresent: true) == "Session capture is off for Pi" + tail)
+    }
+
     @Test func launchdRefusesBuildFolderBinary() async throws {
         let fake = FakeRunner(gitEnvironment: env.variables)
         for path in ["/Users/me/akit/AKitCore/.build/release/akit", "/Users/me/Library/Developer/Xcode/DerivedData/AKit-x/Build/akit"] {

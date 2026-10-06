@@ -14,9 +14,10 @@ public typealias CommandRunner = @Sendable (_ executable: URL, _ arguments: [Str
 /// - Claude: an `akit` plugin in a local marketplace inside the brain (`plugins/`), committed;
 ///   Claude itself installs it (`claude plugin marketplace add` + `claude plugin install`).
 /// - Pi: an AKit-owned extension file in `~/.pi/agent/extensions/`.
+/// On a work Mac the plugin commit carries the brain's own git identity, unsigned (`BrainGit`).
 /// - launchd: an agent that runs `akit sessions import --quiet` hourly (it never commits).
 public struct CaptureInstaller {
-    public enum Part: String, CaseIterable {
+    public enum Part: String, CaseIterable, Encodable {
         case claude, pi, launchd
     }
 
@@ -147,11 +148,33 @@ public struct CaptureInstaller {
 extension CaptureInstaller {
     /// Every write and command `install` would do, for all parts or one.
     public func installPlan(only: Part? = nil) async -> Plan {
+        await installPlan(parts: only.map { [$0] } ?? Part.allCases)
+    }
+
+    /// Every write and command `install` would do for these parts.
+    public func installPlan(parts: [Part]) async -> Plan {
         var plan = Plan()
-        if only == nil || only == .claude { await planClaude(into: &plan) }
-        if only == nil || only == .pi { planPi(into: &plan) }
-        if only == nil || only == .launchd { await planLaunchd(into: &plan) }
+        if parts.contains(.claude) { await planClaude(into: &plan) }
+        if parts.contains(.pi) { planPi(into: &plan) }
+        if parts.contains(.launchd) { await planLaunchd(into: &plan) }
         return plan
+    }
+
+    /// The parts on this Mac now: the plugin installed in Claude Code, AKit's Pi extension
+    /// (current or older), the hourly import's plist.
+    public static func installedParts(_ status: Status) -> [Part] {
+        Part.allCases.filter { part in
+            switch part {
+            case .claude: status.claude.installedVersion != nil
+            case .pi: status.pi.state == "current" || status.pi.state == "outdated"
+            case .launchd: status.launchd.present
+            }
+        }
+    }
+
+    /// Pi is on this Mac: its config folder, or `pi` on the PATH (not started yet).
+    public var piFound: Bool {
+        FileManager.default.fileExists(atPath: HarnessCatalog.configRoot(of: .pi, in: env)!.path) || env.findExecutable("pi") != nil
     }
 
     /// The parts a plan writes to or runs commands for.
@@ -172,8 +195,15 @@ extension CaptureInstaller {
             plan.notes.append("No brain: the Claude plugin lives in the brain (akit init or akit setup first).")
             return
         }
+        // A newer akit on another Mac wrote a newer plugin: it stays, and is what Claude installs.
+        let brainVersion = pluginVersion(inBrain: brain)
+        let newer = brainVersion.map { $0.compare(Self.pluginVersion, options: .numeric) == .orderedDescending } ?? false
+        let version = newer ? brainVersion! : Self.pluginVersion
+        if newer {
+            plan.notes.append("The brain has the akit plugin \(version), newer than this akit's \(Self.pluginVersion); left as is. Update akit on this Mac.")
+        }
         var changed = false
-        for file in Self.pluginFiles {
+        for file in Self.pluginFiles where !newer {
             let url = brain.appending(path: file.path)
             let old = try? String(contentsOf: url, encoding: .utf8)
             let modeOK = !file.executable || FileManager.default.isExecutableFile(atPath: url.path)
@@ -205,17 +235,17 @@ extension CaptureInstaller {
         let installed = await installedPlugin(claude)
         if installed == nil {
             plan.commands.append(.init(executable: claude, arguments: ["plugin", "install", Self.pluginID]))
-        } else if changed || installed?["version"] as? String != Self.pluginVersion {
+        } else if changed || installed?["version"] as? String != version {
             plan.commands.append(.init(executable: claude, arguments: ["plugin", "update", Self.pluginID]))
         } else {
-            plan.notes.append("The akit plugin \(Self.pluginVersion) is installed in Claude Code.")
+            plan.notes.append("The akit plugin \(version) is installed in Claude Code.")
         }
     }
 
     private func planPi(into plan: inout Plan) {
         let root = HarnessCatalog.configRoot(of: .pi, in: env)!
-        guard FileManager.default.fileExists(atPath: root.path) else {
-            plan.notes.append("Pi was not found (\(root.path)); no extension written.")
+        guard piFound else {
+            plan.notes.append("Pi was not found (\(root.path), or pi on the PATH); no extension written.")
             return
         }
         let old = try? String(contentsOf: piExtension, encoding: .utf8)
@@ -223,8 +253,17 @@ extension CaptureInstaller {
             plan.notes.append("The Pi extension is current.")
             return
         }
+        let folder = piExtension.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: folder.path) { plan.folders.append(folder) }
         plan.writes.append(.init(url: piExtension, text: Self.piExtensionText, executable: false, old: old,
                                  backup: old.map { !$0.contains(Self.marker) } ?? false))
+    }
+
+    /// The version in the brain's plugin.json; nil without one.
+    func pluginVersion(inBrain brain: URL) -> String? {
+        guard let data = try? Data(contentsOf: brain.appending(path: "plugins/akit/.claude-plugin/plugin.json")),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        return json["version"] as? String
     }
 
     /// The akit entry of `claude plugin list --json`, nil when not installed (or unreadable).
@@ -244,8 +283,26 @@ extension CaptureInstaller {
     /// the commands. Returns what failed; an empty list means everything worked.
     public func execute(_ plan: Plan, trash: (URL) throws -> URL?) async throws(Failure) -> [String] {
         let fm = FileManager.default
+        var plan = plan
+        var failures: [String] = []
+        // Claude installs the plugin from the brain's commit: without it the Claude commands are skipped;
+        // the other parts (Pi, launchd) still go ahead.
+        var skipClaude = false
+        // A work Mac commits only with the brain's own identity: without one, the plugin files aren't even written.
+        let work = MachineProfile.load(home: env.homeDirectory).isWork
+        if work, let brain = brainRoot, !plan.commitPaths.isEmpty {
+            do {
+                try await BrainGit.requireOwnIdentity(brain: brain, env: env)
+            } catch {
+                plan.writes.removeAll { $0.url.path.hasPrefix(brain.path + "/") }
+                plan.commitPaths = []
+                failures.append("The plugin was not added to the brain from this work Mac: \(error.message) "
+                                + "Set the brain's own git name and email, then run akit insights install again.")
+                skipClaude = true
+            }
+        }
         do {
-            // The only folder is the private index folder (launchd writes its log there).
+            // Private folders: the index folder (launchd writes its log there), Pi's extensions folder.
             for folder in plan.folders {
                 try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             }
@@ -263,14 +320,14 @@ extension CaptureInstaller {
         } catch {
             throw Failure(message: "Stopped: \(error.localizedDescription)")
         }
-        var failures: [String] = []
-        // Claude installs the plugin from the brain's commit: without it the Claude commands are skipped;
-        // the other parts (Pi, launchd) still go ahead.
-        var skipClaude = false
         if let brain = brainRoot, !plan.commitPaths.isEmpty {
             if let git = env.findExecutable("git") {
                 for arguments in [["add", "--"] + plan.commitPaths, ["commit", "--quiet", "-m", plan.commitMessage, "--"] + plan.commitPaths] {
-                    let result = await run(git, arguments, brain, 30)
+                    // Work Mac: as BrainSync and WorkFilter commit, without the identity variables and unsigned.
+                    let result = work
+                        ? await ProcessRunner.run(git, arguments: BrainGit.noSigning + arguments, directory: brain,
+                                                  environment: BrainGit.withoutIdentity(env.gitVariables), timeout: 30)
+                        : await run(git, arguments, brain, 30)
                     guard let result, result.succeeded else {
                         let output = result.map(\.failureText)
                             ?? "couldn't start git"
@@ -340,6 +397,8 @@ extension CaptureInstaller {
             public let path: String
             /// `missing`, `current`, `outdated` (AKit's, older) or `foreign` (not AKit's).
             public let state: String
+            /// Pi is on this Mac (`piFound`).
+            public var found: Bool
         }
 
         public struct Launchd: Encodable {
@@ -357,15 +416,14 @@ extension CaptureInstaller {
         public var lastSpoolLine: String?
         /// Time of the last import.
         public var lastImport: String?
+        /// The person said no to session capture in `akit setup` (`Choice`).
+        public var declined = false
+        /// Parts they said no to adding.
+        public var skipped: [Part] = []
     }
 
     public func status() async -> Status {
-        var brainVersion: String?
-        if let brain = brainRoot,
-           let data = try? Data(contentsOf: brain.appending(path: "plugins/akit/.claude-plugin/plugin.json")),
-           let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            brainVersion = json["version"] as? String
-        }
+        let brainVersion = brainRoot.flatMap(pluginVersion(inBrain:))
         let claude = env.findExecutable("claude")
         var installed: [String: Any]?
         if let claude { installed = await installedPlugin(claude) }
@@ -385,9 +443,11 @@ extension CaptureInstaller {
         }
         let launchd = Status.Launchd(plist: agentPlist.path, present: FileManager.default.fileExists(atPath: agentPlist.path),
                                      loaded: await agentLoaded(), program: agentPlistProgram())
-        return Status(claude: claudeStatus, pi: .init(path: piExtension.path, state: piState), launchd: launchd,
+        let choice = choice
+        return Status(claude: claudeStatus, pi: .init(path: piExtension.path, state: piState, found: piFound), launchd: launchd,
                       lastSpoolLine: lastSpoolLine().map { $0.formatted(.iso8601) },
-                      lastImport: lastImport().map { $0.formatted(.iso8601) })
+                      lastImport: lastImport().map { $0.formatted(.iso8601) },
+                      declined: choice.declined, skipped: Part.allCases.filter(choice.skipped.contains))
     }
 
     /// `ts` of the last line in the newest spool day file.
@@ -404,6 +464,38 @@ extension CaptureInstaller {
         guard FileManager.default.fileExists(atPath: url.path), let database = try? IndexDatabase(url: url),
               let seconds = try? database.value("SELECT MAX(imported_at) FROM sources")?.double else { return nil }
         return Date(timeIntervalSince1970: seconds)
+    }
+}
+
+// MARK: - The person's choice
+
+extension CaptureInstaller {
+    /// What the person answered in `akit setup`, kept in ~/.akit/insights.json so it is asked once:
+    /// `"capture": false` = no session capture on this Mac; `"captureSkipped"` = parts they didn't
+    /// want added to the ones there. `akit insights install --yes` clears it for what it installs.
+    public struct Choice: Equatable {
+        public var declined = false
+        public var skipped: Set<Part> = []
+
+        public init(declined: Bool = false, skipped: Set<Part> = []) {
+            self.declined = declined
+            self.skipped = skipped
+        }
+    }
+
+    public var choice: Choice {
+        let settings = InsightsPaths(env: env).readSettings()
+        return Choice(declined: settings["capture"] as? Bool == false,
+                      skipped: Set((settings["captureSkipped"] as? [String] ?? []).compactMap(Part.init(rawValue:))))
+    }
+
+    /// Saves the choice; writes nothing when it is already the saved one.
+    public func save(_ choice: Choice) throws {
+        guard choice != self.choice else { return }
+        try InsightsPaths(env: env).updateSettings { settings in
+            settings["capture"] = choice.declined ? false : nil
+            settings["captureSkipped"] = choice.skipped.isEmpty ? nil : choice.skipped.map(\.rawValue).sorted()
+        }
     }
 }
 
