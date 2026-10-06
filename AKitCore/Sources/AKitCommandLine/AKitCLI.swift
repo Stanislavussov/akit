@@ -578,17 +578,8 @@ public enum AKitCLI {
                                                     projectsRoot: projectsRoot, hostName: hostName, hardware: hardwareHash(),
                                                     run: runner)
         if subcommand == "changes" {
-            let changes = try BeforeAfter.changes(database, descriptions: inputs.descriptions)
-            // Every anchor calibrates, whatever the output shows. The index is written only under the import lock.
-            let calibration = ContextCalibration.calibration(from: changes)
-            var notes = imported.notes
-            if let lock = try ImportLock.acquire(InsightsPaths(env: env).lock) {
-                try withExtendedLifetime(lock) { try ContextCalibration.save(calibration, database: database) }
-            } else {
-                notes.append("calibration not saved: an import is running; run akit stats changes again later")
-            }
-            let report = ChangesReport(version: 1, changes: project.map { id in changes.filter { $0.project == id } } ?? changes,
-                                       calibration: ContextCalibration.summary(calibration), notes: notes)
+            let report = try BeforeAfter.report(database, env: env, descriptions: inputs.descriptions, project: project,
+                                                notes: imported.notes)
             if options.json {
                 out(encode(report))
                 for note in report.notes { err("note: \(note)") }
@@ -612,7 +603,6 @@ public enum AKitCLI {
                              out: (String) -> Void) throws -> Int32 {
         let text = note?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { throw Failure(message: "Use: akit stats mark \"<note>\" [--at DATE], e.g. akit stats mark \"Disabled the marketing plugin\".") }
-        guard text.count <= 500 else { throw Failure(message: "The note is longer than 500 characters.") }
         var date = now
         if let atText {
             guard let parsed = BeforeAfter.date(from: atText) else {
@@ -621,9 +611,10 @@ public enum AKitCLI {
             guard parsed <= now else { throw Failure(message: "--at is in the future.") }
             date = parsed
         }
-        guard Spool.append(["v": Spool.lineVersion, "kind": "mark", "note": text, "ts": Spool.milliseconds(date)],
-                           home: env.homeDirectory, now: now) else {
-            throw Failure(message: "Couldn't write the mark into \(InsightsPaths(env: env).spool.path); nothing was marked.")
+        do {
+            try Spool.mark(text, at: date, home: env.homeDirectory, now: now)
+        } catch {
+            throw Failure(message: error.message)
         }
         out("Marked \(localMinute(date)): \(text). akit stats changes compares first-request context "
             + "before and after it.")

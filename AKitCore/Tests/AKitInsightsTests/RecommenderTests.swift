@@ -750,6 +750,11 @@ extension RecommenderTests {
         #expect(!week.stats.skills.isEmpty
                 && week.stats.skills.map(\.name) == (stats["skills"] as? [[String: Any]])?.compactMap { $0["name"] as? String })
         #expect(week.stats.skills.map(\.approxContextSpace) == (stats["skills"] as? [[String: Any]])?.compactMap { $0["approxContextSpace"] as? Int })
+        // Its Changes are akit stats changes: the same anchors.
+        let changes = try #require(try JSONSerialization.jsonObject(with: Data(await akit("stats", "changes", "--json").out.utf8))
+                                   as? [String: Any])
+        let anchors = (changes["changes"] as? [[String: Any]])?.compactMap { $0["anchor"] as? String }
+        #expect(loaded.changes.changes.map(\.anchor) == anchors, "\(changes)")
     }
 
     @Test func noBrainMeansAdviceOnly() async throws {

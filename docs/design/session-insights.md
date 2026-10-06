@@ -27,8 +27,10 @@ Checked against the code on 2026-10-03:
 - Skills table (2026-10-07): the screen shows `akit stats --details` of the scope, with a
   7 / 30 / 90 days picker; `Recommender.load` returns it next to the recommendations. It sits
   below the recommendations, so the actions come first.
-- Still to do in step 10: Changes with marks, and Plan for the layer's projects after Apply.
-  The app doesn't use `BeforeAfter` yet.
+- Changes (2026-10-07): the screen shows `akit stats changes` of the scope
+  (`BeforeAfter.report`, shared with the CLI) with the calibration line, and **Add Mark…**
+  writes a mark through `Spool.mark`, as `akit stats mark`.
+- Still to do in step 10: Plan for the layer's projects after Apply.
 - Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
   (2026-10-01), and the index has a `signals` table, filled by
   `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.

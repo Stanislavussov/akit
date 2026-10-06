@@ -1,10 +1,11 @@
+import AKitFoundation
 import Foundation
 
 /// `akit stats changes`: what a change did to the first request's context. The JSON (`version` 1)
-/// is the contract for `/akit` and a later Insights screen. Token counts are recorded; character
+/// is the contract for `/akit`; the Insights screen shows the same report. Token counts are recorded; character
 /// counts are the listed descriptions' lengths; k is characters per token.
-public struct ChangesReport: Encodable, Equatable {
-    public struct Scope: Encodable, Equatable {
+public struct ChangesReport: Encodable, Equatable, Sendable {
+    public struct Scope: Encodable, Equatable, Sendable {
         /// nil: every session on this Mac (a home apply or a mark).
         public let project: String?
 
@@ -17,7 +18,7 @@ public struct ChangesReport: Encodable, Equatable {
     }
 
     /// Sessions are compared only within one harness, harness version and model.
-    public struct Group: Encodable, Equatable, Hashable {
+    public struct Group: Encodable, Equatable, Hashable, Sendable {
         public let harness: String
         public let harnessVersion: String?
         public let model: String?
@@ -32,13 +33,13 @@ public struct ChangesReport: Encodable, Equatable {
         private enum CodingKeys: String, CodingKey { case harness, harnessVersion, model }
     }
 
-    public struct Side: Encodable, Equatable {
+    public struct Side: Encodable, Equatable, Sendable {
         public let sessions: Int
         /// Median first-request context (input + cache read + cache write), recorded tokens.
         public let median: Int
     }
 
-    public struct Change: Encodable, Equatable {
+    public struct Change: Encodable, Equatable, Sendable {
         /// ISO 8601.
         let at: String
         /// `apply` or `mark`.
@@ -100,7 +101,7 @@ public struct ChangesReport: Encodable, Equatable {
     }
 
     /// The k in use (see `ContextSize.calibration`) and the accepted pairs per script.
-    public struct Calibration: Encodable, Equatable {
+    public struct Calibration: Encodable, Equatable, Sendable {
         public let latin: Double
         public let cyrillic: Double
         /// Pairs behind the calibrated scripts; 0 while both use their defaults.
@@ -283,5 +284,25 @@ public enum BeforeAfter {
             if let date = formatter.date(from: text) { return date }
         }
         return nil
+    }
+}
+
+extension BeforeAfter {
+    /// `akit stats changes` and the Insights screen's Changes: every anchor measured, and the k
+    /// they give saved (only under the import lock), then the anchors of `project` (its applies)
+    /// or all of them.
+    public static func report(_ database: IndexDatabase, env: HarnessEnvironment, descriptions: [String: String], project: String?,
+                              notes: [String] = []) throws -> ChangesReport {
+        let changes = try changes(database, descriptions: descriptions)
+        // Every anchor calibrates, whatever the report shows.
+        let calibration = ContextCalibration.calibration(from: changes)
+        var notes = notes
+        if let lock = try ImportLock.acquire(InsightsPaths(env: env).lock) {
+            try withExtendedLifetime(lock) { try ContextCalibration.save(calibration, database: database) }
+        } else {
+            notes.append("calibration not saved: an import is running; run akit stats changes again later")
+        }
+        return ChangesReport(version: 1, changes: project.map { id in changes.filter { $0.project == id } } ?? changes,
+                             calibration: ContextCalibration.summary(calibration), notes: notes)
     }
 }

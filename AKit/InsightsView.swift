@@ -29,6 +29,7 @@ struct InsightsView: View {
     @State private var captureChecks = 0
     /// Snapshots: `--capture` opens Install Capture….
     @State private var installingCapture = DebugSnapshot.options?.capture == true
+    @State private var addingMark = false
 
     var body: some View {
         Group {
@@ -89,6 +90,12 @@ struct InsightsView: View {
         .sheet(item: $patch) { patch in
             InsightsPatchSheet(patch: patch) { notice = $0 }
         }
+        .sheet(isPresented: $addingMark) {
+            AddMarkSheet { message in
+                notice = message
+                Task { await load() }
+            }
+        }
         .sheet(isPresented: $installingCapture) {
             CaptureInstallSheet { message in
                 notice = message
@@ -146,6 +153,7 @@ struct InsightsView: View {
                 owners(report)
                 recommendations(report)
                 skills(loaded.stats)
+                changes(loaded.changes)
                 footer(report)
             }
             .padding(20)
@@ -339,6 +347,49 @@ struct InsightsView: View {
         .help(summary.sessions == 0 ? "" : "The same numbers as akit stats --details")
     }
 
+    /// `akit stats changes`: what each apply or mark did to the recorded first-request context.
+    private func changes(_ report: ChangesReport) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("First-request context (recorded tokens) of the sessions within \(Int(BeforeAfter.window / 86_400)) days before and after each change, with the same harness version and model. Applies are recorded by themselves; Add Mark… records a change made by hand, such as a plugin turned off.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if report.changes.isEmpty {
+                    Text("No changes yet.").foregroundStyle(.secondary)
+                }
+                ForEach(Array(report.changes.enumerated().reversed()), id: \.offset) { _, change in
+                    changeRow(change)
+                }
+                Text(Self.calibrationText(report.calibration)).font(.footnote).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(6)
+        } label: {
+            HStack {
+                Text("Changes").font(.headline)
+                Spacer()
+                Button("Add Mark…") { addingMark = true }
+                    .help("Record a change made by hand, so its before/after is measured (akit stats mark)")
+            }
+        }
+    }
+
+    private func changeRow(_ change: ChangesReport.Change) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(change.date.formatted(date: .abbreviated, time: .shortened)).monospacedDigit().foregroundStyle(.secondary)
+                Text(change.anchor == "mark" ? "Mark “\(change.note ?? "")”" : "Apply \(change.project ?? "")").bold()
+                Text(change.scope.project.map { "sessions of \($0)" } ?? "all sessions on this Mac")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(Self.changeText(change)).font(.callout).foregroundStyle(change.isMeasured ? .primary : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+    }
+
     private func footer(_ report: RecommendReport) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if report.hiddenByDismissal > 0 {
@@ -435,6 +486,40 @@ struct InsightsView: View {
             parts.append("skill listing ≈ \(ContextSize.short(summary.approxListingTokensPerRequest)) tokens per request")
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// The measured change, or why there is none.
+    static func changeText(_ change: ChangesReport.Change) -> String {
+        guard change.isMeasured, let group = change.group, let before = change.before, let after = change.after else {
+            return "Not enough data: \(change.reason ?? "")"
+        }
+        let short = ContextSize.short
+        func signed(_ n: Int) -> String { n > 0 ? "+" + short(n) : short(n) }
+        var text = "\(group.harness) \(group.harnessVersion ?? "?"), \(group.model ?? "unknown model"): median \(short(before.median)) → "
+            + "\(short(after.median)) tokens (\(signed(change.deltaTokens ?? 0))), \(count(before.sessions, "session")) before, "
+            + "\(after.sessions) after."
+        let left = change.left ?? [], joined = change.joined ?? []
+        if left.isEmpty, joined.isEmpty {
+            text += " Skill listing unchanged."
+        } else {
+            var parts: [String] = []
+            if !left.isEmpty { parts.append("\(count(left.count, "skill")) left") }
+            if !joined.isEmpty { parts.append("\(count(joined.count, "skill")) joined") }
+            text += " Skill listing: \(parts.joined(separator: ", ")), \(signed(change.deltaChars ?? 0)) description characters"
+                + (change.k.map { "; k ≈ \(String(format: "%.1f", $0)) characters per token" } ?? "") + "."
+        }
+        return text
+    }
+
+    /// The k in use per script and where it comes from.
+    static func calibrationText(_ calibration: ChangesReport.Calibration) -> String {
+        func k(_ value: Double, _ script: String, _ pairs: Int) -> String {
+            let source = pairs >= ContextSize.minimumPairs ? "calibrated from \(count(pairs, "pair"))"
+                : "default; \(count(pairs, "measured pair")) of \(ContextSize.minimumPairs) needed"
+            return "\(String(format: "%.1f", value)) \(script) (\(source))"
+        }
+        return "≈ sizes use k = characters per token: " + k(calibration.latin, "Latin", calibration.latinPairs) + ", "
+            + k(calibration.cyrillic, "Cyrillic", calibration.cyrillicPairs) + "."
     }
 
     /// `3 (12%)`, with Pi's reads of the skill after it.
@@ -753,5 +838,50 @@ struct CaptureInstallSheet: View {
     private struct InstallResult: Sendable {
         var done: [CaptureInstaller.Part] = []
         var problems: [String] = []
+    }
+}
+
+/// Add Mark…: a change made by hand (a plugin turned off, settings edited), so Changes measures
+/// the sessions before and after it. Writes one spool line, as `akit stats mark`.
+struct AddMarkSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let onDone: (String) -> Void
+    @State private var note = ""
+    @State private var date = Date()
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add Mark").font(.title2.bold())
+            Text("Describe a change you made outside AKit. Changes compares the first-request context of the sessions before and after this time.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Note", text: $note, prompt: Text("Disabled the marketing plugin"))
+            DatePicker("When", selection: $date, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Add Mark", action: add)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func add() {
+        do {
+            let text = try Spool.mark(note, at: date, home: HarnessEnvironment.current.homeDirectory)
+            onDone("Marked \(date.formatted(date: .abbreviated, time: .shortened)): \(text).")
+            dismiss()
+        } catch {
+            self.error = error.message
+        }
     }
 }
