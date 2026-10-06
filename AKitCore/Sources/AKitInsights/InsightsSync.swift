@@ -8,14 +8,14 @@ import Foundation
 /// the pull and push still run. The hourly import never publishes.
 public enum InsightsSync {
     /// The publish half, before the pull and push.
-    public struct Published: Equatable {
+    public struct Published: Equatable, Sendable {
         /// nil when nothing was published.
         public var outcome: SummaryPublisher.Outcome?
         /// Why the summaries were not published.
         public var problem: String?
     }
 
-    public struct Outcome: Equatable {
+    public struct Outcome: Equatable, Sendable {
         public var published: Published
         public var sync: BrainSync.Outcome
     }

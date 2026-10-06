@@ -19,8 +19,12 @@ struct InsightsView: View {
     @State private var notice: String?
     /// Counts the loads started, so a superseded one can tell.
     @State private var generation = 0
-    /// Set when session capture is off or out of date on this Mac.
-    @State private var captureNotice: String?
+    /// Session capture on this Mac (`akit insights status`); nil until checked.
+    @State private var capture: CaptureInstaller.Status?
+    /// Bumped after Install Capture…, so the status is read again.
+    @State private var captureChecks = 0
+    /// Snapshots: `--capture` opens Install Capture….
+    @State private var installingCapture = DebugSnapshot.options?.capture == true
 
     var body: some View {
         Group {
@@ -67,12 +71,18 @@ struct InsightsView: View {
         .task(id: LoadKey(project: project, scan: model.lastScan)) { await load() }
         // Its status runs `claude` and `launchctl`: off the main thread, each time the screen appears
         // or the brain changes (the Claude plugin lives there).
-        .task(id: model.brain?.root) {
+        .task(id: CaptureKey(brain: model.brain?.root, checks: captureChecks)) {
             let brain = model.brain?.root
-            captureNotice = await Task.detached { await Self.captureNotice(env: .current, brain: brain) }.value
+            capture = await Task.detached { await CaptureInstaller(env: .current, brainRoot: brain).status() }.value
         }
         .sheet(item: $patch) { patch in
             InsightsPatchSheet(patch: patch) { notice = $0 }
+        }
+        .sheet(isPresented: $installingCapture) {
+            CaptureInstallSheet { message in
+                notice = message
+                captureChecks += 1
+            }
         }
         .alert("Hide This Advice?", isPresented: Binding(get: { dismissing != nil }, set: { if !$0 { dismissing = nil } }),
                presenting: dismissing) { item in
@@ -120,11 +130,7 @@ struct InsightsView: View {
                     Label(trouble, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if let captureNotice {
-                    Label(captureNotice, systemImage: "record.circle").foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
+                if let capture { captureLine(capture) }
                 owners(report)
                 recommendations(report)
                 footer(report)
@@ -134,13 +140,33 @@ struct InsightsView: View {
         }
     }
 
+    /// Session capture off or out of date, or turned off in `akit setup`: a line and Install Capture….
+    @ViewBuilder
+    private func captureLine(_ status: CaptureInstaller.Status) -> some View {
+        let text = CaptureNotice.text(status: status, brainPresent: model.brain != nil)
+        let chosen = CaptureNotice.offByChoice(status: status, brainPresent: model.brain != nil)
+        if text != nil || chosen != nil {
+            HStack(alignment: .firstTextBaseline) {
+                if let text {
+                    Label(text, systemImage: "record.circle").foregroundStyle(.orange)
+                } else if let chosen {
+                    Label(chosen, systemImage: "record.circle").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Install Capture…") { installingCapture = true }
+                    .help("Show what recording new sessions as they start takes on this Mac, then set it up")
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func owners(_ report: RecommendReport) -> some View {
         let owners = report.summary.approxContextPerRequestByOwner.filter { $0.skills > 0 }
         let largest = max(owners.map(\.approxTokens).max() ?? 1, 1)
         return GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 if owners.isEmpty {
-                    Text("No skill listing recorded in this scope yet. Import Now reads the session files on this Mac; akit setup (or akit insights install) records new sessions as they start.")
+                    Text("No skill listing recorded in this scope yet. Import Now reads the session files on this Mac; session capture (Install Capture…, or akit setup) records new sessions as they start.")
                         .foregroundStyle(.secondary)
                 } else {
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
@@ -267,6 +293,11 @@ struct InsightsView: View {
         let scan: Date?
     }
 
+    private struct CaptureKey: Equatable {
+        let brain: URL?
+        let checks: Int
+    }
+
     private func load() async {
         // Before the first scan the brain isn't loaded yet, and without it every layer skill looks unowned.
         guard model.lastScan != nil else { return }
@@ -319,12 +350,6 @@ struct InsightsView: View {
     }
 
     // MARK: Text
-
-    /// A line when session capture (`akit insights install`) is off or out of date on this Mac.
-    nonisolated static func captureNotice(env: HarnessEnvironment, brain: URL?) async -> String? {
-        let status = await CaptureInstaller(env: env, brainRoot: brain).status()
-        return CaptureNotice.text(status: status, brainPresent: brain != nil)
-    }
 
     /// `3 sessions`, `1 day`.
     static func count(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
@@ -454,5 +479,181 @@ struct InsightsPatchSheet: View {
             }
             busy = false
         }
+    }
+}
+
+/// Install Capture…: what `akit insights install` would write and run, one part at a time, and
+/// only the checked parts are set up. A part said no to in `akit setup` starts unchecked.
+struct CaptureInstallSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let onDone: (String) -> Void
+    @State private var plans: [CaptureInstaller.PartPlan]?
+    /// The parts on this Mac now.
+    @State private var installed: [CaptureInstaller.Part] = []
+    @State private var checked: Set<CaptureInstaller.Part> = []
+    @State private var busy = false
+    /// What went wrong while installing; the sheet stays open to show it.
+    @State private var failures: [String] = []
+    /// Set when the plans changed since they were shown (say, akit setup ran meanwhile).
+    @State private var changed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Install Session Capture").font(.title2.bold())
+            Text("Records each new Claude Code and Pi session as it starts (its folder, log path and git state, never message text) and imports the logs every hour, so sessions are counted before their folders or logs are gone. Nothing changes until you click Install.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let plans {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(plans) { part($0) }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(6)
+                }
+                .frame(height: 320)
+                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            } else {
+                ProgressView("Checking Claude Code, Pi and launchd…")
+                    .frame(maxWidth: .infinity, minHeight: 120)
+            }
+            if changed {
+                Label("Something changed on this Mac since the list was made. Check it again, then Install.",
+                      systemImage: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.orange).font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(failures, id: \.self) { failure in
+                Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Spacer()
+                Button(failures.isEmpty ? "Cancel" : "Close") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(busy)
+                if failures.isEmpty {
+                    Button("Install", action: install)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(busy || plans == nil || checked.isEmpty)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 640)
+        // The Claude plugin lives in the brain: planned again once it is loaded.
+        .task(id: model.brain?.root) {
+            let brain = model.brain?.root
+            let (plans, status) = await Task.detached {
+                let installer = Self.installer(brain: brain)
+                return (await installer.partPlans(), await installer.status())
+            }.value
+            checked = Set(plans.filter { $0.suggested && !$0.plan.isEmpty }.map(\.part))
+            installed = CaptureInstaller.installedParts(status)
+            self.plans = plans
+        }
+    }
+
+    @ViewBuilder
+    private func part(_ item: CaptureInstaller.PartPlan) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if item.plan.isEmpty {
+                let on = installed.contains(item.part)
+                Label(Self.title(item.part) + (on ? "" : ": not set up"), systemImage: on ? "checkmark.circle" : "minus.circle")
+                    .foregroundStyle(item.plan.refused.isEmpty ? .secondary : Color.orange)
+                    .font(.headline)
+            } else {
+                Toggle(Self.title(item.part), isOn: Binding(
+                    get: { checked.contains(item.part) },
+                    set: { if $0 { checked.insert(item.part) } else { checked.remove(item.part) } }))
+                    .font(.headline)
+                    .disabled(busy)
+            }
+            Text(item.plan.isEmpty ? (item.plan.notes + item.plan.refused).joined(separator: "\n") : item.plan.text)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The app is not the akit command: the hourly import runs ~/.local/bin/akit, or is refused without it.
+    nonisolated static func installer(brain: URL?) -> CaptureInstaller {
+        CaptureInstaller(env: .current, brainRoot: brain, akitExecutable: nil)
+    }
+
+    nonisolated static func title(_ part: CaptureInstaller.Part) -> String {
+        switch part {
+        case .claude: "Claude Code plugin"
+        case .pi: "Pi extension"
+        case .launchd: "Hourly import"
+        }
+    }
+
+    private func install() {
+        guard let plans else { return }
+        let chosen = plans.filter { checked.contains($0.part) && !$0.plan.isEmpty }
+        let leftOut = plans.filter { !checked.contains($0.part) && !$0.plan.isEmpty }.map(\.part)
+        let brain = model.brain?.root
+        busy = true
+        changed = false
+        Task {
+            let result: InstallResult? = await Task.detached {
+                let installer = Self.installer(brain: brain)
+                // Runs only what the sheet shows: plans made again now must say the same.
+                let now = await installer.partPlans()
+                guard now.map(\.plan.text) == plans.map(\.plan.text) else { return nil }
+                var result = InstallResult()
+                // Each part's plan as shown; a part that stops doesn't keep the next from running.
+                for item in chosen {
+                    do {
+                        let problems = try await installer.execute(item.plan, trash: Trash.move)
+                        result.problems += problems
+                        if problems.isEmpty { result.done.append(item.part) }
+                    } catch {
+                        result.problems.append("\(Self.title(item.part)): \(error.localizedDescription)")
+                    }
+                }
+                do {
+                    try installer.saveInstalled(result.done, leftOut: leftOut)
+                } catch {
+                    result.problems.append("Couldn't save the answer in ~/.akit: \(error.localizedDescription)")
+                }
+                return result
+            }.value
+            guard let result else {
+                busy = false
+                changed = true
+                self.plans = nil
+                let brain = model.brain?.root
+                let (plans, status) = await Task.detached {
+                    let installer = Self.installer(brain: brain)
+                    return (await installer.partPlans(), await installer.status())
+                }.value
+                checked = Set(plans.filter { $0.suggested && !$0.plan.isEmpty }.map(\.part))
+                installed = CaptureInstaller.installedParts(status)
+                self.plans = plans
+                return
+            }
+            // The Claude plugin is committed in the brain: the rescan shows it there.
+            await model.refresh()
+            busy = false
+            let names = result.done.map(Self.title).joined(separator: ", ")
+            if result.problems.isEmpty {
+                onDone("Session capture is set up: \(names).")
+                dismiss()
+            } else {
+                failures = result.problems
+                if !result.done.isEmpty { onDone("Session capture is set up for \(names); the rest had problems.") }
+            }
+        }
+    }
+
+    private struct InstallResult: Sendable {
+        var done: [CaptureInstaller.Part] = []
+        var problems: [String] = []
     }
 }

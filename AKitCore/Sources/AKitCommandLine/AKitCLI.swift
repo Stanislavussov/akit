@@ -808,19 +808,16 @@ public enum AKitCLI {
         default:
             throw Failure(message: usage)
         }
-        out(insightsPlanText(plan))
+        out(plan.text)
         if subcommand != "status", options.yes, !dryRun {
             // Installing by hand undoes a no given in akit setup, for what it installs;
             // uninstalling is a no, so the next akit setup doesn't put capture back.
-            var choice = installer.choice
-            if subcommand == "install" {
-                choice.declined = false
-                choice.skipped.subtract(only.map { [$0] } ?? CaptureInstaller.Part.allCases)
-            } else {
-                choice = .init(declined: true)
-            }
             do {
-                try installer.save(choice)
+                if subcommand == "install" {
+                    try installer.saveInstalled(only.map { [$0] } ?? CaptureInstaller.Part.allCases)
+                } else {
+                    try installer.save(.init(declined: true))
+                }
             } catch {
                 err("akit: couldn't update \(InsightsPaths(env: env).settings.path): \(error.localizedDescription)")
             }
@@ -1005,22 +1002,6 @@ public enum AKitCLI {
                      : "Committed “\(outcome.message)”: \(outcome.committed.joined(separator: ", ")). akit sync pushes it.")
         if !outcome.local.isEmpty { lines.append("Project summaries kept on this Mac only: \(outcome.local.count) files.") }
         lines += outcome.notes.map { "note: \($0)" }
-        return lines.joined(separator: "\n")
-    }
-
-    static func insightsPlanText(_ plan: CaptureInstaller.Plan) -> String {
-        var lines = plan.folders.map { "FOLDER \($0.path)" }
-        for write in plan.writes {
-            if write.backup { lines.append("BACK UP \(write.url.path) (not written by AKit) into ~/.akit/backups") }
-            lines.append("\(write.old == nil ? "NEW" : "CHANGED") \(write.url.path)\(write.executable ? " (executable)" : "")")
-            if write.old != nil { lines += TextDiff.unified(TextDiff.lines(from: write.old ?? "", to: write.text)) }
-        }
-        if !plan.commitPaths.isEmpty { lines.append("COMMIT in the brain: \(plan.commitMessage) (\(plan.commitPaths.joined(separator: ", ")))") }
-        lines += plan.trash.map { "TRASH \($0.path)" }
-        lines += plan.commands.map { "RUN \($0.display)" }
-        lines += plan.notes.map { "note: \($0)" }
-        lines += plan.refused.map { "REFUSED: \($0)" }
-        if plan.isEmpty { lines.append("Nothing to do.") }
         return lines.joined(separator: "\n")
     }
 

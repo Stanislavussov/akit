@@ -228,7 +228,11 @@ final class AppModel {
         let root = brainRoot
         defer { Task { await refresh() } }
         do {
-            let outcome = try await InsightsSync.run(env: .current, brain: brain, projectsRoot: projectsRoot)
+            // Off the main thread: the host name can take a network lookup.
+            let projectsRoot = projectsRoot
+            let outcome = try await Task.detached {
+                try await InsightsSync.run(env: .current, brain: brain, projectsRoot: projectsRoot)
+            }.value
             brainSync = await BrainSync.status(of: root, env: .current, fetch: false)
             isSyncingBrain = false
             return outcome
