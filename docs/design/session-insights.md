@@ -18,10 +18,12 @@ Checked against the code on 2026-10-03:
   diff, then a commit in the brain), **Dismiss…** and **Import Now**. It reads
   `Recommender.load`, the same calls as `akit recommend --details`; the layer-users query
   moved into `AKitInsights` (`Recommender.projectsUsing`).
-- Still to do in step 10: the skills table, Changes with marks, capture status and install,
+- Capture in setup (2026-10-06): `akit setup` installs capture (see "Capturing before the
+  folder disappears"), and the Insights screen shows a line when `CaptureInstaller.status`
+  finds it off or out of date.
+- Still to do in step 10: the skills table, Changes with marks, an Install capture button,
   Plan for the layer's projects after Apply, and the app's Sync publishing summaries (only
-  `akit sync` does). The app uses none of `InsightsStats`, `BeforeAfter` or
-  `CaptureInstaller` yet.
+  `akit sync` does). The app uses neither `InsightsStats` nor `BeforeAfter` yet.
 - Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
   (2026-10-01), and the index has a `signals` table, filled by
   `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.
@@ -374,6 +376,11 @@ folders that name a known repository.
   an unfinished last line for its next pass. That keeps parallel sessions' lines whole on
   a local APFS home; homes on NFS or SMB are not supported. `akit apply` appends an
   `apply` line too.
+- Installed by `akit setup` (built 2026-10-06), not only by `akit insights install`: while
+  none of it is on the Mac, setup asks once (default yes, also without a terminal); once any
+  part is there, it refreshes stale parts without asking, so running `install.sh` again is
+  an upgrade. A Pi extension AKit didn't write is left alone. The Insights screen shows a
+  line when capture is off or out of date.
 
 ### Fingerprint, repo snapshot and failure signals (step 11)
 

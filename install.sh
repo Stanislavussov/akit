@@ -121,7 +121,7 @@ if [[ -n "${AKIT_MACHINE:-}" ]]; then
         || fail "akit machine $machine failed, so setup didn't run (nothing reached the brain). Fix it (akit machine work|personal), then run: akit setup"
 fi
 
-# The questions (brain, projects folder, skills in ~) with defaults; none without a terminal.
+# The questions (brain, projects folder, skills in ~, session capture) with defaults; none without a terminal.
 say "Setting up"
 setup=("$HOME/.local/bin/akit" setup)
 if [[ "${AKIT_SKIP_HOME:-}" == 1 ]]; then setup+=(--skip-home); fi
