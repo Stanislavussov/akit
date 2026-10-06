@@ -21,6 +21,10 @@ struct InsightsView: View {
     @State private var dismissing: RecommendReport.Recommendation?
     /// What the last Apply or Dismiss did.
     @State private var notice: String?
+    /// Projects a committed layer patch reaches only after they are set up again (Plan… buttons under the notice).
+    @State private var toPlan: [String] = []
+    /// The project Plan… opened in Set Up Project.
+    @State private var planning: PlanRequest?
     /// Counts the loads started, so a superseded one can tell.
     @State private var generation = 0
     /// Session capture on this Mac (`akit insights status`); nil until checked.
@@ -88,8 +92,12 @@ struct InsightsView: View {
             capture = await Task.detached { await CaptureInstaller(env: .current, brainRoot: brain).status() }.value
         }
         .sheet(item: $patch) { patch in
-            InsightsPatchSheet(patch: patch) { notice = $0 }
+            InsightsPatchSheet(patch: patch) { message, projects in
+                notice = message
+                toPlan = projects
+            }
         }
+        .sheet(item: $planning) { ProjectSetupSheet(initialProject: $0.folder) }
         .sheet(isPresented: $addingMark) {
             AddMarkSheet { message in
                 notice = message
@@ -131,14 +139,20 @@ struct InsightsView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if let notice {
-                    HStack(alignment: .firstTextBaseline) {
-                        Label(notice, systemImage: "checkmark.circle").foregroundStyle(.green)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
-                        Spacer()
-                        Button("Close", systemImage: "xmark") { self.notice = nil }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Label(notice, systemImage: "checkmark.circle").foregroundStyle(.green)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                            Spacer()
+                            Button("Close", systemImage: "xmark") {
+                                self.notice = nil
+                                toPlan = []
+                            }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
+                        }
+                        if !toPlan.isEmpty { planButtons }
                     }
                 }
                 if let problem {
@@ -159,6 +173,34 @@ struct InsightsView: View {
             .padding(20)
             .frame(maxWidth: 900, alignment: .leading)
         }
+    }
+
+    /// After a layer patch: the projects that pick it up only when they are set up again. Plan… opens
+    /// Set Up Project with the project's saved answers, where the change is shown as a diff before
+    /// anything is written. A home folder has no button yet: it is applied with the command.
+    private var planButtons: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("It takes effect after these are set up again:").font(.callout)
+            ForEach(toPlan, id: \.self) { id in
+                HStack(alignment: .firstTextBaseline) {
+                    Text(id).font(.callout.monospaced())
+                    if id.hasPrefix("home/") {
+                        Text("run akit apply --home in Terminal").font(.callout).foregroundStyle(.secondary)
+                    } else if let folder = model.brainProjectFolders[id] {
+                        Button("Plan…") { planning = PlanRequest(folder: folder) }
+                            .help("Open Set Up Project for \(folder.tildePath): the change as a diff, then Apply")
+                    } else {
+                        Text("not on this Mac").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.leading, 26)
+    }
+
+    struct PlanRequest: Identifiable {
+        let folder: URL
+        var id: URL { folder }
     }
 
     /// Session capture off or out of date, or turned off in `akit setup`: a line and Install Capture….
@@ -577,7 +619,8 @@ struct InsightsPatchSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let patch: InsightsPatch
-    let onDone: (String) -> Void
+    /// The commit's message, and the projects to set up again (none for keep_auto).
+    let onDone: (String, [String]) -> Void
     @State private var projects: [String] = []
     @State private var busy = false
     @State private var error: String?
@@ -611,7 +654,7 @@ struct InsightsPatchSheet: View {
             .frame(height: 220)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
             if isManual, !projects.isEmpty {
-                Text("It takes effect after these are set up again: \(Self.projectsText(projects)).")
+                Text("It takes effect after these are set up again: \(projects.joined(separator: ", ")). After Commit, Plan… next to each opens its setup.")
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -635,12 +678,6 @@ struct InsightsPatchSheet: View {
         }
     }
 
-    /// A home folder has no Set Up button yet: it is applied with the command.
-    static func projectsText(_ projects: [String]) -> String {
-        projects.map { $0.hasPrefix("home/") ? "\($0) (run akit apply --home)" : "\($0) (Brain → Set Up Project…)" }
-            .joined(separator: ", ")
-    }
-
     private func commit() {
         guard let brain = model.brain else { return }
         busy = true
@@ -652,10 +689,8 @@ struct InsightsPatchSheet: View {
                 try await LayerPatch.commit(skill: patch.item.skill, layer: patch.layer, change: patch.change, before: patch.before,
                                             after: patch.after, brain: brain.root, machine: MachineProfile.load(home: env.homeDirectory),
                                             env: env)
-                var message = "Committed “\(patch.change.message(skill: patch.item.skill, layer: patch.layer))”."
-                if isManual, !projects.isEmpty { message += " It takes effect after these are set up again: \(Self.projectsText(projects))." }
                 await model.refresh()
-                onDone(message)
+                onDone("Committed “\(patch.change.message(skill: patch.item.skill, layer: patch.layer))”.", isManual ? projects : [])
                 dismiss()
             } catch {
                 self.error = error.localizedDescription
