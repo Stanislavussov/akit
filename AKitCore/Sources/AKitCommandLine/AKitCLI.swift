@@ -265,17 +265,12 @@ public enum AKitCLI {
                 return 0
             case "sync":
                 if projectArgument != nil { throw Failure(message: "akit sync takes no folder; use --brain DIR.") }
-                // Import, publish this Mac's summaries, then pull and push. A publish that fails or is
-                // refused (work Mac) is only a warning: the pull and push still run.
-                do {
-                    let database = try IndexSchema.open(InsightsPaths(env: env).database)
-                    _ = try await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database)
-                    let published = try await SummaryPublisher.publish(env: env, brain: brain, database: database, hostName: hostName,
-                                                                       hardware: hardwareHash())
-                    if !published.committed.isEmpty || !published.notes.isEmpty { out(publishText(published)) }
-                } catch {
-                    err("akit: usage summaries not published: \(error.localizedDescription)")
-                }
+                // Import, publish this Mac's summaries, then pull and push (`InsightsSync`, as the app's Sync).
+                // A publish that fails or is refused (work Mac) is only a warning: the pull and push still run.
+                let published = await InsightsSync.publish(env: env, brain: brain, projectsRoot: projectsRoot, hostName: hostName,
+                                                           hardware: hardwareHash())
+                if let problem = published.problem { err("akit: usage summaries not published: \(problem)") }
+                if let outcome = published.outcome, !outcome.committed.isEmpty || !outcome.notes.isEmpty { out(publishText(outcome)) }
                 let outcome: BrainSync.Outcome
                 do {
                     outcome = try await BrainSync.sync(brain.root, env: env)

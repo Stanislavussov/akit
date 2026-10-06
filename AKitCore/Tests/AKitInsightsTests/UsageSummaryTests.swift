@@ -783,5 +783,38 @@ extension UsageSummaryTests {
         #expect(second.out.contains("Pulled 1 commit."), "\(second.out)")
         #expect(fm.fileExists(atPath: brainRoot.appending(path: "layers/core/notes.md").path))
         #expect(!fm.fileExists(atPath: brainRoot.appending(path: "insights/machines/\(pseudonym).json").path))
+
+        // The app's Sync runs the same sequence; its result lines say what was published or why not.
+        let brain = try #require(Brain.load(from: brainRoot))
+        func appSync() async throws -> InsightsSync.Outcome {
+            try await InsightsSync.run(env: env, brain: brain, projectsRoot: home.appending(path: "Projects"),
+                                       hostName: "TestMac.local", hardware: "hw-1")
+        }
+        try write("other/registry/layers/core/notes.md", "from the other Mac, again\n")
+        try await git("commit", "-qam", "Other Mac again", in: otherMac)
+        try await git("push", "--quiet", in: otherMac)
+        let refused = try await appSync()
+        #expect(refused.published.outcome == nil && refused.sync.pulled == 1, "\(refused)")
+        #expect(refused.published.lines.count == 1 && refused.published.lines[0].hasPrefix("Usage summaries not published:"),
+                "\(refused.published.lines)")
+
+        // With the identity back the publish runs; the session is from before the switch to work, so there is nothing to commit.
+        try await git("config", "--local", "user.email", Self.email)
+        let quiet = try await appSync()
+        #expect(quiet.published.outcome?.isWork == true && quiet.published.lines.isEmpty && quiet.sync.pushed == 0, "\(quiet)")
+    }
+
+    @Test func appSyncLinesSayWhatWasPublished() {
+        var outcome = SummaryPublisher.Outcome(key: "0123456789abcdef", isWork: false, message: "Update usage summaries (TestMac)")
+        #expect(InsightsSync.Published(outcome: outcome).lines.isEmpty)
+        outcome.committed = ["insights/machines/0123456789abcdef.json", "projects/x/usage/0123456789abcdef.json"]
+        #expect(InsightsSync.Published(outcome: outcome).lines == ["Published this Mac's usage summaries (2 files)."])
+        let work = SummaryPublisher.Outcome(key: "work-abc123", isWork: true, message: "", committed: ["insights/machines/work-abc123.json"],
+                                            notes: ["A step is left for the next publish."])
+        #expect(InsightsSync.Published(outcome: work).lines == [
+            "Published this work Mac's usage summary (1 file): only brain-skill counts, under its pseudonym work-abc123.",
+            "A step is left for the next publish.",
+        ])
+        #expect(InsightsSync.Published(problem: "No email.").lines == ["Usage summaries not published: No email."])
     }
 }
