@@ -12,7 +12,7 @@ public enum SummaryPublisher {
         public var errorDescription: String? { message }
     }
 
-    public struct Outcome: Equatable {
+    public struct Outcome: Equatable, Sendable {
         /// The machine file's key: the pseudonym on a work Mac, else the id.
         public var key: String
         public var isWork: Bool

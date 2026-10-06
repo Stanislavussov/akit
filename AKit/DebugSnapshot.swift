@@ -26,7 +26,8 @@ import SwiftUI
 /// `--capture` shows the difference grid. Evals: `--select <task id>[,<task id>…]`, `--add` opens Run Cells…,
 /// `--query fromSession|reproduction` a new task sheet. Lab: `--tab analysis --add` opens New Lab Run on the batch form; `--select`
 /// takes a batch run's or a control cell's id too. Insights (`--section insights`): `--select <project id>` picks the
-/// scope and `--add` opens Apply… of the first layer patch; it imports first, so give it `--delay 8`.
+/// scope, `--add` opens Apply… of the first layer patch and `--capture` opens Install Capture…; it imports first, so
+/// give it `--delay 8`.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
 /// a value (`--add`, `--capture`, `--own-copy`, `--settings`) last: Cocoa pairs arguments as "-key value", and a

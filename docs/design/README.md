@@ -1,6 +1,6 @@
 # Design map
 
-Status: 2026-10-03, checked against the code. This is the index of `docs/design/`: what
+Status: 2026-10-06, checked against the code. This is the index of `docs/design/`: what
 each design is for, what is built, what to build next and in which order. Each design
 keeps its own details and its own status note; the order across designs and the open
 decisions live only here.
@@ -43,7 +43,7 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 |---|---|---|---|---|
 | [`architecture.md`](architecture.md) | Which module owns what? | `AKitCore/Package.swift` | all 25 steps; 16 modules | — |
 | [`layers.md`](layers.md) | How does a project get exactly the setup it needs? | Brain screen; `akit plan` / `apply` | roadmap 1–3, update rules, work machines, home render | MCP in layers, JSON merge, `/akit-setup` draft, `machines/<name>.yaml` |
-| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen (recommendations); `akit stats`, `akit recommend`, `akit insights` | steps 1–7; step 10, first slice | steps 8, 9, 11–13; the rest of the Insights screen |
+| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen (recommendations); `akit stats`, `akit recommend`, `akit insights` | steps 1–7; step 10: recommendations, Install Capture…, Sync publishes summaries | steps 8, 9, 11–13; the rest of the Insights screen |
 | [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4 | index as a source, Pi replays |
 | [`error-analysis.md`](error-analysis.md) | What goes wrong again and again, and did the fix help? | Error Analysis screen; `akit analysis` | slices 1–8 | manual calibration of cells, merge/split proposals |
 | [`layer-evals.md`](layer-evals.md) | Does layer X make the agent's work better? | — | nothing (design only) | slices 1–9 |
@@ -74,7 +74,7 @@ design doc and this table say so.
 | # | Step | Design | Why at this place |
 |---|---|---|---|
 | 0 | No code: label the bootstrap sessions, run one batch, write one fix draft | `error-analysis.md` | Error analysis is built and has no active mode yet. Its results show which of the later steps are needed |
-| 1 | Insights screen. Built 2026-10-03: recommendations with Apply… and Dismiss…. `akit setup` installs capture and the screen says when it is off (2026-10-06). Left: the skills table, Changes, an Install capture button, Plan after Apply, and the app's Sync publishing summaries | `session-insights.md`, step 10 | The feature had no button. Almost no new logic: the pieces move from the command line module into `AKitInsights` |
+| 1 | Insights screen. Built 2026-10-03: recommendations with Apply… and Dismiss…. `akit setup` installs capture, and the screen says when it is off and has Install Capture…; the app's Sync publishes summaries (2026-10-06). Left: the skills table, Changes, Plan after Apply | `session-insights.md`, step 10 | The feature had no button. Almost no new logic: the pieces move from the command line module into `AKitInsights` |
 | 2 | Buttons for "apply the core layer to the home folder" and "forget project" | `layers.md`, Roadmap | Same rule: every operation needs a button. Small |
 | 3 | Count only exposures with a description | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |

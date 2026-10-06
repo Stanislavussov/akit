@@ -568,6 +568,42 @@ struct CaptureTests {
         #expect(await cli("insights", "status", "--dry-run", runner: fake).code == 2)
     }
 
+    /// The app's Install Capture…: one plan per part, a part said no to in setup unchecked, and
+    /// executing the checked parts one by one does what the shown plans say.
+    @Test func partPlansInstallOnlyTheCheckedParts() async throws {
+        try await oldBrain()
+        try fakeClaude()
+        try installedAkit()
+        let fake = FakeRunner(gitEnvironment: env.variables)
+        let installer = CaptureInstaller(env: installerEnv, brainRoot: brainRoot, run: fake.runner, akitExecutable: nil)
+        try installer.save(.init(skipped: [.pi]))
+        let plans = await installer.partPlans()
+        #expect(plans.map(\.part) == [.claude, .pi, .launchd])
+        #expect(plans.map(\.suggested) == [true, false, true])
+        #expect(plans.allSatisfy { !$0.plan.isEmpty && installer.parts(in: $0.plan) == [$0.part] })
+        #expect(plans[1].plan.text.contains("NEW \(extensionFile.path)"))
+        // Nothing ran but read-only queries.
+        #expect(fake.commands.allSatisfy { $0.hasSuffix("--help") || $0.hasSuffix("--json") || $0.hasPrefix("launchctl print") },
+                "\(fake.commands)")
+
+        for item in plans where item.suggested {
+            #expect(try await installer.execute(item.plan, trash: trash).isEmpty)
+        }
+        try installer.saveInstalled([.claude, .launchd])
+        #expect(fake.commands.contains("claude plugin install akit@akit-brain"))
+        #expect(fake.commands.contains("launchctl bootstrap gui/\(getuid()) \(plistFile.path)"))
+        #expect(fm.fileExists(atPath: plistFile.path) && !fm.fileExists(atPath: extensionFile.path))
+        #expect(installer.choice == .init(skipped: [.pi]))
+        // A no in setup is undone for what is installed; parts left out stay a no.
+        try installer.save(.init(skipped: [.pi, .launchd]))
+        try installer.saveInstalled([.pi], leftOut: [.claude])
+        #expect(installer.choice == .init(skipped: [.claude, .launchd]))
+        // After a no to all of capture, installing one part keeps the no for the others.
+        try installer.save(.init(declined: true))
+        try installer.saveInstalled([.pi])
+        #expect(installer.choice == .init(skipped: [.claude, .launchd]))
+    }
+
     @Test func installerWritesValidPluginWithVersionAndPlist() async throws {
         try await oldBrain()
         try fakeClaude()
@@ -784,7 +820,7 @@ struct CaptureTests {
                   launchd: .init(plist: "/l", present: loaded, loaded: loaded, program: nil),
                   lastSpoolLine: nil, lastImport: nil, declined: declined, skipped: skipped)
         }
-        let tail = ". Run akit setup (or akit insights install --yes) in Terminal."
+        let tail = "."
         #expect(CaptureNotice.text(status: status(), brainPresent: true)
                 == "Session capture is off for Claude Code, Pi and the hourly import" + tail)
         #expect(CaptureNotice.text(status: status(piFound: false), brainPresent: true)
@@ -798,6 +834,14 @@ struct CaptureTests {
         // Said no in akit setup: no line; a part said no to isn't listed.
         #expect(CaptureNotice.text(status: status(declined: true), brainPresent: true) == nil)
         #expect(CaptureNotice.text(status: status(skipped: [.claude, .launchd]), brainPresent: true) == "Session capture is off for Pi" + tail)
+        // The quieter line for a no: all of capture, or the parts said no to that could be on.
+        #expect(CaptureNotice.offByChoice(status: status(declined: true), brainPresent: true)
+                == "Session capture is off on this Mac (turned off in akit setup or by akit insights uninstall).")
+        #expect(CaptureNotice.offByChoice(status: status(skipped: [.claude, .pi]), brainPresent: true)
+                == "Session capture is off for Claude Code and Pi (your answer in akit setup).")
+        #expect(CaptureNotice.offByChoice(status: status(piFound: false, skipped: [.pi]), brainPresent: true) == nil)
+        #expect(CaptureNotice.offByChoice(status: status(skipped: [.claude]), brainPresent: false) == nil)
+        #expect(CaptureNotice.offByChoice(status: status(installed: "1.0.0", pi: "current", loaded: true), brainPresent: true) == nil)
     }
 
     @Test func launchdRefusesBuildFolderBinary() async throws {

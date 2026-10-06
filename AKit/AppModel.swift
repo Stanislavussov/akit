@@ -213,9 +213,10 @@ final class AppModel {
         await task.value
     }
 
-    /// Pulls the other Macs' commits and pushes this one's, then rescans.
-    func syncBrain() async throws -> BrainSync.Outcome {
-        guard brain != nil else { throw Self.noBrain }
+    /// Publishes this Mac's usage summaries, pulls the other Macs' commits and pushes this one's
+    /// (`InsightsSync`, as `akit sync`), then rescans.
+    func syncBrain() async throws -> InsightsSync.Outcome {
+        guard let brain else { throw Self.noBrain }
         guard !isSyncingBrain else {
             throw NSError(domain: "AKit", code: 5, userInfo: [NSLocalizedDescriptionKey: "The brain is already syncing."])
         }
@@ -227,7 +228,11 @@ final class AppModel {
         let root = brainRoot
         defer { Task { await refresh() } }
         do {
-            let outcome = try await BrainSync.sync(root, env: .current)
+            // Off the main thread: the host name can take a network lookup.
+            let projectsRoot = projectsRoot
+            let outcome = try await Task.detached {
+                try await InsightsSync.run(env: .current, brain: brain, projectsRoot: projectsRoot)
+            }.value
             brainSync = await BrainSync.status(of: root, env: .current, fetch: false)
             isSyncingBrain = false
             return outcome

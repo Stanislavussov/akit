@@ -1,5 +1,6 @@
 import AKitBrain
 import AKitFoundation
+import AKitInsights
 import AKitProjectSetup
 import AppKit
 import SwiftUI
@@ -178,14 +179,15 @@ struct BrainView: View {
     private func sync() {
         Task {
             do {
-                let outcome = try await model.syncBrain()
-                var lines: [String] = []
+                let result = try await model.syncBrain()
+                let outcome = result.sync
+                var lines = result.published.lines
                 if outcome.pulled > 0 { lines.append("Pulled \(outcome.pulled) commit\(outcome.pulled == 1 ? "" : "s").") }
                 if outcome.pushed > 0 { lines.append("Pushed \(outcome.pushed) commit\(outcome.pushed == 1 ? "" : "s").") }
                 if outcome.changesCore(in: model.brain) {
                     lines.append("The core layer changed. Update this Mac's home folder with: akit apply --home")
                 }
-                if lines.isEmpty { lines.append("Nothing new on either side.") }
+                if outcome.pulled == 0, outcome.pushed == 0 { lines.append("Nothing new on either side.") }
                 message = ("Brain synced", lines.joined(separator: "\n"))
             } catch {
                 message = ("Couldn't sync the brain", error.localizedDescription)

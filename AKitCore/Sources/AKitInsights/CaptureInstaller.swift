@@ -17,7 +17,7 @@ public typealias CommandRunner = @Sendable (_ executable: URL, _ arguments: [Str
 /// On a work Mac the plugin commit carries the brain's own git identity, unsigned (`BrainGit`).
 /// - launchd: an agent that runs `akit sessions import --quiet` hourly (it never commits).
 public struct CaptureInstaller {
-    public enum Part: String, CaseIterable, Encodable {
+    public enum Part: String, CaseIterable, Encodable, Sendable {
         case claude, pi, launchd
     }
 
@@ -58,8 +58,8 @@ public struct CaptureInstaller {
 
     // MARK: - Plan
 
-    public struct Plan {
-        public struct Write {
+    public struct Plan: Sendable {
+        public struct Write: Sendable {
             public let url: URL
             public let text: String
             public let executable: Bool
@@ -69,7 +69,7 @@ public struct CaptureInstaller {
             public let backup: Bool
         }
 
-        public struct Command {
+        public struct Command: Sendable {
             let executable: URL
             let arguments: [String]
             public var display: String { ([executable.lastPathComponent] + arguments).joined(separator: " ") }
@@ -89,6 +89,24 @@ public struct CaptureInstaller {
         public var refused: [String] = []
 
         public var isEmpty: Bool { writes.isEmpty && commitPaths.isEmpty && commands.isEmpty && trash.isEmpty }
+
+        /// Every folder, write (with its diff), commit, command and note, one per line, as
+        /// `akit insights install` prints it and the app's Install Capture… sheet shows it.
+        public var text: String {
+            var lines = folders.map { "FOLDER \($0.path)" }
+            for write in writes {
+                if write.backup { lines.append("BACK UP \(write.url.path) (not written by AKit) into ~/.akit/backups") }
+                lines.append("\(write.old == nil ? "NEW" : "CHANGED") \(write.url.path)\(write.executable ? " (executable)" : "")")
+                if write.old != nil { lines += TextDiff.unified(TextDiff.lines(from: write.old ?? "", to: write.text)) }
+            }
+            if !commitPaths.isEmpty { lines.append("COMMIT in the brain: \(commitMessage) (\(commitPaths.joined(separator: ", ")))") }
+            lines += trash.map { "TRASH \($0.path)" }
+            lines += commands.map { "RUN \($0.display)" }
+            lines += notes.map { "note: \($0)" }
+            lines += refused.map { "REFUSED: \($0)" }
+            if isEmpty { lines.append("Nothing to do.") }
+            return lines.joined(separator: "\n")
+        }
     }
 
     // MARK: - Files
@@ -158,6 +176,26 @@ extension CaptureInstaller {
         if parts.contains(.pi) { planPi(into: &plan) }
         if parts.contains(.launchd) { await planLaunchd(into: &plan) }
         return plan
+    }
+
+    /// One part's plan, for the app's Install Capture… sheet. Each part is executed on its own,
+    /// so what runs is exactly what the sheet showed.
+    public struct PartPlan: Sendable, Identifiable {
+        public let part: Part
+        public let plan: Plan
+        /// Checked when the sheet opens: every part but those said no to in `akit setup`.
+        public let suggested: Bool
+        public var id: Part { part }
+    }
+
+    /// Every part's plan, in install order.
+    public func partPlans() async -> [PartPlan] {
+        let skipped = choice.skipped
+        var plans: [PartPlan] = []
+        for part in Part.allCases {
+            plans.append(PartPlan(part: part, plan: await installPlan(only: part), suggested: !skipped.contains(part)))
+        }
+        return plans
     }
 
     /// The parts on this Mac now: the plugin installed in Claude Code, AKit's Pi extension
@@ -380,8 +418,8 @@ extension CaptureInstaller {
         return plan
     }
 
-    public struct Status: Encodable {
-        public struct Claude: Encodable {
+    public struct Status: Encodable, Sendable {
+        public struct Claude: Encodable, Sendable {
             /// Version in the brain's plugin.json; nil without a brain or plugin files.
             public var brainVersion: String?
             /// Version Claude Code on this Mac has installed; nil when not installed.
@@ -393,7 +431,7 @@ extension CaptureInstaller {
             public var versionMismatch: Bool
         }
 
-        public struct Pi: Encodable {
+        public struct Pi: Encodable, Sendable {
             public let path: String
             /// `missing`, `current`, `outdated` (AKit's, older) or `foreign` (not AKit's).
             public let state: String
@@ -401,7 +439,7 @@ extension CaptureInstaller {
             public var found: Bool
         }
 
-        public struct Launchd: Encodable {
+        public struct Launchd: Encodable, Sendable {
             let plist: String
             public let present: Bool
             public let loaded: Bool
@@ -487,6 +525,18 @@ extension CaptureInstaller {
         let settings = InsightsPaths(env: env).readSettings()
         return Choice(declined: settings["capture"] as? Bool == false,
                       skipped: Set((settings["captureSkipped"] as? [String] ?? []).compactMap(Part.init(rawValue:))))
+    }
+
+    /// Installing undoes a no given in `akit setup`, for the parts installed. After a no to all
+    /// of capture, the parts not installed stay a no; `leftOut` adds parts the person was offered
+    /// and didn't check (the app's Install Capture…).
+    public func saveInstalled(_ parts: [Part], leftOut: [Part] = []) throws {
+        var choice = self.choice
+        if choice.declined { choice.skipped.formUnion(Part.allCases) }
+        choice.declined = false
+        choice.skipped.formUnion(leftOut)
+        choice.skipped.subtract(parts)
+        try save(choice)
     }
 
     /// Saves the choice; writes nothing when it is already the saved one.

@@ -21,9 +21,11 @@ Checked against the code on 2026-10-03:
 - Capture in setup (2026-10-06): `akit setup` installs capture (see "Capturing before the
   folder disappears"), and the Insights screen shows a line when `CaptureInstaller.status`
   finds it off or out of date.
-- Still to do in step 10: the skills table, Changes with marks, an Install capture button,
-  Plan for the layer's projects after Apply, and the app's Sync publishing summaries (only
-  `akit sync` does). The app uses neither `InsightsStats` nor `BeforeAfter` yet.
+- Install capture and Sync (2026-10-06): the line has **Install Capture…** (one plan per
+  part, `CaptureInstaller.partPlans`; only the checked parts run), and the app's brain Sync
+  publishes summaries through `InsightsSync`, the sequence `akit sync` runs too.
+- Still to do in step 10: the skills table, Changes with marks, and Plan for the layer's
+  projects after Apply. The app uses neither `InsightsStats` nor `BeforeAfter` yet.
 - Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
   (2026-10-01), and the index has a `signals` table, filled by
   `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.
@@ -489,7 +491,8 @@ CLI, from the same core calls, so the screen and `--json` never disagree.
   recommendations always use the rule's own window (N sessions, D days). Last import time
   and an **Import now** button (`QuickImport.run`). Capture status from
   `CaptureInstaller.status`; **Install capture…** shows `CaptureInstaller.installPlan`
-  (the files and commands) and runs `execute` only after the user confirms.
+  (the files and commands) and runs `execute` only after the user confirms. Built as one plan
+  per part with a checkbox each; a part said no to in `akit setup` starts unchecked.
 - **Context by owner.** One bar per owner (layers, plugins, hand-installed, built-in,
   unknown) with ≈ tokens per request, and the over-budget finding when the listing
   dropped descriptions (step 8). From `InsightsStats.report`.
@@ -512,8 +515,7 @@ CLI, from the same core calls, so the screen and `--json` never disagree.
   **Add mark…** writes a mark (`akit stats mark`). The calibration line (k per script and
   its source) sits below.
 - **Sync publishes summaries.** The app's brain Sync does what `akit sync` does: quick
-  import, `SummaryPublisher.publish`, then `BrainSync.sync`. Today `AppModel.syncBrain`
-  calls only `BrainSync.sync`. A failed or refused publish (work machine) is a warning in
+  import, `SummaryPublisher.publish`, then `BrainSync.sync` (`InsightsSync`, built 2026-10-06). A failed or refused publish (work machine) is a warning in
   the sync result; pull and push still run. The hourly job still never publishes.
 - **Work machine.** The screen works the same on this Mac's data; the Sync result says
   that only the pseudonymous brain-skill counts were published.
