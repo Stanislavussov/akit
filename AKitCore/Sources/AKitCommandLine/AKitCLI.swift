@@ -814,11 +814,16 @@ public enum AKitCLI {
             throw Failure(message: usage)
         }
         out(insightsPlanText(plan))
-        if subcommand == "install", options.yes, !dryRun {
-            // Installing by hand undoes a no given in akit setup, for what it installs.
+        if subcommand != "status", options.yes, !dryRun {
+            // Installing by hand undoes a no given in akit setup, for what it installs;
+            // uninstalling is a no, so the next akit setup doesn't put capture back.
             var choice = installer.choice
-            choice.declined = false
-            choice.skipped.subtract(only.map { [$0] } ?? CaptureInstaller.Part.allCases)
+            if subcommand == "install" {
+                choice.declined = false
+                choice.skipped.subtract(only.map { [$0] } ?? CaptureInstaller.Part.allCases)
+            } else {
+                choice = .init(declined: true)
+            }
             do {
                 try installer.save(choice)
             } catch {

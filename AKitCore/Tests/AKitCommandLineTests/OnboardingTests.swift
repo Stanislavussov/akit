@@ -73,12 +73,7 @@ struct OnboardingTests {
         var out: [String] = []
         let code = await AKitCLI.run(["setup"] + arguments, env: env, cwd: home, hostName: "TestMac.local", installedTargets: ["claude"],
                                      out: { out.append($0) }, err: { out.append($0) },
-                                     trash: { url in
-                                         let target = home.appending(path: "Trash/\(UUID().uuidString)")
-                                         try fm.createDirectory(at: target, withIntermediateDirectories: true)
-                                         try fm.moveItem(at: url, to: target.appending(path: url.lastPathComponent))
-                                         return target
-                                     },
+                                     trash: trash,
                                      ask: answers == nil ? nil : { question in
                                          session.questions.append(question)
                                          return session.answers.isEmpty ? "" : session.answers.removeFirst()
@@ -92,8 +87,16 @@ struct OnboardingTests {
     func akit(_ arguments: String...) async -> (code: Int32, out: String) {
         var out: [String] = []
         let code = await AKitCLI.run(arguments, env: env, cwd: home, out: { out.append($0) }, err: { out.append($0) },
-                                     trash: { _ in nil }, runner: commands.runner)
+                                     trash: trash, runner: commands.runner)
         return (code, out.joined(separator: "\n"))
+    }
+
+    /// The fake Trash: a folder inside the fake home.
+    func trash(_ url: URL) throws -> URL? {
+        let target = home.appending(path: "Trash/\(UUID().uuidString)")
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try fm.moveItem(at: url, to: target.appending(path: url.lastPathComponent))
+        return target
     }
 
     func read(_ path: String) -> String? { try? String(contentsOf: home.appending(path: path), encoding: .utf8) }
@@ -266,6 +269,15 @@ struct OnboardingTests {
         #expect(InsightsPaths(env: env).readSettings()["capture"] == nil)
         let after = await setup(answers: [], session: result.session)
         #expect(after.out.contains("Session capture: on."), "\(after.out)")
+
+        // Uninstalling is a no: the next setup doesn't put capture back.
+        let removed = await akit("insights", "uninstall", "--yes")
+        #expect(removed.code == 0, "\(removed.out)")
+        #expect(read(piExtension) == nil)
+        #expect(InsightsPaths(env: env).readSettings()["capture"] as? Bool == false)
+        let kept = await setup(["--yes"], session: result.session)
+        #expect(kept.out.contains("Session capture: off (your choice)."), "\(kept.out)")
+        #expect(read(piExtension) == nil && !fm.fileExists(atPath: plist.path))
     }
 
     let addQuestion = "Also record sessions with"
