@@ -377,10 +377,17 @@ folders that name a known repository.
   a local APFS home; homes on NFS or SMB are not supported. `akit apply` appends an
   `apply` line too.
 - Installed by `akit setup` (built 2026-10-06), not only by `akit insights install`: while
-  none of it is on the Mac, setup asks once (default yes, also without a terminal); once any
-  part is there, it refreshes stale parts without asking, so running `install.sh` again is
-  an upgrade. A Pi extension AKit didn't write is left alone. The Insights screen shows a
-  line when capture is off or out of date.
+  none of it is on the Mac, setup asks once (default yes, also without a terminal). A no is
+  kept in `~/.akit/insights.json` (`"capture": false`) and setup asks nothing after it;
+  `akit insights install --yes` clears it. Once a part is there, setup refreshes only the
+  parts there, without asking, so running `install.sh` again is an upgrade; a part that
+  could join (Claude Code or Pi found since) is asked for once, and a no to it is kept too
+  (`"captureSkipped"`). `--skip-home` skips capture. Pi counts as found with `~/.pi/agent`
+  or `pi` on the PATH. A Pi extension AKit didn't write is left alone. On a work Mac the
+  plugin commit carries the brain's own git identity, unsigned (`BrainGit`), and nothing is
+  written into the brain without one. A newer plugin version already in the brain is never
+  overwritten. The Insights screen shows a line when capture is off or out of date
+  (`CaptureNotice`), and none for what the person said no to.
 
 ### Fingerprint, repo snapshot and failure signals (step 11)
 

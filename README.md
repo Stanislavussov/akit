@@ -72,8 +72,10 @@ questions. Enter takes the default each time:
    done silently.
 4. **Skills already in `~` that differ from the brain's:** kept unless you say replace
    (the old files are backed up).
-5. **Session capture** (Claude plugin, Pi extension, hourly import), asked once. Later
-   runs keep it up to date without asking.
+5. **Session capture** (Claude plugin, Pi extension, hourly import), asked once; a no is
+   remembered (`akit insights install --yes` turns it on later). Later runs keep the parts
+   that are there up to date without asking, and ask once before adding a new one (say
+   Claude Code, installed since). `--skip-home` skips capture too.
 
 Then the brain's core layer goes into your home folder for every agent on the Mac. That's
 it: open a project and ask your agent `/akit set up this project`.
