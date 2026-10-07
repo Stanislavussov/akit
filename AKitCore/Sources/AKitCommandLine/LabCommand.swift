@@ -385,8 +385,12 @@ extension AKitCLI {
                 throw Failure(message: error.localizedDescription)
             }
             out("\(agent.harness.title) sends to \(gate.destination.label).")
-            for (name, origin) in [("A Claude Code session", SendOrigin.claudeSession),
-                                   ("A Pi session through \(gate.destination.provider)", .piSession(providers: [gate.destination.provider]))] {
+            let own: (String, SendOrigin) = agent.harness == .pi
+                ? ("A Pi session through \(gate.destination.provider)", .piSession(providers: [gate.destination.provider]))
+                : ("A Claude Code session", .claudeSession)
+            let other: (String, SendOrigin) = agent.harness == .pi ? ("A Claude Code session", .claudeSession)
+                : ("A Pi session through github-copilot", .piSession(providers: ["github-copilot"]))
+            for (name, origin) in [own, other, ("Repository code (\(agent.harness.title))", .code(agent.harness))] {
                 let decision = gate.decide(origin)
                 out("\(name): \(decision.allowed ? "allowed" : "refused"). \(decision.reason)")
             }

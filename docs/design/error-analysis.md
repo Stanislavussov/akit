@@ -636,7 +636,8 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
     explicitly. The default notes model (Copilot through Pi) on a Claude Code session is
     cross-origin, so it has to be added.
   - **Work machine** (`work` mode, see `layers.md`): the list is empty by default and is
-    the company's; refusals say so.
+    the company's; refusals say so. Repository code (replays, control runs) goes only to
+    the list there: it was given to the harness, not to every provider the harness reaches.
   - **UI hint**: fill the list in by the company policy for *session data*, not only for
     code.
 - **Account check** at the start of each review, batch and control run, and again after
@@ -776,8 +777,9 @@ assertion over a control cell read events the same way.
    not just quota. AKit estimates the cost before a run; the monthly limit is shared with
    the analysis.
 7. **Sending policy.** Tasks and traces contain the code of a work repository. Control
-   runs go through the same allowed list (harness + provider + account + plan/org); see
-   [Sending policy](#sending-policy).
+   runs go through the same policy with the code as origin: on a personal Mac the agent's
+   own harness counts as the origin, on a work Mac only the allowed list (harness +
+   provider + account + plan/org) does; see [Sending policy](#sending-policy).
 8. **Sanity checks:**
    - a deliberately broken setup (read-only tools) must fail;
    - the tests are green on the reference commit;

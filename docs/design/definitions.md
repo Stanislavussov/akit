@@ -26,9 +26,10 @@ What AKit keeps or sends, by how close it is to message text.
   error analysis step, a judge), only when the user starts that step.
   - Every send goes through the sending policy of `error-analysis.md` (built
     2026-10-01): the scrubbed digest goes through the harness the user picked, with that
-    harness's own sign-in and provider, and only to a destination on the allowed list
-    (harness + provider + account + org), checked before every send. The list is empty
-    by default on a work machine.
+    harness's own sign-in and provider, and only back to the harness and provider that
+    recorded the session or to a destination on the allowed list (harness + provider +
+    account + org), checked before every send. The list is empty by default on a work
+    machine, where repository code goes only to it.
 
 The sentence every design uses: *AKit never uploads sessions anywhere; a transcript
 reaches an LLM provider only in a review or analysis step the user starts, and only to a

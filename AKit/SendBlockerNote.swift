@@ -11,8 +11,9 @@ extension Notification.Name {
 }
 
 /// Under a review sheet's agent fields: what will stop the review, known from the sending
-/// policy settings alone (a destination the policy refuses, such as a Pi provider on a work
-/// Mac with no account allowed), with the button that fixes it here instead of a failed run. Nothing shows when nothing is known
+/// policy settings alone (a destination the policy refuses, such as Pi for a Claude Code
+/// session with no Pi account allowed), with the button that fixes it here instead of a
+/// failed run. Nothing shows when nothing is known
 /// to stop it; the run still checks the account itself.
 struct SendBlockerNote: View {
     let agent: LabAgent

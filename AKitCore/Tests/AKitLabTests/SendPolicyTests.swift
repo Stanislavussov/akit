@@ -62,8 +62,11 @@ struct SendPolicyTests {
         let claude = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
         for work in [false, true] {
             #expect(blocker(claude, .claudeSession, LabSettings(), work: work) == nil)
-            #expect(blocker(claude, .code(.claudeCode), LabSettings(), work: work) == nil)
         }
+        // Repository code: its own harness on a personal Mac, the company's list on a work Mac.
+        #expect(blocker(claude, .code(.claudeCode), LabSettings()) == nil)
+        if case .policy? = blocker(claude, .code(.claudeCode), LabSettings(), work: true) {} else { Issue.record("no work code refusal") }
+        if case .policy? = blocker(pi, .code(.pi), LabSettings(), work: true) {} else { Issue.record("no work Pi code refusal") }
         if case .policy? = blocker(claude, fromCopilot, LabSettings(), work: true) {} else { Issue.record("no Pi-to-Claude refusal") }
         #expect(blocker(claude, fromCopilot, LabSettings(allowedDestinations: [claudeAccount]), work: true) == nil)
 
@@ -135,10 +138,19 @@ struct SendPolicyTests {
         #expect(!SendPolicy.decide(origin: .claudeSession, destination: copilot, isWork: false, allowed: [otherOrg]).allowed)
     }
 
-    /// A work Mac sends data back to its origin too (nobody new gets it); everything else goes only to the company's list.
+    /// A work Mac sends a session back to its origin too (nobody new gets it); everything else, and
+    /// repository code, goes only to the company's list.
     @Test func workMacAllowsTheSameOriginAndTheList() {
         #expect(SendPolicy.decide(origin: .claudeSession, destination: claudeAccount, isWork: true, allowed: []).allowed)
-        #expect(SendPolicy.decide(origin: .code(.claudeCode), destination: claudeAccount, isWork: true, allowed: []).allowed)
+        let code = SendPolicy.decide(origin: .code(.claudeCode), destination: claudeAccount, isWork: true, allowed: [])
+        #expect(!code.allowed && code.reason.contains("repository code"))
+        #expect(SendPolicy.decide(origin: .code(.claudeCode), destination: claudeAccount, isWork: true, allowed: [claudeAccount]).allowed)
+        #expect(SendPolicy.decide(origin: .code(.claudeCode), destination: claudeAccount, isWork: false, allowed: []).allowed)
+        // Work code through Pi: not to whatever provider Pi reaches, only to a listed account.
+        let anyProvider = SendDestination(harness: .pi, provider: "openrouter", account: "", org: "")
+        #expect(!SendPolicy.decide(origin: .code(.pi), destination: anyProvider, isWork: true, allowed: []).allowed)
+        #expect(!SendPolicy.decide(origin: .code(.pi), destination: copilot, isWork: true, allowed: []).allowed)
+        #expect(SendPolicy.decide(origin: .code(.pi), destination: copilot, isWork: true, allowed: [copilot]).allowed)
         let refused = SendPolicy.decide(origin: .claudeSession, destination: copilot, isWork: true, allowed: [])
         #expect(!refused.allowed && refused.reason.contains("work Mac"))
         #expect(SendPolicy.decide(origin: .claudeSession, destination: copilot, isWork: true, allowed: [copilot]).allowed)

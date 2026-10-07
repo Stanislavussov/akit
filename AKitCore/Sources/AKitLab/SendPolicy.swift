@@ -94,18 +94,24 @@ public enum SendPolicy {
         public let reason: String
     }
 
-    /// Any Mac: the same origin, where data goes back to the harness and provider that produced
-    /// it (it went there already, so nobody new gets it), plus the allowed list for everything
-    /// else. The harness's own sign-in counts: Claude Code's transcripts don't record their
-    /// account and Pi can't tell its own, so for Claude Code the harness and for Pi the
-    /// provider decides. A work Mac differs only in its wording: its list is the company's.
+    /// Any Mac: the same origin, where a session goes back to the harness and provider that
+    /// produced it (it went there already, so nobody new gets it), plus the allowed list for
+    /// everything else. The harness's own sign-in counts: Claude Code's transcripts don't
+    /// record their account and Pi can't tell its own, so for Claude Code the harness and for
+    /// Pi the provider decides. A work Mac's list is the company's, and repository code
+    /// (`.code`, no provider of its own) goes only to it there: work code was given to the
+    /// harness, not to every provider it can reach.
     public static func decide(origin: SendOrigin, destination: SendDestination, isWork: Bool, allowed: [SendDestination]) -> Decision {
         // Only entries with an account: an old entry with blank fields mustn't let anything through.
         if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) }) {
             return Decision(allowed: true, reason: "\(destination.label) is on the allowed list.")
         }
-        if sameOrigin(origin, destination) {
+        if sameOrigin(origin, destination), !(isWork && origin.isCode) {
             return Decision(allowed: true, reason: "Same origin: \(destination.label) produced this data.")
+        }
+        if isWork, origin.isCode {
+            return Decision(allowed: false, reason: "This is a work Mac: repository code goes only to destinations on the allowed list "
+                                + "(your company's; Settings → Sending policy → Add Destination…), and \(destination.label) isn't on it.")
         }
         let allow = destination.harness == .pi && !destination.isAccountKnown
             ? "Pi can't tell which \(destination.provider) account it uses: allow it once with your login and plan or org "
@@ -131,6 +137,12 @@ public enum SendPolicy {
 }
 
 extension SendOrigin {
+    /// Repository code rather than a recorded session.
+    var isCode: Bool {
+        if case .code = self { return true }
+        return false
+    }
+
     var label: String {
         switch self {
         case .claudeSession: "a Claude Code session"
@@ -244,6 +256,11 @@ public enum SendAccounts {
             // The account is known only by asking Claude Code; without any Claude Code entry on
             // the list, though, data from another origin is refused whatever the account.
             guard !settings.allowedDestinations.contains(where: { $0.harness == .claudeCode && $0.isAccountKnown }) else { return nil }
+            if isWork, origin == .code(.claudeCode) {
+                return .policy("This is a work Mac: repository code goes only to destinations on the allowed list "
+                               + "(your company's; Settings → Sending policy → Add Destination…), and no Claude Code account is on it.",
+                               destination: nil)
+            }
             if let origin, origin != .claudeSession, origin != .code(.claudeCode) {
                 return .policy("Claude Code didn't produce this data (\(origin.label)). "
                                + (isWork ? "This is a work Mac: allow other destinations only as your company's policy says. " : "")

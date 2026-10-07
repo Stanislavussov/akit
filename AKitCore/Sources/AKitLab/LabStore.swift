@@ -194,7 +194,7 @@ public enum LabRuns {
     public static let reviewable: Set<HarnessID> = [.claudeCode, .pi]
 
     /// The reviewer a session starts with: its own harness with your settings, the same origin
-    /// a personal Mac allows. A Pi session that recorded one provider other than Pi's default
+    /// any Mac allows. A Pi session that recorded one provider other than Pi's default
     /// gets that provider's last model, since only the provider that wrote it may read it.
     public static func ownReviewer(of file: URL, harness: HarnessID, env: HarnessEnvironment) -> LabAgent {
         guard harness == .pi else { return defaultAgent(.claudeCode, env: env) }
