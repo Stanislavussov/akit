@@ -152,10 +152,13 @@ public enum ReviewRun {
         // Code's --restricted also confines them to the run folder and skips your settings;
         // acceptEdits lets it write there (auto asks, and nobody can answer). Pi's allowlist
         // covers extension tools, but its file tools reach any path.
+        // A reviewer needs its own prompt and nothing of your setup: no CLAUDE.md or AGENTS.md,
+        // skills, hooks, plugins or memory (--safe-mode; --restricted skips most of it already
+        // in Claude Code 2.1.289). Replays and control cells keep the setup: it is what they test.
         let tools = switch agent.harness {
-        case .claudeCode: ["--tools", "Read,Write,Glob,Grep", "--restricted", "--strict-mcp-config",
+        case .claudeCode: ["--tools", "Read,Write,Glob,Grep", "--restricted", "--safe-mode", "--strict-mcp-config",
                            "--permission-mode", "acceptEdits"]
-        case .pi: ["--tools", "read,write,grep,find,ls"]
+        case .pi: ["--tools", "read,write,grep,find,ls", "--no-skills", "--no-context-files", "--no-prompt-templates"]
         }
         let outcome = try await AgentRun.run(prompt: agentPrompt + "\n\n" + language.instruction, spec: run.spec, in: run.folder,
                                              runFolder: run.folder, exposeRunFolder: true, extra: tools, env: env, out: out)

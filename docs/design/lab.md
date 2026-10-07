@@ -196,7 +196,12 @@ Who writes what:
   agent, so it gets only `Read`, `Write`, `Glob` and `Grep` (`--tools`, no MCP servers;
   in Pi `--tools read,write,grep,find,ls`, an allowlist that covers extension tools too).
   Claude Code also gets `--restricted`, which confines its file tools to the run folder and
-  skips your settings files. Known gap: Pi's file tools reach any path, so a Pi agent review
+  skips your settings files. A reviewer needs none of your setup (2026-10-07): Claude Code
+  also gets `--safe-mode` (no CLAUDE.md, skills, hooks, plugins, memory; measured: a first call
+  of 11.1k tokens is 6.6k with `--restricted`, the same with `--safe-mode`, so it guards other
+  versions), Pi gets `--no-skills --no-context-files --no-prompt-templates` (its prompt drops
+  the skill list and AGENTS.md). Replays and control cells keep the setup: it is what they
+  test. Known gap: Pi's file tools reach any path, so a Pi agent review
   of an injected transcript could write a file elsewhere; one model call has no such gap.
   `akit lab run` validates `review.json` and records the review status separately from
   the test status; a missing or broken review never hides the numbers.
