@@ -192,6 +192,10 @@ public enum LabRuns {
     /// A review of a recorded session, opened where the session ran (or in the home folder
     /// when that is gone). `harness` recorded the session; nil = `LabPaths.harness(ofTranscript:)`.
     /// `environment` nil = suggested for that folder.
+    /// The harnesses whose sessions a review can read: AKit's numbers (`analysis.json`) only
+    /// for Claude Code, so a Pi session's review has the transcript alone.
+    public static let reviewable: Set<HarnessID> = [.claudeCode, .pi]
+
     /// `agent` nil = Claude Code with your settings; `language` nil = the one in Lab settings.
     public static func newReview(transcript: URL, harness: HarnessID? = nil, title: String?, agent: LabAgent? = nil,
                                  language: LabLanguage? = nil, environment: LabEnvironment?, akit: URL,
@@ -274,7 +278,7 @@ extension LabRuns {
     }
 
     /// Pi's config folder: `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
-    static func piRoot(env: HarnessEnvironment) -> URL {
+    public static func piRoot(env: HarnessEnvironment) -> URL {
         env.variables["PI_CODING_AGENT_DIR"].map { URL(filePath: $0, directoryHint: .isDirectory) }
             ?? env.homeDirectory.appending(path: ".pi/agent", directoryHint: .isDirectory)
     }

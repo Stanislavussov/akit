@@ -20,7 +20,8 @@ Name: `akit check` already validates the brain, so this feature is **Lab**:
 `akit lab …`, `~/.akit/lab/`, a Lab screen.
 
 v1 scope: Claude Code sessions and replays (a review may run in Pi); Orca, herdr and
-background launchers; one run at a time.
+background launchers; one run at a time. Since 2026-10-07 a review can also read a Pi
+session (transcript only, no numbers).
 
 ## What we learned first (2026-09-28, 21 AKit sessions)
 
@@ -413,6 +414,14 @@ is kept here.
      be Pi (`pi -p --mode json`); AKit doesn't measure Pi sessions yet, so a Pi review has
      no numbers of its own. When the harness ends with an error (a refused model call),
      `result.json` keeps it as `agentError` and the Lab screen shows it.
+   - Later (2026-10-07): Pi sessions can be reviewed too (`LabRuns.reviewable`): **Review in
+     Terminal…** shows on a Pi session, New Run… lists Pi sessions with a harness badge, and
+     `akit lab new review` takes a Pi session id (`<pi>/sessions/*/<time>_<id>.jsonl`, also
+     under `PI_CODING_AGENT_DIR`). The run gets `transcript.md` and no `analysis.json`. The
+     reviewer starts as the session's own harness (Pi for a Pi session), because the
+     same-origin rule lets a personal Mac send a Pi session only to its own provider; a
+     Claude Code reviewer of a Pi session needs the allowed list. `akit lab analyze` still
+     refuses Pi sessions.
    - Later (2026-09-30): one model call became the default (`--mode call|agent`); the
      agent stays for sessions too long for a digest.
    - Later (2026-09-30): an improvement is generic advice (a rule, skill, hook, setting or

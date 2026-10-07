@@ -170,9 +170,18 @@ struct LabRunTests {
         let named = try await LabRuns.newReview(transcript: try reviewedSession(), harness: .pi, title: "named",
                                                 environment: .background, akit: akit, env: env)
         #expect(LabStore.load(named.id, env: env)?.spec.reviewedHarness == .pi)
-        // The one path rule the CLI uses too: only Pi's session folder means Pi.
+        // The rule the CLI uses too: Pi's session folder, or Pi's session header elsewhere.
         #expect(LabPaths.harness(ofTranscript: piFile) == .pi)
         #expect(LabPaths.harness(ofTranscript: home.appending(path: ".pi/agent/skills/notes.jsonl")) == .claudeCode)
+        try write("pi-dir/sessions/--work--/2026-10-02_s2.jsonl", #"{"type":"session","id":"s2","cwd":"/work"}"# + "\n")
+        #expect(LabPaths.harness(ofTranscript: home.appending(path: "pi-dir/sessions/--work--/2026-10-02_s2.jsonl")) == .pi)
+        #expect(LabPaths.harness(ofTranscript: try reviewedSession()) == .claudeCode)
+        // A Pi session by its id, in ~/.pi/agent or PI_CODING_AGENT_DIR.
+        #expect(LabPaths.piTranscript(sessionID: "s1", env: env) == piFile)
+        #expect(LabPaths.piTranscript(sessionID: "s", env: env) == nil)
+        let moved = HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path, "PI_CODING_AGENT_DIR": home.appending(path: "pi-dir").path])
+        #expect(LabPaths.piTranscript(sessionID: "s2", env: moved)?.lastPathComponent == "2026-10-02_s2.jsonl")
+        #expect(LabRuns.reviewable == [.claudeCode, .pi])
     }
 
     @Test func queueStartsOneRunAtATime() async throws {

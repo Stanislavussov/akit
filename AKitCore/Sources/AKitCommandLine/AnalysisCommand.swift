@@ -121,7 +121,7 @@ extension AKitCLI {
             return key.description
         }
         let file = try transcript(text, cwd: cwd, env: env)
-        return SessionKey.of(NotesPipeline.Target(harness: .claudeCode, file: file).summary)?.description
+        return SessionKey.of(NotesPipeline.Target(harness: LabPaths.harness(ofTranscript: file), file: file).summary)?.description
             ?? "claude:" + file.deletingPathExtension().lastPathComponent
     }
 

@@ -36,6 +36,8 @@ struct RatingTests {
         let good = await rate("--harness", "pi", "--rating", "good",
                               stdin: try input(["session_id": "s1", "cwd": "/work", "transcript_path": transcript, "anchor": "a1"]))
         #expect(good.code == 0 && good.err.isEmpty, "\(good)")
+        // A rating's key is its session and millisecond; a person never rates twice in one.
+        try await Task.sleep(for: .milliseconds(5))
         let bad = await rate("--harness", "pi", "--rating", "bad",
                              stdin: try input(["transcript_path": transcript, "anchor": "a2", "text": "  read the whole file again \n"]))
         #expect(bad.code == 0, "\(bad)")
