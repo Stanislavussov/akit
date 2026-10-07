@@ -92,13 +92,13 @@ public enum SendPolicy {
         }
         if isWork {
             return Decision(allowed: false, reason: "This is a work Mac: session data goes only to destinations on the allowed list "
-                                + "(Settings → Lab), and \(destination.label) isn't on it.")
+                                + "(Settings → Sending policy → Add Destination…), and \(destination.label) isn't on it.")
         }
         if sameOrigin(origin, destination) {
             return Decision(allowed: true, reason: "Same origin: \(destination.label) produced this data.")
         }
         return Decision(allowed: false, reason: "\(destination.label) didn't produce this data (\(origin.label)). "
-                            + "Add it to the allowed list in Settings → Lab to send it there.")
+                            + "Add it to the allowed list (Settings → Sending policy → Add Destination…) to send it there.")
     }
 
     static func sameOrigin(_ origin: SendOrigin, _ destination: SendDestination) -> Bool {
@@ -176,10 +176,9 @@ public enum SendAccounts {
     /// (`pi auth check`, which prints no credentials without `--credentials`).
     static func pi(provider: String, settings: LabSettings, env: HarnessEnvironment) async throws -> SendDestination {
         guard !provider.isEmpty else { throw Failure(message: "Which Pi provider? Pick a model as provider/model.") }
-        guard let entry = settings.piAccounts.first(where: { $0.provider.caseInsensitiveCompare(provider) == .orderedSame }),
-              !entry.account.trimmingCharacters(in: .whitespaces).isEmpty, !entry.org.trimmingCharacters(in: .whitespaces).isEmpty else {
+        guard let entry = piEntry(provider: provider, settings: settings) else {
             throw Failure(message: "Pi has no account entered for \(provider), so Pi is refused on this Mac. "
-                              + "Enter the account and plan/org in Settings → Lab.")
+                              + "Enter it in Settings → Pi accounts → Add Pi Account…: your login and the plan or org.")
         }
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let result = await ProcessRunner.run(pi, arguments: ["auth", "check", "--provider", provider, "--json", "--no-refresh"],
@@ -193,6 +192,64 @@ public enum SendAccounts {
             throw Failure(message: "Pi isn't signed in to \(provider) (pi auth check: \(status ?? "no answer")).")
         }
         return SendDestination(harness: .pi, provider: provider, account: entry.account, org: entry.org)
+    }
+
+    /// What will stop a review through `agent`, known from the settings alone (no harness is
+    /// asked, so the sheet can say it before anything is queued); nil when nothing is known
+    /// to. The run still checks the account itself. `origin` nil = not known yet.
+    public enum Blocker: Equatable, Sendable {
+        /// No Pi account entered for this provider.
+        case piAccount(provider: String)
+        /// A Pi model with no provider, and no default provider in Pi's settings.
+        case noPiProvider
+        /// The policy refuses the destination; the reason names where to allow it. The
+        /// destination when known (Pi), to put on the allowed list as it is.
+        case policy(String, destination: SendDestination?)
+        /// The Lab settings file can't be read, so every send is refused.
+        case settings(String)
+    }
+
+    /// `settings` nil = read them as a send does (`LabSettings.loadForSending`).
+    public static func blocker(of agent: LabAgent, origin: SendOrigin?, settings given: LabSettings? = nil, isWork: Bool,
+                               env: HarnessEnvironment) -> Blocker? {
+        let settings: LabSettings
+        do {
+            settings = try given ?? LabSettings.loadForSending(env: env)
+        } catch {
+            return .settings(error.localizedDescription)
+        }
+        switch agent.harness {
+        case .pi:
+            let provider = piProvider(of: agent, env: env)
+            guard !provider.isEmpty else { return .noPiProvider }
+            guard let entry = piEntry(provider: provider, settings: settings) else { return .piAccount(provider: provider) }
+            guard let origin else { return nil }
+            let destination = SendDestination(harness: .pi, provider: provider, account: entry.account, org: entry.org)
+            let decision = SendPolicy.decide(origin: origin, destination: destination, isWork: isWork, allowed: settings.allowedDestinations)
+            return decision.allowed ? nil : .policy(decision.reason, destination: destination)
+        case .claudeCode:
+            // The account is known only by asking Claude Code; without any Claude Code entry on
+            // the list, though, every account is refused where only the list counts.
+            guard !settings.allowedDestinations.contains(where: { $0.harness == .claudeCode }) else { return nil }
+            if isWork {
+                return .policy("This is a work Mac: session data goes only to destinations on the allowed list "
+                               + "(Settings → Sending policy → Add Destination…), and no Claude Code account is on it.", destination: nil)
+            }
+            if let origin, origin != .claudeSession {
+                return .policy("Claude Code didn't produce this data (\(origin.label)). "
+                               + "Add its account to the allowed list (Settings → Sending policy → Add Destination…) to send it there.",
+                               destination: nil)
+            }
+            return nil
+        }
+    }
+
+    /// The Pi account entered for a provider, with its login and plan/org filled in.
+    static func piEntry(provider: String, settings: LabSettings) -> PiAccount? {
+        settings.piAccounts.first {
+            $0.provider.caseInsensitiveCompare(provider) == .orderedSame
+                && !$0.account.trimmingCharacters(in: .whitespaces).isEmpty && !$0.org.trimmingCharacters(in: .whitespaces).isEmpty
+        }
     }
 
     /// `provider/model` names the provider; an empty model uses Pi's default provider.

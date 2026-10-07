@@ -100,7 +100,7 @@ struct NewLabRunSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 620, height: session == nil ? 800 : 440)
+        .frame(width: 620, height: session == nil ? 860 : 510)
         .task(id: tabFolder) {
             suggested = nil
             guard let folder = tabFolder else { return }
@@ -206,6 +206,7 @@ struct NewLabRunSheet: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .frame(height: 215)
+        SendBlockerNote(agent: reviewAgent, reviewing: target)
     }
 
     private var reviewAgent: LabAgent {

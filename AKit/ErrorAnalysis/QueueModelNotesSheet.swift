@@ -38,7 +38,7 @@ struct QueueModelNotesSheet: View {
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
             .frame(height: 190)
-            Text("Transcripts go out under the sending policy in Settings → Lab; the monthly limit applies.")
+            Text("Transcripts go out under the sending policy (Settings → Sending policy); the monthly limit applies.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !estimate.isEmpty {

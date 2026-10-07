@@ -119,6 +119,8 @@ struct SettingsView: View {
             // `akit lab policy` may change the file while the form is open: only the form's own
             // edit is applied, onto what is on disk now, and the form then shows the result.
             .onAppear { lab = LabSettings.load(env: .current) }
+            // A review sheet added a Pi account or a destination.
+            .onReceive(NotificationCenter.default.publisher(for: .labSettingsSaved)) { _ in lab = LabSettings.load(env: .current) }
             .onChange(of: lab) { old, new in
                 do {
                     let saved = try LabSettings.update(env: .current) { $0.apply(from: old, to: new) }

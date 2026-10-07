@@ -1227,7 +1227,7 @@ Pi не умеет сказать, под каким аккаунтом он в�
 
 ### «Pi has no account entered for X, so Pi is refused on this Mac»
 
-Settings → **Add Pi Account…** для провайдера X.
+Settings → **Pi accounts** → **Add Pi Account…** для провайдера X: ваш логин и план или организация (для GitHub Copilot — организация, которая его выдаёт). Окна разбора (**New Run…**, **Review in Terminal…**, **Re-check with Another Model…**, **Review with a Model** на вкладке **Bootstrap**) показывают это ещё до запуска, оранжевой строкой под полями агента, с той же кнопкой **Add Pi Account…**: провайдер в ней уже заполнен. На рабочем Mac после этого нужна ещё запись в списке разрешённых: строка сменится на «Not allowed: …» с кнопкой **Add Destination…**.
 
 ### «Pi isn't signed in to X (pi auth check: …)»
 
