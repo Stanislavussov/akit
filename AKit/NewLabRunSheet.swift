@@ -101,13 +101,6 @@ struct NewLabRunSheet: View {
         }
         .padding(20)
         .frame(width: 620, height: session == nil ? 800 : 440)
-        // The reviewer starts as the session's own harness: the same origin, which a personal
-        // Mac allows (a Claude Code reviewer of a Pi session needs the allowed list).
-        .task(id: target?.harness) {
-            guard let reviewed = target?.harness else { return }
-            let own: LabHarness = reviewed == .pi ? .pi : .claudeCode
-            if model.labHarnesses.contains(own) { harness = own }
-        }
         .task(id: tabFolder) {
             suggested = nil
             guard let folder = tabFolder else { return }
@@ -202,7 +195,7 @@ struct NewLabRunSheet: View {
             Text("Session: \(target.title)").fontWeight(.medium)
         }
         Form {
-            ReviewAgentFields(harness: $harness, modelName: $reviewModel, effort: $reviewEffort)
+            ReviewAgentFields(harness: $harness, modelName: $reviewModel, effort: $reviewEffort, reviewing: target)
             Picker("How", selection: $reviewMode) {
                 ForEach(LabAgent.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
             }

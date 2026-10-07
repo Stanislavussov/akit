@@ -185,6 +185,12 @@ extension AppModel {
 
     func defaultAgent(_ harness: LabHarness) -> LabAgent { LabRuns.defaultAgent(harness, env: .current) }
 
+    /// The reviewer a session starts with; reads a Pi session's file, off the main actor.
+    func ownReviewer(of session: SessionSummary) async -> LabAgent {
+        let file = session.file, harness = session.harness
+        return await Task.detached { LabRuns.ownReviewer(of: file, harness: harness, env: .current) }.value
+    }
+
     /// Harnesses that can write a review: the installed ones.
     var labHarnesses: [LabHarness] {
         LabHarness.allCases.filter { HarnessEnvironment.current.findExecutable($0.command) != nil }

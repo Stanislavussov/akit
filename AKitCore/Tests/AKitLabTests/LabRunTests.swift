@@ -184,6 +184,25 @@ struct LabRunTests {
         #expect(LabRuns.reviewable == [.claudeCode, .pi])
     }
 
+    /// A session starts with its own reviewer: Claude Code's settings, or Pi with the provider
+    /// that wrote the session, which is all the same-origin rule allows.
+    @Test func aSessionStartsWithItsOwnReviewer() throws {
+        try write(".pi/agent/settings.json", #"{"defaultProvider":"anthropic","defaultModel":"claude-opus","defaultThinkingLevel":"high"}"#)
+        func pi(_ name: String, _ answers: [(String, String)]) throws -> URL {
+            let lines = [#"{"type":"session","id":"x","cwd":"/work"}"#] + answers.map { provider, model in
+                #"{"type":"message","message":{"role":"assistant","provider":"\#(provider)","model":"\#(model)"}}"#
+            }
+            try write(".pi/agent/sessions/--work--/\(name).jsonl", lines.joined(separator: "\n") + "\n")
+            return home.appending(path: ".pi/agent/sessions/--work--/\(name).jsonl")
+        }
+        let zai = LabRuns.ownReviewer(of: try pi("a_1", [("zai", "glm-4"), ("zai", "glm-5")]), harness: .pi, env: env)
+        #expect(zai.harness == .pi && zai.model == "zai/glm-5" && zai.effort == "high")
+        // Pi's default provider keeps your default model; mixed providers have no single origin.
+        #expect(LabRuns.ownReviewer(of: try pi("a_2", [("anthropic", "claude-haiku")]), harness: .pi, env: env).model == "anthropic/claude-opus")
+        #expect(LabRuns.ownReviewer(of: try pi("a_3", [("zai", "glm-5"), ("openai", "gpt")]), harness: .pi, env: env).model == "anthropic/claude-opus")
+        #expect(LabRuns.ownReviewer(of: try reviewedSession(), harness: .claudeCode, env: env).harness == .claudeCode)
+    }
+
     @Test func queueStartsOneRunAtATime() async throws {
         // The "akit" the tab would run: records its arguments and exits.
         try write("bin/fake-akit", "#!/bin/sh\necho \"$@\" >> \"$HOME/launched.txt\"\n", executable: true)

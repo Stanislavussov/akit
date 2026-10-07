@@ -247,7 +247,8 @@ private struct BootstrapReviewSheet: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Form {
-                ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort)
+                ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort,
+                                  reviewing: model.sessions.first { $0.file.path == entry.transcript } ?? entry.summary)
             }
             .formStyle(.grouped)
             .scrollDisabled(true)

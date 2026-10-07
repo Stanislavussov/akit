@@ -417,11 +417,13 @@ is kept here.
    - Later (2026-10-07): Pi sessions can be reviewed too (`LabRuns.reviewable`): **Review in
      Terminal…** shows on a Pi session, New Run… lists Pi sessions with a harness badge, and
      `akit lab new review` takes a Pi session id (`<pi>/sessions/*/<time>_<id>.jsonl`, also
-     under `PI_CODING_AGENT_DIR`). The run gets `transcript.md` and no `analysis.json`. The
-     reviewer starts as the session's own harness (Pi for a Pi session), because the
-     same-origin rule lets a personal Mac send a Pi session only to its own provider; a
-     Claude Code reviewer of a Pi session needs the allowed list. `akit lab analyze` still
-     refuses Pi sessions.
+     under `PI_CODING_AGENT_DIR`). The run gets `transcript.md` and no `analysis.json`. Every
+     review sheet (New Run…, Re-check, Bootstrap's review) and the CLI start the reviewer as
+     `LabRuns.ownReviewer`: the session's own harness, and for a Pi session that recorded one
+     provider other than Pi's default, that provider's last model. The same-origin rule lets
+     a personal Mac send a Pi session only to that provider (with its Pi account entered);
+     a session that mixed providers, a work Mac, or a Claude Code reviewer of a Pi session
+     needs the allowed list. `akit lab analyze` still refuses Pi sessions.
    - Later (2026-09-30): one model call became the default (`--mode call|agent`); the
      agent stays for sessions too long for a digest.
    - Later (2026-09-30): an improvement is generic advice (a rule, skill, hook, setting or

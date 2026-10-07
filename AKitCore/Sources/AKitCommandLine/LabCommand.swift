@@ -248,12 +248,13 @@ extension AKitCLI {
             try args.finish()
             let environment = try labEnvironment(environmentText, env: env)
             let file = try transcript(session, cwd: cwd, env: env)
-            // A Pi session goes to Pi by default: the same origin, which a personal Mac allows.
+            // Without --harness the session's own harness (and a Pi session's own provider) reviews it.
             let reviewed = LabPaths.harness(ofTranscript: file)
-            guard let harness = LabHarness(rawValue: harnessText ?? (reviewed == .pi ? "pi" : "claude-code")) else {
+            let own = LabRuns.ownReviewer(of: file, harness: reviewed, env: env)
+            guard let harness = harnessText.map(LabHarness.init(rawValue:)) ?? own.harness else {
                 throw Failure(message: "--harness is claude-code or pi.")
             }
-            var agent = LabRuns.defaultAgent(harness, env: env)
+            var agent = harness == own.harness ? own : LabRuns.defaultAgent(harness, env: env)
             if let modelText { agent.model = modelText }
             if let effortText { agent.effort = effortText }
             if let modeText {

@@ -111,7 +111,7 @@ extension AKitCLI {
         }
     }
 
-    /// A session key (`claude:<id>`), a transcript path, or a Claude Code session id.
+    /// A session key (`claude:<id>`), a transcript path, or a Claude Code or Pi session id.
     static func sessionKey(_ text: String, cwd: URL, env: HarnessEnvironment) throws -> String {
         if SessionKey(parsing: text) != nil { return text }
         let path = resolve(text, cwd: cwd, env: env)
