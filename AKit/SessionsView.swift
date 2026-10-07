@@ -205,6 +205,7 @@ enum SessionDetailTab: String, CaseIterable, Identifiable {
     case conversation
     case usage
     case analysis
+    case overview
     case prompt
     var id: Self { self }
 
@@ -213,13 +214,14 @@ enum SessionDetailTab: String, CaseIterable, Identifiable {
         case .conversation: "Conversation"
         case .usage: "Usage"
         case .analysis: "Analysis"
+        case .overview: "Overview"
         case .prompt: "System Prompt"
         }
     }
 
     /// Lab analysis reads Claude Code transcripts only.
     static func available(for harness: HarnessID) -> [SessionDetailTab] {
-        allCases.filter { $0 != .analysis || harness == .claudeCode }
+        allCases.filter { ($0 != .analysis && $0 != .overview) || harness == .claudeCode }
     }
 }
 
@@ -245,6 +247,12 @@ private struct SessionDetailView: View {
             case .analysis:
                 if session.harness == .claudeCode {
                     SessionAnalysisView(session: session)
+                } else {
+                    content
+                }
+            case .overview:
+                if session.harness == .claudeCode {
+                    SessionOverviewView(session: session)
                 } else {
                     content
                 }

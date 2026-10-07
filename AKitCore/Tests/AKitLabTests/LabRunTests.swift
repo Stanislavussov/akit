@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AKitSessions
 import AKitBrain
 import AKitFoundation
 @testable import AKitLab
@@ -84,6 +85,9 @@ struct LabRunTests {
         #expect(done.summary == "Short summary\n")
         #expect(read(run.folder.appending(path: "transcript.md")).contains("Fix it"))
         #expect(LabStore.read(SessionMetrics.self, from: run.folder.appending(path: "analysis.json"))?.calls == 1)
+        // No recorded system prompt in this session: the tool calls only.
+        let overview = LabStore.read(SessionOverview.self, from: run.folder.appending(path: "context.json"))
+        #expect(overview != nil && overview?.footprint == nil && overview?.tools.calls == 0)
         #expect(read(run.folder.appending(path: "agent.jsonl")).contains("\"type\":\"result\""))
         let args = read(run.folder.appending(path: "args.txt")).split(separator: "\n").map(String.init)
         #expect(args.contains("--permission-prompts") && args.contains("none") && args.contains(run.spec.sessionID))

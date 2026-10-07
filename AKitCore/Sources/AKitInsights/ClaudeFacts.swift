@@ -133,29 +133,10 @@ struct ClaudeFacts {
     }
 
     /// One entry per name in `names`. Its description is the `content` line `- <name>: …`
-    /// (or `- <name>` alone). Plugin skill names contain `:`, so lines are matched by name,
-    /// longest first, never split on `:`.
+    /// (or `- <name>` alone) without the name (see `ClaudeLogFormat.listedSkills`).
     static func listedSkills(_ attachment: JSONLines.Object) -> [Fact.ListedSkill] {
-        let lines = (attachment["content"] as? String ?? "").split(separator: "\n").map(String.init)
-        var names = attachment["names"] as? [String] ?? []
-        if names.isEmpty {
-            // Older listings without `names`: a name ends at the first ": ".
-            names = lines.filter { $0.hasPrefix("- ") }.map { line in
-                let body = line.dropFirst(2)
-                return String(body.range(of: ": ").map { body[..<$0.lowerBound] } ?? body)
-            }
-        }
-        let longestFirst = names.sorted { $0.count > $1.count }
-        var descriptions: [String: String] = [:]
-        for line in lines where line.hasPrefix("- ") {
-            guard let name = longestFirst.first(where: { line == "- " + $0 || line.hasPrefix("- " + $0 + ":") }),
-                  descriptions[name] == nil else { continue }
-            let rest = line.dropFirst(2 + name.count)
-            descriptions[name] = String(rest.dropFirst()).trimmingCharacters(in: .whitespaces)
-        }
-        var seen = Set<String>()
-        return names.filter { seen.insert($0).inserted }.map { name in
-            let description = descriptions[name] ?? ""
+        ClaudeLogFormat.listedSkills(attachment).map { name, line in
+            let description = line.isEmpty ? "" : String(line.dropFirst(2 + name.count).dropFirst()).trimmingCharacters(in: .whitespaces)
             return Fact.ListedSkill(name: name, descHash: description.isEmpty ? nil : Fact.sha256(description),
                                     descChars: description.count)
         }
