@@ -192,9 +192,9 @@ public enum ReviewRun {
         if run.spec.reviewedHarness == .claudeCode {
             metrics = try await LabAnalysis.analyze(file: file, env: env)
             try LabStore.write(metrics, to: run.folder.appending(path: "analysis.json"))
-            if let overview = try? SessionOverview.read(summary) {
-                try LabStore.write(overview, to: run.folder.appending(path: "context.json"))
-            }
+        }
+        if let overview = try? SessionOverview.read(summary) {
+            try LabStore.write(overview, to: run.folder.appending(path: "context.json"))
         }
         return (SessionExport.markdown(summary, transcript), metrics)
     }
@@ -243,8 +243,8 @@ public enum ReviewRun {
           git: API calls, fresh tokens, context rent (baseline, reading code, own output,
           injections, other), tool errors, re-reads, rejected tool calls, interrupts,
           compactions, commits.
-        - context.json (Claude Code sessions): where the context went and how the tool calls
-          ended. footprint.parts: each part the harness loaded on its own (system prompt
+        - context.json (Claude Code and Pi sessions): where the context went and how the tool
+          calls ended. footprint.parts: each part the harness loaded on its own (system prompt
           sections, tools, MCP servers, skills, subagents, rules files, hooks) with its
           ≈ tokens in every call and its use in this session (used, unused, always = sent
           with every call, no call to count); footprint.callContexts: every call's recorded
@@ -252,7 +252,7 @@ public enum ReviewRun {
           inputMistake, commandFailed, transient, otherError, noResult) with an example.
           An unused part costs its tokens once per call: name the unused parts that are a
           large share of the calls and what kind of change would cut them (remove or narrow an
-          MCP server, plugin, skill or tool; shorten a rules file), when one session is enough
+          MCP server, plugin, skill or tool; shorten a rules file or AGENTS.md), when one session is enough
           to show it isn't needed for this kind of work.
 
         Trust the numbers; don't recompute them. Read the transcript (it can be long: read it in

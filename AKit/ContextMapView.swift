@@ -2,6 +2,7 @@ import AKitFoundation
 import AKitHarnesses
 import AKitLab
 import AKitMCP
+import AKitModel
 import AKitSessions
 import AppKit
 import Charts
@@ -24,7 +25,7 @@ struct SessionOverviewView: View {
                         if let footprint = overview.footprint {
                             ContextMapView(footprint: footprint, project: session.project)
                         } else {
-                            Label("This session has no recorded system prompt (older Claude Code versions don't write one), so its context can't be split into parts.",
+                            Label("This session has no recorded system prompt (Claude Code writes one from 2.1.26x, Pi from 1.0), so its context can't be split into parts.",
                                   systemImage: "square.grid.3x3.square")
                                 .foregroundStyle(.secondary)
                         }
@@ -469,9 +470,12 @@ private struct ContextPartDetail: View {
                                 Text(file.tildePath).font(.caption.monospaced()).lineLimit(2).truncationMode(.middle)
                                     .textSelection(.enabled)
                                 HStack(spacing: 8) {
-                                    Button("Open") { NSWorkspace.shared.open(file) }
-                                        .help("Open the file in its default app to edit it")
+                                    if !ClaudeSetupFiles.mayHoldKeys(file) {
+                                        Button("Open") { NSWorkspace.shared.open(file) }
+                                            .help("Open the file in its default app to edit it")
+                                    }
                                     Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                                        .help(ClaudeSetupFiles.mayHoldKeys(file) ? "The file may hold keys, so AKit doesn't open it" : "")
                                 }
                             }
                             .controlSize(.small)
@@ -481,8 +485,10 @@ private struct ContextPartDetail: View {
                                 Text("Defined in \(server.file.tildePath)").font(.caption).foregroundStyle(.secondary)
                                 HStack(spacing: 8) {
                                     Button("Show in MCP Servers") { model.section = .mcp }
-                                    Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([server.file]) }
-                                        .help("The file may hold keys, so AKit doesn't open it")
+                                    if !ClaudeSetupFiles.neverOffered.contains(server.file.lastPathComponent) {
+                                        Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([server.file]) }
+                                            .help("The file may hold keys, so AKit doesn't open it")
+                                    }
                                 }
                             }
                             .controlSize(.small)
@@ -507,13 +513,15 @@ private struct ContextPartDetail: View {
         }
         .task(id: block.id) {
             let block = block, project = project, home = HarnessEnvironment.current.homeDirectory
-            files = await Task.detached { Self.files(of: block, home: home, project: project) }.value
+            let harness = footprint.harness
+            files = await Task.detached { Self.files(of: block, harness: harness, home: home, project: project) }.value
         }
     }
 
     /// The files that define the part.
-    nonisolated static func files(of block: ContextMapView.Block, home: URL, project: URL?) -> [URL] {
+    nonisolated static func files(of block: ContextMapView.Block, harness: HarnessID, home: URL, project: URL?) -> [URL] {
         guard block.count == 1 else { return [] }
+        if harness == .pi { return piFiles(of: block, home: home, project: project) }
         switch block.group {
         case .rules:
             return block.source.map { [URL(filePath: $0)] }?.filter { FileManager.default.fileExists(atPath: $0.path) } ?? []
@@ -526,11 +534,37 @@ private struct ContextPartDetail: View {
         }
     }
 
-    /// The MCP server as AKit's MCP Servers screen knows it.
+    /// Pi records the path of every AGENTS.md and SKILL.md; tools are chosen in settings.json.
+    /// mcp.json may hold keys, so it isn't offered (the MCP Servers screen shows the server).
+    nonisolated static func piFiles(of block: ContextMapView.Block, home: URL, project: URL?) -> [URL] {
+        let fm = FileManager.default
+        switch block.group {
+        case .rules, .skills:
+            guard let path = block.source, fm.fileExists(atPath: path) else { return [] }
+            return [URL(filePath: path)]
+        case .tools:
+            let root = HarnessCatalog.configRoot(of: .pi, in: .current) ?? home.appending(path: ".pi/agent")
+            return [root.appending(path: "settings.json"), project?.appending(path: ".pi/settings.json")]
+                .compactMap { $0 }.filter { fm.fileExists(atPath: $0.path) }
+        default:
+            return []
+        }
+    }
+
+    /// The MCP server as AKit's MCP Servers screen knows it: one this harness uses, the
+    /// session's project entry before a user-wide one.
     private var server: MCPServer? {
         guard block.group == .mcp, block.count == 1 else { return nil }
         let key = ContextFootprint.serverKey(block.name)
-        return model.mcpServers.first { ContextFootprint.serverKey($0.name) == key }
+        let candidates = model.mcpServers.filter {
+            ContextFootprint.serverKey($0.name) == key && $0.usedBy.contains(footprint.harness)
+        }
+        let projectPath = project?.standardizedFileURL.path
+        func inProject(_ server: MCPServer) -> Bool {
+            guard let projectPath else { return false }
+            return server.file.standardizedFileURL.path.hasPrefix(projectPath + "/") || server.keyPath.contains(projectPath)
+        }
+        return candidates.first(where: inProject) ?? candidates.first { $0.scope == .global } ?? candidates.first
     }
 
     private var useText: String {
@@ -544,33 +578,68 @@ private struct ContextPartDetail: View {
 
     /// How to turn the part off or shrink it. Check the next session's Overview to see that it went.
     private var hint: String? {
+        footprint.harness == .pi ? piHint : claudeHint
+    }
+
+    /// Pi's switches, from its docs (settings.md, skills.md, mcp.md).
+    private var piHint: String? {
         switch block.group {
-        case .tools where block.name == "Artifact":
-            "Turn artifacts off: \"enableArtifact\": false in ~/.claude/settings.json, /config → Artifacts, "
-                + "or CLAUDE_CODE_DISABLE_ARTIFACT=1 (code.claude.com/docs/en/artifacts)."
         case .tools:
-            "A tool built into Claude Code. Deny it in settings.json (\"permissions\": {\"deny\": [\"\(block.name)\"]}) or with "
-                + "--disallowedTools. The docs don't say whether that removes its definition from the request: "
-                + "check the next session's Overview."
-        case .mcp:
-            "Remove the server, or turn it off for projects that don't need it. Its tools are deferred: "
-                + "only their names and the instructions are sent until the model loads one."
-        case .skills where block.name.contains(":"):
-            "Each listed skill's description is sent with every call. This one comes with a plugin, and an update "
-                + "replaces the plugin's files: turn the plugin off (/plugin) if you don't need its skills here."
+            "Remove it from the tools Pi declares: \"defaultTools\": [\"-\(block.name)\"] in settings.json, or name only the tools you need with --tools."
         case .skills:
-            "Each listed skill's description is sent with every call. Make the skill manual "
-                + "(disable-model-invocation: true in its SKILL.md) or remove it; Insights recommends this across many sessions."
-        case .subagents:
-            "Its line in the subagent list is sent with every call. Remove the file, or the plugin it comes with."
+            "Each listed skill's name, description and path are sent with every call. Add disable-model-invocation: true "
+                + "to its SKILL.md: /skill:\(block.name) still runs it, the model no longer sees it."
+        case .mcp:
+            "Turn the server off (\"enabled\": false) or narrow its exposure in ~/.pi/agent/mcp.json or .pi/mcp.json, or with /mcp."
         case .rules:
             "Sent with every call: shorten it, or move rarely needed parts into a skill."
-        case .hooks:
-            "Its output is added to the context. Change or remove the hook in the file below."
         case .systemPrompt:
-            "Part of Claude Code's own prompt; some sections come with features or plugins (output styles, MCP servers, browser tools)."
-        case .other, .conversation:
+            "Part of Pi's own prompt."
+        default:
             nil
+        }
+    }
+
+    private var claudeHint: String? {
+        let paths = files.map(\.path)
+        switch block.group {
+        case .tools where block.name == "Artifact":
+            return "Turn artifacts off: \"enableArtifact\": false in ~/.claude/settings.json, /config → Artifacts, "
+                + "or CLAUDE_CODE_DISABLE_ARTIFACT=1 (code.claude.com/docs/en/artifacts)."
+        case .tools:
+            return "A tool built into Claude Code. A deny rule with its bare name removes it from Claude's context: "
+                + "\"permissions\": {\"deny\": [\"\(block.name)\"]} in settings.json, or --disallowedTools \(block.name) "
+                + "(code.claude.com/docs/en/cli-reference)."
+        case .mcp:
+            return "Remove the server, or turn it off for projects that don't need it. With tool search on (the default) "
+                + "only its tool names and instructions are sent until the model loads a tool."
+        case .skills where paths.contains { $0.contains("/plugins/") }:
+            return "Each listed skill's description is sent with every call. This one comes with a plugin, and an update "
+                + "replaces the plugin's files: turn the plugin off (/plugin) if you don't need its skills here."
+        case .skills where paths.contains { $0.contains("/skills/synced/") }:
+            return "Each listed skill's description is sent with every call. claude.ai syncs this one from your account: "
+                + "turn it off in your claude.ai skills settings."
+        case .skills where paths.isEmpty:
+            return "Each listed skill's description is sent with every call. AKit found no file for it: it comes with "
+                + "Claude Code itself or from a source AKit doesn't read."
+        case .skills:
+            return "Each listed skill's description is sent with every call. Make the skill manual "
+                + "(disable-model-invocation: true in its SKILL.md) or remove it; Insights recommends this across many sessions."
+        case .subagents where paths.isEmpty:
+            return "Its line in the subagent list is sent with every call. AKit found no file for it: it is built into Claude Code."
+        case .subagents:
+            return "Its line in the subagent list is sent with every call. Remove the file, or the plugin it comes with."
+        case .rules:
+            return "Sent with every call: shorten it, or move rarely needed parts into a skill."
+        case .hooks where paths.isEmpty:
+            return "Its output is added to the context. It isn't in a file AKit offers (settings.local.json, managed settings "
+                + "or a plugin's plugin.json)."
+        case .hooks:
+            return "Its output is added to the context. Change or remove the hook in the file below."
+        case .systemPrompt:
+            return "Part of Claude Code's own prompt; some sections come with features or plugins (output styles, MCP servers, browser tools)."
+        case .other, .conversation:
+            return nil
         }
     }
 

@@ -6,9 +6,11 @@ import Foundation
 public struct ToolOutcomes: Codable, Sendable, Hashable {
     public enum Outcome: String, Codable, CaseIterable, Sendable, CodingKeyRepresentable {
         case ok
-        /// The user (saying what to do instead), a permission rule or the auto mode classifier said no.
+        /// The user (saying what to do instead), a permission rule, the auto mode classifier or
+        /// (Pi) an extension said no.
         case rejected
-        /// The user stopped it (Esc or "No" at its permission prompt without saying what to do instead).
+        /// The user stopped it (Esc or "No" at its permission prompt without saying what to do instead;
+        /// Pi: "Command aborted").
         case interrupted
         /// The input was wrong: a validation error, a missing file, an edit string that isn't
         /// there or isn't unique, a file not read first.
@@ -74,17 +76,29 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
     public func share(_ count: Int) -> Double { calls > 0 ? Double(count) / Double(calls) : 0 }
 
     /// The outcome of one tool result.
-    /// A failed shell command is `commandFailed` whatever its output says (a test log may
-    /// mention a timeout or a missing file). Other failures are read from the first lines only:
-    /// the tool's own error message, not the text it returned.
+    /// A shell command that ran and failed is `commandFailed` whatever its output says (a test
+    /// log may mention a timeout or a missing file): Claude Code starts its result with
+    /// `Exit code N`, Pi ends it with `Command exited with code N`. Other failures are read from
+    /// the first lines only: the tool's own error message, not the text it returned.
     public static func outcome(tool: String, result: String, isError: Bool) -> Outcome {
         guard isError else { return .ok }
-        if result.hasPrefix("[Request interrupted by user") { return .interrupted }
-        if isRejection(result) { return .rejected }
-        if tool == "Bash" || result.hasPrefix("Exit code") { return .commandFailed }
-        let head = result.split(whereSeparator: \.isNewline).prefix(2).joined(separator: " ").lowercased()
-        if transientMarkers.contains(where: head.contains) { return .transient }
-        if inputMarkers.contains(where: head.contains) { return .inputMistake }
+        let lines = result.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        // Pi ends a shell result with how the command ended.
+        let last = lines.last ?? ""
+        // Claude Code: "[Request interrupted by user…"; Pi: "Command aborted".
+        if result.hasPrefix("[Request interrupted by user") || last == "Command aborted" { return .interrupted }
+        if last.hasPrefix("Command timed out") { return .transient }
+        if last.hasPrefix("Command exited with code") { return .commandFailed }
+        let head = lines.prefix(2).joined(separator: " ")
+        // Pi extensions that refuse a call answer "Blocked write: …", "Blocked edit: …".
+        if isRejection(head) || head.wholeMatch(of: /Blocked [a-z_]+: .*/) != nil { return .rejected }
+        // The command ran: whatever its output says (a test log may mention a timeout).
+        if result.hasPrefix("Exit code") { return .commandFailed }
+        // Before the shell rule: the auto mode classifier timing out means the command never ran.
+        let lowered = head.lowercased()
+        if transientMarkers.contains(where: lowered.contains) { return .transient }
+        if tool.lowercased() == "bash" { return .commandFailed }
+        if inputMarkers.contains(where: lowered.contains) { return .inputMistake }
         return .otherError
     }
 
@@ -105,11 +119,13 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
     static let transientMarkers = [
         "timed out", "timeout", "econnreset", "etimedout", "econnrefused", "rate limit", "rate_limit", "overloaded",
         "temporarily unavailable", "socket hang up", "network error", "503 service", "502 bad gateway",
+        "transient failure",
     ]
 
     static let inputMarkers = [
         "inputvalidationerror", "invalid input", "does not exist", "no such file", "not found", "has not been read yet",
         "modified since read", "matches of the string to replace", "must be unique", "is not a valid", "is a directory",
         "not a directory", "enoent", "eisdir", "exceeds maximum allowed tokens", "unknown skill", "cannot be empty",
+        "could not find the exact text",
     ]
 }

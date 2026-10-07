@@ -145,26 +145,106 @@ struct ContextFootprintTests {
             result("a-3", "The user doesn't want to proceed with this tool use."),
             // Claude Code writes a stopped call as a rejection followed by this line.
             ["type": "user", "message": ["content": [["type": "text", "text": "[Request interrupted by user for tool use]"]]]],
-            call("b", context: 200, tools: [("WebFetch", [:]), ("mcp__docs__search", [:]), ("Read", [:])]),
+            call("b", context: 200, tools: [("WebFetch", [:]), ("mcp__docs__search", [:]), ("Read", [:]),
+                                            ("Bash", ["command": "rm -rf build"])]),
             result("b-0", "Request timed out after 30s"),
             result("b-1", "The user doesn't want to proceed with this tool use. The tool use was rejected."),
-            // b-2 never got a result.
+            // b-2 never got a result. The auto mode classifier timing out: the command never ran.
+            result("b-3", "claude-sonnet-5 is temporarily unavailable (timed out), so auto mode cannot determine the safety of Bash"),
             secret,
             result("c-0", "Exit code 1\nKEY=abc"),
+            // Two parallel calls stopped together: each result has its own entry, then one interrupt line.
+            call("d", context: 400, tools: [("Read", ["file_path": "/w/.env"]), ("Grep", [:])]),
+            result("d-0", "The user doesn't want to proceed with this tool use. The tool use was rejected."),
+            result("d-1", "The user doesn't want to proceed with this tool use. The tool use was rejected."),
+            ["type": "user", "message": ["content": [["type": "text", "text": "[Request interrupted by user for tool use]"]]]],
         ]
         let text = try lines.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n")
         try Data(text.utf8).write(to: file)
         let tools = try ClaudeSessions.overview(of: file).tools
         func tool(_ name: String) -> ToolOutcomes.Tool? { tools.tools.first { $0.name == name } }
-        #expect(tools.calls == 8 && tools.tools.first?.name == "Bash", "most calls first, then by name")
+        #expect(tools.calls == 11 && tools.tools.first?.name == "Bash", "most calls first, then by name")
+        #expect(tool("Bash")?.count(.transient) == 1)
+        // Both stopped calls, the secret file's read too (classified from its real text).
+        #expect(tool("Read")?.count(.interrupted) == 2 && tool("Grep")?.count(.interrupted) == 1)
+        #expect(tool("Read")?.count(.rejected) == 0)
         #expect(tool("Bash")?.count(.ok) == 1 && tool("Bash")?.count(.commandFailed) == 2, "whatever the output mentions")
         #expect(tool("Bash")?.examples[.commandFailed] == "Exit code 1: error: build failed")
         #expect(tool("Edit")?.count(.inputMistake) == 1)
-        #expect(tool("Read")?.count(.interrupted) == 1 && tool("Read")?.count(.noResult) == 1)
+        #expect(tool("Read")?.count(.noResult) == 1)
         #expect(tool("WebFetch")?.count(.transient) == 1)
         #expect(tool("mcp__docs__search")?.count(.rejected) == 1 && tool("mcp__docs__search")?.displayName == "docs: search")
-        #expect(tools.failed == 4 && tools.deterministicFailures == 3)
-        #expect(abs(tools.share(tools.failed) - 4.0 / 8) < 0.0001)
+        #expect(tools.failed == 5 && tools.deterministicFailures == 3)
+        #expect(abs(tools.share(tools.failed) - 5.0 / 11) < 0.0001)
         #expect(tool("Bash")?.count(.commandFailed) == 2 && tool("Bash")?.examples[.commandFailed]?.contains("KEY") == false)
+    }
+
+    // MARK: Pi
+
+    @Test func piSessionsSplitTheirRecordedSystemPrompt() throws {
+        let skill = folder.appending(path: "skills/demo/SKILL.md").path
+        let agents = folder.appending(path: "work/AGENTS.md").path
+        let x400 = self.x400
+        func message(_ fields: [String: Any]) -> [String: Any] { ["type": "message", "id": UUID().uuidString, "message": fields] }
+        func assistant(_ id: String, context: Int, calls: [(String, String, [String: Any])] = []) -> [String: Any] {
+            message(["role": "assistant", "model": "glm", "responseId": id,
+                     "usage": ["input": context - 100, "cacheRead": 100, "cacheWrite": 0, "output": 5],
+                     "content": calls.map { ["type": "toolCall", "id": $0.0, "name": $0.1, "arguments": $0.2] }])
+        }
+        func result(_ id: String, _ name: String, _ text: String, error: Bool) -> [String: Any] {
+            message(["role": "toolResult", "toolCallId": id, "toolName": name, "isError": error,
+                     "content": [["type": "text", "text": text]]])
+        }
+        let lines: [[String: Any]] = [
+            ["type": "session", "version": "3", "id": "s", "cwd": folder.appending(path: "work").path],
+            message(["role": "system", "content": "", "sections": [
+                "preamble": "You are an expert coding assistant operating inside pi." + x400,
+                "tools": "<tools>\n- read: Read file contents\n- bash: Execute bash commands\n- web_fetch: Fetch a page\n"
+                    + "- mcp__docs__search: Search the docs\n</tools>",
+                "project_context": "<project_context>\nProject-specific instructions and guidelines:\n\n"
+                    + "<project_instructions path=\"\(agents)\">\n# Rules\n\(x400)\n</project_instructions>\n</project_context>",
+                "skills": "<skills>\nUse the read tool to load a skill's file.\n<available_skills>\n"
+                    + "  <skill>\n    <name>demo</name>\n    <description>\(x400)</description>\n    <location>\(skill)</location>\n  </skill>\n"
+                    + "  <skill>\n    <name>idle</name>\n    <description>\(x400)</description>\n    <location>/x/idle/SKILL.md</location>\n  </skill>\n"
+                    + "</available_skills>\n</skills>",
+            ]]),
+            message(["role": "user", "content": [["type": "text", "text": "fix it"]]]),
+            assistant("r1", context: 3000, calls: [("c1", "read", ["path": skill]), ("c2", "bash", ["command": "make"])]),
+            result("c1", "read", "skill text", error: false),
+            result("c2", "bash", "Timeout: 5s\nmake: *** [all] Error 2\n\nCommand exited with code 2", error: true),
+            assistant("r2", context: 4000, calls: [("c3", "edit", ["path": "a.swift"]), ("c4", "bash", ["command": "sleep 99"])]),
+            result("c3", "edit", "Could not find the exact text in a.swift", error: true),
+            result("c4", "bash", "sleeping\n\nCommand aborted", error: true),
+        ]
+        let file = folder.appending(path: "pi.jsonl")
+        let text = try lines.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n")
+        try Data(text.utf8).write(to: file)
+        let overview = try PiSessions.overview(of: file)
+        let footprint = try #require(overview.footprint)
+        func part(_ group: ContextFootprint.Group, _ name: String) -> ContextFootprint.Part? {
+            footprint.parts.first { $0.group == group && $0.name == name }
+        }
+        #expect(footprint.harness == .pi && footprint.callContexts == [3000, 4000])
+        // Reading a listed SKILL.md is using the skill; its path is where to edit it.
+        #expect(part(.skills, "demo")?.use == .used && part(.skills, "demo")?.source == skill)
+        #expect(part(.skills, "idle")?.use == .unused)
+        #expect(part(.rules, "AGENTS.md")?.source == agents && part(.rules, "AGENTS.md")?.use == .always)
+        #expect(part(.tools, "read")?.use == .used && part(.tools, "web_fetch")?.use == .unused)
+        #expect(part(.tools, "read")?.source == "Built into Pi" && part(.tools, "web_fetch")?.source == "An extension")
+        #expect(part(.mcp, "docs")?.use == .unused)
+        #expect(part(.systemPrompt, "Preamble")?.use == .always)
+        #expect(footprint.parts.first { $0.use == .conversation }?.detail?.contains("tool schemas") == true)
+        // Pi's error texts.
+        let tools = overview.tools
+        #expect(tools.tools.first { $0.name == "bash" }?.count(.commandFailed) == 1, "a failed command, whatever it printed")
+        #expect(tools.tools.first { $0.name == "bash" }?.count(.interrupted) == 1)
+        #expect(tools.tools.first { $0.name == "edit" }?.count(.inputMistake) == 1)
+    }
+
+    @Test func piSessionsWithoutASystemMessageHaveOnlyToolCalls() throws {
+        let file = folder.appending(path: "old.jsonl")
+        try Data(#"{"type":"session","version":"3","id":"s","cwd":"/w"}"#.utf8).write(to: file)
+        let overview = try PiSessions.overview(of: file)
+        #expect(overview.footprint == nil && overview.tools.calls == 0)
     }
 }

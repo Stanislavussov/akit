@@ -26,13 +26,17 @@ public enum ClaudeSetupFiles {
         case .skill:
             if let plugin {
                 candidates = plugin.skillFolders.map { $0.appending(path: "\(base)/SKILL.md") }
+            } else if parts.count == 2 {
+                // A prefix without a known plugin: claude.ai syncs account skills to skills/synced/<account>/.
+                // Never an own skill of the same base name.
+                candidates = FileWalk.children(of: root.appending(path: "skills/synced")).map { $0.appending(path: "\(base)/SKILL.md") }
             } else {
                 candidates = [local, root].compactMap { $0?.appending(path: "skills/\(base)/SKILL.md") }
             }
         case .subagent:
             if let plugin {
                 candidates = [plugin.folder.appending(path: "agents/\(base).md")]
-            } else {
+            } else if parts.count == 1 {
                 candidates = [local, root].compactMap { $0?.appending(path: "agents/\(base).md") }
             }
         case .hook:
@@ -41,7 +45,8 @@ public enum ClaudeSetupFiles {
                 + plugins.map { $0.folder.appending(path: "hooks/hooks.json") })
                 .filter { (try? String(contentsOf: $0, encoding: .utf8))?.contains("\"\(event)\"") == true }
         case .mcpServer:
-            // Plugin servers are named `plugin_<plugin>_<server>`.
+            // Plugin servers are named `plugin_<plugin>_<server>`. These files can hold keys
+            // (env, headers): callers reveal them, never open them.
             candidates = plugins.filter { name.hasPrefix("plugin_\($0.name)_") }.flatMap {
                 [$0.folder.appending(path: ".mcp.json"), $0.folder.appending(path: ".claude-plugin/plugin.json")]
             }
@@ -54,9 +59,17 @@ public enum ClaudeSetupFiles {
         }
         var seen = Set<String>()
         return candidates.filter { url in
-            url.lastPathComponent != "settings.local.json" && FileManager.default.fileExists(atPath: url.path)
+            !neverOffered.contains(url.lastPathComponent) && FileManager.default.fileExists(atPath: url.path)
                 && seen.insert(url.standardizedFileURL.path).inserted
         }
+    }
+
+    /// Files that may hold secrets and are never offered at all.
+    public static let neverOffered: Set<String> = ["settings.local.json", ".claude.json", "auth.json"]
+
+    /// Files that may hold keys (MCP env, headers): shown in Finder, never opened by AKit.
+    public static func mayHoldKeys(_ file: URL) -> Bool {
+        [".mcp.json", "mcp.json", "plugin.json"].contains(file.lastPathComponent)
     }
 
     /// Plugins claude.ai syncs for the account: `plugins/synced/<account>/<plugin>~<suffix>/`.

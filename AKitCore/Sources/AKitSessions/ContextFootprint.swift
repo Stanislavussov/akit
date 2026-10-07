@@ -85,11 +85,12 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
     /// what the session had.
     public var capturedNow: Bool
 
-    public init(harness: HarnessID, parts: [Part], callContexts: [Int], capturedNow: Bool = false) {
+    /// `restNote`: what else the rest of the first call holds for this harness.
+    public init(harness: HarnessID, parts: [Part], callContexts: [Int], capturedNow: Bool = false, restNote: String? = nil) {
         self.harness = harness
         self.callContexts = callContexts
         self.capturedNow = capturedNow
-        self.parts = Self.fitted(parts, firstCall: callContexts.first)
+        self.parts = Self.fitted(parts, firstCall: callContexts.first, restNote: restNote)
     }
 
     /// The first call's context: recorded, or the parts' sum when there is no call.
@@ -139,7 +140,7 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
 
     /// Parts biggest first; their sum is the first call's context when it is known.
     /// Merged parts keep their texts one after another.
-    static func fitted(_ parts: [Part], firstCall: Int?) -> [Part] {
+    static func fitted(_ parts: [Part], firstCall: Int?, restNote: String? = nil) -> [Part] {
         var parts = parts.filter { $0.tokens > 0 && $0.use != .conversation }
         let estimated = parts.reduce(0) { $0 + $1.tokens }
         if let firstCall, firstCall > 0 {
@@ -157,7 +158,8 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
             if rest > 0 {
                 parts.append(Part(group: .conversation, name: "First prompt and the rest", tokens: rest, use: .conversation,
                                   detail: "The first call's recorded context that the setup parts don't explain: "
-                                      + "your first prompt, attachments and the harness's own wrapping."))
+                                      + "your first prompt, attachments and the harness's own wrapping."
+                                      + (restNote.map { " " + $0 } ?? "")))
             }
         }
         return parts.sorted { ($0.tokens, $1.name) > ($1.tokens, $0.name) }

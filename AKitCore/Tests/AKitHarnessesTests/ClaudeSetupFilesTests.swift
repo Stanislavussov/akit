@@ -25,6 +25,8 @@ struct ClaudeSetupFilesTests {
         try write(".claude/settings.local.json", in: project, #"{"hooks": {"Stop": []}}"#)
         try write(".mcp.json", in: project, #"{"mcpServers": {"docs": {}}}"#)
         try write(".claude/plugins/synced/acct/marketing~g2/skills/seo-audit/SKILL.md", in: home, "skill")
+        try write(".claude/skills/synced/acct/pdf/SKILL.md", in: home, "skill")
+        try write(".claude/skills/pdf/SKILL.md", in: home, "own skill with the same base name")
     }
 
     func write(_ path: String, in folder: URL, _ text: String) throws {
@@ -43,6 +45,9 @@ struct ClaudeSetupFilesTests {
         #expect(files(.skill, "omc:ralph") == ["~/.claude/plugins/cache/omc/omc/1.0.0/skills/ralph/SKILL.md"])
         #expect(files(.skill, "tdd") == ["<work>/.claude/skills/tdd/SKILL.md"])
         #expect(files(.skill, "marketing:seo-audit") == ["~/.claude/plugins/synced/acct/marketing~g2/skills/seo-audit/SKILL.md"])
+        // claude.ai account skills; an own skill of the same base name is another skill.
+        #expect(files(.skill, "anthropic-skills:pdf") == ["~/.claude/skills/synced/acct/pdf/SKILL.md"])
+        #expect(files(.skill, "unknown-plugin:tdd").isEmpty)
         #expect(files(.subagent, "omc:architect") == ["~/.claude/plugins/cache/omc/omc/1.0.0/agents/architect.md"])
         #expect(files(.subagent, "Explore").isEmpty, "built in")
         #expect(files(.hook, "SessionStart:startup") == ["~/.claude/plugins/cache/omc/omc/1.0.0/hooks/hooks.json"])

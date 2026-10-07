@@ -13,11 +13,17 @@ public struct SessionOverview: Codable, Sendable, Hashable {
         self.tools = tools
     }
 
-    /// Claude Code sessions only; nil for other harnesses.
+    /// Claude Code and Pi sessions; nil for other harnesses.
     public static func read(_ session: SessionSummary) throws -> SessionOverview? {
-        guard session.harness == .claudeCode else { return nil }
-        return try ClaudeSessions.overview(of: session.file)
+        switch session.harness {
+        case .claudeCode: try ClaudeSessions.overview(of: session.file)
+        case .pi: try PiSessions.overview(of: session.file)
+        default: nil
+        }
     }
+
+    /// Harnesses whose sessions have an overview.
+    public static func isAvailable(for harness: HarnessID) -> Bool { harness == .claudeCode || harness == .pi }
 }
 
 extension ClaudeSessions {
@@ -82,6 +88,8 @@ struct FootprintReader {
         case "assistant":
             guard let message = entry["message"] as? Object else { return }
             beforeFirstAnswer = false
+            // Parallel calls each get their own result entry; the interrupt line follows them all.
+            lastRejected = []
             if let usage = message["usage"] as? Object, message["model"] as? String != "<synthetic>" {
                 let id = message["id"] as? String ?? entry["requestId"] as? String ?? UUID().uuidString
                 if seenCalls.insert(id).inserted { contexts.append(ClaudeLogFormat.tokens(fromClaudeUsage: usage).context) }
@@ -99,13 +107,12 @@ struct FootprintReader {
         case "user":
             guard let message = entry["message"] as? Object else { return }
             let blocks = message["content"] as? [Object] ?? []
-            let results = blocks.filter { $0["type"] as? String == "tool_result" }
-            if !results.isEmpty { lastRejected = [] }
-            for block in results {
+            for block in blocks where block["type"] as? String == "tool_result" {
                 guard let id = block["tool_use_id"] as? String, let call = pending.removeValue(forKey: id) else { continue }
-                let result = call.readsSecret ? SecretFilter.hiddenOutput : JSONLines.text(of: block["content"])
+                // Classified from the real text; a secret file's output is never kept as the example.
+                let result = JSONLines.text(of: block["content"])
                 let outcome = ToolOutcomes.outcome(tool: call.name, result: result, isError: block["is_error"] as? Bool == true)
-                record(call.name, outcome, example: result)
+                record(call.name, outcome, example: call.readsSecret ? SecretFilter.hiddenOutput : result)
                 if outcome == .rejected { lastRejected.append(call.name) }
             }
             guard entry["isMeta"] as? Bool != true else { return }
@@ -137,9 +144,10 @@ struct FootprintReader {
     private mutating func move(_ tool: String, from: ToolOutcomes.Outcome, to: ToolOutcomes.Outcome) {
         guard var entry = outcomeTools[tool], entry.count(from) > 0 else { return }
         entry.counts[from]! -= 1
+        entry.examples[to] = entry.examples[to] ?? entry.examples[from]
         if entry.counts[from] == 0 {
             entry.counts[from] = nil
-            entry.examples[to] = entry.examples[to] ?? entry.examples.removeValue(forKey: from)
+            entry.examples[from] = nil
         }
         entry.counts[to, default: 0] += 1
         outcomeTools[tool] = entry

@@ -376,11 +376,12 @@ private struct LabRunDetail: View {
                         .controlSize(.small)
                         .help("Open the Sessions screen")
                 }
-                if run.spec.reviewedHarness == .claudeCode, FileManager.default.fileExists(atPath: transcript) {
+                if SessionOverview.isAvailable(for: run.spec.reviewedHarness), FileManager.default.fileExists(atPath: transcript) {
                     Button("Overview…", systemImage: "square.grid.3x3.square") {
                         let file = URL(filePath: transcript)
                         let info = JSONLines.fileInfo(file)
-                        overviewOf = session ?? SessionSummary(harness: .claudeCode, file: file, title: run.spec.reviewedTitle ?? file.lastPathComponent,
+                        overviewOf = session ?? SessionSummary(harness: run.spec.reviewedHarness, file: file,
+                                                               title: run.spec.reviewedTitle ?? file.lastPathComponent,
                                                                project: nil, started: nil, modified: info.modified, size: info.size)
                     }
                     .controlSize(.small)
