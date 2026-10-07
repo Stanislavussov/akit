@@ -40,12 +40,40 @@ public struct SessionTranscript: Sendable, Hashable {
     /// Models that answered, in order of first use.
     public var models: [String]
     public var usage: SessionUsage
+    /// The person's ratings of runs, kept apart from `items` so item ids (which notes and quotes
+    /// refer to) don't move and nothing that reads items sees them. In the order of their runs.
+    public var ratings: [RunRating]
+    /// Pi: the id of the last item at or before each log entry of the active branch, so a run's
+    /// anchor (its last entry) finds where the run ends. Empty for other harnesses.
+    public var endItems: [String: Int]
 
-    public init(items: [TranscriptItem] = [], models: [String] = [], usage: SessionUsage = SessionUsage()) {
+    public init(items: [TranscriptItem] = [], models: [String] = [], usage: SessionUsage = SessionUsage(), ratings: [RunRating] = [],
+                endItems: [String: Int] = [:]) {
         self.items = items
         self.models = models
         self.usage = usage
+        self.ratings = ratings
+        self.endItems = endItems
     }
+}
+
+/// The person's rating of one run as the session log holds it (AKit's Pi extension writes it after
+/// the run; it never reaches the model): the latest of the run's ratings, `none` left out.
+public struct RunRating: Sendable, Hashable {
+    /// `good` or `bad`.
+    public let rating: String
+    public let comment: String?
+    /// The run's last entry (Pi: its entry id).
+    public let anchor: String?
+    public let timestamp: Date?
+    /// The id of the item that ends the rated run; nil when the run is not on the active branch.
+    public let afterItem: Int?
+
+    public init(rating: String, comment: String?, anchor: String?, timestamp: Date?, afterItem: Int?) {
+        (self.rating, self.comment, self.anchor, self.timestamp, self.afterItem) = (rating, comment, anchor, timestamp, afterItem)
+    }
+
+    public var isGood: Bool { rating == "good" }
 }
 
 public struct TranscriptItem: Identifiable, Sendable, Hashable {
@@ -82,6 +110,17 @@ struct TranscriptBuilder {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         items.append(TranscriptItem(id: items.count, kind: kind, text: SecretFilter.masked(trimmed), timestamp: timestamp))
+    }
+
+    private(set) var ratings: [RunRating] = []
+    var endItems: [String: Int] = [:]
+
+    /// A rating of the run that ends at item `after`; kept in the order of their runs.
+    mutating func addRating(_ rating: String, anchor: String?, comment: String?, at timestamp: Date?, after: Int?) {
+        let text = comment?.trimmingCharacters(in: .whitespacesAndNewlines)
+        ratings.append(RunRating(rating: rating, comment: text.flatMap { $0.isEmpty ? nil : SecretFilter.masked($0) },
+                                 anchor: anchor, timestamp: timestamp, afterItem: after))
+        ratings.sort { ($0.afterItem ?? .max) < ($1.afterItem ?? .max) }
     }
 
     /// Output of a tool that read a secrets file is replaced as a whole.
@@ -122,7 +161,8 @@ struct TranscriptBuilder {
         return total + (current?.duration ?? 0)
     }
 
-    var transcript: SessionTranscript { SessionTranscript(items: items, models: models, usage: sessionUsage) }
+    var transcript: SessionTranscript { SessionTranscript(items: items, models: models, usage: sessionUsage, ratings: ratings,
+                                                                   endItems: endItems) }
 
     private var sessionUsage: SessionUsage {
         var result = SessionUsage()

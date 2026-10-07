@@ -102,6 +102,17 @@ public enum IndexSchema {
           source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL, PRIMARY KEY(harness, session_id, ts));
         CREATE INDEX ratings_source ON ratings(source_id);
         """,
+        // v8: a rating can be taken back (`none`); a run's latest line is its rating. SQLite can't
+        // change a CHECK, so the table is copied into a new one.
+        """
+        CREATE TABLE ratings_v8(harness TEXT NOT NULL, session_id TEXT NOT NULL, ts INTEGER NOT NULL,
+          rating TEXT NOT NULL CHECK(rating IN ('good','bad','none')), text TEXT, anchor TEXT, transcript TEXT, cwd TEXT,
+          source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL, PRIMARY KEY(harness, session_id, ts));
+        INSERT INTO ratings_v8 SELECT harness, session_id, ts, rating, text, anchor, transcript, cwd, source_id, parser_version FROM ratings;
+        DROP TABLE ratings;
+        ALTER TABLE ratings_v8 RENAME TO ratings;
+        CREATE INDEX ratings_source ON ratings(source_id);
+        """,
     ]
 
     /// Brings the database to the latest version. Refuses an index written by a newer akit.

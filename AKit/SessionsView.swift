@@ -241,6 +241,8 @@ private struct SessionDetailView: View {
     @State private var copied = false
     @State private var showReview = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .sessions
     @State private var tab = DebugSnapshot.options?.tab.flatMap(SessionDetailTab.init(rawValue:)) ?? .conversation
+    /// The item the conversation scrolls to: the end of a rated run, picked in the header.
+    @State private var focus: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -332,7 +334,11 @@ private struct SessionDetailView: View {
                 if let ratings = model.ratings[session.file.path], !ratings.isEmpty {
                     GridRow {
                         Text("Ratings").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-                        Text(RatingText.list(ratings)).fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(ratings, id: \.self) { rating in
+                                ratingLink(rating)
+                            }
+                        }
                     }
                 }
             }
@@ -378,6 +384,27 @@ private struct SessionDetailView: View {
         }
     }
 
+    /// One rating and the prompt of its run; a click shows the run's end in the conversation.
+    private func ratingLink(_ rating: Ratings.Rating) -> some View {
+        let place = transcript.flatMap { Ratings.place(of: rating, in: $0) }
+        let prompt = place.flatMap { place in transcript.flatMap { Ratings.prompt(endingAt: place, in: $0) } }
+        return Button {
+            tab = .conversation
+            focus = place
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(RatingText.line(rating))
+                if let prompt {
+                    Text("on “\(prompt)”").foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                }
+            }
+        }
+        .buttonStyle(.link)
+        .disabled(place == nil)
+        .help(transcript == nil ? "Loading the conversation…"
+              : place == nil ? "The run isn't on this session's current branch" : "Show this run's end in the conversation")
+    }
+
     private func row(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
         GridRow {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
@@ -404,7 +431,7 @@ private struct SessionDetailView: View {
             if transcript.items.isEmpty {
                 ContentUnavailableView("No messages", systemImage: "bubble.left")
             } else {
-                TranscriptView(items: transcript.items)
+                TranscriptView(items: transcript.items, ratings: transcript.ratings, focus: $focus)
             }
         } else {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -464,20 +491,80 @@ private struct SessionPromptView: View {
     }
 }
 
-/// The conversation, top to bottom. Thinking, tool calls and results start collapsed.
+/// The conversation, top to bottom. Thinking, tool calls and results start collapsed. The
+/// person's ratings sit right after the run they rate.
 struct TranscriptView: View {
     let items: [TranscriptItem]
+    var ratings: [RunRating] = []
+    /// Set from outside to scroll to an item; cleared once scrolled.
+    @Binding var focus: Int?
+    @State private var highlighted: Int?
+
+    init(items: [TranscriptItem], ratings: [RunRating] = [], focus: Binding<Int?> = .constant(nil)) {
+        self.items = items
+        self.ratings = ratings
+        _focus = focus
+    }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                ForEach(items) { item in
-                    TranscriptRow(item: item)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(items) { item in
+                        let after = ratings.filter { $0.afterItem == item.id }
+                        if after.isEmpty {
+                            TranscriptRow(item: item)
+                        } else {
+                            VStack(alignment: .leading, spacing: 10) {
+                                TranscriptRow(item: item)
+                                ForEach(after, id: \.self) { RunRatingRow(rating: $0, highlighted: highlighted == item.id) }
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: focus, initial: true) {
+                guard let target = focus else { return }
+                focus = nil
+                // Right after a tab switch the list isn't laid out yet.
+                Task {
+                    try? await Task.sleep(for: .milliseconds(80))
+                    withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    highlighted = target
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+/// The person's rating of the run above it, as the Pi extension saved it.
+private struct RunRatingRow: View {
+    let rating: RunRating
+    let highlighted: Bool
+
+    var body: some View {
+        let tint: Color = rating.isGood ? .green : .red
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(rating.isGood ? "👍" : "👎")
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(rating.isGood ? "You rated this run good" : "You rated this run bad").fontWeight(.medium)
+                    if let time = rating.timestamp {
+                        Text(time.formatted(date: .omitted, time: .shortened)).foregroundStyle(.secondary)
+                    }
+                }
+                if let comment = rating.comment {
+                    Text("«\(comment)»").textSelection(.enabled)
+                }
+            }
+        }
+        .font(.callout)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(highlighted ? 0.22 : 0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(tint.opacity(highlighted ? 0.8 : 0.3)))
     }
 }
 
@@ -519,10 +606,12 @@ enum RatingText {
 
     /// One line per rating: time, face and comment.
     static func list(_ ratings: [Ratings.Rating]) -> String {
-        ratings.map { rating in
-            "\(rating.date.formatted(date: .omitted, time: .shortened))  \(rating.isGood ? "👍" : "👎")"
-                + (rating.text.map { " «\($0)»" } ?? "")
-        }
-        .joined(separator: "\n")
+        ratings.map(line).joined(separator: "\n")
+    }
+
+    /// When the run was rated, face, comment; "changed" when it was rated otherwise before.
+    static func line(_ rating: Ratings.Rating) -> String {
+        "\(rating.firstDate.formatted(date: .omitted, time: .shortened))  \(rating.isGood ? "👍" : "👎")"
+            + (rating.text.map { " «\($0)»" } ?? "") + (rating.changed ? " (changed)" : "")
     }
 }

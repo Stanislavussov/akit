@@ -1,14 +1,19 @@
 import AKitFoundation
+import AKitSessions
 import Darwin
 import Foundation
 
-/// `akit rate --harness H --rating good|bad`, run by the Pi extension when the person rates the
-/// last run (⌥G, ⌥X, ⌥R). Reads `session_id`, `cwd`, `transcript_path`, `anchor` (the last entry
-/// of the run) and an optional `text` from stdin and appends one `rating` line to the spool.
+/// `akit rate --harness H --rating good|bad|none`, run by the Pi extension when the person rates the
+/// last run (⌥G, ⌥X, ⌥R) or takes the rating back (⌥U, `none`). Reads `session_id`, `cwd`,
+/// `transcript_path`, `anchor` (the last entry of the run) and an optional `text` from stdin and
+/// appends one `rating` line to the spool. A run's lines are never rewritten: the latest line with
+/// its anchor is its rating (see `Ratings.current`).
 /// Unlike `record-session` it reports back: the extension says "Saved" only after exit 0, and
 /// shows the one stderr line otherwise. Nothing goes to the model either way.
 public enum RateRun {
     public static let ratings: Set<String> = ["good", "bad"]
+    /// What a line may carry: a rating, or `none` for one taken back.
+    public static let values: Set<String> = ratings.union(["none"])
     /// A comment is one line in the harness; a longer one is cut here, to this many UTF-8 bytes,
     /// so the spool line stays under `Spool.maxLine` and keeps its log path.
     public static let maxText = 2000
@@ -42,8 +47,8 @@ public enum RateRun {
             guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
             return arguments[index + 1]
         }
-        guard let rating = value("--rating"), ratings.contains(rating) else {
-            throw Failure(message: "use --rating good or --rating bad")
+        guard let rating = value("--rating"), values.contains(rating) else {
+            throw Failure(message: "use --rating good, --rating bad or --rating none")
         }
         let harness = String((value("--harness") ?? "pi").lowercased().filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(32))
         guard let input = (try? JSONSerialization.jsonObject(with: stdin)) as? [String: Any] else {
@@ -79,7 +84,7 @@ public enum Ratings {
         public let harness: String
         public let sessionID: String
         public let date: Date
-        /// `good` or `bad`.
+        /// `good`, `bad`, or `none` for a rating taken back.
         public let rating: String
         public let text: String?
         /// The log the session was in when rated.
@@ -87,7 +92,39 @@ public enum Ratings {
         /// The run's last entry (Pi: its entry id).
         public let anchor: String?
 
+        /// When the run was first rated: before its next prompt, so it places the run in time.
+        public var firstDate: Date
+        /// The run was rated before with something else.
+        public var changed = false
+
+        init(harness: String, sessionID: String, date: Date, rating: String, text: String?, transcript: String?, anchor: String?) {
+            self.harness = harness
+            self.sessionID = sessionID
+            self.date = date
+            self.rating = rating
+            self.text = text
+            self.transcript = transcript
+            self.anchor = anchor
+            firstDate = date
+        }
+
         public var isGood: Bool { rating == "good" }
+    }
+
+    /// Each run's rating now: its latest line, by the run's anchor (a line without one is a run
+    /// of its own). Runs whose latest line is `none` are left out. Oldest run first.
+    public static func current(_ ratings: [Rating]) -> [Rating] {
+        let runs = Dictionary(grouping: ratings) { rating in
+            "\(rating.harness)|\(rating.sessionID)|\(rating.anchor ?? "@\(rating.date.timeIntervalSince1970)")"
+        }
+        return runs.values.compactMap { lines -> Rating? in
+            let sorted = lines.sorted { $0.date < $1.date }
+            guard var last = sorted.last, last.rating != "none" else { return nil }
+            last.firstDate = sorted[0].date
+            last.changed = sorted.dropLast().contains { $0.rating != last.rating || $0.text != last.text }
+            return last
+        }
+        .sorted { $0.firstDate < $1.firstDate }
     }
 
     /// Every rating, oldest first.
@@ -99,9 +136,9 @@ public enum Ratings {
         }
     }
 
-    /// Ratings by session log path, for the app's Sessions list: the index's, and the spool's
-    /// that the hourly import hasn't read yet, so a rating shows on the next rescan. Never imports
-    /// or writes.
+    /// Each run's current rating by session log path, for the app's Sessions list: from the
+    /// index, and from the spool lines the hourly import hasn't read yet, so a rating shows on the
+    /// next rescan. Never imports or writes.
     public static func byTranscript(env: HarnessEnvironment) -> [String: [Rating]] {
         var ratings: [Rating] = []
         let url = InsightsPaths(env: env).database
@@ -113,7 +150,23 @@ public enum Ratings {
         var seen = Set<String>()
         let unique = ratings.filter { seen.insert("\($0.harness)|\($0.sessionID)|\($0.date.timeIntervalSince1970)").inserted }
         return Dictionary(grouping: unique.filter { $0.transcript != nil }, by: { $0.transcript! })
-            .mapValues { $0.sorted { $0.date < $1.date } }
+            .mapValues(current).filter { !$0.value.isEmpty }
+    }
+
+    /// The id of the item that ends the rated run, the place to show the rating: where its anchor
+    /// (the run's last log entry) is in the transcript; nil when the run is off the active branch.
+    /// Without an anchor or entry ids, the last item before the run was first rated.
+    public static func place(of rating: Rating, in transcript: SessionTranscript) -> Int? {
+        if let anchor = rating.anchor, !transcript.endItems.isEmpty {
+            return transcript.endItems[anchor]
+        }
+        return transcript.items.last { ($0.timestamp ?? .distantFuture) <= rating.firstDate }?.id
+    }
+
+    /// The first line of the prompt that started the run ending at `item`.
+    public static func prompt(endingAt item: Int, in transcript: SessionTranscript) -> String? {
+        guard let prompt = transcript.items.last(where: { $0.id <= item && $0.kind == .user }) else { return nil }
+        return prompt.text.split(whereSeparator: \.isNewline).first.map(String.init)
     }
 
     /// `rating` lines still in the spool files.
@@ -122,7 +175,7 @@ public enum Ratings {
             ((try? Data(contentsOf: file)).flatMap { try? JSONLines.objects(in: $0) } ?? []).compactMap { entry -> Rating? in
                 guard entry["kind"] as? String == "rating", let harness = entry["harness"] as? String,
                       let session = entry["session_id"] as? String, let rating = entry["rating"] as? String,
-                      RateRun.ratings.contains(rating), let ms = (entry["ts"] as? NSNumber)?.doubleValue else { return nil }
+                      RateRun.values.contains(rating), let ms = (entry["ts"] as? NSNumber)?.doubleValue else { return nil }
                 return Rating(harness: harness, sessionID: session, date: Date(timeIntervalSince1970: ms / 1000), rating: rating,
                               text: entry["text"] as? String, transcript: entry["transcript"] as? String,
                               anchor: entry["anchor"] as? String)

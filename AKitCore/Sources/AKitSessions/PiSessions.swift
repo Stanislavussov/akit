@@ -47,9 +47,22 @@ public enum PiSessions {
         let entries = try JSONLines.objects(in: try Data(contentsOf: file)).filter { $0["type"] as? String != "session" }
         var builder = TranscriptBuilder()
         var secretCalls = Set<String>()
-        for entry in activeBranch(entries) {
+        // A run rated again or taken back has several rating entries, not always in a row (a
+        // model switch may sit between them): the last one per anchor counts. Each sits after the
+        // item that ends its anchor entry, so a rating written later or elsewhere still lands
+        // under its run, and one whose run is off the active branch has no place.
+        var ratings: [(key: String, entry: Object)] = []
+        for (index, entry) in activeBranch(entries).enumerated() {
+            if let data = ratingData(entry) {
+                let key = (data["anchor"] as? String).map { "a:\($0)" } ?? "#\(index)"
+                ratings.removeAll { $0.key == key }
+                ratings.append((key, entry))
+                continue
+            }
             add(entry, secretCalls: &secretCalls, to: &builder)
+            if let id = entry["id"] as? String, let item = builder.items.last?.id { builder.endItems[id] = item }
         }
+        for (_, entry) in ratings { addRating(entry, to: &builder) }
         // Usage counts every response in the file: abandoned branches were paid for too.
         for entry in entries {
             recordUsage(entry, in: &builder.usage)
@@ -98,6 +111,22 @@ public enum PiSessions {
             current = (entry["parentId"] as? String).flatMap { byID[$0] }
         }
         return path.reversed()
+    }
+
+    /// AKit's Pi extension writes `{rating, text?, anchor}` as a custom entry `akit-rating` after
+    /// each rating, change and take-back (`none`). Custom entries never reach the model.
+    static let ratingType = "akit-rating"
+
+    private static func ratingData(_ entry: Object) -> Object? {
+        guard entry["type"] as? String == "custom", entry["customType"] as? String == ratingType else { return nil }
+        return entry["data"] as? Object
+    }
+
+    private static func addRating(_ entry: Object, to builder: inout TranscriptBuilder) {
+        guard let data = ratingData(entry), let rating = data["rating"] as? String, rating == "good" || rating == "bad" else { return }
+        let anchor = data["anchor"] as? String
+        builder.addRating(rating, anchor: anchor, comment: data["text"] as? String, at: JSONLines.date(entry["timestamp"]),
+                          after: anchor.flatMap { builder.endItems[$0] })
     }
 
     private static func add(_ entry: Object, secretCalls: inout Set<String>, to builder: inout TranscriptBuilder) {

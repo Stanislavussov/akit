@@ -191,6 +191,83 @@ struct SessionTests {
         #expect(transcript.models == ["claude-opus-5-5"])
     }
 
+    /// The Pi extension's rating entries: the last of a run's entries counts, `none` takes it back,
+    /// and items (and so their ids) are the same as without them. Exports carry them.
+    @Test func piRatingsSitAfterTheirRunAndLeaveItemsAlone() throws {
+        func rating(_ id: String, _ parent: String, _ data: [String: Any]) -> [String: Any] {
+            ["type": "custom", "id": id, "parentId": parent, "customType": "akit-rating", "timestamp": "2026-09-20T10:00:05.000Z", "data": data]
+        }
+        func message(_ id: String, _ parent: String, _ role: String, _ text: String) -> [String: Any] {
+            ["type": "message", "id": id, "parentId": parent, "timestamp": "2026-09-20T10:00:06.000Z",
+             "message": ["role": role, "content": [["type": "text", "text": text]]]]
+        }
+        var lines = piSession()
+        lines += [
+            rating("r1", "a6", ["rating": "good", "anchor": "a6"]),
+            rating("r2", "r1", ["rating": "bad", "text": "ran the tests twice", "anchor": "a6", "changed": true]),
+            message("m1", "r2", "user", "Next"),
+            message("m2", "m1", "assistant", "Ok"),
+            rating("r3", "m2", ["rating": "good", "anchor": "m2"]),
+            rating("r4", "r3", ["rating": "none", "anchor": "m2", "changed": true]),
+            message("m3", "r4", "user", "Last"),
+            message("m4", "m3", "assistant", "Done"),
+            rating("r5", "m4", ["rating": "good", "anchor": "m4"]),
+        ]
+        try write(piFile, lines: lines)
+        let session = try #require(sessions(.pi).first)
+        let transcript = try SessionReader.transcript(of: session)
+
+        let plain = lines.filter { $0["customType"] as? String != "akit-rating" }
+        try write(piFile, lines: plain.map { line in
+            // Parents of the removed entries point at what came before them.
+            var line = line
+            let skip = ["r2": "a6", "r4": "m2"]
+            if let parent = line["parentId"] as? String, let to = skip[parent] { line["parentId"] = to }
+            return line
+        })
+        let without = try SessionReader.transcript(of: session)
+        #expect(transcript.items == without.items && without.ratings.isEmpty)
+
+        let ids = Dictionary(uniqueKeysWithValues: transcript.items.map { ($0.text, $0.id) })
+        #expect(transcript.ratings.map(\.rating) == ["bad", "good"])
+        #expect(transcript.ratings.map(\.comment) == ["ran the tests twice", nil])
+        #expect(transcript.ratings.map(\.afterItem) == [ids["1 failure"], ids["Done"]])
+
+        let markdown = SessionExport.markdown(session, transcript)
+        #expect(markdown.contains("### The person rated this run: bad\n\n> ran the tests twice"))
+        let failure = try #require(markdown.range(of: "1 failure")), rated = try #require(markdown.range(of: "rated this run: bad"))
+        let next = try #require(markdown.range(of: "## User\n\nNext"))
+        #expect(failure.upperBound < rated.lowerBound && rated.upperBound < next.lowerBound)
+        let json = SessionExport.json(session, transcript)
+        #expect(json.contains("\"ratings\"") && json.contains("\"afterItem\""))
+        #expect(!SessionExport.json(session, without).contains("\"ratings\""))
+    }
+
+    /// A run's rating entries need not be in a row (a model switch between presses), and an entry
+    /// whose run is off the active branch (written after /tree) has no place.
+    @Test func piRatingsGoByAnchorNotByPosition() throws {
+        func rating(_ id: String, _ parent: String, _ data: [String: Any]) -> [String: Any] {
+            ["type": "custom", "id": id, "parentId": parent, "customType": "akit-rating", "data": data]
+        }
+        var lines = piSession()
+        lines += [
+            rating("r1", "a6", ["rating": "good", "anchor": "a4"]),
+            ["type": "thinking_level_change", "id": "t1", "parentId": "r1", "thinkingLevel": "high"],
+            rating("r2", "t1", ["rating": "none", "anchor": "a4"]),
+            ["type": "model_change", "id": "t2", "parentId": "r2", "provider": "x", "modelId": "y"],
+            rating("r3", "t2", ["rating": "bad", "anchor": "a3", "text": "late"]),
+            rating("r4", "r3", ["rating": "good", "anchor": "gone"]),
+        ]
+        try write(piFile, lines: lines)
+        let transcript = try SessionReader.transcript(of: try #require(sessions(.pi).first))
+        let thinking = try #require(transcript.items.first { $0.kind == .thinking })
+        // a4's rating was taken back across the event; a3's sits after its own end, not after the events.
+        #expect(transcript.ratings.map(\.rating) == ["bad", "good"])
+        #expect(transcript.ratings.map(\.afterItem) == [transcript.endItems["a3"], nil])
+        #expect(transcript.endItems["a3"] != nil && transcript.endItems["a3"]! > thinking.id)
+        #expect(!SessionExport.markdown(try #require(sessions(.pi).first), transcript).contains("rated this run: good"))
+    }
+
     @Test func piHidesOutputOfSecretFiles() throws {
         var lines = piSession()
         lines.append(["type": "message", "id": "a7", "parentId": "a6", "message": ["role": "assistant", "content": [

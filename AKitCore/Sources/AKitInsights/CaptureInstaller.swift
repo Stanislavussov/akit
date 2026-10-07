@@ -119,15 +119,17 @@ public struct CaptureInstaller {
     /// Pi extension: on every session start, `akit record-session --harness pi` detached, with
     /// the session id, folder and log path on stdin. Errors are swallowed; Pi never waits.
     /// After a run, a line under the editor offers a rating: ⌥G good, ⌥X bad, ⌥R with a comment.
+    /// Until the next prompt the same keys change it and ⌥U removes it (`none`).
     /// `akit rate` writes it (the extension waits for it, so "Saved" is true), and a custom entry
-    /// shows it in the transcript. Nothing reaches the model: no messages, tools or prompt
+    /// shows it in the transcript (AKit reads it there to place the rating after its run). Nothing reaches the model: no messages, tools or prompt
     /// changes, so the next request's cache is untouched.
     static let piExtensionText = """
         // \(marker) (akit insights install); AKit replaces or removes this file.
         // On session start, hands the session id, folder and log path to `akit record-session`,
         // which appends one line to ~/.akit/index/spool. Never blocks or fails Pi.
         // After a run (Pi 0.80.4 or newer): Option+G rates it good, Option+X bad, Option+R with a
-        // comment (`akit rate`).
+        // comment (`akit rate`). Until the next prompt the rating can be changed the same way, and
+        // Option+U removes it.
         // Nothing of this reaches the model: no messages, tools or prompt changes.
         import { spawn } from "node:child_process";
         import { existsSync } from "node:fs";
@@ -195,23 +197,45 @@ public struct CaptureInstaller {
         }
 
         const face = (rating: string) => (rating === "good" ? "👍" : "👎");
+        // By code points, so an emoji is never cut in half. 500 of them fit `akit rate`'s 2000
+        // bytes, so the log entry and the spool line carry the same comment.
+        const cut = (text: string, length: number) => Array.from(text).slice(0, length).join("");
+        const oneLine = (text: string) => cut(text.split(NEWLINE).join(" ").trim(), 500);
+        const short = (text: string) => (Array.from(text).length > 40 ? `${cut(text, 39)}…` : text);
 
         export default function (pi: any) {
-          // The run waiting for a rating: set when a run ends, cleared by a rating or the next prompt.
+          // The run that just ended, until the next prompt. Unrated: `pending`; rated: `rated`,
+          // with what it was rated, so ⌥G / ⌥X / ⌥R change it and ⌥U takes it back.
           let pending: { anchor?: string } | undefined;
-          // The run rated last, so a second press says so instead of "nothing to rate".
-          let rated: { anchor?: string } | undefined;
-          // Counts prompts, so a rating that failed can tell whether its run is still the latest.
-          let prompts = 0;
+          let rated: { anchor?: string; rating: string; text?: string } | undefined;
+          // Grows with every prompt, run end, session switch and tree jump, so a rating saved
+          // meanwhile can tell whether its run is still the one just ended.
+          let generation = 0;
+          // Grows with every session start: an entry saved for the session before is not written.
+          let sessions = 0;
+          // Rating entries saved while a run was going: written when it ends. AKit places them by
+          // their anchor, not by where they are in the log.
+          let queued: object[] = [];
           // A rating being written: another press waits for its answer.
           let saving = false;
           const nothing = (ctx: any) =>
-            ctx.ui.notify(saving ? "Saving the rating…" : rated ? "Already rated: the next rating goes to the next run."
-                          : "Nothing to rate: a rating goes to the run that just ended.", saving ? "info" : "warning");
+            ctx.ui.notify(saving ? "Saving the rating…" : "Nothing to rate: a rating goes to the run that just ended.",
+                          saving ? "info" : "warning");
+
+          const ask = "rate last run:  👍 ⌥G   👎 ⌥X   💬 ⌥R";
+          const show = (ctx: any) => {
+            const line = pending ? ask : rated
+              ? `rated ${face(rated.rating)}${rated.text ? ` «${short(rated.text)}»` : ""}:  change 👍 ⌥G   👎 ⌥X   💬 ⌥R   remove ⌥U`
+              : undefined;
+            ctx?.ui?.setWidget?.(WIDGET, line ? [line] : undefined, { placement: "belowEditor" });
+          };
 
           pi.on("session_start", (event: any, ctx: any) => {
+            generation += 1;
+            sessions += 1;
             pending = undefined;
             rated = undefined;
+            queued = [];
             try {
               const akit = findAkit();
               if (!akit) return;
@@ -229,67 +253,118 @@ public struct CaptureInstaller {
           // A plain component (render lines, invalidate), so the file needs no Pi package to load.
           pi.registerEntryRenderer?.(RATING, (entry: any, _options: any, theme: any) => {
             const data = entry?.data ?? {};
-            const line = theme.fg("dim", `${face(data.rating)} rated${data.text ? ` «${data.text}»` : ""}`);
+            const text = data.rating === "none" ? "rating removed"
+              : `${face(data.rating)} ${data.changed ? "rating changed" : "rated"}${data.text ? ` «${data.text}»` : ""}`;
+            const line = theme.fg("dim", text);
             return { render: () => [line], invalidate: () => {} };
           });
 
           pi.on("agent_settled", (_event: any, ctx: any) => {
+            generation += 1;
             // Without a session file (pi --no-session) a rating would have no session to show on.
             if (!ctx?.hasUI || !ctx.sessionManager?.getSessionFile?.()) return;
-            pending = { anchor: ctx.sessionManager?.getLeafId?.() ?? undefined };
+            // Taken before the queued entries are written: they are not part of the run.
+            const anchor = ctx.sessionManager?.getLeafId?.() ?? undefined;
+            for (const entry of queued) pi.appendEntry(RATING, entry);
+            queued = [];
+            pending = { anchor };
             rated = undefined;
-            ctx.ui.setWidget(WIDGET, ["rate last run:  👍 ⌥G   👎 ⌥X   💬 ⌥R"], { placement: "belowEditor" });
+            show(ctx);
           });
 
           pi.on("input", (event: any, ctx: any) => {
             if (event?.source === "extension") return;
-            prompts += 1;
+            generation += 1;
             pending = undefined;
             rated = undefined;
-            ctx?.ui?.setWidget?.(WIDGET, undefined);
+            show(ctx);
           });
 
+          // /tree moves to another point of the session: the run that just ended is no longer the last.
+          pi.on("session_tree", (_event: any, ctx: any) => {
+            generation += 1;
+            pending = undefined;
+            rated = undefined;
+            show(ctx);
+          });
+
+          // Rates the run that just ended, changes its rating, or takes it back (`none`).
           async function save(ctx: any, rating: string, text?: string) {
-            const run = pending;
-            if (!run) return nothing(ctx);
+            const run = pending ?? rated;
+            if (!run || saving) return nothing(ctx);
             const akit = findAkit();
             if (!akit) {
               ctx.ui.notify("⚠️ Not saved: akit not in PATH", "warning");
               return;
             }
-            // Taken before the wait, so a second press can't rate the same run again.
-            const prompt = prompts;
+            // Taken before the wait, so a second press waits instead of writing twice.
+            const started = generation;
+            const startedSession = sessions;
+            const before = { pending, rated };
             pending = undefined;
+            rated = undefined;
             ctx.ui.setWidget(WIDGET, undefined);
             saving = true;
             const reason = await rate(akit, rating, { ...session(ctx), anchor: run.anchor, text });
             saving = false;
+            const latest = generation === started;
             if (reason) {
               // Still the latest run: it can be rated again.
-              if (prompts === prompt && pending === undefined) {
-                pending = run;
-                ctx.ui.setWidget(WIDGET, ["rate last run:  👍 ⌥G   👎 ⌥X   💬 ⌥R"], { placement: "belowEditor" });
+              if (latest) {
+                ({ pending, rated } = before);
+                show(ctx);
               }
               ctx.ui.notify(`⚠️ Not saved: ${reason}`, "warning");
               return;
             }
-            rated = run;
-            // A new prompt sent meanwhile: the entry would land inside that run, so only the notice.
-            if (ctx.isIdle?.() !== false) pi.appendEntry(RATING, { rating, text, anchor: run.anchor });
-            ctx.ui.notify(`✅ Saved: ${face(rating)}${text ? ` «${text}»` : ""}`, "info");
+            if (latest) {
+              rated = rating === "none" ? undefined : { anchor: run.anchor, rating, text };
+              pending = rating === "none" ? { anchor: run.anchor } : undefined;
+              show(ctx);
+            }
+            // The log gets every saved rating, as the spool did; while a run is going, after it.
+            const entry = { rating, text, anchor: run.anchor, changed: before.rated ? true : undefined };
+            if (sessions === startedSession) {
+              if (ctx.isIdle?.() !== false) pi.appendEntry(RATING, entry);
+              else queued.push(entry);
+            }
+            ctx.ui.notify(rating === "none" ? "✅ Rating removed"
+                          : `✅ Saved: ${face(rating)}${text ? ` «${text}»` : ""}`, "info");
           }
 
-          pi.registerShortcut("alt+g", { description: "AKit: rate the last run good", handler: (ctx: any) => save(ctx, "good") });
-          pi.registerShortcut("alt+x", { description: "AKit: rate the last run bad", handler: (ctx: any) => save(ctx, "bad") });
+          // ⌥G / ⌥X on a rated run change it and keep its comment; the same rating again does nothing.
+          const quick = (ctx: any, rating: string) => {
+            if (rated && !saving && rated.rating === rating) {
+              return ctx.ui.notify(`Already rated ${face(rating)}: ⌥${rating === "good" ? "X" : "G"} changes it, ⌥U removes it.`, "info");
+            }
+            return save(ctx, rating, rated?.text);
+          };
+
+          pi.registerShortcut("alt+g", { description: "AKit: rate the last run good", handler: (ctx: any) => quick(ctx, "good") });
+          pi.registerShortcut("alt+x", { description: "AKit: rate the last run bad", handler: (ctx: any) => quick(ctx, "bad") });
           pi.registerShortcut("alt+r", {
-            description: "AKit: rate the last run with a comment",
+            description: "AKit: rate the last run with a comment, or change its comment",
             handler: async (ctx: any) => {
-              if (!pending) return nothing(ctx);
-              const comment = await ctx.ui.input("Comment on the last run:", "what went well or wrong");
+              if (!(pending ?? rated) || saving) return nothing(ctx);
+              const started = generation;
+              const old = rated?.text;
+              // The comment already given can be edited in place where Pi has an editor dialog.
+              const comment = old && ctx.ui.editor ? await ctx.ui.editor("Comment on the last run:", old)
+                : await ctx.ui.input("Comment on the last run:", "what went well or wrong");
               if (comment === undefined) return;
-              const choice = await ctx.ui.select("Rating:", ["👍 good", "👎 bad"]);
+              const choice = await ctx.ui.select("Rating:", rated?.rating === "bad" ? ["👎 bad", "👍 good"] : ["👍 good", "👎 bad"]);
               if (!choice) return;
-              await save(ctx, choice.endsWith("good") ? "good" : "bad", comment.trim() || undefined);
+              if (generation !== started) return ctx.ui.notify("Not saved: a new run started meanwhile.", "warning");
+              await save(ctx, choice.endsWith("good") ? "good" : "bad", oneLine(comment) || undefined);
+            },
+          });
+          pi.registerShortcut("alt+u", {
+            description: "AKit: remove the rating of the last run",
+            handler: (ctx: any) => {
+              if (!rated || saving) {
+                return ctx.ui.notify(saving ? "Saving the rating…" : "Nothing to remove: the run that just ended has no rating.", "info");
+              }
+              return save(ctx, "none");
             },
           });
         }
