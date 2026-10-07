@@ -22,6 +22,11 @@ struct BrainView: View {
     @State private var editing: LayerEdit?
     /// Result of a removal or a sync, shown in an alert.
     @State private var message: (title: String, text: String)?
+    /// The alert also offers Update Home Folder… (the core layer changed).
+    @State private var offerHome = false
+    /// Forget Project… asked; waits for confirmation.
+    @State private var forgetting: ForgetRequest?
+    @State private var isForgetting = false
 
     /// Something the user asked to remove, waiting for confirmation.
     enum Removal: Identifiable {
@@ -65,9 +70,21 @@ struct BrainView: View {
         let id = UUID()
         var project: URL?
         var layers: [String] = []
+        /// This Mac's home folder with the core layer, instead of a project.
+        var home = false
+    }
+
+    struct ForgetRequest {
+        let name: String
+        let preview: ProjectForget.Preview
     }
 
     var body: some View {
+        dialogs(screen)
+            .navigationTitle("Brain")
+    }
+
+    private var screen: some View {
         Group {
             if let brain = model.brain {
                 content(brain)
@@ -89,7 +106,7 @@ struct BrainView: View {
             Text(createError ?? "")
         }
         .sheet(isPresented: $importing) { BrainImportSheet() }
-        .sheet(item: $setup) { ProjectSetupSheet(initialProject: $0.project, initialLayers: $0.layers) }
+        .sheet(item: $setup) { ProjectSetupSheet(initialProject: $0.project, initialLayers: $0.layers, forHome: $0.home) }
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         .sheet(item: $editing) { edit in
             switch edit {
@@ -100,7 +117,7 @@ struct BrainView: View {
         // Snapshot `--add`: open the import sheet once the brain is loaded.
         .onChange(of: model.brain?.root) {
             guard model.brain != nil, let options = DebugSnapshot.options else { return }
-            if options.tab == "setup" { setup = SetupRequest() } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
+            if options.tab == "setup" { setup = SetupRequest() } else if options.tab == "home" { setup = SetupRequest(home: true) } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
             // `--select <layer> --tab edit|add-skills` opens that layer's sheet.
             if let name = options.select, let layer = model.brain?.layers.first(where: { $0.name == name }) {
                 if options.tab == "edit" { editing = .details(layer) } else if options.tab == "add-skills" { editing = .skills(layer) }
@@ -115,12 +132,6 @@ struct BrainView: View {
         } message: { removal in
             Text(removalBlocker(removal) ?? removalDetails(removal))
         }
-        .alert(message?.title ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
-            Button("OK") {}
-        } message: {
-            Text(message?.text ?? "")
-        }
-        .navigationTitle("Brain")
         .navigationSubtitle(subtitle)
         .task(id: model.brain?.root) { await model.fetchBrainSync() }
         .toolbar {
@@ -156,6 +167,40 @@ struct BrainView: View {
         }
     }
 
+    /// Forget Project's confirmation and the result alert (with Update Home Folder… when the
+    /// core layer changed).
+    private func dialogs(_ screen: some View) -> some View {
+        screen
+            .confirmationDialog("Forget “\(forgetting?.name ?? "")”?", isPresented: Binding(get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }),
+                                titleVisibility: .visible, presenting: forgetting) { request in
+                // The first button is the one Return picks: never the one that trashes files.
+                let preview = request.preview
+                if !preview.ownRecord {
+                    if !preview.removals.isEmpty {
+                        Button("Trash Files", role: .destructive) { forget(request, keepFiles: false) }
+                    }
+                } else if preview.removals.isEmpty {
+                    Button("Forget", role: .destructive) { forget(request, keepFiles: true) }
+                } else {
+                    Button("Forget, Keep Files") { forget(request, keepFiles: true) }
+                    Button("Forget and Trash Files", role: .destructive) { forget(request, keepFiles: false) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { request in
+                Text(forgetDetails(request.preview))
+            }
+            .alert(message?.title ?? "", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil; offerHome = false } })) {
+                if offerHome {
+                    Button("Update Home Folder…") { setup = SetupRequest(home: true) }
+                    Button("Later", role: .cancel) {}
+                } else {
+                    Button("OK") {}
+                }
+            } message: {
+                Text(message?.text ?? "")
+            }
+    }
+
     private var syncTitle: String {
         guard let status = model.brainSync else { return "Sync" }
         if model.isSyncingBrain { return "Syncing…" }
@@ -184,11 +229,11 @@ struct BrainView: View {
                 var lines = result.published.lines
                 if outcome.pulled > 0 { lines.append("Pulled \(outcome.pulled) commit\(outcome.pulled == 1 ? "" : "s").") }
                 if outcome.pushed > 0 { lines.append("Pushed \(outcome.pushed) commit\(outcome.pushed == 1 ? "" : "s").") }
-                if outcome.changesCore(in: model.brain) {
-                    lines.append("The core layer changed. Update this Mac's home folder with: akit apply --home")
-                }
+                let coreChanged = outcome.changesCore(in: model.brain)
+                if coreChanged { lines.append("The core layer changed. Update this Mac's home folder to take it in.") }
                 if outcome.pulled == 0, outcome.pushed == 0 { lines.append("Nothing new on either side.") }
                 message = ("Brain synced", lines.joined(separator: "\n"))
+                offerHome = coreChanged
             } catch {
                 message = ("Couldn't sync the brain", error.localizedDescription)
             }
@@ -233,7 +278,7 @@ struct BrainView: View {
                 + (projects.isEmpty ? "" : " It is dropped from the skills picked for \(projects.joined(separator: ", ")).")
         case .skillFromLayer(let skill, let layer):
             return "\(skill) is taken out of layers/\(layer)/layer.yaml (committed). "
-                + (layer == "core" ? "Run akit apply --home to take it out of your home folder." : "Projects using \(layer) lose it when they are set up again.")
+                + (layer == "core" ? "Update the home folder afterwards to take it out of it." : "Projects using \(layer) lose it when they are set up again.")
         }
     }
 
@@ -250,9 +295,60 @@ struct BrainView: View {
                     try await model.removeSkill(name)
                 case .skillFromLayer(let skill, let layer):
                     try await model.removeSkill(skill, fromLayer: layer)
+                    if layer == "core", ProjectRecords.savedAnswers(id: ProjectRecords.homeID(machineName: model.machine.homeName), in: model.projectStore) != nil {
+                        message = ("Removed from core", "\(skill) stays in this Mac's home folder until you update it.")
+                        offerHome = true
+                    }
                 }
             } catch {
                 message = ("Couldn't remove it", error.localizedDescription)
+            }
+        }
+    }
+
+    /// Reads what forgetting the project would trash, then asks.
+    private func askForget(_ project: Brain.Project) {
+        guard !isForgetting else { return }
+        Task {
+            if let preview = await model.forgetPreview(id: project.id, folder: model.brainProjectFolders[project.id], forHome: project.isHome) {
+                forgetting = ForgetRequest(name: project.name, preview: preview)
+            } else {
+                message = ("Nothing to forget", "Nothing is saved for \(project.id).")
+            }
+        }
+    }
+
+    private func forgetDetails(_ preview: ProjectForget.Preview) -> String {
+        var lines = [preview.ownRecord
+            ? "\(preview.store.describe(id: preview.id)) goes to the Trash\(preview.store.isLocal ? "" : " and the brain gets a commit")."
+            : "This work Mac has no record of its own for it. The brain's copy stays: other Macs use it."]
+        let place = preview.plan.map { " in \($0.project.tildePath)" } ?? ""
+        if preview.plan == nil {
+            lines.append("Its folder is not among the project folders on this Mac, so its files stay where they are.")
+        } else if preview.removals.isEmpty {
+            lines.append("No files AKit wrote are left\(place).")
+        } else {
+            let shown = preview.removals.prefix(8).joined(separator: ", ")
+            let more = preview.removals.count > 8 ? " and \(preview.removals.count - 8) more" : ""
+            lines.append("Files AKit wrote\(place) can go to the Trash\(preview.ownRecord ? " too" : ""): \(shown)\(more).")
+        }
+        if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
+        return lines.joined(separator: "\n\n")
+    }
+
+    private func forget(_ request: ForgetRequest, keepFiles: Bool) {
+        isForgetting = true
+        Task {
+            defer { isForgetting = false }
+            do {
+                try await model.forget(request.preview, keepFiles: keepFiles)
+                let id = request.preview.id
+                if request.preview.brainCopyLeft {
+                    message = (request.preview.ownRecord ? "\(request.name) is forgotten on this Mac" : "Files moved to the Trash",
+                               "The brain still has projects/\(id) from before this became a work Mac. Remove it by hand: git rm -r projects/\(id) in the brain, then commit.")
+                }
+            } catch {
+                message = ("Couldn't forget \(request.name)", error.localizedDescription)
             }
         }
     }
@@ -291,7 +387,7 @@ struct BrainView: View {
                         LayerDetailView(layer: layer, problems: brain.problems(of: name).map(\.message),
                                         projects: brain.projects(using: name),
                                         onSelectProject: { selection = .project($0) },
-                                        onApply: layer.name == "core" ? nil : { setup = SetupRequest(layers: [layer.name]) },
+                                        onApply: { setup = layer.name == "core" ? SetupRequest(home: true) : SetupRequest(layers: [layer.name]) },
                                         onRemoveSkill: { pendingRemoval = .skillFromLayer(skill: $0, layer: layer.name) },
                                         onSetMode: { skill, mode in change { try await model.setMode(mode, ofSkill: skill, inLayer: layer.name) } },
                                         onAddSkills: { editing = .skills(layer) },
@@ -304,7 +400,9 @@ struct BrainView: View {
                         BrainProjectDetailView(project: project, layers: brain.layers(of: project), folder: folder,
                                                brainFolder: brain.root.appending(path: "projects/\(id)"),
                                                onSelectLayer: { selection = .layer($0) },
-                                               onChange: folder.map { folder in { setup = SetupRequest(project: folder) } })
+                                               onChange: folder.map { folder in { setup = project.isHome ? SetupRequest(home: true) : SetupRequest(project: folder) } },
+                                               // Another Mac's home folder is forgotten on that Mac (akit remove project --home).
+                                               onForget: project.isHome && folder == nil ? nil : { askForget(project) })
                     }
                 case .skill(let name):
                     if let skill = brain.skills.first(where: { $0.name == name }) {
@@ -378,7 +476,13 @@ struct BrainView: View {
                     ProjectRow(project: project, layers: brain.layers(of: project), isOnThisMac: model.brainProjectFolders[project.id] != nil)
                         .tag(Item.project(project.id))
                         .contextMenu {
-                            if let folder = model.brainProjectFolders[project.id] { fileMenu(folder, reveal: folder) }
+                            if let folder = model.brainProjectFolders[project.id] {
+                                fileMenu(folder, reveal: folder)
+                                Divider()
+                            }
+                            if !project.isHome || model.brainProjectFolders[project.id] != nil {
+                                Button("Forget Project…", role: .destructive) { askForget(project) }
+                            }
                         }
                 }
             } }
@@ -531,8 +635,11 @@ private struct BrainProjectDetailView: View {
     /// `projects/<id>` in the brain: answers.json and lock.json.
     let brainFolder: URL
     let onSelectLayer: (String) -> Void
-    /// Opens Set Up Project for it; nil when the folder is not on this Mac.
+    /// Opens Set Up Project for it (Update Home Folder for this Mac's home); nil when the
+    /// folder is not on this Mac.
     let onChange: (() -> Void)?
+    /// nil for another Mac's home folder.
+    let onForget: (() -> Void)?
     /// Skills in the project's .agents/skills that AKit didn't write.
     @State private var ownSkills: [ProjectSkills.Skill] = []
     @State private var creatingSkill = false
@@ -684,10 +791,16 @@ private struct BrainProjectDetailView: View {
                     .font(.title2.bold())
                     .textSelection(.enabled)
                 Spacer()
-                if let onChange, !project.isHome {
-                    Button("Layers & Skills…", systemImage: "square.stack.3d.up", action: onChange)
-                        .buttonStyle(.borderedProminent)
-                        .help("Pick layers and fields, preview the changes, apply")
+                if let onChange {
+                    if project.isHome {
+                        Button("Update Home Folder…", systemImage: "house", action: onChange)
+                            .buttonStyle(.borderedProminent)
+                            .help("Render the core layer into the home folder: preview the changes, then apply")
+                    } else {
+                        Button("Layers & Skills…", systemImage: "square.stack.3d.up", action: onChange)
+                            .buttonStyle(.borderedProminent)
+                            .help("Pick layers and fields, preview the changes, apply")
+                    }
                 }
                 if let folder {
                     if ExternalEditor.appURL != nil {
@@ -697,6 +810,11 @@ private struct BrainProjectDetailView: View {
                     Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
                         .labelStyle(.iconOnly)
                         .help("Show the project in Finder")
+                }
+                if let onForget {
+                    Button("Forget Project…", systemImage: "trash", action: onForget)
+                        .labelStyle(.iconOnly)
+                        .help("Forget the project: its saved answers and, if you want, the files AKit wrote there go to the Trash")
                 }
             }
             Text(project.id).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
@@ -769,8 +887,9 @@ private struct BrainProjectDetailView: View {
     @ViewBuilder
     private var note: some View {
         if project.isHome {
-            Text("The home folder gets the core layer. Update it with: akit apply --home")
-                .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+            Text(folder == nil ? "Another Mac's home folder: it gets the core layer when it is updated on that Mac."
+                 : "The home folder gets the core layer. After the core layer changes, update it here with the Update Home Folder button.")
+                .font(.callout).foregroundStyle(.secondary)
         } else if folder == nil {
             Text("Set up on another Mac, or its folder is outside the project folders in Settings. To change it here, use Set Up Project… → Other Folder….")
                 .font(.callout).foregroundStyle(.secondary)
@@ -785,8 +904,8 @@ private struct LayerDetailView: View {
     /// Projects that get this layer, picked or through requires.
     let projects: [Brain.Project]
     let onSelectProject: (String) -> Void
-    /// Opens Set Up Project with this layer ticked; nil for core.
-    let onApply: (() -> Void)?
+    /// Opens Set Up Project with this layer ticked; for core, Update Home Folder.
+    let onApply: () -> Void
     let onRemoveSkill: (String) -> Void
     let onSetMode: (String, LayerSkill.Mode) -> Void
     let onAddSkills: () -> Void
@@ -844,7 +963,7 @@ private struct LayerDetailView: View {
         GroupBox("Projects (\(projects.count))") {
             VStack(alignment: .leading, spacing: 6) {
                 if projects.isEmpty {
-                    Text(onApply == nil ? "No home folder has it yet. Render it with: akit apply --home" : "No project uses this layer yet.")
+                    Text(layer.name == "core" ? "No home folder has it yet." : "No project uses this layer yet.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(projects) { project in
@@ -860,7 +979,12 @@ private struct LayerDetailView: View {
                         Spacer()
                     }
                 }
-                if let onApply {
+                if layer.name == "core" {
+                    Button("Update Home Folder…", systemImage: "house", action: onApply)
+                        .buttonStyle(.borderedProminent)
+                        .help("Render the core layer into this Mac's home folder: preview the changes, then apply")
+                        .padding(.top, 2)
+                } else {
                     Button("Apply to Project…", systemImage: "folder.badge.plus", action: onApply)
                         .buttonStyle(.borderedProminent)
                         .help("Pick a project; this layer is ticked on top of its current layers")

@@ -102,7 +102,7 @@ struct InsightsView: View {
                 toPlan = projects
             }
         }
-        .sheet(item: $planning) { ProjectSetupSheet(initialProject: $0.folder) }
+        .sheet(item: $planning) { ProjectSetupSheet(initialProject: $0.home ? nil : $0.folder, forHome: $0.home) }
         .sheet(isPresented: $addingMark) {
             AddMarkSheet { message in
                 notice = message
@@ -181,7 +181,7 @@ struct InsightsView: View {
 
     /// After a layer patch: the projects that pick it up only when they are set up again. Plan… opens
     /// Set Up Project with the project's saved answers, where the change is shown as a diff before
-    /// anything is written. A home folder has no button yet: it is applied with the command.
+    /// anything is written. This Mac's home folder gets Update Home Folder, the same with the core layer.
     private var planButtons: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("It takes effect after these are set up again:").font(.callout)
@@ -189,9 +189,10 @@ struct InsightsView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(id).font(.callout.monospaced())
                     if id == ProjectRecords.homeID(machineName: model.machine.homeName) {
-                        Text("this Mac's home folder: run akit apply --home in Terminal").font(.callout).foregroundStyle(.secondary)
+                        Button("Plan…") { planning = PlanRequest(folder: HarnessEnvironment.current.homeDirectory, home: true) }
+                            .help("Open Update Home Folder: the change as a diff, then Apply")
                     } else if id.hasPrefix("home/") {
-                        Text("another Mac's home folder: run akit apply --home there").font(.callout).foregroundStyle(.secondary)
+                        Text("another Mac's home folder: update it on that Mac").font(.callout).foregroundStyle(.secondary)
                     } else if let folder = model.brainProjectFolders[id] {
                         Button("Plan…") { planning = PlanRequest(folder: folder) }
                             .help("Open Set Up Project for \(folder.tildePath): the change as a diff, then Apply")
@@ -206,6 +207,7 @@ struct InsightsView: View {
 
     struct PlanRequest: Identifiable {
         let folder: URL
+        var home = false
         var id: URL { folder }
     }
 

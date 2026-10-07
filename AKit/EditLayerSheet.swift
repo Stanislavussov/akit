@@ -57,7 +57,7 @@ struct EditLayerSheet: View {
             }
             .frame(maxHeight: .infinity, alignment: .top)
 
-            Text("Saved to layers/\(layer.name) and committed. Projects using \(layer.name) change when they are set up again\(layer.name == "core" ? "; the home folder with akit apply --home" : "").")
+            Text("Saved to layers/\(layer.name) and committed. Projects using \(layer.name) change when they are set up again\(layer.name == "core" ? "; the home folder with Update Home Folder… on the core layer" : "").")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3) }

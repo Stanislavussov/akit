@@ -4,7 +4,8 @@ import AKitProjectSetup
 import AppKit
 import SwiftUI
 
-/// Set up a project from brain layers: form → preview with diffs → apply.
+/// Set up a project from brain layers: form → preview with diffs → apply. With `forHome`, the
+/// same for this Mac's home folder, which always gets the core layer (`akit apply --home`).
 struct ProjectSetupSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -12,6 +13,8 @@ struct ProjectSetupSheet: View {
     var initialProject: URL?
     /// Ticked on top of the project's saved answers (Apply to Project on a layer).
     var initialLayers: [String] = []
+    /// The home folder instead of a project: core only, no project picker.
+    var forHome = false
 
     private enum Page { case form, preview, done }
 
@@ -40,6 +43,10 @@ struct ProjectSetupSheet: View {
         .frame(width: 760, height: 640)
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         .task {
+            if forHome, project == nil {
+                await chooseHome()
+                if DebugSnapshot.options?.capture == true { makePlan() }
+            }
             if project == nil, let initialProject { await choose(initialProject) }
             // Snapshot: `--project <folder>` picks it, `--query a,b` ticks layers, `--capture` opens the preview.
             if project == nil, let options = DebugSnapshot.options, let name = options.project,
@@ -65,19 +72,24 @@ struct ProjectSetupSheet: View {
 
     private var form: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(initialLayers.isEmpty ? "Set Up a Project" : "Apply \(initialLayers.joined(separator: ", ")) to a Project").font(.title2.bold())
-            projectPicker
+            Text(forHome ? "Update the Home Folder" : initialLayers.isEmpty ? "Set Up a Project" : "Apply \(initialLayers.joined(separator: ", ")) to a Project").font(.title2.bold())
+            if forHome { homeLine } else { projectPicker }
             if project != nil {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         targetsBox
-                        layersBox
-                        skillsBox
+                        if !forHome {
+                            layersBox
+                            skillsBox
+                        }
                         fieldsBox
                         messages
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            } else if forHome {
+                ContentUnavailableView("The home folder can't be updated", systemImage: "house",
+                                       description: Text("It needs a brain with a core layer."))
             } else {
                 ContentUnavailableView("Pick a project", systemImage: "folder",
                                        description: Text("AKit renders AGENTS.md and skills from the brain into it."))
@@ -111,6 +123,16 @@ struct ProjectSetupSheet: View {
                 Text(projectID ?? "…").font(.caption.monospaced()).foregroundStyle(.secondary)
                     .help("\(project.tildePath)\nAnswers are kept \(model.projectStore.isLocal ? "on this Mac only, in" : "in the brain under") \(model.projectStore.describe(id: projectID ?? "…"))")
             }
+        }
+    }
+
+    private var homeLine: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("The core layer's skills and AGENTS.md section go into \(project?.tildePath ?? "~") for the harnesses ticked below.")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(projectID ?? "…").font(.caption.monospaced()).foregroundStyle(.secondary)
+                .help("Answers are kept \(model.projectStore.isLocal ? "on this Mac only, in" : "in the brain under") \(model.projectStore.describe(id: projectID ?? "…"))")
         }
     }
 
@@ -335,13 +357,32 @@ struct ProjectSetupSheet: View {
         for name in initialLayers where !answers.layers.contains(name) { answers.layers.append(name) }
     }
 
+    /// Picks the home folder: its saved answers, with the core layer only.
+    private func chooseHome() async {
+        let home = HarnessEnvironment.current.homeDirectory
+        guard let brain else {
+            error = "The brain is not loaded."
+            return
+        }
+        guard brain.layers.contains(where: { $0.name == "core" }) else {
+            error = "The brain has no core layer."
+            return
+        }
+        let id = ProjectRecords.homeID(machineName: model.machine.homeName)
+        project = home
+        projectID = id
+        answers = ProjectRecords.savedAnswers(id: id, in: model.projectStore)
+            ?? ProjectAnswers(layers: [], values: [:], targets: model.installedTargets)
+        answers.layers = ["core"]
+    }
+
     private func makePlan() {
         guard let project, let projectID else { return }
         isWorking = true
         error = nil
         Task {
             defer { isWorking = false }
-            guard let made = await model.projectPlan(project: project, id: projectID, answers: answers) else {
+            guard let made = await model.projectPlan(project: project, id: projectID, answers: answers, forHome: forHome) else {
                 error = "The brain is not loaded."
                 return
             }
@@ -360,7 +401,7 @@ struct ProjectSetupSheet: View {
 
     private var preview: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Changes in \(plan?.project.lastPathComponent ?? "")").font(.title2.bold())
+            Text(forHome ? "Changes in the Home Folder" : "Changes in \(plan?.project.lastPathComponent ?? "")").font(.title2.bold())
             if let plan {
                 ForEach(plan.render.errors + plan.blockers, id: \.self) {
                     Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.callout).textSelection(.enabled)
@@ -369,7 +410,7 @@ struct ProjectSetupSheet: View {
                     Label($0, systemImage: "info.circle").foregroundStyle(.secondary).font(.callout).textSelection(.enabled)
                 }
                 if plan.changes.allSatisfy({ $0.kind == .same }) && plan.canApply {
-                    ContentUnavailableView("\(plan.project.lastPathComponent) is up to date", systemImage: "checkmark.circle",
+                    ContentUnavailableView("\(forHome ? "The home folder" : plan.project.lastPathComponent) is up to date", systemImage: "checkmark.circle",
                                            description: Text("All \(plan.changes.count) files already match the layers. Go back to change the answers."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -505,7 +546,7 @@ struct ProjectSetupSheet: View {
 
     private var done: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("\(plan?.project.lastPathComponent ?? "Project") is set up", systemImage: "checkmark.circle.fill")
+            Label(forHome ? "The home folder is updated" : "\(plan?.project.lastPathComponent ?? "Project") is set up", systemImage: "checkmark.circle.fill")
                 .font(.title2.bold())
                 .foregroundStyle(.green)
             if let outcome {
@@ -516,7 +557,7 @@ struct ProjectSetupSheet: View {
                 ForEach(outcome.notes, id: \.self) { Label($0, systemImage: "info.circle") }
             }
             if let plan {
-                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)). Review and commit the new harness files in the project yourself.")
+                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)).\(forHome ? " Reload skills in your harness (e.g. /reload-skills)." : " Review and commit the new harness files in the project yourself.")")
                     .foregroundStyle(.secondary)
             }
             Spacer()
