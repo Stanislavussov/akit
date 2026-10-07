@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitSessions
 import Darwin
 import Foundation
 
@@ -22,6 +23,47 @@ public struct SendUsage: Codable, Hashable, Sendable {
     static func + (a: SendUsage, b: SendUsage) -> SendUsage {
         SendUsage(input: a.input + b.input, cached: a.cached + b.cached, output: a.output + b.output,
                   cost: a.cost.map { $0 + (b.cost ?? 0) } ?? b.cost)
+    }
+}
+
+/// What one Lab run cost: its sends added up.
+public struct RunCost: Hashable, Sendable {
+    /// Sends: one per agent session, one per model call of a batch.
+    public var calls = 0
+    public var usage = SendUsage()
+    /// Sends that recorded a cost.
+    public var priced = 0
+
+    public init() {}
+
+    /// Recorded US dollars; nil when no send recorded a cost.
+    public var dollars: Double? { priced > 0 ? usage.cost : nil }
+    /// Every send recorded its cost, so `dollars` is the whole run.
+    public var isComplete: Bool { priced == calls }
+    public var tokens: Int { usage.input + usage.cached + usage.output }
+
+    /// A run's cost from its own `agent.jsonl`, for runs older than the send log: Claude Code's
+    /// final `result` line, or Pi's answers (`message_end`) added up. nil without either.
+    public static func fromAgentLog(_ file: URL) -> RunCost? {
+        guard let data = try? Data(contentsOf: file), let entries = try? JSONLines.objects(in: data) else { return nil }
+        var cost = RunCost()
+        if let result = entries.last(where: { $0["type"] as? String == "result" }) {
+            cost.usage = ModelCall.claudeUsage(result)
+            cost.calls = 1
+        } else {
+            for entry in entries where entry["type"] as? String == "message_end" {
+                guard let message = entry["message"] as? JSONLines.Object, message["role"] as? String == "assistant",
+                      let usage = message["usage"] as? JSONLines.Object else { continue }
+                let tokens = PiLogFormat.tokens(fromPiUsage: usage)
+                cost.usage = cost.usage + SendUsage(input: tokens.input + tokens.cacheWrite, cached: tokens.cacheRead,
+                                                    output: tokens.output, cost: PiLogFormat.cost(fromPiUsage: usage))
+            }
+            // One agent session, however many answers it had.
+            cost.calls = cost.usage == SendUsage() ? 0 : 1
+        }
+        guard cost.calls > 0 else { return nil }
+        cost.priced = cost.usage.cost == nil ? 0 : 1
+        return cost
     }
 }
 
@@ -102,6 +144,22 @@ public enum SendLog {
     public static func records(env: HarnessEnvironment) -> [SendRecord] {
         guard let data = try? Data(contentsOf: file(env: env)) else { return [] }
         return data.split(separator: 0x0A).compactMap { try? LabStore.decoder.decode(SendRecord.self, from: Data($0)) }
+    }
+
+    /// What each Lab run cost, by run id: its sends added up (the agent session of a review,
+    /// replay or control cell, every model call of an analysis batch), as the harnesses
+    /// recorded them.
+    public static func runCosts(_ records: [SendRecord]) -> [String: RunCost] {
+        var costs: [String: RunCost] = [:]
+        for record in records {
+            guard let id = record.runID else { continue }
+            var cost = costs[id] ?? RunCost()
+            cost.calls += 1
+            cost.usage = cost.usage + record.usage
+            if record.usage.cost != nil { cost.priced += 1 }
+            costs[id] = cost
+        }
+        return costs
     }
 
     /// Recorded cost of the calendar month that holds `date`.

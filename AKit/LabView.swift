@@ -101,12 +101,14 @@ struct LabView: View {
         var parts = ["\(model.labRuns.count) runs"]
         if running > 0 { parts.append("\(running) running") }
         if queued > 0 { parts.append("\(queued) queued") }
+        let spent = model.labRuns.compactMap { model.labRunCosts[$0.id]?.dollars }.reduce(0, +)
+        if spent > 0 { parts.append("\(LabCostText.money(spent)) recorded") }
         return parts.joined(separator: " · ")
     }
 
     private var list: some View {
         List(model.labRuns, selection: $selection) { run in
-            LabRunRow(run: run).tag(run.id)
+            LabRunRow(run: run, cost: model.labRunCosts[run.id]).tag(run.id)
         }
         .overlay {
             if model.labRuns.isEmpty {
@@ -119,6 +121,7 @@ struct LabView: View {
 
 private struct LabRunRow: View {
     let run: LabRun
+    let cost: RunCost?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -147,6 +150,11 @@ private struct LabRunRow: View {
                     Text("\(UsageText.short(metrics.freshTokens)) fresh · \(metrics.calls) \(metrics.calls == 1 ? "call" : "calls")")
                 }
                 Spacer()
+                if let cost {
+                    Text(LabCostText.short(cost))
+                        .foregroundStyle(cost.dollars == nil ? .secondary : .primary)
+                        .help(LabCostText.help(cost))
+                }
                 Text(run.spec.createdAt, format: .relative(presentation: .named))
             }
             .font(.caption)
@@ -330,6 +338,7 @@ private struct LabRunDetail: View {
                 if run.status == .finished || run.status == .cancelled || run.status == .error, let state = run.state {
                     row("Ended", state.updatedAt.formatted(date: .abbreviated, time: .shortened))
                 }
+                if let cost = model.labRunCosts[run.id] { row("Cost", LabCostText.long(cost)) }
                 row("Folder", run.folder.tildePath, monospaced: true)
             }
             .font(.callout)
@@ -618,5 +627,29 @@ struct ComparisonView: View {
         if row.failed > 0 { parts.append("\(row.failed) stopped") }
         if row.leaked > 0 { parts.append("\(row.leaked) saw the answer") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// A run's cost as the harnesses recorded it.
+enum LabCostText {
+    /// `$1.23`, `$0.0042`.
+    static func money(_ dollars: Double) -> String { ContextMapView.money(dollars) }
+
+    /// The list: dollars, `+` when some calls recorded none; tokens when none did.
+    static func short(_ cost: RunCost) -> String {
+        guard let dollars = cost.dollars else { return "\(UsageText.short(cost.tokens)) tok" }
+        return money(dollars) + (cost.isComplete ? "" : "+")
+    }
+
+    static func long(_ cost: RunCost) -> String {
+        let calls = "\(cost.calls) model \(cost.calls == 1 ? "call" : "calls")"
+        let tokens = "\(UsageText.short(cost.tokens)) tokens"
+        guard let dollars = cost.dollars else { return "\(tokens) over \(calls); no cost recorded (a subscription provider records none)" }
+        return "\(money(dollars)) over \(calls) · \(tokens)"
+            + (cost.isComplete ? "" : " · \(cost.calls - cost.priced) of them recorded no cost")
+    }
+
+    static func help(_ cost: RunCost) -> String {
+        long(cost) + ". As the harness recorded it: Claude Code reports API prices even on a subscription."
     }
 }
