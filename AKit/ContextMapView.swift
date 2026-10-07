@@ -319,7 +319,9 @@ struct ContextMapView: View {
     }
 }
 
-/// The treemap: one framed area per group, its blocks inside, area = tokens.
+/// The treemap: one framed area per group, its blocks inside, area = tokens. Views are placed
+/// with `position`, not `offset`: an offset moves only the drawing, so every block would be
+/// clicked at the top left corner.
 private struct ContextTreemap: View {
     let blocks: [ContextMapView.Block]
     let footprint: ContextFootprint
@@ -335,6 +337,7 @@ private struct ContextTreemap: View {
                     groupView(group, tokens: Int(sums[index]), frame: frames[index])
                 }
             }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
     }
 
@@ -349,13 +352,15 @@ private struct ContextTreemap: View {
                 .fill(.background.secondary)
                 .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.separator))
                 .frame(width: max(0, frame.width - 2), height: max(0, frame.height - 2))
-                .offset(x: frame.minX + 1, y: frame.minY + 1)
+                .position(x: frame.midX, y: frame.midY)
+                .allowsHitTesting(false)
             if header > 0 {
                 Text("\(group.title) · \(UsageText.short(tokens)) · \(ContextMapView.percent(footprint.shareOfFirstCall(tokens)))")
                     .font(.caption.bold())
                     .lineLimit(1)
-                    .frame(width: max(0, frame.width - 10), alignment: .leading)
-                    .offset(x: frame.minX + 6, y: frame.minY + 2)
+                    .frame(width: max(0, frame.width - 10), height: header - 2, alignment: .leading)
+                    .position(x: frame.midX, y: frame.minY + 1 + header / 2)
+                    .allowsHitTesting(false)
             }
             ForEach(Array(members.enumerated()), id: \.element.id) { index, block in
                 blockView(block, frame: rects[index])
@@ -383,10 +388,10 @@ private struct ContextTreemap: View {
         }
         .frame(width: max(0, frame.width - 2), height: max(0, frame.height - 2), alignment: .topLeading)
         .clipped()
-        .offset(x: frame.minX + 1, y: frame.minY + 1)
         .contentShape(Rectangle())
         .onTapGesture { selected = isSelected ? nil : block }
         .help("\(block.name) · \(block.group.title) · ≈ \(UsageText.short(block.tokens)) tokens · \(share) of the first call · \(ContextMapView.title(block.use))")
+        .position(x: frame.midX, y: frame.midY)
     }
 }
 
