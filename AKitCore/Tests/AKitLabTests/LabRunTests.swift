@@ -170,9 +170,37 @@ struct LabRunTests {
         let named = try await LabRuns.newReview(transcript: try reviewedSession(), harness: .pi, title: "named",
                                                 environment: .background, akit: akit, env: env)
         #expect(LabStore.load(named.id, env: env)?.spec.reviewedHarness == .pi)
-        // The one path rule the CLI uses too: only Pi's session folder means Pi.
+        // The rule the CLI uses too: Pi's session folder, or Pi's session header elsewhere.
         #expect(LabPaths.harness(ofTranscript: piFile) == .pi)
         #expect(LabPaths.harness(ofTranscript: home.appending(path: ".pi/agent/skills/notes.jsonl")) == .claudeCode)
+        try write("pi-dir/sessions/--work--/2026-10-02_s2.jsonl", #"{"type":"session","id":"s2","cwd":"/work"}"# + "\n")
+        #expect(LabPaths.harness(ofTranscript: home.appending(path: "pi-dir/sessions/--work--/2026-10-02_s2.jsonl")) == .pi)
+        #expect(LabPaths.harness(ofTranscript: try reviewedSession()) == .claudeCode)
+        // A Pi session by its id, in ~/.pi/agent or PI_CODING_AGENT_DIR.
+        #expect(LabPaths.piTranscript(sessionID: "s1", env: env) == piFile)
+        #expect(LabPaths.piTranscript(sessionID: "s", env: env) == nil)
+        let moved = HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path, "PI_CODING_AGENT_DIR": home.appending(path: "pi-dir").path])
+        #expect(LabPaths.piTranscript(sessionID: "s2", env: moved)?.lastPathComponent == "2026-10-02_s2.jsonl")
+        #expect(LabRuns.reviewable == [.claudeCode, .pi])
+    }
+
+    /// A session starts with its own reviewer: Claude Code's settings, or Pi with the provider
+    /// that wrote the session, which is all the same-origin rule allows.
+    @Test func aSessionStartsWithItsOwnReviewer() throws {
+        try write(".pi/agent/settings.json", #"{"defaultProvider":"anthropic","defaultModel":"claude-opus","defaultThinkingLevel":"high"}"#)
+        func pi(_ name: String, _ answers: [(String, String)]) throws -> URL {
+            let lines = [#"{"type":"session","id":"x","cwd":"/work"}"#] + answers.map { provider, model in
+                #"{"type":"message","message":{"role":"assistant","provider":"\#(provider)","model":"\#(model)"}}"#
+            }
+            try write(".pi/agent/sessions/--work--/\(name).jsonl", lines.joined(separator: "\n") + "\n")
+            return home.appending(path: ".pi/agent/sessions/--work--/\(name).jsonl")
+        }
+        let zai = LabRuns.ownReviewer(of: try pi("a_1", [("zai", "glm-4"), ("zai", "glm-5")]), harness: .pi, env: env)
+        #expect(zai.harness == .pi && zai.model == "zai/glm-5" && zai.effort == "high")
+        // Pi's default provider keeps your default model; mixed providers have no single origin.
+        #expect(LabRuns.ownReviewer(of: try pi("a_2", [("anthropic", "claude-haiku")]), harness: .pi, env: env).model == "anthropic/claude-opus")
+        #expect(LabRuns.ownReviewer(of: try pi("a_3", [("zai", "glm-5"), ("openai", "gpt")]), harness: .pi, env: env).model == "anthropic/claude-opus")
+        #expect(LabRuns.ownReviewer(of: try reviewedSession(), harness: .claudeCode, env: env).harness == .claudeCode)
     }
 
     @Test func queueStartsOneRunAtATime() async throws {

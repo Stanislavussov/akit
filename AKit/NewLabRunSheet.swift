@@ -170,7 +170,7 @@ struct NewLabRunSheet: View {
     }
 
     @ViewBuilder private var review: some View {
-        Text("A model reads the session (secrets masked) and AKit's numbers for it, then writes one paragraph and up to three improvements. It goes through the harness you pick, with its own sign-in; nothing in your projects changes.")
+        Text("A model reads the session (secrets masked) and AKit's numbers for it (Claude Code sessions; a Pi session has only its transcript), then writes one paragraph and up to three improvements. It goes through the harness you pick, with its own sign-in; nothing in your projects changes.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -178,8 +178,9 @@ struct NewLabRunSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 TextField("Search sessions", text: $query)
                     .textFieldStyle(.roundedBorder)
-                List(claudeSessions, selection: $chosen) { session in
+                List(reviewableSessions, selection: $chosen) { session in
                     HStack {
+                        HarnessBadge(harness: session.harness)
                         Text(session.title).lineLimit(1)
                         Spacer()
                         Text(session.project?.lastPathComponent ?? "").foregroundStyle(.secondary)
@@ -194,7 +195,7 @@ struct NewLabRunSheet: View {
             Text("Session: \(target.title)").fontWeight(.medium)
         }
         Form {
-            ReviewAgentFields(harness: $harness, modelName: $reviewModel, effort: $reviewEffort)
+            ReviewAgentFields(harness: $harness, modelName: $reviewModel, effort: $reviewEffort, reviewing: target)
             Picker("How", selection: $reviewMode) {
                 ForEach(LabAgent.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
             }
@@ -211,9 +212,9 @@ struct NewLabRunSheet: View {
         LabAgent(harness: harness, model: reviewModel.trimmingCharacters(in: .whitespaces), effort: reviewEffort, mode: reviewMode)
     }
 
-    private var claudeSessions: [SessionSummary] {
+    private var reviewableSessions: [SessionSummary] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        return model.sessions.filter { $0.harness == .claudeCode }
+        return model.sessions.filter { LabRuns.reviewable.contains($0.harness) }
             .filter { q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || ($0.project?.path.localizedCaseInsensitiveContains(q) ?? false) }
     }
 

@@ -1,5 +1,6 @@
 import AKitFoundation
 import AKitInsights
+import AKitLab
 import AKitModel
 import AKitSessions
 import AppKit
@@ -230,7 +231,7 @@ private struct SessionDetailView: View {
     @State private var transcript: SessionTranscript?
     @State private var error: String?
     @State private var copied = false
-    @State private var showReview = false
+    @State private var showReview = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .sessions
     @State private var tab = DebugSnapshot.options?.tab.flatMap(SessionDetailTab.init(rawValue:)) ?? .conversation
 
     var body: some View {
@@ -274,7 +275,7 @@ private struct SessionDetailView: View {
                 Text(session.title).font(.title2.bold()).textSelection(.enabled).lineLimit(3)
                 Spacer()
                 HarnessBadge(harness: session.harness)
-                if session.harness == .claudeCode {
+                if LabRuns.reviewable.contains(session.harness) {
                     Button("Review in Terminal…", systemImage: "flask") { showReview = true }
                         .labelStyle(.iconOnly)
                         .help("Lab: an agent reviews this session in a terminal tab and writes what to change")

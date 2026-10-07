@@ -111,7 +111,7 @@ extension AKitCLI {
         }
     }
 
-    /// A session key (`claude:<id>`), a transcript path, or a Claude Code session id.
+    /// A session key (`claude:<id>`), a transcript path, or a Claude Code or Pi session id.
     static func sessionKey(_ text: String, cwd: URL, env: HarnessEnvironment) throws -> String {
         if SessionKey(parsing: text) != nil { return text }
         let path = resolve(text, cwd: cwd, env: env)
@@ -121,7 +121,7 @@ extension AKitCLI {
             return key.description
         }
         let file = try transcript(text, cwd: cwd, env: env)
-        return SessionKey.of(NotesPipeline.Target(harness: .claudeCode, file: file).summary)?.description
+        return SessionKey.of(NotesPipeline.Target(harness: LabPaths.harness(ofTranscript: file), file: file).summary)?.description
             ?? "claude:" + file.deletingPathExtension().lastPathComponent
     }
 

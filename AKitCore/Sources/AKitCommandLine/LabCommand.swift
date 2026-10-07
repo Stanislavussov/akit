@@ -20,11 +20,13 @@ extension AKitCLI {
                               [--mode call|agent] [--language en|ru|cs] [--env orca|herdr|background]
                               [--no-start]
                                           A model reads the session (masked) and AKit's numbers and
-                                          writes one paragraph and up to 3 improvements. Opens where
-                                          the session ran; --env overrides. It runs through Claude
-                                          Code (default) or Pi, with their sign-in; model and effort
-                                          default to the harness's settings (Pi: --effort is its
-                                          thinking level). call (default): one model call on a
+                                          writes one paragraph and up to 3 improvements (a Pi session:
+                                          the transcript only, no numbers). SESSION: a transcript
+                                          path, or a Claude Code or Pi session id. Opens where the
+                                          session ran; --env overrides. It runs through the session's
+                                          own harness or --harness, with its sign-in; model and
+                                          effort default to the harness's settings (Pi: --effort is
+                                          its thinking level). call (default): one model call on a
                                           digest, no tools; agent: an agent reads the whole
                                           transcript with file tools. --language: the language of the
                                           review (default: Lab settings in AKit, else English)
@@ -111,6 +113,9 @@ extension AKitCLI {
             guard let session = args.positional() else { throw Failure(message: "Which session? akit lab analyze SESSION.") }
             try args.finish()
             let file = try transcript(session, cwd: cwd, env: env)
+            guard LabPaths.harness(ofTranscript: file) == .claudeCode else {
+                throw Failure(message: "AKit measures only Claude Code sessions; a Pi session can be reviewed: akit lab new review \(session).")
+            }
             let metrics: SessionMetrics
             do {
                 metrics = try await LabAnalysis.analyze(file: file, env: env)
@@ -243,10 +248,13 @@ extension AKitCLI {
             try args.finish()
             let environment = try labEnvironment(environmentText, env: env)
             let file = try transcript(session, cwd: cwd, env: env)
-            guard let harness = LabHarness(rawValue: harnessText ?? "claude-code") else {
+            // Without --harness the session's own harness (and a Pi session's own provider) reviews it.
+            let reviewed = LabPaths.harness(ofTranscript: file)
+            let own = LabRuns.ownReviewer(of: file, harness: reviewed, env: env)
+            guard let harness = harnessText.map(LabHarness.init(rawValue:)) ?? own.harness else {
                 throw Failure(message: "--harness is claude-code or pi.")
             }
-            var agent = LabRuns.defaultAgent(harness, env: env)
+            var agent = harness == own.harness ? own : LabRuns.defaultAgent(harness, env: env)
             if let modelText { agent.model = modelText }
             if let effortText { agent.effort = effortText }
             if let modeText {
@@ -261,7 +269,7 @@ extension AKitCLI {
                 guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is en, ru or cs.") }
                 return language
             }
-            let run = try await LabRuns.newReview(transcript: file, title: nil, agent: agent, language: language,
+            let run = try await LabRuns.newReview(transcript: file, harness: reviewed, title: nil, agent: agent, language: language,
                                                   environment: environment, akit: ownExecutable, env: env)
             out("Queued \(run.id): \(run.spec.title) by \(agent.label) in \(run.spec.language?.name ?? "English") (\(run.spec.environment.title), \(run.spec.folder)).")
             if !noStart { try await startNext(env: env, out: out) }
@@ -532,15 +540,16 @@ extension AKitCLI {
         }
     }
 
-    /// A transcript path, or a Claude Code session id.
+    /// A transcript path, or a Claude Code or Pi session id.
     static func transcript(_ argument: String, cwd: URL, env: HarnessEnvironment) throws -> URL {
         if argument.hasSuffix(".jsonl") || argument.contains("/") {
             let file = resolve(argument, cwd: cwd, env: env)
             guard FileManager.default.fileExists(atPath: file.path) else { throw Failure(message: "No file at \(file.path).") }
             return file
         }
-        guard let file = LabPaths.transcript(sessionID: argument, env: env) else {
-            throw Failure(message: "No Claude Code session \(argument) in \(LabPaths.claudeRoot(env: env).path)/projects.")
+        guard let file = LabPaths.transcript(sessionID: argument, env: env) ?? LabPaths.piTranscript(sessionID: argument, env: env) else {
+            throw Failure(message: "No Claude Code or Pi session \(argument) in \(LabPaths.claudeRoot(env: env).path)/projects "
+                              + "or \(LabRuns.piRoot(env: env).path)/sessions.")
         }
         return file
     }

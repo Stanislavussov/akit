@@ -41,12 +41,27 @@ public struct LabPaths: Sendable {
         return [custom, ai].compactMap { $0 }.first { !$0.isEmpty }.map(SecretFilter.masked)
     }
 
-    /// The harness that wrote a transcript: Pi for a file under `.pi/agent/sessions`, else Claude Code.
+    /// The harness that wrote a transcript: Pi for a file under `.pi/agent/sessions` or one that
+    /// starts with Pi's `session` header (a `PI_CODING_AGENT_DIR` elsewhere), else Claude Code.
     public static func harness(ofTranscript file: URL) -> HarnessID {
-        file.path.contains("/.pi/agent/sessions/") ? .pi : .claudeCode
+        if file.path.contains("/.pi/agent/sessions/") { return .pi }
+        var first: [String: Any]?
+        JSONLines.scanHead(of: file) { entry in
+            first = entry
+            return true
+        }
+        return first?["type"] as? String == "session" && first?["cwd"] != nil ? .pi : .claudeCode
     }
 
-    /// The folder a Claude Code session ran in (`cwd` of its first lines).
+    /// `<pi>/sessions/*/<time>_<id>.jsonl`, Pi's log of session `id`.
+    public static func piTranscript(sessionID: String, env: HarnessEnvironment) -> URL? {
+        guard !sessionID.isEmpty, !sessionID.contains("/") else { return nil }
+        return FileWalk.children(of: LabRuns.piRoot(env: env).appending(path: "sessions"))
+            .flatMap { FileWalk.children(of: $0) }
+            .first { $0.lastPathComponent.hasSuffix("_\(sessionID).jsonl") }
+    }
+
+    /// The folder a session ran in (`cwd` of its first lines; Pi: of its header).
     public static func folder(ofTranscript file: URL) -> URL? {
         var cwd: String?
         JSONLines.scanHead(of: file) { entry in

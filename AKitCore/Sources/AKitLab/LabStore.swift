@@ -189,6 +189,30 @@ public enum LabStore {
 
 /// Queuing new runs.
 public enum LabRuns {
+    /// The harnesses whose sessions a review can read: AKit's numbers (`analysis.json`) only
+    /// for Claude Code, so a Pi session's review has the transcript alone.
+    public static let reviewable: Set<HarnessID> = [.claudeCode, .pi]
+
+    /// The reviewer a session starts with: its own harness with your settings, the same origin
+    /// a personal Mac allows. A Pi session that recorded one provider other than Pi's default
+    /// gets that provider's last model, since only the provider that wrote it may read it.
+    public static func ownReviewer(of file: URL, harness: HarnessID, env: HarnessEnvironment) -> LabAgent {
+        guard harness == .pi else { return defaultAgent(.claudeCode, env: env) }
+        var agent = defaultAgent(.pi, env: env)
+        var providers = Set<String>()
+        var last: String?
+        for entry in (try? Data(contentsOf: file)).flatMap({ try? JSONLines.objects(in: $0) }) ?? [] {
+            guard let message = entry["message"] as? [String: Any], message["role"] as? String == "assistant",
+                  let provider = message["provider"] as? String, !provider.isEmpty else { continue }
+            providers.insert(provider)
+            if let model = message["model"] as? String, !model.isEmpty { last = "\(provider)/\(model)" }
+        }
+        if providers.count == 1, let provider = providers.first, let last, !agent.model.hasPrefix(provider + "/") {
+            agent.model = last
+        }
+        return agent
+    }
+
     /// A review of a recorded session, opened where the session ran (or in the home folder
     /// when that is gone). `harness` recorded the session; nil = `LabPaths.harness(ofTranscript:)`.
     /// `environment` nil = suggested for that folder.
@@ -274,7 +298,7 @@ extension LabRuns {
     }
 
     /// Pi's config folder: `PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
-    static func piRoot(env: HarnessEnvironment) -> URL {
+    public static func piRoot(env: HarnessEnvironment) -> URL {
         env.variables["PI_CODING_AGENT_DIR"].map { URL(filePath: $0, directoryHint: .isDirectory) }
             ?? env.homeDirectory.appending(path: ".pi/agent", directoryHint: .isDirectory)
     }

@@ -14,7 +14,7 @@ extension AKitCLI {
                                           A task from an exemplar session: its first user turn, at HEAD
                                           of its start (recorded by the capture hook), in the repository
                                           it ran in. SESSION: a session key (claude:ID, pi:ID), a
-                                          transcript path or a Claude Code session id. The oracle: the
+                                          transcript path or a Claude Code or Pi session id. The oracle: the
                                           project's test command (exit 0 passes), or a mode's code check
                                           on the cell's transcript (passes when the mode doesn't show;
                                           for a success mode, when it does)
@@ -271,7 +271,7 @@ extension AKitCLI {
         }
     }
 
-    /// A session key from the index, or a transcript file (Claude Code or Pi) or Claude Code session id.
+    /// A session key from the index, or a transcript file or session id (Claude Code or Pi).
     private static func controlSession(_ text: String, cwd: URL, env: HarnessEnvironment) throws -> SessionSummary {
         if SessionKey(parsing: text) != nil {
             guard let database = try AnalysisIndex.open(env: env),

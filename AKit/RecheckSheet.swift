@@ -1,5 +1,6 @@
 import AKitErrorAnalysis
 import AKitLab
+import AKitSessions
 import SwiftUI
 
 /// Harness, model and effort of a review agent, with the models the harness offers. Fields
@@ -12,8 +13,12 @@ struct ReviewAgentFields: View {
     /// Keeps the bound model and effort when it appears (a current choice to change), instead
     /// of the harness's defaults; a switch of harness still picks the defaults.
     var keepsValues = false
+    /// The session under review: the fields start as its own reviewer (`LabRuns.ownReviewer`),
+    /// the same origin a personal Mac allows, and change with it.
+    var reviewing: SessionSummary? = nil
     /// Models to offer for the harness (Pi: the ones it has credentials for).
     @State private var models: [String] = []
+    @State private var own: LabAgent?
 
     var body: some View {
         Picker("Harness", selection: $harness) {
@@ -24,6 +29,17 @@ struct ReviewAgentFields: View {
             await load(harness, keep: keepsValues)
         }
         .onChange(of: harness) { _, chosen in Task { await load(chosen) } }
+        .task(id: reviewing?.file) {
+            guard let reviewing else { return }
+            let agent = await model.ownReviewer(of: reviewing)
+            guard !Task.isCancelled, model.labHarnesses.contains(agent.harness) else { return }
+            own = agent
+            if harness == agent.harness {
+                await load(agent.harness)
+            } else {
+                harness = agent.harness
+            }
+        }
         HStack {
             TextField("Model", text: $modelName, prompt: Text(harness == .pi ? "Pi's default" : "opus"))
             Menu("Models") {
@@ -42,7 +58,7 @@ struct ReviewAgentFields: View {
     /// slow `pi --list-models` that ends after a switch back to Claude Code is dropped.
     private func load(_ chosen: LabHarness, keep: Bool = false) async {
         if !keep {
-            let defaults = model.defaultAgent(chosen)
+            let defaults = own.flatMap { $0.harness == chosen ? $0 : nil } ?? model.defaultAgent(chosen)
             modelName = defaults.model
             effort = chosen.efforts.contains(defaults.effort) ? defaults.effort : chosen.efforts[0]
         }
@@ -76,7 +92,7 @@ struct RecheckSheet: View {
                 Text("This review: \(agent.label)").font(.callout)
             }
             Form {
-                ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort)
+                ReviewAgentFields(harness: $harness, modelName: $modelName, effort: $effort, reviewing: session)
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
@@ -97,16 +113,22 @@ struct RecheckSheet: View {
         .frame(width: 520)
     }
 
+    /// The session this run reviewed.
+    private var session: SessionSummary? {
+        run.spec.reviewedTranscript.map { transcript in
+            model.sessions.first { $0.file.path == transcript }
+                ?? NotesPipeline.Target(harness: run.spec.reviewedHarness, file: URL(filePath: transcript), title: run.spec.reviewedTitle).summary
+        }
+    }
+
     private func queue() {
-        guard let transcript = run.spec.reviewedTranscript else { return }
+        guard run.spec.reviewedTranscript != nil else { return }
         busy = true
         error = nil
         let agent = LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort, mode: .call)
         Task {
             do {
-                let file = URL(filePath: transcript)
-                let session = model.sessions.first { $0.file.path == transcript }
-                    ?? NotesPipeline.Target(harness: run.spec.reviewedHarness, file: file, title: run.spec.reviewedTitle).summary
+                guard let session else { return }
                 onQueued(try await model.queueReview(of: session, agent: agent, environment: nil))
                 dismiss()
             } catch {
