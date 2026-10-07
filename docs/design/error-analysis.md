@@ -382,8 +382,16 @@ Built 2026-10-07 for Pi; Claude Code waits (the user asked for Pi only for now).
   `✅ Saved` only on exit 0; otherwise `⚠️ Not saved: <reason>`. An akit from before ratings
   exits 2 on the unknown command `rate`: the extension says to update akit. Ratings need Pi
   0.80.4 or newer (`agent_settled`); the extension imports no Pi package, so on an older Pi
-  session capture still loads. A second press doesn't rate the run twice ("Already rated"),
-  and `pi --no-session` shows no rating line.
+  session capture still loads. `pi --no-session` shows no rating line.
+- **Change, comment, remove.** Until the next prompt the rated run stays the target: the
+  line under the editor reads `rated 👍 «…»:  change 👍 ⌥G   👎 ⌥X   💬 ⌥R   remove ⌥U`.
+  ⌥G / ⌥X change the rating and keep the comment (the same rating again only says
+  "Already rated"); ⌥R edits the comment in Pi's editor dialog, prefilled, then asks the
+  rating with the current one first; ⌥U removes it (`akit rate --rating none`) and the run
+  can be rated again. Nothing is rewritten: every press appends a spool line and a custom
+  entry (`changed: true` after the first), and a run's latest line by its anchor is its
+  rating (`Ratings.current`; index schema v8 lets `none` in). After the next prompt a
+  rating stays as it is.
 - **Not one token in the next request.** No messages, tools or prompt changes: a custom
   entry (`appendEntry`, shown in the transcript by an entry renderer) and a widget only.
   Checked 2026-10-07 against a local fake model: three requests with ratings between them
@@ -393,11 +401,23 @@ Built 2026-10-07 for Pi; Claude Code waits (the user asked for Pi only for now).
   summaries never carry it). The Sessions screen shows 👍/👎 counts in the list and the
   ratings with their comments in the session header, from the index and from spool lines
   the hourly import hasn't read yet.
+- **Where a rating belongs.** The Pi reader turns the extension's custom entries into
+  `SessionTranscript.ratings`: per anchor the last entry wins (other entries such as a
+  model switch may sit between them), `none` drops it, and each is placed after the item
+  that ends its anchor entry, not where the entry is in the log; a run off the active
+  branch has no place. Ratings are kept apart from `items`, so item ids (which notes and
+  quotes refer to) don't move. The conversation shows each rating right after its run;
+  each header line (from the spool, by the same anchor) names the run's prompt and scrolls
+  to it. A rating saved while the next run is going is written to the log when that run
+  ends; one saved for a session that has since been left is only in the spool; `/tree`
+  ends the chance to change it. Copy as Markdown / JSON and the agent-with-file-tools Lab
+  review's `transcript.md` carry them, so that agent knows which run the person liked or
+  not. A one-call review is a notes call and stays blind like the notes.
 - **What the ratings are for.** Labels with `source: human-quick`: a cheap outcome per run,
   the first candidates for modes and a queue of sessions to look at first. Not for recall
   (the person picks which runs to rate) and not in the denominator of frequencies. A rating
-  is about one run, not the session's outcome. Notes stay blind to them: the rating entries
-  are custom entries, which the Pi parser skips. Not built yet: feeding them into bootstrap
+  is about one run, not the session's outcome. Notes, checks and judges stay blind to them:
+  they read `items`, and ratings are not items. Not built yet: feeding them into bootstrap
   labeling and the batch.
 
 ## Checks

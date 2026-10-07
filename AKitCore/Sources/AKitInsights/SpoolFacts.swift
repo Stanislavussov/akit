@@ -42,7 +42,7 @@ enum SpoolFacts {
             try database.run(markSQL, ts, note, sourceID, parserVersion)
         case "rating":
             guard let harness = text("harness"), let session = text("session_id"), let rating = text("rating"),
-                  RateRun.ratings.contains(rating) else { return .malformed }
+                  RateRun.values.contains(rating) else { return .malformed }
             try database.run(ratingSQL, harness, session, ts, rating, text("text"), text("anchor"), text("transcript"), text("cwd"),
                              sourceID, parserVersion)
         default:

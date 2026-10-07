@@ -86,9 +86,10 @@ restart Pi (or run `/reload` in it): a running Pi keeps the old extension.
 
 > [!IMPORTANT]
 > **Rating a Pi run** (Pi 0.80.4 or newer) uses Option keys: after a run, ⌥G rates it good, ⌥X bad, ⌥R with a
-> comment. Your terminal must send Option as Meta (iTerm2: Profiles → Keys → Left Option
+> comment. Until your next prompt the same keys change the rating or its comment, and ⌥U
+> removes it. Your terminal must send Option as Meta (iTerm2: Profiles → Keys → Left Option
 > key: Esc+; Terminal: Settings → Profiles → Keyboard → Use Option as Meta key). The ratings
-> show on the Sessions screen; the model never sees them.
+> show on the Sessions screen, after the run they rate; the model never sees them.
 
 **Settings for scripts:** `AKIT_BRAIN_REPO=you/brain` answers the brain question,
 `AKIT_SKIP_HOME=1` leaves `~` alone, `AKIT_FROM_SOURCE=1` builds from source,

@@ -32,6 +32,9 @@ public enum SessionExport {
             case .event(let title):
                 lines += ["### Event: \(title)", ""] + fenced(item.text)
             }
+            for rating in transcript.ratings where rating.afterItem == item.id {
+                lines += ["", "### The person rated this run: \(rating.rating)"] + (rating.comment.map { ["", "> \($0)"] } ?? [])
+            }
         }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -83,8 +86,9 @@ public enum SessionExport {
 
     private static func money(_ value: Double) -> String { String(format: "%.4f", value) }
 
-    /// JSON for scripts and evals: session facts, `usage`, and `items` with a `type` per entry
-    /// (`user`, `assistant`, `thinking`, `tool_call`, `tool_result`, `event`).
+    /// JSON for scripts and evals: session facts, `usage`, `items` with a `type` per entry
+    /// (`user`, `assistant`, `thinking`, `tool_call`, `tool_result`, `event`), and `ratings`: the
+    /// person's rating of a run, after the item `afterItem` (left out when there are none).
     public static func json(_ session: SessionSummary, _ transcript: SessionTranscript) -> String {
         let export = Export(
             harness: session.harness.displayName,
@@ -94,7 +98,8 @@ public enum SessionExport {
             started: session.started.map(date),
             models: transcript.models,
             usage: Export.Usage(transcript.usage),
-            items: transcript.items.map(Export.Item.init)
+            items: transcript.items.map(Export.Item.init),
+            ratings: transcript.ratings.isEmpty ? nil : transcript.ratings.map(Export.Rating.init)
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -135,6 +140,19 @@ public enum SessionExport {
         let models: [String]
         let usage: Usage
         let items: [Item]
+        let ratings: [Rating]?
+
+        struct Rating: Encodable {
+            let rating: String
+            let comment: String?
+            let afterItem: Int?
+            let timestamp: String?
+
+            init(_ rating: RunRating) {
+                (self.rating, comment, afterItem) = (rating.rating, rating.comment, rating.afterItem)
+                timestamp = rating.timestamp.map(SessionExport.date)
+            }
+        }
 
         struct Usage: Encodable {
             struct Tokens: Encodable {
