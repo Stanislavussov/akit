@@ -32,8 +32,8 @@ Checked against the code on 2026-10-03:
   writes a mark through `Spool.mark`, as `akit stats mark`.
 - Plan after Apply (2026-10-07): after a committed `mode: manual` patch the screen lists the
   layer's projects; **Plan…** opens Set Up Project for a project folder on this Mac, where the
-  change is a diff until Apply. A home folder still says `akit apply --home` (the Home button
-  is step 2 of the design map).
+  change is a diff until Apply. This Mac's home folder gets Plan… too (Update Home Folder,
+  2026-10-07); another Mac's home folder is updated on that Mac.
 - Step 10 is built except these smaller items of its plan below, left until someone needs
   them: **Copy command** / **Show in Skills** on advice cards, **Sync first** in the Apply
   sheet, and the expected-vs-observed delta and "deviates" flags in Changes (they wait for

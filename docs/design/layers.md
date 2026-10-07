@@ -4,7 +4,8 @@ Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
 
 Also built, though not roadmap steps: work machines, the "project owns its files" update
-rules, `keep_auto`, `override`, the home folder render (`akit apply --home`), brain sync,
+rules, `keep_auto`, `override`, the home folder render (`akit apply --home`, and in the app
+**Update Home Folder…**), brain sync,
 import of skills into the brain, the layer editor, and removing layers, skills and
 projects. Not built: MCP in layers, JSON merge, the `/akit-setup` draft,
 `machines/<name>.yaml`, `checks:`.
@@ -250,7 +251,8 @@ as `${VAR}` references; the real values come from Keychain.
 1. Safe write: backup + diff viewer + Apply. (Done, for MCP and for the render.)
 2. Brain repo + layers read-only in AKit (done: Brain screen, checks, Create Brain Repo); move the global skill library from
    `~/.agents/skills` into the brain (done: Import Skills…); core layer with `manual`
-   skills (done; it is rendered into the home folder with `akit apply --home`).
+   skills (done; it is rendered into the home folder with `akit apply --home` or
+   **Update Home Folder…**).
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end. (Done.)
 4. MCP in layers. (Not built.)
@@ -259,9 +261,12 @@ as `${VAR}` references; the real values come from Keychain.
 6. Updates. (Done 2026-09-28 as "the project owns its files", see "Updates". The 3-way
    merge and "publish back" of this step's first version were dropped.)
 
-Buttons still missing in the app for things the `akit` command does: applying the core
-layer to the home folder (`akit apply --home`; the Brain screen only tells the user to run
-it) and forgetting a project.
+Buttons for the two operations that were command-only (2026-10-07): **Update Home Folder…**
+(on the core layer, on the home folder's page, after a Sync or a removal from core that
+changed core, and as Plan… in Insights) opens Set Up Project for the home folder with the
+core layer only, `akit apply --home` in the app. **Forget Project…** (a project's page and
+its context menu) is `akit remove project`: both use `ProjectForget`, and the dialog offers
+"Forget and Trash Files" or "Forget, Keep Files" (`--keep-files`).
 
 ## Open questions
 
@@ -269,5 +274,5 @@ it) and forgetting a project.
   `disable-model-invocation` not verified yet.
 - Pi has no native MCP (only via `pi-mcp-adapter`).
 - Subagents in layers: low priority, format stays open for them.
-- Rendering the core layer into the home folder: done (`akit apply --home`, command
-  only).
+- Rendering the core layer into the home folder: done (`akit apply --home`, and
+  **Update Home Folder…** in the app).

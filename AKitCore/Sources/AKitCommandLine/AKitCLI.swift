@@ -1069,32 +1069,19 @@ public enum AKitCLI {
                 let id = options.home ? homeID(hostName: hostName, env: env)
                     : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
-                guard let saved = ProjectRecords.savedAnswers(id: id, in: store) else {
+                guard let preview = ProjectForget.preview(id: id, folder: project, forHome: options.home, brain: brain, store: store) else {
                     out("Nothing is saved for \(id).")
                     return 1
                 }
-                let ownRecord = !store.isLocal || FileManager.default.fileExists(atPath: store.folder(id: id).path)
-                var lines = [ownRecord ? "Forget \(id) (\(store.describe(id: id)) goes to the Trash)." : "Forget \(id) on this Mac."]
-                var empty = saved
-                empty.layers = []
-                empty.skills = []
-                let plan = ProjectSetup.plan(project: project, id: id, answers: empty, brain: brain, store: store, forHome: options.home)
-                let removals = plan.changes.filter { $0.kind == .remove }
+                var lines = [preview.ownRecord ? "Forget \(id) (\(store.describe(id: id)) goes to the Trash)." : "Forget \(id) on this Mac."]
                 if !options.keepFiles {
-                    lines.append(removals.isEmpty ? "No files AKit wrote are left there."
-                                 : "Files AKit wrote go to the Trash: \(removals.map(\.path).joined(separator: ", ")).")
-                    let kept = plan.changes.filter { $0.kind == .keepEdited }.map(\.path)
-                    if !kept.isEmpty { lines.append("Kept (edited by hand): \(kept.joined(separator: ", ")).") }
+                    lines.append(preview.removals.isEmpty ? "No files AKit wrote are left there."
+                                 : "Files AKit wrote go to the Trash: \(preview.removals.joined(separator: ", ")).")
+                    if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
                 }
                 guard options.yes else { out((lines + [confirm]).joined(separator: "\n")); return 0 }
-                if !options.keepFiles, !removals.isEmpty {
-                    _ = try await ProjectSetup.apply(plan, brain: brain, home: env.homeDirectory, env: env, trash: trash)
-                }
-                // Apply saved a lock again; forget the project with it.
-                if !store.isLocal || FileManager.default.fileExists(atPath: store.folder(id: id).path) {
-                    try await BrainRemove.forgetProject(id, in: store, env: env, trash: trash)
-                }
-                if store.isLocal, let fallback = store.readFallback, FileManager.default.fileExists(atPath: fallback.appending(path: id).path) {
+                try await ProjectForget.run(preview, keepFiles: options.keepFiles, brain: brain, home: env.homeDirectory, env: env, trash: trash)
+                if preview.brainCopyLeft {
                     lines.append("The brain still has projects/\(id) from before this became a work Mac; remove it by hand: git -C \(brain.root.path) rm -r projects/\(id), then commit.")
                 }
                 out((lines + ["Done."]).joined(separator: "\n"))

@@ -279,11 +279,28 @@ final class AppModel {
         return folders
     }
 
-    /// What rendering these answers would change in the project. Only reads.
-    func projectPlan(project: URL, id: String, answers: ProjectAnswers) async -> ProjectSetup.Plan? {
+    /// What rendering these answers would change in the project (or the home folder). Only reads.
+    func projectPlan(project: URL, id: String, answers: ProjectAnswers, forHome: Bool = false) async -> ProjectSetup.Plan? {
         guard let brain else { return nil }
         let store = projectStore
-        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store) }.value
+        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: forHome) }.value
+    }
+
+    /// What forgetting a project would trash; nil when nothing is saved for it. Only reads.
+    func forgetPreview(id: String, folder: URL?, forHome: Bool) async -> ProjectForget.Preview? {
+        guard let brain else { return nil }
+        let store = projectStore
+        return await Task.detached { ProjectForget.preview(id: id, folder: folder, forHome: forHome, brain: brain, store: store) }.value
+    }
+
+    /// Trashes the files AKit wrote in the project (unless `keepFiles`) and its record, then rescans.
+    func forget(_ preview: ProjectForget.Preview, keepFiles: Bool) async throws {
+        guard let brain else {
+            throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
+        }
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current
+        try await ProjectForget.run(preview, keepFiles: keepFiles, brain: brain, home: env.homeDirectory, env: env)
     }
 
     /// Writes the project files (backup first), saves answers in the plan's store, then rescans.

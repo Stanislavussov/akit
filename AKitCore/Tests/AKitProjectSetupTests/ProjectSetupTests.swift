@@ -357,4 +357,70 @@ struct ProjectSetupTests {
         try fm.createDirectory(at: project.appending(path: ".agents/skills/empty"), withIntermediateDirectories: true)
         #expect(ProjectSkills.list(in: project, id: "local/task", store: .brain(brainRoot)).isEmpty)
     }
+
+    @Test func forgettingTrashesOnlyUneditedFilesAndKeepsThemWhenAsked() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let store = ProjectStore.brain(brainRoot)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: store)
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        try write("Projects/task/REVIEW.md", "Edited by hand\n")
+        #expect(ProjectForget.preview(id: "local/other", folder: nil, forHome: false, brain: brain, store: store) == nil)
+
+        let preview = try #require(ProjectForget.preview(id: "local/task", folder: project, forHome: false, brain: brain, store: store))
+        #expect(preview.ownRecord && !preview.brainCopyLeft)
+        #expect(preview.removals.contains("AGENTS.md") && !preview.removals.contains("REVIEW.md"))
+        #expect(preview.kept == ["REVIEW.md"])
+        try await ProjectForget.run(preview, keepFiles: false, brain: brain, home: home, env: env, trash: trash)
+        #expect(read("AGENTS.md") == nil && read("REVIEW.md") == "Edited by hand\n")
+        #expect(ProjectRecords.savedAnswers(id: "local/task", in: store) == nil)
+        #expect(try await git("log", "-1", "--format=%s") == "Forget local/task\n")
+    }
+
+    @Test func forgettingAProjectNotOnThisMacOnlyDropsItsRecord() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let store = ProjectStore.brain(brainRoot)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: store)
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+
+        let preview = try #require(ProjectForget.preview(id: "local/task", folder: nil, forHome: false, brain: brain, store: store))
+        #expect(preview.plan == nil && preview.removals.isEmpty)
+        try await ProjectForget.run(preview, keepFiles: false, brain: brain, home: home, env: env, trash: trash)
+        #expect(read("AGENTS.md") != nil)
+        #expect(!fm.fileExists(atPath: brainRoot.appending(path: "projects/local/task").path))
+    }
+
+    @Test func onAWorkMacForgettingDropsOnlyTheLocalRecordAndLeavesTheBrainCopy() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: .brain(brainRoot))
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        try MachineProfile(kind: .work).save(home: home)
+        let store = ProjectStore.current(brain: brainRoot, home: home)
+        #expect(store.isLocal)
+
+        // Only the brain has the record: this Mac has none of its own, but the files can go.
+        let preview = try #require(ProjectForget.preview(id: "local/task", folder: project, forHome: false, brain: brain, store: store))
+        #expect(!preview.ownRecord && preview.brainCopyLeft && preview.removals.contains("AGENTS.md"))
+        try await ProjectForget.run(preview, keepFiles: false, brain: brain, home: home, env: env, trash: trash)
+        #expect(read("AGENTS.md") == nil)
+        // The lock apply saved locally is forgotten too; the brain copy stays for other Macs.
+        #expect(!fm.fileExists(atPath: store.folder(id: "local/task").path))
+        #expect(fm.fileExists(atPath: brainRoot.appending(path: "projects/local/task").path))
+    }
+
+    @Test func forgettingRefusesAPreviewMadeBeforeTheMacBecameAWorkMac() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let store = ProjectStore.brain(brainRoot)
+        let plan = ProjectSetup.plan(project: project, id: "local/task", answers: answers, brain: brain, store: store)
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        let preview = try #require(ProjectForget.preview(id: "local/task", folder: project, forHome: false, brain: brain, store: store))
+        try MachineProfile(kind: .work).save(home: home)
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectForget.run(preview, keepFiles: true, brain: brain, home: home, env: env, trash: trash)
+        }
+        #expect(fm.fileExists(atPath: brainRoot.appending(path: "projects/local/task").path))
+    }
 }
