@@ -27,7 +27,8 @@ extension ClaudeSessions {
     /// instructions, deferred tools, hook context) and what the conversation called.
     static func overview(of file: URL) throws -> SessionOverview {
         let data = try Data(contentsOf: file, options: .mappedIfSafe)
-        let markers = ["\"type\":\"attachment\"", "\"type\":\"assistant\"", "command-name>", "\"tool_result\""].map { Data($0.utf8) }
+        let markers = ["\"type\":\"attachment\"", "\"type\":\"assistant\"", "command-name>", "\"tool_result\"",
+                       "[Request interrupted by user for tool use]"].map { Data($0.utf8) }
         var reader = FootprintReader()
         for entry in try JSONLines.objects(in: data, where: { line in markers.contains { JSONLines.contains(line, $0) } })
         where !ClaudeLogFormat.isSidechain(entry) {
@@ -54,21 +55,27 @@ struct FootprintReader {
     private var seenCalls = Set<String>()
     private var contexts: [Int] = []
     private var toolCalls: [String: Int] = [:]
+    /// Skill calls by the model (the `Skill` tool) and by the user (`/name`).
     private var skillCalls: [String: Int] = [:]
+    private var userSkillCalls: [String: Int] = [:]
     private var agentCalls: [String: Int] = [:]
-    /// Tool use id → tool name, until its result comes.
-    private var pending: [String: String] = [:]
+    /// Tool use id → tool name and whether it read a secret file, until its result comes.
+    private var pending: [String: (name: String, readsSecret: Bool)] = [:]
     private var outcomeTools: [String: ToolOutcomes.Tool] = [:]
+    /// Tools whose results the latest user entry rejected: Claude Code follows a stopped tool
+    /// call's rejection with `[Request interrupted by user for tool use]`.
+    private var lastRejected: [String] = []
 
     mutating func read(_ entry: Object) {
         switch entry["type"] as? String {
         case "attachment":
             guard let attachment = entry["attachment"] as? Object else { return }
             if attachment["type"] as? String == "prompt_snapshot" {
+                // The first call's: later snapshots (after a compaction or resume) can differ.
+                // The first snapshots often have no tools; the list comes with a later one.
                 let prompt = attachment["systemPrompt"]
-                sections = ((prompt as? [String]) ?? (prompt as? String).map { [$0] }) ?? sections
-                let listed = PromptTool.list(attachment["tools"])
-                if !listed.isEmpty { tools = listed }
+                if sections == nil { sections = (prompt as? [String]) ?? (prompt as? String).map { [$0] } }
+                if tools.isEmpty { tools = PromptTool.list(attachment["tools"]) }
             } else if beforeFirstAnswer {
                 attachments.append(attachment)
             }
@@ -83,7 +90,7 @@ struct FootprintReader {
                 let name = block["name"] as? String ?? ""
                 let input = block["input"] as? Object ?? [:]
                 toolCalls[name, default: 0] += 1
-                if let id = block["id"] as? String { pending[id] = name }
+                if let id = block["id"] as? String { pending[id] = (name, SecretFilter.readsSecretFile(input)) }
                 if name == "Skill", let skill = input["skill"] as? String { skillCalls[skill, default: 0] += 1 }
                 if name == "Agent" || name == "Task" {
                     agentCalls[input["subagent_type"] as? String ?? "general-purpose", default: 0] += 1
@@ -91,16 +98,26 @@ struct FootprintReader {
             }
         case "user":
             guard let message = entry["message"] as? Object else { return }
-            for block in message["content"] as? [Object] ?? [] where block["type"] as? String == "tool_result" {
-                guard let id = block["tool_use_id"] as? String, let name = pending.removeValue(forKey: id) else { continue }
-                let result = JSONLines.text(of: block["content"])
-                let outcome = ToolOutcomes.outcome(tool: name, result: result, isError: block["is_error"] as? Bool == true)
-                record(name, outcome, example: result)
+            let blocks = message["content"] as? [Object] ?? []
+            let results = blocks.filter { $0["type"] as? String == "tool_result" }
+            if !results.isEmpty { lastRejected = [] }
+            for block in results {
+                guard let id = block["tool_use_id"] as? String, let call = pending.removeValue(forKey: id) else { continue }
+                let result = call.readsSecret ? SecretFilter.hiddenOutput : JSONLines.text(of: block["content"])
+                let outcome = ToolOutcomes.outcome(tool: call.name, result: result, isError: block["is_error"] as? Bool == true)
+                record(call.name, outcome, example: result)
+                if outcome == .rejected { lastRejected.append(call.name) }
             }
             guard entry["isMeta"] as? Bool != true else { return }
-            let text = JSONLines.text(of: message["content"])
-            if let command = ClaudeLogFormat.tag("command-name", in: text), command.hasPrefix("/"), command.count > 1 {
-                skillCalls[String(command.dropFirst()), default: 0] += 1
+            let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.hasPrefix("[Request interrupted by user for tool use]") {
+                for tool in lastRejected { move(tool, from: .rejected, to: .interrupted) }
+                lastRejected = []
+            }
+            // Same rule as Insights: a skill run by `/name` is written as `<command-message>…`.
+            if text.hasPrefix("<command-message>"), let command = ClaudeLogFormat.tag("command-name", in: text),
+               command.hasPrefix("/"), command.count > 1 {
+                userSkillCalls[String(command.dropFirst()), default: 0] += 1
             }
         default:
             break
@@ -111,8 +128,20 @@ struct FootprintReader {
         var entry = outcomeTools[tool] ?? ToolOutcomes.Tool(name: tool)
         entry.counts[outcome, default: 0] += 1
         if outcome != .ok, entry.examples[outcome] == nil {
-            if let line = Self.firstLine(example) { entry.examples[outcome] = SecretFilter.masked(String(line.prefix(200))) }
+            // Masked before it is cut, so a cut can't leave part of a secret unmatched.
+            if let line = Self.firstLine(example) { entry.examples[outcome] = String(SecretFilter.masked(line).prefix(200)) }
         }
+        outcomeTools[tool] = entry
+    }
+
+    private mutating func move(_ tool: String, from: ToolOutcomes.Outcome, to: ToolOutcomes.Outcome) {
+        guard var entry = outcomeTools[tool], entry.count(from) > 0 else { return }
+        entry.counts[from]! -= 1
+        if entry.counts[from] == 0 {
+            entry.counts[from] = nil
+            entry.examples[to] = entry.examples[to] ?? entry.examples.removeValue(forKey: from)
+        }
+        entry.counts[to, default: 0] += 1
         outcomeTools[tool] = entry
     }
 
@@ -127,7 +156,7 @@ struct FootprintReader {
     /// Calls without a result count as `noResult`.
     var outcomes: ToolOutcomes {
         var reader = self
-        for name in pending.values { reader.record(name, .noResult) }
+        for call in pending.values { reader.record(call.name, .noResult) }
         return ToolOutcomes(tools: Array(reader.outcomeTools.values))
     }
 
@@ -137,14 +166,15 @@ struct FootprintReader {
         var servers = MCPServers()
 
         for section in sections {
-            parts.append(Part(group: .systemPrompt, name: Self.title(of: section), tokens: TokenEstimate.tokens(section), use: .always))
+            parts.append(Part(group: .systemPrompt, name: SecretFilter.masked(Self.title(of: section)),
+                              tokens: TokenEstimate.tokens(section), use: .always, text: section))
         }
         for tool in tools {
-            let text = tool.name + tool.description + Self.compact(tool.schema)
+            let schema = Self.compact(tool.schema)
             if let server = MCPServers.server(ofTool: tool.name) {
-                servers.add(server, tool: tool.name, text: text)
+                servers.add(server, tool: tool.name, text: tool.name + tool.description + schema)
             } else {
-                parts.append(toolPart(tool.name, text: text))
+                parts.append(toolPart(tool.name, description: tool.description, schema: schema, pretty: tool.schema))
             }
         }
         for attachment in attachments {
@@ -154,9 +184,14 @@ struct FootprintReader {
         return ContextFootprint(harness: .claudeCode, parts: Self.merged(parts), callContexts: contexts)
     }
 
-    private func toolPart(_ name: String, text: String) -> Part {
+    /// A tool of the harness itself (MCP and plugin tools go to their server).
+    private func toolPart(_ name: String, description: String, schema: String, pretty: String? = nil) -> Part {
         let calls = toolCalls[name] ?? 0
-        return Part(group: .tools, name: name, tokens: TokenEstimate.tokens(text), use: calls > 0 ? .used : .unused, calls: calls)
+        let described = TokenEstimate.tokens(name + description), schemaTokens = TokenEstimate.tokens(schema)
+        let detail = schema.isEmpty ? nil : "Description ≈ \(described) tokens · input schema ≈ \(schemaTokens) tokens"
+        let text = description + ((pretty ?? schema).isEmpty ? "" : "\n\nInput schema:\n" + (pretty ?? schema))
+        return Part(group: .tools, name: name, source: "Built into Claude Code", tokens: described + schemaTokens,
+                    use: calls > 0 ? .used : .unused, calls: calls, detail: detail, text: text)
     }
 
     private func parts(of attachment: Object, servers: inout MCPServers) -> [Part] {
@@ -167,26 +202,36 @@ struct FootprintReader {
                 let path = file["path"] as? String
                 let name = path.map { URL(filePath: $0).lastPathComponent } ?? "Instructions"
                 let kind = (file["type"] as? String).map { " · \($0)" } ?? ""
-                return Part(group: .rules, name: name + kind, source: path, tokens: TokenEstimate.tokens(text), use: .always)
+                return Part(group: .rules, name: name + kind, source: path, tokens: TokenEstimate.tokens(text), use: .always, text: text)
             }
         case "skill_listing":
-            return ClaudeLogFormat.listedSkills(attachment).map { skill in
-                let calls = skillCalls.filter { Self.sameSkill($0.key, skill.name) }.values.reduce(0, +)
+            let listed = ClaudeLogFormat.listedSkills(attachment)
+            let names = listed.map(\.name)
+            let byModel = Self.callsBySkill(skillCalls, listed: names)
+            let byUser = Self.callsBySkill(userSkillCalls, listed: names)
+            return listed.map { skill in
+                let calls = byModel[skill.name] ?? 0, userCalls = byUser[skill.name] ?? 0
                 let plugin = skill.name.split(separator: ":").first.map(String.init)
+                // The listing is for the model: a skill only you ran with /name didn't need it.
+                let detail = calls == 0 && userCalls > 0
+                    ? "Only you ran it (/\(skill.name) ×\(userCalls)); the model never needed its description." : nil
                 return Part(group: .skills, name: skill.name, source: skill.name.contains(":") ? plugin.map { "plugin \($0)" } : nil,
-                            tokens: TokenEstimate.tokens(skill.line), use: calls > 0 ? .used : .unused, calls: calls)
+                            tokens: TokenEstimate.tokens(skill.line), use: calls > 0 ? .used : .unused, calls: calls, detail: detail,
+                            text: skill.line)
             }
         case "agent_listing_delta":
             let lines = attachment["addedLines"] as? [String] ?? []
             return (attachment["addedTypes"] as? [String] ?? []).map { type in
                 let line = lines.first { $0.hasPrefix("- \(type):") || $0 == "- \(type)" } ?? type
                 let calls = agentCalls[type] ?? 0
-                return Part(group: .subagents, name: type, tokens: TokenEstimate.tokens(line), use: calls > 0 ? .used : .unused, calls: calls)
+                return Part(group: .subagents, name: type, tokens: TokenEstimate.tokens(line), use: calls > 0 ? .used : .unused, calls: calls,
+                            text: line)
             }
         case "mcp_instructions_delta":
             let names = attachment["addedNames"] as? [String] ?? []
+            let longestFirst = names.sorted { $0.count > $1.count }
             for block in attachment["addedBlocks"] as? [String] ?? [] {
-                let name = names.first { block.hasPrefix("## \($0)") } ?? names.first ?? "MCP"
+                let name = longestFirst.first { block == "## \($0)" || block.hasPrefix("## \($0)\n") } ?? names.first ?? "MCP"
                 servers.add(name, instructions: block)
             }
             return []
@@ -199,8 +244,8 @@ struct FootprintReader {
                 if let server = MCPServers.server(ofTool: name) {
                     servers.add(server, tool: name, text: line)
                 } else {
-                    var part = toolPart(name, text: line)
-                    part.detail = "Deferred: only the name is sent until the model loads the tool."
+                    var part = toolPart(name, description: line == name ? "" : line, schema: "")
+                    part.detail = "Deferred: only the name is sent until the model loads the tool with ToolSearch."
                     parts.append(part)
                 }
             }
@@ -208,19 +253,20 @@ struct FootprintReader {
         case "deferred_tools_record":
             return (attachment["entries"] as? [Object] ?? []).compactMap { entry in
                 guard let name = entry["name"] as? String else { return nil }
-                let text = name + (entry["description"] as? String ?? "") + Self.compact(JSONLines.pretty(entry["input_schema"]))
+                let description = entry["description"] as? String ?? "", pretty = JSONLines.pretty(entry["input_schema"])
                 if let server = MCPServers.server(ofTool: name) {
-                    servers.add(server, tool: name, text: text)
+                    servers.add(server, tool: name, text: name + description + Self.compact(pretty))
                     return nil
                 }
-                return toolPart(name, text: text)
+                return toolPart(name, description: description, schema: Self.compact(pretty), pretty: pretty)
             }
         case "hook_additional_context":
             let text = (attachment["content"] as? [String])?.joined(separator: "\n\n") ?? attachment["content"] as? String ?? ""
-            return [Part(group: .hooks, name: attachment["hookName"] as? String ?? "hook", tokens: TokenEstimate.tokens(text), use: .always)]
+            return [Part(group: .hooks, name: attachment["hookName"] as? String ?? "hook", tokens: TokenEstimate.tokens(text), use: .always,
+                         text: text)]
         default:
             return ClaudeSessions.contextParts(of: attachment, startingAt: 0).map {
-                Part(group: .other, name: $0.title, source: $0.source, tokens: TokenEstimate.tokens($0.text), use: .always)
+                Part(group: .other, name: $0.title, source: $0.source, tokens: TokenEstimate.tokens($0.text), use: .always, text: $0.text)
             }
         }
     }
@@ -233,6 +279,7 @@ struct FootprintReader {
             if var existing = byID[part.id] {
                 existing.tokens += part.tokens
                 existing.detail = existing.detail ?? part.detail
+                existing.text = [existing.text, part.text].compactMap { $0 }.joined(separator: "\n\n")
                 byID[part.id] = existing
             } else {
                 order.append(part.id)
@@ -242,10 +289,20 @@ struct FootprintReader {
         return order.compactMap { byID[$0] }
     }
 
-    /// `oh-my-claudecode:ralph` called as `ralph`, or the other way round.
-    static func sameSkill(_ called: String, _ listed: String) -> Bool {
+    /// Calls per listed skill. A call names the listed skill exactly, or by its base name
+    /// (`ralph` for `omc:ralph`, or the other way round) when only one listed skill has that base.
+    static func callsBySkill(_ calls: [String: Int], listed: [String]) -> [String: Int] {
         func base(_ name: String) -> Substring { name.split(separator: ":").last ?? Substring(name) }
-        return called == listed || (base(called) == base(listed) && (called.contains(":") != listed.contains(":")))
+        var result: [String: Int] = [:]
+        for (called, count) in calls {
+            if listed.contains(called) {
+                result[called, default: 0] += count
+            } else {
+                let matches = listed.filter { base($0) == base(called) }
+                if matches.count == 1 { result[matches[0], default: 0] += count }
+            }
+        }
+        return result
     }
 
     /// A pretty-printed schema as the model gets it: without the indentation.
@@ -269,7 +326,7 @@ struct MCPServers {
         var name: String
         var tokens = 0
         var tools = Set<String>()
-        var hasInstructions = false
+        var instructions: String?
     }
 
     private var servers: [String: Server] = [:]
@@ -302,7 +359,7 @@ struct MCPServers {
 
     /// Instructions carry the display name, which reads better than the tool prefix.
     mutating func add(_ server: String, instructions: String) {
-        edit(server) { $0.tokens += TokenEstimate.tokens(instructions); $0.name = server; $0.hasInstructions = true }
+        edit(server) { $0.tokens += TokenEstimate.tokens(instructions); $0.name = server; $0.instructions = instructions }
     }
 
     func parts(calls: [String: Int]) -> [ContextFootprint.Part] {
@@ -311,7 +368,7 @@ struct MCPServers {
             let called = calls.filter { Self.server(ofTool: $0.key).map(Self.key) == key }
             let total = called.values.reduce(0, +)
             let tools = server.tools.count
-            var detail = "\(tools) tool\(tools == 1 ? "" : "s")" + (server.hasInstructions ? " and instructions" : "")
+            var detail = "\(tools) tool\(tools == 1 ? "" : "s")" + (server.instructions != nil ? " and instructions" : "")
             if !called.isEmpty {
                 let names = called.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(5).map { call in
                     let short = call.key.split(separator: "__").last.map(String.init) ?? call.key
@@ -321,7 +378,9 @@ struct MCPServers {
             }
             return ContextFootprint.Part(group: .mcp, name: server.name, source: "MCP server",
                                          tokens: server.tokens, use: total > 0 ? .used : .unused,
-                                         calls: total, detail: detail)
+                                         calls: total, detail: detail,
+                                         text: ([server.instructions].compactMap { $0 } + ["Tools:\n" + server.tools.sorted().joined(separator: "\n")])
+                                             .joined(separator: "\n\n"))
         }
     }
 }

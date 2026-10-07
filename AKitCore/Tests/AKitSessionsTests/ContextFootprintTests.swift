@@ -47,13 +47,15 @@ struct ContextFootprintTests {
                         "content": "- tdd: " + x400 + "\n- omc:ralph: " + x400 + x400]),
             attachment(["type": "agent_listing_delta", "addedTypes": ["Explore", "planner"],
                         "addedLines": ["- Explore: " + x400, "- planner: " + x400]]),
-            attachment(["type": "mcp_instructions_delta", "addedNames": ["claude-in-chrome"],
+            attachment(["type": "mcp_instructions_delta", "addedNames": ["claude", "claude-in-chrome"],
                         "addedBlocks": ["## claude-in-chrome\n" + x400]]),
             attachment(["type": "deferred_tools_delta", "addedNames": ["mcp__claude-in-chrome__navigate", "CronCreate"],
                         "addedLines": ["mcp__claude-in-chrome__navigate", "CronCreate"]]),
             attachment(["type": "hook_additional_context", "hookName": "SessionStart", "content": [x400]]),
-            ["type": "user", "message": ["content": "<command-name>/ralph</command-name>"]],
-            call("m1", context: 5000, tools: [("Read", [:]), ("mcp__docs__search", [:])]),
+            ["type": "user", "message": ["content": "<command-message>tdd</command-message>\n<command-name>/tdd</command-name>"]],
+            call("m1", context: 5000, tools: [("Read", [:]), ("mcp__docs__search", [:]), ("Skill", ["skill": "ralph"])]),
+            // A later snapshot (after a compaction) is not the first call's.
+            attachment(["type": "prompt_snapshot", "systemPrompt": ["Short"]]),
             call("m1", context: 5000),
             // Attachments after the first answer are conversation, not setup.
             attachment(["type": "hook_additional_context", "hookName": "Later", "content": [x400 + x400 + x400]]),
@@ -74,9 +76,12 @@ struct ContextFootprintTests {
         #expect(part(.tools, "Workflow")?.use == .unused, "only a side chain called it")
         #expect((200...205).contains(part(.tools, "Workflow")?.tokens ?? 0), "name, description and schema")
         #expect(part(.tools, "CronCreate")?.use == .unused)
-        #expect(part(.skills, "omc:ralph")?.use == .used, "/ralph is the plugin's ralph")
+        #expect(part(.skills, "omc:ralph")?.use == .used, "the model's ralph is the plugin's ralph")
         #expect(part(.skills, "omc:ralph")?.source == "plugin omc")
-        #expect(part(.skills, "tdd")?.use == .unused)
+        // Only the user ran it: the model never needed its description.
+        #expect(part(.skills, "tdd")?.use == .unused && part(.skills, "tdd")?.detail?.hasPrefix("Only you ran it") == true)
+        #expect(part(.systemPrompt, "Short") == nil && part(.systemPrompt, "Tone")?.text?.hasPrefix("Tone") == true)
+        #expect(part(.tools, "Workflow")?.source == "Built into Claude Code" && part(.tools, "Workflow")?.text?.hasPrefix("xxx") == true)
         #expect(part(.subagents, "Explore")?.use == .used && part(.subagents, "planner")?.use == .unused)
         #expect(part(.rules, "CLAUDE.md · Project")?.use == .always && part(.rules, "CLAUDE.md · Project")?.source == "/work/CLAUDE.md")
         #expect(part(.hooks, "SessionStart")?.use == .always)
@@ -86,6 +91,7 @@ struct ContextFootprintTests {
         #expect(part(.mcp, "docs")?.use == .used && part(.mcp, "docs")?.calls == 1)
         let chrome = try #require(part(.mcp, "claude-in-chrome"))
         #expect(chrome.use == .unused && chrome.detail?.hasPrefix("1 tool and instructions") == true)
+        #expect(part(.mcp, "claude") == nil, "the longest matching name gets the instructions")
     }
 
     @Test func sharesAreOfTheFirstCallAndOfTheWholeSession() throws {
@@ -129,29 +135,36 @@ struct ContextFootprintTests {
 
     @Test func toolCallsEndInKnownOutcomes() throws {
         let file = folder.appending(path: "t.jsonl")
+        // A secret file's output never becomes an example.
+        let secret = call("c", context: 300, tools: [("Bash", ["command": "grep KEY .env; false"])])
         let lines: [[String: Any]] = [
             call("a", context: 100, tools: [("Bash", [:]), ("Bash", [:]), ("Edit", [:]), ("Read", [:])]),
             result("a-0", "ok", error: false),
-            result("a-1", "Exit code 1\nerror: build failed"),
+            result("a-1", "Exit code 1\nerror: build failed\nTimeout: 5000ms, no such file"),
             result("a-2", "<tool_use_error>String to replace not found in file.</tool_use_error>"),
             result("a-3", "The user doesn't want to proceed with this tool use."),
+            // Claude Code writes a stopped call as a rejection followed by this line.
+            ["type": "user", "message": ["content": [["type": "text", "text": "[Request interrupted by user for tool use]"]]]],
             call("b", context: 200, tools: [("WebFetch", [:]), ("mcp__docs__search", [:]), ("Read", [:])]),
             result("b-0", "Request timed out after 30s"),
-            result("b-1", "[Request interrupted by user for tool use]"),
+            result("b-1", "The user doesn't want to proceed with this tool use. The tool use was rejected."),
             // b-2 never got a result.
+            secret,
+            result("c-0", "Exit code 1\nKEY=abc"),
         ]
         let text = try lines.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n")
         try Data(text.utf8).write(to: file)
         let tools = try ClaudeSessions.overview(of: file).tools
         func tool(_ name: String) -> ToolOutcomes.Tool? { tools.tools.first { $0.name == name } }
-        #expect(tools.calls == 7 && tools.tools.first?.name == "Bash", "most calls first, then by name")
-        #expect(tool("Bash")?.count(.ok) == 1 && tool("Bash")?.count(.commandFailed) == 1)
+        #expect(tools.calls == 8 && tools.tools.first?.name == "Bash", "most calls first, then by name")
+        #expect(tool("Bash")?.count(.ok) == 1 && tool("Bash")?.count(.commandFailed) == 2, "whatever the output mentions")
         #expect(tool("Bash")?.examples[.commandFailed] == "Exit code 1: error: build failed")
         #expect(tool("Edit")?.count(.inputMistake) == 1)
-        #expect(tool("Read")?.count(.rejected) == 1 && tool("Read")?.count(.noResult) == 1)
+        #expect(tool("Read")?.count(.interrupted) == 1 && tool("Read")?.count(.noResult) == 1)
         #expect(tool("WebFetch")?.count(.transient) == 1)
-        #expect(tool("mcp__docs__search")?.count(.interrupted) == 1 && tool("mcp__docs__search")?.displayName == "docs: search")
-        #expect(tools.failed == 3 && tools.deterministicFailures == 2)
-        #expect(abs(tools.share(tools.failed) - 3.0 / 7) < 0.0001)
+        #expect(tool("mcp__docs__search")?.count(.rejected) == 1 && tool("mcp__docs__search")?.displayName == "docs: search")
+        #expect(tools.failed == 4 && tools.deterministicFailures == 3)
+        #expect(abs(tools.share(tools.failed) - 4.0 / 8) < 0.0001)
+        #expect(tool("Bash")?.count(.commandFailed) == 2 && tool("Bash")?.examples[.commandFailed]?.contains("KEY") == false)
     }
 }

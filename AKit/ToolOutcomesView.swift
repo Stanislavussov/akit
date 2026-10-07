@@ -40,7 +40,7 @@ struct ToolOutcomesView: View {
             tile("Failed", ContextMapView.percent(outcomes.share(outcomes.failed)),
                  "\(outcomes.failed) calls · \(outcomes.deterministicFailures) deterministic", color: outcomes.failed > 0 ? Self.color(.inputMistake) : .secondary)
             tile("Rejected", ContextMapView.percent(outcomes.share(outcomes.count(.rejected))),
-                 "\(outcomes.count(.rejected)) by you, a rule or a hook", color: outcomes.count(.rejected) > 0 ? Self.color(.rejected) : .secondary)
+                 "\(outcomes.count(.rejected)) by you or a permission rule", color: outcomes.count(.rejected) > 0 ? Self.color(.rejected) : .secondary)
             tile("Interrupted", ContextMapView.percent(outcomes.share(outcomes.count(.interrupted))),
                  "\(outcomes.count(.interrupted)) calls", color: .secondary)
         }

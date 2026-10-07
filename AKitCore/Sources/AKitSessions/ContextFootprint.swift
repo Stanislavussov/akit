@@ -1,3 +1,4 @@
+import AKitFoundation
 import AKitModel
 import Foundation
 
@@ -53,10 +54,17 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
         public var calls: Int
         /// What it holds, e.g. the tools of an MCP server and which of them were called.
         public var detail: String?
+        /// The text the model gets, secrets masked. Shown on screen, never written to a file.
+        public var text: String?
 
         public var id: String { "\(group.rawValue)|\(name)" }
 
-        public init(group: Group, name: String, source: String? = nil, tokens: Int, use: Use, calls: Int = 0, detail: String? = nil) {
+        enum CodingKeys: String, CodingKey {
+            case group, name, source, tokens, use, calls, detail
+        }
+
+        public init(group: Group, name: String, source: String? = nil, tokens: Int, use: Use, calls: Int = 0, detail: String? = nil,
+                    text: String? = nil) {
             self.group = group
             self.name = name
             self.source = source
@@ -64,6 +72,7 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
             self.use = use
             self.calls = calls
             self.detail = detail
+            self.text = text.map(SecretFilter.masked)
         }
     }
 
@@ -90,6 +99,10 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
 
     public func tokens(_ use: Use) -> Int { parts.filter { $0.use == use }.reduce(0) { $0 + $1.tokens } }
     public var setupTokens: Int { parts.filter { $0.use != .conversation }.reduce(0) { $0 + $1.tokens } }
+
+    /// A key that matches an MCP server's display name (`claude.ai Claude Docs`), its tool
+    /// prefix (`claude_ai_Claude_Docs`) and its name in a config file.
+    public static func serverKey(_ name: String) -> String { MCPServers.key(name) }
 
     /// Part of the first call, 0…1.
     public func shareOfFirstCall(_ tokens: Int) -> Double {
@@ -125,6 +138,7 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
     }
 
     /// Parts biggest first; their sum is the first call's context when it is known.
+    /// Merged parts keep their texts one after another.
     static func fitted(_ parts: [Part], firstCall: Int?) -> [Part] {
         var parts = parts.filter { $0.tokens > 0 && $0.use != .conversation }
         let estimated = parts.reduce(0) { $0 + $1.tokens }
@@ -132,6 +146,11 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
             if estimated > firstCall {
                 let scale = Double(firstCall) / Double(estimated)
                 parts = parts.map { var part = $0; part.tokens = Int(Double(part.tokens) * scale); return part }
+                    .filter { $0.tokens > 0 }
+                // Rounding down leaves a few tokens over: they go to the biggest part.
+                if let biggest = parts.indices.max(by: { parts[$0].tokens < parts[$1].tokens }) {
+                    parts[biggest].tokens += firstCall - parts.reduce(0) { $0 + $1.tokens }
+                }
             }
             // After scaling down, the rest is only rounding.
             let rest = estimated > firstCall ? 0 : firstCall - estimated

@@ -1,5 +1,7 @@
 import AKitFoundation
+import AKitHarnesses
 import AKitLab
+import AKitMCP
 import AKitSessions
 import AppKit
 import Charts
@@ -20,7 +22,7 @@ struct SessionOverviewView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         if let footprint = overview.footprint {
-                            ContextMapView(footprint: footprint)
+                            ContextMapView(footprint: footprint, project: session.project)
                         } else {
                             Label("This session has no recorded system prompt (older Claude Code versions don't write one), so its context can't be split into parts.",
                                   systemImage: "square.grid.3x3.square")
@@ -66,6 +68,8 @@ struct SessionOverviewView: View {
 /// unused parts.
 struct ContextMapView: View {
     let footprint: ContextFootprint
+    /// The session's folder: where project rules, skills and settings are.
+    var project: URL?
     @State private var selected: ContextMapView.Block?
     @State private var asShare = true
 
@@ -74,15 +78,28 @@ struct ContextMapView: View {
             headline
             VStack(alignment: .leading, spacing: 8) {
                 Text("First call").font(.headline)
-                ContextTreemap(blocks: blocks, footprint: footprint, selected: $selected)
-                    .frame(height: 360)
-                legend
-                if let selected {
-                    detail(selected)
-                } else {
-                    Text("Click a block to see what it is, where it comes from and how much of the session it took.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ContextTreemap(blocks: blocks, footprint: footprint, selected: $selected)
+                            .frame(height: 420)
+                        legend
+                    }
+                    .frame(minWidth: 420, maxWidth: .infinity)
+                    Group {
+                        if let selected {
+                            ScrollView {
+                                ContextPartDetail(block: selected, footprint: footprint, project: project) { self.selected = Block($0) }
+                                    .id(selected.id)
+                            }
+                        } else {
+                            Text("Click a block to see what it is, the text the model gets, the file that defines it "
+                                 + "and how to cut it.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 4)
+                        }
+                    }
+                    .frame(width: 380, height: 450, alignment: .topLeading)
                 }
             }
             if footprint.callContexts.count > 1 { calls.id("calls") }
@@ -92,6 +109,11 @@ struct ContextMapView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        // Snapshots: `--select <part name>` opens a block.
+        .task {
+            guard let name = DebugSnapshot.options?.select, selected == nil else { return }
+            selected = blocks.first { $0.name == name }
         }
     }
 
@@ -131,52 +153,6 @@ struct ContextMapView: View {
             }
         }
         .font(.caption)
-    }
-
-    // MARK: Selection
-
-    private func detail(_ block: Block) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(block.name).font(.headline)
-                    Text(block.group.title).foregroundStyle(.secondary)
-                    Spacer()
-                    if let path = block.source, path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) {
-                        Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(filePath: path)]) }
-                    }
-                }
-                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 3) {
-                    row("Size", "≈ \(UsageText.full(block.tokens)) tokens in every call")
-                    row("Share", "\(Self.percent(footprint.shareOfFirstCall(block.tokens))) of the first call · "
-                        + "\(Self.percent(footprint.shareOfSession(block.tokens))) of all context sent")
-                    row("Use", useText(block))
-                    if let source = block.source { row("From", source) }
-                    if let detail = block.detail { row("Holds", detail) }
-                    if block.use == .unused, let hint = Self.hint(block.group) { row("To cut", hint) }
-                }
-                .textSelection(.enabled)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(maxWidth: 720, alignment: .leading)
-    }
-
-    private func useText(_ block: Block) -> String {
-        switch block.use {
-        case .used: "Called \(block.calls) time\(block.calls == 1 ? "" : "s") in this session"
-        case .unused: block.count > 1 ? "None of them was called in this session" : "Never called in this session"
-        case .always: "Sent with every call; whether the model followed it isn't recorded"
-        case .conversation: "Not setup: what this session itself sent"
-        }
-    }
-
-    private func row(_ label: String, _ value: String) -> some View {
-        GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
-            Text(value).fixedSize(horizontal: false, vertical: true)
-        }
-        .font(.callout)
     }
 
     // MARK: Calls
@@ -269,7 +245,10 @@ struct ContextMapView: View {
         var calls = 0
         var source: String?
         var detail: String?
+        var text: String?
         var count = 1
+        /// The parts of a block of small ones, biggest first.
+        var members: [ContextFootprint.Part] = []
 
         init(_ part: ContextFootprint.Part) {
             id = part.id
@@ -280,6 +259,7 @@ struct ContextMapView: View {
             calls = part.calls
             source = part.source
             detail = part.detail
+            text = part.text
         }
 
         init(group: ContextFootprint.Group, use: ContextFootprint.Use, parts: [ContextFootprint.Part]) {
@@ -289,7 +269,7 @@ struct ContextMapView: View {
             tokens = parts.reduce(0) { $0 + $1.tokens }
             self.use = use
             calls = parts.reduce(0) { $0 + $1.calls }
-            detail = parts.map(\.name).joined(separator: ", ")
+            members = parts.sorted { $0.tokens > $1.tokens }
             count = parts.count
         }
     }
@@ -334,17 +314,6 @@ struct ContextMapView: View {
         case .used: "Used"
         case .always: "Always loaded"
         case .conversation: "Conversation"
-        }
-    }
-
-    /// Where an unused part can be cut.
-    static func hint(_ group: ContextFootprint.Group) -> String? {
-        switch group {
-        case .tools: "A tool of the harness or a plugin; a plugin's tools go away with the plugin."
-        case .mcp: "Remove the server or turn it off for projects that don't need it (MCP screen)."
-        case .skills: "Each listed skill's description is sent with every call. Make the skill manual or remove its plugin (Insights recommends this across many sessions)."
-        case .subagents: "A subagent type from a plugin or an agents folder; its line is sent with every call."
-        default: nil
         }
     }
 }
@@ -449,5 +418,167 @@ struct CallsChart: View {
 
     private func label(_ number: Double) -> Text {
         Text(asShare ? MetricsText.percent(number) : UsageText.short(Int(number)))
+    }
+}
+
+/// What a selected block is: its numbers, its text, the files that define it and how to cut it.
+private struct ContextPartDetail: View {
+    @Environment(AppModel.self) private var model
+    let block: ContextMapView.Block
+    let footprint: ContextFootprint
+    let project: URL?
+    /// Opens one part of a block of small ones.
+    let open: (ContextFootprint.Part) -> Void
+    @State private var files: [URL] = []
+    @State private var showText = false
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(block.name).font(.headline).textSelection(.enabled)
+                    Text(block.group.title).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 3) {
+                    row("Size", "≈ \(UsageText.full(block.tokens)) tokens in every call")
+                    row("Share", "\(ContextMapView.percent(footprint.shareOfFirstCall(block.tokens))) of the first call · "
+                        + "\(ContextMapView.percent(footprint.shareOfSession(block.tokens))) of all context sent")
+                    row("Use", useText)
+                    if let source = block.source { row("From", source) }
+                    if let detail = block.detail { row("Holds", detail) }
+                    if let hint { row(block.use == .unused ? "To cut" : "To change", hint) }
+                }
+                .textSelection(.enabled)
+                if !block.members.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(block.members) { part in
+                            HStack {
+                                Button(part.name) { open(part) }.buttonStyle(.link).lineLimit(1)
+                                Spacer()
+                                Text("≈ \(UsageText.short(part.tokens))").foregroundStyle(.secondary).monospacedDigit()
+                            }
+                            .font(.callout)
+                        }
+                    }
+                }
+                if !files.isEmpty || server != nil {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(files, id: \.self) { file in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(file.tildePath).font(.caption.monospaced()).lineLimit(2).truncationMode(.middle)
+                                    .textSelection(.enabled)
+                                HStack(spacing: 8) {
+                                    Button("Open") { NSWorkspace.shared.open(file) }
+                                        .help("Open the file in its default app to edit it")
+                                    Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                        if let server {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Defined in \(server.file.tildePath)").font(.caption).foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    Button("Show in MCP Servers") { model.section = .mcp }
+                                    Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([server.file]) }
+                                        .help("The file may hold keys, so AKit doesn't open it")
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                if let text = block.text, !text.isEmpty {
+                    DisclosureGroup("Text sent to the model (\(UsageText.full(text.count)) characters)", isExpanded: $showText) {
+                        ScrollView {
+                            Text(text)
+                                .font(.callout.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                        }
+                        .frame(maxHeight: 280)
+                        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task(id: block.id) {
+            let block = block, project = project, home = HarnessEnvironment.current.homeDirectory
+            files = await Task.detached { Self.files(of: block, home: home, project: project) }.value
+        }
+    }
+
+    /// The files that define the part.
+    nonisolated static func files(of block: ContextMapView.Block, home: URL, project: URL?) -> [URL] {
+        guard block.count == 1 else { return [] }
+        switch block.group {
+        case .rules:
+            return block.source.map { [URL(filePath: $0)] }?.filter { FileManager.default.fileExists(atPath: $0.path) } ?? []
+        case .skills: return ClaudeSetupFiles.files(.skill, name: block.name, home: home, project: project)
+        case .subagents: return ClaudeSetupFiles.files(.subagent, name: block.name, home: home, project: project)
+        case .hooks: return ClaudeSetupFiles.files(.hook, name: block.name, home: home, project: project)
+        case .mcp: return ClaudeSetupFiles.files(.mcpServer, name: block.name, home: home, project: project)
+        case .tools: return ClaudeSetupFiles.files(.settings, name: block.name, home: home, project: project)
+        case .systemPrompt, .other, .conversation: return []
+        }
+    }
+
+    /// The MCP server as AKit's MCP Servers screen knows it.
+    private var server: MCPServer? {
+        guard block.group == .mcp, block.count == 1 else { return nil }
+        let key = ContextFootprint.serverKey(block.name)
+        return model.mcpServers.first { ContextFootprint.serverKey($0.name) == key }
+    }
+
+    private var useText: String {
+        switch block.use {
+        case .used: "Called \(block.calls) time\(block.calls == 1 ? "" : "s") in this session"
+        case .unused: block.count > 1 ? "None of them was called in this session" : "Never called in this session"
+        case .always: "Sent with every call; whether the model followed it isn't recorded"
+        case .conversation: "Not setup: what this session itself sent"
+        }
+    }
+
+    /// How to turn the part off or shrink it. Check the next session's Overview to see that it went.
+    private var hint: String? {
+        switch block.group {
+        case .tools where block.name == "Artifact":
+            "Turn artifacts off: \"enableArtifact\": false in ~/.claude/settings.json, /config → Artifacts, "
+                + "or CLAUDE_CODE_DISABLE_ARTIFACT=1 (code.claude.com/docs/en/artifacts)."
+        case .tools:
+            "A tool built into Claude Code. Deny it in settings.json (\"permissions\": {\"deny\": [\"\(block.name)\"]}) or with "
+                + "--disallowedTools. The docs don't say whether that removes its definition from the request: "
+                + "check the next session's Overview."
+        case .mcp:
+            "Remove the server, or turn it off for projects that don't need it. Its tools are deferred: "
+                + "only their names and the instructions are sent until the model loads one."
+        case .skills where block.name.contains(":"):
+            "Each listed skill's description is sent with every call. This one comes with a plugin, and an update "
+                + "replaces the plugin's files: turn the plugin off (/plugin) if you don't need its skills here."
+        case .skills:
+            "Each listed skill's description is sent with every call. Make the skill manual "
+                + "(disable-model-invocation: true in its SKILL.md) or remove it; Insights recommends this across many sessions."
+        case .subagents:
+            "Its line in the subagent list is sent with every call. Remove the file, or the plugin it comes with."
+        case .rules:
+            "Sent with every call: shorten it, or move rarely needed parts into a skill."
+        case .hooks:
+            "Its output is added to the context. Change or remove the hook in the file below."
+        case .systemPrompt:
+            "Part of Claude Code's own prompt; some sections come with features or plugins (output styles, MCP servers, browser tools)."
+        case .other, .conversation:
+            nil
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            Text(value).fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
     }
 }

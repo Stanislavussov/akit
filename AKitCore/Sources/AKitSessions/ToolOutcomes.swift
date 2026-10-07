@@ -6,14 +6,14 @@ import Foundation
 public struct ToolOutcomes: Codable, Sendable, Hashable {
     public enum Outcome: String, Codable, CaseIterable, Sendable, CodingKeyRepresentable {
         case ok
-        /// The user, a permission rule, a hook or the auto mode classifier said no.
+        /// The user (saying what to do instead), a permission rule or the auto mode classifier said no.
         case rejected
-        /// The user stopped it.
+        /// The user stopped it (Esc or "No" at its permission prompt without saying what to do instead).
         case interrupted
         /// The input was wrong: a validation error, a missing file, an edit string that isn't
         /// there or isn't unique, a file not read first.
         case inputMistake
-        /// A shell command ran and failed (non-zero exit).
+        /// A shell command failed (non-zero exit or not run).
         case commandFailed
         /// A timeout, the network, a rate limit or an overloaded service.
         case transient
@@ -74,14 +74,17 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
     public func share(_ count: Int) -> Double { calls > 0 ? Double(count) / Double(calls) : 0 }
 
     /// The outcome of one tool result.
+    /// A failed shell command is `commandFailed` whatever its output says (a test log may
+    /// mention a timeout or a missing file). Other failures are read from the first lines only:
+    /// the tool's own error message, not the text it returned.
     public static func outcome(tool: String, result: String, isError: Bool) -> Outcome {
-        let text = result.lowercased()
-        if text.hasPrefix("[request interrupted by user") { return .interrupted }
         guard isError else { return .ok }
+        if result.hasPrefix("[Request interrupted by user") { return .interrupted }
         if isRejection(result) { return .rejected }
-        if transientMarkers.contains(where: text.contains) { return .transient }
-        if inputMarkers.contains(where: text.contains) { return .inputMistake }
-        if tool == "Bash" || text.contains("exit code") { return .commandFailed }
+        if tool == "Bash" || result.hasPrefix("Exit code") { return .commandFailed }
+        let head = result.split(whereSeparator: \.isNewline).prefix(2).joined(separator: " ").lowercased()
+        if transientMarkers.contains(where: head.contains) { return .transient }
+        if inputMarkers.contains(where: head.contains) { return .inputMistake }
         return .otherError
     }
 
