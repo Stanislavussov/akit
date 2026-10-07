@@ -84,12 +84,49 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
     /// The setup was read now, not from the session (Pi keeps no copy): it may differ from
     /// what the session had.
     public var capturedNow: Bool
+    /// What each call cost by token kind, as the harness recorded it (Pi); nil when it records
+    /// no cost per call (Claude Code). Same order as `callContexts`.
+    public var callCosts: [CallCost]?
+
+    /// One call's recorded tokens and dollars by kind.
+    public struct CallCost: Codable, Sendable, Hashable {
+        public var input = 0, cacheRead = 0, cacheWrite = 0
+        public var inputCost = 0.0, cacheReadCost = 0.0, cacheWriteCost = 0.0, outputCost = 0.0
+
+        public init(input: Int = 0, cacheRead: Int = 0, cacheWrite: Int = 0, inputCost: Double = 0, cacheReadCost: Double = 0,
+                    cacheWriteCost: Double = 0, outputCost: Double = 0) {
+            self.input = input
+            self.cacheRead = cacheRead
+            self.cacheWrite = cacheWrite
+            self.inputCost = inputCost
+            self.cacheReadCost = cacheReadCost
+            self.cacheWriteCost = cacheWriteCost
+            self.outputCost = outputCost
+        }
+
+        public var total: Double { inputCost + cacheReadCost + cacheWriteCost + outputCost }
+
+        /// The dollars of the call's first `tokens` tokens. The setup sits at the start of every
+        /// call, so it is read from the cache first, then written to it, then sent fresh, each at
+        /// the price this call recorded for that kind.
+        func costOfPrefix(_ tokens: Int) -> Double {
+            var left = Double(tokens), dollars = 0.0
+            for (count, cost) in [(cacheRead, cacheReadCost), (cacheWrite, cacheWriteCost), (input, inputCost)] where count > 0 && left > 0 {
+                let taken = min(left, Double(count))
+                dollars += cost * taken / Double(count)
+                left -= taken
+            }
+            return dollars
+        }
+    }
 
     /// `restNote`: what else the rest of the first call holds for this harness.
-    public init(harness: HarnessID, parts: [Part], callContexts: [Int], capturedNow: Bool = false, restNote: String? = nil) {
+    public init(harness: HarnessID, parts: [Part], callContexts: [Int], capturedNow: Bool = false, restNote: String? = nil,
+                callCosts: [CallCost]? = nil) {
         self.harness = harness
         self.callContexts = callContexts
         self.capturedNow = capturedNow
+        self.callCosts = callCosts
         self.parts = Self.fitted(parts, firstCall: callContexts.first, restNote: restNote)
     }
 
@@ -127,6 +164,31 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
         let setup = setupTokens
         guard setup > 0 else { return Double(callContexts.count) }
         return callContexts.reduce(0) { $0 + min(1, Double($1) / Double(setup)) }
+    }
+
+    /// The session's recorded cost; nil when the harness records none per call, 0 when it
+    /// recorded $0 (a subscription provider).
+    public var recordedCost: Double? { callCosts.map { $0.reduce(0) { $0 + $1.total } } }
+
+    /// Dollars of a setup part of this size over the session: in every call, its share of the
+    /// setup times what the setup cost there. nil without recorded costs.
+    public func sessionCost(_ tokens: Int) -> Double? {
+        guard let callCosts, callCosts.count == callContexts.count else { return nil }
+        let setup = setupTokens
+        guard setup > 0 else { return 0 }
+        var dollars = 0.0
+        for (context, cost) in zip(callContexts, callCosts) {
+            let held = min(setup, context)
+            dollars += cost.costOfPrefix(held) * Double(tokens) / Double(setup)
+        }
+        return dollars
+    }
+
+    /// A part's dollars over the session; the conversation part is everything else the session
+    /// cost (its own context and every answer), so the parts add up to the recorded cost.
+    public func sessionCost(of part: Part) -> Double? {
+        guard let total = recordedCost else { return nil }
+        return part.use == .conversation ? max(0, total - (sessionCost(setupTokens) ?? 0)) : sessionCost(part.tokens)
     }
 
     /// A part's tokens over the whole session; the conversation part is what the calls sent
