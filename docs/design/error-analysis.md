@@ -380,7 +380,10 @@ Built 2026-10-07 for Pi; Claude Code waits (the user asked for Pi only for now).
 - **"Saved" is true.** The extension waits for `akit rate --harness pi --rating good|bad`
   (stdin: session id, cwd, log path, `anchor` = the run's last entry id, `text`) and says
   `✅ Saved` only on exit 0; otherwise `⚠️ Not saved: <reason>`. An akit from before ratings
-  exits 2 on the unknown flags: the extension says to update akit.
+  exits 2 on the unknown command `rate`: the extension says to update akit. Ratings need Pi
+  0.80.4 or newer (`agent_settled`); the extension imports no Pi package, so on an older Pi
+  session capture still loads. A second press doesn't rate the run twice ("Already rated"),
+  and `pi --no-session` shows no rating line.
 - **Not one token in the next request.** No messages, tools or prompt changes: a custom
   entry (`appendEntry`, shown in the transcript by an entry renderer) and a widget only.
   Checked 2026-10-07 against a local fake model: three requests with ratings between them

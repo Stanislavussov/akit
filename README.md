@@ -85,7 +85,7 @@ brain, adds agents installed since, and puts new core skills into `~`. After an 
 restart Pi (or run `/reload` in it): a running Pi keeps the old extension.
 
 > [!IMPORTANT]
-> **Rating a Pi run** uses Option keys: after a run, ⌥G rates it good, ⌥X bad, ⌥R with a
+> **Rating a Pi run** (Pi 0.80.4 or newer) uses Option keys: after a run, ⌥G rates it good, ⌥X bad, ⌥R with a
 > comment. Your terminal must send Option as Meta (iTerm2: Profiles → Keys → Left Option
 > key: Esc+; Terminal: Settings → Profiles → Keyboard → Use Option as Meta key). The ratings
 > show on the Sessions screen; the model never sees them.

@@ -65,6 +65,11 @@ struct RatingTests {
         let long = await rate("--harness", "pi", "--rating", "bad",
                               stdin: try input(["session_id": "s1", "text": String(repeating: "x", count: 5000)]))
         #expect(long.code == 0 && Ratings.spooled(home: home).first?.text?.count == RateRun.maxText)
+        // Cut by bytes: a long Cyrillic comment keeps the log path, so the rating still shows.
+        let cyrillic = await rate("--harness", "pi", "--rating", "bad",
+                                  stdin: try input(["session_id": "s2", "transcript_path": transcript, "text": String(repeating: "ж", count: 3000)]))
+        let saved = try #require(Ratings.spooled(home: home).first { $0.sessionID == "s2" })
+        #expect(cyrillic.code == 0 && saved.transcript == transcript && (saved.text?.utf8.count ?? 0) <= RateRun.maxText)
     }
 
     /// The extension's contract: a widget after the run, the three Option keys, `akit rate` waited
@@ -75,7 +80,9 @@ struct RatingTests {
                        "appendEntry(RATING", "registerEntryRenderer", "✅ Saved", "⚠️ Not saved", "record-session"] {
             #expect(text.contains(needle), "\(needle)")
         }
-        for banned in ["sendMessage", "sendUserMessage", "registerTool", "before_agent_start", "setActiveTools", "\"context\""] {
+        // No Pi package import either: the file loads on any Pi, and session capture with it.
+        for banned in ["sendMessage", "sendUserMessage", "registerTool", "before_agent_start", "setActiveTools", "\"context\"",
+                       "@earendil-works", "@mariozechner"] {
             #expect(!text.contains(banned), "\(banned)")
         }
         // Option keys Pi itself uses (word left, delete word, …) are left alone, and so are its reserved Ctrl keys.

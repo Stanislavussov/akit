@@ -9,7 +9,8 @@ import Foundation
 /// shows the one stderr line otherwise. Nothing goes to the model either way.
 public enum RateRun {
     public static let ratings: Set<String> = ["good", "bad"]
-    /// A comment is one line in the harness; a longer one is cut here.
+    /// A comment is one line in the harness; a longer one is cut here, to this many UTF-8 bytes,
+    /// so the spool line stays under `Spool.maxLine` and keeps its log path.
     public static let maxText = 2000
 
     public struct Failure: Error, LocalizedError {
@@ -64,7 +65,9 @@ public enum RateRun {
         line["cwd"] = text("cwd")
         line["anchor"] = text("anchor").map { String($0.prefix(256)) }
         if let comment = text("text")?.trimmingCharacters(in: .whitespacesAndNewlines), !comment.isEmpty {
-            line["text"] = String(comment.prefix(maxText))
+            var cut = Substring(comment)
+            while cut.utf8.count > maxText { cut = cut.dropLast() }
+            line["text"] = String(cut)
         }
         return line
     }
