@@ -80,7 +80,8 @@ struct SessionsView: View {
 
     private func list(_ names: [String: String]) -> some View {
         List(filtered, selection: $selection) { session in
-            SessionRow(session: session, projectName: projectID(of: session).flatMap { names[$0] })
+            SessionRow(session: session, projectName: projectID(of: session).flatMap { names[$0] },
+                       ratings: model.ratings[session.file.path] ?? [])
                 .tag(session.id)
                 .contextMenu {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([session.file]) }
@@ -167,12 +168,17 @@ private struct SessionRow: View {
     let session: SessionSummary
     /// Short name of the session's project, if it has one.
     let projectName: String?
+    let ratings: [Ratings.Rating]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(session.title).fontWeight(.medium).lineLimit(2)
                 Spacer()
+                if !ratings.isEmpty {
+                    Text(RatingText.counts(ratings)).font(.caption)
+                        .help(RatingText.list(ratings))
+                }
                 HarnessBadge(harness: session.harness)
             }
             HStack(spacing: 6) {
@@ -307,6 +313,12 @@ private struct SessionDetailView: View {
                 row("File", "\(session.file.tildePath) · \(session.size.formatted(.byteCount(style: .file)))", monospaced: true)
                 if let version = session.harnessVersion {
                     row("Version", version)
+                }
+                if let ratings = model.ratings[session.file.path], !ratings.isEmpty {
+                    GridRow {
+                        Text("Ratings").foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                        Text(RatingText.list(ratings)).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .font(.callout)
@@ -479,5 +491,23 @@ private struct TranscriptRow: View {
             Collapsible(title: title, icon: "info.circle", tint: .orange, text: item.text, monospaced: false,
                         startsExpanded: item.text.count < 200)
         }
+    }
+}
+
+/// Ratings of a session's runs, as the Pi extension shows them: 👍 good, 👎 bad, the comment in «».
+enum RatingText {
+    /// `👍 2  👎 1`.
+    static func counts(_ ratings: [Ratings.Rating]) -> String {
+        let good = ratings.filter(\.isGood).count, bad = ratings.count - good
+        return [good > 0 ? "👍 \(good)" : nil, bad > 0 ? "👎 \(bad)" : nil].compactMap { $0 }.joined(separator: "  ")
+    }
+
+    /// One line per rating: time, face and comment.
+    static func list(_ ratings: [Ratings.Rating]) -> String {
+        ratings.map { rating in
+            "\(rating.date.formatted(date: .omitted, time: .shortened))  \(rating.isGood ? "👍" : "👎")"
+                + (rating.text.map { " «\($0)»" } ?? "")
+        }
+        .joined(separator: "\n")
     }
 }

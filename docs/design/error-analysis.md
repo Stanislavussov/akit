@@ -366,6 +366,37 @@ report was inaccurate in 22.58%. METR saw reward hacking in about 0.7% of runs.
 - **Confirmed modes** with familiar exemplars aren't re-checked.
 - **First UI**: a table with rename / merge / reject / move-note actions.
 
+### Quick ratings after a run (Pi)
+
+Built 2026-10-07 for Pi; Claude Code waits (the user asked for Pi only for now).
+
+- **Input in the harness, everything else in AKit.** The rating lives seconds; switching to
+  the app for it would mean rating only big failures. The Pi extension (`akit-record.ts`,
+  written by `akit insights install` / `akit setup`) shows `rate last run:  👍 ⌥G   👎 ⌥X
+  💬 ⌥R` under the editor after `agent_settled`; the next prompt hides it. ⌥R asks for one
+  line of comment, then good or bad. Ctrl keys were the first wish, but Pi reserves ⌃G
+  (external editor) and uses ⌃B and ⌃R; the Option keys need "Option as Meta" in the
+  terminal.
+- **"Saved" is true.** The extension waits for `akit rate --harness pi --rating good|bad`
+  (stdin: session id, cwd, log path, `anchor` = the run's last entry id, `text`) and says
+  `✅ Saved` only on exit 0; otherwise `⚠️ Not saved: <reason>`. An akit from before ratings
+  exits 2 on the unknown flags: the extension says to update akit.
+- **Not one token in the next request.** No messages, tools or prompt changes: a custom
+  entry (`appendEntry`, shown in the transcript by an entry renderer) and a widget only.
+  Checked 2026-10-07 against a local fake model: three requests with ratings between them
+  had the same system prompt and tools, each request started with the previous one
+  unchanged, and no rating text reached any of them.
+- **Storage.** A `rating` spool line → the index's `ratings` table (local only; usage
+  summaries never carry it). The Sessions screen shows 👍/👎 counts in the list and the
+  ratings with their comments in the session header, from the index and from spool lines
+  the hourly import hasn't read yet.
+- **What the ratings are for.** Labels with `source: human-quick`: a cheap outcome per run,
+  the first candidates for modes and a queue of sessions to look at first. Not for recall
+  (the person picks which runs to rate) and not in the denominator of frequencies. A rating
+  is about one run, not the session's outcome. Notes stay blind to them: the rating entries
+  are custom entries, which the Pi parser skips. Not built yet: feeding them into bootstrap
+  labeling and the batch.
+
 ## Checks
 
 A check per active mode is a pass/fail per session. It is the only source of a mode's

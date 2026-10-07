@@ -2,13 +2,14 @@ import AKitFoundation
 import Foundation
 
 /// Spool lines (see `Spool`) as index rows: `session_start` → `hook_events`, `apply` →
-/// `applies`, `mark` → `marks`. Written with the same upsert rule as session facts (see `FactWriter`).
+/// `applies`, `mark` → `marks`, `rating` → `ratings`. Written with the same upsert rule as session facts (see `FactWriter`).
 enum SpoolFacts {
     /// 2: `mark` lines. Spool files still on disk from parser 1 are read again, so marks an
     /// older akit counted as unknown are picked up.
     /// 3: `head` of session starts. Spool files still on disk from parser 2 are read again, so
     /// heads an older importer dropped (a hook binary newer than the importer) are picked up.
-    static let parserVersion = 3
+    /// 4: `rating` lines (`akit rate`). Spool files still on disk from parser 3 are read again.
+    static let parserVersion = 4
 
     /// What one line did.
     enum Outcome {
@@ -39,6 +40,11 @@ enum SpoolFacts {
         case "mark":
             guard let note = text("note"), !note.isEmpty else { return .malformed }
             try database.run(markSQL, ts, note, sourceID, parserVersion)
+        case "rating":
+            guard let harness = text("harness"), let session = text("session_id"), let rating = text("rating"),
+                  RateRun.ratings.contains(rating) else { return .malformed }
+            try database.run(ratingSQL, harness, session, ts, rating, text("text"), text("anchor"), text("transcript"), text("cwd"),
+                             sourceID, parserVersion)
         default:
             return .unknown
         }
@@ -55,4 +61,6 @@ enum SpoolFacts {
                                                 values: ["source", "cwd", "gitdir", "common_dir", "remote_id", "branch", "transcript", "head"])
     static let applySQL = FactWriter.upsert("applies", key: ["project_id", "ts"], identity: [], values: ["layers", "skills"])
     static let markSQL = FactWriter.upsert("marks", key: ["ts", "note"], identity: [], values: [])
+    static let ratingSQL = FactWriter.upsert("ratings", key: ["harness", "session_id", "ts"], identity: [],
+                                             values: ["rating", "text", "anchor", "transcript", "cwd"])
 }

@@ -15,7 +15,7 @@ public enum Spool {
     public static let lineVersion = 1
     /// Line kinds this akit writes and reads. An older akit counts a kind it doesn't know (as
     /// `mark` before spool parser 2) in `sources.unknown_lines` and keeps the file for a newer one.
-    static let kinds: Set<String> = ["session_start", "apply", "mark"]
+    static let kinds: Set<String> = ["session_start", "apply", "mark", "rating"]
     /// Lines longer than this drop their longest fields (`transcript`, `cwd`) first.
     static let maxLine = 4096
 
