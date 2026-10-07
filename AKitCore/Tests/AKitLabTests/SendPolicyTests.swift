@@ -33,6 +33,33 @@ struct SendPolicyTests {
 
     // MARK: Policy
 
+    /// What the review sheets say before anything is queued, from the settings alone.
+    @Test func blockersAreKnownBeforeTheRun() {
+        let pi = LabAgent(harness: .pi, model: "github-copilot/gpt-5", effort: "high")
+        let fromCopilot = SendOrigin.piSession(providers: ["github-copilot"])
+        func blocker(_ agent: LabAgent, _ origin: SendOrigin?, _ settings: LabSettings, work: Bool = false) -> SendAccounts.Blocker? {
+            SendAccounts.blocker(of: agent, origin: origin, settings: settings, isWork: work, env: env)
+        }
+        // No Pi account for the provider: the sheet offers Add Pi Account… for it.
+        #expect(blocker(pi, fromCopilot, LabSettings()) == .piAccount(provider: "github-copilot"))
+        let entered = LabSettings(piAccounts: [PiAccount(provider: "GitHub-Copilot", account: "me", org: "acme")])
+        #expect(blocker(pi, fromCopilot, entered) == nil)
+        #expect(blocker(pi, nil, entered) == nil)
+        // A work Mac wants the list; so does a session from another provider.
+        guard case .policy(let work)? = blocker(pi, fromCopilot, entered, work: true) else { Issue.record("no work refusal"); return }
+        #expect(work.contains("Add Destination…"))
+        if case .policy? = blocker(pi, .piSession(providers: ["zai"]), entered) {} else { Issue.record("no origin refusal") }
+        var listed = entered
+        listed.allowedDestinations = [copilot]
+        #expect(blocker(pi, fromCopilot, listed, work: true) == nil)
+        // Claude Code: its account is asked at the run; only an empty list is known to refuse.
+        let claude = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        #expect(blocker(claude, .claudeSession, LabSettings()) == nil)
+        if case .policy? = blocker(claude, fromCopilot, LabSettings()) {} else { Issue.record("no Pi-to-Claude refusal") }
+        if case .policy? = blocker(claude, .claudeSession, LabSettings(), work: true) {} else { Issue.record("no work refusal") }
+        #expect(blocker(claude, .claudeSession, LabSettings(allowedDestinations: [claudeAccount]), work: true) == nil)
+    }
+
     @Test func personalMacAllowsTheSameOriginOnly() {
         #expect(SendPolicy.decide(origin: .claudeSession, destination: claudeAccount, isWork: false, allowed: []).allowed)
         #expect(!SendPolicy.decide(origin: .claudeSession, destination: copilot, isWork: false, allowed: []).allowed)

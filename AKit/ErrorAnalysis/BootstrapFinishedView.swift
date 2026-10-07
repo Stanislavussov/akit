@@ -254,6 +254,8 @@ private struct BootstrapReviewSheet: View {
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
             .frame(height: 150)
+            SendBlockerNote(agent: LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort),
+                            reviewing: model.sessions.first { $0.file.path == entry.transcript } ?? entry.summary)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
                     .fixedSize(horizontal: false, vertical: true)

@@ -59,7 +59,7 @@ struct AnalysisSendSheet: View {
             Text("\(AnalysisText.size(send.characters).capitalizedFirst) to \(agent.label): \(AnalysisText.cost(characters: send.characters, agent: agent, records: records)).")
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("The sending policy in Settings → Lab decides whether it may go there; the monthly limit applies.")
+            Text("The sending policy (Settings → Sending policy) decides whether it may go there; the monthly limit applies.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error {

@@ -146,24 +146,11 @@ struct SendingPolicySections: View {
     }
 
     private func add(_ destination: SendDestination) {
-        guard !lab.allowedDestinations.contains(where: { $0.matches(destination) }) else { return }
-        lab.allowedDestinations.append(destination)
+        lab.save(destination, for: .destination)
     }
 
     private func save(_ entry: SendDestination, for request: PolicyEntryEditor) {
-        switch request.kind {
-        case .destination:
-            add(entry)
-        case .piAccount(let index):
-            let account = PiAccount(provider: entry.provider, account: entry.account, org: entry.org)
-            if let index, lab.piAccounts.indices.contains(index) {
-                lab.piAccounts[index] = account
-            } else if let same = lab.piAccounts.firstIndex(where: { $0.provider.caseInsensitiveCompare(account.provider) == .orderedSame }) {
-                lab.piAccounts[same] = account
-            } else {
-                lab.piAccounts.append(account)
-            }
-        }
+        lab.save(entry, for: request.kind)
     }
 
     /// The account each installed review harness would use now. Settings are saved on
@@ -288,8 +275,28 @@ struct PolicyEntryEditor: Identifiable {
     }
 }
 
+extension LabSettings {
+    /// An allowed destination (once), or a Pi account (one per provider; `index` edits that one).
+    mutating func save(_ entry: SendDestination, for kind: PolicyEntryEditor.Kind) {
+        switch kind {
+        case .destination:
+            guard !allowedDestinations.contains(where: { $0.matches(entry) }) else { return }
+            allowedDestinations.append(entry)
+        case .piAccount(let index):
+            let account = PiAccount(provider: entry.provider, account: entry.account, org: entry.org)
+            if let index, piAccounts.indices.contains(index) {
+                piAccounts[index] = account
+            } else if let same = piAccounts.firstIndex(where: { $0.provider.caseInsensitiveCompare(account.provider) == .orderedSame }) {
+                piAccounts[same] = account
+            } else {
+                piAccounts.append(account)
+            }
+        }
+    }
+}
+
 /// Harness (destinations only), provider, account and plan/org; all required.
-private struct PolicyEntrySheet: View {
+struct PolicyEntrySheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let request: PolicyEntryEditor

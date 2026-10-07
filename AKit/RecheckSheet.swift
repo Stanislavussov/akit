@@ -98,6 +98,8 @@ struct RecheckSheet: View {
             .scrollDisabled(true)
             .scrollContentBackground(.hidden)
             .frame(height: 150)
+            SendBlockerNote(agent: LabAgent(harness: harness, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort),
+                            reviewing: session)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
             }
