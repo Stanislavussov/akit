@@ -112,7 +112,27 @@ public struct ContextFootprint: Codable, Sendable, Hashable {
 
     /// Part of all context sent in the session, 0…1: the tokens went with every call.
     public func shareOfSession(_ tokens: Int) -> Double {
-        sent > 0 ? min(1, Double(tokens * callContexts.count) / Double(sent)) : 0
+        sent > 0 ? min(1, Double(sessionTokens(tokens)) / Double(sent)) : 0
+    }
+
+    /// Tokens a setup part of this size took over the whole session: its size in every call,
+    /// scaled like `calls` where a call was smaller than the whole setup.
+    public func sessionTokens(_ tokens: Int) -> Int {
+        Int((Double(tokens) * callWeight).rounded())
+    }
+
+    /// The number of calls the setup went with, each counted by the part of the setup it held
+    /// (1 for a call at least as big as the setup).
+    public var callWeight: Double {
+        let setup = setupTokens
+        guard setup > 0 else { return Double(callContexts.count) }
+        return callContexts.reduce(0) { $0 + min(1, Double($1) / Double(setup)) }
+    }
+
+    /// A part's tokens over the whole session; the conversation part is what the calls sent
+    /// besides the setup.
+    public func sessionTokens(of part: Part) -> Int {
+        part.use == .conversation ? max(0, sent - sessionTokens(setupTokens)) : sessionTokens(part.tokens)
     }
 
     /// One call: its recorded context split into setup by use and the rest.

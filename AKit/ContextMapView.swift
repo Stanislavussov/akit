@@ -36,8 +36,8 @@ struct SessionOverviewView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .task {
-                    // Snapshots of the lower parts: `--query calls|tools`.
-                    guard let target = DebugSnapshot.options?.query, ["calls", "tools"].contains(target) else { return }
+                    // Snapshots of the lower parts: `--query calls|ranked|tools`.
+                    guard let target = DebugSnapshot.options?.query, ["calls", "ranked", "tools"].contains(target) else { return }
                     try? await Task.sleep(for: .milliseconds(300))
                     proxy.scrollTo(target, anchor: .top)
                 }
@@ -73,15 +73,37 @@ struct ContextMapView: View {
     var project: URL?
     @State private var selected: ContextMapView.Block?
     @State private var asShare = true
+    @State private var mode: MapMode = DebugSnapshot.options?.query == "session" ? .session : .firstCall
+    @State private var ranking: ContextFootprint.Use? = .unused
+    @State private var showAllRanked = false
+
+    /// What a block's area is.
+    enum MapMode: Hashable {
+        /// The part's tokens in one call.
+        case firstCall
+        /// The part's tokens over all calls: its size times the calls it went with.
+        case session
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             headline
             VStack(alignment: .leading, spacing: 8) {
-                Text("First call").font(.headline)
+                HStack {
+                    Picker("", selection: $mode) {
+                        Text("First call").tag(MapMode.firstCall)
+                        Text("Whole session").tag(MapMode.session)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 260)
+                    Text(mode == .firstCall ? "Area: tokens in one call" : "Area: tokens over all \(footprint.callContexts.count) calls")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 8) {
-                        ContextTreemap(blocks: blocks, footprint: footprint, selected: $selected)
+                        ContextTreemap(blocks: blocks, footprint: footprint, mode: mode, selected: $selected)
                             .frame(height: 420)
                         legend
                     }
@@ -104,9 +126,10 @@ struct ContextMapView: View {
                 }
             }
             if footprint.callContexts.count > 1 { calls.id("calls") }
-            if !unused.isEmpty { biggestUnused }
+            if footprint.setupTokens > 0 { ranked.id("ranked") }
             Text("Call contexts are recorded. The parts are estimated from their characters and fitted to the first call's "
-                 + "recorded context. A part loaded at the start is sent again with every call, so the setup's tokens count once per call.")
+                 + "recorded context. A part loaded at the start is sent again with every call, so over the session it counts "
+                 + "once per call. These are tokens, not money: a part sent again is mostly read from the cache, which costs less.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -121,15 +144,18 @@ struct ContextMapView: View {
     // MARK: Headline
 
     private var headline: some View {
-        let unused = footprint.tokens(.unused)
+        let unused = footprint.tokens(.unused), used = footprint.tokens(.used)
         let calls = footprint.callContexts.count
         return HStack(alignment: .top, spacing: 12) {
-            tile("Unused setup", "≈ \(UsageText.short(unused))", "tokens in every call", color: .red)
-            tile("Of the first call", Self.percent(footprint.shareOfFirstCall(unused)),
-                 "setup in all: \(Self.percent(footprint.shareOfFirstCall(footprint.setupTokens)))", color: .red)
-            tile("Of the whole session", Self.percent(footprint.shareOfSession(unused)),
-                 "≈ \(UsageText.short(unused * calls)) of \(UsageText.short(footprint.sent)) sent in \(calls) call\(calls == 1 ? "" : "s")",
+            tile("Unused setup, each call", "≈ \(UsageText.short(unused))",
+                 "\(Self.percent(footprint.shareOfFirstCall(unused))) of the first call", color: .red)
+            tile("Unused setup, whole session", "≈ \(UsageText.short(footprint.sessionTokens(unused)))",
+                 "\(Self.percent(footprint.shareOfSession(unused))) of \(UsageText.short(footprint.sent)) sent in \(calls) call\(calls == 1 ? "" : "s")",
                  color: .red)
+            tile("Used setup, whole session", "≈ \(UsageText.short(footprint.sessionTokens(used)))",
+                 "\(Self.percent(footprint.shareOfSession(used))) of all sent", color: Self.color(.used))
+            tile("Setup in all, whole session", "≈ \(UsageText.short(footprint.sessionTokens(footprint.setupTokens)))",
+                 "\(Self.percent(footprint.shareOfSession(footprint.setupTokens))) of all sent; the rest is the conversation", color: .secondary)
         }
     }
 
@@ -202,35 +228,65 @@ struct ContextMapView: View {
         }
     }
 
-    // MARK: Biggest unused
+    // MARK: Ranked
 
-    private var unused: [ContextFootprint.Part] {
-        Array(footprint.parts.filter { $0.use == .unused }.prefix(10))
+    /// Setup parts by their tokens over the whole session, the biggest first.
+    private var rankedParts: [ContextFootprint.Part] {
+        footprint.parts.filter { $0.use != .conversation && (ranking == nil || $0.use == ranking) }
     }
 
-    private var biggestUnused: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Biggest unused parts").font(.headline)
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 5) {
+    private var ranked: some View {
+        let parts = rankedParts
+        let shown = showAllRanked ? parts : Array(parts.prefix(15))
+        let top = max(1, footprint.sessionTokens(parts.first?.tokens ?? 1))
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Over the whole session").font(.headline)
+                Picker("", selection: $ranking) {
+                    Text("Unused").tag(ContextFootprint.Use?.some(.unused))
+                    Text("Used").tag(ContextFootprint.Use?.some(.used))
+                    Text("Always loaded").tag(ContextFootprint.Use?.some(.always))
+                    Text("All setup").tag(ContextFootprint.Use?.none)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 380)
+                Spacer()
+                Text("≈ \(UsageText.short(parts.reduce(0) { $0 + footprint.sessionTokens($1.tokens) })) tokens in \(parts.count) part\(parts.count == 1 ? "" : "s")")
+                    .foregroundStyle(.secondary)
+            }
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 5) {
                 GridRow {
-                    Text("Part"); Text("Kind"); Text("≈ Tokens"); Text("First call"); Text("Session")
+                    Text("Part"); Text("Kind"); Text("≈ Tokens over the session"); Text("Of all sent"); Text("Size × calls")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                ForEach(unused) { part in
+                ForEach(shown) { part in
+                    let total = footprint.sessionTokens(part.tokens)
                     GridRow {
                         Button(part.name) { selected = Block(part) }
                             .buttonStyle(.link)
                             .lineLimit(1)
+                            .frame(maxWidth: 260, alignment: .leading)
                         Text(part.group.title).foregroundStyle(.secondary)
-                        Text(UsageText.short(part.tokens)).gridColumnAlignment(.trailing)
-                        Text(Self.percent(footprint.shareOfFirstCall(part.tokens))).gridColumnAlignment(.trailing)
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Self.color(part.use))
+                                .frame(width: max(2, 220 * CGFloat(total) / CGFloat(top)), height: 10)
+                            Text(UsageText.short(total))
+                        }
+                        .frame(width: 290, alignment: .leading)
                         Text(Self.percent(footprint.shareOfSession(part.tokens))).gridColumnAlignment(.trailing)
+                        Text("\(UsageText.short(part.tokens)) × \(footprint.callContexts.count)").foregroundStyle(.secondary)
                     }
                     .font(.callout)
                 }
             }
             .monospacedDigit()
+            if parts.count > 15 {
+                Button(showAllRanked ? "Show the Top 15" : "Show All \(parts.count)") { showAllRanked.toggle() }
+                    .buttonStyle(.link)
+            }
         }
     }
 
@@ -248,6 +304,8 @@ struct ContextMapView: View {
         var detail: String?
         var text: String?
         var count = 1
+        /// The treemap area: tokens in one call or over the session (see `MapMode`).
+        var area = 0
         /// The parts of a block of small ones, biggest first.
         var members: [ContextFootprint.Part] = []
 
@@ -261,6 +319,7 @@ struct ContextMapView: View {
             source = part.source
             detail = part.detail
             text = part.text
+            area = part.tokens
         }
 
         init(group: ContextFootprint.Group, use: ContextFootprint.Use, parts: [ContextFootprint.Part]) {
@@ -271,21 +330,35 @@ struct ContextMapView: View {
             self.use = use
             calls = parts.reduce(0) { $0 + $1.calls }
             members = parts.sorted { $0.tokens > $1.tokens }
+            area = tokens
             count = parts.count
         }
     }
 
     /// Parts under 0.3% of the first call are put together per group and use, so the map stays readable.
     private var blocks: [Block] {
-        let small = max(1, footprint.firstCall * 3 / 1000)
+        func area(_ part: ContextFootprint.Part) -> Int {
+            mode == .firstCall ? part.tokens : footprint.sessionTokens(of: part)
+        }
+        let total = footprint.parts.reduce(0) { $0 + area($1) }
+        let small = max(1, total * 3 / 1000)
         var blocks: [Block] = []
         for group in ContextFootprint.Group.allCases {
             let parts = footprint.parts.filter { $0.group == group }
-            blocks += parts.filter { $0.tokens >= small }.map(Block.init)
+            blocks += parts.filter { area($0) >= small }.map { part in
+                var block = Block(part)
+                block.area = area(part)
+                return block
+            }
             for use in [ContextFootprint.Use.unused, .used, .always, .conversation] {
-                let tiny = parts.filter { $0.tokens < small && $0.use == use }
-                if tiny.count == 1 { blocks.append(Block(tiny[0])) }
-                if tiny.count > 1 { blocks.append(Block(group: group, use: use, parts: tiny)) }
+                let tiny = parts.filter { area($0) < small && $0.use == use }
+                var merged: Block?
+                if tiny.count == 1 { merged = Block(tiny[0]) }
+                if tiny.count > 1 { merged = Block(group: group, use: use, parts: tiny) }
+                if var merged {
+                    merged.area = tiny.reduce(0) { $0 + area($1) }
+                    blocks.append(merged)
+                }
             }
         }
         return blocks
@@ -325,12 +398,19 @@ struct ContextMapView: View {
 private struct ContextTreemap: View {
     let blocks: [ContextMapView.Block]
     let footprint: ContextFootprint
+    let mode: ContextMapView.MapMode
     @Binding var selected: ContextMapView.Block?
+
+    /// Part of the first call, or of everything sent in the session.
+    private func share(_ area: Int) -> String {
+        ContextMapView.percent(mode == .firstCall ? footprint.shareOfFirstCall(area)
+                               : (footprint.sent > 0 ? Double(area) / Double(footprint.sent) : 0))
+    }
 
     var body: some View {
         GeometryReader { geometry in
             let groups = ContextFootprint.Group.allCases.filter { group in blocks.contains { $0.group == group } }
-            let sums = groups.map { group in Double(blocks.filter { $0.group == group }.reduce(0) { $0 + $1.tokens }) }
+            let sums = groups.map { group in Double(blocks.filter { $0.group == group }.reduce(0) { $0 + $1.area }) }
             let frames = TreemapLayout.squarify(sums, in: CGRect(origin: .zero, size: geometry.size))
             ZStack(alignment: .topLeading) {
                 ForEach(Array(groups.enumerated()), id: \.element) { index, group in
@@ -345,8 +425,8 @@ private struct ContextTreemap: View {
     private func groupView(_ group: ContextFootprint.Group, tokens: Int, frame: CGRect) -> some View {
         let header: CGFloat = frame.height > 44 && frame.width > 70 ? 17 : 0
         let inner = CGRect(x: frame.minX + 1, y: frame.minY + header + 1, width: max(0, frame.width - 2), height: max(0, frame.height - header - 2))
-        let members = blocks.filter { $0.group == group }.sorted { $0.tokens > $1.tokens }
-        let rects = TreemapLayout.squarify(members.map { Double($0.tokens) }, in: inner)
+        let members = blocks.filter { $0.group == group }.sorted { $0.area > $1.area }
+        let rects = TreemapLayout.squarify(members.map { Double($0.area) }, in: inner)
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 5)
                 .fill(.background.secondary)
@@ -355,7 +435,7 @@ private struct ContextTreemap: View {
                 .position(x: frame.midX, y: frame.midY)
                 .allowsHitTesting(false)
             if header > 0 {
-                Text("\(group.title) · \(UsageText.short(tokens)) · \(ContextMapView.percent(footprint.shareOfFirstCall(tokens)))")
+                Text("\(group.title) · \(UsageText.short(tokens)) · \(share(tokens))")
                     .font(.caption.bold())
                     .lineLimit(1)
                     .frame(width: max(0, frame.width - 10), height: header - 2, alignment: .leading)
@@ -370,7 +450,7 @@ private struct ContextTreemap: View {
 
     private func blockView(_ block: ContextMapView.Block, frame: CGRect) -> some View {
         let isSelected = selected?.id == block.id
-        let share = ContextMapView.percent(footprint.shareOfFirstCall(block.tokens))
+        let share = share(block.area)
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 3)
                 .fill(ContextMapView.color(block.use).opacity(isSelected ? 1 : 0.78))
@@ -379,7 +459,7 @@ private struct ContextTreemap: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(block.name).font(.caption.weight(.medium)).lineLimit(frame.height > 44 ? 2 : 1)
                     if frame.height > 32 {
-                        Text("\(UsageText.short(block.tokens)) · \(share)").font(.caption2).monospacedDigit().opacity(0.85)
+                        Text("\(UsageText.short(block.area)) · \(share)").font(.caption2).monospacedDigit().opacity(0.85)
                     }
                 }
                 .foregroundStyle(.white)
@@ -390,7 +470,9 @@ private struct ContextTreemap: View {
         .clipped()
         .contentShape(Rectangle())
         .onTapGesture { selected = isSelected ? nil : block }
-        .help("\(block.name) · \(block.group.title) · ≈ \(UsageText.short(block.tokens)) tokens · \(share) of the first call · \(ContextMapView.title(block.use))")
+        .help("\(block.name) · \(block.group.title) · ≈ \(UsageText.short(block.area)) tokens"
+              + (mode == .firstCall ? " in one call · \(share) of the first call" : " over the session · \(share) of all sent")
+              + " · \(ContextMapView.title(block.use))")
         .position(x: frame.midX, y: frame.midY)
     }
 }
@@ -447,9 +529,17 @@ private struct ContextPartDetail: View {
                     Spacer()
                 }
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 3) {
-                    row("Size", "≈ \(UsageText.full(block.tokens)) tokens in every call")
-                    row("Share", "\(ContextMapView.percent(footprint.shareOfFirstCall(block.tokens))) of the first call · "
-                        + "\(ContextMapView.percent(footprint.shareOfSession(block.tokens))) of all context sent")
+                    if block.use == .conversation {
+                        row("Size", "≈ \(UsageText.full(block.tokens)) tokens in the first call")
+                        row("Session", "≈ \(UsageText.full(max(0, footprint.sent - footprint.sessionTokens(footprint.setupTokens)))) "
+                            + "tokens: everything the calls sent besides the setup")
+                    } else {
+                        row("Size", "≈ \(UsageText.full(block.tokens)) tokens in every call · "
+                            + "\(ContextMapView.percent(footprint.shareOfFirstCall(block.tokens))) of the first call")
+                        row("Session", "≈ \(UsageText.full(footprint.sessionTokens(block.tokens))) tokens "
+                            + "(\(UsageText.full(block.tokens)) × \(footprint.callContexts.count) calls) · "
+                            + "\(ContextMapView.percent(footprint.shareOfSession(block.tokens))) of all context sent")
+                    }
                     row("Use", useText)
                     if let source = block.source { row("From", source) }
                     if let detail = block.detail { row("Holds", detail) }

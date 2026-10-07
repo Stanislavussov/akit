@@ -108,6 +108,11 @@ struct ContextFootprintTests {
         #expect(calls.map(\.context) == [5000, 7000, 8000])
         #expect(calls.allSatisfy { $0.unused == unused && $0.unused + $0.used + $0.always + $0.conversation == $0.context })
         #expect(calls[2].unusedShare < calls[0].unusedShare, "the same setup is a smaller part of a bigger call")
+        // Over the whole session: the size once per call.
+        #expect(footprint.sessionTokens(unused) == unused * 3)
+        let rest = try #require(footprint.parts.first { $0.use == .conversation })
+        #expect(footprint.sessionTokens(of: rest) == 20000 - footprint.setupTokens * 3)
+        #expect(footprint.parts.reduce(0) { $0 + footprint.sessionTokens(of: $1) } <= 20000 + footprint.parts.count)
     }
 
     @Test func estimatesBiggerThanTheFirstCallAreScaledDown() throws {
@@ -117,6 +122,9 @@ struct ContextFootprintTests {
         #expect(footprint.parts.allSatisfy { $0.use != .conversation })
         let total = footprint.parts.reduce(0) { $0 + $1.tokens }
         #expect(total <= 500 && total > 450)
+        // A call smaller than the setup holds only part of it.
+        let weight = 500.0 / Double(footprint.setupTokens) + 2
+        #expect(abs(footprint.callWeight - min(3, weight)) < 0.01)
     }
 
     @Test func noSnapshotMeansNoFootprint() throws {
