@@ -92,6 +92,8 @@ struct LabRunTests {
         let args = read(run.folder.appending(path: "args.txt")).split(separator: "\n").map(String.init)
         #expect(args.contains("--permission-prompts") && args.contains("none") && args.contains(run.spec.sessionID))
         #expect(args.contains("--restricted") && args.filter { $0 == "--permission-mode" }.count == 1 && args.contains("acceptEdits"))
+        // The reviewer gets none of your setup.
+        #expect(args.contains("--safe-mode"))
         #expect(args.contains("Bash(git push:*)"))
         #expect(output.lines.contains("▸ Read transcript.md"))
         #expect(output.lines.contains("Agent finished · 2 turns · 5 sec"))
@@ -292,7 +294,8 @@ struct LabRunTests {
         #expect(done.result?.agentError == nil)
         let args = read(run.folder.appending(path: "args.txt")).split(separator: "\n").map(String.init)
         #expect(args.starts(with: ["-p"]) && args.contains(run.spec.sessionID) && !args.contains("--permission-prompts"))
-        #expect(args.suffix(6) == ["--model", "zai/glm-5", "--thinking", "low", "--tools", "read,write,grep,find,ls"])
+        #expect(args.suffix(9) == ["--model", "zai/glm-5", "--thinking", "low", "--tools", "read,write,grep,find,ls",
+                                   "--no-skills", "--no-context-files", "--no-prompt-templates"])
         #expect(output.lines.contains("▸ read transcript.md") && output.lines.contains("  ✗ no such file"))
         #expect(output.lines.contains("Agent finished") && !output.lines.contains { $0.hasPrefix("Warning:") })
     }
