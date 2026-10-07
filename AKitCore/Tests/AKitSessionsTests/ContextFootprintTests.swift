@@ -108,6 +108,11 @@ struct ContextFootprintTests {
         #expect(calls.map(\.context) == [5000, 7000, 8000])
         #expect(calls.allSatisfy { $0.unused == unused && $0.unused + $0.used + $0.always + $0.conversation == $0.context })
         #expect(calls[2].unusedShare < calls[0].unusedShare, "the same setup is a smaller part of a bigger call")
+        // Over the whole session: the size once per call.
+        #expect(footprint.sessionTokens(unused) == unused * 3)
+        let rest = try #require(footprint.parts.first { $0.use == .conversation })
+        #expect(footprint.sessionTokens(of: rest) == 20000 - footprint.setupTokens * 3)
+        #expect(footprint.parts.reduce(0) { $0 + footprint.sessionTokens(of: $1) } <= 20000 + footprint.parts.count)
     }
 
     @Test func estimatesBiggerThanTheFirstCallAreScaledDown() throws {
@@ -117,6 +122,9 @@ struct ContextFootprintTests {
         #expect(footprint.parts.allSatisfy { $0.use != .conversation })
         let total = footprint.parts.reduce(0) { $0 + $1.tokens }
         #expect(total <= 500 && total > 450)
+        // A call smaller than the setup holds only part of it.
+        let weight = 500.0 / Double(footprint.setupTokens) + 2
+        #expect(abs(footprint.callWeight - min(3, weight)) < 0.01)
     }
 
     @Test func noSnapshotMeansNoFootprint() throws {
@@ -188,7 +196,9 @@ struct ContextFootprintTests {
         func message(_ fields: [String: Any]) -> [String: Any] { ["type": "message", "id": UUID().uuidString, "message": fields] }
         func assistant(_ id: String, context: Int, calls: [(String, String, [String: Any])] = []) -> [String: Any] {
             message(["role": "assistant", "model": "glm", "responseId": id,
-                     "usage": ["input": context - 100, "cacheRead": 100, "cacheWrite": 0, "output": 5],
+                     "usage": ["input": context - 100, "cacheRead": 100, "cacheWrite": 0, "output": 5,
+                               "cost": ["input": Double(context - 100) * 0.00001, "cacheRead": 0.0001, "cacheWrite": 0,
+                                        "output": 0.01, "total": Double(context - 100) * 0.00001 + 0.0101]],
                      "content": calls.map { ["type": "toolCall", "id": $0.0, "name": $0.1, "arguments": $0.2] }])
         }
         func result(_ id: String, _ name: String, _ text: String, error: Bool) -> [String: Any] {
@@ -234,6 +244,14 @@ struct ContextFootprintTests {
         #expect(part(.mcp, "docs")?.use == .unused)
         #expect(part(.systemPrompt, "Preamble")?.use == .always)
         #expect(footprint.parts.first { $0.use == .conversation }?.detail?.contains("tool schemas") == true)
+        // Money: the setup is the start of each call, the first 100 tokens of it read from the
+        // cache ($0.000001 each), the rest sent fresh ($0.00001 each). The parts add up to the recorded cost.
+        let setup = footprint.setupTokens
+        let perCall = 0.0001 + Double(setup - 100) * 0.00001
+        #expect(abs((footprint.sessionCost(setup) ?? 0) - perCall * 2) < 1e-9)
+        let recorded = try #require(footprint.recordedCost)
+        #expect(abs(recorded - (2900 * 0.00001 + 0.0101 + 3900 * 0.00001 + 0.0101)) < 1e-9)
+        #expect(abs(footprint.parts.reduce(0) { $0 + (footprint.sessionCost(of: $1) ?? 0) } - recorded) < 1e-9)
         // Pi's error texts.
         let tools = overview.tools
         #expect(tools.tools.first { $0.name == "bash" }?.count(.commandFailed) == 1, "a failed command, whatever it printed")
@@ -246,5 +264,7 @@ struct ContextFootprintTests {
         try Data(#"{"type":"session","version":"3","id":"s","cwd":"/w"}"#.utf8).write(to: file)
         let overview = try PiSessions.overview(of: file)
         #expect(overview.footprint == nil && overview.tools.calls == 0)
+        // Claude Code records no cost per call.
+        #expect(try footprint(session)?.recordedCost == nil)
     }
 }

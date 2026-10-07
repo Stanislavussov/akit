@@ -27,6 +27,7 @@ struct PiFootprintReader {
     private var sections: [String: String]?
     private var seenCalls = Set<String>()
     private var contexts: [Int] = []
+    private var costs: [ContextFootprint.CallCost] = []
     private var toolCalls: [String: Int] = [:]
     /// Paths the model read, standardized: reading a listed SKILL.md is using the skill.
     private var readPaths: [String: Int] = [:]
@@ -48,7 +49,15 @@ struct PiFootprintReader {
         case "assistant":
             if let usage = message["usage"] as? Object, let model = message["model"] as? String, !model.isEmpty {
                 let id = message["responseId"] as? String ?? entry["id"] as? String ?? UUID().uuidString
-                if seenCalls.insert(id).inserted { contexts.append(PiLogFormat.tokens(fromPiUsage: usage).context) }
+                if seenCalls.insert(id).inserted {
+                    let tokens = PiLogFormat.tokens(fromPiUsage: usage)
+                    contexts.append(tokens.context)
+                    let cost = usage["cost"] as? Object ?? [:]
+                    func dollars(_ key: String) -> Double { (cost[key] as? NSNumber)?.doubleValue ?? 0 }
+                    costs.append(.init(input: tokens.input, cacheRead: tokens.cacheRead, cacheWrite: tokens.cacheWrite,
+                                       inputCost: dollars("input"), cacheReadCost: dollars("cacheRead"),
+                                       cacheWriteCost: dollars("cacheWrite"), outputCost: dollars("output")))
+                }
             }
             for block in message["content"] as? [Object] ?? [] where block["type"] as? String == "toolCall" {
                 let name = block["name"] as? String ?? "tool"
@@ -107,7 +116,7 @@ struct PiFootprintReader {
         }
         parts += servers.parts(calls: toolCalls)
         return ContextFootprint(harness: .pi, parts: parts, callContexts: contexts,
-                                restNote: "Pi doesn't record the tool schemas it declares; they are in this part.")
+                                restNote: "Pi doesn't record the tool schemas it declares; they are in this part.", callCosts: costs)
     }
 
     static func title(of key: String) -> String {

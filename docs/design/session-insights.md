@@ -59,7 +59,10 @@ first call split into every part the harness loaded (system prompt sections, too
 servers, skills, subagents, rules files, hooks; `ContextFootprint`), each marked used,
 unused or always sent, as a treemap, with its share of the first call and of all context
 sent, the setup's share of every call, and how the tool calls ended (`ToolOutcomes`). Part
-sizes are character estimates fitted to the first call's recorded context. Pi records its
+sizes are character estimates fitted to the first call's recorded context. Over the whole
+session a part counts its size once per call. Money only where the harness recorded it per
+call and kind (Pi `usage.cost`): the setup is each call's prefix, priced as cache reads, then
+cache writes, then fresh input of that call; the parts add up to the recorded cost. Pi records its
 prompt as a `system` message with named sections (AGENTS.md and SKILL.md with their paths),
 but not its tool schemas. Each part links to the file that defines it. Lab reviews get
 it as `context.json`. Across many sessions, Insights stays the place that recommends.
