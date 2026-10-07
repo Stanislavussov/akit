@@ -62,6 +62,7 @@ The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`
 | See which skills cost context and are never called | Insights (Apply… makes a layer skill manual; the Skills table lists every skill) |
 | Check that a change reduced the context | Insights → Changes (Add Mark… for a change made by hand) |
 | See where one session's tokens went | Sessions → Analysis |
+| See which setup one session never used, and how its tool calls ended | Sessions → Overview (Lab review: Overview…) |
 | Get a short review of one session | Sessions → Review in Terminal… |
 | Compare setups on a past commit | Lab → New Run… (replay) |
 | Find failure modes over many sessions | Error Analysis: Bootstrap, then a batch, then Reports |

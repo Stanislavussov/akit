@@ -150,6 +150,7 @@ phase change:
   console.log     output of a background run (Orca and herdr show it in the tab)
   transcript.md   review: the reviewed session, masked (the app's Markdown export)
   analysis.json   review: AKit's metrics of the reviewed session
+  context.json    review (Claude Code, Pi): the reviewed session's overview (context footprint, tool outcomes)
 ```
 
 `result.json`:

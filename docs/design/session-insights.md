@@ -54,6 +54,16 @@ Find what the harness config costs in every request and is not used, and turn it
 into ordinary layer edits (`plan` → `apply`). First target: auto skills the model
 never calls. Every skill description sits in the context of every request.
 
+One session at a time (built 2026-10-07, Sessions → Overview, Claude Code and Pi 1.0+): the
+first call split into every part the harness loaded (system prompt sections, tools, MCP
+servers, skills, subagents, rules files, hooks; `ContextFootprint`), each marked used,
+unused or always sent, as a treemap, with its share of the first call and of all context
+sent, the setup's share of every call, and how the tool calls ended (`ToolOutcomes`). Part
+sizes are character estimates fitted to the first call's recorded context. Pi records its
+prompt as a `system` message with named sections (AGENTS.md and SKILL.md with their paths),
+but not its tool schemas. Each part links to the file that defines it. Lab reviews get
+it as `context.json`. Across many sessions, Insights stays the place that recommends.
+
 Measured on one Claude Code session in this repo: the skill listing alone was
 ≈ 7.5k tokens (121 skills). ≈ 3.2k of it came from plugins, including `marketing`
 and `customer-support` in a Swift project. (These figures used the default 4 characters

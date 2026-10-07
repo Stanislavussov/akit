@@ -239,6 +239,8 @@ private struct LabRunDetail: View {
     @State private var replacedBy: String?
     /// Snapshots: `--tab recheck` opens the Re-check sheet.
     @State private var showRecheck = DebugSnapshot.options?.tab == "recheck"
+    /// The reviewed session whose Overview sheet is open.
+    @State private var overviewOf: SessionSummary?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -253,6 +255,19 @@ private struct LabRunDetail: View {
         .task(id: run) { await loadNotes() }
         .sheet(isPresented: $showRecheck) {
             RecheckSheet(run: run) { select($0) }
+        }
+        .sheet(item: $overviewOf) { session in
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Overview of \(session.title)").font(.headline).lineLimit(1)
+                    Spacer()
+                    Button("Done") { overviewOf = nil }.keyboardShortcut(.defaultAction)
+                }
+                .padding(14)
+                Divider()
+                SessionOverviewView(session: session)
+            }
+            .frame(minWidth: 900, idealWidth: 1000, minHeight: 640, idealHeight: 820)
         }
         .confirmationDialog("Move this run to the Trash?", isPresented: $confirmRemove) {
             Button("Move to Trash", role: .destructive) { act { try await model.remove(run) } }
@@ -360,6 +375,17 @@ private struct LabRunDetail: View {
                     Button("Show Session") { model.section = .sessions }
                         .controlSize(.small)
                         .help("Open the Sessions screen")
+                }
+                if SessionOverview.isAvailable(for: run.spec.reviewedHarness), FileManager.default.fileExists(atPath: transcript) {
+                    Button("Overview…", systemImage: "square.grid.3x3.square") {
+                        let file = URL(filePath: transcript)
+                        let info = JSONLines.fileInfo(file)
+                        overviewOf = session ?? SessionSummary(harness: run.spec.reviewedHarness, file: file,
+                                                               title: run.spec.reviewedTitle ?? file.lastPathComponent,
+                                                               project: nil, started: nil, modified: info.modified, size: info.size)
+                    }
+                    .controlSize(.small)
+                    .help("Where the reviewed session's context went and how its tool calls ended")
                 }
             }
         }

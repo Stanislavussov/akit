@@ -33,6 +33,30 @@ public enum ClaudeLogFormat {
                            reasoning: count("thinking_tokens", in: usage["output_tokens_details"] as? Object))
     }
 
+    /// The skills of a `skill_listing` attachment, one per name in `names`, with their `content`
+    /// line `- <name>: …` (or `- <name>` alone; empty when there is none). Plugin skill names
+    /// contain `:`, so lines are matched by name, longest first, never split on `:`.
+    public static func listedSkills(_ attachment: Object) -> [(name: String, line: String)] {
+        let lines = (attachment["content"] as? String ?? "").split(separator: "\n").map(String.init)
+        var names = attachment["names"] as? [String] ?? []
+        if names.isEmpty {
+            // Older listings without `names`: a name ends at the first ": ".
+            names = lines.filter { $0.hasPrefix("- ") }.map { line in
+                let body = line.dropFirst(2)
+                return String(body.range(of: ": ").map { body[..<$0.lowerBound] } ?? body)
+            }
+        }
+        let longestFirst = names.sorted { $0.count > $1.count }
+        var found: [String: String] = [:]
+        for line in lines where line.hasPrefix("- ") {
+            guard let name = longestFirst.first(where: { line == "- " + $0 || line.hasPrefix("- " + $0 + ":") }),
+                  found[name] == nil else { continue }
+            found[name] = line
+        }
+        var seen = Set<String>()
+        return names.filter { seen.insert($0).inserted }.map { ($0, found[$0] ?? "") }
+    }
+
     /// Trimmed text between `<name>` and `</name>`.
     public static func tag(_ name: String, in text: String) -> String? {
         guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex)

@@ -320,18 +320,7 @@ public enum SessionAnalyzer {
         }
 
         /// The user said no, or a permission rule or the auto mode classifier refused.
-        static func isRejection(_ text: String) -> Bool {
-            rejectionMarkers.contains { text.localizedCaseInsensitiveContains($0) }
-        }
-
-        static let rejectionMarkers = [
-            "doesn't want to proceed with this tool use",
-            "Permission for this action was denied",
-            "Permission for this tool use was denied",
-            "Permission to use",
-            "permission prompts are disabled",
-            "requires approval",
-        ]
+        static func isRejection(_ text: String) -> Bool { ToolOutcomes.isRejection(text) }
 
         static func readsCode(_ tool: String, input: Object) -> Bool {
             switch tool {
