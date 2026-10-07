@@ -24,11 +24,22 @@ public struct SendDestination: Codable, Hashable, Sendable {
         self.org = org
     }
 
-    /// "Pi · github-copilot · me@example.com · acme".
-    public var label: String { "\(harness.title) · \(provider) · \(account) · \(org)" }
+    /// Whether the account and plan/org are known: Pi can't tell them, so a Pi provider with no
+    /// account entered goes out as the provider alone.
+    public var isAccountKnown: Bool {
+        !account.trimmingCharacters(in: .whitespaces).isEmpty && !org.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
-    /// The same destination, ignoring case and surrounding spaces.
+    /// "Pi · github-copilot · me@example.com · acme", or "Pi · github-copilot · account not entered".
+    public var label: String {
+        isAccountKnown ? "\(harness.title) · \(provider) · \(account) · \(org)" : "\(harness.title) · \(provider) · account not entered"
+    }
+
+    /// The same destination, ignoring case and surrounding spaces. One whose account isn't
+    /// known matches only another such one of the same provider, never a list entry (the
+    /// allowed list is a list of accounts).
     public func matches(_ other: SendDestination) -> Bool {
+        guard isAccountKnown == other.isAccountKnown else { return false }
         func same(_ a: String, _ b: String) -> Bool {
             a.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(b.trimmingCharacters(in: .whitespaces)) == .orderedSame
         }
@@ -85,10 +96,17 @@ public enum SendPolicy {
 
     /// - Work Mac: only destinations on the allowed list (empty by default).
     /// - Personal Mac: the allowed list, plus the same origin: a transcript may go to the
-    ///   provider and account that produced it.
+    ///   provider and account that produced it. Pi can't tell its account, so for Pi the
+    ///   provider decides, as the signed-in account does for Claude Code.
     public static func decide(origin: SendOrigin, destination: SendDestination, isWork: Bool, allowed: [SendDestination]) -> Decision {
         if allowed.contains(where: { $0.matches(destination) }) {
             return Decision(allowed: true, reason: "\(destination.label) is on the allowed list.")
+        }
+        if isWork, destination.harness == .pi, !destination.isAccountKnown {
+            return Decision(allowed: false, reason: "This is a work Mac: session data goes only to accounts on the allowed list, and Pi "
+                                + "can't tell which \(destination.provider) account it uses. Allow it once: Settings → Sending policy → "
+                                + "Add Destination… (Pi · \(destination.provider) · your login · plan or org), or "
+                                + "akit lab policy allow pi \(destination.provider) LOGIN ORG.")
         }
         if isWork {
             return Decision(allowed: false, reason: "This is a work Mac: session data goes only to destinations on the allowed list "
@@ -172,14 +190,12 @@ public enum SendAccounts {
         return SendDestination(harness: .claudeCode, provider: provider, account: email, org: org)
     }
 
-    /// The account the user entered for the provider; Pi must also report the provider ready
-    /// (`pi auth check`, which prints no credentials without `--credentials`).
+    /// The provider with the account the user entered for it (none entered: the provider
+    /// alone, which the policy allows only as the same origin); Pi must also report the
+    /// provider ready (`pi auth check`, which prints no credentials without `--credentials`).
     static func pi(provider: String, settings: LabSettings, env: HarnessEnvironment) async throws -> SendDestination {
         guard !provider.isEmpty else { throw Failure(message: "Which Pi provider? Pick a model as provider/model.") }
-        guard let entry = piEntry(provider: provider, settings: settings) else {
-            throw Failure(message: "Pi has no account entered for \(provider), so Pi is refused on this Mac. "
-                              + "Enter it in Settings → Pi accounts → Add Pi Account…: your login and the plan or org.")
-        }
+        let entry = piEntry(provider: provider, settings: settings)
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let result = await ProcessRunner.run(pi, arguments: ["auth", "check", "--provider", provider, "--json", "--no-refresh"],
                                              environment: AgentRun.environment(env, runFolder: nil), timeout: 30)
@@ -191,15 +207,13 @@ public enum SendAccounts {
         guard status == "ready" else {
             throw Failure(message: "Pi isn't signed in to \(provider) (pi auth check: \(status ?? "no answer")).")
         }
-        return SendDestination(harness: .pi, provider: provider, account: entry.account, org: entry.org)
+        return SendDestination(harness: .pi, provider: provider, account: entry?.account ?? "", org: entry?.org ?? "")
     }
 
     /// What will stop a review through `agent`, known from the settings alone (no harness is
     /// asked, so the sheet can say it before anything is queued); nil when nothing is known
     /// to. The run still checks the account itself. `origin` nil = not known yet.
     public enum Blocker: Equatable, Sendable {
-        /// No Pi account entered for this provider.
-        case piAccount(provider: String)
         /// A Pi model with no provider, and no default provider in Pi's settings.
         case noPiProvider
         /// The policy refuses the destination; the reason names where to allow it. The
@@ -222,9 +236,10 @@ public enum SendAccounts {
         case .pi:
             let provider = piProvider(of: agent, env: env)
             guard !provider.isEmpty else { return .noPiProvider }
-            guard let entry = piEntry(provider: provider, settings: settings) else { return .piAccount(provider: provider) }
-            guard let origin else { return nil }
-            let destination = SendDestination(harness: .pi, provider: provider, account: entry.account, org: entry.org)
+            let entry = piEntry(provider: provider, settings: settings)
+            let destination = SendDestination(harness: .pi, provider: provider, account: entry?.account ?? "", org: entry?.org ?? "")
+            // A work Mac decides by the list alone, whatever the origin.
+            guard let origin = origin ?? (isWork ? .code(.pi) : nil) else { return nil }
             let decision = SendPolicy.decide(origin: origin, destination: destination, isWork: isWork, allowed: settings.allowedDestinations)
             return decision.allowed ? nil : .policy(decision.reason, destination: destination)
         case .claudeCode:

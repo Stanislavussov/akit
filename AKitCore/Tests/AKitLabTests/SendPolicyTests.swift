@@ -40,19 +40,23 @@ struct SendPolicyTests {
         func blocker(_ agent: LabAgent, _ origin: SendOrigin?, _ settings: LabSettings, work: Bool = false) -> SendAccounts.Blocker? {
             SendAccounts.blocker(of: agent, origin: origin, settings: settings, isWork: work, env: env)
         }
-        // No Pi account for the provider: the sheet offers Add Pi Account… for it.
-        #expect(blocker(pi, fromCopilot, LabSettings()) == .piAccount(provider: "github-copilot"))
+        // Personal Mac: a Pi session goes to its own provider, with or without an account entered.
+        #expect(blocker(pi, fromCopilot, LabSettings()) == nil)
+        if case .policy? = blocker(pi, .piSession(providers: ["zai"]), LabSettings()) {} else { Issue.record("no origin refusal") }
+        #expect(blocker(pi, nil, LabSettings()) == nil)
+        // Work Mac: the list alone, so the sheet's Add Destination… is filled with what is known.
+        guard case .policy(let unknown, let provider)? = blocker(pi, nil, LabSettings(), work: true) else {
+            Issue.record("no work refusal"); return
+        }
+        #expect(unknown.contains("akit lab policy allow pi github-copilot") && provider?.provider == "github-copilot"
+                && provider?.isAccountKnown == false)
         let entered = LabSettings(piAccounts: [PiAccount(provider: "GitHub-Copilot", account: "me", org: "acme")])
-        #expect(blocker(pi, fromCopilot, entered) == nil)
-        #expect(blocker(pi, nil, entered) == nil)
-        // A session from another provider wants the list too.
-        // A work Mac wants the list, and the sheet's Add Destination… gets the checked destination.
         guard case .policy(let work, let destination)? = blocker(pi, fromCopilot, entered, work: true) else { Issue.record("no work refusal"); return }
         #expect(work.contains("Add Destination…") && destination?.matches(copilot) == true)
-        if case .policy? = blocker(pi, .piSession(providers: ["zai"]), entered) {} else { Issue.record("no origin refusal") }
-        var listed = entered
-        listed.allowedDestinations = [copilot]
+        var listed = LabSettings()
+        listed.allow(copilot)
         #expect(blocker(pi, fromCopilot, listed, work: true) == nil)
+        #expect(blocker(pi, nil, listed, work: true) == nil)
         // Claude Code: its account is asked at the run; only an empty list is known to refuse.
         let claude = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
         #expect(blocker(claude, .claudeSession, LabSettings()) == nil)
@@ -64,15 +68,39 @@ struct SendPolicyTests {
         let piDefault = LabAgent(harness: .pi, model: "", effort: "high")
         #expect(blocker(piDefault, fromCopilot, LabSettings()) == .noPiProvider)
         try? write(".pi/agent/settings.json", #"{"defaultProvider":"github-copilot","defaultModel":"gpt-5"}"#)
-        #expect(blocker(piDefault, fromCopilot, LabSettings()) == .piAccount(provider: "github-copilot"))
-        #expect(blocker(piDefault, fromCopilot, entered) == nil)
+        #expect(blocker(piDefault, fromCopilot, LabSettings()) == nil)
+        #expect(blocker(piDefault, fromCopilot, listed, work: true) == nil)
         // Read as a send reads them: a file that doesn't decode refuses everything.
-        #expect(SendAccounts.blocker(of: pi, origin: fromCopilot, isWork: false, env: env) == .piAccount(provider: "github-copilot"))
+        #expect(SendAccounts.blocker(of: pi, origin: fromCopilot, isWork: false, env: env) == nil)
         try? write(".akit/lab/settings.json", #"{"monthlyLimit":"ten"}"#)
         guard case .settings(let reason)? = SendAccounts.blocker(of: pi, origin: fromCopilot, isWork: false, env: env) else {
             Issue.record("no settings refusal"); return
         }
         #expect(reason.contains("can't be read"))
+    }
+
+    /// One `allow` is all a work Mac needs for Pi: the destination, and its Pi account when none is entered.
+    @Test func allowingAPiDestinationEntersItsAccount() {
+        var settings = LabSettings()
+        let entered = settings.allow(copilot)
+        #expect(entered && settings.allowedDestinations == [copilot])
+        #expect(settings.piAccounts == [PiAccount(provider: "github-copilot", account: "me", org: "acme")])
+        // Once; and an account already entered stays.
+        let again = settings.allow(copilot)
+        #expect(!again && settings.allowedDestinations.count == 1)
+        let second = settings.allow(SendDestination(harness: .pi, provider: "github-copilot", account: "me", org: "other"))
+        #expect(!second && settings.piAccounts.map(\.org) == ["acme"] && settings.allowedDestinations.count == 2)
+        let claude = settings.allow(claudeAccount)
+        #expect(!claude && settings.piAccounts.count == 1)
+        // Unknown accounts match each other (a batch's start and now), never a list entry.
+        let unknown = SendDestination(harness: .pi, provider: "github-copilot", account: "", org: "")
+        #expect(unknown.matches(SendDestination(harness: .pi, provider: "GitHub-Copilot", account: " ", org: "")))
+        #expect(!unknown.matches(copilot) && !copilot.matches(unknown))
+        #expect(unknown.label == "Pi · github-copilot · account not entered")
+        #expect(!SendPolicy.decide(origin: .piSession(providers: ["github-copilot"]), destination: unknown, isWork: true,
+                                   allowed: [copilot]).allowed)
+        #expect(SendPolicy.decide(origin: .piSession(providers: ["github-copilot"]), destination: unknown, isWork: false,
+                                  allowed: []).allowed)
     }
 
     @Test func personalMacAllowsTheSameOriginOnly() {
@@ -138,7 +166,7 @@ struct SendPolicyTests {
         #expect(destination == claudeAccount)
     }
 
-    @Test func piNeedsAnEnteredAccountAndAReadyProvider() async throws {
+    @Test func piNeedsAReadyProviderAndNamesTheEnteredAccount() async throws {
         try write("bin/pi", """
             #!/bin/sh
             case "$*" in
@@ -148,9 +176,9 @@ struct SendPolicyTests {
 
             """, executable: true)
         let agent = LabAgent(harness: .pi, model: "github-copilot/gpt-6.1", effort: "high")
-        await #expect(throws: SendAccounts.Failure.self) {
-            _ = try await SendAccounts.destination(of: agent, settings: LabSettings(), env: env)
-        }
+        // No account entered: the provider alone, which only the same origin allows.
+        let bare = try await SendAccounts.destination(of: agent, settings: LabSettings(), env: env)
+        #expect(bare.provider == "github-copilot" && !bare.isAccountKnown)
         let settings = LabSettings(piAccounts: [PiAccount(provider: "github-copilot", account: "me", org: "acme")])
         #expect(try await SendAccounts.destination(of: agent, settings: settings, env: env) == copilot)
         let other = LabAgent(harness: .pi, model: "anthropic/claude", effort: "high")

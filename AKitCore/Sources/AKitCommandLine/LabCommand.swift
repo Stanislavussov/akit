@@ -66,7 +66,7 @@ extension AKitCLI {
           akit lab remove ID              Move a run's folder to the Trash
           akit lab run ID                 Do the run here (what the tab runs)
 
-        Sending policy (every model call that sends session data or code; Settings → Lab):
+        Sending policy (every model call that sends session data or code; Settings → Sending policy):
           akit lab policy [--json]        This Mac's kind, allowed destinations, Pi accounts, scrub
                                           patterns and monthly limit
           akit lab policy check HARNESS [--model M]
@@ -74,9 +74,13 @@ extension AKitCLI {
                                           a Claude Code or Pi session may go there
           akit lab policy allow HARNESS PROVIDER ACCOUNT ORG
           akit lab policy remove HARNESS PROVIDER ACCOUNT ORG
-                                          Add or remove an allowed destination
+                                          Add or remove an allowed destination. On a work Mac,
+                                          `allow pi PROVIDER LOGIN ORG` is all a Pi review needs: it
+                                          also enters the Pi account when none is
           akit lab policy pi-account PROVIDER ACCOUNT ORG
-                                          The account behind a Pi provider (Pi has no whoami)
+                                          The account behind a Pi provider (Pi has no whoami). A
+                                          personal Mac doesn't need it: a Pi session goes to its own
+                                          provider
           akit lab policy limit DOLLARS|none
                                           Monthly limit on recorded cost
           akit lab sends [--json]         The send log: what went where, tokens, recorded cost
@@ -389,10 +393,10 @@ extension AKitCLI {
         case "allow":
             let entry = try destination()
             try args.finish()
-            try LabSettings.update(env: env) { settings in
-                if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
-            }
-            out("Allowed \(entry.label).")
+            guard entry.isAccountKnown else { throw Failure(message: "Give the ACCOUNT and the ORG (plan or organization).") }
+            var entered = false
+            try LabSettings.update(env: env) { entered = $0.allow(entry) }
+            out("Allowed \(entry.label)." + (entered ? " It's also the Pi account for \(entry.provider)." : ""))
         case "remove":
             let entry = try destination()
             try args.finish()

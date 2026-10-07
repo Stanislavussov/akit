@@ -929,6 +929,13 @@ Decided by the user on 2026-10-01; they replace the open questions of the design
   CLAUDE.md needs no exception. With same-origin, a Pi session is reviewed only through the
   Pi provider that produced it. AKit can't see a switched account behind Pi; on a work
   machine that means trusting the entry.
+  Changed by the user on 2026-10-07: a personal Mac needs no Pi account. Pi can't tell
+  its account and the entry was never checked, so same-origin for Pi compares the
+  provider, as it compares the harness for Claude Code; a Pi destination with no account
+  entered is "account not entered" and matches no list entry. A work Mac still needs the
+  account on the list, and allowing a Pi destination (Settings or `akit lab policy allow
+  pi …`) also enters it as the provider's Pi account, so one entry is all a Pi review
+  needs there. The review sheets say what the policy will refuse before a run is queued.
 - **Randomized interleaving: no.** The user applies fixes; AKit never changes the context
   of real sessions, stays read-only and the capture hook keeps printing nothing. The fix
   signals are control sets and before/after T.

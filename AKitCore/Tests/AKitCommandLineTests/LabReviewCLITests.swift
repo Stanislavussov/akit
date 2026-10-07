@@ -24,4 +24,14 @@ extension AKitCLITests {
         #expect(await akit("lab", "analyze", "pi-s1").err.contains("measures only Claude Code sessions"))
         #expect(await akit("lab", "new", "review", "nope", "--no-start").err.contains("No Claude Code or Pi session nope"))
     }
+
+    /// A work Mac's one step for Pi: the destination, and the provider's Pi account with it.
+    @Test func allowingAPiProviderEntersItsAccount() async throws {
+        let allowed = await akit("lab", "policy", "allow", "pi", "github-copilot", "me", "acme")
+        #expect(allowed.code == 0 && allowed.out == "Allowed Pi · github-copilot · me · acme. It's also the Pi account for github-copilot.",
+                "\(allowed)")
+        let policy = await akit("lab", "policy")
+        #expect(policy.out.contains("github-copilot") && policy.code == 0, "\(policy)")
+        #expect(await akit("lab", "policy", "allow", "pi", "github-copilot", " ", "acme").err.contains("Give the ACCOUNT and the ORG"))
+    }
 }
