@@ -23,6 +23,8 @@ final class AppModel {
     private(set) var skills: [Skill] = []
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
+    /// The person's ratings of runs (`akit rate`, Pi's ⌥G / ⌥X / ⌥R), by session log path.
+    private(set) var ratings: [String: [Ratings.Rating]] = [:]
     /// Session folder (`SessionSummary.project` path) → project id, worktrees under their
     /// repository (from the last scan). Folders without a project are missing.
     private(set) var sessionProjects: [String: String] = [:]
@@ -548,8 +550,8 @@ final class AppModel {
         // Before anything is shown: the session list and its projects change together.
         let folders = Array(Set(sessions.compactMap { $0.project?.path }))
         let projectsRoot = projectsRoot
-        let sessionProjects = await Task.detached {
-            SessionProjects.projectIDs(ofFolders: folders, env: env, projectsRoot: projectsRoot)
+        let (sessionProjects, ratings) = await Task.detached {
+            (SessionProjects.projectIDs(ofFolders: folders, env: env, projectsRoot: projectsRoot), Ratings.byTranscript(env: env))
         }.value
         self.brain = brain
         brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
@@ -565,6 +567,7 @@ final class AppModel {
         }
         self.sessions = sessions
         self.sessionProjects = sessionProjects
+        self.ratings = ratings
         mcpServers = mcp.servers
         mcpProblems = mcp.problems
         mcpWriteTargets = targets

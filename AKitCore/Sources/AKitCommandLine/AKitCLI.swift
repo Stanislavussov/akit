@@ -158,6 +158,16 @@ public enum AKitCLI {
             RecordSession.run(harness: RecordSession.harness(in: arguments), stdin: input(), env: env)
             return 0
         }
+        // Run by the Pi extension; the akit binary also runs it first (main.swift).
+        if arguments.first == "rate" {
+            do {
+                try RateRun.run(arguments: Array(arguments.dropFirst()), stdin: input(), env: env)
+                return 0
+            } catch {
+                err("akit rate: \(error.message)")
+                return 1
+            }
+        }
         let projectsRoot = projectsRoot ?? env.homeDirectory.appending(path: "Projects")
         do {
             // Lab has its own options (--repo, --json, …); none of the brain's apply.
@@ -502,7 +512,7 @@ public enum AKitCLI {
             lines.append("Read \(count(report.sources, "file")) (\(bytes)) in \(report.ms) ms. Added \(count(report.sessions, "session")), "
                          + "\(count(report.requests, "request")), \(count(report.toolCalls, "tool call")), \(count(report.skillCalls, "skill call")).")
         }
-        if report.spoolLines > 0 { lines.append("Read \(count(report.spoolLines, "spool line")) (session starts, applies).") }
+        if report.spoolLines > 0 { lines.append("Read \(count(report.spoolLines, "spool line")) (session starts, applies, marks, ratings).") }
         if report.pending > 0 { lines.append("\(count(report.pending, "file")) left for the next run.") }
         if report.bindings > 0 { lines.append("Bound \(count(report.bindings, "session")) to projects (new or changed).") }
         if report.bindingsPending > 0 { lines.append("\(count(report.bindingsPending, "session")) left to bind in the next run.") }

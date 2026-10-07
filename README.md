@@ -81,7 +81,14 @@ Then the brain's core layer goes into your home folder for every agent on the Ma
 it: open a project and ask your agent `/akit set up this project`.
 
 Run the install again to update. `akit setup` is safe to run again any time: it syncs the
-brain, adds agents installed since, and puts new core skills into `~`.
+brain, adds agents installed since, and puts new core skills into `~`. After an update,
+restart Pi (or run `/reload` in it): a running Pi keeps the old extension.
+
+> [!IMPORTANT]
+> **Rating a Pi run** (Pi 0.80.4 or newer) uses Option keys: after a run, ⌥G rates it good, ⌥X bad, ⌥R with a
+> comment. Your terminal must send Option as Meta (iTerm2: Profiles → Keys → Left Option
+> key: Esc+; Terminal: Settings → Profiles → Keyboard → Use Option as Meta key). The ratings
+> show on the Sessions screen; the model never sees them.
 
 **Settings for scripts:** `AKIT_BRAIN_REPO=you/brain` answers the brain question,
 `AKIT_SKIP_HOME=1` leaves `~` alone, `AKIT_FROM_SOURCE=1` builds from source,

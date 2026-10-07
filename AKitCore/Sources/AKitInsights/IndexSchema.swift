@@ -10,7 +10,7 @@ public enum IndexSchema {
 
     /// Fact tables: every row carries `source_id` (a `sources` row, which is never deleted).
     static let factTables = ["sessions", "requests", "tool_calls", "skill_listings", "skill_calls", "manual_call_examples",
-                             "hook_events", "applies", "marks"]
+                             "hook_events", "applies", "marks", "ratings"]
 
     static let migrations: [String] = [
         // v1: facts of Claude Code and Pi sessions. No FOREIGN KEY from facts to sources, so
@@ -93,6 +93,14 @@ public enum IndexSchema {
         CREATE TABLE signals(session_key TEXT PRIMARY KEY, file_size INTEGER NOT NULL, file_mtime REAL NOT NULL,
           version INTEGER NOT NULL, interrupts INTEGER NOT NULL, pushbacks INTEGER NOT NULL, tool_errors INTEGER NOT NULL,
           repeated_calls INTEGER NOT NULL, unverified_done INTEGER NOT NULL, user_turns INTEGER NOT NULL, steps INTEGER NOT NULL);
+        """,
+        // v7: the person's ratings of a run (`akit rate`, from the Pi extension): good or bad and an
+        // optional comment in their own words. Local only: summaries never carry them.
+        """
+        CREATE TABLE ratings(harness TEXT NOT NULL, session_id TEXT NOT NULL, ts INTEGER NOT NULL,
+          rating TEXT NOT NULL CHECK(rating IN ('good','bad')), text TEXT, anchor TEXT, transcript TEXT, cwd TEXT,
+          source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL, PRIMARY KEY(harness, session_id, ts));
+        CREATE INDEX ratings_source ON ratings(source_id);
         """,
     ]
 

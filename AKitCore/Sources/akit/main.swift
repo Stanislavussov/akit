@@ -13,6 +13,10 @@ if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "record-session"
     RecordSession.main(arguments: Array(CommandLine.arguments.dropFirst(2)))
     exit(0)
 }
+// The Pi extension's rating: also first, and it reports back (exit 0 = saved).
+if CommandLine.arguments.count > 1, CommandLine.arguments[1] == "rate" {
+    exit(RateRun.main(arguments: Array(CommandLine.arguments.dropFirst(2))))
+}
 if getuid() == 0 {
     FileHandle.standardError.write(Data("akit: don't run akit with sudo; it works in your own home folder.\n".utf8))
     exit(2)
