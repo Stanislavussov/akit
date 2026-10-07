@@ -325,14 +325,14 @@ public struct LabSettings: Codable, Sendable, Hashable {
         }
     }
 
-    /// Applies an edit made on a copy, from `old` to `new` (the app's Settings form), onto
-    /// these settings without undoing what changed here meanwhile: list entries are added and
-    /// removed one by one, other fields replaced only when the edit changed them.
-    /// Adds a destination to the allowed list, once. A Pi destination also becomes its
-    /// provider's Pi account when none is entered, so on a work Mac one entry is all a review
-    /// through Pi needs. Returns whether it entered the Pi account.
+    /// Adds a destination to the allowed list, once; one without an account is ignored. A Pi
+    /// destination also becomes its provider's Pi account when none is entered, so one entry
+    /// is all a cross-origin send through Pi needs. Returns whether it entered the Pi account.
     @discardableResult
-    public mutating func allow(_ destination: SendDestination) -> Bool {
+    public mutating func allow(_ given: SendDestination) -> Bool {
+        var destination = given
+        destination.provider = destination.provider.trimmingCharacters(in: .whitespaces)
+        guard destination.isAccountKnown else { return false }
         if !allowedDestinations.contains(where: { $0.matches(destination) }) { allowedDestinations.append(destination) }
         guard destination.harness == .pi, destination.isAccountKnown,
               SendAccounts.piEntry(provider: destination.provider, settings: self) == nil else { return false }
@@ -341,6 +341,9 @@ public struct LabSettings: Codable, Sendable, Hashable {
         return true
     }
 
+    /// Applies an edit made on a copy, from `old` to `new` (the app's Settings form), onto
+    /// these settings without undoing what changed here meanwhile: list entries are added and
+    /// removed one by one, other fields replaced only when the edit changed them.
     public mutating func apply(from old: LabSettings, to new: LabSettings) {
         if new.reportLanguage != old.reportLanguage { reportLanguage = new.reportLanguage }
         if new.monthlyLimit != old.monthlyLimit { monthlyLimit = new.monthlyLimit }

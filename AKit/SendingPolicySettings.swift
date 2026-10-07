@@ -20,8 +20,8 @@ struct SendingPolicySections: View {
     var body: some View {
         Section {
             Label(model.machine.isWork
-                  ? "Work Mac: session data goes only to the allowed list."
-                  : "Personal Mac: session data goes to the same origin (the account that recorded it), plus the allowed list.",
+                  ? "Work Mac: session data goes back to the harness and provider that recorded it, plus your company's allowed list."
+                  : "Personal Mac: session data goes back to the harness and provider that recorded it, plus the allowed list.",
                   systemImage: model.machine.isWork ? "building.2" : "house")
             ForEach(lab.allowedDestinations, id: \.self) { destination in
                 HStack {
@@ -89,7 +89,7 @@ struct SendingPolicySections: View {
         } header: {
             Text("Pi accounts")
         } footer: {
-            Text("Pi can't tell which account a provider is signed in with, so enter it here. A personal Mac doesn't need it: a Pi session goes to the provider that recorded it. A work Mac needs the account on the allowed list, and Add Destination… for Pi enters it here too. AKit never reads Pi's keys.")
+            Text("Pi can't tell which account a provider is signed in with. A Pi session needs no entry to go back to the provider that recorded it; other data needs the account on the allowed list, and Add Destination… for Pi enters it here too. AKit never reads Pi's keys.")
                 .foregroundStyle(.secondary)
         }
         Section {
@@ -155,11 +155,21 @@ struct SendingPolicySections: View {
     }
 
     private func add(_ destination: SendDestination) {
-        lab.save(destination, for: .destination)
+        save(destination, for: .destination)
     }
 
     private func save(_ entry: SendDestination, for request: PolicyEntryEditor) {
-        lab.save(entry, for: request.kind)
+        save(entry, for: request.kind)
+    }
+
+    /// On what is on disk now, not on this form's copy (`akit lab policy` may have entered a Pi
+    /// account meanwhile), then the form shows the result.
+    private func save(_ entry: SendDestination, for kind: PolicyEntryEditor.Kind) {
+        do {
+            lab = try LabSettings.update(env: .current) { $0.save(entry, for: kind) }
+        } catch {
+            lab.save(entry, for: kind)
+        }
     }
 
     /// The account each installed review harness would use now. Settings are saved on

@@ -99,11 +99,17 @@ struct LabRunTests {
         #expect(await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in }) == 2)
     }
 
-    @Test func workMacRefusesAReviewBeforeAnythingIsSent() async throws {
+    /// A work Mac sends a session back to its own harness, but not elsewhere without the company's list.
+    @Test func workMacRefusesAReviewElsewhereBeforeAnythingIsSent() async throws {
         try fakeClaude()
         try MachineProfile(kind: .work, name: "work").save(home: home)
-        let run = try await LabRuns.newReview(transcript: try reviewedSession(), title: nil, environment: .background,
-                                              akit: URL(filePath: "/usr/bin/true"), env: env)
+        try write(".pi/agent/sessions/--work--/2026-10-01_p1.jsonl", [
+            #"{"type":"session","id":"p1","cwd":"/work"}"#,
+            #"{"type":"message","message":{"role":"assistant","provider":"github-copilot","content":[]}}"#,
+        ].joined(separator: "\n") + "\n")
+        // A Pi session, reviewed by Claude Code (the default agent): another origin.
+        let run = try await LabRuns.newReview(transcript: home.appending(path: ".pi/agent/sessions/--work--/2026-10-01_p1.jsonl"),
+                                              title: nil, environment: .background, akit: URL(filePath: "/usr/bin/true"), env: env)
         let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, out: { _ in })
         let done = try #require(LabStore.load(run.id, env: env))
         #expect(code == 1 && done.status == .error)

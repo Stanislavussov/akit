@@ -40,36 +40,38 @@ struct SendPolicyTests {
         func blocker(_ agent: LabAgent, _ origin: SendOrigin?, _ settings: LabSettings, work: Bool = false) -> SendAccounts.Blocker? {
             SendAccounts.blocker(of: agent, origin: origin, settings: settings, isWork: work, env: env)
         }
-        // Personal Mac: a Pi session goes to its own provider, with or without an account entered.
-        #expect(blocker(pi, fromCopilot, LabSettings()) == nil)
-        if case .policy? = blocker(pi, .piSession(providers: ["zai"]), LabSettings()) {} else { Issue.record("no origin refusal") }
-        #expect(blocker(pi, nil, LabSettings()) == nil)
-        // Work Mac: the list alone, so the sheet's Add Destination… is filled with what is known.
-        guard case .policy(let unknown, let provider)? = blocker(pi, nil, LabSettings(), work: true) else {
-            Issue.record("no work refusal"); return
+        // Any Mac: a Pi session goes back to its own provider, with nothing entered.
+        for work in [false, true] {
+            #expect(blocker(pi, fromCopilot, LabSettings(), work: work) == nil)
+            #expect(blocker(pi, nil, LabSettings(), work: work) == nil)
         }
-        #expect(unknown.contains("akit lab policy allow pi github-copilot") && provider?.provider == "github-copilot"
-                && provider?.isAccountKnown == false)
+        // Another origin needs the list, so the sheet's Add Destination… is filled with what is known.
+        let fromZai = SendOrigin.piSession(providers: ["zai"])
+        guard case .policy(let unknown, let provider)? = blocker(pi, fromZai, LabSettings(), work: true) else {
+            Issue.record("no cross-origin refusal"); return
+        }
+        #expect(unknown.contains("akit lab policy allow pi github-copilot") && unknown.contains("work Mac")
+                && provider?.provider == "github-copilot" && provider?.isAccountKnown == false)
         let entered = LabSettings(piAccounts: [PiAccount(provider: "GitHub-Copilot", account: "me", org: "acme")])
-        guard case .policy(let work, let destination)? = blocker(pi, fromCopilot, entered, work: true) else { Issue.record("no work refusal"); return }
-        #expect(work.contains("Add Destination…") && destination?.matches(copilot) == true)
+        guard case .policy(let reason, let destination)? = blocker(pi, fromZai, entered) else { Issue.record("no origin refusal"); return }
+        #expect(reason.contains("Add Destination…") && !reason.contains("work Mac") && destination?.matches(copilot) == true)
         var listed = LabSettings()
         listed.allow(copilot)
-        #expect(blocker(pi, fromCopilot, listed, work: true) == nil)
-        #expect(blocker(pi, nil, listed, work: true) == nil)
-        // Claude Code: its account is asked at the run; only an empty list is known to refuse.
+        #expect(blocker(pi, fromZai, listed, work: true) == nil)
+        // Claude Code: its account is asked at the run; only data from elsewhere with no Claude Code entry is known to refuse.
         let claude = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
-        #expect(blocker(claude, .claudeSession, LabSettings()) == nil)
-        if case .policy? = blocker(claude, fromCopilot, LabSettings()) {} else { Issue.record("no Pi-to-Claude refusal") }
-        if case .policy? = blocker(claude, .claudeSession, LabSettings(), work: true) {} else { Issue.record("no work refusal") }
-        #expect(blocker(claude, .claudeSession, LabSettings(allowedDestinations: [claudeAccount]), work: true) == nil)
+        for work in [false, true] {
+            #expect(blocker(claude, .claudeSession, LabSettings(), work: work) == nil)
+            #expect(blocker(claude, .code(.claudeCode), LabSettings(), work: work) == nil)
+        }
+        if case .policy? = blocker(claude, fromCopilot, LabSettings(), work: true) {} else { Issue.record("no Pi-to-Claude refusal") }
+        #expect(blocker(claude, fromCopilot, LabSettings(allowedDestinations: [claudeAccount]), work: true) == nil)
 
         // An empty model is Pi's default provider, as the run reads it; none set says so.
         let piDefault = LabAgent(harness: .pi, model: "", effort: "high")
         #expect(blocker(piDefault, fromCopilot, LabSettings()) == .noPiProvider)
         try? write(".pi/agent/settings.json", #"{"defaultProvider":"github-copilot","defaultModel":"gpt-5"}"#)
-        #expect(blocker(piDefault, fromCopilot, LabSettings()) == nil)
-        #expect(blocker(piDefault, fromCopilot, listed, work: true) == nil)
+        #expect(blocker(piDefault, fromCopilot, LabSettings(), work: true) == nil)
         // Read as a send reads them: a file that doesn't decode refuses everything.
         #expect(SendAccounts.blocker(of: pi, origin: fromCopilot, isWork: false, env: env) == nil)
         try? write(".akit/lab/settings.json", #"{"monthlyLimit":"ten"}"#)
@@ -97,10 +99,20 @@ struct SendPolicyTests {
         #expect(unknown.matches(SendDestination(harness: .pi, provider: "GitHub-Copilot", account: " ", org: "")))
         #expect(!unknown.matches(copilot) && !copilot.matches(unknown))
         #expect(unknown.label == "Pi · github-copilot · account not entered")
-        #expect(!SendPolicy.decide(origin: .piSession(providers: ["github-copilot"]), destination: unknown, isWork: true,
-                                   allowed: [copilot]).allowed)
-        #expect(SendPolicy.decide(origin: .piSession(providers: ["github-copilot"]), destination: unknown, isWork: false,
-                                  allowed: []).allowed)
+        #expect(!SendPolicy.decide(origin: .claudeSession, destination: unknown, isWork: true, allowed: [copilot]).allowed)
+        for work in [false, true] {
+            #expect(SendPolicy.decide(origin: .piSession(providers: ["github-copilot"]), destination: unknown, isWork: work,
+                                      allowed: []).allowed)
+        }
+        // An old entry with blank fields lets nothing through, and isn't added again.
+        let blank = SendDestination(harness: .pi, provider: "github-copilot", account: "", org: "")
+        #expect(!SendPolicy.decide(origin: .claudeSession, destination: unknown, isWork: true, allowed: [blank]).allowed)
+        var plain = LabSettings()
+        let added = plain.allow(blank)
+        #expect(!added && plain.allowedDestinations.isEmpty)
+        // The provider is trimmed, so the Pi account it enters is found.
+        let spaced = plain.allow(SendDestination(harness: .pi, provider: " github-copilot ", account: "me", org: "acme"))
+        #expect(spaced && plain.piAccounts.map(\.provider) == ["github-copilot"])
     }
 
     @Test func personalMacAllowsTheSameOriginOnly() {
@@ -123,12 +135,13 @@ struct SendPolicyTests {
         #expect(!SendPolicy.decide(origin: .claudeSession, destination: copilot, isWork: false, allowed: [otherOrg]).allowed)
     }
 
-    @Test func workMacSendsOnlyToTheList() {
-        let refused = SendPolicy.decide(origin: .claudeSession, destination: claudeAccount, isWork: true, allowed: [])
-        #expect(!refused.allowed)
-        #expect(refused.reason.contains("work Mac"))
-        #expect(SendPolicy.decide(origin: .claudeSession, destination: claudeAccount, isWork: true, allowed: [claudeAccount]).allowed)
-        #expect(!SendPolicy.decide(origin: .code(.claudeCode), destination: claudeAccount, isWork: true, allowed: []).allowed)
+    /// A work Mac sends data back to its origin too (nobody new gets it); everything else goes only to the company's list.
+    @Test func workMacAllowsTheSameOriginAndTheList() {
+        #expect(SendPolicy.decide(origin: .claudeSession, destination: claudeAccount, isWork: true, allowed: []).allowed)
+        #expect(SendPolicy.decide(origin: .code(.claudeCode), destination: claudeAccount, isWork: true, allowed: []).allowed)
+        let refused = SendPolicy.decide(origin: .claudeSession, destination: copilot, isWork: true, allowed: [])
+        #expect(!refused.allowed && refused.reason.contains("work Mac"))
+        #expect(SendPolicy.decide(origin: .claudeSession, destination: copilot, isWork: true, allowed: [copilot]).allowed)
     }
 
     @Test func piOriginComesFromTheSessionsAnswers() throws {
@@ -327,7 +340,8 @@ struct SendPolicyTests {
         try fakeClaude(result: #"{"type":"result","is_error":false,"result":"x"}"#)
         let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
         let gate = SendGate(destination: claudeAccount, isWork: true, settings: LabSettings())
-        let request = ModelCall.Request(agent: agent, purpose: "notes", system: "s", input: "data", origin: .claudeSession)
+        // Data from another origin, on a work Mac with an empty list.
+        let request = ModelCall.Request(agent: agent, purpose: "notes", system: "s", input: "data", origin: .piSession(providers: ["zai"]))
         await #expect(throws: SendAccounts.Failure.self) {
             _ = try await ModelCall.run(request, gate: gate, folder: home.appending(path: "work"), env: env)
         }

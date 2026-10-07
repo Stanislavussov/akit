@@ -74,13 +74,13 @@ extension AKitCLI {
                                           a Claude Code or Pi session may go there
           akit lab policy allow HARNESS PROVIDER ACCOUNT ORG
           akit lab policy remove HARNESS PROVIDER ACCOUNT ORG
-                                          Add or remove an allowed destination. On a work Mac,
-                                          `allow pi PROVIDER LOGIN ORG` is all a Pi review needs: it
-                                          also enters the Pi account when none is
+                                          Add or remove an allowed destination, for data from
+                                          another origin (a session goes back to its own harness and
+                                          provider without one). `allow pi PROVIDER LOGIN ORG` also
+                                          enters the Pi account when none is
           akit lab policy pi-account PROVIDER ACCOUNT ORG
-                                          The account behind a Pi provider (Pi has no whoami). A
-                                          personal Mac doesn't need it: a Pi session goes to its own
-                                          provider
+                                          The account behind a Pi provider (Pi has no whoami); needed
+                                          only to put Pi on the allowed list
           akit lab policy limit DOLLARS|none
                                           Monthly limit on recorded cost
           akit lab sends [--json]         The send log: what went where, tokens, recorded cost
@@ -364,8 +364,8 @@ extension AKitCLI {
                 out(try labJSON(settings))
                 return 0
             }
-            var lines = [isWork ? "Work Mac: session data goes only to the allowed list." :
-                            "Personal Mac: the same origin, plus the allowed list."]
+            var lines = [(isWork ? "Work Mac" : "Personal Mac") + ": the same origin (the harness and provider that recorded the data), "
+                            + "plus the allowed list" + (isWork ? " (your company's)." : ".")]
             lines.append("Allowed: " + (settings.allowedDestinations.isEmpty ? "none" : ""))
             lines += settings.allowedDestinations.map { "  \($0.label)" }
             lines.append("Pi accounts: " + (settings.piAccounts.isEmpty ? "none" : ""))
@@ -438,7 +438,7 @@ extension AKitCLI {
         let date = record.date.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
         let cost = record.usage.cost.map { String(format: "$%.3f", $0) } ?? "no cost recorded"
         return "\(date)  \(record.purpose.padding(toLength: 9, withPad: " ", startingAt: 0))  \(record.harness.title) · \(record.provider) · "
-            + "\(record.account) · \(record.model)  in \(record.usage.input) cached \(record.usage.cached) out \(record.usage.output)  \(cost)"
+            + "\(record.account.isEmpty ? "account not entered" : record.account) · \(record.model)  in \(record.usage.input) cached \(record.usage.cached) out \(record.usage.output)  \(cost)"
             + (record.session.map { "  \($0)" } ?? "")
     }
 

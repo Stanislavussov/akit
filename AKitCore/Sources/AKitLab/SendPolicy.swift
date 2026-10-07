@@ -94,29 +94,26 @@ public enum SendPolicy {
         public let reason: String
     }
 
-    /// - Work Mac: only destinations on the allowed list (empty by default).
-    /// - Personal Mac: the allowed list, plus the same origin: a transcript may go to the
-    ///   provider and account that produced it. Pi can't tell its account, so for Pi the
-    ///   provider decides, as the signed-in account does for Claude Code.
+    /// Any Mac: the same origin, where data goes back to the harness and provider that produced
+    /// it (it went there already, so nobody new gets it), plus the allowed list for everything
+    /// else. The harness's own sign-in counts: Claude Code's transcripts don't record their
+    /// account and Pi can't tell its own, so for Claude Code the harness and for Pi the
+    /// provider decides. A work Mac differs only in its wording: its list is the company's.
     public static func decide(origin: SendOrigin, destination: SendDestination, isWork: Bool, allowed: [SendDestination]) -> Decision {
-        if allowed.contains(where: { $0.matches(destination) }) {
+        // Only entries with an account: an old entry with blank fields mustn't let anything through.
+        if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) }) {
             return Decision(allowed: true, reason: "\(destination.label) is on the allowed list.")
-        }
-        if isWork, destination.harness == .pi, !destination.isAccountKnown {
-            return Decision(allowed: false, reason: "This is a work Mac: session data goes only to accounts on the allowed list, and Pi "
-                                + "can't tell which \(destination.provider) account it uses. Allow it once: Settings → Sending policy → "
-                                + "Add Destination… (Pi · \(destination.provider) · your login · plan or org), or "
-                                + "akit lab policy allow pi \(destination.provider) LOGIN ORG.")
-        }
-        if isWork {
-            return Decision(allowed: false, reason: "This is a work Mac: session data goes only to destinations on the allowed list "
-                                + "(Settings → Sending policy → Add Destination…), and \(destination.label) isn't on it.")
         }
         if sameOrigin(origin, destination) {
             return Decision(allowed: true, reason: "Same origin: \(destination.label) produced this data.")
         }
+        let allow = destination.harness == .pi && !destination.isAccountKnown
+            ? "Pi can't tell which \(destination.provider) account it uses: allow it once with your login and plan or org "
+                + "(Settings → Sending policy → Add Destination…, or akit lab policy allow pi \(destination.provider) LOGIN ORG)."
+            : "Add it to the allowed list (Settings → Sending policy → Add Destination…) to send it there."
         return Decision(allowed: false, reason: "\(destination.label) didn't produce this data (\(origin.label)). "
-                            + "Add it to the allowed list (Settings → Sending policy → Add Destination…) to send it there.")
+                            + (isWork ? "This is a work Mac: allow other destinations only as your company's policy says. " : "")
+                            + allow)
     }
 
     static func sameOrigin(_ origin: SendOrigin, _ destination: SendDestination) -> Bool {
@@ -146,7 +143,9 @@ extension SendOrigin {
 }
 
 /// Finds out who a destination is, at the start of every review, batch and control run.
-/// An account that can't be determined, or one without plan or org data, refuses the call.
+/// A Claude Code account that can't be determined, or one without plan or org data, refuses
+/// the call; a Pi provider goes out with the account entered for it, or as "account not
+/// entered", which only the same origin allows.
 public enum SendAccounts {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -238,20 +237,16 @@ public enum SendAccounts {
             guard !provider.isEmpty else { return .noPiProvider }
             let entry = piEntry(provider: provider, settings: settings)
             let destination = SendDestination(harness: .pi, provider: provider, account: entry?.account ?? "", org: entry?.org ?? "")
-            // A work Mac decides by the list alone, whatever the origin.
-            guard let origin = origin ?? (isWork ? .code(.pi) : nil) else { return nil }
+            guard let origin else { return nil }
             let decision = SendPolicy.decide(origin: origin, destination: destination, isWork: isWork, allowed: settings.allowedDestinations)
             return decision.allowed ? nil : .policy(decision.reason, destination: destination)
         case .claudeCode:
             // The account is known only by asking Claude Code; without any Claude Code entry on
-            // the list, though, every account is refused where only the list counts.
-            guard !settings.allowedDestinations.contains(where: { $0.harness == .claudeCode }) else { return nil }
-            if isWork {
-                return .policy("This is a work Mac: session data goes only to destinations on the allowed list "
-                               + "(Settings → Sending policy → Add Destination…), and no Claude Code account is on it.", destination: nil)
-            }
-            if let origin, origin != .claudeSession {
+            // the list, though, data from another origin is refused whatever the account.
+            guard !settings.allowedDestinations.contains(where: { $0.harness == .claudeCode && $0.isAccountKnown }) else { return nil }
+            if let origin, origin != .claudeSession, origin != .code(.claudeCode) {
                 return .policy("Claude Code didn't produce this data (\(origin.label)). "
+                               + (isWork ? "This is a work Mac: allow other destinations only as your company's policy says. " : "")
                                + "Add its account to the allowed list (Settings → Sending policy → Add Destination…) to send it there.",
                                destination: nil)
             }
