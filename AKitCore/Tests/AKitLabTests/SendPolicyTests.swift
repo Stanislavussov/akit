@@ -234,6 +234,47 @@ struct SendPolicyTests {
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
     }
 
+    @Test func runCostsAddUpEachRunsSends() {
+        func record(_ run: String?, _ usage: SendUsage) -> SendRecord {
+            SendRecord(purpose: "notes", session: nil, runID: run, destination: claudeAccount, model: "opus", inputCharacters: 10, usage: usage)
+        }
+        let costs = SendLog.runCosts([
+            record("batch", SendUsage(input: 100, cached: 50, output: 10, cost: 0.25)),
+            record("batch", SendUsage(input: 200, output: 20, cost: 0.50)),
+            record("review", SendUsage(input: 300, cached: 700)),
+            record("half", SendUsage(input: 10, cost: 0.10)),
+            record("half", SendUsage(input: 10)),
+            record(nil, SendUsage(cost: 9)),
+        ])
+        #expect(costs.count == 3, "a send without a run belongs to none")
+        let batch = costs["batch"]
+        #expect(batch?.calls == 2 && batch?.tokens == 380 && abs((batch?.dollars ?? 0) - 0.75) < 1e-9 && batch?.isComplete == true)
+        // A subscription or a harness that wrote no cost: tokens only.
+        #expect(costs["review"]?.dollars == nil && costs["review"]?.tokens == 1000)
+        #expect(costs["half"]?.isComplete == false && abs((costs["half"]?.dollars ?? 0) - 0.10) < 1e-9)
+    }
+
+    @Test func olderRunsTakeTheirCostFromTheAgentLog() throws {
+        let claude = home.appending(path: "claude.jsonl"), pi = home.appending(path: "pi.jsonl"), none = home.appending(path: "none.jsonl")
+        try Data("""
+            {"type":"assistant","message":{"content":[]}}
+            {"type":"result","is_error":false,"usage":{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":5},"total_cost_usd":0.42}
+
+            """.utf8).write(to: claude)
+        try Data("""
+            {"type":"message_end","message":{"role":"assistant","usage":{"input":10,"cacheRead":20,"output":3,"cost":{"total":0.01}}}}
+            {"type":"message_end","message":{"role":"user"}}
+            {"type":"message_end","message":{"role":"assistant","usage":{"input":5,"cacheRead":40,"output":2,"cost":{"total":0.02}}}}
+
+            """.utf8).write(to: pi)
+        try Data("{\"type\":\"system\"}\n".utf8).write(to: none)
+        let fromClaude = try #require(RunCost.fromAgentLog(claude))
+        #expect(abs((fromClaude.dollars ?? 0) - 0.42) < 1e-9 && fromClaude.tokens == 105 && fromClaude.isComplete)
+        let fromPi = try #require(RunCost.fromAgentLog(pi))
+        #expect(abs((fromPi.dollars ?? 0) - 0.03) < 1e-9 && fromPi.tokens == 80 && fromPi.calls == 1)
+        #expect(RunCost.fromAgentLog(none) == nil && RunCost.fromAgentLog(home.appending(path: "missing")) == nil)
+    }
+
     @Test func monthlyLimitRefusesWhatWouldPassIt() throws {
         try SendLog.append(SendRecord(purpose: "notes", session: nil, runID: nil, destination: claudeAccount, model: "opus",
                                       inputCharacters: 1000, usage: SendUsage(cost: 4.50)), env: env)

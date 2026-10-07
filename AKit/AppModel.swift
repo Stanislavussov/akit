@@ -426,6 +426,10 @@ final class AppModel {
     /// When the send log last changed: model calls of the Error Analysis screen and the
     /// `akit` command write it too, not only Lab runs (reloaded with the runs).
     var labSendsChanged: Date?
+    /// What each run cost, by run id, from the send log (reloaded when it changes).
+    var labRunCosts: [String: RunCost] = [:]
+    /// Ended runs with neither sends nor an agent log to price them: not read again.
+    @ObservationIgnored var labUnpricedRuns = Set<String>()
 
     /// Lab metrics of one Claude Code session: transcript, then git for its commits.
     func analysis(of session: SessionSummary) async throws -> SessionMetrics {

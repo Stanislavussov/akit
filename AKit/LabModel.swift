@@ -35,8 +35,11 @@ extension AppModel {
 
     func reloadLab() async {
         let env = HarnessEnvironment.current
-        let (runs, tasks, batches, controlTasks, sends) = await Task.detached {
-            () -> ([LabRun], [String: ReplayTask], [String: Batch], [String: ControlTask], Date?) in
+        let known = labSendsChanged
+        let logged = labRunCosts
+        let unpricedBefore = labUnpricedRuns
+        let (runs, tasks, batches, controlTasks, sends, costs, checked) = await Task.detached {
+            () -> ([LabRun], [String: ReplayTask], [String: Batch], [String: ControlTask], Date?, [String: RunCost]?, Set<String>) in
             let runs = LabStore.list(env: env)
             var tasks: [String: ReplayTask] = [:]
             for commit in Set(runs.compactMap(\.spec.commit)) { tasks[commit] = ReplayTasks.cached(commit, env: env) }
@@ -47,13 +50,32 @@ extension AppModel {
             var controlTasks: [String: ControlTask] = [:]
             for id in Set(runs.compactMap(\.spec.controlTask)) { controlTasks[id] = ControlTasks.load(id, env: env) }
             let sends = try? SendLog.file(env: env).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            return (runs, tasks, batches, controlTasks, sends)
+            // The log grows with every call: read it again only when it changed.
+            var costs = sends == known ? nil : SendLog.runCosts(SendLog.records(env: env))
+            // Runs older than the send log: their own agent log, read once when they have ended.
+            var unpriced = unpricedBefore
+            let current = costs ?? logged
+            let missing = runs.filter { !$0.isActive && current[$0.id] == nil && !unpriced.contains($0.id) }
+            if !missing.isEmpty {
+                var filled = current
+                for run in missing {
+                    if let cost = RunCost.fromAgentLog(run.folder.appending(path: "agent.jsonl")) {
+                        filled[run.id] = cost
+                    } else {
+                        unpriced.insert(run.id)
+                    }
+                }
+                costs = filled
+            }
+            return (runs, tasks, batches, controlTasks, sends, costs, unpriced)
         }.value
+        labUnpricedRuns = checked
         if runs != labRuns { labRuns = runs }
         if tasks != labTasks { labTasks = tasks }
         if batches != labBatches { labBatches = batches }
         if controlTasks != labControlTasks { labControlTasks = controlTasks }
         if sends != labSendsChanged { labSendsChanged = sends }
+        if let costs, costs != labRunCosts { labRunCosts = costs }
     }
 
     /// Keeps the Lab badge and the queue current while AKit runs: reloads the runs, and

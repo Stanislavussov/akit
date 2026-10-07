@@ -211,6 +211,12 @@ Who writes what:
   policy of `error-analysis.md` (allowed list, same origin, account check, scrub, monthly
   limit, `sends.jsonl`); the one-call review is error analysis's notes and verifier.
 
+A run's cost (2026-10-07) is its sends added up by `runID` (`SendLog.runCosts`): the agent
+session of a review, replay or control cell, every model call of a batch, as the harness
+recorded it. Runs older than the send log take it from their own `agent.jsonl` (Claude Code's
+`result.total_cost_usd`, Pi's `message_end` costs). The Lab list, the run's header and the
+screen's subtitle show it; tokens when no cost was recorded.
+
 ## Replay tasks
 
 A task is made from a commit:
