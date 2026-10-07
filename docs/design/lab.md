@@ -420,10 +420,9 @@ is kept here.
      under `PI_CODING_AGENT_DIR`). The run gets `transcript.md` and no `analysis.json`. Every
      review sheet (New Run…, Re-check, Bootstrap's review) and the CLI start the reviewer as
      `LabRuns.ownReviewer`: the session's own harness, and for a Pi session that recorded one
-     provider other than Pi's default, that provider's last model. The same-origin rule lets
-     a personal Mac send a Pi session only to that provider (with its Pi account entered);
-     a session that mixed providers, a work Mac, or a Claude Code reviewer of a Pi session
-     needs the allowed list. `akit lab analyze` still refuses Pi sessions.
+     provider other than Pi's default, that provider's last model. The same-origin rule
+     sends a Pi session back to that provider with nothing to enter, on any Mac; a session
+     that mixed providers or a Claude Code reviewer of a Pi session needs the allowed list. `akit lab analyze` still refuses Pi sessions.
    - Later (2026-09-30): one model call became the default (`--mode call|agent`); the
      agent stays for sessions too long for a digest.
    - Later (2026-09-30): an improvement is generic advice (a rule, skill, hook, setting or

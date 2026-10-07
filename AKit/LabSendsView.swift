@@ -41,8 +41,9 @@ struct LabSendsView: View {
             TableColumn("Purpose") { row in Text(row.record.purpose) }
                 .width(min: 60, ideal: 70)
             TableColumn("Destination") { row in
-                Text("\(row.record.harness.title) · \(row.record.provider) · \(row.record.account)")
-                    .help("\(row.record.harness.title) · \(row.record.provider) · \(row.record.account) · \(row.record.org)")
+                Text("\(row.record.harness.title) · \(row.record.provider) · \(row.record.account.isEmpty ? "account not entered" : row.record.account)")
+                    .help(row.record.account.isEmpty ? "\(row.record.harness.title) · \(row.record.provider) · account not entered"
+                          : "\(row.record.harness.title) · \(row.record.provider) · \(row.record.account) · \(row.record.org)")
             }
             .width(min: 160, ideal: 210)
             TableColumn("Model") { row in Text(row.record.model.isEmpty ? "default" : row.record.model) }

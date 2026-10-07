@@ -11,8 +11,9 @@ extension Notification.Name {
 }
 
 /// Under a review sheet's agent fields: what will stop the review, known from the sending
-/// policy settings alone (a missing Pi account, a destination the policy refuses), with the
-/// button that fixes it here instead of a failed run. Nothing shows when nothing is known
+/// policy settings alone (a destination the policy refuses, such as Pi for a Claude Code
+/// session with no Pi account allowed), with the button that fixes it here instead of a
+/// failed run. Nothing shows when nothing is known
 /// to stop it; the run still checks the account itself.
 struct SendBlockerNote: View {
     let agent: LabAgent
@@ -36,7 +37,8 @@ struct SendBlockerNote: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                     if let entry = entry(blocker) {
-                        Button(entry.isPiAccount ? "Add Pi Account…" : "Add Destination…") { editor = entry }
+                        Button("Add Destination…") { editor = entry }
+                            .help("Allow this account to receive session data; for Pi, also its Pi account")
                     }
                 }
                 .font(.callout)
@@ -74,8 +76,6 @@ struct SendBlockerNote: View {
 
     private func text(_ blocker: SendAccounts.Blocker) -> String {
         switch blocker {
-        case .piAccount(let provider):
-            "Pi has no account entered for \(provider), so the review would be refused. Enter your login and the plan or org behind it."
         case .noPiProvider:
             "Which Pi provider? Pick a model as provider/model (Pi has no default provider set)."
         case .policy(let reason, _):
@@ -88,8 +88,6 @@ struct SendBlockerNote: View {
     /// The entry to fill in, with what is already known; nil = nothing to add here.
     private func entry(_ blocker: SendAccounts.Blocker) -> PolicyEntryEditor? {
         switch blocker {
-        case .piAccount(let provider):
-            PolicyEntryEditor(kind: .piAccount(index: nil), entry: SendDestination(harness: .pi, provider: provider, account: "", org: ""))
         case .policy(_, let destination?):
             PolicyEntryEditor(kind: .destination, entry: destination)
         case .policy(_, nil):

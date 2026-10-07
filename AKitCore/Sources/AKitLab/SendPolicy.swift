@@ -24,11 +24,22 @@ public struct SendDestination: Codable, Hashable, Sendable {
         self.org = org
     }
 
-    /// "Pi · github-copilot · me@example.com · acme".
-    public var label: String { "\(harness.title) · \(provider) · \(account) · \(org)" }
+    /// Whether the account and plan/org are known: Pi can't tell them, so a Pi provider with no
+    /// account entered goes out as the provider alone.
+    public var isAccountKnown: Bool {
+        !account.trimmingCharacters(in: .whitespaces).isEmpty && !org.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 
-    /// The same destination, ignoring case and surrounding spaces.
+    /// "Pi · github-copilot · me@example.com · acme", or "Pi · github-copilot · account not entered".
+    public var label: String {
+        isAccountKnown ? "\(harness.title) · \(provider) · \(account) · \(org)" : "\(harness.title) · \(provider) · account not entered"
+    }
+
+    /// The same destination, ignoring case and surrounding spaces. One whose account isn't
+    /// known matches only another such one of the same provider, never a list entry (the
+    /// allowed list is a list of accounts).
     public func matches(_ other: SendDestination) -> Bool {
+        guard isAccountKnown == other.isAccountKnown else { return false }
         func same(_ a: String, _ b: String) -> Bool {
             a.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(b.trimmingCharacters(in: .whitespaces)) == .orderedSame
         }
@@ -83,22 +94,32 @@ public enum SendPolicy {
         public let reason: String
     }
 
-    /// - Work Mac: only destinations on the allowed list (empty by default).
-    /// - Personal Mac: the allowed list, plus the same origin: a transcript may go to the
-    ///   provider and account that produced it.
+    /// Any Mac: the same origin, where a session goes back to the harness and provider that
+    /// produced it (it went there already, so nobody new gets it), plus the allowed list for
+    /// everything else. The harness's own sign-in counts: Claude Code's transcripts don't
+    /// record their account and Pi can't tell its own, so for Claude Code the harness and for
+    /// Pi the provider decides. A work Mac's list is the company's, and repository code
+    /// (`.code`, no provider of its own) goes only to it there: work code was given to the
+    /// harness, not to every provider it can reach.
     public static func decide(origin: SendOrigin, destination: SendDestination, isWork: Bool, allowed: [SendDestination]) -> Decision {
-        if allowed.contains(where: { $0.matches(destination) }) {
+        // Only entries with an account: an old entry with blank fields mustn't let anything through.
+        if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) }) {
             return Decision(allowed: true, reason: "\(destination.label) is on the allowed list.")
         }
-        if isWork {
-            return Decision(allowed: false, reason: "This is a work Mac: session data goes only to destinations on the allowed list "
-                                + "(Settings → Sending policy → Add Destination…), and \(destination.label) isn't on it.")
-        }
-        if sameOrigin(origin, destination) {
+        if sameOrigin(origin, destination), !(isWork && origin.isCode) {
             return Decision(allowed: true, reason: "Same origin: \(destination.label) produced this data.")
         }
+        if isWork, origin.isCode {
+            return Decision(allowed: false, reason: "This is a work Mac: repository code goes only to destinations on the allowed list "
+                                + "(your company's; Settings → Sending policy → Add Destination…), and \(destination.label) isn't on it.")
+        }
+        let allow = destination.harness == .pi && !destination.isAccountKnown
+            ? "Pi can't tell which \(destination.provider) account it uses: allow it once with your login and plan or org "
+                + "(Settings → Sending policy → Add Destination…, or akit lab policy allow pi \(destination.provider) LOGIN ORG)."
+            : "Add it to the allowed list (Settings → Sending policy → Add Destination…) to send it there."
         return Decision(allowed: false, reason: "\(destination.label) didn't produce this data (\(origin.label)). "
-                            + "Add it to the allowed list (Settings → Sending policy → Add Destination…) to send it there.")
+                            + (isWork ? "This is a work Mac: allow other destinations only as your company's policy says. " : "")
+                            + allow)
     }
 
     static func sameOrigin(_ origin: SendOrigin, _ destination: SendDestination) -> Bool {
@@ -116,6 +137,12 @@ public enum SendPolicy {
 }
 
 extension SendOrigin {
+    /// Repository code rather than a recorded session.
+    var isCode: Bool {
+        if case .code = self { return true }
+        return false
+    }
+
     var label: String {
         switch self {
         case .claudeSession: "a Claude Code session"
@@ -128,7 +155,9 @@ extension SendOrigin {
 }
 
 /// Finds out who a destination is, at the start of every review, batch and control run.
-/// An account that can't be determined, or one without plan or org data, refuses the call.
+/// A Claude Code account that can't be determined, or one without plan or org data, refuses
+/// the call; a Pi provider goes out with the account entered for it, or as "account not
+/// entered", which only the same origin allows.
 public enum SendAccounts {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -172,14 +201,12 @@ public enum SendAccounts {
         return SendDestination(harness: .claudeCode, provider: provider, account: email, org: org)
     }
 
-    /// The account the user entered for the provider; Pi must also report the provider ready
-    /// (`pi auth check`, which prints no credentials without `--credentials`).
+    /// The provider with the account the user entered for it (none entered: the provider
+    /// alone, which the policy allows only as the same origin); Pi must also report the
+    /// provider ready (`pi auth check`, which prints no credentials without `--credentials`).
     static func pi(provider: String, settings: LabSettings, env: HarnessEnvironment) async throws -> SendDestination {
         guard !provider.isEmpty else { throw Failure(message: "Which Pi provider? Pick a model as provider/model.") }
-        guard let entry = piEntry(provider: provider, settings: settings) else {
-            throw Failure(message: "Pi has no account entered for \(provider), so Pi is refused on this Mac. "
-                              + "Enter it in Settings → Pi accounts → Add Pi Account…: your login and the plan or org.")
-        }
+        let entry = piEntry(provider: provider, settings: settings)
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
         let result = await ProcessRunner.run(pi, arguments: ["auth", "check", "--provider", provider, "--json", "--no-refresh"],
                                              environment: AgentRun.environment(env, runFolder: nil), timeout: 30)
@@ -191,15 +218,13 @@ public enum SendAccounts {
         guard status == "ready" else {
             throw Failure(message: "Pi isn't signed in to \(provider) (pi auth check: \(status ?? "no answer")).")
         }
-        return SendDestination(harness: .pi, provider: provider, account: entry.account, org: entry.org)
+        return SendDestination(harness: .pi, provider: provider, account: entry?.account ?? "", org: entry?.org ?? "")
     }
 
     /// What will stop a review through `agent`, known from the settings alone (no harness is
     /// asked, so the sheet can say it before anything is queued); nil when nothing is known
     /// to. The run still checks the account itself. `origin` nil = not known yet.
     public enum Blocker: Equatable, Sendable {
-        /// No Pi account entered for this provider.
-        case piAccount(provider: String)
         /// A Pi model with no provider, and no default provider in Pi's settings.
         case noPiProvider
         /// The policy refuses the destination; the reason names where to allow it. The
@@ -222,21 +247,23 @@ public enum SendAccounts {
         case .pi:
             let provider = piProvider(of: agent, env: env)
             guard !provider.isEmpty else { return .noPiProvider }
-            guard let entry = piEntry(provider: provider, settings: settings) else { return .piAccount(provider: provider) }
+            let entry = piEntry(provider: provider, settings: settings)
+            let destination = SendDestination(harness: .pi, provider: provider, account: entry?.account ?? "", org: entry?.org ?? "")
             guard let origin else { return nil }
-            let destination = SendDestination(harness: .pi, provider: provider, account: entry.account, org: entry.org)
             let decision = SendPolicy.decide(origin: origin, destination: destination, isWork: isWork, allowed: settings.allowedDestinations)
             return decision.allowed ? nil : .policy(decision.reason, destination: destination)
         case .claudeCode:
             // The account is known only by asking Claude Code; without any Claude Code entry on
-            // the list, though, every account is refused where only the list counts.
-            guard !settings.allowedDestinations.contains(where: { $0.harness == .claudeCode }) else { return nil }
-            if isWork {
-                return .policy("This is a work Mac: session data goes only to destinations on the allowed list "
-                               + "(Settings → Sending policy → Add Destination…), and no Claude Code account is on it.", destination: nil)
+            // the list, though, data from another origin is refused whatever the account.
+            guard !settings.allowedDestinations.contains(where: { $0.harness == .claudeCode && $0.isAccountKnown }) else { return nil }
+            if isWork, origin == .code(.claudeCode) {
+                return .policy("This is a work Mac: repository code goes only to destinations on the allowed list "
+                               + "(your company's; Settings → Sending policy → Add Destination…), and no Claude Code account is on it.",
+                               destination: nil)
             }
-            if let origin, origin != .claudeSession {
+            if let origin, origin != .claudeSession, origin != .code(.claudeCode) {
                 return .policy("Claude Code didn't produce this data (\(origin.label)). "
+                               + (isWork ? "This is a work Mac: allow other destinations only as your company's policy says. " : "")
                                + "Add its account to the allowed list (Settings → Sending policy → Add Destination…) to send it there.",
                                destination: nil)
             }

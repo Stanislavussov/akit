@@ -631,26 +631,28 @@ Code checks run locally and send nothing, so the policy doesn't apply to them.
 - **Allowed list.** Settings → Lab holds the destinations allowed for session data. An
   entry is harness + provider + account + plan/organization (the org through which Copilot
   is granted, not only the login).
-  - **Work machine** (`work` mode, see `layers.md`): the list is empty by default.
-  - **Personal machine.** Same-origin by default: a transcript may go only to
-    the provider and account that produced it; everything else is added explicitly. The
-    default notes model (Copilot through Pi) on a Claude Code session is cross-origin,
-    so it has to be added.
+  - **Same origin, on every machine** (since 2026-10-07): a transcript may go back to the
+    harness and provider that produced it, which already has it; everything else is added
+    explicitly. The default notes model (Copilot through Pi) on a Claude Code session is
+    cross-origin, so it has to be added.
+  - **Work machine** (`work` mode, see `layers.md`): the list is empty by default and is
+    the company's; refusals say so. Repository code (replays, control runs) goes only to
+    the list there: it was given to the harness, not to every provider the harness reaches.
   - **UI hint**: fill the list in by the company policy for *session data*, not only for
     code.
 - **Account check** at the start of each review, batch and control run, and again after
-  an authorization error. If the account can't be determined, or there is no plan or org
-  data, the call is refused.
+  an authorization error. If the Claude Code account can't be determined, or there is no
+  plan or org data, the call is refused.
 - **Unreadable settings.** When Lab's `settings.json` exists but can't be read (or a field
   such as the monthly limit doesn't decode), every send is refused with that reason: the
   defaults would silently drop the allowed list, the scrub patterns and the limit.
   - **Claude Code:** `claude auth status --json` returns `email`, `orgId` and `orgName`,
     and no secrets.
   - **Pi** has no whoami (`pi auth check --json` gives only provider, status and reason).
-    The user enters the account and plan/org per Pi provider in Settings → Lab, and that
-    entry counts as the plan/org data. No harness secret is read.
-  - **A failed check rejects Pi on this machine** (no entry for the provider); Claude
-    Code keeps working.
+    Pi must report the provider ready. The account and plan/org the user entered for the
+    provider (Settings → Pi accounts) name the destination; with none it is "account not
+    entered", which only the same origin allows and which matches no list entry. No
+    harness secret is read.
 - **Scrub before sending.**
   - **Detector**: gitleaks rules ported to Swift (`Scrubber`, next to `SecretFilter`), with
     no live verification of found keys (trufflehog-style verification sends the secret to
@@ -775,8 +777,9 @@ assertion over a control cell read events the same way.
    not just quota. AKit estimates the cost before a run; the monthly limit is shared with
    the analysis.
 7. **Sending policy.** Tasks and traces contain the code of a work repository. Control
-   runs go through the same allowed list (harness + provider + account + plan/org); see
-   [Sending policy](#sending-policy).
+   runs go through the same policy with the code as origin: on a personal Mac the agent's
+   own harness counts as the origin, on a work Mac only the allowed list (harness +
+   provider + account + plan/org) does; see [Sending policy](#sending-policy).
 8. **Sanity checks:**
    - a deliberately broken setup (read-only tools) must fail;
    - the tests are green on the reference commit;
@@ -923,12 +926,23 @@ Not built (yet):
 Decided by the user on 2026-10-01; they replace the open questions of the design.
 
 - **Personal machine default: same-origin.** A transcript may go only to the provider and
-  account that produced it; everything else is added explicitly.
+  account that produced it; everything else is added explicitly. (Since 2026-10-07 on a
+  work machine too; see the Pi account decision.)
 - **Pi account: entered by the user** (option b). Pi is allowed by provider + model + the
   account and plan/org the user entered in Settings → Lab; no harness secret is touched and
   CLAUDE.md needs no exception. With same-origin, a Pi session is reviewed only through the
   Pi provider that produced it. AKit can't see a switched account behind Pi; on a work
   machine that means trusting the entry.
+  Changed by the user on 2026-10-07: a harness that is already signed in is used as it
+  is, on a work Mac too, with nothing typed in. Pi can't tell its account and the entry
+  was never checked, so same-origin for Pi compares the provider, as it compares the
+  harness for Claude Code; the data goes back where it already went, so nobody new gets
+  it. A Pi destination with no account entered is "account not entered" and matches no
+  list entry, not even an old one with blank fields. The allowed list (the company's on a
+  work Mac) is for cross-origin sends; allowing a Pi destination (Settings or `akit lab
+  policy allow pi …`) also enters it as the provider's Pi account. The review sheets say
+  what the policy will refuse before a run is queued. Known gap, as before: an account
+  switched inside the harness since the session isn't seen.
 - **Randomized interleaving: no.** The user applies fixes; AKit never changes the context
   of real sessions, stays read-only and the capture hook keeps printing nothing. The fix
   signals are control sets and before/after T.

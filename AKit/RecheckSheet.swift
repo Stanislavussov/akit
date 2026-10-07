@@ -14,7 +14,7 @@ struct ReviewAgentFields: View {
     /// of the harness's defaults; a switch of harness still picks the defaults.
     var keepsValues = false
     /// The session under review: the fields start as its own reviewer (`LabRuns.ownReviewer`),
-    /// the same origin a personal Mac allows, and change with it.
+    /// the same origin any Mac allows, and change with it.
     var reviewing: SessionSummary? = nil
     /// Models to offer for the harness (Pi: the ones it has credentials for).
     @State private var models: [String] = []

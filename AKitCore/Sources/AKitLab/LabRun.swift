@@ -235,7 +235,7 @@ public enum LabLanguage: String, Codable, Sendable, CaseIterable {
 public struct LabSettings: Codable, Sendable, Hashable {
     /// The language new reviews are written in.
     public var reportLanguage: LabLanguage
-    /// Destinations session data may go to beyond the same origin; on a work Mac the only ones.
+    /// Destinations data may go to beyond the same origin; on a work Mac the only ones for code.
     public var allowedDestinations: [SendDestination]
     /// The account behind each Pi provider, entered by the user.
     public var piAccounts: [PiAccount]
@@ -323,6 +323,22 @@ public struct LabSettings: Codable, Sendable, Hashable {
             if settings != before { try LabStore.write(settings, to: url) }
             return settings
         }
+    }
+
+    /// Adds a destination to the allowed list, once; one without an account is ignored. A Pi
+    /// destination also becomes its provider's Pi account when none is entered, so one entry
+    /// is all a cross-origin send through Pi needs. Returns whether it entered the Pi account.
+    @discardableResult
+    public mutating func allow(_ given: SendDestination) -> Bool {
+        var destination = given
+        destination.provider = destination.provider.trimmingCharacters(in: .whitespaces)
+        guard destination.isAccountKnown else { return false }
+        if !allowedDestinations.contains(where: { $0.matches(destination) }) { allowedDestinations.append(destination) }
+        guard destination.harness == .pi,
+              SendAccounts.piEntry(provider: destination.provider, settings: self) == nil else { return false }
+        piAccounts.removeAll { $0.provider.caseInsensitiveCompare(destination.provider) == .orderedSame }
+        piAccounts.append(PiAccount(provider: destination.provider, account: destination.account, org: destination.org))
+        return true
     }
 
     /// Applies an edit made on a copy, from `old` to `new` (the app's Settings form), onto

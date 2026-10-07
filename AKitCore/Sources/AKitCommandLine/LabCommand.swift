@@ -66,7 +66,7 @@ extension AKitCLI {
           akit lab remove ID              Move a run's folder to the Trash
           akit lab run ID                 Do the run here (what the tab runs)
 
-        Sending policy (every model call that sends session data or code; Settings → Lab):
+        Sending policy (every model call that sends session data or code; Settings → Sending policy):
           akit lab policy [--json]        This Mac's kind, allowed destinations, Pi accounts, scrub
                                           patterns and monthly limit
           akit lab policy check HARNESS [--model M]
@@ -74,9 +74,13 @@ extension AKitCLI {
                                           a Claude Code or Pi session may go there
           akit lab policy allow HARNESS PROVIDER ACCOUNT ORG
           akit lab policy remove HARNESS PROVIDER ACCOUNT ORG
-                                          Add or remove an allowed destination
+                                          Add or remove an allowed destination, for data from
+                                          another origin (a session goes back to its own harness and
+                                          provider without one). `allow pi PROVIDER LOGIN ORG` also
+                                          enters the Pi account when none is
           akit lab policy pi-account PROVIDER ACCOUNT ORG
-                                          The account behind a Pi provider (Pi has no whoami)
+                                          The account behind a Pi provider (Pi has no whoami); needed
+                                          only to put Pi on the allowed list
           akit lab policy limit DOLLARS|none
                                           Monthly limit on recorded cost
           akit lab sends [--json]         The send log: what went where, tokens, recorded cost
@@ -360,8 +364,8 @@ extension AKitCLI {
                 out(try labJSON(settings))
                 return 0
             }
-            var lines = [isWork ? "Work Mac: session data goes only to the allowed list." :
-                            "Personal Mac: the same origin, plus the allowed list."]
+            var lines = [(isWork ? "Work Mac" : "Personal Mac") + ": the same origin (the harness and provider that recorded the data), "
+                            + "plus the allowed list" + (isWork ? " (your company's)." : ".")]
             lines.append("Allowed: " + (settings.allowedDestinations.isEmpty ? "none" : ""))
             lines += settings.allowedDestinations.map { "  \($0.label)" }
             lines.append("Pi accounts: " + (settings.piAccounts.isEmpty ? "none" : ""))
@@ -381,18 +385,22 @@ extension AKitCLI {
                 throw Failure(message: error.localizedDescription)
             }
             out("\(agent.harness.title) sends to \(gate.destination.label).")
-            for (name, origin) in [("A Claude Code session", SendOrigin.claudeSession),
-                                   ("A Pi session through \(gate.destination.provider)", .piSession(providers: [gate.destination.provider]))] {
+            let own: (String, SendOrigin) = agent.harness == .pi
+                ? ("A Pi session through \(gate.destination.provider)", .piSession(providers: [gate.destination.provider]))
+                : ("A Claude Code session", .claudeSession)
+            let other: (String, SendOrigin) = agent.harness == .pi ? ("A Claude Code session", .claudeSession)
+                : ("A Pi session through github-copilot", .piSession(providers: ["github-copilot"]))
+            for (name, origin) in [own, other, ("Repository code (\(agent.harness.title))", .code(agent.harness))] {
                 let decision = gate.decide(origin)
                 out("\(name): \(decision.allowed ? "allowed" : "refused"). \(decision.reason)")
             }
         case "allow":
             let entry = try destination()
             try args.finish()
-            try LabSettings.update(env: env) { settings in
-                if !settings.allowedDestinations.contains(where: { $0.matches(entry) }) { settings.allowedDestinations.append(entry) }
-            }
-            out("Allowed \(entry.label).")
+            guard entry.isAccountKnown else { throw Failure(message: "Give the ACCOUNT and the ORG (plan or organization).") }
+            var entered = false
+            try LabSettings.update(env: env) { entered = $0.allow(entry) }
+            out("Allowed \(entry.label)." + (entered ? " It's also the Pi account for \(entry.provider)." : ""))
         case "remove":
             let entry = try destination()
             try args.finish()
@@ -434,7 +442,7 @@ extension AKitCLI {
         let date = record.date.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
         let cost = record.usage.cost.map { String(format: "$%.3f", $0) } ?? "no cost recorded"
         return "\(date)  \(record.purpose.padding(toLength: 9, withPad: " ", startingAt: 0))  \(record.harness.title) · \(record.provider) · "
-            + "\(record.account) · \(record.model)  in \(record.usage.input) cached \(record.usage.cached) out \(record.usage.output)  \(cost)"
+            + "\(record.account.isEmpty ? "account not entered" : record.account) · \(record.model)  in \(record.usage.input) cached \(record.usage.cached) out \(record.usage.output)  \(cost)"
             + (record.session.map { "  \($0)" } ?? "")
     }
 
