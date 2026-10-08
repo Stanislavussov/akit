@@ -73,6 +73,8 @@ struct GuideDocumentTests {
         for id in ["overview", "modes", "review", "bootstrap", "reports", "evals", "lab", "settings"] {
             #expect(document.path(to: id) == [id], "no section \(id)")
         }
+        // The Guide buttons of Brain → layer → Evals and the Evaluate… sheet.
+        #expect(document.path(to: "evaluate-layer") == ["evals", "evaluate-layer"])
     }
 
     /// The sidebar opens `docs/guides/screens.ru.md` at its group and screen ids

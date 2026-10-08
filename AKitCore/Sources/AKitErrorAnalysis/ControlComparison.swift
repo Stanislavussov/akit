@@ -19,16 +19,23 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var overlayRecorded: Bool
         /// The Claude Code version the cell ran with, when recorded.
         public var harnessVersion: String?
+        /// The transcript showed the setup wasn't what it should be (`ControlOutcome.setupCheck`):
+        /// left out of the comparison (and counted), so it can't move a verdict.
+        public var setupCheckFailed: Bool
 
         public init(task: String, setup: ControlSetup, passed: Bool, flagged: Bool = false, overlayRecorded: Bool = true,
-                    harnessVersion: String? = nil) {
+                    harnessVersion: String? = nil, setupCheckFailed: Bool = false) {
             self.task = task
             self.setup = setup
             self.passed = passed
             self.flagged = flagged
             self.overlayRecorded = overlayRecorded
             self.harnessVersion = harnessVersion
+            self.setupCheckFailed = setupCheckFailed
         }
+
+        /// Counted in a comparison: not run by an older akit, not failed its setup check.
+        var counts: Bool { overlayRecorded && !setupCheckFailed }
 
         /// The finished control runs; queued, failed and cancelled ones have no verdict.
         public static func of(_ runs: [LabRun]) -> [Cell] {
@@ -36,7 +43,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                 guard run.spec.kind == .control, run.status == .finished, let task = run.spec.controlTask,
                       let setup = run.spec.controlSetup, let control = run.result?.control else { return nil }
                 return Cell(task: task, setup: setup, passed: control.passed, flagged: control.flagged,
-                            overlayRecorded: setup.layer == nil || control.overlay != nil, harnessVersion: control.harnessVersion)
+                            overlayRecorded: setup.layer == nil || control.overlay != nil, harnessVersion: control.harnessVersion,
+                            setupCheckFailed: control.setupCheckFailed)
             }
         }
     }
@@ -118,6 +126,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     public var paired: [Paired]
     /// Layer cells left out because an older akit ran them without the layer.
     public var leftOut = 0
+    /// Layer cells left out because they failed their setup check after the agent.
+    public var setupCheckFailed = 0
 
     /// Rows per setup in order of first appearance. Each patch variant is paired with the
     /// baseline of the same agent (no patch, no layer, not read-only), else the first such
@@ -128,10 +138,11 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     /// fix's signal, so layer pairs never get it: they are judged offline ("helps (offline)",
     /// D4), unless a read-only cell of their eval passed.
     /// `sanity`: more read-only cells of the layer evals among `cells` (their other tasks), for
-    /// the read-only rule only; they make no row.
+    /// the read-only rule only; they make no row. Cells an older akit ran without the layer and
+    /// cells that failed their setup check are left out and counted.
     public static func compare(_ cells: [Cell], sanity: [Cell] = [], production: FixEvaluation? = nil, iterations: Int = 2000,
                                seed: UInt64 = 1) -> ControlComparison {
-        let kept = cells.filter(\.overlayRecorded)
+        let kept = cells.filter(\.counts)
         var order: [ControlSetup] = []
         for cell in kept where !order.contains(cell.setup) { order.append(cell.setup) }
         let rows = order.map { setup in row(setup, cells: kept.filter { $0.setup == setup }) }
@@ -152,13 +163,14 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                   }) else { return nil }
             // The read-only sanity cells of the eval must fail: a pass means the oracle can't tell
             // work from no work. The oracle's verdict counts, flagged or not.
-            let readOnlyPass = (kept + sanity.filter(\.overlayRecorded)).first { cell in
+            let readOnlyPass = (kept + sanity.filter(\.counts)).first { cell in
                 cell.setup.readOnly && cell.passed && cell.setup.layer?.evalID == layer.evalID && cell.setup.agent == variant.setup.agent
             }
             return pair(baseline: baseline, variant: variant, production: nil, offline: true, readOnlyPassed: readOnlyPass?.task,
                         iterations: iterations, seed: seed)
         }
-        return ControlComparison(rows: rows, paired: paired, leftOut: cells.count - kept.count)
+        return ControlComparison(rows: rows, paired: paired, leftOut: cells.filter { !$0.overlayRecorded }.count,
+                                 setupCheckFailed: cells.filter { $0.overlayRecorded && $0.setupCheckFailed }.count)
     }
 
     /// The production signal of the one mode the tasks are about: its fix judged by the mode's

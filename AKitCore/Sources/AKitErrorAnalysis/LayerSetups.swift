@@ -45,6 +45,8 @@ public enum LayerSetups {
         public var continuing: Bool
         /// Shell commands the agent may not run in any cell of the eval (`ControlSetup.denied`).
         public var denied: [String]
+        /// What each setup's cells must and must not show the agent (`LayerChecks`).
+        public var checks: LayerChecks
     }
 
     /// Read-only sanity cells: one repeat on the first tasks.
@@ -133,6 +135,11 @@ public enum LayerSetups {
         if layerOverlay.hash == (baseOverlay ?? ControlOverlay()).hash {
             warnings.append("\(layer) renders nothing beyond its required layers here; both setups get the same files.")
         }
+        let checks = LayerChecks.make(layer: layer, full: full, required: required, layerOverlay: layerOverlay, baseOverlay: baseOverlay,
+                                      declared: Set(closure.flatMap { byName[$0]?.skills.map(\.name) ?? [] }))
+        // Shared by every cell, so every cell of that setup would fail before its agent.
+        warnings += checks.outsideProblems(layer: layer, home: env.homeDirectory).map { $0 + " Its cells won't start while it is there." }
+        let outsideSkills = Set(checks.baseline.outsideFindings(of: LayerChecks.cloneLocation, home: env.homeDirectory).compactMap(\.skill))
 
         if let manifest {
             let hashes = (layer: manifest.setups.first { $0.layer?.role == .layer }?.layer?.overlayHash,
@@ -158,6 +165,8 @@ public enum LayerSetups {
         var notes: [String: [String]] = [:]
         var ownFiles: [String: String] = [:]
         var projectSkills: [String: [String]] = [:]
+        var baseTexts: [String: String] = [:]
+        var textOverlap: [String] = []
         let ownSkills = full.skills
         for task in chosen {
             let tree: CloneFiles
@@ -172,7 +181,33 @@ public enum LayerSetups {
                 }
                 trees[task.base] = tree
             }
-            for name in ownSkills where tree.has(skill: name) { projectSkills[name, default: []].append(String(task.base.prefix(7))) }
+            let short = String(task.base.prefix(7))
+            let skillsInBase = ownSkills.filter { tree.has(skill: $0) }
+            for name in skillsInBase { projectSkills[name, default: []].append(short) }
+            // The layer's texts the project already committed: both setups have them.
+            var textsInBase: [(label: String, path: String)] = []
+            for text in checks.layer.texts {
+                for path in Set(["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", text.path]).sorted() {
+                    let key = "\(task.base):\(path)"
+                    if baseTexts[key] == nil { baseTexts[key] = await git(["show", key], in: repo, env: env) ?? "" }
+                    guard baseTexts[key]?.contains(text.text) == true else { continue }
+                    textsInBase.append((text.label, path))
+                    if !textOverlap.contains(where: { $0.hasPrefix("\(text.label) is already in the project's \(path) at \(short)") }) {
+                        textOverlap.append("\(text.label) is already in the project's \(path) at \(short): both setups have it, so the "
+                                           + "difference will look smaller than it is.")
+                    }
+                    break
+                }
+            }
+            let adds = checks.layer.texts.count + ownSkills.count
+            // A file the layer adds (not Markdown) still makes the setups differ.
+            if adds > 0, checks.baseline.absentFiles.isEmpty, textsInBase.count == checks.layer.texts.count,
+               skillsInBase.count == ownSkills.count {
+                let what = textsInBase.map { "\($0.label) in \($0.path)" } + skillsInBase.map { "the skill \($0)" }
+                blocked[task.id] = "The project already holds everything the \(layer) layer adds at \(short) (\(what.joined(separator: ", "))): "
+                    + "both setups would be the same."
+                continue
+            }
             var reason: String?
             for overlay in [baseOverlay, layerOverlay].compactMap({ $0 }) {
                 if case .blocked(let why) = ControlOverlay.place(overlay, in: tree) {
@@ -192,7 +227,8 @@ public enum LayerSetups {
         }
 
         var overlap: [String] = []
-        for name in ownSkills where homeSkills.contains(name) {
+        // A home skill the setup check finds is a warning that blocks the queue (above), not an overlap.
+        for name in ownSkills where homeSkills.contains(name) && !outsideSkills.contains(name) {
             overlap.append("\(name) is already installed in the home folder: the difference will look smaller than it is.")
         }
         for name in ownSkills {
@@ -200,6 +236,7 @@ public enum LayerSetups {
             let unique = bases.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             overlap.append("\(name) is already in the project (at \(unique.joined(separator: ", "))): the layer's copy is skipped there, so the difference will look smaller than it is.")
         }
+        overlap += textOverlap
 
         let evalID = manifest?.id ?? newID(layer: layer, at: now)
         let brainCommit = manifest?.brainCommit ?? commit
@@ -232,7 +269,7 @@ public enum LayerSetups {
                         runnable: runnable, blocked: blocked, notes: notes, ownFiles: ownFiles, overlap: overlap, warnings: warnings + full.warnings,
                         brainCommit: brainCommit, values: values, continuing: manifest != nil,
                         // An older eval's setups name none: its cells get the default when queued.
-                        denied: setups.first?.denied ?? ControlSetup.defaultDenied(repo: repo))
+                        denied: setups.first?.denied ?? ControlSetup.defaultDenied(repo: repo), checks: checks)
     }
 
     /// `<layer>-<yyyyMMdd-HHmm>-<4 hex>`.
@@ -246,7 +283,7 @@ public enum LayerSetups {
     /// One render for Claude Code into an overlay. Refuses a render with errors, and a layer
     /// that merges keys into a JSON file (v1: merging into the clone's file needs JSONMerge).
     static func render(layers: [String], role: LayerVariant.Role, of layer: String, values: [String: FieldValue], brain: Brain,
-                       projectName: String) throws -> (overlay: ControlOverlay, skills: [String], warnings: [String]) {
+                       projectName: String) throws -> Rendered {
         let bundle = ProjectBundle.resolve(ProjectAnswers(layers: layers, values: values, targets: ["claude"]), brain: brain,
                                            projectName: projectName)
         let result = Render.render(bundle, forHome: false)
@@ -292,7 +329,25 @@ public enum LayerSetups {
             }
         }
         let own = result.skills.filter { $0.source == layer }.map(\.name)
-        return (overlay, role == .layer ? own : [], result.warnings)
+        return Rendered(overlay: overlay, skills: role == .layer ? own : [], warnings: result.warnings,
+                        // The rendered SKILL.md says the rest: a header of its own may be manual or hidden.
+                        rendered: result.skills.map { skill in
+                            let file = overlay.contents["\(skillsPrefix)\(skill.name)/SKILL.md"].map { String(decoding: $0, as: UTF8.self) } ?? ""
+                            return SetupCheck.Skill.of(skill.name, skillFile: file, manual: skill.mode == .manual)
+                        },
+                        files: role == .layer ? bundle.files.filter { $0.layer == layer } : [])
+    }
+
+    /// One render as an overlay, with what the setup check needs.
+    struct Rendered {
+        var overlay: ControlOverlay
+        /// The layer's own skills (role `layer` only), for the overlap warning.
+        var skills: [String]
+        var warnings: [String]
+        /// Every skill the render brings, with its mode.
+        var rendered: [SetupCheck.Skill]
+        /// The template outputs of the evaluated layer itself (role `layer` only), fields filled.
+        var files: [ProjectBundle.File]
     }
 
     private static func git(_ arguments: [String], in folder: URL, env: HarnessEnvironment) async -> String? {

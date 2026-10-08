@@ -49,6 +49,9 @@ enum AgentRun {
         let usage: SendUsage
         /// Claude Code's version from the stream's init event; nil for Pi.
         var harnessVersion: String? = nil
+        /// The skills Claude Code loaded (`skills` of the stream's init, manual ones included,
+        /// commands not); nil for Pi or a stream without it.
+        var skills: [String]? = nil
     }
 
     /// Runs the agent to the end (or the time limit). Throws when the harness can't start.
@@ -73,7 +76,8 @@ enum AgentRun {
         }
         guard let exit else { throw LabWorker.Failure(message: "Couldn't start \(command.path).") }
         if exit.timedOut { out("The agent was stopped after \(MetricsText.duration(Int(timeout))).") }
-        return Outcome(exit: exit, error: printer.error, answer: printer.answer, usage: printer.usage, harnessVersion: printer.version)
+        return Outcome(exit: exit, error: printer.error, answer: printer.answer, usage: printer.usage, harnessVersion: printer.version,
+                       skills: printer.skills)
     }
 }
 
@@ -92,6 +96,12 @@ final class StreamPrinter: @unchecked Sendable {
 
     /// Claude Code's version from `system/init` (`claude_code_version`).
     var version: String? { lock.withLock { harnessVersion } }
+
+    private var loadedSkills: [String]?
+
+    /// The skill names of Claude Code's `system/init` (`skills`: plain names or objects with a
+    /// `name`); nil when the stream had none.
+    var skills: [String]? { lock.withLock { loadedSkills } }
 
     /// Tokens and cost the harness recorded: Claude Code's result event, Pi's answers.
     var usage: SendUsage { lock.withLock { recorded } }
@@ -134,6 +144,9 @@ final class StreamPrinter: @unchecked Sendable {
                 }
             case .claudeCode where object["type"] as? String == "system" && object["subtype"] as? String == "init":
                 harnessVersion = object["claude_code_version"] as? String
+                if let skills = object["skills"] as? [Any] {
+                    loadedSkills = skills.compactMap { $0 as? String ?? ($0 as? [String: Any])?["name"] as? String }
+                }
             case .claudeCode where object["type"] as? String == "result":
                 recorded = ModelCall.claudeUsage(object)
                 lastError = object["is_error"] as? Bool == true

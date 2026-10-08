@@ -67,6 +67,30 @@ struct LayerVerdictsTests {
         #expect(LayerVerdicts.verdict(of: manifest, runs: cancelled, costs: [:]) == nil)
     }
 
+    /// A cell whose transcript listed the wrong skills is left out of the verdict and counted.
+    @Test func cellsThatFailedTheSetupCheckAreLeftOut() throws {
+        let manifest = manifest()
+        func failing(_ runs: [LabRun], where pick: (LabRun) -> Bool) -> [LabRun] {
+            runs.map { run in
+                guard pick(run), var result = run.result else { return run }
+                result.control?.setupCheck = SetupCheckResult(status: .failed, detail: "Claude Code listed swiftui-expert, which this setup must not have")
+                return LabRun(folder: run.folder, spec: run.spec, state: run.state, launch: run.launch, result: result)
+            }
+        }
+        // Every baseline cell of t0 "passed", but its setup leaked the layer: left out.
+        let baseline = failing(runs(manifest.setups[0], passes: [3, 1, 1, 1, 1, 1])) { $0.spec.controlTask == "t0" }
+        let all = baseline + runs(manifest.setups[1], passes: [3, 3, 3, 3, 3, 3]) + runs(manifest.sanity!, passes: [0])
+        let verdict = try #require(LayerVerdicts.verdict(of: manifest, runs: all, costs: [:]))
+        #expect(verdict.setupCheckFailed == 3 && verdict.leftOut == 0 && verdict.baselineCells == 15 && verdict.tasks == 5)
+        #expect(verdict.verdict == .helpsOffline && verdict.baselineRate.map { abs($0 - 1.0 / 3) < 1e-9 } == true)
+        #expect(LayerVerdicts.lines(verdict)[2].contains("3 cells failed the setup check, left out"), "\(LayerVerdicts.lines(verdict))")
+        // A read-only cell that failed its check doesn't decide the sanity rule either.
+        let sanity = failing(runs(manifest.sanity!, passes: [3])) { _ in true }
+        let checked = try #require(LayerVerdicts.verdict(of: manifest, runs: baseline + runs(manifest.setups[1], passes: [3, 3, 3, 3, 3, 3]) + sanity,
+                                                         costs: [:]))
+        #expect(checked.sanity == .none && checked.setupCheckFailed == 6 && checked.verdict == .helpsOffline)
+    }
+
     @Test func aFinishedEvalGetsItsVerdictAndLines() throws {
         let manifest = manifest()
         let all = runs(manifest.setups[0], passes: [1, 1, 1, 1, 1]) + runs(manifest.setups[1], passes: [3, 3, 3, 3, 3])

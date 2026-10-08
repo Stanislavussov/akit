@@ -182,8 +182,9 @@ struct RunCellsSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if isLayer, layerEval != nil, let estimate = currentPlan?.estimate, estimate.perCell == nil {
-                Label("No paid layer cells without an estimate: queue 1 calibration cell in Brain → \(layerName ?? "the layer") → Evaluate… "
-                      + "(the tasks must be in the layer's set); the eval reuses it.", systemImage: "info.circle")
+                Label("No paid layer cells without an estimate: queue the calibration cells, one of each setup, in Brain → "
+                      + "\(layerName ?? "the layer") → Evaluate… (the tasks must be in the layer's set); the eval reuses them.",
+                      systemImage: "info.circle")
                     .foregroundStyle(.orange)
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
@@ -216,11 +217,17 @@ struct RunCellsSheet: View {
         }
         .task(id: estimateKey) {
             let key = estimateKey, env = analysis.env, baselineSetup = ControlSetup(name: "baseline", agent: agent)
+            let layer = isLayer ? layerEval : nil
             let value = await Task.detached {
+                let baselineLeft = ControlRuns.plan(tasks: key.tasks, setups: [baselineSetup], repeats: key.repeats, env: env).toQueue
+                // Layer cells per setup once each setup has a recorded cell, as Evaluate… does.
+                if let layer {
+                    let counts = LayerEvals.estimate(layer, repeats: key.repeats, env: env)
+                    return Planned(toQueue: counts.toQueue, skipped: counts.skipped, estimate: counts.estimate, baselineLeft: baselineLeft)
+                }
                 let sanity = key.sanity.map { ($0, key.sanityTasks, 1) }
                 let counts = ControlRuns.plan(tasks: key.tasks, setups: key.setups, repeats: key.repeats, sanity: sanity, env: env)
                 let estimate = ControlRuns.estimate(cells: counts.toQueue, agent: key.agent, repo: key.tasks.first?.mainFolder, env: env)
-                let baselineLeft = ControlRuns.plan(tasks: key.tasks, setups: [baselineSetup], repeats: key.repeats, env: env).toQueue
                 return Planned(toQueue: counts.toQueue, skipped: counts.skipped, estimate: estimate, baselineLeft: baselineLeft)
             }.value
             guard !Task.isCancelled else { return }

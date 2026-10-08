@@ -244,7 +244,7 @@ extension AppModel {
         }.value
     }
 
-    /// Queues a planned eval, or only its calibration cell: the monthly limit first, then the
+    /// Queues a planned eval, or only its calibration cells: the monthly limit first, then the
     /// eval folder, then the cells.
     /// `maxCost`: the high end of the estimate the user confirmed; a higher one refuses.
     func queueLayerEval(_ plan: LayerEvals.EvalPlan, calibrateOnly: Bool, maxCost: Double?, environment: LabEnvironment?,

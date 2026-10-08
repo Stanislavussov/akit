@@ -106,9 +106,26 @@ public enum ControlRuns {
         guard let task = ControlTasks.load(id, env: env) else { throw LabWorker.Failure(message: "The control task \(id) is gone.") }
         // A layer setup's overlay, rendered when the cells were queued and stored with the eval.
         var overlay: ControlOverlay?
+        // And what the clone must and must not show the agent: checked before it starts.
+        var check: SetupCheck?
         if let layer = setup.layer {
             guard setup.agent.harness == .claudeCode else { throw LabWorker.Failure(message: "Layer evals run Claude Code only for now.") }
             if let hash = layer.overlayHash { overlay = try LayerEvalStore.overlay(hash: hash, eval: layer.evalID, env: env) }
+            check = try LayerChecks.check(for: setup, env: env)
+            // A circuit breaker: once a cell of this setup failed its check after the agent, the
+            // cells queued before that stop here instead of paying for the same failure. Cells
+            // queued after it (a Continue once the cause is fixed) run.
+            let failed = LabStore.list(env: env).first { other in
+                guard other.id != run.id, other.status == .finished, let otherSetup = other.spec.controlSetup,
+                      let otherLayer = otherSetup.layer, otherLayer.evalID == layer.evalID, otherLayer.role == layer.role,
+                      otherSetup.readOnly == setup.readOnly, other.result?.control?.setupCheckFailed == true else { return false }
+                return (other.state?.updatedAt ?? .distantPast) > run.spec.createdAt
+            }
+            if let failed {
+                throw LabWorker.Failure(message: "An earlier cell of this setup (\(failed.id)) failed its setup check: "
+                                            + (failed.result?.control?.setupCheck?.detail ?? "") + ". The agent didn't start, so nothing "
+                                            + "was paid; fix the cause, then continue the eval to run this cell again.")
+            }
         }
         let gate = try await SendGate.open(agent: setup.agent, env: env)
         try gate.check(.code(setup.agent.harness))
@@ -140,7 +157,7 @@ public enum ControlRuns {
         // default now. The key stays the setup's own.
         let runSetup = ControlRuns.withDefaults(setup, task)
         let facts = try await ControlCell.run(run, setup: runSetup, repo: repo, base: task.base, prompt: prompt, oracle: oracle, overlay: overlay,
-                                              env: env, phase: phase, out: out)
+                                              check: check, env: env, phase: phase, out: out)
         let session: String? = if case .session(let key) = task.source { key.description } else { nil }
         let logError = SendLog.appendAfterRun(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,
                                                          model: setup.agent.model, inputCharacters: prompt.count, usage: facts.usage),
@@ -159,7 +176,7 @@ public enum ControlRuns {
                                          + facts.hiddenLeaks,
                                      // Always present on a layer cell: an older akit that ignored the layer leaves it out.
                                      overlay: setup.layer != nil ? (facts.overlayNotes ?? []) : nil,
-                                     harnessVersion: facts.harnessVersion)
+                                     harnessVersion: facts.harnessVersion, setupCheck: facts.setupCheck)
         switch task.oracle {
         case .tests:
             outcome.passed = facts.tests?.passed ?? false

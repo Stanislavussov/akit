@@ -171,9 +171,14 @@ public struct ControlOutcome: Codable, Sendable, Hashable {
     public var overlay: [String]?
     /// The Claude Code version the cell ran with (`claude_code_version` of the stream's init).
     public var harnessVersion: String?
+    /// A layer cell's setup check (`SetupCheck`): before the agent (a cell that failed it never
+    /// ran) and of the skills its transcript listed. A failed one is left out of comparisons.
+    /// nil for other cells and for cells run before the check existed.
+    public var setupCheck: SetupCheckResult?
 
     public init(key: String, passed: Bool, oracle: String, testsDropped: Bool = false, changedTestFiles: [String] = [],
-                leaks: [String] = [], checkSteps: [Int] = [], overlay: [String]? = nil, harnessVersion: String? = nil) {
+                leaks: [String] = [], checkSteps: [Int] = [], overlay: [String]? = nil, harnessVersion: String? = nil,
+                setupCheck: SetupCheckResult? = nil) {
         self.key = key
         self.passed = passed
         self.oracle = oracle
@@ -183,13 +188,21 @@ public struct ControlOutcome: Codable, Sendable, Hashable {
         self.checkSteps = checkSteps
         self.overlay = overlay
         self.harnessVersion = harnessVersion
+        self.setupCheck = setupCheck
     }
 
     /// A guarded or leaked cell is shown, but its pass isn't trusted: comparisons count it as failed.
     public var flagged: Bool { testsDropped || !changedTestFiles.isEmpty || !leaks.isEmpty }
 
+    /// The transcript showed the setup wasn't what it should be: comparisons leave the cell out.
+    public var setupCheckFailed: Bool { setupCheck?.status == .failed }
+
     var lines: [String] {
         var lines = ["Control: \(passed ? "passed" : "failed") · \(oracle)"]
+        if let setupCheck {
+            lines.append("  " + setupCheck.line.prefix(1).uppercased() + setupCheck.line.dropFirst()
+                         + (setupCheck.status == .failed ? ": the cell is left out of the comparison." : "."))
+        }
         if testsDropped { lines.append("  Fewer tests than before the agent: the pass isn't trusted.") }
         if !changedTestFiles.isEmpty {
             lines.append("  Test files changed: \(changedTestFiles.prefix(5).joined(separator: ", ")): the pass isn't trusted.")
@@ -233,10 +246,13 @@ public enum ControlCell {
         public var transcriptFile: URL?
         /// The harness version the stream reported.
         public var harnessVersion: String?
+        /// The setup check after the agent; nil when the cell had none.
+        public var setupCheck: SetupCheckResult?
 
         public init(transcript: SessionTranscript?, metrics: SessionMetrics? = nil, agentError: String? = nil, usage: SendUsage = SendUsage(),
                     tests: TestCommand? = nil, hiddenTests: TestOutcome? = nil, hiddenLeaks: [String] = [], testsDropped: Bool = false,
-                    changedTestFiles: [String] = [], overlayNotes: [String]? = nil, transcriptFile: URL? = nil, harnessVersion: String? = nil) {
+                    changedTestFiles: [String] = [], overlayNotes: [String]? = nil, transcriptFile: URL? = nil, harnessVersion: String? = nil,
+                    setupCheck: SetupCheckResult? = nil) {
             self.transcript = transcript
             self.metrics = metrics
             self.agentError = agentError
@@ -249,6 +265,7 @@ public enum ControlCell {
             self.overlayNotes = overlayNotes
             self.transcriptFile = transcriptFile
             self.harnessVersion = harnessVersion
+            self.setupCheck = setupCheck
         }
     }
 
@@ -268,10 +285,12 @@ public enum ControlCell {
     /// here (the task should have been refused when it was queued) stops the cell. The agent
     /// runs under the memory watchdog: its own `swift test` in a large clone must not grow
     /// without limit. The guard leaves out the test files hidden tests copy in afterwards: the
-    /// agent may add tests to them, and they are replaced anyway.
+    /// agent may add tests to them, and they are replaced anyway. `check`: a layer setup's
+    /// isolation check, run on the prepared clone before the agent (a violation stops the cell
+    /// before any model call) and on the transcript's skill listing after it.
     public static func run(_ run: LabRun, setup: ControlSetup, repo: URL, base: String, prompt: String, oracle: CellOracle,
-                           overlay: ControlOverlay? = nil, testLimit: TimeInterval = 15 * 60, env: HarnessEnvironment,
-                           phase: @escaping @Sendable (RunState.Phase) -> Void,
+                           overlay: ControlOverlay? = nil, check: SetupCheck? = nil, testLimit: TimeInterval = 15 * 60,
+                           env: HarnessEnvironment, phase: @escaping @Sendable (RunState.Phase) -> Void,
                            out: @escaping @Sendable (String) -> Void) async throws -> Facts {
         let work = FileManager.default.temporaryDirectory
             .appending(path: "akit-control-\(UUID().uuidString.lowercased())", directoryHint: .isDirectory)
@@ -285,16 +304,33 @@ public enum ControlCell {
             }
         }
         try await IsolatedClone.make(at: work, from: repo, commit: base, env: env)
+        // The project's own files, before anything is added: both setups have them.
+        let projectContent = check?.projectContent(in: work, home: env.homeDirectory)
         if let patch = setup.patch { try await patch.apply(in: work, env: env) }
         var overlayNotes: [String]?
+        var placed: [ControlOverlay.Write] = []
         if let overlay {
             switch ControlOverlay.place(overlay, in: CloneFiles.fromFolder(work)) {
             case .blocked(let reason):
                 throw LabWorker.Failure(message: "The layer can't be placed in this clone: \(reason)")
             case .writes(let writes, let notes):
                 try await ControlOverlay.apply(writes, in: work, env: env)
+                placed = writes
                 overlayNotes = notes
                 notes.forEach { out("Layer: \($0)") }
+            }
+        }
+        if let check, let projectContent {
+            let problems = check.problems(clone: work, home: env.homeDirectory, writes: placed, projectContent: projectContent)
+            guard problems.isEmpty else {
+                throw LabWorker.Failure(message: "Setup check failed for \(setup.label), so the agent didn't start and the cell doesn't count: "
+                                            + problems.prefix(5).joined(separator: "; ")
+                                            + (problems.count > 5 ? "; and \(problems.count - 5) more" : "") + ".")
+            }
+            out("Setup check: the clone and the folders Claude Code reads hold what this setup must have, and nothing it must not.")
+            // Allowed, but worth seeing: the project itself already holds part of the layer.
+            for finding in projectContent.findings.sorted(by: { ($0.path, $0.what) < ($1.path, $1.what) }) {
+                out("Setup check: the project's own \(finding.path) already holds \(finding.what): both setups have it.")
             }
         }
         var hiddenFiles: Set<String> = []
@@ -343,10 +379,16 @@ public enum ControlCell {
         let transcriptFile = setup.agent.harness == .claudeCode ? LabPaths.transcript(sessionID: spec.sessionID, env: env) : nil
         var hiddenLeaks: [String] = []
         if case .hidden(let task) = oracle, let transcriptFile { hiddenLeaks = LeakCheck.commitSigns(in: transcriptFile, task: task, env: env) }
+        // The skills Claude Code loaded and listed to the model: the same rule, seen from the other side.
+        let setupCheck = check.map { check in
+            check.afterRun(listed: transcriptFile.flatMap(SetupCheck.listedSkills(in:)), loaded: agent.skills.map(Set.init),
+                           projectSkills: projectContent?.skills ?? [])
+        }
+        if let setupCheck { out(setupCheck.line.prefix(1).uppercased() + setupCheck.line.dropFirst() + ".") }
         return Facts(transcript: transcript, metrics: metrics, agentError: agent.error, usage: agent.usage, tests: tests,
                      hiddenTests: hidden, hiddenLeaks: hiddenLeaks, testsDropped: after.markers < before.markers,
                      changedTestFiles: before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted(),
-                     overlayNotes: overlayNotes, transcriptFile: transcriptFile, harnessVersion: agent.harnessVersion)
+                     overlayNotes: overlayNotes, transcriptFile: transcriptFile, harnessVersion: agent.harnessVersion, setupCheck: setupCheck)
     }
 
     /// The runbook's sanity check: the task's test command must pass on its reference commit
