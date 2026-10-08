@@ -64,7 +64,9 @@ extension AKitCLI {
           akit lab start                  Start the next queued run, if none is running
           akit lab cancel ID              Stop a running run (its tab stays), or drop a queued one
           akit lab remove ID              Move a run's folder to the Trash
-          akit lab run ID                 Do the run here (what the tab runs)
+          akit lab run ID                 Do the run here (what the tab runs): a review, replay, batch
+                                          or control cell, also control cells with a brain layer
+                                          (akit analysis control run --layer)
 
         Sending policy (every model call that sends session data or code; Settings → Sending policy):
           akit lab policy [--json]        This Mac's kind, allowed destinations, Pi accounts, scrub

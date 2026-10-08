@@ -47,7 +47,8 @@ let package = Package(
         // Lab → Brain for one thing: whether this Mac is a work Mac (the sending policy).
         .target(name: "AKitLab", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitBrain"]),
         // Error analysis: failure modes across many sessions (docs/design/error-analysis.md).
-        .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain"]),
+        // → Render: layer evals render a brain layer into a control cell (docs/design/layer-evals.md).
+        .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain", "AKitRender"]),
         .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitBrain", "AKitRender", "AKitInsights"]),
         .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
@@ -64,7 +65,7 @@ let package = Package(
         .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender"]),
         .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain"]),
-        .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights"]),
+        .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitBrain", "AKitRender"]),
         .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
     ]
 )

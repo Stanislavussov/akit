@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import AKitFoundation
-import AKitLab
+@testable import AKitLab
 import AKitSessions
 @testable import AKitErrorAnalysis
 
@@ -224,6 +224,134 @@ struct ControlRunsTests {
         otherBase.base = String(repeating: "b", count: 40)
         #expect(ControlRuns.cellKey(task: otherBase, setup: baseline, repeatIndex: 1) != ControlRuns.cellKey(task: task, setup: baseline, repeatIndex: 1))
         #expect(ControlRuns.cellKey(task: task, setup: variant("a"), repeatIndex: 1) != ControlRuns.cellKey(task: task, setup: variant("b"), repeatIndex: 1))
+    }
+
+    /// Keys of plain, patch and read-only setups as master computed them before layer evals:
+    /// a change here would queue every finished cell again.
+    @Test func cellKeysOfSetupsWithoutALayerAreUnchanged() {
+        let task = ControlTask(id: "make-value-2-abcd", title: "Make value 2", repo: "/work/repo", base: String(repeating: "a", count: 40),
+                               prompt: "Make value 2", source: .reproduction, oracle: .tests(command: "swift test"),
+                               createdAt: Date(timeIntervalSince1970: 0))
+        #expect(ControlRuns.cellKey(task: task, setup: baseline, repeatIndex: 1) == "8f09f13e3d60d9a30ddf0a0a1e9b3510dd5a656a9db2fb05acb2835d8e30d295.8a5eca1b2c4a83e9dc0a89a2b12344d078d1858e1542f432ff15fcc0aff78b37")
+        #expect(ControlRuns.cellKey(task: task, setup: variant("- Run the tests"), repeatIndex: 2) == "8f09f13e3d60d9a30ddf0a0a1e9b3510dd5a656a9db2fb05acb2835d8e30d295.d7158f3c5892cf974091d701032b3ea8d68b8e9627e303dc6713bbc661bb71c1")
+        #expect(ControlRuns.cellKey(task: task, setup: ControlSetup(name: "read-only", agent: claude, readOnly: true), repeatIndex: 3)
+                == "8f09f13e3d60d9a30ddf0a0a1e9b3510dd5a656a9db2fb05acb2835d8e30d295.05113429b2225c6b601458dfbccde35a6ac4d99f238caf30a59d879203ecbcfb")
+    }
+
+    @Test func layerCellKeysDifferByRoleOverlayAndEvalNotBrainCommit() {
+        let task = task(URL(filePath: "/work/repo"), "abc", oracle: .tests(command: "true"))
+        let layer = LayerVariant(layer: "swiftui", role: .layer, overlayHash: "h1", evalID: "swiftui-20261012-0930-ab12", brainCommit: "c1")
+        func key(_ change: (inout LayerVariant) -> Void) -> String {
+            var variant = layer
+            change(&variant)
+            return ControlRuns.cellKey(task: task, setup: ControlSetup(name: "layer swiftui", agent: claude, layer: variant), repeatIndex: 1)
+        }
+        let original = key { _ in }
+        #expect(original != ControlRuns.cellKey(task: task, setup: baseline, repeatIndex: 1))
+        #expect(key { $0.role = .requiredOnly } != original)
+        #expect(key { $0.overlayHash = "h2" } != original && key { $0.overlayHash = nil } != original)
+        #expect(key { $0.evalID = "swiftui-20261013-0930-cd34" } != original)
+        #expect(key { $0.layer = "other" } != original)
+        #expect(key { $0.brainCommit = "c2" } == original)
+    }
+
+    /// The whole slice with a fake `claude`: a layer eval prepared from a temporary brain, its
+    /// folder written, cells queued (sanity after the first repeat) and run. The fake passes
+    /// only when the clone's CLAUDE.md carries the layer's marker.
+    @Test func layerEvalEndToEnd() async throws {
+        let fixture = LayerFixture(home: home)
+        try fixture.fakeClaude()
+        // The fake, not a real Claude Code, is what runs.
+        #expect(env.findExecutable("claude")?.path == home.appending(path: "bin/claude").path)
+        try await fixture.makeBrain()
+        let base = try await fixture.makeRepo()
+        let brainHead = await fixture.git("rev-parse", "HEAD", in: fixture.brain)
+        let task = ControlTask(id: "make-value-2-abcd", title: "Make value 2", repo: fixture.repo.path, base: base, prompt: "Make value 2",
+                               source: .reproduction, oracle: .tests(command: #"test "$(cat value.txt)" = 2"#))
+        try ControlTasks.save(task, env: env)
+        let prepared = try await LayerSetups.prepare(layer: "swiftui", tasks: [task], answers: [:], agent: claude, sanity: true,
+                                                     homeSkills: [], brain: fixture.brain, store: .local(home: home),
+                                                     projectsRoot: home, env: env)
+        try LayerEvalStore.create(prepared, repeats: 2, env: env)
+        let sanity = try #require(prepared.sanitySetup)
+        let queued = try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: 2,
+                                                         sanity: (sanity, prepared.sanityTasks, 1), environment: .background,
+                                                         keep: true, akit: URL(filePath: "/usr/bin/true"), env: env).runs
+        // Sanity cells right after the first repeat, so a broken oracle shows early.
+        #expect(queued.map { $0.spec.controlSetup?.label ?? "" } == [
+            "without swiftui@\(prepared.brainCommit.prefix(7)) · Claude Code · opus · high",
+            "layer swiftui@\(prepared.brainCommit.prefix(7)) · Claude Code · opus · high",
+            "read-only · without swiftui@\(prepared.brainCommit.prefix(7)) · Claude Code · opus · high",
+            "without swiftui@\(prepared.brainCommit.prefix(7)) · Claude Code · opus · high",
+            "layer swiftui@\(prepared.brainCommit.prefix(7)) · Claude Code · opus · high",
+        ])
+        var done: [LabRun] = []
+        for run in queued {
+            let output = Output()
+            let code = await LabWorker.run(id: run.id, env: env, startNext: false, handleSignals: false, execute: AnalysisRuns.execute,
+                                           out: output.add)
+            #expect(code == 0, "\(output.lines)")
+            done.append(try #require(LabStore.load(run.id, env: env)))
+        }
+        #expect(FileManager.default.fileExists(atPath: home.appending(path: "fake-claude-ran").path))
+
+        let (without, layered) = (done[0], done[1])
+        #expect(without.result?.control?.passed == false && layered.result?.control?.passed == true)
+        #expect(done[2].result?.control?.passed == false)
+        // The layer's section went into the clone's own CLAUDE.md; the baseline got base's only.
+        #expect(read(layered.folder.appending(path: "work/CLAUDE.md")).contains("LAYER-MARKER: check with make snapshot"))
+        #expect(read(without.folder.appending(path: "work/CLAUDE.md")) == "# Rules\n\n- BASE-RULE\n")
+        #expect(read(layered.folder.appending(path: "work/.claude/skills/swiftui-expert/SKILL.md")).contains("Use repo."))
+        // Every layer cell records its overlay notes and Claude Code version.
+        for run in done {
+            #expect(run.result?.control?.overlay?.first?.contains("project's own CLAUDE.md") == true)
+            #expect(run.result?.control?.harnessVersion == "2.1.290")
+        }
+        // The agent saw a clean checkout; the user's repository and the brain are untouched.
+        for run in done { #expect(read(home.appending(path: "status-\(run.spec.sessionID).txt")) == "") }
+        #expect(read(fixture.repo.appending(path: "CLAUDE.md")) == "# Rules\n" && read(fixture.repo.appending(path: "value.txt")) == "1\n")
+        #expect(await git("status", "--porcelain", in: fixture.repo) == "")
+        #expect(await fixture.git("rev-parse", "HEAD", in: fixture.brain) == brainHead)
+        #expect(await fixture.git("status", "--porcelain", in: fixture.brain) == "")
+
+        // One pair: the layer against its eval's required layers; the read-only row stays apart.
+        let comparison = ControlComparison.compare(ControlComparison.Cell.of(done))
+        #expect(comparison.rows.count == 3 && comparison.paired.count == 1)
+        #expect(comparison.paired[0].variant == prepared.setups[1] && comparison.paired[0].baseline == prepared.setups[0])
+        #expect(comparison.paired[0].verdict == .noConclusion && comparison.paired[0].harnessVersions == ["2.1.290"])
+
+        // Queuing the same eval again skips every cell.
+        let again = try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: 2,
+                                                        sanity: (sanity, prepared.sanityTasks, 1), environment: .background,
+                                                        keep: true, akit: URL(filePath: "/usr/bin/true"), env: env)
+        #expect(again.runs.isEmpty && again.skipped == 5)
+    }
+
+    @Test func layerCellRunByAnOlderAkitIsNotDone() async throws {
+        let (repo, base) = try await repository()
+        let task = task(repo, base, oracle: .tests(command: "true"))
+        let layer = ControlSetup(name: "layer swiftui", agent: claude,
+                                 layer: LayerVariant(layer: "swiftui", role: .layer, overlayHash: "h", evalID: "e", brainCommit: "c"))
+        let first = try #require(try await ControlRuns.newControlRuns(tasks: [task], setups: [layer, baseline], repeats: 1,
+                                                                     environment: .background, keep: false,
+                                                                     akit: URL(filePath: "/usr/bin/true"), env: env).runs)
+        // Both finished; the layer cell without overlay notes, as an akit that ignored the layer leaves it.
+        for run in first {
+            try LabStore.save(RunState(status: .finished), of: run.id, env: env)
+            let key = ControlRuns.cellKey(task: task, setup: try #require(run.spec.controlSetup), repeatIndex: 1)
+            try LabStore.save(RunResult(control: ControlOutcome(key: key, passed: true, oracle: "x")), of: run.id, env: env)
+        }
+        let again = try await ControlRuns.newControlRuns(tasks: [task], setups: [layer, baseline], repeats: 1, environment: .background,
+                                                        keep: false, akit: URL(filePath: "/usr/bin/true"), env: env)
+        #expect(again.skipped == 1 && again.runs.map { $0.spec.controlSetup } == [layer])
+
+        // One setup makes one difference: a patch and a layer together are refused.
+        var both = layer
+        both.patch = ControlPatch(file: "CLAUDE.md", text: "x")
+        await #expect(throws: (any Error).self) {
+            _ = try await ControlRuns.newControlRuns(tasks: [task], setups: [both], repeats: 1, environment: .background, keep: false,
+                                                     akit: URL(filePath: "/usr/bin/true"), env: env)
+        }
     }
 
     @Test func labAloneCantRunACell() async throws {

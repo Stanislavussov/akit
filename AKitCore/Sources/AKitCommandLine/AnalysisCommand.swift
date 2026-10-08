@@ -23,7 +23,8 @@ extension AKitCLI {
                                           with a 95% interval. Local, nothing is sent
         """ + analysisModesUsage + analysisReportUsage + "\n\n" + analysisControlUsage
 
-    static func analysis(_ arguments: [String], env: HarnessEnvironment, cwd: URL,
+    /// `projectsRoot`: for the project ids of layer evals (their answers in the project store).
+    static func analysis(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
                          out: (String) -> Void, err: (String) -> Void, trash: (URL) throws -> URL? = Trash.move) async throws -> Int32 {
         var args = Arguments(arguments)
         if args.flag("--help") || args.flag("-h") || args.isEmpty {
@@ -106,7 +107,7 @@ extension AKitCLI {
             }
             return 0
         case "control":
-            return try await analysisControl(&args, options: options, env: env, cwd: cwd, out: out, trash: trash)
+            return try await analysisControl(&args, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash)
         case let other:
             throw Failure(message: "Unknown “akit analysis \(other ?? "")”. Run akit analysis --help.")
         }

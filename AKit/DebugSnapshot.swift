@@ -25,7 +25,8 @@ import SwiftUI
 /// `--tab modes|review|bootstrap|reports` (`--tab review --add` opens Cluster Unmatched Notes' cost confirmation); on Modes `--select <mode id>` opens the mode's page (`--query judge|fix` scrolls to that panel, `--query fix --add` opens Draft Fix…), on Bootstrap
 /// `--select <session key>` opens its labeling view (`--query <step>` starts a note at that step); on Reports
 /// `--select <batch id>` picks the batch, `--query <batch id>` the one to compare, `--add` scrolls to the matrix and
-/// `--capture` shows the difference grid. Evals: `--select <task id>[,<task id>…]`, `--add` opens Run Cells…,
+/// `--capture` shows the difference grid. Evals: `--select <task id>[,<task id>…]`, `--add` opens Run Cells…
+/// (`--query layer` on a brain layer, `--project <layer>` picks it),
 /// `--query fromSession|reproduction` a new task sheet. Lab: `--tab analysis --add` opens New Lab Run on the batch form; `--select`
 /// takes a batch run's or a control cell's id too. Insights (`--section insights`): `--select <project id>` picks the
 /// scope, `--add` opens Apply… of the first layer patch and `--capture` opens Install Capture…; it imports first, so

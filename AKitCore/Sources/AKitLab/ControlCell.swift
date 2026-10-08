@@ -36,15 +36,41 @@ public struct ControlPatch: Codable, Sendable, Hashable {
         content += text.hasSuffix("\n") ? text : text + "\n"
         try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(content.utf8).write(to: url)
-        if await LabGit.run(["ls-files", "--error-unmatch", file], in: folder, env: env)?.succeeded == true {
-            _ = await LabGit.run(["update-index", "--assume-unchanged", file], in: folder, env: env)
-        } else {
-            let exclude = folder.appending(path: ".git/info/exclude")
-            let old = (try? String(contentsOf: exclude, encoding: .utf8)) ?? ""
-            try? fm.createDirectory(at: exclude.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? Data((old + (old.isEmpty || old.hasSuffix("\n") ? "" : "\n") + "/\(file)\n").utf8).write(to: exclude)
-        }
+        await CloneHiding.hide(paths: [file], in: folder, env: env)
     }
+}
+
+/// A brain layer as a setup's difference (`docs/design/layer-evals.md`, "Format"): the
+/// layer's rendered overlay, or its required layers alone as the eval's baseline. Cells of
+/// one eval pair only with each other, so the eval id is part of the cell key.
+public struct LayerVariant: Codable, Sendable, Hashable {
+    public enum Role: String, Codable, Sendable {
+        /// The baseline of X's eval: X's required layers alone (nothing when X requires none).
+        case requiredOnly
+        /// The required layers and X.
+        case layer
+    }
+
+    /// The brain layer being evaluated (X), also on its baseline.
+    public var layer: String
+    public var role: Role
+    /// The stored overlay (`layer-evals/<eval>/overlays/<hash>`); nil when nothing is written.
+    public var overlayHash: String?
+    /// The eval run: `<layer>-<yyyyMMdd-HHmm>-<4 hex>`.
+    public var evalID: String
+    /// The brain commit the overlay was rendered from; shown, not part of the cell key.
+    public var brainCommit: String
+
+    public init(layer: String, role: Role, overlayHash: String?, evalID: String, brainCommit: String) {
+        self.layer = layer
+        self.role = role
+        self.overlayHash = overlayHash
+        self.evalID = evalID
+        self.brainCommit = brainCommit
+    }
+
+    /// "layer swiftui@a1b2c3d", "without swiftui@a1b2c3d".
+    public var title: String { "\(role == .layer ? "layer" : "without") \(layer)@\(brainCommit.prefix(7))" }
 }
 
 /// How the agent of a control cell is started: a harness, model and effort, and at most one
@@ -57,17 +83,24 @@ public struct ControlSetup: Codable, Sendable, Hashable {
     public var patch: ControlPatch?
     /// The sanity check: an agent that can only read can't do the task, so its cells must fail.
     public var readOnly: Bool
+    /// A brain layer instead of a patch (layer evals); at most one of `patch` and `layer`.
+    public var layer: LayerVariant?
 
-    public init(name: String, agent: LabAgent, patch: ControlPatch? = nil, readOnly: Bool = false) {
+    public init(name: String, agent: LabAgent, patch: ControlPatch? = nil, readOnly: Bool = false, layer: LayerVariant? = nil) {
         self.name = name
         self.agent = agent
         self.patch = patch
         self.readOnly = readOnly
+        self.layer = layer
     }
 
-    /// "variant · Claude Code · opus · high · + CLAUDE.md".
+    /// "variant · Claude Code · opus · high · + CLAUDE.md"; a layer setup
+    /// "layer swiftui@a1b2c3d · Claude Code · opus · high", its sanity setup
+    /// "read-only · without swiftui@a1b2c3d · …".
     public var label: String {
-        var parts = [name, agent.harness.title, agent.model.isEmpty ? "default model" : agent.model, agent.effort]
+        let agentParts = [agent.harness.title, agent.model.isEmpty ? "default model" : agent.model, agent.effort]
+        if let layer { return ((readOnly ? ["read-only"] : []) + [layer.title] + agentParts).joined(separator: " · ") }
+        var parts = [name] + agentParts
         if let patch { parts.append("+ \(patch.file)") }
         if readOnly { parts.append("read-only") }
         return parts.joined(separator: " · ")
@@ -99,9 +132,15 @@ public struct ControlOutcome: Codable, Sendable, Hashable {
     public var leaks: [String]
     /// Where an assertion's mode shows.
     public var checkSteps: [Int]
+    /// A layer cell's overlay notes ("appended to the project's own CLAUDE.md"); `[]` when
+    /// nothing needed one. Always present for a layer cell, nil for others: a layer cell
+    /// without it was run by an akit that ignored the layer.
+    public var overlay: [String]?
+    /// The Claude Code version the cell ran with (`claude_code_version` of the stream's init).
+    public var harnessVersion: String?
 
     public init(key: String, passed: Bool, oracle: String, testsDropped: Bool = false, changedTestFiles: [String] = [],
-                leaks: [String] = [], checkSteps: [Int] = []) {
+                leaks: [String] = [], checkSteps: [Int] = [], overlay: [String]? = nil, harnessVersion: String? = nil) {
         self.key = key
         self.passed = passed
         self.oracle = oracle
@@ -109,6 +148,8 @@ public struct ControlOutcome: Codable, Sendable, Hashable {
         self.changedTestFiles = changedTestFiles
         self.leaks = leaks
         self.checkSteps = checkSteps
+        self.overlay = overlay
+        self.harnessVersion = harnessVersion
     }
 
     /// A guarded or leaked cell is shown, but its pass isn't trusted: comparisons count it as failed.
@@ -138,9 +179,16 @@ public enum ControlCell {
         public var tests: TestCommand?
         public var testsDropped: Bool
         public var changedTestFiles: [String]
+        /// The overlay's notes; nil when the cell had no overlay.
+        public var overlayNotes: [String]?
+        /// Claude Code's transcript file of the cell, when it wrote one.
+        public var transcriptFile: URL?
+        /// The harness version the stream reported.
+        public var harnessVersion: String?
 
         public init(transcript: SessionTranscript?, metrics: SessionMetrics? = nil, agentError: String? = nil, usage: SendUsage = SendUsage(),
-                    tests: TestCommand? = nil, testsDropped: Bool = false, changedTestFiles: [String] = []) {
+                    tests: TestCommand? = nil, testsDropped: Bool = false, changedTestFiles: [String] = [], overlayNotes: [String]? = nil,
+                    transcriptFile: URL? = nil, harnessVersion: String? = nil) {
             self.transcript = transcript
             self.metrics = metrics
             self.agentError = agentError
@@ -148,6 +196,9 @@ public enum ControlCell {
             self.tests = tests
             self.testsDropped = testsDropped
             self.changedTestFiles = changedTestFiles
+            self.overlayNotes = overlayNotes
+            self.transcriptFile = transcriptFile
+            self.harnessVersion = harnessVersion
         }
     }
 
@@ -162,9 +213,11 @@ public enum ControlCell {
     }
 
     /// The clone goes to the Trash at the end, or into the run folder as `work` with `keep`.
-    /// The agent gets the run folder for its stream only, never as `AKIT_LAB_DIR`.
+    /// The agent gets the run folder for its stream only, never as `AKIT_LAB_DIR`. `overlay`:
+    /// a layer setup's stored overlay, placed after the clone; a placement that is blocked
+    /// here (the task should have been refused when it was queued) stops the cell.
     public static func run(_ run: LabRun, setup: ControlSetup, repo: URL, base: String, prompt: String, testCommand: String?,
-                           testLimit: TimeInterval = 15 * 60, env: HarnessEnvironment,
+                           overlay: ControlOverlay? = nil, testLimit: TimeInterval = 15 * 60, env: HarnessEnvironment,
                            phase: @escaping @Sendable (RunState.Phase) -> Void,
                            out: @escaping @Sendable (String) -> Void) async throws -> Facts {
         let work = FileManager.default.temporaryDirectory
@@ -180,6 +233,17 @@ public enum ControlCell {
         }
         try await IsolatedClone.make(at: work, from: repo, commit: base, env: env)
         if let patch = setup.patch { try await patch.apply(in: work, env: env) }
+        var overlayNotes: [String]?
+        if let overlay {
+            switch ControlOverlay.place(overlay, in: CloneFiles.fromFolder(work)) {
+            case .blocked(let reason):
+                throw LabWorker.Failure(message: "The layer can't be placed in this clone: \(reason)")
+            case .writes(let writes, let notes):
+                try await ControlOverlay.apply(writes, in: work, env: env)
+                overlayNotes = notes
+                notes.forEach { out("Layer: \($0)") }
+            }
+        }
         let before = TestFiles.state(of: work)
         guard !Cancellation.isCancelled else { throw CancellationError() }
 
@@ -202,9 +266,11 @@ public enum ControlCell {
         phase(.metrics)
         let transcript = transcript(spec, runFolder: run.folder, env: env)
         let metrics = setup.agent.harness == .claudeCode ? await LabWorker.ownMetrics(spec, project: work, env: env) : nil
+        let transcriptFile = setup.agent.harness == .claudeCode ? LabPaths.transcript(sessionID: spec.sessionID, env: env) : nil
         return Facts(transcript: transcript, metrics: metrics, agentError: agent.error, usage: agent.usage, tests: tests,
                      testsDropped: after.markers < before.markers,
-                     changedTestFiles: before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted())
+                     changedTestFiles: before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted(),
+                     overlayNotes: overlayNotes, transcriptFile: transcriptFile, harnessVersion: agent.harnessVersion)
     }
 
     /// The runbook's sanity check: the task's test command must pass on its reference commit

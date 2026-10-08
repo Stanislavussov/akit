@@ -78,8 +78,9 @@ set to `name-only` by the user. A skill never listed with its description anywhe
 What the agent ran with, as a hash, so two sessions can be compared "under the same setup".
 
 Status: designed, not built. No fingerprint is computed in code (step 11 of
-`session-insights.md`). Layer evals design a second, narrower one, the home fingerprint
-(`layer-evals.md`, "Baseline"); it is not built either.
+`session-insights.md`). Layer evals once designed a second, narrower one, the home
+fingerprint; D2 (2026-10-08) dropped it: a layer eval pairs cells only within one eval
+run and records the Claude Code version per cell instead (`layer-evals.md`, "Baseline").
 
 - Components, each hashed on its own:
   - `listing`: the text of the initial `skill_listing` after that start event (from the

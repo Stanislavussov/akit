@@ -14,12 +14,20 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var setup: ControlSetup
         public var passed: Bool
         public var flagged: Bool
+        /// False for a layer cell whose result has no overlay notes: an older akit ran it and
+        /// ignored the layer, so it is left out of the comparison (and counted).
+        public var overlayRecorded: Bool
+        /// The Claude Code version the cell ran with, when recorded.
+        public var harnessVersion: String?
 
-        public init(task: String, setup: ControlSetup, passed: Bool, flagged: Bool = false) {
+        public init(task: String, setup: ControlSetup, passed: Bool, flagged: Bool = false, overlayRecorded: Bool = true,
+                    harnessVersion: String? = nil) {
             self.task = task
             self.setup = setup
             self.passed = passed
             self.flagged = flagged
+            self.overlayRecorded = overlayRecorded
+            self.harnessVersion = harnessVersion
         }
 
         /// The finished control runs; queued, failed and cancelled ones have no verdict.
@@ -27,7 +35,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             runs.sorted { $0.spec.createdAt < $1.spec.createdAt }.compactMap { run in
                 guard run.spec.kind == .control, run.status == .finished, let task = run.spec.controlTask,
                       let setup = run.spec.controlSetup, let control = run.result?.control else { return nil }
-                return Cell(task: task, setup: setup, passed: control.passed, flagged: control.flagged)
+                return Cell(task: task, setup: setup, passed: control.passed, flagged: control.flagged,
+                            overlayRecorded: setup.layer == nil || control.overlay != nil, harnessVersion: control.harnessVersion)
             }
         }
     }
@@ -55,6 +64,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         /// The share of tasks where all k runs passed.
         public var passHatK: Double?
         public var passHatKInterval: Stats.Interval
+        /// The Claude Code versions its cells recorded, sorted.
+        public var harnessVersions: [String] = []
     }
 
     public enum Verdict: String, Codable, Sendable {
@@ -89,6 +100,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var productionHigher: Double?
         public var verdict: Verdict
         public var reason: String
+        /// The Claude Code versions of both sides' cells; more than one means the eval mixes them.
+        public var harnessVersions: [String] = []
     }
 
     public static let minimumRepeats = 3
@@ -97,22 +110,38 @@ public struct ControlComparison: Codable, Sendable, Hashable {
 
     public var rows: [Row]
     public var paired: [Paired]
+    /// Layer cells left out because an older akit ran them without the layer.
+    public var leftOut = 0
 
-    /// Rows per setup in order of first appearance; each variant (a setup with a patch) is
-    /// paired with the baseline of the same agent (no patch, not read-only), else the first one.
-    /// `production` is the fix's production signal (`production(for:env:)`): "helped" also
-    /// needs it not worse, so without it there is no conclusion.
+    /// Rows per setup in order of first appearance. Each patch variant is paired with the
+    /// baseline of the same agent (no patch, no layer, not read-only), else the first such
+    /// baseline. A layer setup (`role: layer`) is paired only with the `requiredOnly` setup of
+    /// the same layer, eval and agent: never with a plain baseline, and patch variants never
+    /// with a layer row. `production` is the fix's production signal (`production(for:env:)`):
+    /// "helped" also needs it not worse, so without it there is no conclusion. It is a patch
+    /// fix's signal, so layer pairs never get it.
     public static func compare(_ cells: [Cell], production: FixEvaluation? = nil, iterations: Int = 2000,
                                seed: UInt64 = 1) -> ControlComparison {
+        let kept = cells.filter(\.overlayRecorded)
         var order: [ControlSetup] = []
-        for cell in cells where !order.contains(cell.setup) { order.append(cell.setup) }
-        let rows = order.map { setup in row(setup, cells: cells.filter { $0.setup == setup }) }
-        let baselines = rows.filter { $0.setup.patch == nil && !$0.setup.readOnly }
-        let paired = rows.filter { $0.setup.patch != nil && !$0.setup.readOnly }.compactMap { variant -> Paired? in
-            guard let baseline = baselines.first(where: { $0.setup.agent == variant.setup.agent }) ?? baselines.first else { return nil }
-            return pair(baseline: baseline, variant: variant, production: production, iterations: iterations, seed: seed)
+        for cell in kept where !order.contains(cell.setup) { order.append(cell.setup) }
+        let rows = order.map { setup in row(setup, cells: kept.filter { $0.setup == setup }) }
+        let candidates = rows.filter { !$0.setup.readOnly }
+        let baselines = candidates.filter { $0.setup.patch == nil && $0.setup.layer == nil }
+        let paired = candidates.compactMap { variant -> Paired? in
+            if variant.setup.patch != nil {
+                guard let baseline = baselines.first(where: { $0.setup.agent == variant.setup.agent }) ?? baselines.first else { return nil }
+                return pair(baseline: baseline, variant: variant, production: production, iterations: iterations, seed: seed)
+            }
+            guard let layer = variant.setup.layer, layer.role == .layer,
+                  let baseline = candidates.first(where: { row in
+                      guard let other = row.setup.layer else { return false }
+                      return other.role == .requiredOnly && other.layer == layer.layer && other.evalID == layer.evalID
+                          && row.setup.agent == variant.setup.agent
+                  }) else { return nil }
+            return pair(baseline: baseline, variant: variant, production: nil, iterations: iterations, seed: seed)
         }
-        return ControlComparison(rows: rows, paired: paired)
+        return ControlComparison(rows: rows, paired: paired, leftOut: cells.count - kept.count)
     }
 
     /// The production signal of the one mode the tasks are about: its fix judged by the mode's
@@ -149,7 +178,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                    passAt1: tasks.isEmpty ? nil : tasks.map(\.rate).reduce(0, +) / Double(tasks.count),
                    passAt1Interval: Stats.wilson(passed, cells.count), k: k,
                    passHatK: passHatK,
-                   passHatKInterval: interval(ofMean: hatK))
+                   passHatKInterval: interval(ofMean: hatK),
+                   harnessVersions: Set(cells.compactMap(\.harnessVersion)).sorted())
     }
 
     /// The paired bootstrap over tasks of the per-task change in pass rate (seeded, so the
@@ -165,7 +195,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         let changes = shared.map { $0.after.rate - $0.before.rate }
         var result = Paired(baseline: baseline.setup, variant: variant.setup, tasks: shared.count, baselineCells: baselineCells,
                             variantCells: variantCells, meanChange: changes.isEmpty ? nil : changes.reduce(0, +) / Double(changes.count),
-                            improvementShare: nil, verdict: .noConclusion, reason: "")
+                            improvementShare: nil, verdict: .noConclusion, reason: "",
+                            harnessVersions: Set(baseline.harnessVersions + variant.harnessVersions).sorted())
         let measured = production.flatMap { production in
             production.before.sessions >= Fixes.minimumPerSide && production.after.sessions >= Fixes.minimumPerSide ? production : nil
         }
@@ -188,6 +219,10 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             result.reason = "A task has fewer than \(minimumRepeats) repeats on a side."
         } else if baselineCells < minimumCells || variantCells < minimumCells {
             result.reason = "Fewer than \(minimumCells) cells on a side (baseline \(baselineCells), variant \(variantCells))."
+        } else if variant.setup.layer != nil {
+            // Until layers get their own verdict level (slice 5), every layer pair stays open.
+            result.reason = "\(percent) of the bootstrap mass on improvement; a layer eval has no verdict level of its own yet, "
+                + "so this pair has no conclusion."
         } else if share >= helpedShare {
             let control = "\(percent) of the bootstrap mass on improvement (needs \(Int(helpedShare * 100))%)"
             if let measured {

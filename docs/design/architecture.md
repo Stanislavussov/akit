@@ -8,8 +8,13 @@ modules directly.
 
 Checked against `Package.swift` on 2026-10-03: the dependency table in 1.1 matches the
 code. Three modules were added after the split, `AKitLab`, `AKitErrorAnalysis` and
-`AKitMCPCatalog` (2026-10-04; 16 library targets now); the table has them, the graph does not. Planned, not built:
-`AKitErrorAnalysis → AKitRender` for layer evals (`layer-evals.md`).
+`AKitMCPCatalog` (2026-10-04; 16 library targets now); the table has them, the graph does not.
+
+2026-10-08 (layer evals, slice 1, `layer-evals.md`): `AKitErrorAnalysis → AKitRender`, so an
+eval renders a brain layer into a control cell's overlay. Render sits below ErrorAnalysis, so
+the arrows still point down. `AKitErrorAnalysisTests` also depends on `AKitBrain` and
+`AKitRender` (the tests build temporary brains). `AKitLab` gains nothing: its
+`ControlOverlay` knows paths and placement rules, not layers.
 
 2026-10-08 (JSON merge, `layers.md`): `AKitRender` also depends on `AKitFoundation`, for
 `JSONValue` (`AKitFoundation/JSONValue.swift`, the JSON tree that Brain, Render and
@@ -113,7 +118,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitRender` | Foundation (`JSONValue`), Brain |
 | `AKitProjectSetup` | Foundation, Brain, Render, Insights |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
-| `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain |
+| `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
