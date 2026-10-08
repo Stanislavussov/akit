@@ -224,12 +224,15 @@ Further choices of the step 4 plan, accepted on the same day:
   bootstrap mass on improvement, with 3+ repeats and 15+ cells a side, gives **helps
   (offline)** (`helps-offline`) without the production guard; below that, "didn't show it
   helped". A read-only cell of the same eval and agent that passed leaves the pair at "no
-  conclusion" ("A read-only agent passed <task>: its oracle can't tell work from no work").
+  conclusion" ("A read-only agent passed <task>: its oracle can't tell work from no work"),
+  also when that task isn't among the compared ones (`compare(_:sanity:)`). A setup with
+  both a patch and a layer is not paired.
   Patch pairs keep the fix rule and never get the offline level (D4; a test runs the same
   cells as both). `Paired.worseShare`: the share of bootstrap sums strictly below zero (ties
   count for neither), computed for every pair.
 - `LayerVerdicts` (`AKitErrorAnalysis`): `verdict(of:runs:costs:)` gives an eval's verdict
-  once none of its cells is queued or running (nil before); `save` keeps the last verdict per
+  once none of its cells is queued or running (nil before, and nil when no task has finished
+  cells of both setups, so a cancelled eval never replaces a stored verdict); `save` keeps the last verdict per
   agent (harness, model, effort) in `verdicts/<layer>.json` (schema 1; a newer schema is
   skipped and never overwritten), where an older eval never replaces a newer one's verdict;
   `load`; `lines` (the result lines below). The manifest now records `ownFiles` for the count

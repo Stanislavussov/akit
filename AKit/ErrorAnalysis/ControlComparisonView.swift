@@ -18,7 +18,14 @@ struct ControlComparisonView: View {
     /// The comparison of the inputs it was computed for: the bootstrap, the production signal
     /// (the mode's check before and after the fix) and the layer evals' verdicts run off the
     /// main thread, once per change of the inputs.
-    @State private var computed: (inputs: Inputs, comparison: ControlComparison, verdicts: [String: LayerVerdict])?
+    @State private var computed: (inputs: Inputs, comparison: ControlComparison, verdicts: [String: EvalVerdict])?
+    /// A layer eval's verdict once none of its cells is open, whether it was stored as the
+    /// layer's last one, or why its manifest can't be read.
+    struct EvalVerdict: Sendable {
+        var verdict: LayerVerdict?
+        var saved = false
+        var problem: String?
+    }
     /// Why the production signal couldn't be read; the comparison then has none.
     @State private var productionError: String?
     /// Why a layer verdict couldn't be saved.
@@ -48,29 +55,41 @@ struct ControlComparisonView: View {
         .task(id: inputs) {
             guard computed?.inputs != inputs else { return }
             let tasks = tasks
-            let result = await Task.detached { () -> (ControlComparison, String?, [String: LayerVerdict], String?) in
+            let result = await Task.detached { () -> (ControlComparison, String?, [String: EvalVerdict], String?) in
                 var production: FixEvaluation?
                 var failure: String?
                 do { production = try await ControlComparison.production(for: tasks, env: .current) } catch { failure = error.localizedDescription }
                 // A finished layer eval's verdict is saved as the layer's last one for its agent.
-                var verdicts: [String: LayerVerdict] = [:]
+                var verdicts: [String: EvalVerdict] = [:]
                 var saveFailure: String?
                 let costs = evals.isEmpty ? [:] : SendLog.runCosts(SendLog.records(env: .current))
                 for id in evals {
-                    guard let manifest = LayerEvalStore.manifest(id, env: .current),
-                          let verdict = LayerVerdicts.verdict(of: manifest, runs: evalRuns, costs: costs) else { continue }
-                    verdicts[id] = verdict
+                    guard let manifest = LayerEvalStore.manifest(id, env: .current) else {
+                        verdicts[id] = EvalVerdict(problem: LayerEvalStore.problem(id, env: .current) ?? "No eval \(id).")
+                        continue
+                    }
+                    guard let verdict = LayerVerdicts.verdict(of: manifest, runs: evalRuns, costs: costs) else { continue }
+                    var result = EvalVerdict(verdict: verdict)
                     do { try LayerVerdicts.save(verdict, env: .current) } catch { saveFailure = error.localizedDescription }
+                    // Stored now or before; a newer eval's verdict for the agent is kept instead.
+                    result.saved = LayerVerdicts.load(layer: verdict.layer, env: .current)?.verdicts
+                        .first { $0.agent == verdict.agent }?.evalID == verdict.evalID
+                    verdicts[id] = result
                 }
-                return (ControlComparison.compare(cells, production: production), failure, verdicts, saveFailure)
+                // The eval's read-only cells on tasks not shown count for its pair too.
+                let sanity = ControlComparison.Cell.of(evalRuns.filter { $0.spec.controlSetup?.readOnly == true })
+                    .filter { cell in !cells.contains(cell) }
+                return (ControlComparison.compare(cells, sanity: sanity, production: production), failure, verdicts, saveFailure)
             }.value
+            // A newer input's task may have finished first: this one's result is stale then.
+            guard !Task.isCancelled else { return }
             computed = (inputs, result.0, result.2)
             productionError = result.1
             verdictError = result.3
         }
     }
 
-    @ViewBuilder private func results(_ comparison: ControlComparison, verdicts: [String: LayerVerdict], evalRuns: [LabRun],
+    @ViewBuilder private func results(_ comparison: ControlComparison, verdicts: [String: EvalVerdict], evalRuns: [LabRun],
                                       open: Int) -> some View {
         if comparison.rows.isEmpty {
             Text("No finished cells yet." + (open > 0 ? " \(open) queued or running." : " Run Cells… queues them in the Lab."))
@@ -93,7 +112,7 @@ struct ControlComparisonView: View {
             .font(.callout)
             ForEach(comparison.paired, id: \.variant) { pair in
                 let eval = pair.variant.layer?.evalID
-                PairedVerdict(pair: pair, verdict: eval.flatMap { verdicts[$0] },
+                PairedVerdict(pair: pair, eval: eval.flatMap { verdicts[$0] },
                               waiting: evalRuns.filter { run in
                                   run.spec.controlSetup?.layer?.evalID == eval && (run.status == .queued || run.status == .running)
                               }.count)
@@ -173,7 +192,7 @@ struct ControlComparisonView: View {
 /// result lines once no cell of the eval is queued or running.
 private struct PairedVerdict: View {
     let pair: ControlComparison.Paired
-    let verdict: LayerVerdict?
+    let eval: ControlComparisonView.EvalVerdict?
     /// Cells of the layer pair's eval still queued or running.
     let waiting: Int
 
@@ -205,9 +224,15 @@ private struct PairedVerdict: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-                if let verdict {
+                if let problem = eval?.problem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if let verdict = eval?.verdict {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Verdict of the eval (all its tasks), saved for the layer:").font(.caption.weight(.semibold))
+                        Text(eval?.saved == true ? "Verdict of the eval (all its tasks), saved for the layer:"
+                             : "Verdict of the eval (all its tasks); a newer eval's verdict is kept for the layer:")
+                            .font(.caption.weight(.semibold))
                         ForEach(LayerVerdicts.lines(verdict), id: \.self) { line in
                             Text(line).font(.caption.monospaced()).fixedSize(horizontal: false, vertical: true)
                         }

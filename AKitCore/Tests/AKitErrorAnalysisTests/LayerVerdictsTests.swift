@@ -62,6 +62,9 @@ struct LayerVerdictsTests {
         // Another eval's open cells don't hold this one back.
         let other = runs(setup(.layer, eval: "swiftui-2"), passes: [0], status: .queued)
         #expect(LayerVerdicts.verdict(of: manifest, runs: done + other, costs: [:])?.verdict == .helpsOffline)
+        // Every cell of one side cancelled: no task to compare, so no verdict to replace a stored one.
+        let cancelled = runs(manifest.setups[0], passes: [1, 1, 1, 1, 1], status: .cancelled) + runs(manifest.setups[1], passes: [3, 3, 3, 3, 3])
+        #expect(LayerVerdicts.verdict(of: manifest, runs: cancelled, costs: [:]) == nil)
     }
 
     @Test func aFinishedEvalGetsItsVerdictAndLines() throws {

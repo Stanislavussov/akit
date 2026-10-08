@@ -193,6 +193,18 @@ struct ControlComparisonTests {
         // A read-only pass of another eval doesn't count here.
         let other = [ControlComparison.Cell(task: "t2", setup: layerSetup(.requiredOnly, eval: "swiftui-2", readOnly: true), passed: true)]
         #expect(ControlComparison.compare(main + other).paired.first?.verdict == .helpsOffline)
+        // A passed read-only cell on a task that isn't compared still counts, without a row of its own.
+        let elsewhere = ControlComparison.compare(main, sanity: [ControlComparison.Cell(task: "t9", setup: sanity, passed: true)])
+        #expect(elsewhere.paired.first?.verdict == .noConclusion && elsewhere.paired.first?.reason.contains("passed t9") == true)
+        #expect(elsewhere.rows.count == 2)
+    }
+
+    @Test func aSetupWithBothAPatchAndALayerIsNotPaired() {
+        var both = layerSetup(.layer)
+        both.patch = ControlPatch(file: "CLAUDE.md", text: "x")
+        let comparison = ControlComparison.compare(cells(baseline, passes: [1, 1, 1, 1, 1]) + cells(layerSetup(.requiredOnly), passes: [1, 1, 1, 1, 1])
+                                                   + cells(both, passes: [3, 3, 3, 3, 3]), production: notWorse)
+        #expect(comparison.paired.isEmpty)
     }
 
     @Test func worseShareCountsSumsBelowZeroAndNotTies() throws {

@@ -127,7 +127,9 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     /// "helped" also needs it not worse, so without it there is no conclusion. It is a patch
     /// fix's signal, so layer pairs never get it: they are judged offline ("helps (offline)",
     /// D4), unless a read-only cell of their eval passed.
-    public static func compare(_ cells: [Cell], production: FixEvaluation? = nil, iterations: Int = 2000,
+    /// `sanity`: more read-only cells of the layer evals among `cells` (their other tasks), for
+    /// the read-only rule only; they make no row.
+    public static func compare(_ cells: [Cell], sanity: [Cell] = [], production: FixEvaluation? = nil, iterations: Int = 2000,
                                seed: UInt64 = 1) -> ControlComparison {
         let kept = cells.filter(\.overlayRecorded)
         var order: [ControlSetup] = []
@@ -137,6 +139,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         let baselines = candidates.filter { $0.setup.patch == nil && $0.setup.layer == nil }
         let paired = candidates.compactMap { variant -> Paired? in
             if variant.setup.patch != nil {
+                // A setup makes one difference; one with both a patch and a layer is not paired.
+                guard variant.setup.layer == nil else { return nil }
                 guard let baseline = baselines.first(where: { $0.setup.agent == variant.setup.agent }) ?? baselines.first else { return nil }
                 return pair(baseline: baseline, variant: variant, production: production, iterations: iterations, seed: seed)
             }
@@ -148,10 +152,10 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                   }) else { return nil }
             // The read-only sanity cells of the eval must fail: a pass means the oracle can't tell
             // work from no work. The oracle's verdict counts, flagged or not.
-            let sanity = kept.first { cell in
+            let readOnlyPass = (kept + sanity.filter(\.overlayRecorded)).first { cell in
                 cell.setup.readOnly && cell.passed && cell.setup.layer?.evalID == layer.evalID && cell.setup.agent == variant.setup.agent
             }
-            return pair(baseline: baseline, variant: variant, production: nil, offline: true, readOnlyPassed: sanity?.task,
+            return pair(baseline: baseline, variant: variant, production: nil, offline: true, readOnlyPassed: readOnlyPass?.task,
                         iterations: iterations, seed: seed)
         }
         return ControlComparison(rows: rows, paired: paired, leftOut: cells.count - kept.count)

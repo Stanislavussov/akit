@@ -73,7 +73,8 @@ public struct LayerVerdictFile: Codable, Sendable, Hashable {
 public enum LayerVerdicts {
     /// The verdict of an eval from its cells (the Lab runs of its setups) and the recorded
     /// cost per run (`SendLog.runCosts`). nil while a cell of the eval is queued or running,
-    /// or when none was queued.
+    /// and when no task has finished cells of both setups (none queued, or all cancelled or
+    /// failed), so an empty eval never replaces a stored verdict.
     public static func verdict(of manifest: LayerEvalManifest, runs: [LabRun], costs: [String: RunCost]) -> LayerVerdict? {
         let mine = runs.filter { $0.spec.kind == .control && $0.spec.controlSetup?.layer?.evalID == manifest.id }
         guard !mine.isEmpty, !mine.contains(where: { $0.status == .queued || $0.status == .running }),
@@ -83,7 +84,7 @@ public enum LayerVerdicts {
         let comparison = ControlComparison.compare(cells)
         let before = comparison.rows.first { $0.setup == baseline }
         let after = comparison.rows.first { $0.setup == variant }
-        let pair = comparison.paired.first { $0.variant == variant && $0.baseline == baseline }
+        guard let pair = comparison.paired.first(where: { $0.variant == variant && $0.baseline == baseline }), pair.tasks > 0 else { return nil }
         // pass@1 of a side over the tasks both sides have.
         let shared = Set(before?.tasks.map(\.task) ?? []).intersection(after?.tasks.map(\.task) ?? [])
         func rate(_ row: ControlComparison.Row?) -> Double? {
@@ -92,15 +93,15 @@ public enum LayerVerdicts {
         }
         let sanity = cells.filter { $0.overlayRecorded && $0.setup.readOnly }
         let sanityPassed = sanity.filter(\.passed).count
-        let priced = mine.compactMap { costs[$0.id]?.dollars }
+        // In run order, so the same runs always give the same sum.
+        let priced = mine.sorted { $0.id < $1.id }.compactMap { costs[$0.id]?.dollars }
         return LayerVerdict(
             layer: manifest.layer, evalID: manifest.id, evalCreatedAt: seconds(manifest.createdAt), harness: variant.agent.harness,
             model: variant.agent.model, effort: variant.agent.effort, brainCommit: manifest.brainCommit,
             overlay: variant.layer?.overlayHash, baselineOverlay: baseline.layer?.overlayHash,
-            tasks: pair?.tasks ?? 0, repeats: manifest.repeats, baselineCells: pair?.baselineCells ?? 0, layerCells: pair?.variantCells ?? 0,
-            baselineRate: rate(before), layerRate: rate(after), meanChange: pair?.meanChange,
-            improvementShare: pair?.improvementShare, worseShare: pair?.worseShare, verdict: pair?.verdict ?? .noConclusion,
-            reason: pair?.reason ?? "No finished cells of both setups.",
+            tasks: pair.tasks, repeats: manifest.repeats, baselineCells: pair.baselineCells, layerCells: pair.variantCells,
+            baselineRate: rate(before), layerRate: rate(after), meanChange: pair.meanChange,
+            improvementShare: pair.improvementShare, worseShare: pair.worseShare, verdict: pair.verdict, reason: pair.reason,
             flagged: (before?.flagged ?? 0) + (after?.flagged ?? 0), leftOut: comparison.leftOut, blocked: manifest.blocked.count,
             sanity: sanity.isEmpty ? .none : sanityPassed > 0 ? .failed : .passed, sanityCells: sanity.count, sanityPassed: sanityPassed,
             harnessVersions: Set(cells.compactMap(\.harnessVersion)).sorted(), overlap: manifest.overlap,

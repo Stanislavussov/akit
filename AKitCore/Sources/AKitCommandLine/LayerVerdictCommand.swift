@@ -28,29 +28,42 @@ extension AKitCLI {
         let open = runs.filter { $0.status == .queued || $0.status == .running }.count
         let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs))
         let verdict = LayerVerdicts.verdict(of: manifest, runs: runs, costs: SendLog.runCosts(SendLog.records(env: env)))
+        // A verdict file that can't be written doesn't hide the result: it is reported after it.
         var saved = false
+        var saveFailure: String?
         if let verdict {
-            do {
-                saved = try LayerVerdicts.save(verdict, env: env)
-            } catch {
-                throw Failure(message: error.localizedDescription)
-            }
+            do { saved = try LayerVerdicts.save(verdict, env: env) } catch { saveFailure = error.localizedDescription }
         }
         if json {
             out(try labJSON(LayerEvalReport(eval: manifest.id, layer: manifest.layer, open: open, comparison: comparison,
                                             verdict: verdict, saved: saved)))
+            if let saveFailure { throw Failure(message: "The verdict wasn't saved: \(saveFailure)") }
             return 0
         }
         out(comparisonText(comparison, tasks: manifest.tasks.compactMap { ControlTasks.load($0, env: env) }, open: open))
         out("")
         guard let verdict else {
-            out(runs.isEmpty ? "No cells of the eval \(manifest.id) yet." : "The verdict waits for \(open) cells still queued or running.")
+            out(runs.isEmpty ? "No cells of the eval \(manifest.id) yet."
+                : open > 0 ? "The verdict waits for \(open) cells still queued or running."
+                : "No verdict: no task of the eval has finished cells of both setups.")
             return 0
         }
         LayerVerdicts.lines(verdict).forEach(out)
+        if let saveFailure { throw Failure(message: "The verdict wasn't saved: \(saveFailure)") }
         let file = EvalPaths(env: env).verdict(manifest.layer).path.replacingOccurrences(of: env.homeDirectory.path, with: "~")
         out(saved ? "Saved as the last verdict of \(manifest.layer) for \(verdict.agent.harness.title) · \(verdict.model) · \(verdict.effort) (\(file))."
             : "The stored verdict for this agent is already this one or comes from a newer eval (\(file)).")
         return 0
+    }
+
+    /// The read-only cells of the layer evals among `runs`, on all their tasks: a passed one
+    /// leaves the eval's pair open even when its task isn't compared.
+    static func layerEvalSanity(of runs: [LabRun], env: HarnessEnvironment) -> [ControlComparison.Cell] {
+        let evals = Set(runs.compactMap { $0.spec.controlSetup?.layer?.evalID })
+        guard !evals.isEmpty else { return [] }
+        return ControlComparison.Cell.of(LabStore.list(env: env).filter { run in
+            run.spec.kind == .control && run.spec.controlSetup?.readOnly == true
+                && run.spec.controlSetup?.layer.map { evals.contains($0.evalID) } == true
+        })
     }
 }

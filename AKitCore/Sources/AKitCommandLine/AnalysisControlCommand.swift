@@ -132,7 +132,7 @@ extension AKitCLI {
             let tasks = try controlTasks(list, env: env)
             let ids = Set(tasks.map(\.id))
             let runs = LabStore.list(env: env).filter { $0.spec.kind == .control && $0.spec.controlTask.map(ids.contains) == true }
-            let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs),
+            let comparison = ControlComparison.compare(ControlComparison.Cell.of(runs), sanity: layerEvalSanity(of: runs, env: env),
                                                        production: try await ControlComparison.production(for: tasks, env: env))
             if json { out(try labJSON(comparison)); return 0 }
             let open = runs.filter { $0.status == .queued || $0.status == .running }.count
