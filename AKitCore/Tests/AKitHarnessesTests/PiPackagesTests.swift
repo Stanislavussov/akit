@@ -151,7 +151,8 @@ struct PiPackagesTests {
 
         let list = packages()
         #expect(list.map(\.identity) == ["git:github.com/acme/repo", "git:gitlab.com/team/kit",
-                                         "local:\(agent.appending(path: "mine").path)", "local:\(home.appending(path: "ext.ts").path)"])
+                                         "local:\(FileWalk.realPath(agent.appending(path: "mine"))!)",
+                                         "local:\(FileWalk.realPath(home.appending(path: "ext.ts"))!)"])
         #expect(list.allSatisfy { $0.isInstalled })
         #expect(names(list[0].skills, in: list[0]) == ["skills/one/SKILL.md"])
         #expect(names(list[1].prompts, in: list[1]) == ["prompts/p.md"])

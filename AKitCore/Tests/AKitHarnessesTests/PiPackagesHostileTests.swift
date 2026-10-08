@@ -223,10 +223,64 @@ extension PiPackagesTests {
                        "Projects/app/.pi/npm/node_modules/third"] {
             for index in 0..<30 { try write("\(folder)/prompts/p\(index).md") }
         }
-        let listing = PiPackages.list(configRoot: agent, projects: [project], limits: { .init(entries: 50) }, in: env)
+        let ceiling = PiPackages.Ceiling()
+        let listing = PiPackages.list(configRoot: agent, projects: [project], ceiling: ceiling,
+                                      limits: { .init(entries: 200, ceiling: ceiling) }, in: env)
         #expect(listing.packages.map(\.isTooLarge) == [false, true, false])
         #expect(listing.packages.map(\.prompts.count) == [30, 0, 30])
         #expect(listing.notes.contains { $0.contains("settings.json: AKit stopped reading packages") })
+    }
+
+    @Test func linkedPackagesAndProjectsCountOnceAndFinishFast() throws {
+        // One project lists 200 local packages that are links to one folder; that folder has 30
+        // extension subfolders whose package.json lists 256 entries each; 20 more project folders
+        // are links to the project.
+        let evil = home.appending(path: "Projects/evil")
+        let kit = "Projects/evil/.pi/k0"
+        let entries = (0..<200).map { "\"./k\($0)\"" }.joined(separator: ",")
+        try write("Projects/evil/.pi/settings.json", #"{"packages": [\#(entries)]}"#)
+        let listed = (0..<256).map { "\"./f\($0).ts\"" }.joined(separator: ",")
+        for index in 0..<30 {
+            try write("\(kit)/extensions/e\(index)/package.json", #"{"pi": {"extensions": [\#(listed)]}}"#)
+        }
+        for index in 1..<200 { try link("Projects/evil/.pi/k\(index)", to: "k0") }
+        var projects = [evil]
+        for index in 1...20 {
+            try link("Projects/alias\(index)", to: evil.path)
+            projects.append(home.appending(path: "Projects/alias\(index)"))
+        }
+
+        let start = Date()
+        let listing = PiPackages.list(configRoot: agent, projects: projects, in: env)
+        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(listing.packages.count == 1) // one real package, one real project
+        #expect(listing.notes.contains { $0.contains("199 repeated entries skipped") })
+    }
+
+    @Test func theDeadlineStopsTheWholeListing() throws {
+        let project = home.appending(path: "Projects/app")
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:tools"]}"#)
+        try write(".pi/agent/npm/node_modules/tools/prompts/p.md")
+        try write("Projects/app/.pi/settings.json", #"{"packages": ["npm:mine"]}"#)
+
+        let ceiling = PiPackages.Ceiling(seconds: 0)
+        let listing = PiPackages.list(configRoot: agent, projects: [project], ceiling: ceiling,
+                                      limits: { .init(ceiling: ceiling) }, in: env)
+        #expect(listing.packages.isEmpty) // not even the settings files are read
+        #expect(listing.notes == ["AKit stopped reading Pi packages after 0 s; later ones are not read."])    }
+
+    @Test func theRefreshCeilingCoversEverySettingsFile() throws {
+        let project = home.appending(path: "Projects/app")
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:first"]}"#)
+        try write("Projects/app/.pi/settings.json", #"{"packages": ["npm:second"]}"#)
+        for folder in [".pi/agent/npm/node_modules/first", "Projects/app/.pi/npm/node_modules/second"] {
+            for index in 0..<30 { try write("\(folder)/prompts/p\(index).md") }
+        }
+        let ceiling = PiPackages.Ceiling(entries: 100)
+        let listing = PiPackages.list(configRoot: agent, projects: [project], ceiling: ceiling,
+                                      limits: { .init(ceiling: ceiling) }, in: env)
+        #expect(listing.packages.allSatisfy { $0.isTooLarge })
+        #expect(listing.notes.contains { $0.hasPrefix("AKit stopped reading Pi packages after its limit for one refresh;") })
     }
 
     @Test func linkedSubfoldersSharingAHugePackageJSONFinishFast() throws {

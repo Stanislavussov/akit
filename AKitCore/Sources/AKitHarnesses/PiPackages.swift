@@ -51,9 +51,11 @@ public struct PiPackage: Sendable, Hashable, Identifiable {
 /// Packages come from settings a cloned repository may bring, so nothing listed may leave the
 /// package folder (links resolved), only regular files count, known secret files never show,
 /// and the work is bounded: at most `maxEntries` entries per settings file, and `Limits` per
-/// package and per settings file (folder entries and package.json kilobytes read, glob matching
-/// done), so one hostile project can't use up the work of the others. Past a limit a package is
-/// marked too large and the listing says what was left out.
+/// package and per settings file (folder entries, file checks and package.json kilobytes read,
+/// glob matching done), so one hostile project can't use up the work of the others, under a
+/// `Ceiling` for the whole listing (work and a wall-clock deadline). Packages reached by links
+/// count once (local identity and projects by real path). Past a limit a package is marked too
+/// large and the listing says what was left out.
 /// Differences from Pi: npm packages in the old global npm folder (`npm root -g`) are not found
 /// (finding it means running npm), `.gitignore` files inside packages are not applied, `**`
 /// skips node_modules, project packages are listed whether or not Pi trusts the project, and
@@ -65,8 +67,8 @@ public enum PiPackages {
 
     typealias Resources = [ResourceType: [URL]]
 
-    /// Folder entries one package may cost.
-    static let entryBudget = 5_000
+    /// Folder entries and file checks one package may cost.
+    static let entryBudget = 20_000
     /// Entries read from one settings file, after repeated ones are dropped.
     static let maxEntries = 200
     /// Patterns (or manifest entries) read from one list; a longer list is cut and noted.
@@ -76,17 +78,44 @@ public enum PiPackages {
     /// Never listed, even inside a package.
     public static let secretNames: Set<String> = ["auth.json", "models-store.json", "settings.local.json"]
 
-    /// Work allowed for the packages of one settings file.
+    /// Work allowed for the whole listing of one refresh, every settings file together.
+    final class Ceiling {
+        /// Folder entries, file checks and package.json kilobytes.
+        var entries: Int
+        let deadline: Date
+        /// How long the listing may take, for the note.
+        let seconds: Double
+
+        init(entries: Int = 100_000, seconds: Double = 2) {
+            self.entries = entries
+            self.seconds = seconds
+            deadline = Date().addingTimeInterval(seconds)
+        }
+
+        var isPastDeadline: Bool { Date() > deadline }
+        var isExhausted: Bool { entries < 0 || isPastDeadline }
+    }
+
+    /// Work allowed for the packages of one settings file, within the `Ceiling`.
     final class Limits {
-        /// Folder entries read, plus one per kilobyte of package.json read.
+        /// Folder entries read, file checks, plus one per kilobyte of package.json read.
         var entries: Int
         /// Glob matching: tokens × characters compared.
         var matchSteps: Int
-        var isExhausted: Bool { entries < 0 || matchSteps < 0 }
+        let ceiling: Ceiling
+        /// This file's own share is used up (not the ceiling).
+        var isOwnShareUsed: Bool { entries < 0 || matchSteps < 0 }
+        var isExhausted: Bool { isOwnShareUsed || ceiling.isExhausted }
 
-        init(entries: Int = 25_000, matchSteps: Int = 20_000_000) {
+        init(entries: Int = 40_000, matchSteps: Int = 20_000_000, ceiling: Ceiling = Ceiling()) {
             self.entries = entries
             self.matchSteps = matchSteps
+            self.ceiling = ceiling
+        }
+
+        func charge(entries count: Int) {
+            entries -= count
+            ceiling.entries -= count
         }
     }
 
@@ -104,18 +133,32 @@ public enum PiPackages {
 
     /// Packages of the global settings, then those of each project's `.pi/settings.json`.
     public static func list(configRoot: URL, projects: [URL], in env: HarnessEnvironment) -> Listing {
-        list(configRoot: configRoot, projects: projects, limits: { Limits() }, in: env)
+        let ceiling = Ceiling()
+        return list(configRoot: configRoot, projects: projects, ceiling: ceiling,
+                    limits: { Limits(ceiling: ceiling) }, in: env)
     }
 
-    /// `limits`: a fresh share of work for each settings file.
-    static func list(configRoot: URL, projects: [URL], limits: () -> Limits, in env: HarnessEnvironment) -> Listing {
+    /// `limits`: a fresh share of work for each settings file, all under `ceiling`.
+    static func list(configRoot: URL, projects: [URL], ceiling: Ceiling, limits: () -> Limits,
+                     in env: HarnessEnvironment) -> Listing {
         var listing = Listing()
         let global = packages(settings: configRoot.appending(path: "settings.json"), scope: .global,
                               configRoot: configRoot, globals: [], limits: limits(), env: env, into: &listing)
+        // A project reached through a link is the same project.
         var seen: Set<String> = []
-        for project in projects where seen.insert(project.standardizedFileURL.path).inserted {
+        for project in projects {
+            if ceiling.isExhausted { break }
+            guard seen.insert(FileWalk.realPath(project) ?? project.standardizedFileURL.path).inserted else { continue }
             _ = packages(settings: project.appending(path: ".pi/settings.json"), scope: .project(project),
                          configRoot: configRoot, globals: global, limits: limits(), env: env, into: &listing)
+        }
+        let skipped = listing.packages.filter(\.isTooLarge).count
+        let rest = skipped == 0 ? "later ones are not read."
+            : "\(skipped) \(skipped == 1 ? "is" : "are") not listed and later ones are not read."
+        if ceiling.isPastDeadline {
+            listing.notes.append("AKit stopped reading Pi packages after \(Int(ceiling.seconds)) s; \(rest)")
+        } else if ceiling.entries < 0 {
+            listing.notes.append("AKit stopped reading Pi packages after its limit for one refresh; \(rest)")
         }
         return listing
     }
@@ -172,10 +215,14 @@ public enum PiPackages {
         var chosen: [String: (index: Int, source: String, filter: [String: Any]?, parsed: Source)] = [:]
         var order: [String] = []
         var repeated = 0
+        // The same text parses once: resolving a local path's links costs a file-system call.
+        var parsedSources: [String: Source] = [:]
         for (index, entry) in entries.enumerated() {
+            if index % 256 == 0, limits.ceiling.isExhausted { break }
             let filter = entry as? [String: Any]
             guard let source = (entry as? String) ?? filter?["source"] as? String else { continue }
-            let parsed = Source(source, base: base, env: env)
+            let parsed = parsedSources[source] ?? Source(source, base: base, env: env)
+            parsedSources[source] = parsed
             if chosen[parsed.identity] == nil {
                 order.append(parsed.identity)
             } else {
@@ -204,7 +251,7 @@ public enum PiPackages {
                 + "entries; only the first \(maxPatterns) are read, so it may be listed wrongly.")
         }
         let skipped = result.filter(\.isTooLarge).count
-        if limits.isExhausted, skipped > 0 {
+        if limits.isOwnShareUsed, skipped > 0 {
             listing.notes.append("\(file): AKit stopped reading packages after its limit for one settings file; "
                 + "\(skipped) \(skipped == 1 ? "package is" : "packages are") not listed.")
         }
@@ -322,7 +369,7 @@ public enum PiPackages {
             switch kind {
             case .npm(let name): "npm:\(name)"
             case .git(let host, let path): "git:\(host)/\(path)"
-            case .local(let url): "local:\(url.path)"
+            case .local(let url): "local:\(FileWalk.realPath(url) ?? url.path)"
             case .invalid: "invalid:\(raw)"
             }
         }
@@ -477,13 +524,7 @@ public enum PiPackages {
             guard !exhausted, let real = realFile(file) else { return nil }
             if let cached = packageJSONs[real] { return cached }
             let data = FileWalk.head(of: URL(filePath: real), limit: PiPackages.maxPackageJSON + 1)
-            let cost = 1 + (data?.count ?? 0) / 1024
-            budget -= cost
-            limits.entries -= cost
-            if budget < 0 || limits.isExhausted {
-                stopped = true
-                return nil
-            }
+            guard spend(1 + (data?.count ?? 0) / 1024) else { return nil }
             var json: [String: Any]?
             if let data, data.count <= PiPackages.maxPackageJSON {
                 json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -541,9 +582,9 @@ public enum PiPackages {
 
         // MARK: Containment and limits
 
-        /// Real path of a folder inside the package.
+        /// Real path of a folder inside the package. Each check costs one entry.
         func directory(_ url: URL) -> String? {
-            guard let real = inside(url), FileWalk.isDirectory(URL(filePath: real)) else { return nil }
+            guard let real = inside(url), spend(1), FileWalk.isDirectory(URL(filePath: real)) else { return nil }
             return real
         }
 
@@ -554,14 +595,15 @@ public enum PiPackages {
 
         /// Real path of a regular file inside the package that isn't a known secret.
         private func realFile(_ url: URL) -> String? {
-            guard let real = inside(url), FileWalk.isRegularFile(URL(filePath: real)),
+            guard let real = inside(url), spend(1), FileWalk.isRegularFile(URL(filePath: real)),
                   !PiPackages.secretNames.contains(url.lastPathComponent),
                   !PiPackages.secretNames.contains((real as NSString).lastPathComponent) else { return nil }
             return real
         }
 
+        /// Real path of `url` if it lies inside the package. Resolving links costs one entry.
         private func inside(_ url: URL) -> String? {
-            guard let real = FileWalk.realPath(url) else { return nil }
+            guard spend(1), let real = FileWalk.realPath(url) else { return nil }
             return real == rootReal || real.hasPrefix(rootReal == "/" ? "/" : rootReal + "/") ? real : nil
         }
 
@@ -569,12 +611,7 @@ public enum PiPackages {
         private func children(_ dir: URL) -> [URL] {
             guard !exhausted else { return [] }
             let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-            budget -= names.count + 1
-            limits.entries -= names.count + 1
-            if budget < 0 || limits.isExhausted {
-                stopped = true
-                return []
-            }
+            guard spend(names.count + 1) else { return [] }
             return names.filter { !$0.hasPrefix(".") }.sorted().map { dir.appending(path: $0) }
         }
 
@@ -587,6 +624,18 @@ public enum PiPackages {
                 return false
             }
             return glob.matches(text)
+        }
+
+        /// Charges work to the package's budget and the limits; false (and stopped) once one is used up.
+        private func spend(_ count: Int) -> Bool {
+            guard !exhausted else { return false }
+            budget -= count
+            limits.charge(entries: count)
+            if budget < 0 || limits.isExhausted {
+                stopped = true
+                return false
+            }
+            return true
         }
 
         private func unique(_ files: [URL]) -> [URL] {
