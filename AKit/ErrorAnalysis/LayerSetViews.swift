@@ -188,6 +188,9 @@ struct LayerSetView: View {
     let delete: () -> Void
     /// The answers as edited, saved with Save Answers.
     @State private var answers: [String: FieldValue] = [:]
+    /// The layer's evals, newest first, and the one whose comparison is shown.
+    @State private var evals: [LayerEvalManifest] = []
+    @State private var shownEval: String?
 
     var body: some View {
         let tasks = Dictionary(analysis.data.controlTasks.map { ($0.id, $0) }) { first, _ in first }
@@ -234,8 +237,14 @@ struct LayerSetView: View {
                 .padding(4)
             }
             GroupBox("Answers") { answersEditor.padding(4) }
+            if !evals.isEmpty { evalsBox(tasks) }
         }
         .onAppear { answers = set.answers }
+        .task(id: "\(set.layer) \(model.labRuns.filter { $0.spec.kind == .control }.count)") {
+            let layer = set.layer
+            evals = await Task.detached { LayerEvalStore.evals(of: layer, env: .current) }.value
+            if shownEval == nil || !evals.contains(where: { $0.id == shownEval }) { shownEval = evals.first?.id }
+        }
         .onChange(of: set) { old, new in
             // Another set: its own answers. The same set read again (after any change on the
             // screen): only the fields whose saved answer changed; unsaved edits stay.
@@ -246,6 +255,34 @@ struct LayerSetView: View {
             for field in Set(old.answers.keys).union(new.answers.keys) where old.answers[field] != new.answers[field] {
                 answers[field] = new.answers[field]
             }
+        }
+    }
+
+    /// The layer's evals (Evaluate… in Brain, or Run Cells… here), newest first; the chosen
+    /// one's comparison and verdict below.
+    private func evalsBox(_ tasks: [String: ControlTask]) -> some View {
+        GroupBox("Evals (\(evals.count))") {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Eval", selection: $shownEval) {
+                    ForEach(evals) { eval in
+                        Text("\(eval.createdAt.formatted(date: .abbreviated, time: .shortened)) · "
+                             + "\(eval.agent.map { "\($0.model) · \($0.effort)" } ?? "") · \(eval.tasks.count) tasks × \(eval.repeats)")
+                            .tag(String?.some(eval.id))
+                    }
+                }
+                .fixedSize()
+                if let eval = evals.first(where: { $0.id == shownEval }) {
+                    let denied = Set(eval.setups.flatMap { $0.denied ?? [] }).sorted()
+                    Text("Eval \(eval.id) · brain \(eval.brainCommit.prefix(7))"
+                         + (denied.isEmpty ? "" : " · the agent may not run: \(denied.joined(separator: ", "))"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    ControlComparisonView(tasks: eval.tasks.compactMap { tasks[$0] }, eval: eval.id)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
         }
     }
 

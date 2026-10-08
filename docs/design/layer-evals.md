@@ -3,8 +3,8 @@
 Status: design 2026-10-03, decided in a grilling session and revised after a fact-check
 against the code. Narrowed on 2026-10-08 by the decisions I2, D2, D3 and D4 (see
 [Decisions (2026-10-08)](#decisions-2026-10-08)): v1 is for Claude Code only, without a
-home fingerprint, with the verdict offline only. Slices 1, 2 and 5 built 2026-10-08 (see
-[Built](#built)); slice 6, then the pilot, are next (step 4 of `README.md`).
+home fingerprint, with the verdict offline only. Slices 1, 2, 5 and 6 built 2026-10-08 (see
+[Built](#built)); the pilot is next (step 4 of `README.md`).
 
 ## Goal
 
@@ -61,7 +61,7 @@ What its results taught:
 | read-only setup as a sanity check | `ControlSetup.readOnly` | done |
 | guard: fewer test markers, test files changed (file snapshots before and after the agent, not git) | `ControlCell`, `ControlOutcome` | done |
 | repeats, cell keys, paired bootstrap by task, Wilson intervals | `ControlRuns`, `ControlComparison` | done |
-| cost estimate before queueing; monthly limit and sending policy per cell | `RunCellsSheet`, `akit analysis control`, `ControlRuns` | done |
+| cost estimate before queueing; monthly limit and sending policy per cell | `ControlRuns.estimate` (slice 6; the app and `akit` share it), `ControlRuns` | done |
 | fix draft of a mode with "the layer to change" | `FixDraft.layer` | done; a kind of artifact, not a brain layer |
 | layer render: skills, glued Markdown, CLAUDE.md shim, `.claude/skills` link | `Render.render` | done; pure, writes nothing |
 | project plan: a template file (any non-skill path) the project edited is offered, not overwritten; one AKit wrote and nobody edited is updated; with a lock, the project's same-name skill wins | `ProjectSetup.plan` | done |
@@ -295,6 +295,104 @@ Further choices of the step 4 plan, accepted on the same day:
 - What slice 6 needs: `LayerVerdicts.load(layer:env:)` for the badge, `LayerVerdict.agent`,
   `decidedAt`, `brainCommit`, `verdict.title`, and `LayerEvalStore.evals(of:)` for running
   evals.
+
+**Slice 6, Brain UI and `evaluate` (2026-10-08).**
+
+- `ControlRuns.estimate(cells:agent:repo:env:)` (`CostEstimate`) is the one estimate the app
+  and `akit` show before cells are queued (it replaced their two copies): the recorded cost
+  per cell of earlier control cells of the same harness and model, else of replays of them;
+  the mean times the cells, a range (the lowest and highest recorded cell times the cells)
+  and the number of records; the time in the Lab queue from the median duration of finished
+  control runs, else replays (`startedAt` → `updatedAt`: clone, agent and hidden-test build),
+  of the tasks' repository first, else of any repository, times the cells (the queue runs
+  one at a time). The time line says where the median comes from ("median of 9 control runs
+  of this repository"). With no record there is no estimate. `ControlRuns.plan` is a dry run
+  of `newControlRuns` (cells to queue and cells skipped), so only cells still to run are
+  estimated.
+- `LayerEvals.plan` (`AKitErrorAnalysis`) plans an eval of the layer's set: prepare, the cells
+  to queue, the estimate, and the latest eval of the layer and agent that renders the same
+  files (`Resumable`: cells done, open, left; `calibrating` while a setup has no finished
+  cell). It writes nothing. `LayerEvals.queue` holds a file lock per eval
+  (`layer-evals/.<id>.lock`), counts and estimates the cells again and refuses when more
+  cells would run than the plan said ("The eval changed since the estimate …; check it
+  again": a cell that failed or was cancelled since runs again) or when the fresh estimate's
+  high end is above the amount the user confirmed (`maxCost`). Then it checks the monthly
+  limit with the fresh estimate (`SendLog.checkLimit`; a send log that exists but can't be
+  read now refuses when a limit is set), writes the eval folder, and queues the cells. A new
+  eval whose cells can't be queued has its folder removed again. Without an estimate it
+  refuses and only **calibration** is possible: exactly one cell, the first not yet done
+  (repeat 1 of the baseline of the first task in a new eval); under the lock a second
+  calibration cell is refused while one of the eval is queued or running. The eval keeps the
+  calibration cell, and the next Evaluate continues that eval by default while not every
+  setup has a finished cell (so the paid cell is reused); `--new` (CLI) or the Continue
+  toggle (app) starts another.
+- Every paid queue of **Run Cells…** (plain and patch setups too) counts the cells still to
+  run, estimates them and asks before queueing: "Queue up to N cells for about $X (range
+  $L–$H)?", or "Queue N cells with no estimate yet?" when no cost is recorded; the app counts
+  and estimates again before it queues. The hint for a variant without its baseline says "it
+  costs nothing" only when the baseline has no cell left to run. `control run --yes` without
+  `--layer` prints the cells to run and the estimate, and needs `--max-cost USD` once a cost
+  is recorded (without one, `--yes` alone with the count shown).
+- The same money rule for **Run Cells…** with a brain layer and `run --layer`: no recorded
+  cost, no paid layer cell (the button stays disabled and points to Brain → layer →
+  Evaluate… for the calibration cell; the CLI refuses with the `evaluate --calibrate`
+  command); otherwise the button waits for the estimate and asks "Queue up to N cells for
+  about $X (range $L–$H)?"; both queue through `LayerEvals.queue` (the lock, the second count,
+  the cleanup of a new eval's folder and lock). The
+  CLI's `--yes` for paid layer cells (`evaluate` and `run --layer`) needs `--max-cost USD`
+  and refuses when the estimate's high end is above it; `--calibrate --yes` needs none (one
+  cell) and prints the cell's expected range when there is one. The app's confirmations add
+  "k other queued runs will start too" when the Lab queue holds other runs.
+- **Denied commands** (the pilot safety rule, decided by the user): `ControlSetup.denied`
+  (shell command prefixes) goes into Claude Code's one `--disallowedTools` flag as
+  `Bash(<command>:*)`, next to the push rule every run has (one flag with all values; a
+  test reads the fake `claude`'s argv). A layer eval gives the same list to both setups and
+  the read-only cells, so the comparison stays fair. In AKit's own repository (it has
+  `AKitCore/Package.swift`) the default is every Makefile target that builds, installs or
+  starts AKit or another app, `open` and `swift run` (`swift build` and `swift test` stay
+  allowed): `make snapshot, make run, make restart, make install, make install-cli, make
+  screenshots, make open, open, swift run` (a test parses the Makefile
+  and fails when a new launching or installing target is missing). AKit's `CLAUDE.md` asks
+  for `make snapshot` after UI changes, and these would build and start a development AKit
+  against the real `~/.akit`. Other repositories get none. The default applies to **every**
+  control cell (a setup with `denied` nil gets it when its cells are queued, `--no-deny`
+  stores an explicit empty list; a cell an older version queued without the list gets it when
+  it runs, its key unchanged) and to every replay in AKit's own repository (at run time).
+  The list is in the cell key only when it is not empty, so keys change only for cells in
+  AKit's own repository: their earlier finished cells (without the list) don't count as done
+  and run again. A continued eval keeps its own list; continuing one that denies nothing in
+  AKit's own repository warns. Entries are command prefixes: one with `(`, `)` or `*` (a
+  permission rule such as `Bash(make run:*)`) is refused. The app queues such cells only
+  through an `akit` whose `akit lab --help` names "denied commands". **What it doesn't
+  catch:** a prefix rule sees the command as written, so `make -C . snapshot`,
+  `make OUT=x snapshot`, `cd x && …` chains Claude Code splits differently, a script that
+  calls make, and running a built binary directly (`build/…/AKit.app/Contents/MacOS/AKit`,
+  `AKitCore/.build/…/akit`, `xcodebuild` followed by either) are not denied; Pi cells get no list (Pi has no deny flag). It guards the commands the
+  project's own instructions name.
+- UI: Brain → layer (not core) → **Evals** box: the last verdict per agent as a badge
+  ("helps (offline)" · opus · high · the date · @a1b2c3d, the result lines in its help),
+  "running: n of N cells" for an eval with open cells, **Evaluate…** (when the set has tasks),
+  **Show in Error Analysis**, or **Create Layer Set** (an empty set, then Evals with it
+  selected). The Brain list shows the newest verdict next to the layer's name. **Evaluate…**
+  sheet: the eval (Continue toggle "Continue the eval of …: n of N cells done", set, answers
+  read-only with **Edit in Set…**, setups, eval id, warnings, home overlap), the agent (model,
+  effort, repeats, read-only sanity cells, "The agent may not run", Open in, Keep the clones),
+  and under them the cells to run, the estimate and the time. **Queue N Cells…** asks "Queue N
+  cells for about $X (range $L–$H)?" ("They run with your Claude Code account (…), go through
+  the sending policy and count toward the monthly limit."); with no estimate it is disabled
+  and **Queue 1 Calibration Cell…** asks "Queue 1 calibration cell?" ("1 paid cell to measure
+  the cost; the eval reuses it."). Error Analysis → Evals → a layer set's page lists the
+  layer's evals (newest first) with the comparison of the chosen one. Snapshot hook:
+  `--section brain --select <layer> --tab evaluate`.
+- CLI: `akit analysis control evaluate LAYER [--model M] [--effort E] [--repeats N]
+  [--no-sanity] [--continue [ID] | --new] [--deny CMD[,CMD…] | --no-deny] [--brain DIR]
+  [--env …] [--keep] [--calibrate] [--yes [--max-cost USD]] [--no-start] [--json]`, exempt
+  from the model-flag refusal. Without `--yes` it prints the plan and the estimate and queues
+  nothing; `--yes` without an estimate is refused; `--calibrate --yes` queues the one
+  calibration cell.
+- Not in this slice: the sheet offers Continue only for the latest eval of the layer and
+  agent; an older one continues with `--continue ID`. The sheet doesn't edit answers (the
+  set's page is the one editor).
 
 Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (see
 [Open questions](#open-questions)); the check needs a transcript of a repository with
@@ -670,7 +768,8 @@ Nothing about modes goes into the brain; on another Mac the link isn't visible.
 - **Brain → layer**: "Evaluate…" (sheet: layer set, model, effort, repeats, environment,
   cost estimate, overlap warning, blocked tasks) and the last verdict as a badge with its
   date, model and brain commit. A layer without a set offers "Create layer set". The badge
-  is read from local storage, never from the brain.
+  is read from local storage, never from the brain. Built in slice 6 (see [Built](#built)),
+  with the calibration cell when no cost is recorded yet and the denied commands.
 - **Error Analysis → Evals**: layer sets next to control tasks; a set's page shows its
   tasks, cells, the comparison table (setups × success and checks) and the verdict lines.
   "Add to layer set…" on tasks, sessions and commits.

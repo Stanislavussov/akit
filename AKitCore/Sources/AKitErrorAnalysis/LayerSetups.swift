@@ -43,6 +43,8 @@ public enum LayerSetups {
         public var values: [String: FieldValue]
         /// Continues an eval: its folder exists, its finished cells are reused.
         public var continuing: Bool
+        /// Shell commands the agent may not run in any cell of the eval (`ControlSetup.denied`).
+        public var denied: [String]
     }
 
     /// Read-only sanity cells: one repeat on the first tasks.
@@ -52,10 +54,14 @@ public enum LayerSetups {
     /// task repository was set up through AKit), which win over the defaults of `layer.yaml`.
     /// `homeSkills`: Claude Code skill names of the home folder and plugins, for the overlap
     /// warning. `continuing`: an eval id; its setups and tasks are reused when the layer still
-    /// renders the same overlays.
+    /// renders the same overlays. `denied`: shell commands no cell may run (both setups and the
+    /// sanity cells); nil takes `ControlSetup.defaultDenied(repo:)`. A continued eval keeps
+    /// its own.
     public static func prepare(layer: String, tasks: [ControlTask], answers: [String: FieldValue], agent: LabAgent, sanity: Bool,
-                               continuing: String? = nil, homeSkills: Set<String>, brain brainRoot: URL, store: ProjectStore,
+                               continuing: String? = nil, denied: [String]? = nil, homeSkills: Set<String>, brain brainRoot: URL, store: ProjectStore,
                                projectsRoot: URL, now: Date = .now, env: HarnessEnvironment) async throws -> Prepared {
+        let explicit = denied.map { $0.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        if let explicit, let problem = ControlSetup.deniedProblem(explicit) { throw Failure(message: problem) }
         guard agent.harness == .claudeCode else {
             throw Failure(message: "Layer evals run Claude Code only for now; pick Claude Code as the agent.")
         }
@@ -134,6 +140,11 @@ public enum LayerSetups {
             guard hashes.layer == layerOverlay.hash, hashes.base == baseOverlay?.hash else {
                 throw Failure(message: "The layer changed since the eval \(manifest.id) (its rendered files differ); start a new eval.")
             }
+            // Explicitly none in AKit's own repository: its agent may build or start AKit.
+            if !ControlSetup.defaultDenied(repo: repo).isEmpty, manifest.setups.first?.denied == [] {
+                warnings.append("The eval \(manifest.id) denies no commands in AKit's own repository: its agent may run make snapshot or "
+                                + "make run against the real ~/.akit. Start a new eval to get the default denied commands.")
+            }
             if let first = manifest.setups.first, first.agent != agent {
                 warnings.append("The eval continues with its own agent: \(first.agent.harness.title) · \(first.agent.model) · \(first.agent.effort).")
             }
@@ -208,15 +219,20 @@ public enum LayerSetups {
         } else {
             let baseline = LayerVariant(layer: layer, role: .requiredOnly, overlayHash: baseOverlay?.hash, evalID: evalID, brainCommit: brainCommit)
             let variant = LayerVariant(layer: layer, role: .layer, overlayHash: layerOverlay.hash, evalID: evalID, brainCommit: brainCommit)
-            setups = [ControlSetup(name: "without \(layer)", agent: agent, layer: baseline),
-                      ControlSetup(name: "layer \(layer)", agent: agent, layer: variant)]
-            sanitySetup = sanity ? ControlSetup(name: "read-only", agent: agent, readOnly: true, layer: baseline) : nil
+            // The same denied commands on every setup, so the comparison stays fair.
+            // Stored even when empty: an explicit "none" is not filled with the default later.
+            let deny = explicit ?? ControlSetup.defaultDenied(repo: repo)
+            setups = [ControlSetup(name: "without \(layer)", agent: agent, layer: baseline, denied: deny),
+                      ControlSetup(name: "layer \(layer)", agent: agent, layer: variant, denied: deny)]
+            sanitySetup = sanity ? ControlSetup(name: "read-only", agent: agent, readOnly: true, layer: baseline, denied: deny) : nil
             sanityTasks = sanity ? Array(runnable.prefix(sanityTaskCount)) : []
         }
         if sanitySetup == nil { sanityTasks = [] }
         return Prepared(evalID: evalID, layer: layer, setups: setups, sanitySetup: sanitySetup, sanityTasks: sanityTasks, overlays: overlays,
                         runnable: runnable, blocked: blocked, notes: notes, ownFiles: ownFiles, overlap: overlap, warnings: warnings + full.warnings,
-                        brainCommit: brainCommit, values: values, continuing: manifest != nil)
+                        brainCommit: brainCommit, values: values, continuing: manifest != nil,
+                        // An older eval's setups name none: its cells get the default when queued.
+                        denied: setups.first?.denied ?? ControlSetup.defaultDenied(repo: repo))
     }
 
     /// `<layer>-<yyyyMMdd-HHmm>-<4 hex>`.

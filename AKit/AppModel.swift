@@ -56,6 +56,15 @@ final class AppModel {
 
     /// A brain skill the Brain screen should select when it appears (set by "Show in Brain").
     var revealBrainSkill: String?
+    /// A layer whose set Error Analysis → Evals should show when it appears (set by Brain's
+    /// "Show in Error Analysis" and "Edit in Set…").
+    var revealLayerSet: String?
+
+    /// Opens Error Analysis → Evals on the layer's set.
+    func showLayerSet(_ layer: String) {
+        revealLayerSet = layer
+        section = .analysis
+    }
 
     /// Opens the Brain screen on this brain skill.
     func showBrainSkill(_ name: String) {

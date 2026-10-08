@@ -85,13 +85,46 @@ public struct ControlSetup: Codable, Sendable, Hashable {
     public var readOnly: Bool
     /// A brain layer instead of a patch (layer evals); at most one of `patch` and `layer`.
     public var layer: LayerVariant?
+    /// Shell commands the agent may not run, by prefix (`make snapshot`): Claude Code gets
+    /// `Bash(make snapshot:*)` in its one `--disallowedTools` flag, next to the push rule
+    /// every run has. A layer eval gives the same list to both setups, so the comparison
+    /// stays fair. nil: the default for the task's repository (`defaultDenied`), filled in
+    /// when the cell is queued; empty: none.
+    public var denied: [String]?
 
-    public init(name: String, agent: LabAgent, patch: ControlPatch? = nil, readOnly: Bool = false, layer: LayerVariant? = nil) {
+    /// Commands an agent must not run in a clone of AKit's own repository: its CLAUDE.md asks
+    /// for `make snapshot` after a UI change, and these build, install or start AKit (or
+    /// Xcode) from the clone, against the real `~/.akit` (an index migration locks out the
+    /// installed app). `open` launches any app, `swift run` the package's `akit` (`swift build`
+    /// and `swift test` stay allowed). Every Makefile target that does so is listed (a test
+    /// reads the Makefile).
+    public static let akitDenied = ["make snapshot", "make run", "make restart", "make install", "make install-cli",
+                                    "make screenshots", "make open", "open", "swift run"]
+
+    /// The denied commands of a cell whose setup names none: `akitDenied` in AKit's own
+    /// repository (it has `AKitCore/Package.swift`), else none.
+    public static func defaultDenied(repo: URL) -> [String] {
+        FileManager.default.fileExists(atPath: repo.appending(path: "AKitCore/Package.swift").path) ? akitDenied : []
+    }
+
+    /// Why a denied command can't be used, or nil: it is a command prefix, not a permission
+    /// rule, so it may not hold `(`, `)` or `*` (nor start with `Bash(`).
+    public static func deniedProblem(_ commands: [String]) -> String? {
+        guard let bad = commands.first(where: { $0.contains("(") || $0.contains(")") || $0.contains("*") }) else { return nil }
+        return "“\(bad)” isn't a command prefix: give the command itself (make snapshot), without Bash(…), parentheses or *."
+    }
+
+    /// Claude Code's `--disallowedTools` values for denied commands.
+    public static func disallowedTools(_ commands: [String]) -> [String] { commands.map { "Bash(\($0):*)" } }
+
+    public init(name: String, agent: LabAgent, patch: ControlPatch? = nil, readOnly: Bool = false, layer: LayerVariant? = nil,
+                denied: [String]? = nil) {
         self.name = name
         self.agent = agent
         self.patch = patch
         self.readOnly = readOnly
         self.layer = layer
+        self.denied = denied
     }
 
     /// "variant · Claude Code · opus · high · + CLAUDE.md"; a layer setup
@@ -107,7 +140,7 @@ public struct ControlSetup: Codable, Sendable, Hashable {
     }
 
     /// Claude Code keeps a replay's tools; Pi's coding tools are named, since a coding agent
-    /// needs them.
+    /// needs them. Denied commands go into the one `--disallowedTools` flag (`AgentRun`).
     var tools: [String] {
         switch agent.harness {
         case .claudeCode: readOnly ? ["--tools", "Read,Grep,Glob"] : []
@@ -280,7 +313,7 @@ public enum ControlCell {
             defer { watchdog.killHelpers() }
             agent = try await watchdog.watching {
                 try await AgentRun.run(prompt: prompt, spec: spec, in: work, runFolder: run.folder, exposeRunFolder: false,
-                                       extra: setup.tools, env: env, out: out)
+                                       extra: setup.tools, denied: ControlSetup.disallowedTools(setup.denied ?? []), env: env, out: out)
             }
         }
         guard !agent.exit.cancelled else { throw CancellationError() }

@@ -9,6 +9,8 @@ import SwiftUI
 struct ControlComparisonView: View {
     @Environment(AppModel.self) private var model
     let tasks: [ControlTask]
+    /// Only the cells of this layer eval (a layer set's page); nil: every cell of the tasks.
+    var eval: String? = nil
     /// What a comparison is computed from: the finished cells of the tasks, and the state of
     /// every cell of the layer evals among them with its result (the verdict waits for all of
     /// an eval's cells), and the send log's change date (the verdict's cost).
@@ -36,7 +38,9 @@ struct ControlComparisonView: View {
 
     var body: some View {
         let ids = Set(tasks.map(\.id))
-        let runs = model.labRuns.filter { $0.spec.kind == .control && $0.spec.controlTask.map(ids.contains) == true }
+        let runs = model.labRuns.filter {
+            $0.spec.kind == .control && $0.spec.controlTask.map(ids.contains) == true && (eval == nil || $0.spec.controlSetup?.layer?.evalID == eval)
+        }
         let open = runs.filter { $0.status == .queued || $0.status == .running }.count
         let cells = ControlComparison.Cell.of(runs)
         let evals = Set(cells.compactMap { $0.setup.layer?.evalID })

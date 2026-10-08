@@ -171,13 +171,27 @@ extension AppModel {
     }
 
     /// Queues control cells (`akit analysis control run`): repeats × tasks × setups.
-    func queueControlRuns(tasks: [ControlTask], setups: [ControlSetup], repeats: Int, environment: LabEnvironment?,
-                          keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
+    /// `toQueue` and `maxCost`: what the user confirmed; refused when more cells would run now, or
+    /// a newer cell recorded a higher cost.
+    func queueControlRuns(tasks: [ControlTask], setups: [ControlSetup], repeats: Int, toQueue: Int, maxCost: Double?,
+                          environment: LabEnvironment?, keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
         let akit = try await analysisAkit()
         try await checkHiddenTests(tasks)
+        // Cells in AKit's own repository get denied commands; an older akit would ignore them.
+        if tasks.contains(where: { !ControlSetup.defaultDenied(repo: $0.mainFolder).isEmpty }),
+           let problem = await labProblem(needing: "denied commands") { throw LabStore.Failure(message: problem) }
         let queued = try await Task.detached {
-            try await ControlRuns.newControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep,
-                                                 akit: akit, env: .current)
+            let counts = ControlRuns.plan(tasks: tasks, setups: setups, repeats: repeats, env: .current)
+            if counts.toQueue > toQueue {
+                throw LabStore.Failure(message: "\(counts.toQueue) cells would run now, not the \(toQueue) you confirmed; check it again.")
+            }
+            let estimate = ControlRuns.estimate(cells: counts.toQueue, agent: setups[0].agent, repo: tasks.first?.mainFolder, env: .current)
+            if let maxCost, let high = estimate.high, high > maxCost {
+                throw LabStore.Failure(message: String(format: "A cell recorded a higher cost since the estimate: its high end is now $%.2f, "
+                                                           + "above the $%.2f you confirmed; check it again.", high, maxCost))
+            }
+            return try await ControlRuns.newControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep,
+                                                        akit: akit, env: .current)
         }.value
         if !queued.runs.isEmpty { try? await startLabQueue() }
         return queued
@@ -203,32 +217,65 @@ extension AppModel {
     /// rendered from the brain with the layer set's answers, checked against each task's base
     /// commit. Writes nothing.
     func prepareLayerEval(layer: String, tasks: [ControlTask], agent: LabAgent, sanity: Bool) async throws -> LayerSetups.Prepared {
-        let brain = brainRoot, projects = projectsRoot, store = projectStore
-        // Claude Code's skills outside any project: a layer skill with one of these names overlaps.
-        let homeSkills = Set(skills.filter { skill in
-            guard skill.visibleTo.contains(.claudeCode) else { return false }
-            if case .project = skill.scope { return false }
-            return true
-        }.map(\.name))
+        let brain = brainRoot, projects = projectsRoot, store = projectStore, homeSkills = claudeHomeSkills
         return try await Task.detached {
             try await LayerSetups.prepare(layer: layer, tasks: tasks, answers: LayerSets.load(layer, env: .current)?.answers ?? [:], agent: agent,
                                           sanity: sanity, homeSkills: homeSkills, brain: brain, store: store, projectsRoot: projects, env: .current)
         }.value
     }
 
-    /// Queues a prepared layer eval: the eval folder first (a cell must find its overlay), then
-    /// the cells, read-only sanity cells after the first repeat.
-    func queueLayerCells(_ prepared: LayerSetups.Prepared, repeats: Int, environment: LabEnvironment?,
-                         keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
-        // An older akit would run the cells without the layer.
-        if let problem = await labProblem(needing: "brain layer") { throw LabStore.Failure(message: problem) }
-        try await checkHiddenTests(prepared.runnable)
+    /// Claude Code's skills outside any project: a layer skill with one of these names overlaps.
+    private var claudeHomeSkills: Set<String> {
+        Set(skills.filter { skill in
+            guard skill.visibleTo.contains(.claudeCode) else { return false }
+            if case .project = skill.scope { return false }
+            return true
+        }.map(\.name))
+    }
+
+    /// An eval of the layer's set (Brain → layer → Evaluate…, `akit analysis control
+    /// evaluate`): rendered, its cells counted and their cost and time estimated. Writes nothing.
+    func planLayerEval(layer: String, agent: LabAgent, repeats: Int, sanity: Bool, continuing: String?,
+                       denied: [String]?) async throws -> LayerEvals.EvalPlan {
+        let brain = brainRoot, projects = projectsRoot, store = projectStore, homeSkills = claudeHomeSkills
+        return try await Task.detached {
+            try await LayerEvals.plan(layer: layer, agent: agent, repeats: repeats, sanity: sanity, continuing: continuing, denied: denied,
+                                      homeSkills: homeSkills, brain: brain, store: store, projectsRoot: projects, env: .current)
+        }.value
+    }
+
+    /// Queues a planned eval, or only its calibration cell: the monthly limit first, then the
+    /// eval folder, then the cells.
+    /// `maxCost`: the high end of the estimate the user confirmed; a higher one refuses.
+    func queueLayerEval(_ plan: LayerEvals.EvalPlan, calibrateOnly: Bool, maxCost: Double?, environment: LabEnvironment?,
+                        keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
+        try await checkLayerAkit(plan.prepared)
         guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
         let queued = try await Task.detached {
-            try LayerEvalStore.create(prepared, repeats: repeats, env: .current)
-            return try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats,
-                                                        sanity: prepared.sanitySetup.map { ($0, prepared.sanityTasks, 1) },
-                                                        environment: environment, keep: keep, akit: akit, env: .current)
+            try await LayerEvals.queue(plan, calibrateOnly: calibrateOnly, maxCost: maxCost, environment: environment, keep: keep, akit: akit, env: .current)
+        }.value
+        if !queued.runs.isEmpty { try? await startLabQueue() }
+        return queued
+    }
+
+    /// An older akit would run layer cells without the layer, or without their denied commands.
+    private func checkLayerAkit(_ prepared: LayerSetups.Prepared) async throws {
+        if let problem = await labProblem(needing: "brain layer") { throw LabStore.Failure(message: problem) }
+        if !prepared.denied.isEmpty, let problem = await labProblem(needing: "denied commands") { throw LabStore.Failure(message: problem) }
+        try await checkHiddenTests(prepared.runnable)
+    }
+
+    /// Queues a prepared layer eval (Run Cells… with a brain layer) as Evaluate… does
+    /// (`LayerEvals.queue`): counted and estimated again under the eval's lock, refused when
+    /// more cells would run than `toQueue` or the high end is above the confirmed `maxCost`, the
+    /// monthly limit, the eval folder, then the cells.
+    func queueLayerCells(_ prepared: LayerSetups.Prepared, repeats: Int, toQueue: Int, maxCost: Double, environment: LabEnvironment?,
+                         keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
+        try await checkLayerAkit(prepared)
+        guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
+        let queued = try await Task.detached {
+            try await LayerEvals.queue(prepared, repeats: repeats, toQueue: toQueue, maxCost: maxCost, environment: environment, keep: keep,
+                                       akit: akit, env: .current)
         }.value
         if !queued.runs.isEmpty { try? await startLabQueue() }
         return queued

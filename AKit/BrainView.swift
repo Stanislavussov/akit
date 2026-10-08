@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
 import AKitProjectSetup
@@ -27,6 +28,15 @@ struct BrainView: View {
     /// Forget Project… asked; waits for confirmation.
     @State private var forgetting: ForgetRequest?
     @State private var isForgetting = false
+    /// Evaluate… is open for this layer.
+    @State private var evaluating: EvaluateRequest?
+    /// Each layer's stored eval verdicts, newest first (`~/.akit/lab/evals/verdicts`, local only).
+    @State private var verdicts: [String: [LayerVerdict]] = [:]
+
+    struct EvaluateRequest: Identifiable {
+        let layer: String
+        var id: String { layer }
+    }
 
     /// Something the user asked to remove, waiting for confirmation.
     enum Removal: Identifiable {
@@ -108,6 +118,20 @@ struct BrainView: View {
         .sheet(isPresented: $importing) { BrainImportSheet() }
         .sheet(item: $setup) { ProjectSetupSheet(initialProject: $0.project, initialLayers: $0.layers, forHome: $0.home) }
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
+        .sheet(item: $evaluating) { request in
+            EvaluateLayerSheet(layer: request.layer) { text in message = ("Evaluate \(request.layer)", text) }
+        }
+        .task(id: "\(model.brain?.layers.map(\.name) ?? []) \(model.labRuns.filter { $0.spec.kind == .control && $0.status == .finished }.count)") {
+            // The badges: verdicts are saved when an eval's comparison is shown or compared.
+            let layers = (model.brain?.layers.map(\.name) ?? []).filter { $0 != "core" }
+            let read = await Task.detached {
+                Dictionary(uniqueKeysWithValues: layers.map { layer in
+                    (layer, (LayerVerdicts.load(layer: layer, env: .current)?.verdicts ?? []).sorted { $0.decidedAt > $1.decidedAt })
+                })
+            }.value
+            guard !Task.isCancelled else { return }
+            verdicts = read
+        }
         .sheet(item: $editing) { edit in
             switch edit {
             case .details(let layer): EditLayerSheet(layer: layer)
@@ -118,9 +142,10 @@ struct BrainView: View {
         .onChange(of: model.brain?.root) {
             guard model.brain != nil, let options = DebugSnapshot.options else { return }
             if options.tab == "setup" { setup = SetupRequest() } else if options.tab == "home" { setup = SetupRequest(home: true) } else if options.tab == "layer" { creatingLayer = true } else if options.add { importing = true }
-            // `--select <layer> --tab edit|add-skills` opens that layer's sheet.
+            // `--select <layer> --tab edit|add-skills|evaluate` opens that layer's sheet.
             if let name = options.select, let layer = model.brain?.layers.first(where: { $0.name == name }) {
                 if options.tab == "edit" { editing = .details(layer) } else if options.tab == "add-skills" { editing = .skills(layer) }
+                if options.tab == "evaluate", layer.name != "core" { evaluating = EvaluateRequest(layer: layer.name) }
             }
         }
         .confirmationDialog(removalTitle, isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
@@ -403,7 +428,9 @@ struct BrainView: View {
                                         onSetMode: { skill, mode in change { try await model.setMode(mode, ofSkill: skill, inLayer: layer.name) } },
                                         onAddSkills: { editing = .skills(layer) },
                                         onEdit: { editing = .details(layer) },
-                                        onRemove: layer.name == "core" ? nil : { pendingRemoval = .layer(layer.name) })
+                                        onRemove: layer.name == "core" ? nil : { pendingRemoval = .layer(layer.name) },
+                                        verdicts: verdicts[layer.name] ?? [],
+                                        onEvaluate: layer.name == "core" ? nil : { evaluating = EvaluateRequest(layer: layer.name) })
                     }
                 case .project(let id):
                     if let project = brain.projects.first(where: { $0.id == id }) {
@@ -461,7 +488,7 @@ struct BrainView: View {
             }
             if !layers(brain).isEmpty { Section {
                 ForEach(layers(brain)) { layer in
-                    LayerRow(layer: layer, problemCount: brain.problems(of: layer.name).count)
+                    LayerRow(layer: layer, problemCount: brain.problems(of: layer.name).count, verdict: verdicts[layer.name]?.first)
                         .tag(Item.layer(layer.name))
                         .contextMenu {
                             Button("Edit…") { editing = .details(layer) }
@@ -585,6 +612,8 @@ struct BrainView: View {
 private struct LayerRow: View {
     let layer: Layer
     let problemCount: Int
+    /// The layer's newest eval verdict, for the badge.
+    var verdict: LayerVerdict?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -596,6 +625,7 @@ private struct LayerRow: View {
                         .font(.caption)
                         .help("\(problemCount) problem\(problemCount == 1 ? "" : "s")")
                 }
+                if let verdict { LayerVerdictBadge(verdict: verdict) }
                 Spacer()
                 Text("\(count(layer.skills.count, "skill")) · \(count(layer.fields.count, "field"))")
                     .font(.caption)
@@ -923,6 +953,10 @@ private struct LayerDetailView: View {
     let onEdit: () -> Void
     /// nil for the core layer, which can't be removed.
     let onRemove: (() -> Void)?
+    /// The layer's stored eval verdicts, newest first.
+    let verdicts: [LayerVerdict]
+    /// Opens Evaluate…; nil for the core layer (the home folder's: every cell has it).
+    let onEvaluate: (() -> Void)?
     @State private var manifest: String?
 
     var body: some View {
@@ -933,6 +967,7 @@ private struct LayerDetailView: View {
                 if !problems.isEmpty { ProblemList(problems: problems) }
                 info
                 usedBy
+                if let onEvaluate { LayerEvalsBox(layer: layer.name, verdicts: verdicts, onEvaluate: onEvaluate) }
                 if !layer.fields.isEmpty { fields }
                 skills
                 if !layer.files.isEmpty { files }

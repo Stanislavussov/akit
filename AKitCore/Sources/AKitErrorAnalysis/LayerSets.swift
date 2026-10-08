@@ -76,6 +76,13 @@ public enum LayerSets {
         }
     }
 
+    /// An empty set for the layer (Brain → layer → Create Layer Set…); a set it has stays as it is.
+    @discardableResult
+    public static func create(_ layer: String, now: Date = .now, env: HarnessEnvironment) throws -> LayerSet {
+        if let set = load(layer, env: env) { return set }
+        return try update(layer, now: now, env: env) { _ in }
+    }
+
     /// Takes task ids out of the set; the tasks themselves stay.
     @discardableResult
     public static func remove(_ ids: [String], from layer: String, now: Date = .now, env: HarnessEnvironment) throws -> LayerSet {

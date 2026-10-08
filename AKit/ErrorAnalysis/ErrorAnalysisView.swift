@@ -72,6 +72,13 @@ struct ErrorAnalysisView: View {
             tab = .reports
             model.revealBatch = nil
         }
+        .task(id: model.revealLayerSet) {
+            // Brain → Show in Error Analysis: the layer's set on the Evals tab.
+            guard let layer = model.revealLayerSet else { return }
+            analysis.evalsFocus = layer
+            tab = .evals
+            model.revealLayerSet = nil
+        }
         .task {
             await analysis.reload()
             // Snapshots: `--tab review --add` opens the clustering confirmation.

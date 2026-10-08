@@ -129,6 +129,8 @@ final class AnalysisModel {
     /// Reports: the batch shown and the one compared with it.
     var reportBatch: String? = DebugSnapshot.options?.tab == "reports" ? DebugSnapshot.options?.select : nil
     var compareBatch: String? = DebugSnapshot.options?.tab == "reports" ? DebugSnapshot.options?.query : nil
+    /// Evals: the layer whose set the tab should select when it appears (Brain → Show in Error Analysis).
+    var evalsFocus: String?
     /// The last rebuild: all notes clustered from scratch, shown and never saved.
     var rebuild: [Clustering.Candidate]?
     /// The last pool judge run per mode: sessions where the judge found the mode and no note did.
