@@ -418,10 +418,10 @@ struct RunCellsSheet: View {
     }
 
     private func queue() {
+        guard let plan = currentPlan else { return }
         busy = true
         error = nil
         let tasks = chosenTasks, setups = setups, repeats = repeats, environment = environment, keep = keep
-        guard let plan = currentPlan else { return }
         let estimate = plan.estimate.total, maxCost = plan.estimate.high, confirmed = plan.toQueue
         let env = analysis.env
         let layerEval = isLayer ? layerEval : nil
