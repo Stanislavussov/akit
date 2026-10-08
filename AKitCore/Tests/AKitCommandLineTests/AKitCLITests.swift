@@ -68,6 +68,21 @@ struct AKitCLITests {
         try fm.createDirectory(at: project, withIntermediateDirectories: true)
     }
 
+    @Test func planNeverPrintsSecretsOfAJSONFileAnOlderAKitWroteWhole() async throws {
+        try await setUp()
+        // An older AKit wrote .mcp.json whole from a layer that is gone now.
+        let whole = #"{"mcpServers": {"api": {"command": "api", "env": {"API_KEY": "sk-live-123"}}}}"#
+        try write("Projects/task/.mcp.json", whole)
+        try ProjectRecords.save(ProjectRecords.Lock(brainCommit: nil, brainDirty: false,
+                                                    files: [".mcp.json": .init(sha256: Checksum.sha256(Data(whole.utf8)), link: nil, layers: ["old"])]),
+                                answers: nil, id: "local/task", in: .brain(Brain.defaultRoot(home: home)))
+        let plan = await akit("plan", "--layers", "task", "--set", "company=Acme")
+        #expect(plan.code == 0, "\(plan.err)")
+        #expect(plan.out.contains("REMOVE (to the Trash) .mcp.json"), "\(plan.out)")
+        #expect(!plan.out.contains("sk-live-123"))
+        #expect(plan.out.contains("\"API_KEY\": \"••••\""))
+    }
+
     @Test func checkAndLayers() async throws {
         try await setUp()
         let ok = await akit("check")

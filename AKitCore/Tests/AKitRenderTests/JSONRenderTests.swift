@@ -124,9 +124,33 @@ struct JSONRenderTests {
         try layer("local", to: ".claude/settings.local.json", #"{"a": 1}"#)
         try layer("auth", to: ".pi/agent/auth.json", #"{"a": 1}"#)
         let result = try render(["local", "auth"])
-        #expect(result.errors == ["local/t.json targets .claude/settings.local.json, the project's private settings; layers can't write it.",
-                                  "auth/t.json targets .pi/agent/auth.json, a file that holds credentials; layers can't write it."])
+        #expect(result.errors == [
+            "local/t.json targets .claude/settings.local.json, a file that holds secrets (private settings or credentials); layers can't write it.",
+            "auth/t.json targets .pi/agent/auth.json, a file that holds secrets (private settings or credentials); layers can't write it."])
         #expect(result.outputs.isEmpty)
+    }
+
+    @Test func onlyClaudeCodesFilesAreMergedOtherJSONIsAWholeFile() throws {
+        // tsconfig.json with comments: a whole file, filled as text like any template.
+        try layer("ts", to: "tsconfig.json", "// {{project_name}}\n{\"a\": 1,}\n")
+        try layer("ts2", to: "./tsconfig.json", "{}", override: true)
+        try layer("mcp", to: "./.MCP.json", #"{"mcpServers": {}}"#)
+        let whole = try render(["ts"])
+        #expect(whole.errors.isEmpty, "\(whole.errors)")
+        #expect(output(whole, "tsconfig.json")?.text == "// p\n{\"a\": 1,}\n")
+        #expect(output(whole, "tsconfig.json")?.mergesJSON == false)
+        // `./` is dropped, so both layers name one file; the overriding one wins.
+        #expect(output(try render(["ts", "ts2"]), "tsconfig.json")?.text == "{}")
+        // .MCP.json is .mcp.json on macOS: merged.
+        #expect(output(try render(["mcp"]), ".MCP.json")?.mergesJSON == true)
+    }
+
+    @Test func oneFileSpelledTwoWaysIsAnError() throws {
+        try layer("a", #"{"x": 1}"#)
+        try layer("b", to: ".MCP.json", #"{"y": 1}"#)
+        let result = try render(["a", "b"])
+        #expect(result.errors == [".mcp.json and .MCP.json (b) are the same file on macOS. Spell it one way in every layer."])
+        #expect(result.outputs.map(\.path) == [".mcp.json"])
     }
 
     @Test func theHomeFolderGetsNoJSONYet() throws {

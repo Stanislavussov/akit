@@ -1082,6 +1082,9 @@ public enum AKitCLI {
                     if !preview.keysTakenOut.isEmpty {
                         lines.append("The keys AKit added come out of: \(preview.keysTakenOut.joined(separator: ", ")) (the project's own keys stay).")
                     }
+                    if !preview.keysLeft.isEmpty {
+                        lines.append("AKit's keys stay in \(preview.keysLeft.joined(separator: ", ")): AKit can't read it as JSON, so take them out by hand.")
+                    }
                     if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
                 }
                 guard options.yes else { out((lines + [confirm]).joined(separator: "\n")); return 0 }
@@ -1186,7 +1189,7 @@ public enum AKitCLI {
             var note = ""
             if change.kind == .update && change.replacesUnmanaged { note = "  (AKit didn't write it: skipped unless --include)" }
             if change.kind == .update && change.editedSinceRender { note = "  (edited by hand since the last render: skipped unless --include)" }
-            if change.mergesJSON && change.kind != .remove { note = "  (keys merged; the project's own keys stay; env and headers values masked)" }
+            if change.mergesJSON && [.create, .update].contains(change.kind) { note = "  (keys merged; the project's own keys stay; env and headers values masked)" }
             lines.append("")
             lines.append("\(label(change.kind)) \(change.path)\(note)")
             let new = change.kind == .remove || change.kind == .keepEdited ? "" : change.newText ?? ""

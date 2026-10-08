@@ -33,7 +33,7 @@ struct JSONValueTests {
         #expect(try parse(tree.pretty) == tree)
         #expect(tree.compact == #"{"a":{},"b":[1,2.5,1.0,true,null,"a\"\n/éé😀/"],"c":{"x":false},"f":-3.14159265358979323846e-2,"n":18446744073709551616}"#)
         #expect(try parse("\u{FEFF} [\"x\"] ") == .array([.string("x")]))
-        let bad = ["{ nope", #"{"a": 1,}"#, "[01]", #"{"a": 1} x"#, #""\ud800""#, #"{"dup": 1, "dup": 2}"#, "// c\n{}",
+        let bad = ["{ nope", #"{"a": 1,}"#, #""\u+041""#, #""\u-041""#, #""\u 041""#, "[01]", #"{"a": 1} x"#, #""\ud800""#, #"{"dup": 1, "dup": 2}"#, "// c\n{}",
                    String(repeating: "[", count: 150)]
         for text in bad {
             #expect(throws: JSONValue.ParseError.self, "\(text.prefix(20))") { try parse(text) }
@@ -43,9 +43,11 @@ struct JSONValueTests {
     @Test func keyPathsSetRemoveAndPointers() throws {
         var tree = try parse(#"{"a": {"b": {"c": 1}, "d": 2}, "e": {}}"#)
         #expect(tree.leaves.map(\.path) == [["a", "b", "c"], ["a", "d"]])
+        #expect(tree.objectPaths == [["a"], ["a", "b"], ["e"]])
+        // Objects on the way stay: only the merge knows which ones it created.
         tree.remove(at: ["a", "b", "c"])
-        #expect(tree == .object(["a": .object(["d": .number("2")]), "e": .object([:])]))
-        tree.remove(at: ["a", "d"])
+        #expect(tree == .object(["a": .object(["b": .object([:]), "d": .number("2")]), "e": .object([:])]))
+        tree.remove(at: ["a"])
         #expect(tree == .object(["e": .object([:])]))
         tree.set(.string("x"), at: ["e", "f", "g"])
         #expect(tree.value(at: ["e", "f", "g"]) == .string("x"))
@@ -68,6 +70,8 @@ struct JSONValueTests {
         #expect(masked.value(at: ["s", "env", "B"]) == .string("••••"))
         #expect(masked.value(at: ["s", "env", "C"]) == .string("••••"))
         #expect(masked.value(at: ["s", "args"]) == .array([.string("secret")]))
+        // Key names in any letter case.
+        #expect(try parse(#"{"Env": {"A": "x"}, "HEADERS": {"B": "y"}}"#).secretLeaves == [["Env", "A"], ["HEADERS", "B"]])
         // Inside a list of objects too.
         let listed = try parse(#"{"servers": [{"env": {"T": "tok"}, "headers": {"R": "${R}"}, "name": "a"}]}"#).masked
         #expect(listed.value(at: ["servers"]) == .array([.object([

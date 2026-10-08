@@ -20,6 +20,9 @@ public enum ProjectForget {
         public var removals: [String] { plan?.changes.filter { $0.kind == .remove }.map(\.path) ?? [] }
         /// JSON files the project keeps, with the keys AKit merged into them taken out.
         public var keysTakenOut: [String] { plan?.changes.filter { $0.mergesJSON && $0.kind == .update }.map(\.path) ?? [] }
+        /// JSON files where AKit's keys stay although the record goes: AKit can't read the file
+        /// as JSON (or it is a link or a folder), so it can't take them out.
+        public var keysLeft: [String] { plan?.jsonRecords.keys.sorted() ?? [] }
         /// Files AKit wrote and the user edited since: kept.
         public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited }.map(\.path) ?? [] }
     }

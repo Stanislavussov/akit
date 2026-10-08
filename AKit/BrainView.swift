@@ -176,15 +176,19 @@ struct BrainView: View {
                 // The first button is the one Return picks: never the one that trashes files.
                 let preview = request.preview
                 let touchesFiles = !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty
+                // Keys come out of JSON files the project keeps: "Trash Files" would say too little.
+                let withKeys = !preview.keysTakenOut.isEmpty
                 if !preview.ownRecord {
                     if touchesFiles {
-                        Button("Trash Files", role: .destructive) { forget(request, keepFiles: false) }
+                        Button(withKeys ? "Remove AKit's Files and Keys" : "Trash Files", role: .destructive) { forget(request, keepFiles: false) }
                     }
                 } else if !touchesFiles {
                     Button("Forget", role: .destructive) { forget(request, keepFiles: true) }
                 } else {
                     Button("Forget, Keep Files") { forget(request, keepFiles: true) }
-                    Button("Forget and Trash Files", role: .destructive) { forget(request, keepFiles: false) }
+                    Button(withKeys ? "Forget and Remove AKit's Files and Keys" : "Forget and Trash Files", role: .destructive) {
+                        forget(request, keepFiles: false)
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { request in
@@ -335,6 +339,9 @@ struct BrainView: View {
         }
         if !preview.keysTakenOut.isEmpty {
             lines.append("The keys AKit added to \(preview.keysTakenOut.joined(separator: ", "))\(place) can come out; the project's own keys stay.")
+        }
+        if !preview.keysLeft.isEmpty {
+            lines.append("AKit's keys stay in \(preview.keysLeft.joined(separator: ", ")): AKit can't read it as JSON, so take them out by hand.")
         }
         if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
         return lines.joined(separator: "\n\n")

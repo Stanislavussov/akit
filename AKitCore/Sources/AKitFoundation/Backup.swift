@@ -2,7 +2,8 @@ import Foundation
 
 /// Copies of files AKit is about to change, in `~/.akit/backups/<time>/<path under home>`.
 public enum Backup {
-    /// A new, empty backup folder; never an older one.
+    /// A new, empty backup folder; never an older one. Readable only by the user (0700, the
+    /// backups folder too): backups of MCP and settings files can hold secrets.
     public static func newFolder(home: URL) throws -> URL {
         let fm = FileManager.default
         let formatter = DateFormatter()
@@ -13,7 +14,11 @@ public enum Backup {
             folder = home.appending(path: ".akit/backups/\(formatter.string(from: .now))-\(counter)")
             counter += 1
         }
-        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let privateOnly: [FileAttributeKey: Any] = [.posixPermissions: 0o700]
+        let backups = folder.deletingLastPathComponent()
+        try fm.createDirectory(at: backups, withIntermediateDirectories: true, attributes: privateOnly)
+        try fm.setAttributes(privateOnly, ofItemAtPath: backups.path)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: false, attributes: privateOnly)
         return folder
     }
 

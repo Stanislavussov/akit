@@ -105,7 +105,7 @@ public enum LayerManifest {
                 return nil
             }
         }
-        return LayerFile(template: template, to: to, when: conditions(map["when"], "file “\(template)”", &problems),
+        return LayerFile(template: template, to: ProjectBundle.normalizedPath(to), when: conditions(map["when"], "file “\(template)”", &problems),
                          override: flag(map["override"], "File “\(template)”: override", &problems))
     }
 

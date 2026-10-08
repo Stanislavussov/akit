@@ -58,6 +58,9 @@ public enum JSONValue: Hashable, Sendable {
                     skipSpace()
                     guard index < bytes.count, bytes[index] == UInt8(ascii: "\"") else { throw error("expected a key") }
                     let key = try string()
+                    // Swift compares strings by canonical equivalence, so "é" written precomposed
+                    // (NFC) and decomposed (NFD) is one key here: such a file reads as having a key
+                    // twice and is refused. Harnesses would see two keys; AKit never merges into it.
                     guard members[key] == nil else { throw error("the key \"\(key)\" appears twice") }
                     skipSpace()
                     try expect(":")
@@ -163,7 +166,9 @@ public enum JSONValue: Hashable, Sendable {
         }
 
         mutating func hex4() throws(ParseError) -> UInt32 {
-            guard index + 4 <= bytes.count, let code = UInt32(String(decoding: bytes[index..<index + 4], as: UTF8.self), radix: 16)
+            // Exactly four hex digits: UInt32(_:radix:) alone would also take a sign.
+            guard index + 4 <= bytes.count, bytes[index..<index + 4].allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 | 0x20 >= 0x61 && $0 | 0x20 <= 0x66) }),
+                  let code = UInt32(String(decoding: bytes[index..<index + 4], as: UTF8.self), radix: 16)
             else { throw error("expected 4 hex digits") }
             index += 4
             return code
@@ -272,17 +277,25 @@ public enum JSONValue: Hashable, Sendable {
         return false
     }
 
-    /// Removes the value at a key path; objects on the way that become empty go too (never
-    /// the top level).
+    /// Removes the value at a key path. Objects on the way stay, even when they become empty.
     public mutating func remove(at path: [String]) {
         guard let first = path.first, case .object(var members) = self, var child = members[first] else { return }
         if path.count == 1 {
             members[first] = nil
         } else {
             child.remove(at: Array(path.dropFirst()))
-            members[first] = child == .object([:]) ? nil : child
+            members[first] = child
         }
         self = .object(members)
+    }
+
+    /// Key paths of every object inside this one (not the top level), outermost first.
+    public var objectPaths: [[String]] {
+        guard case .object(let members) = self else { return [] }
+        return members.keys.sorted().flatMap { key -> [[String]] in
+            guard case .object = members[key]! else { return [] }
+            return [[key]] + members[key]!.objectPaths.map { [key] + $0 }
+        }
     }
 
     /// The same document with `transform` applied to every string value (never to keys).
@@ -312,8 +325,11 @@ public enum JSONValue: Hashable, Sendable {
 
     // MARK: - Secrets
 
-    /// Keys whose values may be secrets (MCP server `env` and `headers`, settings `env`).
+    /// Keys whose values may be secrets (MCP server `env` and `headers`, settings `env`),
+    /// in any letter case.
     public static let secretKeys: Set<String> = ["env", "headers"]
+
+    static func isSecretKey(_ key: String) -> Bool { secretKeys.contains(key.lowercased()) }
     public static let mask = "••••"
 
     /// A whole-string `${NAME}` reference: the harness fills it from the environment.
@@ -328,7 +344,7 @@ public enum JSONValue: Hashable, Sendable {
     /// references (an empty list holds nothing).
     public var secretLeaves: [[String]] {
         leaves.filter { leaf in
-            guard leaf.path.contains(where: { Self.secretKeys.contains($0) }) else { return false }
+            guard leaf.path.contains(where: Self.isSecretKey) else { return false }
             switch leaf.value {
             case .string(let text): return !Self.isVariableReference(text)
             case .array(let items): return !items.isEmpty
@@ -345,7 +361,7 @@ public enum JSONValue: Hashable, Sendable {
         switch self {
         case .object(let members):
             return .object(Dictionary(uniqueKeysWithValues: members.map { key, value in
-                (key, value.masked(secret: secret || Self.secretKeys.contains(key)))
+                (key, value.masked(secret: secret || Self.isSecretKey(key)))
             }))
         case .array(let items):
             // A list right under env or headers is a value (args, tokens); deeper lists may hold objects.

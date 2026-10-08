@@ -159,10 +159,14 @@ public enum ProjectSetup {
                 cannotMerge("\(path) is a folder in the project; AKit wants to merge keys into a file there.")
                 continue
             }
-            let layersTree = output.flatMap { output -> JSONValue? in
-                guard case .data(let data) = output.content else { return nil }
-                return try? JSONValue.parse(data)
-            } ?? .object([:])
+            var layersTree = JSONValue.object([:])
+            if let output {
+                guard case .data(let data) = output.content, let tree = try? JSONValue.parse(data) else {
+                    blockers.append("The layers' keys for \(path) can't be read as JSON; nothing is merged.")
+                    continue
+                }
+                layersTree = tree
+            }
             let merge = JSONMerge.plan(path: path, url: url, layers: layersTree, layerNames: output?.layers ?? previous?.json?[path]?.layers ?? [],
                                        previous: previous?.json?[path], legacy: output == nil ? nil : previous?.files[path])
             warnings += merge.warnings
@@ -230,18 +234,18 @@ public enum ProjectSetup {
                         layersChanged ? .suggest : .own
                     }
                     changes.append(Change(path: output.path, kind: kind,
-                                          oldText: destination.map { "→ \($0) (a link)" } ?? current.flatMap { String(data: $0, encoding: .utf8) },
-                                          newText: output.text, replacesUnmanaged: (destination != nil || current != nil) && !managed,
+                                          oldText: destination.map { "→ \($0) (a link)" } ?? shown(output.path, current),
+                                          newText: shown(output.path, data), replacesUnmanaged: (destination != nil || current != nil) && !managed,
                                           layers: output.layers))
                 } else if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) {
                     // A link (e.g. CLAUDE.md -> AGENTS.md) is replaced by a file; say so.
-                    changes.append(Change(path: output.path, kind: .update, oldText: "→ \(destination) (a link)", newText: output.text,
+                    changes.append(Change(path: output.path, kind: .update, oldText: "→ \(destination) (a link)", newText: shown(output.path, data),
                                           replacesUnmanaged: true, layers: output.layers))
                 } else {
                     let current = try? Data(contentsOf: url)
                     let kind: Change.Kind = current == nil ? .create : current == data ? .same : .update
-                    var change = Change(path: output.path, kind: kind, oldText: current.flatMap { String(data: $0, encoding: .utf8) },
-                                        newText: output.text, replacesUnmanaged: current != nil && !managed, layers: output.layers)
+                    var change = Change(path: output.path, kind: kind, oldText: shown(output.path, current),
+                                        newText: shown(output.path, data), replacesUnmanaged: current != nil && !managed, layers: output.layers)
                     if kind == .update, let current, let entry = previous?.files[output.path], entry.sha256 != Checksum.sha256(current) {
                         change.editedSinceRender = true
                     }
@@ -257,8 +261,14 @@ public enum ProjectSetup {
             guard escapes(path, project: project) == nil else { continue }
             // JSON files are skipped in the home folder, not dropped: an older AKit may have
             // written ~/.claude/settings.json, and it must never go to the Trash for that.
-            if forHome, ProjectBundle.isJSON(path), !path.hasPrefix(ProjectBundle.skillsFolder + "/") {
+            if forHome, ProjectBundle.mergesJSON(path) {
                 carried.insert(path)
+                continue
+            }
+            // Never read: an older AKit may have written it, but it holds secrets now. Left alone.
+            if ProjectBundle.isSecretFile(path) {
+                carried.insert(path)
+                warnings.append("\(path) was written by an earlier render; AKit doesn't read files that hold secrets, so it stays. Remove it by hand if it is no longer needed.")
                 continue
             }
             if let link = entry.link {
@@ -267,12 +277,13 @@ public enum ProjectSetup {
                 snapshot[path] = state(url)
             } else if !isLink(url), let data = try? Data(contentsOf: url) {
                 let edited = entry.sha256 != Checksum.sha256(data)
-                changes.append(Change(path: path, kind: edited ? .keepEdited : .remove, oldText: String(data: data, encoding: .utf8),
+                changes.append(Change(path: path, kind: edited ? .keepEdited : .remove, oldText: shown(path, data),
                                       newText: nil, replacesUnmanaged: false, layers: entry.layers))
                 snapshot[path] = state(url)
             }
         }
 
+        render = RenderResult(layers: render.layers, outputs: render.outputs, errors: render.errors, warnings: warnings, skills: render.skills)
         return Plan(project: project, id: id, answers: answers, render: render,
                     changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
                     forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried)
@@ -363,6 +374,7 @@ public enum ProjectSetup {
                     var json = partial.json ?? [:]
                     json[path] = plan.jsonRecords[path]
                     partial.json = json
+                    partial.files[path] = nil  // an older AKit's whole-file entry, now merged
                 } else if let output = outputs[path] {
                     partial.files[path] = entry(for: output)
                 }
@@ -397,7 +409,8 @@ public enum ProjectSetup {
         }
         // Merged JSON files: the keys AKit now owns; a change left out keeps the old record.
         var json: [String: ProjectRecords.Lock.MergedJSON] = plan.jsonRecords
-        for change in plan.changes where change.mergesJSON && excluded.contains(change.path) {
+        for change in plan.changes where change.mergesJSON
+            && (excluded.contains(change.path) || (change.kind == .own && !accepting.contains(change.path))) {
             json[change.path] = plan.previous?.json?[change.path]
             // Not migrated yet from an older AKit's whole-file entry: keep that entry.
             if json[change.path] == nil, let old = plan.previous?.files[change.path] { lock.files[change.path] = old }
@@ -443,6 +456,19 @@ public enum ProjectSetup {
     }
 
     // MARK: - Helpers
+
+    /// A file's text for the preview. JSON is shown re-printed with `env` and `headers` values
+    /// masked (JSONC too, read without its comments); files that hold secrets never.
+    static func shown(_ path: String, _ data: Data?) -> String? {
+        guard let data else { return nil }
+        if ProjectBundle.isSecretFile(path) { return "(not shown: this file holds secrets)" }
+        guard path.lowercased().hasSuffix(".json") else { return String(data: data, encoding: .utf8) }
+        if let tree = try? JSONValue.parse(data) { return tree.masked.pretty }
+        if let text = String(data: data, encoding: .utf8), let tree = try? JSONValue.parse(Data(ConfigText.stripJSONC(text).utf8)) {
+            return tree.masked.pretty
+        }
+        return "(JSON file; contents not shown)"
+    }
 
     private static func entry(for output: RenderedFile) -> ProjectRecords.Lock.Entry {
         switch output.content {

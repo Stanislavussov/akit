@@ -219,20 +219,15 @@ public struct ProjectBundle: Sendable {
                     continue
                 }
                 var rendered = data
-                if isJSON(file.to) {
+                let name = "\(layer.name)/\(file.template)"
+                // Files that hold secrets are never read or shown, so layers never write them.
+                if isSecretFile(file.to) {
+                    errors.append("\(name) targets \(file.to), a file that holds secrets (private settings or credentials); layers can't write it.")
+                    continue
+                }
+                if mergesJSON(file.to) {
                     // Merged key by key into the project's file: parsed first, fields filled only
                     // inside string values, so a value can't break the JSON.
-                    let name = "\(layer.name)/\(file.template)"
-                    // Files that hold secrets are never read or shown, so never merged into.
-                    switch (file.to as NSString).lastPathComponent.lowercased() {
-                    case "settings.local.json":
-                        errors.append("\(name) targets \(file.to), the project's private settings; layers can't write it.")
-                        continue
-                    case "auth.json":
-                        errors.append("\(name) targets \(file.to), a file that holds credentials; layers can't write it.")
-                        continue
-                    default: break
-                    }
                     let tree: JSONValue
                     do {
                         tree = try JSONValue.parse(data)
@@ -291,8 +286,22 @@ public struct ProjectBundle: Sendable {
 
     // MARK: - Pieces
 
-    /// A template target merged key by key into the project's file instead of written whole.
-    public static func isJSON(_ path: String) -> Bool { path.lowercased().hasSuffix(".json") }
+    /// The JSON files merged key by key into the project's file instead of written whole:
+    /// Claude Code's project MCP servers and settings (any letter case). Other `.json` targets
+    /// (tsconfig.json, opencode.json, …) are whole files like any template.
+    public static let mergedJSONFiles: Set<String> = [".mcp.json", ".claude/settings.json"]
+
+    public static func mergesJSON(_ path: String) -> Bool { mergedJSONFiles.contains(normalizedPath(path).lowercased()) }
+
+    /// Files AKit never reads, shows or writes, because they hold secrets.
+    public static func isSecretFile(_ path: String) -> Bool {
+        ["settings.local.json", "auth.json"].contains((path as NSString).lastPathComponent.lowercased())
+    }
+
+    /// `./a//b` → `a/b`: one spelling per file, for grouping layers' targets.
+    public static func normalizedPath(_ path: String) -> String {
+        path.split(separator: "/").filter { $0 != "." }.joined(separator: "/")
+    }
 
     /// `when` entries all hold. A list value (multi field, `target`) matches when it contains the value.
     static func matches(_ conditions: [Condition], _ values: [String: FieldValue]) -> Bool {

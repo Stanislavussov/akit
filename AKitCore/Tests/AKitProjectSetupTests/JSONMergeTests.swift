@@ -295,6 +295,139 @@ struct JSONMergeTests {
         }
     }
 
+    @Test func aDroppedWholeFileOfAnOlderAKitIsShownMaskedAndSecretFilesAreNeverRead() async throws {
+        let brain = try await setUpBrain()
+        let whole = #"{"mcpServers": {"api": {"env": {"API_KEY": "sk-live-123"}}}}"#
+        try write("Projects/task/.mcp.json", whole)
+        try write("Projects/task/.claude/settings.local.json", #"{"env": {"TOKEN": "tok-456"}}"#)
+        try write("Projects/task/tsconfig.json", "// comment\n{\"compilerOptions\": {\"strict\": true},}\n")
+        let hash = { (path: String) in Checksum.sha256(try Data(contentsOf: project.appending(path: path))) }
+        try ProjectRecords.save(ProjectRecords.Lock(brainCommit: nil, brainDirty: false, files: [
+            ".mcp.json": .init(sha256: try hash(".mcp.json"), link: nil, layers: ["old"]),
+            ".claude/settings.local.json": .init(sha256: try hash(".claude/settings.local.json"), link: nil, layers: ["old"]),
+            "tsconfig.json": .init(sha256: try hash("tsconfig.json"), link: nil, layers: ["old"]),
+        ]), answers: nil, id: id, in: store)
+
+        let plan = plan([], brain: brain)
+        let removed = try #require(change(plan))
+        #expect(removed.kind == .remove)
+        #expect(removed.oldText?.contains("sk-live-123") == false)
+        #expect(removed.oldText?.contains("\"API_KEY\": \"••••\"") == true)
+        // JSONC is read without its comments, for showing only.
+        #expect(change(plan, "tsconfig.json")?.oldText?.contains("\"strict\": true") == true)
+        // settings.local.json: no change, no text, a warning, and its entry stays.
+        #expect(change(plan, ".claude/settings.local.json") == nil)
+        #expect(plan.render.warnings.contains { $0.hasPrefix(".claude/settings.local.json was written by an earlier render") })
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        #expect(fm.fileExists(atPath: project.appending(path: ".claude/settings.local.json").path))
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.files[".claude/settings.local.json"] != nil)
+    }
+
+    @Test func anInterruptedApplyNeverLeavesAFileBothWholeAndMerged() async throws {
+        let brain = try await setUpBrain()
+        let whole = #"{"mcpServers": {"one": {"command": "one-server"}}}"#
+        try write("Projects/task/.mcp.json", whole)
+        try write("Projects/task/old.md", "old")
+        try ProjectRecords.save(ProjectRecords.Lock(brainCommit: nil, brainDirty: false, files: [
+            ".mcp.json": .init(sha256: Checksum.sha256(Data(whole.utf8)), link: nil, layers: ["mcp"]),
+            "old.md": .init(sha256: Checksum.sha256(Data("old".utf8)), link: nil, layers: ["gone"]),
+        ]), answers: nil, id: id, in: store)
+        let plan = plan(["mcp"], brain: brain)
+        #expect(change(plan)?.kind == .update && change(plan, "old.md")?.kind == .remove)
+        // .mcp.json is written first, then trashing old.md fails.
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: { _ in throw CocoaError(.fileWriteNoPermission) })
+        }
+        let raw = try JSONDecoder().decode(ProjectRecords.Lock.self, from: try Data(contentsOf: store.folder(id: id).appending(path: "lock.json")))
+        #expect(raw.json?[".mcp.json"] != nil)
+        #expect(raw.files[".mcp.json"] == nil)
+        #expect(raw.files["old.md"] != nil)
+
+        // A lock that has both anyway (written by hand, or by an older build) reads as merged.
+        var both = raw
+        both.files[".mcp.json"] = .init(sha256: "00", link: nil, layers: ["mcp"])
+        try ProjectRecords.save(both, answers: nil, id: id, in: store)
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.files[".mcp.json"] == nil)
+    }
+
+    @Test func whatTheProjectDeletedStaysDeleted() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        // The project deletes one of AKit's leaves.
+        var edited = try tree(".mcp.json")
+        edited.remove(at: ["mcpServers", "two", "args"])
+        try write("Projects/task/.mcp.json", edited.pretty)
+        let next = plan(["mcp"], brain: brain)
+        #expect(change(next)?.kind == .same)
+        #expect(next.render.warnings.contains(".mcp.json: the project removed mcpServers.two.args; AKit leaves it out."))
+        _ = try await ProjectSetup.apply(next, brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".mcp.json").value(at: ["mcpServers", "two", "args"]) == nil)
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"]?.keys["/mcpServers/two/args"] == nil)
+
+        // The project deletes the whole file: not created again, only offered.
+        try fm.removeItem(at: project.appending(path: ".mcp.json"))
+        let gone = plan(["mcp"], brain: brain)
+        #expect(change(gone)?.kind == .own)
+        #expect(gone.render.warnings.contains { $0.hasPrefix(".mcp.json: the project deleted it, so AKit doesn't create it again.") })
+        _ = try await ProjectSetup.apply(gone, brain: brain, home: home, env: env, trash: trash)
+        #expect(read(".mcp.json") == nil)
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"] != nil)
+        // Taken on purpose.
+        let offered = plan(["mcp"], brain: brain)
+        _ = try await ProjectSetup.apply(offered, accepting: [".mcp.json"], brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".mcp.json").value(at: ["mcpServers", "one", "command"]) == .string("one-server"))
+    }
+
+    @Test func onlyObjectsAKitCreatedAreCleanedUp() async throws {
+        let brain = try await setUpBrain()
+        try write("Projects/task/.mcp.json", #"{"mcpServers": {}}"#)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        let record = try #require(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"])
+        #expect(record.containers?.sorted() == ["/mcpServers/one", "/mcpServers/one/env", "/mcpServers/two"])
+        // Server two goes with its object; the project's own mcpServers stays even when empty.
+        _ = try await ProjectSetup.apply(plan(["mcp"], two: false, brain: brain), brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".mcp.json").value(at: ["mcpServers", "two"]) == nil)
+        _ = try await ProjectSetup.apply(plan([], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".mcp.json") == .object(["mcpServers": .object([:])]))
+    }
+
+    @Test func anEditAfterThePreviewStopsApply() async throws {
+        let brain = try await setUpBrain()
+        try write("Projects/task/.mcp.json", #"{"mcpServers": {}}"#)
+        let plan = plan(["mcp"], brain: brain)
+        try write("Projects/task/.mcp.json", #"{"mcpServers": {"mine": {"command": "x"}}}"#)
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        }
+        #expect(read(".mcp.json") == #"{"mcpServers": {"mine": {"command": "x"}}}"#)
+    }
+
+    @Test func theProjectsNumbersSurviveAMergeAsWritten() async throws {
+        let brain = try await setUpBrain()
+        try write("Projects/task/.mcp.json", #"{"n": -0, "e": 1E+2, "big": 123456789012345678901234567890, "f": 0.10, "g": -1.5e-300}"#)
+        let outcome = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        let text = try #require(read(".mcp.json"))
+        for number in [#""n": -0"#, #""e": 1E+2,"#, #""big": 123456789012345678901234567890,"#, #""f": 0.10,"#, #""g": -1.5e-300,"#] {
+            #expect(text.contains(number), "\(number)")
+        }
+        // Backups hold the project's file, secrets included: only the user may read them.
+        let backup = try #require(outcome.backup)
+        for folder in [backup, backup.deletingLastPathComponent()] {
+            #expect((try fm.attributesOfItem(atPath: folder.path)[.posixPermissions] as? Int) == 0o700)
+        }
+    }
+
+    @Test func forgettingWarnsWhenAKitsKeysStayInAFileItCantRead() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        try write("Projects/task/.mcp.json", "{ broken")
+        let preview = try #require(ProjectForget.preview(id: id, folder: project, forHome: false, brain: brain, store: store))
+        #expect(preview.keysLeft == [".mcp.json"])
+        #expect(preview.keysTakenOut.isEmpty)
+    }
+
     @Test func locksOfEitherVersionStillRead() throws {
         // A lock written before merged JSON files existed.
         let old = #"{"brainCommit":"abc","brainDirty":false,"files":{"AGENTS.md":{"layers":["base"],"sha256":"00"}}}"#

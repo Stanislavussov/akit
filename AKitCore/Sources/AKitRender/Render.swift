@@ -28,15 +28,24 @@ public enum Render {
 
         // 4. Files from templates. Markdown targets are glued in layer order; other
         //    files from two layers clash unless the later one overrides.
+        //    Paths are grouped ignoring letter case (macOS does), under the first spelling.
         var pieces: [String: [ProjectBundle.File]] = [:]
+        var spelling: [String: String] = [:]
         var targetsInOrder: [String] = []
         for file in bundle.files {
-            if pieces[file.to] == nil { targetsInOrder.append(file.to) }
-            pieces[file.to, default: []].append(file)
+            let to = ProjectBundle.normalizedPath(file.to)
+            let key = to.lowercased()
+            if let first = spelling[key] {
+                if first != to { errors.append("\(first) and \(to) (\(file.layer)) are the same file on macOS. Spell it one way in every layer.") }
+            } else {
+                spelling[key] = to
+                targetsInOrder.append(to)
+            }
+            pieces[spelling[key]!, default: []].append(file)
         }
         for path in targetsInOrder {
             let parts = pieces[path] ?? []
-            if ProjectBundle.isJSON(path) {
+            if ProjectBundle.mergesJSON(path) {
                 let layers = parts.map(\.layer).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
                 // Not merged into the home folder yet (~/.claude/settings.json is the user's).
                 guard !forHome else {

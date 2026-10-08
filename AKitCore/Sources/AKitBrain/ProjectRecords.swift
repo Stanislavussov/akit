@@ -30,11 +30,15 @@ public enum ProjectRecords {
             /// AKit created the file, so it may go to the Trash once nothing but `{}` is left.
             public var created: Bool
             public var layers: [String]
+            /// Objects AKit created to hold its keys (pointers): only these are cleaned up when
+            /// they become empty, never one the project had. Optional: absent in early locks.
+            public var containers: [String]?
 
-            public init(keys: [String: String], created: Bool, layers: [String]) {
+            public init(keys: [String: String], created: Bool, layers: [String], containers: [String]? = nil) {
                 self.keys = keys
                 self.created = created
                 self.layers = layers
+                self.containers = containers
             }
         }
 
@@ -128,8 +132,12 @@ public enum ProjectRecords {
     }
 
     public static func savedLock(id: String, in store: ProjectStore) -> Lock? {
-        store.savedFile(id: id, "lock.json").flatMap { try? Data(contentsOf: $0) }
-            .flatMap { try? JSONDecoder().decode(Lock.self, from: $0) }
+        guard var lock = store.savedFile(id: id, "lock.json").flatMap({ try? Data(contentsOf: $0) })
+            .flatMap({ try? JSONDecoder().decode(Lock.self, from: $0) }) else { return nil }
+        // A merged JSON file is never also a whole file AKit wrote (an older AKit's entry, or one
+        // left by an interrupted Apply): the merge record wins.
+        for path in (lock.json ?? [:]).keys { lock.files[path] = nil }
+        return lock
     }
 
     /// Writes lock.json (and answers.json, when given) under `<store>/<id>`.
