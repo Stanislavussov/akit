@@ -46,14 +46,16 @@ final class ProcessRunnerTests {
         let (result, elapsed) = try await run("(sleep 30) &\necho started")
         #expect(result.succeeded)
         #expect(result.output.contains("started"))
-        #expect(elapsed < 5)
+        // Far below the child's 30 s, with room for a busy machine (parallel builds).
+        #expect(elapsed < 15)
     }
 
     @Test func ignoredTerminationIsKilledAfterTimeout() async throws {
         let (result, elapsed) = try await run("trap '' TERM\nwhile true; do sleep 0.1; done", timeout: 0.5)
         #expect(result.timedOut)
         #expect(!result.succeeded)
-        #expect(elapsed < 4)
+        // Without the kill it would never end; the margin is for a busy machine.
+        #expect(elapsed < 10)
     }
 
     @Test func missingProgramIsNil() async {

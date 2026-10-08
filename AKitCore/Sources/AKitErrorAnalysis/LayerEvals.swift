@@ -160,6 +160,7 @@ public enum LayerEvals {
                 }
                 // Paid cells only up to an amount the user confirmed.
                 guard let maxCost else {
+                    if counts.toQueue == 0 { return ([], counts.skipped) }
                     throw LayerSetups.Failure(message: "Paid cells are queued only up to an amount you confirmed; none was given.")
                 }
                 if let high = estimate.high, high > maxCost {
