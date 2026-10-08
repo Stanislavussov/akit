@@ -225,6 +225,28 @@ struct ControlComparisonTests {
         #expect(patch.verdict == .notShown && patch.improvementShare == layer.improvementShare)
     }
 
+    /// 45 different task totals: their least common multiple overflows `Int`, so the shares
+    /// come from Double sums with a tolerance instead of a trap.
+    @Test func manyDifferentTaskTotalsFallBackWithoutATrap() throws {
+        let totals = Array(3...47)
+        #expect(ControlComparison.exactChanges(totals.map { (after: (1, $0), before: (0, $0)) }) == nil)
+        #expect(ControlComparison.exactChanges([(after: (2, 3), before: (1, 4))]) == [8 - 3])
+        func cells(_ setup: ControlSetup, passed: (Int) -> Int) -> [ControlComparison.Cell] {
+            totals.enumerated().flatMap { index, total in
+                (0..<total).map { ControlComparison.Cell(task: "t\(index)", setup: setup, passed: $0 < passed(total)) }
+            }
+        }
+        // One more pass on every task: all the mass on improvement.
+        let better = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly)) { $0 / 3 } + cells(layerSetup(.layer)) { $0 / 3 + 1 }).paired.first)
+        #expect(better.improvementShare == 1 && better.worseShare == 0 && better.verdict == .helpsOffline)
+        // The same passes: every sum is a tie.
+        let same = try #require(ControlComparison.compare(cells(baseline) { $0 / 2 } + cells(variant) { $0 / 2 }).paired.first)
+        #expect(same.improvementShare == 0 && same.worseShare == 0 && same.verdict == .notShown)
+        // Mixed changes, up on even totals and down on odd ones: the shares add up to at most 1.
+        let mixed = try #require(ControlComparison.compare(cells(baseline) { $0 / 2 } + cells(variant) { $0 / 2 + ($0 % 2 == 0 ? 1 : -1) }).paired.first)
+        #expect((mixed.improvementShare ?? 2) + (mixed.worseShare ?? 2) <= 1)
+    }
+
     @Test func aSetupWithBothAPatchAndALayerIsNotPaired() {
         var both = layerSetup(.layer)
         both.patch = ControlPatch(file: "CLAUDE.md", text: "x")

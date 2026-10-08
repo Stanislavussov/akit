@@ -199,6 +199,33 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                    harnessVersions: Set(cells.compactMap(\.harnessVersion)).sorted())
     }
 
+    /// Each task's change (passed/total after minus before) as an exact integer over one common
+    /// denominator, the least common multiple of the task totals: fractions like 1/3 − 2/3 + 1/3
+    /// then sum to exactly zero, so a tie never counts as improved or worse by a floating-point
+    /// residue. nil when the denominator, a scaled change or the largest possible bootstrap sum
+    /// (every draw the largest change) would overflow `Int`: the caller falls back to Doubles.
+    static func exactChanges(_ tasks: [(after: (passed: Int, total: Int), before: (passed: Int, total: Int))]) -> [Int]? {
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+        var denominator = 1
+        for total in tasks.flatMap({ [$0.after.total, $0.before.total] }) where total > 0 {
+            let (lcm, overflow) = (denominator / gcd(denominator, total)).multipliedReportingOverflow(by: total)
+            if overflow { return nil }
+            denominator = lcm
+        }
+        var changes: [Int] = []
+        for task in tasks {
+            guard task.after.total > 0, task.before.total > 0 else { return nil }
+            let (after, overflowAfter) = task.after.passed.multipliedReportingOverflow(by: denominator / task.after.total)
+            let (before, overflowBefore) = task.before.passed.multipliedReportingOverflow(by: denominator / task.before.total)
+            let (change, overflowChange) = after.subtractingReportingOverflow(before)
+            if overflowAfter || overflowBefore || overflowChange { return nil }
+            changes.append(change)
+        }
+        let largest = changes.map { $0.magnitude }.max() ?? 0
+        guard largest <= UInt(Int.max), !Int(largest).multipliedReportingOverflow(by: changes.count).overflow else { return nil }
+        return changes
+    }
+
     /// The paired bootstrap over tasks of the per-task change in pass rate (seeded, so the
     /// same cells give the same share). "Helped" is fixed before the run: ≥ 95% of the mass
     /// on improvement, with at least 3 repeats of every task and 15 cells on each side, and not
@@ -225,19 +252,22 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             result.reason = "No task has cells of both setups."
             return result
         }
-        // Each task's change as an exact integer over one common denominator (the least common
-        // multiple of the task totals): fractions like 1/3 − 2/3 + 1/3 then sum to exactly zero,
-        // so a tie never counts as improved or worse by a floating-point residue.
-        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
-        let denominator = shared.flatMap { [$0.before.total, $0.after.total] }.reduce(1) { lcm, total in lcm / gcd(lcm, total) * total }
-        let exact = shared.map { $0.after.passed * (denominator / $0.after.total) - $0.before.passed * (denominator / $0.before.total) }
+        let exact = exactChanges(shared.map { (after: ($0.after.passed, $0.after.total), before: ($0.before.passed, $0.before.total)) })
         var generator = SeededGenerator(seed: seed)
         var improved = 0
         var worse = 0
         for _ in 0..<iterations {
-            var sum = 0
-            for _ in exact.indices { sum += exact[Int.random(in: 0..<exact.count, using: &generator)] }
-            if sum > 0 { improved += 1 } else if sum < 0 { worse += 1 }
+            if let exact {
+                var sum = 0
+                for _ in exact.indices { sum += exact[Int.random(in: 0..<exact.count, using: &generator)] }
+                if sum > 0 { improved += 1 } else if sum < 0 { worse += 1 }
+            } else {
+                // Fallback when the exact integers would overflow: Double sums, with sums within
+                // 1e-9 of zero counted as ties (a residue of cancelling fractions is about 1e-16).
+                var sum = 0.0
+                for _ in changes.indices { sum += changes[Int.random(in: 0..<changes.count, using: &generator)] }
+                if sum > 1e-9 { improved += 1 } else if sum < -1e-9 { worse += 1 }
+            }
         }
         let share = Double(improved) / Double(iterations)
         result.improvementShare = share

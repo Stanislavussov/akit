@@ -46,7 +46,7 @@ struct ControlComparisonView: View {
         let inputs = Inputs(cells: cells, evalRuns: evalRuns.map { run in
             let control = run.result?.control
             return "\(run.id) \(run.status.rawValue) \(control?.passed == true) \(control?.flagged == true)"
-        }, sends: model.labSendsChanged)
+        }, sends: evals.isEmpty ? nil : model.labSendsChanged)
         VStack(alignment: .leading, spacing: 12) {
             Text(tasks.count == 1 ? "Setups compared" : "Setups compared over \(tasks.count) tasks").font(.title3.bold())
             if let computed, computed.inputs == inputs {
