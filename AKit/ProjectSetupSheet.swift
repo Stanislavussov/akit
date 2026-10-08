@@ -461,7 +461,9 @@ struct ProjectSetupSheet: View {
                         Text(change.path).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
                         HStack(spacing: 4) {
                             Text(label(change.kind)).foregroundStyle(tint(change.kind))
-                            if change.replacesUnmanaged && change.kind == .update {
+                            if change.mergesJSON && change.kind != .remove {
+                                Text("· keys merged; the project's own keys stay").foregroundStyle(.secondary)
+                            } else if change.replacesUnmanaged && change.kind == .update {
                                 Text("· replaces a file AKit didn't write").foregroundStyle(.orange)
                             } else if change.editedSinceRender {
                                 Text("· edited by hand since the last render").foregroundStyle(.orange)

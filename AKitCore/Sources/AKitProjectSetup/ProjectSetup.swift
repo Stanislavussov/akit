@@ -35,6 +35,9 @@ public enum ProjectSetup {
         public let layers: [String]
         /// AKit wrote it, but it was edited by hand since (hash differs from the lock).
         public var editedSinceRender = false
+        /// A JSON file the layers' keys are merged into: the texts show the whole file with
+        /// `env` and `headers` values masked; Apply writes the real values.
+        public var mergesJSON = false
     }
 
     public struct Plan: Sendable {
@@ -52,6 +55,9 @@ public enum ProjectSetup {
         let forHome: Bool
         /// Current bytes of the paths the plan changes, to spot edits made after the preview.
         let snapshot: [String: Data?]
+        /// Merged JSON files: the bytes Apply writes, and what the lock keeps after Apply.
+        var jsonWrites: [String: Data] = [:]
+        var jsonRecords: [String: ProjectRecords.Lock.MergedJSON] = [:]
 
         public var canApply: Bool { render.errors.isEmpty && blockers.isEmpty }
     }
@@ -121,15 +127,59 @@ public enum ProjectSetup {
                 warnings.append(".claude/skills is a folder, so Claude Code doesn't see the project's own skills in \(ProjectBundle.skillsFolder).")
             }
         }
-        render = RenderResult(layers: render.layers, outputs: outputs.sorted { $0.path < $1.path }, errors: render.errors,
-                              warnings: warnings, skills: render.skills)
-        let rendered = Set(render.outputs.map(\.path))
+        outputs.sort { $0.path < $1.path }
+        let rendered = Set(outputs.map(\.path))
 
         var changes: [Change] = []
         var blockers: [String] = []
         var snapshot: [String: Data?] = [:]
+        var jsonWrites: [String: Data] = [:]
+        var jsonRecords: [String: ProjectRecords.Lock.MergedJSON] = [:]
 
-        for output in render.outputs {
+        // JSON files the layers' keys merge into, and those an earlier render merged into
+        // (their keys come out when the layers stop bringing them).
+        let jsonOutputs = Dictionary(outputs.filter(\.mergesJSON).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        for path in Set(jsonOutputs.keys).union((previous?.json ?? [:]).keys).sorted() {
+            let url = project.appending(path: path)
+            let output = jsonOutputs[path]
+            // Something AKit can't merge into stops Apply while the layers bring the file;
+            // otherwise the file is left alone and keeps its record.
+            func cannotMerge(_ problem: String) {
+                if output != nil { blockers.append(problem) } else if let old = previous?.json?[path] { jsonRecords[path] = old }
+            }
+            if let problem = escapes(path, project: project) {
+                cannotMerge(problem)
+                continue
+            }
+            var isFolder: ObjCBool = false
+            if !isLink(url), fm.fileExists(atPath: url.path, isDirectory: &isFolder), isFolder.boolValue {
+                cannotMerge("\(path) is a folder in the project; AKit wants to merge keys into a file there.")
+                continue
+            }
+            let layersTree = output.flatMap { output -> JSONValue? in
+                guard case .data(let data) = output.content else { return nil }
+                return try? JSONValue.parse(data)
+            } ?? .object([:])
+            let merge = JSONMerge.plan(path: path, url: url, layers: layersTree, layerNames: output?.layers ?? previous?.json?[path]?.layers ?? [],
+                                       previous: previous?.json?[path])
+            warnings += merge.warnings
+            if let blocker = merge.blocker {
+                cannotMerge(blocker)  // never overwritten
+                continue
+            }
+            if let record = merge.record { jsonRecords[path] = record }
+            if let write = merge.write { jsonWrites[path] = write }
+            guard let kind = merge.kind else { continue }
+            var change = Change(path: path, kind: kind, oldText: merge.oldText, newText: merge.newText, replacesUnmanaged: false,
+                                layers: output?.layers ?? previous?.json?[path]?.layers ?? [])
+            change.mergesJSON = true
+            changes.append(change)
+            snapshot[path] = state(url)
+        }
+
+        render = RenderResult(layers: render.layers, outputs: outputs, errors: render.errors, warnings: warnings, skills: render.skills)
+
+        for output in render.outputs where !output.mergesJSON {
             let url = project.appending(path: output.path)
             let managed = previous?.files[output.path] != nil
             if let problem = escapes(output.path, project: project) {
@@ -215,7 +265,7 @@ public enum ProjectSetup {
 
         return Plan(project: project, id: id, answers: answers, render: render,
                     changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
-                    forHome: forHome, snapshot: snapshot)
+                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords)
     }
 
     // MARK: - Apply
@@ -267,6 +317,13 @@ public enum ProjectSetup {
                     removeEmptyFolders(from: url.deletingLastPathComponent(), upTo: plan.project)
                     continue
                 }
+                if change.mergesJSON {
+                    guard let data = plan.jsonWrites[change.path] else { continue }
+                    try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try data.write(to: url, options: .atomic)
+                    written.append(change.path)
+                    continue
+                }
                 guard let output = outputs[change.path] else { continue }
                 try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
                 // Whatever is there must go first: a link is only a link (backed up above);
@@ -290,8 +347,16 @@ public enum ProjectSetup {
         } catch {
             // Record what did happen, so the next preview knows which files AKit wrote.
             var partial = plan.previous ?? ProjectRecords.Lock(brainCommit: nil, brainDirty: false, files: [:])
-            for path in removed { partial.files[path] = nil }
-            for path in written { if let output = outputs[path] { partial.files[path] = entry(for: output) } }
+            for path in removed { partial.files[path] = nil; partial.json?[path] = nil }
+            for path in written {
+                if plan.jsonWrites[path] != nil {
+                    var json = partial.json ?? [:]
+                    json[path] = plan.jsonRecords[path]
+                    partial.json = json
+                } else if let output = outputs[path] {
+                    partial.files[path] = entry(for: output)
+                }
+            }
             try? ProjectRecords.save(partial, answers: nil, id: plan.id, in: plan.store)
             let reason = (error as? Failure)?.message ?? error.localizedDescription
             throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")")
@@ -302,7 +367,7 @@ public enum ProjectSetup {
         // wrote it, so a later render or removal must not trash it.
         let kinds = Dictionary(plan.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         var lock = ProjectRecords.Lock(brainCommit: nil, brainDirty: false, files: [:])
-        for output in plan.render.outputs {
+        for output in plan.render.outputs where !output.mergesJSON {
             // Skeleton files: which layers' version the project has seen, so it is offered once.
             // A declined first version isn't "seen": it is offered again next time.
             if isProjectOwned(output.path, forHome: plan.forHome), case .data(let data) = output.content,
@@ -320,6 +385,12 @@ public enum ProjectSetup {
         for change in plan.changes where change.kind == .keepEdited || (change.kind == .remove && excluded.contains(change.path)) {
             if let old = plan.previous?.files[change.path] { lock.files[change.path] = old }
         }
+        // Merged JSON files: the keys AKit now owns; a change left out keeps the old record.
+        var json: [String: ProjectRecords.Lock.MergedJSON] = plan.jsonRecords
+        for change in plan.changes where change.mergesJSON && excluded.contains(change.path) {
+            json[change.path] = plan.previous?.json?[change.path]
+        }
+        lock.json = json.isEmpty ? nil : json
 
         let isRepo = fm.fileExists(atPath: brain.root.appending(path: ".git").path)
         if isRepo {

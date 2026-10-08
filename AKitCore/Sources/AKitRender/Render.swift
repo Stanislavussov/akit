@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitFoundation
 import Foundation
 
 /// Turns a `ProjectBundle` into harness files: skills in `.agents/skills`, glued Markdown
@@ -8,6 +9,7 @@ public enum Render {
     /// ~/AGENTS.md, so there is no CLAUDE.md shim (the .claude/skills link still applies).
     public static func render(_ bundle: ProjectBundle, forHome: Bool = false) -> RenderResult {
         var errors = bundle.errors
+        var warnings = bundle.warnings
 
         // 3. Skills, each in its own folder; manual ones get the header that stops models from starting them.
         var outputs: [RenderedFile] = []
@@ -34,7 +36,16 @@ public enum Render {
         }
         for path in targetsInOrder {
             let parts = pieces[path] ?? []
-            if isMarkdown(path) {
+            if ProjectBundle.isJSON(path) {
+                let layers = parts.map(\.layer).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+                // Not merged into the home folder yet (~/.claude/settings.json is the user's).
+                guard !forHome else {
+                    warnings.append("\(path) (\(layers.joined(separator: ", "))): JSON files are not rendered into the home folder yet; skipped.")
+                    continue
+                }
+                let merged = mergeJSON(parts, path: path, errors: &errors)
+                outputs.append(RenderedFile(path: path, content: .data(Data(merged.pretty.utf8)), layers: layers, mergesJSON: true))
+            } else if isMarkdown(path) {
                 // An empty section (cleared in Edit Layer) adds nothing; an AGENTS.md of
                 // only empty sections is not written. Other empty Markdown files stay.
                 let all = parts.map { (layer: $0.layer, text: String(decoding: $0.data, as: UTF8.self).trimmingCharacters(in: .newlines)) }
@@ -76,7 +87,7 @@ public enum Render {
         }
 
         return RenderResult(layers: bundle.layers, outputs: outputs.sorted { $0.path < $1.path }, errors: errors,
-                            warnings: bundle.warnings, skills: bundle.skills.map { .init(name: $0.name, mode: $0.mode, source: $0.source) })
+                            warnings: warnings, skills: bundle.skills.map { .init(name: $0.name, mode: $0.mode, source: $0.source) })
     }
 
     // MARK: - Pieces
@@ -96,6 +107,38 @@ public enum Render {
         }
         if let existing { lines[existing] = line } else { lines.insert(line, at: end) }
         return (bom ? "\u{FEFF}" : "") + lines.joined(separator: newline)
+    }
+
+    /// The layers' JSON for one file, merged key by key in layer order. Objects merge; arrays
+    /// and other values are leaves. Two layers giving one leaf different values is an error,
+    /// unless one sets `override: true` (that one wins; the later one when both do).
+    static func mergeJSON(_ parts: [ProjectBundle.File], path: String, errors: inout [String]) -> JSONValue {
+        var leaves: [(path: [String], value: JSONValue, layer: String, override: Bool)] = []
+        var reported: Set<[String]> = []
+        func overlaps(_ a: [String], _ b: [String]) -> Bool { a.count <= b.count ? Array(b.prefix(a.count)) == a : Array(a.prefix(b.count)) == b }
+        for part in parts {
+            // The bundle has checked that every part is a JSON object.
+            guard let tree = try? JSONValue.parse(part.data) else { continue }
+            for leaf in tree.leaves {
+                let clashes = leaves.indices.filter { overlaps(leaves[$0].path, leaf.path) }
+                if clashes.count == 1, leaves[clashes[0]].path == leaf.path, leaves[clashes[0]].value == leaf.value { continue }
+                if !clashes.isEmpty {
+                    if !part.override {
+                        let owners = clashes.map { leaves[$0] }
+                        if !owners.contains(where: \.override), reported.insert(leaf.path).inserted {
+                            let others = owners.map(\.layer).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+                            errors.append("\(path): \(JSONValue.display(leaf.path)) is set differently by \(others.joined(separator: " and ")) and \(part.layer). Set override: true in the layer that should win.")
+                        }
+                        continue
+                    }
+                    for index in clashes.reversed() { leaves.remove(at: index) }
+                }
+                leaves.append((leaf.path, leaf.value, part.layer, part.override))
+            }
+        }
+        var merged = JSONValue.object([:])
+        for leaf in leaves { merged.set(leaf.value, at: leaf.path) }
+        return merged
     }
 
     private static func isMarkdown(_ path: String) -> Bool { path.lowercased().hasSuffix(".md") }

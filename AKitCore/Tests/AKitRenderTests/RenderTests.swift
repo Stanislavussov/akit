@@ -107,20 +107,20 @@ struct RenderTests {
 
     @Test func sameSkillOrFileFromTwoLayersNeedsOverride() throws {
         try write("skills/tdd/SKILL.md", "---\nname: tdd\n---\n")
-        try write("layers/a/layer.yaml", "skills: [tdd]\nfiles:\n  - template: x.json\n")
-        try write("layers/a/templates/x.json", "{\"a\": 1}")
-        try write("layers/b/layer.yaml", "skills: [tdd]\nfiles:\n  - template: x.json\n")
-        try write("layers/b/templates/x.json", "{\"b\": 1}")
-        try write("layers/c/layer.yaml", "skills:\n  - name: tdd\n    mode: manual\n    override: true\nfiles:\n  - template: x.json\n    override: true\n")
-        try write("layers/c/templates/x.json", "{\"c\": 1}")
+        try write("layers/a/layer.yaml", "skills: [tdd]\nfiles:\n  - template: x.yaml\n")
+        try write("layers/a/templates/x.yaml", "{\"a\": 1}")
+        try write("layers/b/layer.yaml", "skills: [tdd]\nfiles:\n  - template: x.yaml\n")
+        try write("layers/b/templates/x.yaml", "{\"b\": 1}")
+        try write("layers/c/layer.yaml", "skills:\n  - name: tdd\n    mode: manual\n    override: true\nfiles:\n  - template: x.yaml\n    override: true\n")
+        try write("layers/c/templates/x.yaml", "{\"c\": 1}")
 
         let clash = render(ProjectAnswers(layers: ["a", "b"]), brain: try brain(), projectName: "p")
         #expect(clash.errors.contains { $0.hasPrefix("Skill “tdd” comes from both a and b.") })
-        #expect(clash.errors.contains { $0.hasPrefix("x.json comes from a and b.") })
+        #expect(clash.errors.contains { $0.hasPrefix("x.yaml comes from a and b.") })
 
         let overridden = render(ProjectAnswers(layers: ["a", "c"]), brain: try brain(), projectName: "p")
         #expect(overridden.errors.isEmpty, "\(overridden.errors)")
-        #expect(text(overridden, "x.json") == "{\"c\": 1}")
+        #expect(text(overridden, "x.yaml") == "{\"c\": 1}")
         #expect(text(overridden, ".agents/skills/tdd/SKILL.md")?.contains("disable-model-invocation: true") == true)
     }
 
@@ -142,15 +142,15 @@ struct RenderTests {
     @Test func overrideWinsFromEitherSideAndOffRemoves() throws {
         try write("skills/tdd/SKILL.md", "---\nname: tdd\n---\n")
         try write("skills/tdd/run.sh", "echo {{project_name}}\n")
-        try write("layers/a/layer.yaml", "skills:\n  - name: tdd\n    override: true\nfiles:\n  - template: x.json\n    override: true\n")
-        try write("layers/a/templates/x.json", "a")
-        try write("layers/b/layer.yaml", "skills:\n  - name: tdd\n    mode: manual\nfiles:\n  - template: x.json\n")
-        try write("layers/b/templates/x.json", "b")
+        try write("layers/a/layer.yaml", "skills:\n  - name: tdd\n    override: true\nfiles:\n  - template: x.yaml\n    override: true\n")
+        try write("layers/a/templates/x.yaml", "a")
+        try write("layers/b/layer.yaml", "skills:\n  - name: tdd\n    mode: manual\nfiles:\n  - template: x.yaml\n")
+        try write("layers/b/templates/x.yaml", "b")
         try write("layers/off/layer.yaml", "skills:\n  - name: tdd\n    mode: off\n    override: true\n")
 
         let earlier = render(ProjectAnswers(layers: ["a", "b"]), brain: try brain(), projectName: "p")
         #expect(earlier.errors.isEmpty, "\(earlier.errors)")
-        #expect(text(earlier, "x.json") == "a")
+        #expect(text(earlier, "x.yaml") == "a")
         #expect(text(earlier, ".agents/skills/tdd/SKILL.md")?.contains("disable-model-invocation") == false)
         #expect(text(earlier, ".agents/skills/tdd/run.sh") == "echo {{project_name}}\n")  // only Markdown is filled
 

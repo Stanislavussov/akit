@@ -21,6 +21,23 @@ public enum ProjectRecords {
             }
         }
 
+        /// A JSON file the layers' keys were merged into (`.mcp.json`, `.claude/settings.json`).
+        /// The file is the project's; AKit owns only the keys it wrote.
+        public struct MergedJSON: Codable, Hashable, Sendable {
+            /// Key path (an RFC 6901 pointer, `/mcpServers/github/command`) → SHA-256 of the
+            /// value AKit wrote there, in `JSONValue.compact` form.
+            public var keys: [String: String]
+            /// AKit created the file, so it may go to the Trash once nothing but `{}` is left.
+            public var created: Bool
+            public var layers: [String]
+
+            public init(keys: [String: String], created: Bool, layers: [String]) {
+                self.keys = keys
+                self.created = created
+                self.layers = layers
+            }
+        }
+
         /// Brain commit the files were rendered from.
         public var brainCommit: String?
         /// The brain had uncommitted changes, so the commit alone doesn't reproduce the render.
@@ -29,12 +46,17 @@ public enum ProjectRecords {
         /// Project-owned files (AGENTS.md, templates): hash of the layers' version when it
         /// was last written or offered. A suggestion appears only when that version changes.
         public var templates: [String: String]?
+        /// Merged JSON files by path. Kept out of `files`, so an older AKit, which ignores this
+        /// key, never treats such a file as one it wrote whole (and never trashes it).
+        public var json: [String: MergedJSON]?
 
-        public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil) {
+        public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil,
+                    json: [String: MergedJSON]? = nil) {
             self.brainCommit = brainCommit
             self.brainDirty = brainDirty
             self.files = files
             self.templates = templates
+            self.json = json
         }
     }
 

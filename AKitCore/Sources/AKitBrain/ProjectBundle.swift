@@ -1,3 +1,4 @@
+import AKitFoundation
 import AKitModel
 import Foundation
 
@@ -218,6 +219,43 @@ public struct ProjectBundle: Sendable {
                     continue
                 }
                 var rendered = data
+                if isJSON(file.to) {
+                    // Merged key by key into the project's file: parsed first, fields filled only
+                    // inside string values, so a value can't break the JSON.
+                    let name = "\(layer.name)/\(file.template)"
+                    if (file.to as NSString).lastPathComponent.lowercased() == "settings.local.json" {
+                        errors.append("\(name) targets \(file.to), the project's private settings; layers can't write it.")
+                        continue
+                    }
+                    let tree: JSONValue
+                    do {
+                        tree = try JSONValue.parse(data)
+                    } catch {
+                        errors.append("\(name) is not valid JSON: \(error.message)")
+                        continue
+                    }
+                    guard case .object = tree else {
+                        errors.append("\(name) must be a JSON object ({ … }); it is merged into \(file.to) key by key.")
+                        continue
+                    }
+                    var unknown: [String] = []
+                    let filled = tree.mappingStrings { text in
+                        let result = substitute(text, values)
+                        unknown += result.unknown
+                        return result.text
+                    }
+                    for name in unknown.reduce(into: [String](), { if !$0.contains($1) { $0.append($1) } }) {
+                        warnings.append("\(layer.name)/\(file.template) uses {{\(name)}}, which is not a field; it is left as is.")
+                    }
+                    // Secrets never live in the brain: env and headers hold only ${VAR} references.
+                    let secrets = filled.secretLeaves
+                    for path in secrets {
+                        errors.append("\(name): \(JSONValue.display(path)) holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment.")
+                    }
+                    guard secrets.isEmpty else { continue }
+                    files.append(File(layer: layer.name, to: file.to, data: Data(filled.pretty.utf8), override: file.override))
+                    continue
+                }
                 if let text = String(data: data, encoding: .utf8) {
                     let result = substitute(text, values)
                     for name in result.unknown {
@@ -246,6 +284,9 @@ public struct ProjectBundle: Sendable {
     }
 
     // MARK: - Pieces
+
+    /// A template target merged key by key into the project's file instead of written whole.
+    public static func isJSON(_ path: String) -> Bool { path.lowercased().hasSuffix(".json") }
 
     /// `when` entries all hold. A list value (multi field, `target`) matches when it contains the value.
     static func matches(_ conditions: [Condition], _ values: [String: FieldValue]) -> Bool {
@@ -314,11 +355,15 @@ public struct RenderedFile: Hashable, Sendable {
     public let content: Content
     /// Layers the file comes from (a glued AGENTS.md has several).
     public let layers: [String]
+    /// A JSON file of the layers' keys, merged key by key into the project's file (never
+    /// written whole; see `ProjectSetup`).
+    public let mergesJSON: Bool
 
-    public init(path: String, content: Content, layers: [String]) {
+    public init(path: String, content: Content, layers: [String], mergesJSON: Bool = false) {
         self.path = path
         self.content = content
         self.layers = layers
+        self.mergesJSON = mergesJSON
     }
 
     public var text: String? {
