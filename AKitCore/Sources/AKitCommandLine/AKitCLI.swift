@@ -319,7 +319,7 @@ public enum AKitCLI {
                 }
                 let include = Set(options.include), exclude = Set(options.exclude)
                 let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: options.home,
-                                             piAgentDir: env.piAgentDirectory)
+                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
                 out(planText(plan))
                 guard plan.canApply else { return 1 }
                 guard command == "apply" else { return 0 }
@@ -1083,7 +1083,7 @@ public enum AKitCLI {
                     : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
                 guard let preview = ProjectForget.preview(id: id, folder: project, forHome: options.home, brain: brain, store: store,
-                                                          piAgentDir: env.piAgentDirectory) else {
+                                                          piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"]) else {
                     out("Nothing is saved for \(id).")
                     return 1
                 }
@@ -1101,6 +1101,9 @@ public enum AKitCLI {
                     }
                     if !preview.keysLeft.isEmpty {
                         lines.append("AKit's keys stay in \(preview.keysLeft.joined(separator: ", ")): AKit can't read it as JSON, so take them out by hand.")
+                    }
+                    if !preview.blocksLeft.isEmpty {
+                        lines.append("AKit's block stays in \(preview.blocksLeft.joined(separator: ", ")) (edited by hand, without a record, or a file AKit doesn't write); take it out by hand.")
                     }
                     if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
                 }
@@ -1209,7 +1212,7 @@ public enum AKitCLI {
             if change.mergesJSON && [.create, .update].contains(change.kind) { note = "  (keys merged; the project's own keys stay; env and headers values masked)" }
             if change.block && [.create, .update].contains(change.kind) { note = "  (AKit's block between the akit:core markers; the text around it stays)" }
             lines.append("")
-            lines.append("\(change.block && change.kind == .suggest ? "LAYERS CHANGED (AKit's block, edited by hand: kept unless --include)" : label(change.kind)) \(change.path)\(note)")
+            lines.append("\(change.blockNote.map { "OFFERED (\($0); left alone unless --include)" } ?? label(change.kind)) \(change.path)\(note)")
             let new = change.kind == .remove || change.kind == .keepEdited ? "" : change.newText ?? ""
             if change.oldText != nil || change.newText != nil {
                 lines += TextDiff.unified(TextDiff.lines(from: change.oldText ?? "", to: new))

@@ -47,7 +47,7 @@ public enum ProjectRecords {
         }
 
         /// AKit's marked block in a harness's global instructions file (`~/.claude/CLAUDE.md`,
-        /// `~/.pi/agent/AGENTS.md`), written by the home render. The file is the user's; AKit owns
+        /// the file Pi reads in `~/.pi/agent`), written by the home render. The file is the user's; AKit owns
         /// only the text between its markers.
         public struct Block: Codable, Hashable, Sendable {
             /// SHA-256 of the text AKit wrote between the markers; nil when the block there is
@@ -57,11 +57,18 @@ public enum ProjectRecords {
             /// is offered the layers' text again only when this changes.
             public var offered: String?
             public var layers: [String]
+            /// The bytes AKit put before the block when it appended it (a newline or a blank
+            /// line), so taking the block out leaves the file as it was.
+            public var separator: String?
+            /// The harness the file is for: `claude` or `pi`.
+            public var target: String?
 
-            public init(sha256: String?, offered: String?, layers: [String]) {
+            public init(sha256: String?, offered: String?, layers: [String], separator: String? = nil, target: String? = nil) {
                 self.sha256 = sha256
                 self.offered = offered
                 self.layers = layers
+                self.separator = separator
+                self.target = target
             }
         }
 
@@ -79,9 +86,14 @@ public enum ProjectRecords {
         /// Instruction blocks by file: a path under the home folder, or an absolute path for one
         /// outside it (a `PI_CODING_AGENT_DIR` elsewhere). Older AKit ignores the key.
         public var blocks: [String: Block]?
+        /// Pi's config folder the last home render used (absolute): used again when the
+        /// environment doesn't set PI_CODING_AGENT_DIR (the app started from the Finder doesn't
+        /// see the shell's), so the block doesn't move between files from run to run.
+        public var piAgentDir: String?
 
         public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil,
-                    json: [String: MergedJSON]? = nil, blocks: [String: Block]? = nil) {
+                    json: [String: MergedJSON]? = nil, blocks: [String: Block]? = nil, piAgentDir: String? = nil) {
+            self.piAgentDir = piAgentDir
             self.brainCommit = brainCommit
             self.brainDirty = brainDirty
             self.files = files

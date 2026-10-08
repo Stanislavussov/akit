@@ -168,14 +168,29 @@ struct JSONRenderTests {
             try layer("run", to: to, #"{"mcpServers": {"api": {"env": {"TOKEN": "!security find-generic-password -w"}, "headers": {"Auth": ["!cat key"]}, "args": ["!fine"]}}}"#)
             let refused = try render(["run"])
             #expect(refused.errors.sorted() == [
-                "run/t.json: mcpServers.api.env.TOKEN starts with “!”, which pi-mcp-adapter runs as a shell command. Layers never bring commands to run; use a ${NAME} reference.",
-                "run/t.json: mcpServers.api.headers.Auth starts with “!”, which pi-mcp-adapter runs as a shell command. Layers never bring commands to run; use a ${NAME} reference.",
+                "run/t.json: mcpServers.api.env.TOKEN starts with “!”, and pi-mcp-adapter runs it as a shell command; under env and headers a layer may bring only a ${NAME} reference.",
+                "run/t.json: mcpServers.api.headers.Auth starts with “!”, and pi-mcp-adapter runs it as a shell command; under env and headers a layer may bring only a ${NAME} reference.",
             ], "\(to)")
             #expect(output(refused, to) == nil)
         }
         // Other merged files keep the plain rule: still refused, as a value.
         try layer("run", to: ".pi/settings.json", #"{"env": {"X": "!echo"}}"#)
         #expect(try render(["run"]).errors == ["run/t.json: env.X holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment."])
+    }
+
+    @Test func keysTheHarnessRunsAreNamedInTheWarnings() throws {
+        try layer("pi", to: ".pi/settings.json", #"{"shellCommandPrefix": "source ~/.env", "packages": ["npm:x"], "theme": "dark"}"#)
+        try layer("claude", to: ".claude/settings.json", #"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}, "statusLine": {"type": "command", "command": "x"}}"#)
+        try layer("mcp", #"{"mcpServers": {"api": {"command": "api", "headersHelper": "get-headers"}}}"#)
+        let result = try render(["pi", "claude", "mcp"])
+        #expect(result.errors.isEmpty, "\(result.errors)")
+        #expect(result.warnings.sorted() == [
+            "claude sets hooks in .claude/settings.json, which Claude Code runs; check it before Apply.",
+            "claude sets statusLine in .claude/settings.json, which Claude Code runs; check it before Apply.",
+            "mcp sets mcpServers.api.headersHelper in .mcp.json, which Claude Code runs; check it before Apply.",
+            "pi sets packages in .pi/settings.json, which Pi runs; check it before Apply.",
+            "pi sets shellCommandPrefix in .pi/settings.json, which Pi runs; check it before Apply.",
+        ])
     }
 
     @Test func theHomeFolderGetsNoJSONYet() throws {

@@ -194,8 +194,9 @@ project/
 Targets (harnesses) are a project field, multi-select, default from the machine
 profile. Differences per harness go through `when: target == "claude"`.
 
-In the home folder, AGENTS.md is not written as `~/AGENTS.md` (no harness reads it): its
-text goes as a marked block into `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md`, see
+In the home folder, AGENTS.md is not written as `~/AGENTS.md` (Claude Code never reads it, Pi
+only below the home folder): its text goes as a marked block into `~/.claude/CLAUDE.md` and the
+file Pi reads in `~/.pi/agent`, see
 [Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08).
 
 ## Several layers, one file
@@ -278,7 +279,14 @@ recommendation later.
    `headers` key (any letter case) must be a whole-string `${NAME}` reference, else a render
    error. So `"Bearer ${TOKEN}"` is refused for now. In `.mcp.json` and `.pi/mcp.json` a value
    there starting with `!` gets its own error: pi-mcp-adapter runs such a value as a shell
-   command, and a layer never brings a command to run. The preview never shows a secret: in a
+   command, and a layer never brings a command to run. Open (2026-10-09): pi-mcp-adapter's
+   source was not available locally, so whether it also runs or expands other fields
+   (`bearerToken`, `auth`, …) is not checked; only `env` and `headers` are guarded and masked.
+   Keys a harness runs are allowed but named in the preview ("layer X sets `shellCommandPrefix`
+   in .pi/settings.json, which Pi runs"): Pi's `shellPath`, `shellCommandPrefix`, `npmCommand`,
+   `packages`, `extensions`, `externalEditor`; Claude Code's `hooks`, `apiKeyHelper`,
+   `statusLine`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`; and an MCP
+   server's `headersHelper` in `.mcp.json`. The preview never shows a secret: in a
    JSON change's texts every value under `env` and `headers` that is not a `${NAME}`
    reference reads `••••`, in the old and the new text, also inside lists of objects. The
    masked text is only for showing; Apply writes the real values. Every `.json` file the
@@ -349,15 +357,21 @@ object, clashes), `JSONMerge` in AKitProjectSetup (into the project's file, the 
 
 ## Home folder: instructions block (built 2026-10-08)
 
-Decided 2026-10-08 ("block with markers"), built the same day. The home render used to write
-the core layer's AGENTS.md text to `~/AGENTS.md`, which no harness reads. Now it goes into
-each target harness's global instructions file of the home record (`answers.targets`):
+Decided 2026-10-08 ("block with markers"), built the same day, revised 2026-10-09 after review.
+The home render used to write the core layer's AGENTS.md text to `~/AGENTS.md`, which Claude
+Code never reads and Pi reads only as a parent of the folder it starts in. Now it goes into the
+global instructions file of each target harness of the home record (`answers.targets`):
 
 - `claude` → `~/.claude/CLAUDE.md`;
-- `pi` → `<Pi's config folder>/AGENTS.md`: `~/.pi/agent/AGENTS.md`, or the folder from
-  `PI_CODING_AGENT_DIR` (`HarnessEnvironment.piAgentDirectory`, the same as Pi's adapter). Pi
-  reads this file as its global instructions (Pi docs, usage.md "Context Files"). A folder
-  outside the home folder shows its absolute path in the preview and the lock.
+- `pi` → the file Pi reads in its config folder. Pi reads one file per folder, the first that
+  exists of `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`
+  (`loadContextFileFromDir` in Pi's resource-loader; checked in the installed 0.8x package), so
+  the block goes into that one, and AKit creates `AGENTS.md` only when none is there. The
+  folder is PI_CODING_AGENT_DIR (`~` and `file://` expanded, as Pi does), else the folder the
+  last home render used (`piAgentDir` in the lock: the app started from the Finder doesn't see
+  the shell's variables, so the block doesn't move between runs), else `~/.pi/agent`. A
+  relative PI_CODING_AGENT_DIR is resolved by Pi from the folder it starts in, so AKit leaves
+  Pi's file alone with a warning. A folder outside the home folder shows its absolute path.
 
 The text sits between two markers, and AKit owns only what is between them:
 
@@ -367,38 +381,63 @@ The text sits between two markers, and AKit owns only what is between them:
 <!-- akit:core:end -->
 ```
 
-- **Text around the block** stays byte for byte. Other tools keep their own blocks in the
-  same file (oh-my-claudecode writes `<!-- OMC:START -->` … into `~/.claude/CLAUDE.md`).
-- **No block yet**: appended at the end, after one blank line. **File missing**: created
-  with only the block.
-- **Update**: only the block is replaced.
+- **One text per target.** The text is rendered once per harness, so a section with
+  `when: target == pi` reaches only Pi's file. A layer text that holds a marker is a render
+  error.
+- **Markers** count only as whole lines (trailing spaces and `\r` ignored), never inside a
+  fenced code block, so a quoted marker in the user's text is just text.
+- **Bytes around the block** stay as they are. AKit works on bytes: CRLF files get a block with
+  CRLF lines, a BOM stays, and the separator AKit put before an appended block (`separator` in
+  the lock) goes with it, so append + take out gives back the same bytes (no final newline,
+  trailing blank lines, CRLF, BOM, text added after the block). Other tools keep their own
+  blocks in the same file (oh-my-claudecode writes `<!-- OMC:START -->` … into
+  `~/.claude/CLAUDE.md`).
+- **No block yet**: appended at the end, after one blank line. **File missing**: created with
+  only the block. **Update**: only the block is replaced.
 - **Empty render** (the core layer has no AGENTS.md text, the target is no longer chosen,
-  Forget): the block and its markers go, with the blank line AKit put before it; the file
-  stays, even when empty. Only a block AKit wrote (it has a record) is taken out.
-- **Broken markers** (a start without an end, two starts, an end before the start): a
-  blocker in the preview; nothing is written. When AKit only wanted to take its block out,
-  the file is left alone with a warning and keeps its record.
-- **Edited by hand**: `lock.json` keeps, per file, a hash of the text AKit wrote in the
-  block and of the layers' text last offered (new optional key `blocks`, `{path: {sha256,
-  offered, layers}}`; older AKit ignores it). A block edited since is the user's, like an
-  edited template in a project: kept, and the layers' new text is offered unticked ("edited
-  by hand · layers changed"), once per new version; taken when ticked or with `akit apply
-  --include PATH`. A block found without a record and different from the layers' counts as
-  edited. A block (or the whole file) removed by hand is not added again, only offered. An
-  edited block outlives an empty render ("no longer rendered, but edited by hand: kept").
-- **Links**: a file that is a link blocks Apply, like a merged JSON file (AKit writes the
-  block only into a plain file). A linked parent folder (`~/.claude` in a dotfiles repo) is
-  fine: the paths are AKit's own, not a layer's.
+  Forget): the block and its markers go; the file stays, even when empty. Only a block AKit
+  wrote (it has a record) is taken out; one without a record is only offered.
+- **Broken markers** (a start without an end, two starts, an end before the start): a blocker
+  in the preview; nothing is written. When AKit only wanted to take its block out, the file is
+  left alone with a warning and keeps its record.
+- **A file AKit can't safely write** (a link, a file with more than one hard link, which an
+  atomic write would cut, a folder, an unreadable file): skipped with a warning, the rest of the
+  home folder still updates. A linked parent folder (`~/.claude` in a dotfiles repo) is fine.
+- **Edited by hand**: `lock.json` keeps, per file, a hash of the text AKit wrote in the block
+  and of the layers' text last offered (optional key `blocks`, `{path: {sha256, offered,
+  layers, separator, target}}`, plus `piAgentDir`). A block edited since is the user's, like an
+  edited template in a project: kept, and the layers' new text is offered unticked ("edited by
+  hand · layers changed"), once per new version ("edited by hand" after that); taken when ticked
+  or with `akit apply --include PATH`. A block (or the whole file) removed by hand is not added
+  again, only offered ("removed by hand"). An edited block outlives an empty render ("no longer
+  rendered, but edited by hand: kept").
+- **Pi reads another file now** (an `AGENTS.override.md` appeared, PI_CODING_AGENT_DIR
+  changed): the block goes into the new file, and the old one is only offered for taking out
+  (unticked, with a warning).
+- **Older AKit**: it ignores `blocks` and `piAgentDir`, and drops them when it saves the lock.
+  A block found without a record counts as edited, unless it holds the layers' text exactly
+  (then it is AKit's again, with a record); Forget can't tell, so it leaves such a block and
+  says so.
+- **Lock keys** are used only for files AKit writes: `.claude/CLAUDE.md`, or a file Pi reads in
+  its current, recorded or default folder. Others are kept in the lock and never touched.
 - **Preview and Apply**: the preview shows a diff of the whole file; Apply backs the file up
-  first and refuses if it changed since the preview, as for every other change.
+  first (a file outside the home folder under its full path) and refuses if it changed since
+  the preview, checked again right before the block is written.
 - **`~/AGENTS.md` of an older render** goes through the usual "an earlier render wrote it"
-  removal: to the Trash, unless edited since (then kept).
+  removal: to the Trash, unless edited since (then kept, and with Pi as a target the preview
+  warns that Pi reads it on top of its own file in every folder under the home folder).
+- **`akit setup`** names each block change and asks ("Add AKit's block … to ~/.claude/CLAUDE.md?
+  [Y/n]"), and the same for moving an older `~/AGENTS.md` to the Trash; without a terminal it
+  leaves them and says so.
+- **Forget** takes AKit's blocks out ("Forget and Remove AKit's Files and Blocks") and lists the
+  ones that stay (edited, without a record, or a file AKit doesn't write).
 - A core template that targets one of these files is a blocker (the file can't be both).
 
 Where it lives: `Render` marks the home folder's AGENTS.md output `instructionsBlock`;
-`ProjectSetup.plan` (with `piAgentDir`) maps it to the target files, `InstructionsBlock` in
-AKitProjectSetup finds, writes and takes out the block. `akit apply --home`, `akit setup`,
-**Update Home Folder…** and **Forget Project…** on the home folder all use it.
+`InstructionsBlock.planHome` (called by `ProjectSetup.plan` with `piAgentDirSetting`) renders
+the text per target, picks the files and plans each one; `InstructionsBlock` finds, writes and
+takes out the block. `akit apply --home`, `akit setup`, **Update Home Folder…** and **Forget
+Project…** on the home folder all use it.
 
 Not built: the global files of other harnesses (Codex `~/.codex/AGENTS.md`, OpenCode
 `~/.config/opencode/AGENTS.md`).

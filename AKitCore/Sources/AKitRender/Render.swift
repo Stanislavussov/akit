@@ -5,10 +5,11 @@ import Foundation
 /// Turns a `ProjectBundle` into harness files: skills in `.agents/skills`, glued Markdown
 /// files, the CLAUDE.md shim and the `.claude/skills` link. Pure: writes nothing.
 public enum Render {
-    /// `forHome`: rendering the core layer into the home folder, where no harness reads
-    /// ~/AGENTS.md: its text is marked `instructionsBlock` (ProjectSetup writes it as a block
-    /// into each harness's global instructions file), and there is no CLAUDE.md shim (the
-    /// .claude/skills link still applies).
+    /// `forHome`: rendering the core layer into the home folder. ~/AGENTS.md is not the place
+    /// for global instructions (Claude Code never reads it; Pi reads it only as a parent of the
+    /// folder it starts in, and not when it starts elsewhere): the text is marked
+    /// `instructionsBlock` (ProjectSetup writes it as a block into each harness's global
+    /// instructions file), and there is no CLAUDE.md shim (the .claude/skills link still applies).
     public static func render(_ bundle: ProjectBundle, forHome: Bool = false) -> RenderResult {
         var errors = bundle.errors
         var warnings = bundle.warnings

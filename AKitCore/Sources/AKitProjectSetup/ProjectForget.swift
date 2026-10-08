@@ -25,19 +25,26 @@ public enum ProjectForget {
         /// JSON files where AKit's keys stay although the record goes: AKit can't read the file
         /// as JSON (or it is a link or a folder), so it can't take them out.
         public var keysLeft: [String] { plan?.jsonRecords.keys.sorted() ?? [] }
+        /// Instruction files where AKit's block stays although the record goes: edited by hand,
+        /// found without a record, or a file AKit can't safely write (a link, broken markers).
+        public var blocksLeft: [String] {
+            guard let plan else { return [] }
+            let left = plan.changes.filter { $0.block && [.keepEdited, .suggest, .own].contains($0.kind) }.map(\.path)
+            return Set(left + plan.blockSkipped).sorted()
+        }
         /// Files AKit wrote and the user edited since: kept.
-        public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited }.map(\.path) ?? [] }
+        public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited && !$0.block }.map(\.path) ?? [] }
     }
 
     /// What forgetting would do; nil when nothing is saved for the id. Only reads.
-    /// `piAgentDir`: see `ProjectSetup.plan`.
+    /// `piAgentDirSetting`: see `ProjectSetup.plan`.
     public static func preview(id: String, folder: URL?, forHome: Bool, brain: Brain, store: ProjectStore,
-                               piAgentDir: URL? = nil) -> Preview? {
+                               piAgentDirSetting: String? = nil) -> Preview? {
         guard var empty = ProjectRecords.savedAnswers(id: id, in: store) else { return nil }
         empty.layers = []
         empty.skills = []
         let plan = folder.map { ProjectSetup.plan(project: $0, id: id, answers: empty, brain: brain, store: store, forHome: forHome,
-                                                  piAgentDir: piAgentDir) }
+                                                  piAgentDirSetting: piAgentDirSetting) }
         let fm = FileManager.default
         return Preview(id: id, store: store, plan: plan,
                        ownRecord: !store.isLocal || fm.fileExists(atPath: store.folder(id: id).path),

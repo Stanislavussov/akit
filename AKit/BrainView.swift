@@ -372,6 +372,9 @@ struct BrainView: View {
         if !preview.keysLeft.isEmpty {
             lines.append("AKit's keys stay in \(preview.keysLeft.joined(separator: ", ")): AKit can't read it as JSON, so take them out by hand.")
         }
+        if !preview.blocksLeft.isEmpty {
+            lines.append("AKit's block stays in \(preview.blocksLeft.joined(separator: ", ")): edited by hand, without a record, or a file AKit doesn't write, so take it out by hand.")
+        }
         if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
         return lines.joined(separator: "\n\n")
     }

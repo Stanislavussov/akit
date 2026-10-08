@@ -254,10 +254,14 @@ public struct ProjectBundle: Sendable {
                     let secrets = filled.secretLeaves
                     for path in secrets {
                         errors.append(commands.contains(path)
-                            ? "\(name): \(JSONValue.display(path)) starts with “!”, which pi-mcp-adapter runs as a shell command. Layers never bring commands to run; use a ${NAME} reference."
+                            ? "\(name): \(JSONValue.display(path)) starts with “!”, and pi-mcp-adapter runs it as a shell command; under env and headers a layer may bring only a ${NAME} reference."
                             : "\(name): \(JSONValue.display(path)) holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment.")
                     }
                     guard secrets.isEmpty else { continue }
+                    // Keys whose value the harness runs: allowed, but named in the preview.
+                    for key in runningKeys(filled, path: file.to) {
+                        warnings.append("\(layer.name) sets \(key.key) in \(file.to), which \(key.harness) runs; check it before Apply.")
+                    }
                     files.append(File(layer: layer.name, to: file.to, data: Data(filled.pretty.utf8), override: file.override))
                     continue
                 }
@@ -297,6 +301,30 @@ public struct ProjectBundle: Sendable {
     public static let mergedJSONFiles: Set<String> = [".mcp.json", ".claude/settings.json", ".pi/mcp.json", ".pi/settings.json"]
 
     public static func mergesJSON(_ path: String) -> Bool { mergedJSONFiles.contains(normalizedPath(path).lowercased()) }
+
+    /// Settings whose value the harness runs as a command or loads as code, by merged file:
+    /// Pi's settings (settings-manager), Claude Code's settings, and a project MCP server's
+    /// `headersHelper` (any server, so `*`).
+    static let runningKeys: [String: (harness: String, paths: [[String]])] = [
+        ".pi/settings.json": ("Pi", [["shellPath"], ["shellCommandPrefix"], ["npmCommand"], ["packages"], ["extensions"], ["externalEditor"]]),
+        ".claude/settings.json": ("Claude Code", [["hooks"], ["apiKeyHelper"], ["statusLine"], ["awsAuthRefresh"], ["awsCredentialExport"],
+                                                  ["otelHeadersHelper"]]),
+        ".mcp.json": ("Claude Code", [["mcpServers", "*", "headersHelper"]]),
+    ]
+
+    /// The keys of `runningKeys` a layer's JSON sets, as shown (`mcpServers.api.headersHelper`).
+    static func runningKeys(_ tree: JSONValue, path: String) -> [(key: String, harness: String)] {
+        guard let entry = runningKeys[normalizedPath(path).lowercased()] else { return [] }
+        var found: [String] = []
+        for leaf in tree.leaves {
+            for pattern in entry.paths where leaf.path.count >= pattern.count
+                && zip(pattern, leaf.path).allSatisfy({ $0 == "*" || $0 == $1 }) {
+                let key = JSONValue.display(Array(leaf.path.prefix(pattern.count)))
+                if !found.contains(key) { found.append(key) }
+            }
+        }
+        return found.map { ($0, entry.harness) }
+    }
 
     /// MCP files whose `env` and `headers` values pi-mcp-adapter runs as a shell command when
     /// they start with `!` (it reads `.mcp.json` too).
