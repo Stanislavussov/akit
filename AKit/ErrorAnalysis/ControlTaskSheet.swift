@@ -28,9 +28,17 @@ struct NewControlTaskSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let fromSession: Bool
+    /// A session picked elsewhere (Sessions → Add to Layer Set…), listed and selected.
+    let preset: Source?
     @State private var gitRepositories: [URL] = []
     @State private var query = ""
     @State private var source: String?
+
+    init(fromSession: Bool, preset: Source? = nil) {
+        self.fromSession = fromSession
+        self.preset = preset
+        _source = State(initialValue: preset?.key)
+    }
     @State private var repo: URL?
     @State private var base = ""
     @State private var prompt = ""
@@ -39,6 +47,7 @@ struct NewControlTaskSheet: View {
     @State private var command = ""
     @State private var assertMode = CodeChecks.all.first?.modeID ?? ""
     @State private var reference = ""
+    @State private var layerSet: String?
     @State private var error: String?
     @State private var busy = false
 
@@ -75,10 +84,11 @@ struct NewControlTaskSheet: View {
                     }
                     .help("The cell passes when the mode doesn't show (a success mode: when it does)")
                 }
+                LayerSetPicker(layer: $layerSet)
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
-            .frame(height: oracle == .tests ? 200 : 160)
+            .frame(height: oracle == .tests ? 240 : 200)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
                     .textSelection(.enabled)
@@ -93,6 +103,12 @@ struct NewControlTaskSheet: View {
         }
         .padding(20)
         .frame(width: 640)
+        .task {
+            // Opened from the Sessions screen: the modes may not be read yet, and the task is
+            // meant for a set.
+            if !analysis.loaded { await analysis.reload() }
+            if preset != nil, layerSet == nil { layerSet = model.evaluableLayers.first }
+        }
     }
 
     private var canSave: Bool {
@@ -115,6 +131,7 @@ struct NewControlTaskSheet: View {
         list += exemplarOf.keys.filter { !known.contains($0) }.sorted().map {
             Source(key: $0, title: $0, transcript: nil, project: nil, exemplarOf: exemplarOf[$0] ?? [])
         }
+        if let preset, !list.contains(where: { $0.key == preset.key }) { list.append(preset) }
         let q = query.trimmingCharacters(in: .whitespaces)
         return list.filter { q.isEmpty || $0.title.localizedCaseInsensitiveContains(q) || $0.key.contains(q) }
             .sorted { ($0.exemplarOf.isEmpty ? 1 : 0, $0.title) < ($1.exemplarOf.isEmpty ? 1 : 0, $1.title) }
@@ -194,7 +211,7 @@ struct NewControlTaskSheet: View {
         let success = self.oracle == .assertion && analysis.data.mode(assertMode)?.kind == .success
         let reference = reference.trimmingCharacters(in: .whitespaces).isEmpty ? nil : reference.trimmingCharacters(in: .whitespaces)
         let chosen = sources.first { $0.key == source }
-        let fromSession = fromSession, repo = repo, base = base.trimmingCharacters(in: .whitespaces), prompt = prompt
+        let fromSession = fromSession, repo = repo, base = base.trimmingCharacters(in: .whitespaces), prompt = prompt, layerSet = layerSet
         Task {
             do {
                 try await analysis.run { env in
@@ -209,7 +226,7 @@ struct NewControlTaskSheet: View {
                                                                    successMode: success, reference: reference, env: env)
                     }
                     try ControlTasks.save(task, env: env)
-                    return "Saved control task \(task.id): \(task.title)."
+                    return try LayerSetPicker.add(task, to: layerSet, saved: "Saved control task \(task.id): \(task.title).", env: env)
                 }
                 dismiss()
             } catch {

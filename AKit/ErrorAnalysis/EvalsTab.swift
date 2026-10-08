@@ -4,19 +4,24 @@ import AKitLab
 import SwiftUI
 
 /// Controlled evals (`akit analysis control …`): fixed tasks with an oracle, cells queued in
-/// the Lab per setup, and the paired comparison that says whether a fix helped.
+/// the Lab per setup, and the paired comparison that says whether a fix helped. Layer sets
+/// (`docs/design/layer-evals.md`) list above the tasks.
 struct EvalsTab: View {
     @Environment(AnalysisModel.self) private var analysis
     @Environment(AppModel.self) private var model
-    /// Snapshots: `--select <task id>[,<task id>…]`.
+    /// Snapshots: `--select <task id>[,<task id>…]`, or `set:<layer>` for a layer set.
     @State private var selection: Set<String> = Set(DebugSnapshot.options?.select?.split(separator: ",").map(String.init) ?? [])
     @State private var sheet: Sheet?
     @State private var remove: ControlTask?
+    @State private var deleteSet: String?
 
     enum Sheet: String, Identifiable {
-        case fromSession, reproduction, run
+        case fromSession, reproduction, fromCommit, run, runSet
         var id: String { rawValue }
     }
+
+    /// A layer set's tag in the sidebar list; task ids never start with it.
+    private static let setTag = "set:"
 
     var body: some View {
         HSplitView {
@@ -29,8 +34,22 @@ struct EvalsTab: View {
             switch sheet {
             case .fromSession: NewControlTaskSheet(fromSession: true)
             case .reproduction: NewControlTaskSheet(fromSession: false)
-            case .run: RunCellsSheet(tasks: selection, fixMode: nil)
+            case .fromCommit: NewCommitTaskSheet()
+            case .run: RunCellsSheet(tasks: selection.filter { !$0.hasPrefix(Self.setTag) }, fixMode: nil)
+            case .runSet: RunCellsSheet(tasks: Set(selectedSet?.tasks ?? []), fixMode: nil, layer: selectedSet?.layer)
             }
+        }
+        .confirmationDialog("Move the \(deleteSet ?? "") set to the Trash?", isPresented: Binding(get: { deleteSet != nil }, set: { if !$0 { deleteSet = nil } }),
+                            presenting: deleteSet) { layer in
+            Button("Move to Trash", role: .destructive) {
+                selection.remove(Self.setTag + layer)
+                analysis.act { env in
+                    try LayerSets.delete(layer, env: env)
+                    return "Moved the \(layer) set to the Trash. Its tasks stay."
+                }
+            }
+        } message: { _ in
+            Text("Only the set's file goes: its tasks and cells stay.")
         }
         .confirmationDialog("Move this control task to the Trash?", isPresented: Binding(get: { remove != nil }, set: { if !$0 { remove = nil } }),
                             presenting: remove) { task in
@@ -46,14 +65,20 @@ struct EvalsTab: View {
             Text("Only the task's file goes; its cells stay Lab runs.")
         }
         .task {
-            // Snapshots: `--tab evals --add` opens Run Cells…, `--query fromSession|reproduction` a new task sheet.
-            if DebugSnapshot.options?.add == true, !selection.isEmpty { sheet = .run }
+            // Snapshots: `--tab evals --add` opens Run Cells…, `--query fromSession|reproduction|fromCommit` a new task sheet.
+            guard DebugSnapshot.options != nil else { return }
+            // A set's tasks are known once the data is read (at most 5 s).
+            for _ in 0..<50 where !analysis.loaded { try? await Task.sleep(for: .milliseconds(100)) }
+            if DebugSnapshot.options?.add == true, !selection.isEmpty { sheet = selectedSet == nil ? .run : .runSet }
             if let query = DebugSnapshot.options?.query, let open = Sheet(rawValue: query) { sheet = open }
         }
     }
 
     private var tasks: [ControlTask] { analysis.data.controlTasks }
+    private var sets: [LayerSet] { analysis.data.layerSets }
     private var selected: [ControlTask] { tasks.filter { selection.contains($0.id) } }
+    /// A selected set shows its page, whatever tasks are selected with it.
+    private var selectedSet: LayerSet? { sets.first { selection.contains(Self.setTag + $0.layer) } }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -68,39 +93,65 @@ struct EvalsTab: View {
                     Button("Reproduction…") { sheet = .reproduction }
                         .help("A minimal reproduction you write: repository, base commit, prompt and oracle")
                 }
-                Button("Run Cells…", systemImage: "play") { sheet = .run }
-                    .disabled(selection.isEmpty)
-                    .help("Queue repeats × tasks × setups in the Lab")
+                HStack {
+                    Button("From Commit…") { sheet = .fromCommit }
+                        .help("A task from a commit: redo it from its parent; the commit's own tests judge it (Swift packages)")
+                    Button("Run Cells…", systemImage: "play") { sheet = .run }
+                        .disabled(selected.isEmpty)
+                        .help("Queue repeats × tasks × setups in the Lab")
+                }
             }
             .controlSize(.small)
             .font(.callout)
             .padding(12)
-            List(tasks, selection: $selection) { task in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(task.title).lineLimit(1)
-                        Spacer()
-                        ReferenceBadge(task: task)
+            List(selection: $selection) {
+                if !sets.isEmpty {
+                    Section("Layer Sets") {
+                        ForEach(sets) { set in
+                            HStack {
+                                Label(set.layer, systemImage: "square.3.layers.3d")
+                                Spacer()
+                                Text("\(set.tasks.count) \(set.tasks.count == 1 ? "task" : "tasks")").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .tag(Self.setTag + set.layer)
+                        }
                     }
-                    Text("\(URL(filePath: task.repo).lastPathComponent)@\(task.base.prefix(7)) · \(task.oracle.label)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
                 }
-                .padding(.vertical, 2)
-                .tag(task.id)
+                Section(sets.isEmpty ? "" : "Tasks") {
+                    ForEach(tasks) { task in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(task.title).lineLimit(1)
+                                Spacer()
+                                ReferenceBadge(task: task)
+                            }
+                            Text("\(URL(filePath: task.repo).lastPathComponent)@\(task.base.prefix(7)) · \(task.oracle.label)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .padding(.vertical, 2)
+                        .tag(task.id)
+                    }
+                }
             }
             .overlay {
                 if tasks.isEmpty, analysis.loaded {
                     ContentUnavailableView("No control tasks", systemImage: "checklist",
-                                           description: Text("Make one from an exemplar session of a frequent mode, or write a minimal reproduction."))
+                                           description: Text("Make one from an exemplar session of a frequent mode or from a commit, or write a minimal reproduction."))
                 }
             }
         }
     }
 
     @ViewBuilder private var detail: some View {
-        if selected.isEmpty {
+        if let set = selectedSet {
+            ScrollView {
+                LayerSetView(set: set, runCells: { sheet = .runSet }, delete: { deleteSet = set.layer })
+                    .padding(20)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else if selected.isEmpty {
             ContentUnavailableView("Select Tasks", systemImage: "checklist",
                                    description: Text("Select one task to see it, several to compare setups across them. Did the fix help? The unit is a task's pass rate over its repeats, compared by task."))
         } else {
@@ -140,13 +191,16 @@ private struct ReferenceBadge: View {
     }
 }
 
-/// One task: prompt, repository, oracle, source, and Check Reference / Remove.
+/// One task: prompt, repository, oracle, source, its layer sets, and Check Reference /
+/// Add to Layer Set… / Remove.
 private struct ControlTaskView: View {
     @Environment(AnalysisModel.self) private var analysis
+    @Environment(AppModel.self) private var model
     let task: ControlTask
     let remove: () -> Void
 
     var body: some View {
+        let inSets = LayerSets.layers(holding: task.id, in: analysis.data.layerSets)
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(task.title).font(.title3.bold()).textSelection(.enabled)
@@ -157,6 +211,14 @@ private struct ControlTaskView: View {
                         .disabled(analysis.progress != nil)
                         .help("Run the test command on the reference commit in an isolated clone: it must pass, or the oracle can't tell a fix")
                 }
+                Menu("Add to Layer Set…", systemImage: "square.3.layers.3d") {
+                    ForEach(model.evaluableLayers, id: \.self) { layer in
+                        Button(layer) { add(to: layer) }.disabled(inSets.contains(layer))
+                    }
+                }
+                .fixedSize()
+                .disabled(model.evaluableLayers.isEmpty)
+                .help("The layer's set gets this task: an eval of the layer runs it")
                 Button("Remove…", systemImage: "trash", role: .destructive, action: remove)
             }
             .controlSize(.small)
@@ -166,8 +228,13 @@ private struct ControlTaskView: View {
                 row("Source", task.sourceTitle)
                 if let mode = task.modeID { row("Mode", analysis.data.mode(mode)?.name ?? mode) }
                 if let reference = task.reference {
-                    row("Reference", "\(reference.prefix(10)) · " + (task.referenceGreen.map { $0 ? "tests pass there" : "tests fail there: fix the command or the reference" } ?? "not checked yet"))
+                    if case .hiddenTests = task.oracle {
+                        row("Reference", "\(reference.prefix(10)) · the commit itself: its tests pass there (checked when the task was made)")
+                    } else {
+                        row("Reference", "\(reference.prefix(10)) · " + (task.referenceGreen.map { $0 ? "tests pass there" : "tests fail there: fix the command or the reference" } ?? "not checked yet"))
+                    }
                 }
+                if !inSets.isEmpty { row("In sets", inSets.joined(separator: ", ")) }
                 row("Id", task.id)
             }
             .font(.callout)
@@ -185,6 +252,14 @@ private struct ControlTaskView: View {
         GridRow {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
             Text(value).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func add(to layer: String) {
+        let task = task
+        analysis.act { env in
+            let set = try LayerSets.add([task], to: layer, env: env)
+            return "Added \(task.title) to the \(layer) set (\(set.tasks.count) \(set.tasks.count == 1 ? "task" : "tasks"))."
         }
     }
 

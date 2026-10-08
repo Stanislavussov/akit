@@ -41,6 +41,8 @@ struct AnalysisData: Sendable {
     var fixes: [String: FixDraft] = [:]
     /// Controlled eval tasks, oldest first.
     var controlTasks: [ControlTask] = []
+    /// Layer sets, by layer name.
+    var layerSets: [LayerSet] = []
 
     var current: [Mode] { modes.filter(\.isCurrent) }
 
@@ -105,6 +107,7 @@ struct AnalysisData: Sendable {
         data.trust = Validation.trustMap(modes: data.modes, env: env)
         data.fixes = Dictionary(FixStore(env: env).all().map { ($0.modeID, $0) }, uniquingKeysWith: { first, _ in first })
         data.controlTasks = ControlTasks.list(env: env)
+        data.layerSets = LayerSets.list(env: env)
         return data
     }
 }
