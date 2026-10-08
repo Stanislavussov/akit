@@ -82,7 +82,7 @@ struct EvaluateLayerSheet: View {
                     TextField("The agent may not run", text: Binding(get: { deniedText }, set: { deniedText = $0; deniedEdited = true }),
                               prompt: Text("no extra commands"))
                         .disabled(plan?.prepared.continuing == true)
-                        .help("Shell commands, comma-separated, denied in every cell of both setups (Claude Code's --disallowedTools \"Bash(command:*)\"). In AKit's own repository: make snapshot, make run, make install, which would start a development AKit against your real ~/.akit")
+                        .help("Shell commands, comma-separated, denied in every cell of both setups (Claude Code's --disallowedTools \"Bash(command:*)\"). In AKit's own repository: the make targets that build, install or start AKit, and open, which would run a development AKit against your real ~/.akit")
                     Picker("Open in", selection: $environment) {
                         Text("Automatic").tag(LabEnvironment?.none)
                         ForEach(model.labEnvironments, id: \.self) { Text($0.title).tag(LabEnvironment?.some($0)) }
@@ -257,10 +257,13 @@ struct EvaluateLayerSheet: View {
     private func confirmationMessage(_ kind: Confirmation) -> String {
         let agent = plan?.agent ?? agent
         let account = "with your Claude Code account (\(agent.model), \(agent.effort)), go through the sending policy and count toward the monthly limit."
+        // The Lab queue starts after queueing: runs waiting in it start too.
+        let waiting = model.labRuns.filter { $0.status == .queued }.count
+        let others = waiting == 0 ? "" : " \(waiting) other queued \(waiting == 1 ? "run" : "runs") will start too."
         switch kind {
-        case .calibrate: return "1 paid cell to measure the cost; the eval reuses it. It runs " + account
+        case .calibrate: return "1 paid cell to measure the cost; the eval reuses it. It runs " + account + others
         case .queue:
-            return "They run " + account + (plan?.estimate.timeText.map { " \($0)." } ?? "")
+            return "They run " + account + (plan?.estimate.timeText.map { " \($0)." } ?? "") + others
         }
     }
 
@@ -272,7 +275,8 @@ struct EvaluateLayerSheet: View {
         Task {
             defer { busy = false }
             do {
-                let queued = try await model.queueLayerEval(plan, calibrateOnly: calibrateOnly, environment: environment, keep: keep)
+                let queued = try await model.queueLayerEval(plan, calibrateOnly: calibrateOnly, maxCost: calibrateOnly ? nil : plan.estimate.high,
+                                                            environment: environment, keep: keep)
                 let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
                 let text = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
                     : calibrateOnly ? "Queued 1 calibration cell of eval \(plan.evalID). When it finishes, Evaluate… shows the estimate and continues this eval."

@@ -30,14 +30,16 @@ public struct CostEstimate: Sendable, Hashable {
     public var seconds: Int?
     /// Finished runs the time comes from.
     public var durations: Int
+    /// Which runs those are: "control runs of this repository", "replays of other repositories"…
+    public var durationsFrom: String = ""
 
     /// The mean cost of all the cells; nil without records.
     public var total: Double? { perCell.map { $0 * Double(cells) } }
 
-    /// "≈ $48.20 (range $30.10–$75.00) from 14 recorded control cells of Claude Code · opus", or
+    /// "≈ $48.20 (range $30.10–$75.00) from 14 recorded control cells of Claude Code ·
+    /// opus", or
     /// "no estimate yet (no recorded control or replay cell of Claude Code · opus)".
     public var costText: String {
-        let agentText = "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model)"
         guard let total, let low, let high else { return "no estimate yet (no recorded control or replay cell of \(agentText))" }
         let kind = source == .replay ? "replay" : "control"
         return String(format: "≈ $%.2f (range $%.2f–$%.2f) from %d recorded %@ cell%@ of %@", total, low, high, basedOn, kind,
@@ -46,16 +48,16 @@ public struct CostEstimate: Sendable, Hashable {
 
     /// The cost as its own line: `costText`, or "No estimate yet: no recorded control or replay
     /// cell of Claude Code · opus."
-    public var line: String {
-        perCell == nil ? "No estimate yet: no recorded control or replay cell of \(agent.harness.title) · "
-            + "\(agent.model.isEmpty ? "default model" : agent.model)." : costText
-    }
+    public var line: String { perCell == nil ? "No estimate yet: no recorded control or replay cell of \(agentText)." : costText }
 
-    /// "≈ 13 h in the Lab queue (one cell at a time, from 9 recorded run durations)"; nil
-    /// without recorded durations.
+    /// "Claude Code · opus".
+    private var agentText: String { "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model)" }
+
+    /// "≈ 13 h in the Lab queue (one cell at a time, median of 9 control runs of this
+    /// repository)"; nil without recorded durations.
     public var timeText: String? {
         guard let seconds, cells > 0 else { return nil }
-        return "≈ \(Self.duration(seconds)) in the Lab queue (one cell at a time, from \(durations) recorded run duration\(durations == 1 ? "" : "s"))"
+        return "≈ \(Self.duration(seconds)) in the Lab queue (one cell at a time, median of \(durations) \(durationsFrom))"
     }
 
     static func duration(_ seconds: Int) -> String {
@@ -85,7 +87,8 @@ extension ControlRuns {
     }
 
     /// The cells in queue order: 1 of each task and setup, then 2 of each…; the sanity cells
-    /// right after the first repeat. `of`: the repeats of the cell's setup.
+    /// right after the first repeat. `of`: the repeats of the cell's setup. A setup that names
+    /// no denied commands gets its task repository's default (`ControlSetup.defaultDenied`).
     static func order(tasks: [ControlTask], setups: [ControlSetup], repeats: Int,
                       sanity: (setup: ControlSetup, tasks: [ControlTask], repeats: Int)?)
         -> [(task: ControlTask, setup: ControlSetup, index: Int, of: Int)] {
@@ -93,15 +96,25 @@ extension ControlRuns {
         guard repeats > 0 else { return cells }
         for index in 1...repeats {
             for task in tasks {
-                for setup in setups { cells.append((task, setup, index, repeats)) }
+                for setup in setups { cells.append((task, withDefaults(setup, task), index, repeats)) }
             }
             if index == 1, let sanity, sanity.repeats > 0 {
                 for sanityIndex in 1...sanity.repeats {
-                    for task in sanity.tasks { cells.append((task, sanity.setup, sanityIndex, sanity.repeats)) }
+                    for task in sanity.tasks { cells.append((task, withDefaults(sanity.setup, task), sanityIndex, sanity.repeats)) }
                 }
             }
         }
         return cells
+    }
+
+    /// The setup a cell of `task` runs with: its denied commands, or the repository's default.
+    static func withDefaults(_ setup: ControlSetup, _ task: ControlTask) -> ControlSetup {
+        guard setup.denied == nil, setup.agent.harness == .claudeCode else { return setup }
+        let denied = ControlSetup.defaultDenied(repo: task.mainFolder)
+        guard !denied.isEmpty else { return setup }
+        var setup = setup
+        setup.denied = denied
+        return setup
     }
 
     /// A dry run of `newControlRuns`: how many cells it would queue now, and how many it would
@@ -116,16 +129,18 @@ extension ControlRuns {
         return (keys.count - skipped, skipped)
     }
 
-    /// The estimate for `cells` new cells of `agent`, from this Mac's send log and Lab runs.
-    public static func estimate(cells: Int, agent: LabAgent, env: HarnessEnvironment) -> CostEstimate {
-        estimate(cells: cells, agent: agent, records: SendLog.records(env: env), runs: LabStore.list(env: env))
+    /// The estimate for `cells` new cells of `agent` in `repo`, from this Mac's send log and
+    /// Lab runs.
+    public static func estimate(cells: Int, agent: LabAgent, repo: URL? = nil, env: HarnessEnvironment) -> CostEstimate {
+        estimate(cells: cells, agent: agent, repo: repo, records: SendLog.records(env: env), runs: LabStore.list(env: env))
     }
 
     /// The recorded cost per cell of earlier control cells of the same harness and model, else
     /// of replays of them (a replay is the same work: an agent in a clone, then tests); the
     /// time from the recorded durations of finished control runs, else replays (clone, agent
-    /// and hidden-test build included).
-    public static func estimate(cells: Int, agent: LabAgent, records: [SendRecord], runs: [LabRun]) -> CostEstimate {
+    /// and hidden-test build included), of `repo` first (builds differ most by repository),
+    /// else of any repository.
+    public static func estimate(cells: Int, agent: LabAgent, repo: URL? = nil, records: [SendRecord], runs: [LabRun]) -> CostEstimate {
         func costs(_ purpose: String) -> [Double] {
             records.filter { $0.purpose == purpose && $0.harness == agent.harness && $0.model == agent.model }.compactMap(\.usage.cost)
         }
@@ -136,15 +151,27 @@ extension ControlRuns {
             recorded = costs("replay")
         }
         if recorded.isEmpty { source = .none }
-        func durations(_ kind: RunSpec.Kind) -> [Double] {
-            runs.filter { $0.spec.kind == kind && $0.status == .finished }.compactMap { run in
+        let path = repo?.standardizedFileURL.path
+        func inRepo(_ run: LabRun) -> Bool {
+            [run.spec.repo, run.spec.folder].compactMap { $0 }.contains { URL(filePath: $0).standardizedFileURL.path == path }
+        }
+        func durations(_ kind: RunSpec.Kind, here: Bool) -> [Double] {
+            runs.filter { $0.spec.kind == kind && $0.status == .finished && (!here || inRepo($0)) }.compactMap { run in
                 guard let state = run.state, let started = state.startedAt else { return nil }
                 let seconds = state.updatedAt.timeIntervalSince(started)
                 return seconds > 0 ? seconds : nil
             }
         }
-        var times = durations(.control)
-        if times.isEmpty { times = durations(.replay) }
+        var times: [Double] = []
+        var from = ""
+        for (kind, here) in (path == nil ? [] : [(RunSpec.Kind.control, true), (.replay, true)]) + [(.control, false), (.replay, false)] {
+            times = durations(kind, here: here)
+            guard times.isEmpty else {
+                from = (kind == .control ? "control run" : "replay") + (times.count == 1 ? "" : "s")
+                    + (here ? " of this repository" : path == nil ? "" : " of other repositories")
+                break
+            }
+        }
         let median: Double? = times.isEmpty ? nil : {
             let sorted = times.sorted()
             let middle = sorted.count / 2
@@ -153,6 +180,6 @@ extension ControlRuns {
         let perCell = recorded.isEmpty ? nil : recorded.reduce(0, +) / Double(recorded.count)
         return CostEstimate(cells: cells, agent: agent, perCell: perCell, low: recorded.min().map { $0 * Double(cells) },
                             high: recorded.max().map { $0 * Double(cells) }, basedOn: recorded.count, source: source,
-                            seconds: median.map { Int(($0 * Double(cells)).rounded()) }, durations: times.count)
+                            seconds: median.map { Int(($0 * Double(cells)).rounded()) }, durations: times.count, durationsFrom: from)
     }
 }

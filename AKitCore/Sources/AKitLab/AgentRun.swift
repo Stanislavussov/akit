@@ -9,8 +9,9 @@ enum AgentRun {
     static func harness(of spec: RunSpec) -> LabHarness { spec.agent?.harness ?? .claudeCode }
 
     /// Every Claude Code run gets these: nobody can answer a permission prompt, so anything
-    /// that would ask is denied (counted as rejected), and nothing is pushed. Pi never asks.
-    static func arguments(prompt: String, spec: RunSpec, extra: [String] = []) -> [String] {
+    /// that would ask is denied (counted as rejected), and nothing is pushed. `denied`: more
+    /// `--disallowedTools` values, in the same one flag. Pi never asks.
+    static func arguments(prompt: String, spec: RunSpec, extra: [String] = [], denied: [String] = []) -> [String] {
         switch harness(of: spec) {
         case .claudeCode:
             // `extra` may bring its own permission mode.
@@ -18,7 +19,7 @@ enum AgentRun {
             let flags: [String] = spec.setup?.flags ?? spec.agent?.flags ?? []
             var arguments = ["-p", prompt, "--verbose", "--output-format", "stream-json",
                              "--session-id", spec.sessionID, "--name", "Lab: \(spec.title)"]
-            arguments += mode + ["--permission-prompts", "none", "--disallowedTools", "Bash(git push:*)"]
+            arguments += mode + ["--permission-prompts", "none", "--disallowedTools", "Bash(git push:*)"] + denied
             return arguments + flags + extra
         case .pi:
             return ["-p", prompt, "--mode", "json", "--session-id", spec.sessionID, "--name", "Lab: \(spec.title)", "--offline"]
@@ -53,7 +54,7 @@ enum AgentRun {
     /// Runs the agent to the end (or the time limit). Throws when the harness can't start.
     /// The raw stream goes to `runFolder/agent.jsonl`; `exposeRunFolder` sets `AKIT_LAB_DIR`.
     static func run(prompt: String, spec: RunSpec, in directory: URL, runFolder: URL, exposeRunFolder: Bool, extra: [String] = [],
-                    input: URL? = nil, env: HarnessEnvironment, timeout: TimeInterval = 2 * 3600,
+                    denied: [String] = [], input: URL? = nil, env: HarnessEnvironment, timeout: TimeInterval = 2 * 3600,
                     out: @escaping @Sendable (String) -> Void) async throws -> Outcome {
         let harness = harness(of: spec)
         guard let command = env.findExecutable(harness.command) else {
@@ -64,7 +65,7 @@ enum AgentRun {
         let writer = try FileHandle(forWritingTo: log)
         defer { try? writer.close() }
         let printer = StreamPrinter(harness: harness, out: out)
-        let exit = await ChildProcess.run(command, arguments: arguments(prompt: prompt, spec: spec, extra: extra),
+        let exit = await ChildProcess.run(command, arguments: arguments(prompt: prompt, spec: spec, extra: extra, denied: denied),
                                           directory: directory, environment: environment(env, runFolder: exposeRunFolder ? runFolder : nil),
                                           input: input, timeout: timeout) { line in
             try? writer.write(contentsOf: Data((line + "\n").utf8))

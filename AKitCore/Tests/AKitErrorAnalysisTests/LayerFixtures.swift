@@ -89,6 +89,7 @@ struct LayerFixture {
             id=""; prev=""
             for a in "$@"; do [ "$prev" = "--session-id" ] && id="$a"; prev="$a"; done
             touch "$HOME/fake-claude-ran"
+            printf '%s\n' "$@" > "$HOME/args-$id.txt"
             git status --porcelain > "$HOME/status-$id.txt"
             mkdir -p "$HOME/.claude/projects/-fake"
             t="$HOME/.claude/projects/-fake/$id.jsonl"

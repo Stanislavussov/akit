@@ -25,6 +25,7 @@ struct RunCellsSheet: View {
     private struct EstimateKey: Hashable {
         var cells: Int
         var agent: LabAgent
+        var repo: URL?
     }
 
     /// What a layer eval's preparation depends on: a change prepares it again.
@@ -59,6 +60,8 @@ struct RunCellsSheet: View {
     @State private var estimate: (key: EstimateKey, value: CostEstimate)?
     @State private var error: String?
     @State private var busy = false
+    /// A layer eval's cells wait for the user to confirm the amount.
+    @State private var confirmingLayer = false
 
     /// `fixMode`: Try on Control Tasks… of a mode page (`--fix MODE`). `layer`: Run Cells… of a
     /// layer set's page, a layer eval of that layer.
@@ -165,6 +168,13 @@ struct RunCellsSheet: View {
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if isLayer, layerEval != nil, let estimate = currentEstimate, estimate.perCell == nil {
+                Label("No paid layer cells without an estimate: queue 1 calibration cell in Brain → \(layerName ?? "the layer") → Evaluate… "
+                      + "(the tasks must be in the layer's set); the eval reuses it.", systemImage: "info.circle")
+                    .foregroundStyle(.orange)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
                     .textSelection(.enabled)
@@ -174,18 +184,27 @@ struct RunCellsSheet: View {
                 if busy { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(cells == 1 ? "Queue 1 Cell" : "Queue \(cells) Cells", action: queue)
+                Button((cells == 1 ? "Queue 1 Cell" : "Queue \(cells) Cells") + (isLayer ? "…" : "")) {
+                    if isLayer { confirmingLayer = true } else { queue() }
+                }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || cells == 0 || !redTasks.isEmpty
+                    // A layer eval's cells: only with an estimate from recorded cells, as in Evaluate….
+                    .disabled(busy || cells == 0 || !redTasks.isEmpty || (isLayer && currentEstimate?.perCell == nil)
                               || (variant && !isLayer && setups.allSatisfy { $0.patch == nil }) || (variant && !isLayer && !baseline)
                               || (harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty))
             }
         }
         .padding(20)
         .frame(width: 780)
-        .task(id: EstimateKey(cells: cells, agent: agent)) {
-            let key = EstimateKey(cells: cells, agent: agent), env = analysis.env
-            let value = await Task.detached { ControlRuns.estimate(cells: key.cells, agent: key.agent, env: env) }.value
+        .confirmationDialog(layerConfirmationTitle, isPresented: $confirmingLayer, titleVisibility: .visible) {
+            Button("Queue", action: queue)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(layerConfirmationMessage)
+        }
+        .task(id: estimateKey) {
+            let key = estimateKey, env = analysis.env
+            let value = await Task.detached { ControlRuns.estimate(cells: key.cells, agent: key.agent, repo: key.repo, env: env) }.value
             guard !Task.isCancelled else { return }
             estimate = (key, value)
         }
@@ -338,10 +357,24 @@ struct RunCellsSheet: View {
         }
     }
 
+    private var estimateKey: EstimateKey { EstimateKey(cells: cells, agent: agent, repo: chosenTasks.first?.mainFolder) }
+
     /// The current estimate, once computed for these cells and this agent.
     private var currentEstimate: CostEstimate? {
-        guard let estimate, estimate.key == EstimateKey(cells: cells, agent: agent) else { return nil }
+        guard let estimate, estimate.key == estimateKey else { return nil }
         return estimate.value
+    }
+
+    private var layerConfirmationTitle: String {
+        guard let estimate = currentEstimate, let total = estimate.total, let low = estimate.low, let high = estimate.high else { return "" }
+        return String(format: "Queue up to %d cells for about $%.2f (range $%.2f–$%.2f)?", cells, total, low, high)
+    }
+
+    private var layerConfirmationMessage: String {
+        let waiting = model.labRuns.filter { $0.status == .queued }.count
+        return "They run with your Claude Code account (\(agent.model), \(agent.effort)), go through the sending policy and count toward "
+            + "the monthly limit. Cells already done are skipped." + (currentEstimate?.timeText.map { " \($0)." } ?? "")
+            + (waiting == 0 ? "" : " \(waiting) other queued \(waiting == 1 ? "run" : "runs") will start too.")
     }
 
     /// As the CLI prints it (`ControlRuns.estimate`): the recorded cost of earlier control
@@ -355,14 +388,14 @@ struct RunCellsSheet: View {
         busy = true
         error = nil
         let tasks = chosenTasks, setups = setups, repeats = repeats, environment = environment, keep = keep
-        let estimate = currentEstimate?.total
+        let estimate = currentEstimate?.total, maxCost = currentEstimate?.high ?? 0
         let env = analysis.env
         let layerEval = isLayer ? layerEval : nil
         Task {
             do {
                 try await Task.detached { try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env) }.value
                 if let layerEval {
-                    let queued = try await model.queueLayerCells(layerEval, repeats: repeats, environment: environment, keep: keep)
+                    let queued = try await model.queueLayerCells(layerEval, repeats: repeats, maxCost: maxCost, environment: environment, keep: keep)
                     let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
                     analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
                         : "Queued \(queued.runs.count) cells of eval \(layerEval.evalID): \(repeats) × \(layerEval.runnable.count) tasks × "

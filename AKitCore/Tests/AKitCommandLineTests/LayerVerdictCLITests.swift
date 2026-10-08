@@ -33,8 +33,9 @@ extension AKitCLITests {
         for args in [["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "Brain"]] {
             _ = await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["-C", brain.path] + args, environment: env.gitVariables, timeout: 60)
         }
+        try recordControlCost(0.5, model: "sonnet")
         let queued = await akit("analysis", "control", "run", ids.joined(separator: ","), "--layer", "swiftui", "--brain", brain.path,
-                                "--model", "sonnet", "--read-only-setup", "--env", "background", "--no-start", "--yes")
+                                "--model", "sonnet", "--read-only-setup", "--env", "background", "--no-start", "--yes", "--max-cost", "100")
         #expect(queued.code == 0 && queued.out.contains("Queued 33 cells of eval swiftui-"), "\(queued)")
         let eval = try #require(LayerEvalStore.evals(of: "swiftui", env: env).first?.id)
         let verdictFile = home.appending(path: ".akit/lab/evals/verdicts/swiftui.json")

@@ -10,12 +10,14 @@ extension AKitCLI {
     static let analysisEvaluateUsage = """
           akit analysis control evaluate LAYER [--model M] [--effort E] [--repeats N] [--no-sanity]
                               [--continue [ID] | --new] [--deny CMD[,CMD…] | --no-deny] [--brain DIR]
-                              [--env orca|herdr|background] [--keep] [--calibrate] [--yes] [--no-start] [--json]
+                              [--env orca|herdr|background] [--keep] [--calibrate] [--yes [--max-cost USD]]
+                              [--no-start] [--json]
                                           The layer's set as one layer eval (Claude Code only): its
                                           tasks, blocked tasks, home overlap, the cells to queue, ≈ cost
                                           (a range, from the recorded cost of earlier control cells of
                                           the model, else replays) and ≈ time in the Lab queue. --yes
-                                          queues them after the monthly limit check. With no recorded
+                                          --max-cost USD queues them when the estimate's high end is
+                                          at most USD, after the monthly limit check. With no recorded
                                           cost there is no estimate: --calibrate --yes queues 1 paid cell
                                           to measure it, and the eval reuses it (an eval whose setups
                                           don't all have a finished cell yet is continued by default;
@@ -23,8 +25,9 @@ extension AKitCLI {
                                           the layer and agent (or ID) while the layer renders the same
                                           files. 1 read-only cell on each of the first 3 tasks unless
                                           --no-sanity. In AKit's own repository the agent may not run
-                                          make snapshot, make run or make install (every setup);
-                                          --deny sets other commands, --no-deny none
+                                          make snapshot, make run, make restart, make install(-cli),
+                                          make screenshots, make open or open (every setup); --deny
+                                          sets other commands, --no-deny none
         """
 
     struct LayerEvaluateReport: Encodable {
@@ -71,6 +74,7 @@ extension AKitCLI {
         let noSanity = args.flag("--no-sanity")
         let keep = args.flag("--keep")
         let calibrate = args.flag("--calibrate")
+        let maxCost = args.value("--max-cost")
         let noStart = args.flag("--no-start")
         try args.finish()
         guard !fresh || (continueID == nil && !continueLatest) else { throw Failure(message: "--new starts another eval; leave out --continue.") }
@@ -88,6 +92,7 @@ extension AKitCLI {
         let repeats = try positiveNumber(repeatsText, "--repeats") ?? 3
         let environment = try labEnvironment(environmentText, env: env)
         let denied: [String]? = noDeny ? [] : denyText.map { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+        if let denied, let problem = ControlSetup.deniedProblem(denied) { throw Failure(message: problem) }
         let brainRoot = brainText.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
         guard Brain.load(from: brainRoot) != nil else {
             throw Failure(message: "No brain repo at \(brainRoot.path). Create it in AKit (Brain → Create Brain Repo) or pass --brain.")
@@ -125,8 +130,9 @@ extension AKitCLI {
         if options.json {
             var queued = 0
             if options.yes, plan.toQueue > 0 || calibrate {
-                queued = try await queueEval(plan, calibrate: calibrate, environment: environment, keep: keep, noStart: noStart, env: env,
-                                             out: { _ in })
+                let allowed = calibrate ? nil : try maxCostAllowing(maxCost, plan.estimate)
+                queued = try await queueEval(plan, calibrate: calibrate, maxCost: allowed, environment: environment, keep: keep, noStart: noStart,
+                                             env: env, out: { _ in })
             }
             let estimate = plan.estimate
             out(try labJSON(LayerEvaluateReport(
@@ -152,7 +158,7 @@ extension AKitCLI {
             if calibrate || (plan.toQueue > 0 && plan.estimate.perCell == nil) {
                 out("No paid cell is queued without --yes. Run it again with --calibrate --yes to queue 1 cell that measures the cost; the eval reuses it.")
             } else {
-                out("Run it again with --yes to queue them.")
+                out("Run it again with --yes --max-cost USD to queue them (USD: the most you allow).")
             }
             return 0
         }
@@ -160,7 +166,17 @@ extension AKitCLI {
             out("Nothing to queue. Skipped \(plan.skipped) cells already done or queued.")
             return 0
         }
-        _ = try await queueEval(plan, calibrate: calibrate, environment: environment, keep: keep, noStart: noStart, env: env, out: out)
+        if calibrate {
+            if let low = plan.estimate.low, let high = plan.estimate.high, plan.estimate.cells > 0 {
+                out(String(format: "The calibration cell is expected to cost $%.2f–$%.2f.", low / Double(plan.estimate.cells),
+                           high / Double(plan.estimate.cells)))
+            }
+        } else if plan.estimate.perCell != nil {
+            _ = try maxCostAllowing(maxCost, plan.estimate)
+        }
+        let allowed = calibrate ? nil : Double(maxCost ?? "")
+        _ = try await queueEval(plan, calibrate: calibrate, maxCost: allowed, environment: environment, keep: keep, noStart: noStart, env: env,
+                                out: out)
         return 0
     }
 
@@ -189,11 +205,11 @@ extension AKitCLI {
     }
 
     /// Queues the eval, or its one calibration cell; returns how many cells were queued.
-    private static func queueEval(_ plan: LayerEvals.EvalPlan, calibrate: Bool, environment: LabEnvironment?, keep: Bool, noStart: Bool,
-                                  env: HarnessEnvironment, out: (String) -> Void) async throws -> Int {
+    private static func queueEval(_ plan: LayerEvals.EvalPlan, calibrate: Bool, maxCost: Double?, environment: LabEnvironment?, keep: Bool,
+                                  noStart: Bool, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int {
         let queued: (runs: [LabRun], skipped: Int)
         do {
-            queued = try await LayerEvals.queue(plan, calibrateOnly: calibrate, environment: environment, keep: keep, akit: ownExecutable, env: env)
+            queued = try await LayerEvals.queue(plan, calibrateOnly: calibrate, maxCost: maxCost, environment: environment, keep: keep, akit: ownExecutable, env: env)
         } catch {
             throw Failure(message: error.localizedDescription)
         }

@@ -25,7 +25,7 @@ struct LayerVerdictBadge: View {
 }
 
 /// "Evals" on a brain layer's page (not on core): the last verdict per agent, evals still
-/// running, and Evaluate… / Create Layer Set… / Show in Error Analysis.
+/// running, and Evaluate… / Create Layer Set / Show in Error Analysis.
 struct LayerEvalsBox: View {
     @Environment(AppModel.self) private var model
     let layer: String
@@ -84,7 +84,7 @@ struct LayerEvalsBox: View {
                         Button("Show in Error Analysis") { model.showLayerSet(layer) }
                             .help("The set's page: its tasks, answers and evals")
                     } else if loaded != nil {
-                        Button("Create Layer Set…", systemImage: "plus", action: createSet)
+                        Button("Create Layer Set", systemImage: "plus", action: createSet)
                             .help("An empty set for \(layer), opened in Error Analysis → Evals")
                     }
                 }

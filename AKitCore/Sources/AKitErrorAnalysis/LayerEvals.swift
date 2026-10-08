@@ -3,8 +3,8 @@ import AKitFoundation
 import AKitLab
 import Foundation
 
-/// Brain → layer → Evaluate… and `akit analysis control evaluate` (`docs/design/layer-evals.md`,
-/// "UI"): the layer's set as one eval, planned and estimated before anything is queued. Paid
+/// Brain → layer → Evaluate… and `akit analysis control evaluate`
+/// (`docs/design/layer-evals.md`, "UI"): the layer's set as one eval, planned and estimated before anything is queued. Paid
 /// cells are queued only after the user saw the estimate; with no recorded cost the only
 /// paid step is one calibration cell, which the eval then reuses.
 public enum LayerEvals {
@@ -75,7 +75,8 @@ public enum LayerEvals {
                                                      projectsRoot: projectsRoot, now: now, env: env)
         let sanityCells = prepared.sanitySetup.map { ($0, prepared.sanityTasks, 1) }
         let counts = ControlRuns.plan(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats, sanity: sanityCells, env: env)
-        let estimate = ControlRuns.estimate(cells: counts.toQueue, agent: prepared.setups.first?.agent ?? agent, env: env)
+        let estimate = ControlRuns.estimate(cells: counts.toQueue, agent: prepared.setups.first?.agent ?? agent,
+                                            repo: prepared.runnable.first?.mainFolder, env: env)
         var resumable: Resumable?
         if !prepared.continuing, let latest = LayerEvalStore.latest(of: layer, agent: agent, env: env),
            overlays(of: latest.setups) == overlays(of: prepared.setups) {
@@ -104,42 +105,71 @@ public enum LayerEvals {
                          calibrating: manifest.setups.contains { setup in !finished.contains { $0.spec.controlSetup == setup } })
     }
 
-    /// Queues a planned eval: the monthly limit first, then the eval folder (a cell must find
-    /// its overlay), then the cells. `calibrateOnly`: exactly one cell, the first one not yet
-    /// done (repeat 1 of the baseline of the first task in a new eval), to measure the cost;
-    /// the eval keeps it. Without a recorded cost only that is queued.
-    public static func queue(_ plan: EvalPlan, calibrateOnly: Bool, environment: LabEnvironment?, keep: Bool, akit: URL,
-                             env: HarnessEnvironment) async throws -> (runs: [LabRun], skipped: Int) {
+    /// Queues a planned eval: the cells counted and estimated again (refused when more would
+    /// be queued than the plan said, or the estimate's high end is above `maxCost`), the monthly
+    /// limit with that estimate, then the eval folder (a cell must find its overlay), then the
+    /// cells. `calibrateOnly`: exactly one cell, the first one not yet done (repeat 1 of the
+    /// baseline of the first task in a new eval), to measure the cost; the eval keeps it.
+    /// Without a recorded cost only that is queued. One queue at a time per eval (a file lock),
+    /// so two calibrations can't both pass the check. A new eval's folder is removed again when
+    /// none of its cells could be queued.
+    public static func queue(_ plan: EvalPlan, calibrateOnly: Bool, maxCost: Double? = nil, environment: LabEnvironment?, keep: Bool,
+                             akit: URL, env: HarnessEnvironment) async throws -> (runs: [LabRun], skipped: Int) {
         let prepared = plan.prepared
         guard !prepared.runnable.isEmpty else {
             throw LayerSetups.Failure(message: "No task of the \(plan.layer) set can take the layer; see the blocked tasks.")
         }
-        var calibration: (task: ControlTask, setup: ControlSetup)?
-        if calibrateOnly {
-            let open = LabStore.list(env: env).contains { run in
-                run.spec.controlSetup?.layer?.evalID == prepared.evalID && (run.status == .queued || run.status == .running)
+        let paths = EvalPaths(env: env)
+        try FileManager.default.createDirectory(at: paths.layerEvals, withIntermediateDirectories: true)
+        let lock = paths.layerEvals.appending(path: ".\(AnalysisPaths.fileName(prepared.evalID)).lock")
+        return try await FileLock.holding(lock) {
+            let runs = LabStore.list(env: env)
+            // Counted again: a cell that failed or was cancelled since the plan would run again.
+            let counts = ControlRuns.plan(tasks: prepared.runnable, setups: prepared.setups, repeats: plan.repeats, sanity: plan.sanity, env: env)
+            let estimate = ControlRuns.estimate(cells: calibrateOnly ? 1 : counts.toQueue, agent: plan.agent ?? plan.estimate.agent,
+                                                repo: prepared.runnable.first?.mainFolder, records: SendLog.records(env: env), runs: runs)
+            var calibration: (task: ControlTask, setup: ControlSetup)?
+            if calibrateOnly {
+                if runs.contains(where: { $0.spec.controlSetup?.layer?.evalID == prepared.evalID && ($0.status == .queued || $0.status == .running) }) {
+                    throw LayerSetups.Failure(message: "A cell of the eval \(prepared.evalID) is queued or running: wait for it, it records the cost.")
+                }
+                let done = ControlRuns.doneKeys(tasks: prepared.runnable, env: env)
+                guard let first = ControlRuns.order(tasks: prepared.runnable, setups: prepared.setups, repeats: 1, sanity: nil)
+                    .first(where: { !done.contains(ControlRuns.cellKey(task: $0.task, setup: $0.setup, repeatIndex: $0.index)) }) else {
+                    throw LayerSetups.Failure(message: "Every first cell of the eval is done or queued: no calibration cell is left to run.")
+                }
+                calibration = (first.task, first.setup)
+            } else {
+                if counts.toQueue > plan.toQueue {
+                    throw LayerSetups.Failure(message: "The eval changed since the estimate (\(counts.toQueue) cells to run now, not "
+                                                  + "\(plan.toQueue)); check it again.")
+                }
+                if counts.toQueue > 0, estimate.perCell == nil {
+                    throw LayerSetups.Failure(message: "No estimate yet: " + estimate.costText + ". Queue 1 calibration cell first "
+                                                  + "(akit analysis control evaluate \(plan.layer) --calibrate --yes); the eval reuses it.")
+                }
+                if let maxCost, let high = estimate.high, high > maxCost {
+                    throw LayerSetups.Failure(message: String(format: "The estimate's high end $%.2f is above the most you allowed, $%.2f; "
+                                                                 + "check it again.", high, maxCost))
+                }
             }
-            if open {
-                throw LayerSetups.Failure(message: "A cell of the eval \(prepared.evalID) is queued or running: wait for it, it records the cost.")
+            try SendLog.checkLimit(estimate: calibrateOnly ? estimate.perCell : estimate.total,
+                                   settings: LabSettings.loadForSending(env: env), env: env)
+            let isNew = LayerEvalStore.manifest(prepared.evalID, env: env) == nil
+            try LayerEvalStore.create(prepared, repeats: plan.repeats, env: env)
+            do {
+                if let calibration {
+                    return try await ControlRuns.newControlRuns(tasks: [calibration.task], setups: [calibration.setup], repeats: 1,
+                                                                environment: environment, keep: keep, akit: akit, env: env)
+                }
+                return try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: plan.repeats,
+                                                            sanity: plan.sanity, environment: environment, keep: keep, akit: akit, env: env)
+            } catch {
+                // A new eval with no cell is no eval: its folder goes, so no plan offers to continue it.
+                let queued = LabStore.list(env: env).contains { $0.spec.controlSetup?.layer?.evalID == prepared.evalID }
+                if isNew, !queued { try? FileManager.default.removeItem(at: paths.layerEval(prepared.evalID)) }
+                throw error
             }
-            let done = ControlRuns.doneKeys(tasks: prepared.runnable, env: env)
-            guard let first = ControlRuns.order(tasks: prepared.runnable, setups: prepared.setups, repeats: 1, sanity: nil)
-                .first(where: { !done.contains(ControlRuns.cellKey(task: $0.task, setup: $0.setup, repeatIndex: $0.index)) }) else {
-                throw LayerSetups.Failure(message: "Every first cell of the eval is done or queued: no calibration cell is left to run.")
-            }
-            calibration = (first.task, first.setup)
-        } else if plan.toQueue > 0, plan.estimate.perCell == nil {
-            throw LayerSetups.Failure(message: "No estimate yet: " + plan.estimate.costText + ". Queue 1 calibration cell first "
-                                          + "(akit analysis control evaluate \(plan.layer) --calibrate --yes); the eval reuses it.")
         }
-        try SendLog.checkLimit(estimate: calibrateOnly ? plan.estimate.perCell : plan.estimate.total,
-                               settings: LabSettings.loadForSending(env: env), env: env)
-        try LayerEvalStore.create(prepared, repeats: plan.repeats, env: env)
-        if let calibration {
-            return try await ControlRuns.newControlRuns(tasks: [calibration.task], setups: [calibration.setup], repeats: 1,
-                                                        environment: environment, keep: keep, akit: akit, env: env)
-        }
-        return try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: plan.repeats,
-                                                    sanity: plan.sanity, environment: environment, keep: keep, akit: akit, env: env)
     }
 }

@@ -52,7 +52,7 @@ extension AKitCLI {
                                           The number of cells and the ≈ cost first; --yes queues them
           akit analysis control run [TASK[,TASK…]] --layer LAYER [--answer FIELD=VALUE]… [--eval ID]
                               [--brain DIR] [--model M] [--effort E] [--repeats N] [--read-only-setup]
-                              [--env orca|herdr|background] [--keep] [--no-start] [--yes]
+                              [--env orca|herdr|background] [--keep] [--no-start] [--yes --max-cost USD]
                                           A layer eval (Claude Code only): the brain layer is rendered
                                           once from a clean brain commit, and each cell gets either its
                                           required layers alone ("without LAYER") or them and LAYER
@@ -63,7 +63,8 @@ extension AKitCLI {
                                           only cell on each of the first 3 tasks. A new eval queues new
                                           cells; --eval ID continues one (its tasks, setups and repeats;
                                           no task list needed) while the layer renders the same files.
-                                          Pairs only within one eval
+                                          Pairs only within one eval. Paid cells as in evaluate: only
+                                          with a recorded cost, and --yes needs --max-cost
           akit analysis control compare TASK[,TASK…] [--json]
                                           pass@1 and pass^k per setup with 95% intervals, and for each
                                           variant the paired bootstrap over tasks: "helped" when at least
@@ -220,6 +221,7 @@ extension AKitCLI {
         let readOnly = args.flag("--read-only-setup")
         let keep = args.flag("--keep")
         let noStart = args.flag("--no-start")
+        let maxCost = args.value("--max-cost")
         let list = args.positional()
         try args.finish()
         // Continue of a layer eval: its own tasks and repeats, never others.
@@ -270,10 +272,10 @@ extension AKitCLI {
             let brainRoot = brainText.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
             return try await runLayerControl(layer, tasks: tasks, answerTexts: answerTexts, evalID: evalID, brainRoot: brainRoot, agent: agent,
                                              repeats: repeats, sanity: readOnly, environment: environment, keep: keep, noStart: noStart,
-                                             options: options, env: env, projectsRoot: projectsRoot, out: out)
+                                             maxCost: maxCost, options: options, env: env, projectsRoot: projectsRoot, out: out)
         }
-        guard answerTexts.isEmpty, evalID == nil, brainText == nil else {
-            throw Failure(message: "--answer, --eval and --brain go with --layer.")
+        guard answerTexts.isEmpty, evalID == nil, brainText == nil, maxCost == nil else {
+            throw Failure(message: "--answer, --eval, --brain and --max-cost go with --layer.")
         }
 
         if let fixMode {
@@ -310,7 +312,7 @@ extension AKitCLI {
         }
         if readOnly { setups.append(ControlSetup(name: "read-only", agent: agent, readOnly: true)) }
 
-        try printEstimate(cells: repeats * tasks.count * setups.count, agent: agent, env: env, out: out)
+        try printEstimate(cells: repeats * tasks.count * setups.count, agent: agent, repo: tasks.first?.mainFolder, env: env, out: out)
         guard options.yes else {
             out("Run it again with --yes to queue them.")
             return 0
@@ -336,8 +338,8 @@ extension AKitCLI {
     /// Agent runs cost money (Copilot bills per token): an estimate from the recorded cost of
     /// earlier control cells (else replays) of the same harness and model, before anything is
     /// queued (`ControlRuns.estimate`).
-    private static func printEstimate(cells: Int, agent: LabAgent, env: HarnessEnvironment, out: (String) -> Void) throws {
-        let estimate = ControlRuns.estimate(cells: cells, agent: agent, env: env)
+    private static func printEstimate(cells: Int, agent: LabAgent, repo: URL?, env: HarnessEnvironment, out: (String) -> Void) throws {
+        let estimate = ControlRuns.estimate(cells: cells, agent: agent, repo: repo, env: env)
         out("Up to \(cells) cells; \(estimate.costText).")
         guard let total = estimate.total else { return }
         do {
@@ -351,8 +353,8 @@ extension AKitCLI {
     /// run and why, the estimate; with --yes the eval folder first, then the cells.
     private static func runLayerControl(_ layer: String, tasks: [ControlTask], answerTexts: [String], evalID: String?, brainRoot: URL,
                                         agent: LabAgent, repeats: Int, sanity: Bool, environment: LabEnvironment?, keep: Bool,
-                                        noStart: Bool, options: AnalysisOptions, env: HarnessEnvironment, projectsRoot: URL,
-                                        out: (String) -> Void) async throws -> Int32 {
+                                        noStart: Bool, maxCost: String?, options: AnalysisOptions, env: HarnessEnvironment,
+                                        projectsRoot: URL, out: (String) -> Void) async throws -> Int32 {
         guard let brain = Brain.load(from: brainRoot) else {
             throw Failure(message: "No brain repo at \(brainRoot.path). Create it in AKit (Brain → Create Brain Repo) or pass --brain.")
         }
@@ -382,14 +384,34 @@ extension AKitCLI {
         prepared.warnings.forEach { out("Warning: \($0)") }
         guard !prepared.runnable.isEmpty else { throw Failure(message: "No task can take the layer; see the blocked tasks above.") }
 
-        let cells = repeats * prepared.runnable.count * prepared.setups.count + prepared.sanityTasks.count
-        try printEstimate(cells: cells, agent: prepared.setups.first?.agent ?? agent, env: env, out: out)
-        guard options.yes else {
-            out("Run it again with --yes to queue them.")
+        // The money rule of evaluate: only cells still to run are estimated; no estimate, no paid cells.
+        let counts = ControlRuns.plan(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats,
+                                      sanity: prepared.sanitySetup.map { ($0, prepared.sanityTasks, 1) }, env: env)
+        let estimate = ControlRuns.estimate(cells: counts.toQueue, agent: prepared.setups.first?.agent ?? agent,
+                                            repo: prepared.runnable.first?.mainFolder, env: env)
+        out("\(counts.toQueue) cells to run (\(counts.skipped) already done or queued); \(estimate.costText).")
+        if let time = estimate.timeText { out(time + ".") }
+        guard counts.toQueue > 0 else {
+            out("Nothing to queue. Skipped \(counts.skipped) cells already done or queued.")
             return 0
         }
+        guard estimate.perCell != nil else {
+            let calibrate = "Queue 1 calibration cell first: add the tasks to the layer's set and run akit analysis control evaluate \(layer) "
+                + "--calibrate --yes (or Brain → \(layer) → Evaluate…); the eval reuses it."
+            guard options.yes else {
+                out("No paid cell is queued without an estimate. " + calibrate)
+                return 0
+            }
+            throw Failure(message: "No estimate yet. " + calibrate)
+        }
+        guard options.yes else {
+            out("Run it again with --yes --max-cost USD to queue them.")
+            return 0
+        }
+        _ = try maxCostAllowing(maxCost, estimate)
         let queued: (runs: [LabRun], skipped: Int)
         do {
+            try SendLog.checkLimit(estimate: estimate.total, settings: LabSettings.loadForSending(env: env), env: env)
             // The eval folder first: a queued cell must find its overlay.
             try LayerEvalStore.create(prepared, repeats: repeats, env: env)
             queued = try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats,
@@ -408,6 +430,21 @@ extension AKitCLI {
             + " (\(first.spec.environment.title)).\(skipped)")
         if !noStart { try await startNext(env: env, out: out) }
         return 0
+    }
+
+    /// `--max-cost USD`, required with `--yes` before paid cells are queued: refused when the
+    /// estimate's high end is above it.
+    static func maxCostAllowing(_ text: String?, _ estimate: CostEstimate) throws -> Double {
+        let high = estimate.high ?? 0
+        guard let text else {
+            throw Failure(message: String(format: "--yes queues paid cells: add --max-cost USD, the most you allow (the estimate's high end is $%.2f).",
+                                          high))
+        }
+        guard let max = Double(text), max >= 0 else { throw Failure(message: "--max-cost takes US dollars, like 25 or 7.50.") }
+        guard high <= max else {
+            throw Failure(message: String(format: "The estimate's high end $%.2f is above --max-cost $%.2f.", high, max))
+        }
+        return max
     }
 
     /// `FIELD=VALUE` typed by the field's kind in the layer or the layers it requires: bool

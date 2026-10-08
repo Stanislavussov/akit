@@ -313,8 +313,10 @@ enum ReplayRun {
                                            env: env)
         try gate.check(.code(.claudeCode))
         try SendLog.checkLimit(estimate: nil, settings: gate.settings, env: env)
+        // In AKit's own repository the agent may not build, install or start AKit from the clone.
+        let denied = ControlSetup.disallowedTools(ControlSetup.defaultDenied(repo: URL(filePath: task.repo)))
         let agent = try await AgentRun.run(prompt: task.prompt, spec: run.spec, in: work, runFolder: run.folder, exposeRunFolder: false,
-                                           env: env, out: out)
+                                           denied: denied, env: env, out: out)
         guard !agent.exit.cancelled else { throw CancellationError() }
         let logError = SendLog.appendAfterRun(SendRecord(purpose: "replay", session: nil, runID: run.id, destination: gate.destination,
                                                          model: model, inputCharacters: task.prompt.count, usage: agent.usage),

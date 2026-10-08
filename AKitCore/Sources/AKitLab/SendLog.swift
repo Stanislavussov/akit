@@ -178,9 +178,15 @@ public enum SendLog {
     }
 
     /// Throws when the month's recorded cost plus `estimate` would pass the monthly limit.
-    /// Without an estimate only the cost so far is checked.
+    /// Without an estimate only the cost so far is checked. A log that exists but can't be
+    /// read would count as nothing spent, so it refuses until it is fixed.
     public static func checkLimit(estimate: Double?, settings: LabSettings, env: HarnessEnvironment, now: Date = .now) throws {
         guard let limit = settings.monthlyLimit else { return }
+        let url = file(env: env)
+        if FileManager.default.fileExists(atPath: url.path), (try? Data(contentsOf: url)) == nil {
+            throw SendAccounts.Failure(message: "Not sent: \(url.path) can't be read, so the monthly limit can't be checked. "
+                                           + "Fix or move the file, then try again.")
+        }
         let spent = monthCost(records(env: env), at: now)
         let next = estimate ?? 0
         guard spent + next <= limit else {
