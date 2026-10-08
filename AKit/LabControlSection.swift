@@ -89,7 +89,6 @@ struct LabControlSection: View {
             if let version = control.harnessVersion {
                 Text("Claude Code \(version)").font(.caption).foregroundStyle(.secondary)
             }
-
         }
     }
 

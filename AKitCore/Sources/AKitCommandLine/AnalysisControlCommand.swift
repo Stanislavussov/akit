@@ -43,7 +43,7 @@ extension AKitCLI {
                                           must fail. Cells already done (same task, setup, base, repeat)
                                           are skipped. The agent defaults to Claude Code with your model.
                                           The number of cells and the ≈ cost first; --yes queues them
-          akit analysis control run TASK[,TASK…] --layer LAYER [--answer FIELD=VALUE]… [--eval ID]
+          akit analysis control run [TASK[,TASK…]] --layer LAYER [--answer FIELD=VALUE]… [--eval ID]
                               [--brain DIR] [--model M] [--effort E] [--repeats N] [--read-only-setup]
                               [--env orca|herdr|background] [--keep] [--no-start] [--yes]
                                           A layer eval (Claude Code only): the brain layer is rendered
@@ -54,8 +54,9 @@ extension AKitCLI {
                                           true|false, a list a,b). Tasks whose clone can't take the
                                           layer are listed and left out. --read-only-setup adds 1 read-
                                           only cell on each of the first 3 tasks. A new eval queues new
-                                          cells; --eval ID continues one (its tasks and setups) while the
-                                          layer renders the same files. Pairs only within one eval
+                                          cells; --eval ID continues one (its tasks, setups and repeats;
+                                          no task list needed) while the layer renders the same files.
+                                          Pairs only within one eval
           akit analysis control compare TASK[,TASK…] [--json]
                                           pass@1 and pass^k per setup with 95% intervals, and for each
                                           variant the paired bootstrap over tasks: "helped" when at least
@@ -192,9 +193,28 @@ extension AKitCLI {
         let readOnly = args.flag("--read-only-setup")
         let keep = args.flag("--keep")
         let noStart = args.flag("--no-start")
-        guard let list = args.positional() else { throw Failure(message: "Which tasks? akit analysis control run TASK[,TASK…].") }
+        let list = args.positional()
         try args.finish()
-        let tasks = try controlTasks(list, env: env)
+        // Continue of a layer eval: its own tasks and repeats, never others.
+        var continued: LayerEvalManifest?
+        if let evalID {
+            guard layer != nil else { throw Failure(message: "--answer, --eval and --brain go with --layer.") }
+            guard let manifest = LayerEvalStore.manifest(evalID, env: env) else {
+                throw Failure(message: LayerEvalStore.problem(evalID, env: env) ?? "No eval \(evalID).")
+            }
+            continued = manifest
+        }
+        let tasks: [ControlTask]
+        if let continued {
+            if let list, Set(try controlTasks(list, env: env).map(\.id)) != Set(continued.tasks) {
+                throw Failure(message: "The eval \(continued.id) runs its own tasks (\(continued.tasks.joined(separator: ", "))); "
+                                  + "leave out the task list, or give exactly those.")
+            }
+            tasks = continued.tasks.compactMap { ControlTasks.load($0, env: env) }
+        } else {
+            guard let list else { throw Failure(message: "Which tasks? akit analysis control run TASK[,TASK…].") }
+            tasks = try controlTasks(list, env: env)
+        }
         let environment = try labEnvironment(environmentText, env: env)
         guard let harness = LabHarness(rawValue: harnessText ?? "claude-code") else { throw Failure(message: "--harness is claude-code or pi.") }
         var agent = LabRuns.defaultAgent(harness, env: env)
@@ -204,7 +224,16 @@ extension AKitCLI {
             throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
         }
         guard harness == .pi || !agent.model.isEmpty else { throw Failure(message: "Which model? --model.") }
-        let repeats = try positiveNumber(repeatsText, "--repeats") ?? 3
+        let repeats: Int
+        if let continued {
+            if let given = try positiveNumber(repeatsText, "--repeats"), given != continued.repeats {
+                throw Failure(message: "The eval \(continued.id) runs \(continued.repeats) repeats; leave out --repeats, "
+                                  + "or give --repeats \(continued.repeats).")
+            }
+            repeats = continued.repeats
+        } else {
+            repeats = try positiveNumber(repeatsText, "--repeats") ?? 3
+        }
 
         if let layer {
             guard setupsText == nil, patchFile == nil, patchText == nil, fixMode == nil else {
@@ -397,7 +426,6 @@ extension AKitCLI {
     }
 
     /// Tasks by id or a unique id prefix, comma-separated.
-
     private static func controlTasks(_ list: String, env: HarnessEnvironment) throws -> [ControlTask] {
         let all = ControlTasks.list(env: env)
         return try list.split(separator: ",").map { part in

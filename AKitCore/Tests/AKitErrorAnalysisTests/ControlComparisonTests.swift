@@ -146,6 +146,21 @@ struct ControlComparisonTests {
         #expect(both.paired.count == 1 && both.paired[0].baseline == baseline)
     }
 
+    @Test func everyLayerPairHasNoConclusionYet() throws {
+        // Enough cells and repeats, below 95%: a patch pair would say "didn't show it helped".
+        let baseCells = [1, 1, 2, 3, 0, 2], variantCells = [3, 2, 1, 3, 1, 2]
+        let patch = try #require(ControlComparison.compare(cells(baseline, passes: baseCells) + cells(variant, passes: variantCells)).paired.first)
+        #expect(patch.verdict == .notShown && (patch.improvementShare ?? 1) < ControlComparison.helpedShare)
+        let layer = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: baseCells)
+                                                           + cells(layerSetup(.layer), passes: variantCells)).paired.first)
+        #expect(layer.verdict == .noConclusion && layer.improvementShare == patch.improvementShare)
+        #expect(layer.reason.contains("no verdict level of its own yet"))
+        // No mass on improvement at all: still no conclusion.
+        let same = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: [2, 1, 3, 0, 2])
+                                                          + cells(layerSetup(.layer), passes: [2, 1, 3, 0, 2])).paired.first)
+        #expect(same.verdict == .noConclusion && same.improvementShare == 0)
+    }
+
     @Test func layerCellsRunWithoutTheLayerAreLeftOut() {
         func run(_ id: String, setup: ControlSetup, overlay: [String]?, version: String? = nil) -> LabRun {
             let spec = RunSpec(id: id, kind: .control, title: "", createdAt: Date(timeIntervalSince1970: Double(id.count)), folder: "/",

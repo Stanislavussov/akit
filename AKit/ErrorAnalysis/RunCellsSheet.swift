@@ -269,7 +269,7 @@ struct RunCellsSheet: View {
             Picker("Layer", selection: $layerName) {
                 ForEach(layers, id: \.self) { Text($0).tag(String?.some($0)) }
             }
-            Text("Baseline: the layer's required layers alone; variant: them and the layer. Rendered once from the brain's commit with the project's saved answers and the layer's defaults; the layer's text is appended to the clone's own CLAUDE.md.")
+            Text("Baseline: the layer's required layers alone; variant: them and the layer. Rendered once from the brain's commit with the project's saved answers and the layer's defaults; the layer's text is appended to the file Claude Code reads in the clone.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -308,8 +308,10 @@ struct RunCellsSheet: View {
                     .font(.caption)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !eval.notes.isEmpty {
-                Text("\(eval.notes.count) tasks: the layer's text goes into the project's own CLAUDE.md (the project gets it only by accepting the suggestion).")
+            // Per file: tasks whose project has its own file that gets the layer's text.
+            ForEach(Dictionary(grouping: eval.ownFiles, by: \.value).sorted(by: { $0.key < $1.key }), id: \.key) { file, tasks in
+                Text("\(tasks.count == 1 ? "1 task" : "\(tasks.count) tasks"): the layer's text is appended to the project's own \(file); "
+                     + "the project would get it only by accepting the suggestion.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

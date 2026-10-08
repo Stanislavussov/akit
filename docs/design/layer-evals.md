@@ -137,7 +137,9 @@ Further choices of the step 4 plan, accepted on the same day:
   [Layer setup: on top of the project](#layer-setup-on-top-of-the-project) and apply with
   hiding. `CloneFiles` reads either the base commit's git tree (at queueing) or the clone's
   folder (before the agent); a test proves both give the same placement. Paths are compared
-  ignoring letter case. A link out of the clone, an absolute path, `..` or `.git` blocks.
+  ignoring letter case. A link out of the clone, an absolute path, `..` or `.git` blocks;
+  so does a root `AGENTS.md` without any `CLAUDE.md` (see [Open questions](#open-questions)).
+  A skill's executable file stays executable (`executable` in its entry).
 - `LayerSetups.prepare` (`AKitErrorAnalysis`): refuses a Pi agent, the core layer, tasks of
   more than one repository, a brain with uncommitted changes in the layer's closure or its
   skills, a render error (a required field without a value) and merged JSON outputs; renders
@@ -149,7 +151,8 @@ Further choices of the step 4 plan, accepted on the same day:
 - Eval folder `layer-evals/<eval-id>/` with `manifest.json` and `overlays/<hash>/`, written
   under a temporary name and moved into place before the cells are queued. Continue (`--eval
   ID`) renders again and refuses when a hash differs; otherwise it reuses the manifest's
-  setups and tasks verbatim.
+  setups, tasks and repeats verbatim (`--eval ID` needs no task list; another list or
+  `--repeats` value is refused).
 - Cell key: layer setups add the layer, role, overlay hash, eval id and rules version; the
   keys of other setups stay byte-identical (golden test). Read-only sanity cells (required
   layers alone, read-only tools, the first 3 tasks, 1 repeat) are queued after the first
@@ -157,8 +160,9 @@ Further choices of the step 4 plan, accepted on the same day:
 - `result.json`: `control.overlay` (always on a layer cell) and `control.harnessVersion`.
   The comparison leaves out a layer cell without `overlay` ("n cells run by an older akit,
   left out"), and warns when a pair mixes Claude Code versions.
-- Pairing as in [Format](#format). A layer pair gets today's rule without a production
-  signal: "no conclusion" until slice 5.
+- Pairing as in [Format](#format). Every layer pair says "no conclusion" until slice 5
+  gives layers their own level, whatever its bootstrap share. A layer cell run by an older
+  akit (no `overlay`) is not counted as done, so it is queued again.
 - UI: Error Analysis → Evals → **Run Cells…** → Difference **A brain layer** (layer picker,
   the two setups with their overlay hashes, blocked tasks, notes, overlap). The app queues
   only through an `akit` whose `akit lab --help` names "control cells with a brain layer".
@@ -170,7 +174,6 @@ Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (se
 `AGENTS.md` and no import, which was not read in this slice.
 
 ## Terms
-
 
 - **Layer eval**: control cells of one layer's task set under two setups, baseline and
   layer, and their comparison.
@@ -647,7 +650,10 @@ weakened tests or suppressions).
   stays as it is; the layer's verdict is offline only.
 - Claude Code reading `AGENTS.md` by itself: the rule "the project's `AGENTS.md`, unread
   before, stays unread" assumes it doesn't. Not yet checked against a transcript; if it
-  does, the `AGENTS.md` section goes to `AGENTS.md` instead.
+  does, the `AGENTS.md` section goes to `AGENTS.md` instead. Until it is checked, a task
+  whose base commit has a root `AGENTS.md` and neither `CLAUDE.md` nor `.claude/CLAUDE.md`
+  is blocked ("The project has AGENTS.md but no CLAUDE.md; AKit can't yet tell what Claude
+  Code reads there."): there a new `CLAUDE.md` would hide the question.
 - A `diff` check sees T0..T1 only; a pattern the agent added and removed again isn't
   counted (a `transcript` or later `order` question).
 - Pi's choice when a folder has both `AGENTS.md` and `CLAUDE.md` isn't verified (not in v1, I2).

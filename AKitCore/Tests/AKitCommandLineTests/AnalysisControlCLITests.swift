@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AKitErrorAnalysis
 import AKitFoundation
 @testable import AKitCommandLine
 
@@ -129,6 +130,25 @@ extension AKitCLITests {
         // Continue the eval: its cells are all queued already.
         let again = await run(["--eval", folder.lastPathComponent, "--read-only-setup", "--env", "background", "--yes"])
         #expect(again.out.contains("(continued)") && again.out.hasSuffix("Nothing to queue. Skipped 7 cells already done or queued."), "\(again)")
+
+        // Without a task list it takes the eval's tasks and repeats; another count or list is refused.
+        func cont(_ extra: [String]) async -> (code: Int32, out: String, err: String) {
+            var out: [String] = []
+            var err: [String] = []
+            let code = await AKitCLI.run(["analysis", "control", "run", "--layer", "swiftui", "--brain", brain.path, "--model", "sonnet",
+                                          "--no-start", "--eval", folder.lastPathComponent, "--env", "background"] + extra,
+                                         env: env, cwd: project, projectsRoot: home.appending(path: "Projects"),
+                                         out: { out.append($0) }, err: { err.append($0) })
+            return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
+        }
+        let own = await cont(["--read-only-setup", "--yes"])
+        #expect(own.code == 0 && own.out.hasSuffix("Nothing to queue. Skipped 7 cells already done or queued."), "\(own)")
+        #expect(await cont(["--repeats", "3"]).code == 0)
+        #expect(await cont(["--repeats", "5"]).err.contains("runs 3 repeats; leave out --repeats, or give --repeats 3."))
+        _ = await akit("analysis", "control", "task", "new", "--repo", ".", "--base", "HEAD", "--prompt", "Other", "--tests", "true")
+        let other = try #require(ControlTasks.list(env: env).first { $0.id != id }?.id)
+        #expect(await cont([other]).err.contains("runs its own tasks (\(id))"))
+        #expect(await cont([id]).code == 0)
     }
 
     @Test func localAnalysisCommandsRefuseTheModelFlags() async throws {

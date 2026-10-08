@@ -134,7 +134,6 @@ final class StreamPrinter: @unchecked Sendable {
             case .claudeCode where object["type"] as? String == "system" && object["subtype"] as? String == "init":
                 harnessVersion = object["claude_code_version"] as? String
             case .claudeCode where object["type"] as? String == "result":
-
                 recorded = ModelCall.claudeUsage(object)
                 lastError = object["is_error"] as? Bool == true
                     ? SecretFilter.masked(String((object["result"] as? String ?? "Claude Code stopped with an error.").prefix(300))) : nil

@@ -30,13 +30,17 @@ public struct ControlOverlay: Codable, Sendable, Hashable {
         public var sha256: String?
         /// The link's destination, for `claudeSkillsLink`.
         public var linkTarget: String?
+        /// The brain's file is executable (a skill's script); nil when it isn't.
+        public var executable: Bool?
 
-        public init(path: String, kind: Kind, skill: String? = nil, sha256: String? = nil, linkTarget: String? = nil) {
+        public init(path: String, kind: Kind, skill: String? = nil, sha256: String? = nil, linkTarget: String? = nil,
+                    executable: Bool? = nil) {
             self.path = path
             self.kind = kind
             self.skill = skill
             self.sha256 = sha256
             self.linkTarget = linkTarget
+            self.executable = executable
         }
     }
 
@@ -69,8 +73,8 @@ public struct ControlOverlay: Codable, Sendable, Hashable {
         self.layers = layers
     }
 
-    public mutating func add(_ path: String, kind: Kind, skill: String? = nil, data: Data) {
-        insert(Entry(path: path, kind: kind, skill: skill, sha256: Checksum.sha256(data)))
+    public mutating func add(_ path: String, kind: Kind, skill: String? = nil, data: Data, executable: Bool = false) {
+        insert(Entry(path: path, kind: kind, skill: skill, sha256: Checksum.sha256(data), executable: executable ? true : nil))
         contents[path] = data
     }
 
@@ -108,6 +112,7 @@ public struct ControlOverlay: Codable, Sendable, Hashable {
             let url = folder.appending(path: "files").appending(path: entry.path)
             try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: url)
+            if entry.executable == true { try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -175,6 +180,10 @@ extension ControlOverlay {
         public var path: String
         public var action: Action
         public var data: Data
+        /// The overlay entry it places.
+        public var kind: Kind
+        /// A new file that must be executable.
+        public var executable = false
     }
 
     /// The placement rules (`layer-evals.md`, "Layer setup: on top of the project"): append the
@@ -197,20 +206,20 @@ extension ControlOverlay {
                 case .failure(let failure): return .blocked(failure.message)
                 case .success(let target):
                     if view.exists(target.path) {
-                        writes.append(Write(path: target.path, action: .append, data: data))
+                        writes.append(Write(path: target.path, action: .append, data: data, kind: entry.kind))
                         notes.append("The layer's AGENTS.md section is appended to the project's own \(target.path)\(target.why).")
                     } else {
-                        writes.append(Write(path: target.path, action: .create, data: data))
+                        writes.append(Write(path: target.path, action: .create, data: data, kind: entry.kind))
                         view.add(target.path)
                     }
                 }
             case .markdown:
                 guard let path = view.resolve(entry.path) else { return .blocked(outside(entry.path)) }
                 if view.exists(path) {
-                    writes.append(Write(path: path, action: .append, data: data))
+                    writes.append(Write(path: path, action: .append, data: data, kind: entry.kind))
                     notes.append("The layer's \(entry.path) is appended to the project's own \(path).")
                 } else {
-                    writes.append(Write(path: path, action: .create, data: data))
+                    writes.append(Write(path: path, action: .create, data: data, kind: entry.kind))
                     view.add(path)
                 }
             case .skillFile:
@@ -224,7 +233,7 @@ extension ControlOverlay {
                 }
                 guard let path = view.resolve(entry.path) else { return .blocked(outside(entry.path)) }
                 if view.exists(path) { return .blocked("\(path) is already in the project; the layer's skill file would replace it.") }
-                writes.append(Write(path: path, action: .create, data: data))
+                writes.append(Write(path: path, action: .create, data: data, kind: entry.kind, executable: entry.executable == true))
                 view.add(path)
             case .claudeSkillsLink:
                 let target = entry.linkTarget ?? "../.agents/skills"
@@ -232,9 +241,11 @@ extension ControlOverlay {
                 guard let folder = parent.isEmpty ? "" : view.resolve(parent) else { return .blocked(outside(entry.path)) }
                 let path = folder.isEmpty ? (entry.path as NSString).lastPathComponent
                     : folder + "/" + (entry.path as NSString).lastPathComponent
+                // The link itself must point inside the clone.
+                guard CloneFiles.normalize(target, from: folder) != nil else { return .blocked(outside(entry.path)) }
                 switch view.kind(of: path) {
                 case nil:
-                    writes.append(Write(path: view.spelled(path), action: .link(target), data: Data()))
+                    writes.append(Write(path: view.spelled(path), action: .link(target), data: Data(), kind: entry.kind))
                 case .link(let existing):
                     guard CloneFiles.normalize(existing, from: (path as NSString).deletingLastPathComponent)?.lowercased()
                         == CloneFiles.normalize(target, from: (path as NSString).deletingLastPathComponent)?.lowercased() else {
@@ -248,7 +259,7 @@ extension ControlOverlay {
             case .file:
                 guard let path = view.resolve(entry.path) else { return .blocked(outside(entry.path)) }
                 if view.exists(path) { return .blocked("\(path) is already in the project; the layer's file would replace it.") }
-                writes.append(Write(path: path, action: .create, data: data))
+                writes.append(Write(path: path, action: .create, data: data, kind: entry.kind))
                 view.add(path)
             }
         }
@@ -279,6 +290,11 @@ extension ControlOverlay {
             }
             if files.kind(of: path) != nil { return .success((path, "")) }
         }
+        // Not verified yet whether Claude Code reads a project's AGENTS.md by itself
+        // (layer-evals.md, Open questions): until it is, such a task is refused.
+        if files.exists("AGENTS.md") {
+            return .failure(Failure(message: "The project has AGENTS.md but no CLAUDE.md; AKit can't yet tell what Claude Code reads there."))
+        }
         guard let path = files.resolve("CLAUDE.md") else { return .failure(Failure(message: outside("CLAUDE.md"))) }
         return .success((path, ""))
     }
@@ -293,6 +309,7 @@ extension ControlOverlay {
             switch write.action {
             case .create:
                 try write.data.write(to: url)
+                if write.executable { try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path) }
             case .append:
                 var content = (try? Data(contentsOf: url)) ?? Data()
                 if !content.isEmpty { content.append(Data((content.last == UInt8(ascii: "\n") ? "\n" : "\n\n").utf8)) }
@@ -315,7 +332,8 @@ enum CloneHiding {
         var excluded: [String] = []
         var seen: Set<String> = []
         for path in paths where seen.insert(path).inserted {
-            if await LabGit.run(["ls-files", "--error-unmatch", "--", path], in: folder, env: env)?.succeeded == true {
+            // A pathspec, read literally: a path with `*` or `:` names only itself.
+            if await LabGit.run(["ls-files", "--error-unmatch", "--", ":(literal)" + path], in: folder, env: env)?.succeeded == true {
                 _ = await LabGit.run(["update-index", "--assume-unchanged", "--", path], in: folder, env: env)
             } else {
                 excluded.append(path)
@@ -442,7 +460,6 @@ public struct CloneFiles: Sendable, Equatable {
         for match in text.matches(of: pattern) {
             var name = String(match.1)
             while let last = name.last, ".,;:!?".contains(last) { name.removeLast() }
-
             guard let target = Self.normalize(name, from: folder), let resolved = resolve(target) else { continue }
             if resolved.lowercased() == file.lowercased() { return true }
         }

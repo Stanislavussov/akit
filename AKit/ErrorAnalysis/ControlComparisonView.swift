@@ -164,7 +164,6 @@ private struct PairedVerdict: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-
             }
         }
         .padding(10)

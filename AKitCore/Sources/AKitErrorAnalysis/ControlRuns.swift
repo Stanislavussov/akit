@@ -50,8 +50,12 @@ public enum ControlRuns {
         guard !tasks.isEmpty, !setups.isEmpty, repeats > 0 else {
             throw LabStore.Failure(message: "Pick at least one task, one setup and one repeat.")
         }
-        if (setups + [sanity?.setup].compactMap { $0 }).contains(where: { $0.layer != nil && $0.agent.harness != .claudeCode }) {
+        let all = setups + [sanity?.setup].compactMap { $0 }
+        if all.contains(where: { $0.layer != nil && $0.agent.harness != .claudeCode }) {
             throw LabStore.Failure(message: "Layer evals run Claude Code only for now.")
+        }
+        if let both = all.first(where: { $0.layer != nil && $0.patch != nil }) {
+            throw LabStore.Failure(message: "The setup \(both.name) has both a patch and a brain layer; a setup makes one difference.")
         }
         // A test oracle that fails on its reference commit can't tell a fix from noise.
         if let red = tasks.first(where: { $0.referenceGreen == false }) {
@@ -59,8 +63,11 @@ public enum ControlRuns {
                                        + "first (akit analysis control task check \(red.id)).")
         }
         let existing = LabStore.list(env: env).filter { $0.spec.kind == .control }
+        // A layer cell an older akit ran without the layer (no overlay notes) is not done:
+        // comparisons leave it out, so it runs again.
         var done = Set(existing.compactMap { run -> String? in
-            run.status == .finished ? run.result?.control?.key : nil
+            guard run.status == .finished, let control = run.result?.control else { return nil }
+            return run.spec.controlSetup?.layer != nil && control.overlay == nil ? nil : control.key
         })
         let byID = Dictionary((tasks + (sanity?.tasks ?? [])).map { ($0.id, $0) }) { first, _ in first }
         for run in existing where run.status == .queued || run.status == .running {
@@ -143,7 +150,6 @@ public enum ControlRuns {
                                      // Always present on a layer cell: an older akit that ignored the layer leaves it out.
                                      overlay: setup.layer != nil ? (facts.overlayNotes ?? []) : nil,
                                      harnessVersion: facts.harnessVersion)
-
         switch task.oracle {
         case .tests:
             outcome.passed = facts.tests?.passed ?? false

@@ -68,7 +68,6 @@ extension AKitCLI {
                                           or control cell, also control cells with a brain layer
                                           (akit analysis control run --layer)
 
-
         Sending policy (every model call that sends session data or code; Settings → Sending policy):
           akit lab policy [--json]        This Mac's kind, allowed destinations, Pi accounts, scrub
                                           patterns and monthly limit

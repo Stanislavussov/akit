@@ -271,7 +271,6 @@ public enum ControlCell {
                      testsDropped: after.markers < before.markers,
                      changedTestFiles: before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted(),
                      overlayNotes: overlayNotes, transcriptFile: transcriptFile, harnessVersion: agent.harnessVersion)
-
     }
 
     /// The runbook's sanity check: the task's test command must pass on its reference commit

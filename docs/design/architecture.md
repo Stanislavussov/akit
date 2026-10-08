@@ -119,7 +119,6 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitProjectSetup` | Foundation, Brain, Render, Insights |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
-
 | `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 

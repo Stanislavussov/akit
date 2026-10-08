@@ -32,6 +32,9 @@ public enum LayerSetups {
         public var blocked: [String: String]
         /// Task id → what the layer's placement noted (appended to the project's own CLAUDE.md, …).
         public var notes: [String: [String]]
+        /// Task id → the project's own file the layer's AGENTS.md text is appended to
+        /// (`CLAUDE.md`, `.claude/CLAUDE.md`, or `AGENTS.md` when CLAUDE.md brings it in).
+        public var ownFiles: [String: String]
         /// Skills of the layer the agent already has elsewhere.
         public var overlap: [String]
         public var warnings: [String]
@@ -132,6 +135,7 @@ public enum LayerSetups {
         var runnable: [ControlTask] = []
         var blocked: [String: String] = [:]
         var notes: [String: [String]] = [:]
+        var ownFiles: [String: String] = [:]
         var projectSkills: [String: [String]] = [:]
         let ownSkills = full.skills
         for task in chosen {
@@ -159,7 +163,10 @@ public enum LayerSetups {
                 blocked[task.id] = reason
                 continue
             }
-            if case .writes(_, let placed) = ControlOverlay.place(layerOverlay, in: tree), !placed.isEmpty { notes[task.id] = placed }
+            if case .writes(let writes, let placed) = ControlOverlay.place(layerOverlay, in: tree) {
+                if !placed.isEmpty { notes[task.id] = placed }
+                ownFiles[task.id] = writes.first { $0.kind == .agentsSection && $0.action == .append }?.path
+            }
             runnable.append(task)
         }
 
@@ -198,7 +205,7 @@ public enum LayerSetups {
         }
         if sanitySetup == nil { sanityTasks = [] }
         return Prepared(evalID: evalID, layer: layer, setups: setups, sanitySetup: sanitySetup, sanityTasks: sanityTasks, overlays: overlays,
-                        runnable: runnable, blocked: blocked, notes: notes, overlap: overlap, warnings: warnings + full.warnings,
+                        runnable: runnable, blocked: blocked, notes: notes, ownFiles: ownFiles, overlap: overlap, warnings: warnings + full.warnings,
                         brainCommit: brainCommit, values: values, continuing: manifest != nil)
     }
 
@@ -219,7 +226,10 @@ public enum LayerSetups {
         let result = Render.render(bundle, forHome: false)
         guard result.errors.isEmpty else {
             let what = role == .layer ? layer : "the layers \(layer) requires"
-            throw Failure(message: "\(what.prefix(1).uppercased() + what.dropFirst()) can't be rendered: " + result.errors.joined(separator: " "))
+            let hint = result.errors.contains { $0.contains(" is required by ") }
+                ? " Set it with --answer, or answer it for the project in Brain → Set Up Project…." : ""
+            throw Failure(message: "\(what.prefix(1).uppercased() + what.dropFirst()) can't be rendered: "
+                              + result.errors.joined(separator: " ") + hint)
         }
         if let merged = result.outputs.first(where: \.mergesJSON) {
             throw Failure(message: "\(merged.layers.joined(separator: ", ")) merges keys into \(merged.path) (MCP servers or Claude Code settings); "
@@ -241,7 +251,12 @@ public enum LayerSetups {
                     overlay.add(output.path, kind: .agentsSection, data: data)
                 } else if output.path.hasPrefix(skillsPrefix) {
                     let name = output.path.dropFirst(skillsPrefix.count).split(separator: "/").first.map(String.init)
-                    overlay.add(output.path, kind: .skillFile, skill: name, data: data)
+                    // A skill's script keeps its executable bit.
+                    let source = name.flatMap { name in brain.skills.first { $0.name == name } }.map { skill in
+                        skill.folder.appending(path: String(output.path.dropFirst(skillsPrefix.count + (name?.count ?? 0) + 1)))
+                    }
+                    let executable = source.map { FileManager.default.isExecutableFile(atPath: $0.path) } ?? false
+                    overlay.add(output.path, kind: .skillFile, skill: name, data: data, executable: executable)
                 } else if lower.hasSuffix(".md") {
                     overlay.add(output.path, kind: .markdown, data: data)
                 } else {

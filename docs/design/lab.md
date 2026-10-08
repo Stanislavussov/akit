@@ -353,7 +353,6 @@ Lab screen shows the spread, not only the mean.
 - **Layer evals** (`layer-evals.md`): control cells whose setup places a brain layer's
   stored overlay into the clone (`ControlOverlay`, slice 1 built 2026-10-08); the layer's
   own checks next to the oracle are step 5.
-
 - **Module split** (`architecture.md`, done 2026-09-29): Lab is its own module
   (`AKitLab`); launchers live inside it.
 

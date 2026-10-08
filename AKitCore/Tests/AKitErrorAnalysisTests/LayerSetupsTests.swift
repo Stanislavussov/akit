@@ -68,11 +68,30 @@ struct LayerSetupsTests {
         // The project has its own CLAUDE.md: noted.
         #expect(prepared.runnable.map(\.id) == ["make-value-2-abcd"] && prepared.blocked.isEmpty)
         #expect(prepared.notes["make-value-2-abcd"]?.first?.contains("project's own CLAUDE.md") == true)
+        #expect(prepared.ownFiles == ["make-value-2-abcd": "CLAUDE.md"])
         // Sanity: read-only, the required layers alone, on the first tasks.
         #expect(prepared.sanitySetup?.readOnly == true && prepared.sanitySetup?.layer == baseline && prepared.sanityTasks.count == 1)
         // The brain is only read.
         #expect(await fixture.git("rev-parse", "HEAD", in: fixture.brain) == headBefore)
         #expect(await fixture.git("status", "--porcelain", in: fixture.brain) == "")
+    }
+
+    @Test func skillScriptsStayExecutableAndAgentsOnlyProjectsAreBlocked() async throws {
+        try await fixture.makeBrain()
+        try fixture.write("skills/swiftui-expert/run.sh", "#!/bin/sh\n", in: fixture.brain, executable: true)
+        await fixture.commitAll(fixture.brain)
+        let plain = try await fixture.makeRepo()
+        // A later commit where the project keeps AGENTS.md and no CLAUDE.md.
+        await fixture.git("mv", "CLAUDE.md", "AGENTS.md", in: fixture.repo)
+        await fixture.commitAll(fixture.repo)
+        let agentsOnly = try #require(await fixture.git("rev-parse", "HEAD", in: fixture.repo))
+        let prepared = try await prepare(tasks: [task(plain), task(agentsOnly, id: "agents-only-abcd")])
+        let hash = try #require(prepared.setups[1].layer?.overlayHash)
+        let entries = try #require(prepared.overlays[hash]?.entries)
+        #expect(entries.first { $0.path.hasSuffix("run.sh") }?.executable == true)
+        #expect(entries.first { $0.path.hasSuffix("SKILL.md") }?.executable == nil)
+        #expect(prepared.runnable.map(\.id) == ["make-value-2-abcd"])
+        #expect(prepared.blocked["agents-only-abcd"]?.contains("has AGENTS.md but no CLAUDE.md") == true)
     }
 
     @Test func hashFollowsTheRenderedContentOnly() async throws {
@@ -135,6 +154,7 @@ struct LayerSetupsTests {
 
         let missing = await message { _ = try await prepare(tasks: [task(base)]) }
         #expect(missing?.contains("(company) is required by swiftui") == true)
+        #expect(missing?.hasSuffix("Set it with --answer, or answer it for the project in Brain → Set Up Project….") == true)
         // An empty explicit answer keeps the default.
         let defaults = try await prepare(tasks: [task(base)], answers: ["company": .text("Acme"), "ui_check": .text("")])
         #expect(section(defaults).contains("make snapshot for Acme"))

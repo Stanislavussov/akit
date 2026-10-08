@@ -108,7 +108,6 @@ extension AKitCLI {
             return 0
         case "control":
             return try await analysisControl(&args, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash)
-
         case let other:
             throw Failure(message: "Unknown “akit analysis \(other ?? "")”. Run akit analysis --help.")
         }

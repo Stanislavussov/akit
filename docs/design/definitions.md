@@ -82,7 +82,6 @@ Status: designed, not built. No fingerprint is computed in code (step 11 of
 fingerprint; D2 (2026-10-08) dropped it: a layer eval pairs cells only within one eval
 run and records the Claude Code version per cell instead (`layer-evals.md`, "Baseline").
 
-
 - Components, each hashed on its own:
   - `listing`: the text of the initial `skill_listing` after that start event (from the
     transcript, by the importer);

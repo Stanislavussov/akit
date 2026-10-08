@@ -82,7 +82,6 @@ design doc and this table say so.
 | 2 | Buttons for "apply the core layer to the home folder" and "forget project". Built 2026-10-07: **Update Home Folder…** and **Forget Project…** on the Brain screen; Insights' Plan… covers the home folder too | `layers.md`, Roadmap | Same rule: every operation needs a button. Small |
 | 3 | Count only exposures with a description. Built 2026-10-08 as I1: stats, recommend and the summaries' `described` day field; the "descriptions dropped by the harness" line in `akit stats` and on Insights | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks. I2, D2, D3 and D4 decided 2026-10-08. In progress: slice 1 built 2026-10-08 (Run Cells… → A brain layer, `akit analysis control run --layer`) | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
-
 | 5 | Layer checks: slices 3 and 4 | `layer-evals.md` | Only if the pilot shows that success alone can't see the gain |
 | 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json`. Built 2026-10-08: the two files merge key by key, per-key ownership in the lock, `${VAR}`-only secrets, masked preview; not into the home folder yet. It is the base for hooks in layers, but arrays are leaves: lists from several layers (hooks, permissions) clash until named arrays get a union merge | `layers.md`, JSON merge; Roadmap 4 | One mechanism unblocks MCP in layers and writing `enabledPlugins` from a recommendation, and is the base for hooks in layers (array merge still to do) |
 | 7 | One parser for failure signals. Built 2026-10-08: `FailureSignals` in `AKitSessions` holds the rules of interrupts, rejections, tool errors and repeated calls; Lab and the index scanner both use it (I4, D1) | `definitions.md`; `session-insights.md`, step 11 (see I4) | Two parsers counted the same signals differently |
@@ -109,7 +108,6 @@ Each one removes work or removes a conflict. None adds a feature.
 | D2 | Is the session fingerprint needed at all? Two are designed (session, home) and none is built; before/after already compares within one harness version and model. Decided 2026-10-08 for layer evals: no fingerprint in v1; the eval id is in the cell key, cells pair only within one eval and one agent, each cell records its Claude Code version and the result warns on mixed versions. The session fingerprint stays parked | `definitions.md`; `layer-evals.md`, Baseline |
 | D3 | Layer evals append the layer's text to a project's own `CLAUDE.md`; Apply only offers it. Should Apply get an "append the layer's section" choice, or does the verdict stay offline only? Decided 2026-10-08: Apply is not changed; the verdict stays offline only | `layer-evals.md`, Decisions (2026-10-08) |
 | D4 | Accept I3 (one verdict ladder)? It changes a decided rule of error analysis. Decided 2026-10-08: not now; only layer setups get "helps (offline)", fix verdicts keep the production guard | `error-analysis.md`, Fixes |
-
 
 ## Parked
 

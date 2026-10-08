@@ -219,6 +219,10 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             result.reason = "A task has fewer than \(minimumRepeats) repeats on a side."
         } else if baselineCells < minimumCells || variantCells < minimumCells {
             result.reason = "Fewer than \(minimumCells) cells on a side (baseline \(baselineCells), variant \(variantCells))."
+        } else if variant.setup.layer != nil {
+            // Until layers get their own verdict level (slice 5), every layer pair stays open.
+            result.reason = "\(percent) of the bootstrap mass on improvement; a layer eval has no verdict level of its own yet, "
+                + "so this pair has no conclusion."
         } else if share >= helpedShare {
             let control = "\(percent) of the bootstrap mass on improvement (needs \(Int(helpedShare * 100))%)"
             if let measured {
@@ -230,10 +234,7 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                     result.verdict = .notShown
                     result.reason = "\(control), but in production \(rose) that the mode's failure rate rose after the fix (at most 50%)."
                 }
-            } else if variant.setup.layer != nil {
-                result.reason = "\(control); a layer eval has no verdict level of its own yet, so this pair has no conclusion."
             } else if let production {
-
                 result.reason = "\(control); not worse in production needs \(Fixes.minimumPerSide) sessions with the mode's check on each side "
                     + "of the fix (before \(production.before.sessions), after \(production.after.sessions))."
             } else {

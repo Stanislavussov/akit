@@ -86,6 +86,14 @@ struct ControlOverlayTests {
         let linked = ControlOverlay.place(overlay, in: files(["AGENTS.md"], links: ["CLAUDE.md": "AGENTS.md"]))
         #expect(writes(linked)["AGENTS.md"] == .append && writes(linked).count == 4)
 
+        // AGENTS.md and no CLAUDE.md: whether Claude Code reads it isn't verified, so the task is blocked.
+        let agentsOnly = ControlOverlay.place(overlay, in: files(["AGENTS.md"]))
+        #expect(blocked(agentsOnly) == "The project has AGENTS.md but no CLAUDE.md; AKit can't yet tell what Claude Code reads there.")
+        // A layer without an AGENTS.md section places there.
+        var file = ControlOverlay()
+        file.add("docs/x.md", kind: .markdown, data: Data("x".utf8))
+        #expect(blocked(ControlOverlay.place(file, in: files(["AGENTS.md"]))) == nil)
+
         // An e-mail address is not an import.
         let mail = ControlOverlay.place(overlay, in: files(["CLAUDE.md", "AGENTS.md"], texts: ["CLAUDE.md": "Ask me@AGENTS.md\n"]))
         #expect(writes(mail)["CLAUDE.md"] == .append)
@@ -115,6 +123,10 @@ struct ControlOverlayTests {
         let same = ControlOverlay.place(overlay, in: files(["x"], links: [".claude/skills": "../.agents/skills"]))
         #expect(blocked(same) == nil && writes(same)[".claude/skills"] == nil)
         #expect(blocked(ControlOverlay.place(overlay, in: files(["x"], links: [".claude/skills": "../skills"]))) != nil)
+        // A link entry whose target leaves the clone is never made.
+        var outward = ControlOverlay()
+        outward.addLink(".claude/skills", to: "../../elsewhere")
+        #expect(blocked(ControlOverlay.place(outward, in: files(["x"]))) != nil)
 
         // Another file the project has blocks.
         var file = ControlOverlay()
@@ -148,6 +160,8 @@ struct ControlOverlayTests {
         try write("CLAUDE.md", "# Rules\n", in: repo)
         try write("shared/notes.md", "notes\n", in: repo)
         try write("Sources/a.swift", "let a = 1\n", in: repo)
+        // A name git would read as a pattern: hidden as itself.
+        try write("docs/[draft].md", "draft\n", in: repo)
         try fm.createDirectory(at: repo.appending(path: "docs"), withIntermediateDirectories: true)
         try fm.createSymbolicLink(atPath: repo.appending(path: "docs/NOTES.md").path, withDestinationPath: "../shared/notes.md")
         _ = await git("init", "-q", "-b", "master", in: repo)
@@ -157,6 +171,9 @@ struct ControlOverlayTests {
 
         var layered = overlay
         layered.add("docs/NOTES.md", kind: .markdown, data: Data("- more notes\n".utf8))
+        layered.add("docs/[draft].md", kind: .markdown, data: Data("- layer\n".utf8))
+        layered.add(".agents/skills/swiftui-expert/run.sh", kind: .skillFile, skill: "swiftui-expert", data: Data("#!/bin/sh\n".utf8),
+                    executable: true)
         let work = home.appending(path: "work")
         try await IsolatedClone.make(at: work, from: repo, commit: base, env: env)
         let fromTree = try await CloneFiles.fromTree(repo: repo, base: base, env: env)
@@ -177,8 +194,11 @@ struct ControlOverlayTests {
         #expect(await git("status", "--porcelain", in: work) == "")
         #expect(await git("diff", in: work) == "")
         // Tracked files are assume-unchanged ("h"), new ones are in info/exclude.
-        let flags = await git("ls-files", "-v", "CLAUDE.md", "shared/notes.md", in: work)
-        #expect(flags == "h CLAUDE.md\nh shared/notes.md")
+        let flags = await git("ls-files", "-v", "CLAUDE.md", "shared/notes.md", ":(literal)docs/[draft].md", in: work)
+        #expect(flags == "h CLAUDE.md\nh docs/[draft].md\nh shared/notes.md")
+        // A skill's script stays executable.
+        #expect(fm.isExecutableFile(atPath: work.appending(path: ".agents/skills/swiftui-expert/run.sh").path))
+        #expect(!fm.isExecutableFile(atPath: work.appending(path: ".agents/skills/swiftui-expert/SKILL.md").path))
         let exclude = read(".git/info/exclude", in: work) ?? ""
         #expect(exclude.contains("/.claude/skills\n") && exclude.contains("/.agents/skills/swiftui-expert/SKILL.md\n"))
         // The user's repository is untouched.

@@ -839,7 +839,6 @@ a minimal reproduction: the simplest request that triggers the mode.
   sends.jsonl                # send log
 ~/.akit/lab/evals/           # control tasks and sets; cells are Lab runs; layer evals in
                              # layer-evals/<eval-id>/ (layer-evals.md, Storage)
-
 ```
 
 All of it is local and never goes into the brain repo. Everything outside `modes/` is

@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import AKitFoundation
-import AKitLab
+@testable import AKitLab
 import AKitSessions
 @testable import AKitErrorAnalysis
 
@@ -325,6 +325,33 @@ struct ControlRunsTests {
                                                         sanity: (sanity, prepared.sanityTasks, 1), environment: .background,
                                                         keep: true, akit: URL(filePath: "/usr/bin/true"), env: env)
         #expect(again.runs.isEmpty && again.skipped == 5)
+    }
+
+    @Test func layerCellRunByAnOlderAkitIsNotDone() async throws {
+        let (repo, base) = try await repository()
+        let task = task(repo, base, oracle: .tests(command: "true"))
+        let layer = ControlSetup(name: "layer swiftui", agent: claude,
+                                 layer: LayerVariant(layer: "swiftui", role: .layer, overlayHash: "h", evalID: "e", brainCommit: "c"))
+        let first = try #require(try await ControlRuns.newControlRuns(tasks: [task], setups: [layer, baseline], repeats: 1,
+                                                                     environment: .background, keep: false,
+                                                                     akit: URL(filePath: "/usr/bin/true"), env: env).runs)
+        // Both finished; the layer cell without overlay notes, as an akit that ignored the layer leaves it.
+        for run in first {
+            try LabStore.save(RunState(status: .finished), of: run.id, env: env)
+            let key = ControlRuns.cellKey(task: task, setup: try #require(run.spec.controlSetup), repeatIndex: 1)
+            try LabStore.save(RunResult(control: ControlOutcome(key: key, passed: true, oracle: "x")), of: run.id, env: env)
+        }
+        let again = try await ControlRuns.newControlRuns(tasks: [task], setups: [layer, baseline], repeats: 1, environment: .background,
+                                                        keep: false, akit: URL(filePath: "/usr/bin/true"), env: env)
+        #expect(again.skipped == 1 && again.runs.map { $0.spec.controlSetup } == [layer])
+
+        // One setup makes one difference: a patch and a layer together are refused.
+        var both = layer
+        both.patch = ControlPatch(file: "CLAUDE.md", text: "x")
+        await #expect(throws: (any Error).self) {
+            _ = try await ControlRuns.newControlRuns(tasks: [task], setups: [both], repeats: 1, environment: .background, keep: false,
+                                                     akit: URL(filePath: "/usr/bin/true"), env: env)
+        }
     }
 
     @Test func labAloneCantRunACell() async throws {
