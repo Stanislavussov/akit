@@ -3,8 +3,8 @@
 Status: design 2026-10-03, decided in a grilling session and revised after a fact-check
 against the code. Narrowed on 2026-10-08 by the decisions I2, D2, D3 and D4 (see
 [Decisions (2026-10-08)](#decisions-2026-10-08)): v1 is for Claude Code only, without a
-home fingerprint, with the verdict offline only. Slices 1 and 2 built 2026-10-08 (see
-[Built](#built)); slices 5 and 6, then the pilot, are next (step 4 of `README.md`).
+home fingerprint, with the verdict offline only. Slices 1, 2 and 5 built 2026-10-08 (see
+[Built](#built)); slice 6, then the pilot, are next (step 4 of `README.md`).
 
 ## Goal
 
@@ -160,9 +160,9 @@ Further choices of the step 4 plan, accepted on the same day:
 - `result.json`: `control.overlay` (always on a layer cell) and `control.harnessVersion`.
   The comparison leaves out a layer cell without `overlay` ("n cells run by an older akit,
   left out"), and warns when a pair mixes Claude Code versions.
-- Pairing as in [Format](#format). Every layer pair says "no conclusion" until slice 5
-  gives layers their own level, whatever its bootstrap share. A layer cell run by an older
-  akit (no `overlay`) is not counted as done, so it is queued again.
+- Pairing as in [Format](#format). In slice 1 every layer pair said "no conclusion"; slice 5
+  gives layers their own level (below). A layer cell run by an older akit (no `overlay`) is
+  not counted as done, so it is queued again.
 - UI: Error Analysis → Evals → **Run Cells…** → Difference **A brain layer** (layer picker,
   the two setups with their overlay hashes, blocked tasks, notes, overlap). The app queues
   only through an `akit` whose `akit lab --help` names "control cells with a brain layer".
@@ -217,6 +217,33 @@ Further choices of the step 4 plan, accepted on the same day:
   | delete]`.
 - Not in this slice: "From a failure mode" (slice 7, waits), a Continue that picks up tasks
   added to the set later (by design, decision 5).
+
+**Slice 5, verdict (2026-10-08).** Success only (checks are step 5).
+
+- `ControlComparison`: a layer pair (`role: layer`) is judged offline: at least 95% of the
+  bootstrap mass on improvement, with 3+ repeats and 15+ cells a side, gives **helps
+  (offline)** (`helps-offline`) without the production guard; below that, "didn't show it
+  helped". A read-only cell of the same eval and agent that passed leaves the pair at "no
+  conclusion" ("A read-only agent passed <task>: its oracle can't tell work from no work").
+  Patch pairs keep the fix rule and never get the offline level (D4; a test runs the same
+  cells as both). `Paired.worseShare`: the share of bootstrap sums strictly below zero (ties
+  count for neither), computed for every pair.
+- `LayerVerdicts` (`AKitErrorAnalysis`): `verdict(of:runs:costs:)` gives an eval's verdict
+  once none of its cells is queued or running (nil before); `save` keeps the last verdict per
+  agent (harness, model, effort) in `verdicts/<layer>.json` (schema 1; a newer schema is
+  skipped and never overwritten), where an older eval never replaces a newer one's verdict;
+  `load`; `lines` (the result lines below). The manifest now records `ownFiles` for the count
+  of tasks with the project's own `CLAUDE.md` (an older manifest shows none).
+- UI: Error Analysis → Evals → the comparison shows "helps (offline)", the share on worse
+  next to the share on improvement, and under a layer pair the eval's result lines ("Verdict
+  of the eval (all its tasks), saved for the layer:") or "The eval's verdict waits for N
+  cells still queued or running." When the shown eval has no open cell, the view saves its
+  verdict off the main thread. CLI: `akit analysis control compare --eval ID [--json]` (the
+  comparison, the lines, and the save); `compare TASK[,…]` prints `helps (offline)` for
+  layer pairs and is otherwise unchanged.
+- What slice 6 needs: `LayerVerdicts.load(layer:env:)` for the badge, `LayerVerdict.agent`,
+  `decidedAt`, `brainCommit`, `verdict.title`, and `LayerEvalStore.evals(of:)` for running
+  evals.
 
 Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (see
 [Open questions](#open-questions)); the check needs a transcript of a repository with
@@ -516,6 +543,28 @@ level drops that requirement **for layer setups only**, because a layer must be 
 before anyone uses it; a mode's fix status keeps the existing rule (D4, 2026-10-08: patch
 fixes never get "helps (offline)"; see [Link to error analysis](#link-to-error-analysis)).
 
+**v1 (slice 5, built).** Success only: per-check verdicts wait for step 5. Two more rules:
+
+- **Read-only sanity.** If a read-only cell of the eval passed, the oracle can't tell work
+  from no work, so the layer pair has no conclusion, whatever the shares.
+- **Older akit.** A layer cell whose result has no `control.overlay` was run by an akit
+  that ignored the layer: it is left out and counted ("n cells run by an older akit, left
+  out").
+
+The verdict waits until no cell of the eval is queued or running, then is stored as the
+layer's last verdict for that agent (`verdicts/<layer>.json`; see [Storage](#storage)).
+Result lines (success only):
+
+```
+swiftui · Claude Code · opus · high · 8 tasks × 3 · eval 2026-10-12 · brain a1b2c3d
+success: 71% → 75%, didn't show it helped (81% of the bootstrap mass on improvement, 12% on worse; needs 95%)
+read-only sanity: 0 of 3 passed · 1 flagged cell · Claude Code 2.1.290
+home overlap: none · 8 tasks with the project's own CLAUDE.md (the project gets the layer's text only by accepting the suggestion) · $48.20
+```
+
+`cost` is the sum of the cost the eval's cells recorded (the send log); a cell without a
+recorded cost adds nothing.
+
 **Per check.** Each check gets the same verdict on its own pass/fail ("deprecated-api:
 helps (offline)"), only when success didn't get worse: at most 50% of the success bootstrap
 mass strictly below zero. `Paired` stores that share ("worse share") next to the share above
@@ -593,7 +642,8 @@ agent skill can drive it too.
   layer-evals/<eval-id>/   # one eval:
     manifest.json          #   the exact setups, tasks, blocked tasks, notes, overlap
     overlays/<hash>/       #   overlay.json + files/<path> (rendered bytes, answers filled)
-  verdicts/<layer>.json    # last verdicts per model, for the badge
+  verdicts/<layer>.json    # last verdict per agent (harness, model, effort), for the
+                           #   badge: numbers only, no prompts or repository paths
 ~/.akit/lab/<run-id>/      # a cell (kind control): controlSetup.layer in run.json;
                            #   control.overlay and control.harnessVersion in result.json;
                            #   later (step 5) added-lines.diff, commands.jsonl
