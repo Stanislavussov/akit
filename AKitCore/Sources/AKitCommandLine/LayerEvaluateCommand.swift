@@ -26,8 +26,8 @@ extension AKitCLI {
                                           files. 1 read-only cell on each of the first 3 tasks unless
                                           --no-sanity. In AKit's own repository the agent may not run
                                           make snapshot, make run, make restart, make install(-cli),
-                                          make screenshots, make open or open (every setup); --deny
-                                          sets other commands, --no-deny none
+                                          make screenshots, make open, open or swift run (every
+                                          setup); --deny sets other commands, --no-deny none
         """
 
     struct LayerEvaluateReport: Encodable {
