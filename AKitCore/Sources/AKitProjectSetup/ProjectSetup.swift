@@ -374,7 +374,8 @@ public enum ProjectSetup {
         } catch {
             // Record what did happen, so the next preview knows which files AKit wrote.
             var partial = plan.previous ?? ProjectRecords.Lock(brainCommit: nil, brainDirty: false, files: [:])
-            for path in removed { partial.files[path] = nil; partial.json?[path] = nil }
+            // A trashed JSON file may still have a record: the keys the project declined.
+            for path in removed { partial.files[path] = nil; partial.json?[path] = plan.jsonRecords[path] }
             for path in written {
                 if plan.jsonWrites[path] != nil {
                     var json = partial.json ?? [:]

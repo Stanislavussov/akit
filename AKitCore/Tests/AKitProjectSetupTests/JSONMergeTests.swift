@@ -405,6 +405,30 @@ struct JSONMergeTests {
         #expect(record.keys.isEmpty && record.declined?.count == 4)
     }
 
+    @Test func anInterruptedApplyKeepsTheDeclinedKeysOfATrashedFile() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        // The project takes out every key of AKit's; the file AKit created is left as {}.
+        try write("Projects/task/.mcp.json", "{}")
+        var lock = try #require(ProjectRecords.savedLock(id: id, in: store))
+        try write("Projects/task/old.md", "old")
+        lock.files["old.md"] = .init(sha256: Checksum.sha256(Data("old".utf8)), link: nil, layers: ["gone"])
+        try ProjectRecords.save(lock, answers: nil, id: id, in: store)
+        let next = plan(["mcp"], brain: brain)
+        #expect(change(next)?.kind == .remove && change(next, "old.md")?.kind == .remove)
+        // .mcp.json goes to the Trash, then trashing old.md fails.
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(next, brain: brain, home: home, env: env, trash: { url in
+                if url.lastPathComponent == "old.md" { throw CocoaError(.fileWriteNoPermission) }
+                return try trash(url)
+            })
+        }
+        try #require(read(".mcp.json") == nil, "the test needs .mcp.json trashed before old.md")
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"]?.declined?.count == 4)
+        #expect(change(plan(["mcp"], brain: brain))?.kind == .own)
+    }
+
     @Test func anEarlyRecordWithoutContainersTreatsEveryObjectOfAFileAKitCreatedAsItsOwn() async throws {
         let brain = try await setUpBrain()
         try fm.createDirectory(at: project, withIntermediateDirectories: true)
