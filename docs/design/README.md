@@ -61,6 +61,7 @@ The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`
 | Give a project its setup | Brain → Set Up Project… |
 | Give a project MCP servers or Claude Code settings from a layer | a layer file with `to: .mcp.json` or `to: .claude/settings.json`, then Brain → Set Up Project… (keys are merged; secrets only as `${VAR}`) |
 | Add an MCP server from a public catalog | MCP Servers → Catalog… |
+| See what a Pi package brings (extensions, skills, prompt templates, themes) | Overview → Pi → Packages (files open read-only in Quick Look); its skills are on Skills under “Pi package · name” |
 | Update the home folder from the core layer | Brain → core → Update Home Folder… (or `akit apply --home`) |
 | Forget a project and trash the files AKit wrote there | Brain → the project → Forget Project… |
 | See which skills cost context and are never called | Insights (Apply… makes a layer skill manual; the Skills table lists every skill; the line above it says how often Claude Code dropped descriptions) |

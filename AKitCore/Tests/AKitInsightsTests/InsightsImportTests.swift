@@ -503,6 +503,20 @@ struct InsightsImportTests {
         ".pi/agent/sessions/--work-app--/\(started)_\(name).jsonl"
     }
 
+    @Test func piCustomSessionFolderIsFlat() throws {
+        // PI_CODING_AGENT_SESSION_DIR (or `sessionDir`) holds the session files themselves.
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        try write("elsewhere/2026-09-20T10-00-00-000Z_flat.jsonl", lines: [Self.piHeader("flat")])
+        try write("elsewhere/--old-layout--/2026-09-21T10-00-00-000Z_nested.jsonl", lines: [Self.piHeader("nested")])
+        var custom = env
+        custom.variables["PI_CODING_AGENT_SESSION_DIR"] = "~/elsewhere"
+
+        let pi = SessionImporter(env: custom).discover().filter { $0.harness == "pi" }
+        #expect(pi.map(\.url.lastPathComponent).sorted() == [
+            "2026-09-20T10-00-00-000Z_flat.jsonl", "2026-09-21T10-00-00-000Z_nested.jsonl",
+        ])
+    }
+
     static func piHeader(_ id: String, cwd: String = "/work/app", at time: String = "2026-09-20T10:00:00.000Z") -> [String: Any] {
         ["type": "session", "version": 3, "id": id, "timestamp": time, "cwd": cwd]
     }

@@ -40,7 +40,7 @@ public enum BrainLinks {
         for skill in skills {
             switch skill.scope {
             case .global, .project: break
-            case .synced, .plugin, .bundled: continue
+            case .synced, .plugin, .bundled, .package: continue
             }
             if let found = rendered[key(skill.realFile)] {
                 let current = (try? Data(contentsOf: skill.realFile)).map(Checksum.sha256)

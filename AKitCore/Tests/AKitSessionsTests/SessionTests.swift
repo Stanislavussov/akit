@@ -172,6 +172,19 @@ struct SessionTests {
         #expect(session.project?.path == "/work/app")
     }
 
+    @Test func piCustomSessionDirHoldsTheFilesThemselves() throws {
+        // Pi writes into a folder set by PI_CODING_AGENT_SESSION_DIR (or `sessionDir`) without
+        // per-cwd folders.
+        try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
+        try write("elsewhere/2026-09-20T10-00-00-000Z_abcd.jsonl", lines: piSession())
+        var custom = env
+        custom.variables["PI_CODING_AGENT_SESSION_DIR"] = "~/elsewhere"
+
+        let session = try #require(sessions(.pi, in: custom).first)
+        #expect(session.title == "Test run")
+        #expect(session.project?.path == "/work/app")
+    }
+
     @Test func piTitleSkipsExpandedSkill() throws {
         var lines = piSession()
         lines.removeLast()

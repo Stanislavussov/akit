@@ -1,17 +1,15 @@
 import AKitFoundation
 import Foundation
 
-/// Pi session files: `<sessions>/--<cwd with - for />--/<time>_<uuid>.jsonl`.
+/// Pi session files: `<sessions>/--<cwd with - for />--/<time>_<uuid>.jsonl`, or
+/// `<folder>/<time>_<uuid>.jsonl` directly in a folder set by `PI_CODING_AGENT_SESSION_DIR` or `sessionDir`.
 /// The first line is a `session` header (id, cwd); the other entries form a tree via
 /// `id`/`parentId` so branches live in one file. See docs/session-format.md in Pi.
 public enum PiSessions {
     typealias Object = JSONLines.Object
 
     static func list(folder: URL) -> [SessionSummary] {
-        let files = FileWalk.children(of: folder)
-            .filter(FileWalk.isDirectory)
-            .flatMap { dir in FileWalk.children(of: dir).filter { $0.pathExtension == "jsonl" } }
-        return JSONLines.summaries(of: files) { summary(of: $0) }
+        JSONLines.summaries(of: FileWalk.files(withExtension: "jsonl", inAndBelow: folder)) { summary(of: $0) }
     }
 
     static func summary(of file: URL) -> SessionSummary? {

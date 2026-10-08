@@ -72,18 +72,66 @@ struct PiAdapter: HarnessAdapter {
 
     /// Whether Pi settings list the pi-mcp-adapter package (`packages`, plain or `{source}` entries).
     static func hasMCPAdapter(settings: URL) -> Bool {
-        guard let data = try? Data(contentsOf: settings),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let packages = json["packages"] as? [Any] else { return false }
+        guard let packages = FileWalk.jsonObject(settings)?["packages"] as? [Any] else { return false }
         return packages.contains { entry in
             let text = entry as? String ?? (entry as? [String: Any])?["source"] as? String ?? ""
             return text.contains("pi-mcp-adapter")
         }
     }
 
+    /// Folders Pi was started in, from the session headers. The default sessions folder has one
+    /// folder per cwd (`--<cwd with - for />--`, a lossy name: `/a/b-c` and `/a-b/c` share it),
+    /// a custom one holds the files directly. The first line of each file has the real `cwd`;
+    /// only the newest 3 files of a cwd folder and the newest 1,000 loose files are read, 4 KB each.
+    /// Folders that no longer exist are left out.
+    public func knownProjects(in env: HarnessEnvironment) -> [URL] {
+        let sessions = Self.sessionsFolder(configRoot: configRoot(in: env), in: env)
+        let entries = FileWalk.children(of: sessions)
+        // `<time>_<uuid>.jsonl`: the name sorts by time.
+        var files = Array(entries.filter { $0.pathExtension == "jsonl" }.suffix(1_000))
+        for folder in entries where FileWalk.isDirectory(folder) {
+            files += FileWalk.children(of: folder).filter { $0.pathExtension == "jsonl" }.suffix(3)
+        }
+        var seen: Set<String> = []
+        var projects: [URL] = []
+        for cwd in files.compactMap(Self.sessionCwd) {
+            let url = URL(filePath: cwd, directoryHint: .isDirectory)
+            guard seen.insert(url.standardizedFileURL.path).inserted, FileWalk.isDirectory(url) else { continue }
+            projects.append(url)
+        }
+        return projects.sorted { $0.path < $1.path }
+    }
+
+    /// The same rule as PiLogFormat.folder (AKitSessions), repeated because neither module may
+    /// import the other: `PI_CODING_AGENT_SESSION_DIR`, then an absolute `sessionDir` from the
+    /// global settings, then `<Pi dir>/sessions`. Known difference: a `sessionDir` in a project's
+    /// `.pi/settings.json` (or `--session-dir`) is not followed; those sessions are not found.
+    static func sessionsFolder(configRoot: URL, in env: HarnessEnvironment) -> URL {
+        if let custom = env.variables["PI_CODING_AGENT_SESSION_DIR"], !custom.isEmpty {
+            return env.expand(custom)
+        }
+        if let dir = FileWalk.jsonObject(configRoot.appending(path: "settings.json"))?["sessionDir"] as? String,
+           dir.hasPrefix("/") || dir.hasPrefix("~") {
+            return env.expand(dir)
+        }
+        return configRoot.appending(path: "sessions")
+    }
+
+    /// `cwd` of the `session` header on the first line of a session file.
+    static func sessionCwd(_ file: URL) -> String? {
+        guard let data = FileWalk.head(of: file, limit: 4 << 10), !data.isEmpty else { return nil }
+        let line = data.split(separator: UInt8(ascii: "\n"), maxSplits: 1).first ?? data[...]
+        guard let header = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+              header["type"] as? String == "session", let cwd = header["cwd"] as? String,
+              cwd.hasPrefix("/") else { return nil }
+        return cwd
+    }
+
     /// Mirrors Pi's loader (core/package-manager.js):
     /// global `~/.pi/agent/skills` and `~/.agents/skills`; per project `.pi/skills`
     /// and `.agents/skills` in the project and each parent up to the git root.
+    /// Skills of Pi packages are not here (reading packages is too slow for every caller):
+    /// see `PiPackages.skillRoots`, which `SkillScanner` adds.
     public func skillRoots(in env: HarnessEnvironment, projects: [URL]) -> [SkillRoot] {
         var roots = [
             SkillRoot(url: configRoot(in: env).appending(path: "skills"), harness: id, scope: .global,

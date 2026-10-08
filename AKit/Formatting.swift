@@ -20,6 +20,8 @@ extension SkillScope {
         case .synced: "claude.ai (synced)"
         case .plugin(let name): "Plugin · \(name)"
         case .bundled(let harness): "Built into \(harness.displayName)"
+        case .package(let name, nil): "Pi package · \(name)"
+        case .package(let name, let project?): "Pi package · \(name) · \(project.lastPathComponent)"
         }
     }
 }

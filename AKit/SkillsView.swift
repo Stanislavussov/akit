@@ -251,8 +251,12 @@ struct SkillsView: View {
 
     /// Skills for the chosen project filter, before the search text.
     private var scoped: [Skill] {
-        model.skills.filter { skill in
-            model.skillsFilter.includes(skill.scope)
+        // A project that lists a global Pi package itself replaces (or narrows) the global one.
+        let hidden: Set<String> = if case .project(let project) = model.skillsFilter {
+            model.piHiddenSkills[project.standardizedFileURL.path] ?? []
+        } else { [] }
+        return model.skills.filter { skill in
+            model.skillsFilter.includes(skill.scope) && !hidden.contains(skill.id)
                 && (model.skillsHarness.map { id in skill.visibleTo.contains { $0.rawValue == id } } ?? true)
                 && matchesBrainFilter(skill)
         }
@@ -554,7 +558,7 @@ enum SkillsFilter: Hashable {
     func includes(_ scope: SkillScope) -> Bool {
         switch (self, scope) {
         case (.all, _): true
-        case (_, .project(let url)):
+        case (_, .project(let url)), (_, .package(_, let url?)):
             if case .project(let chosen) = self { url.standardizedFileURL.path == chosen.standardizedFileURL.path } else { false }
         default: true
         }
