@@ -205,7 +205,12 @@ private struct PiPackageRow: View {
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                if package.isInstalled {
+                if package.isTooLarge {
+                    Text("too large to list")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .help("More than 5,000 files and folders; AKit stops reading it")
+                } else if package.isInstalled {
                     DisclosureGroup(isExpanded: $expanded) {
                         VStack(alignment: .leading, spacing: 2) {
                             files("Extensions", package.extensions)

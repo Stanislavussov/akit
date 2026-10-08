@@ -97,7 +97,7 @@ struct PiPackagesTests {
 
         try write(".pi/agent/settings.json", #"{"packages": [{"source": "npm:cave"}]}"#)
         let object = try #require(packages().first)
-        #expect(object.isFiltered)
+        #expect(!object.isFiltered) // an object without filter keys narrows nothing
         #expect(names(object.skills, in: object) == ["skills/grunt/SKILL.md"])
     }
 
@@ -205,17 +205,21 @@ struct PiPackagesTests {
         var e = env
         e.variables["PI_CODING_AGENT_DIR"] = "~/custom-pi"
 
-        let root = try #require(PiAdapter().skillRoots(in: e, projects: []).first { $0.isReadOnly })
+        let list = PiPackages.list(configRoot: PiAdapter().configRoot(in: e), projects: [], in: e)
+        let root = try #require(PiPackages.skillRoots(list).first)
         #expect(root.scope == .package(name: "tools", project: nil))
         #expect(root.origin == "npm:tools 2.0")
+        #expect(root.isReadOnly)
         guard case .listed(let files) = root.layout else { Issue.record("not a listed root"); return }
         #expect(files.map(\.lastPathComponent) == ["SKILL.md"])
+        // The adapter's own roots stay cheap: packages are added by the skill scan only.
+        #expect(!PiAdapter().skillRoots(in: e, projects: []).contains { $0.isReadOnly })
     }
 
     // MARK: - Known projects
 
-    func session(_ folder: String, _ file: String, cwd: String, under root: String = ".pi/agent/sessions") throws {
-        try write("\(root)/\(folder)/\(file)", """
+    func session(_ file: String, cwd: String, under root: String) throws {
+        try write("\(root)/\(file)", """
             {"type":"session","version":3,"id":"x","timestamp":"2026-01-01T00:00:00.000Z","cwd":"\(cwd)"}
             {"type":"message","id":"1"}
 
@@ -224,28 +228,35 @@ struct PiPackagesTests {
 
     @Test func knownProjectsComeFromSessionHeaders() throws {
         let app = home.appending(path: "Projects/my-app")
-        let other = home.appending(path: "Projects/other")
+        let other = home.appending(path: "Projects/my/app")
         try fm.createDirectory(at: app, withIntermediateDirectories: true)
         try fm.createDirectory(at: other, withIntermediateDirectories: true)
-        // The folder name is lossy (`my-app` reads as `my/app`); the header has the real path.
-        try session("--x-Projects-my-app--", "2026-01-01T10-00-00-000Z_a.jsonl", cwd: other.path)
-        try session("--x-Projects-my-app--", "2026-02-01T10-00-00-000Z_b.jsonl", cwd: app.path)
-        try session("--dup--", "2026-01-01T10-00-00-000Z_c.jsonl", cwd: app.path + "/")
-        try session("--gone--", "2026-01-01T10-00-00-000Z_d.jsonl", cwd: home.appending(path: "Projects/deleted").path)
+        // `/x/my-app` and `/x/my/app` share one lossy folder name; the headers tell them apart.
+        let shared = ".pi/agent/sessions/--x-Projects-my-app--"
+        try session("2026-01-01T10-00-00-000Z_a.jsonl", cwd: other.path, under: shared)
+        try session("2026-02-01T10-00-00-000Z_b.jsonl", cwd: app.path, under: shared)
+        try session("2026-01-01T10-00-00-000Z_c.jsonl", cwd: app.path + "/", under: ".pi/agent/sessions/--dup--")
+        try session("2026-01-01T10-00-00-000Z_d.jsonl", cwd: home.appending(path: "Projects/deleted").path,
+                    under: ".pi/agent/sessions/--gone--")
         try write(".pi/agent/sessions/--broken--/2026-01-01T10-00-00-000Z_e.jsonl", "not json\n")
 
-        #expect(PiAdapter().knownProjects(in: env).map(\.standardizedFileURL.path) == [app.path])
+        #expect(PiAdapter().knownProjects(in: env).map(\.standardizedFileURL.path) == [app.path, other.path].sorted())
     }
 
-    @Test func knownProjectsFollowTheSessionDirOverrides() throws {
+    @Test func knownProjectsReadTheFlatSessionDirOfTheOverrides() throws {
+        // A folder set by PI_CODING_AGENT_SESSION_DIR or `sessionDir` holds the files themselves.
         let app = home.appending(path: "Projects/app")
+        let web = home.appending(path: "Projects/web")
         try fm.createDirectory(at: app, withIntermediateDirectories: true)
-        try session("--app--", "2026-01-01T10-00-00-000Z_a.jsonl", cwd: app.path, under: "elsewhere")
-        try session("--app--", "2026-01-01T10-00-00-000Z_a.jsonl", cwd: app.path, under: "from-settings")
+        try fm.createDirectory(at: web, withIntermediateDirectories: true)
+        try session("2026-01-01T10-00-00-000Z_a.jsonl", cwd: app.path, under: "elsewhere")
+        try session("2026-01-02T10-00-00-000Z_b.jsonl", cwd: web.path, under: "elsewhere")
+        try session("2026-01-03T10-00-00-000Z_c.jsonl", cwd: app.path, under: "elsewhere")
+        try session("2026-01-01T10-00-00-000Z_a.jsonl", cwd: app.path, under: "from-settings")
 
         var e = env
         e.variables["PI_CODING_AGENT_SESSION_DIR"] = "~/elsewhere"
-        #expect(PiAdapter().knownProjects(in: e).map(\.standardizedFileURL.path) == [app.path])
+        #expect(PiAdapter().knownProjects(in: e).map(\.standardizedFileURL.path) == [app.path, web.path])
 
         #expect(PiAdapter().knownProjects(in: env).isEmpty)
         try write(".pi/agent/settings.json", #"{"sessionDir": "~/from-settings"}"#)

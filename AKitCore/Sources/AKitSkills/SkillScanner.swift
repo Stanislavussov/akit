@@ -8,20 +8,36 @@ public enum SkillScanner {
     /// Scan all skill roots of the installed harnesses and merge duplicates
     /// (the same real file reached through several roots/symlinks).
     /// `extraProjects`: folders found in the user's project roots (see ProjectFinder).
+    /// `projects` and `piPackages`: already computed by the caller (`projects(...)`,
+    /// `PiPackages.list`), so a refresh reads them once; nil = computed here.
     public static func scan(installations: [HarnessInstallation],
                             extraProjects: [URL] = [],
                             adapters: [any HarnessAdapter] = HarnessCatalog.adapters,
+                            projects knownProjects: [URL]? = nil,
+                            piPackages: [PiPackage]? = nil,
                             in env: HarnessEnvironment) -> [Skill] {
         let installed = Set(installations.map(\.id))
         let active = adapters.filter { installed.contains($0.id) }
-        let projects = projects(installations: installations, extraProjects: extraProjects, adapters: adapters, in: env)
+        let projects = knownProjects
+            ?? projects(installations: installations, extraProjects: extraProjects, adapters: adapters, in: env)
+        let packages = !installed.contains(.pi) ? []
+            : piPackages ?? HarnessCatalog.configRoot(of: .pi, in: env).map {
+                PiPackages.list(configRoot: $0, projects: projects, in: env)
+            } ?? []
 
-        let roots = active.flatMap { $0.skillRoots(in: env, projects: projects) }
-            .sorted { $0.scope.sortRank < $1.scope.sortRank } // first root wins the scope
+        // First root wins the scope; equal ranks keep their order (global packages before project ones).
+        let roots = (active.flatMap { $0.skillRoots(in: env, projects: projects) } + PiPackages.skillRoots(packages))
+            .enumerated()
+            .sorted { ($0.element.scope.sortRank, $0.offset) < ($1.element.scope.sortRank, $1.offset) }
+            .map(\.element)
         // Only files under Claude's own `skills/synced/` count as claude.ai skills.
         let syncedFolders = roots.compactMap(\.syncedFolder).map { $0.resolvingSymlinksInPath().path + "/" }
+        var hidden: [String: Set<String>] = [:]
+        for project in projects where !packages.isEmpty {
+            hidden[project.standardizedFileURL.path] = PiPackages.skillsHidden(in: project, packages: packages)
+        }
         return merge(roots.flatMap { found(in: $0) }, lock: SkillLock.read(in: env), home: env.homeDirectory,
-                     syncedFolders: syncedFolders)
+                     syncedFolders: syncedFolders, hiddenInProject: hidden)
     }
 
     /// Project folders the installed harnesses know about plus `extraProjects`, existing ones, no duplicates.
@@ -68,7 +84,9 @@ public enum SkillScanner {
             return hits
 
         case .listed(let files):
-            return files.filter(isFile).map { Hit(file: $0, root: root, isSingleFile: $0.lastPathComponent != "SKILL.md") }
+            // A package lists its own files only; checked again here, as the list came from package data.
+            return files.filter { isFile($0) && FileWalk.isInside($0, root.url) && !PiPackages.secretNames.contains($0.lastPathComponent) }
+                .map { Hit(file: $0, root: root, isSingleFile: $0.lastPathComponent != "SKILL.md") }
 
         case .recursive(let rootMarkdown):
             var hits: [Hit] = []
@@ -100,7 +118,8 @@ public enum SkillScanner {
 
     // MARK: - Merging
 
-    static func merge(_ hits: [Hit], lock: SkillLock, home: URL, syncedFolders: [String] = []) -> [Skill] {
+    static func merge(_ hits: [Hit], lock: SkillLock, home: URL, syncedFolders: [String] = [],
+                      hiddenInProject: [String: Set<String>] = [:]) -> [Skill] {
         var byID: [String: Skill] = [:]
         var order: [String] = []
         var piMissingDescription = Set<String>()
@@ -113,7 +132,7 @@ public enum SkillScanner {
                 byID[id] = existing
                 continue
             }
-            guard let text = try? String(contentsOf: hit.file, encoding: .utf8) else { continue }
+            guard let text = readHead(hit.file) else { continue }
             let meta = Frontmatter.parse(text)
             let folderName = hit.file.deletingLastPathComponent().lastPathComponent
             let name = meta["name"].flatMap { $0.isEmpty ? nil : $0 } ?? folderName
@@ -147,15 +166,23 @@ public enum SkillScanner {
                 skills[index].warnings += PiNameRule.problems(skill.name).map { "Pi: \($0)" }
             }
         }
-        addCollisionWarnings(&skills, home: home)
+        addCollisionWarnings(&skills, home: home, hiddenInProject: hiddenInProject)
         return skills
+    }
+
+    /// The start of a skill file: enough for its frontmatter, never a whole huge file.
+    static func readHead(_ file: URL, limit: Int = 256 << 10) -> String? {
+        guard let data = FileWalk.head(of: file, limit: limit) else { return nil }
+        // A cut may split a character; only a whole file must be valid UTF-8.
+        return data.count < limit ? String(data: data, encoding: .utf8) : String(decoding: data, as: UTF8.self)
     }
 
     /// Two different skills with one name that a harness would load in the same session.
     /// A session sees the global skills plus ONE project, so two projects never collide.
     /// Claude namespaces plugin skills (`plugin:skill`), so they never collide for Claude.
-    /// A Pi package in a project's settings replaces the same package from the global settings.
-    static func addCollisionWarnings(_ skills: inout [Skill], home: URL) {
+    /// `hiddenInProject`: per project path, ids (real paths) of global Pi package skills that a
+    /// session there doesn't load, because the project's settings replace or narrow that package.
+    static func addCollisionWarnings(_ skills: inout [Skill], home: URL, hiddenInProject: [String: Set<String>] = [:]) {
         let projects = Set(skills.compactMap { skill -> URL? in
             switch skill.scope {
             case .project(let url), .package(_, let url?): url
@@ -167,10 +194,7 @@ public enum SkillScanner {
         var messages: [Int: [String]] = [:]
         for harness in Set(skills.flatMap(\.visibleTo)) {
             for context in contexts {
-                let projectPackages = Set(skills.compactMap { skill -> String? in
-                    if case .package(let name, let project?) = skill.scope, project == context { return name }
-                    return nil
-                })
+                let hidden = context.flatMap { hiddenInProject[$0.standardizedFileURL.path] } ?? []
                 let loaded = skills.indices.filter { index in
                     let skill = skills[index]
                     guard skill.visibleTo.contains(harness) else { return false }
@@ -178,7 +202,7 @@ public enum SkillScanner {
                     case .global, .synced, .bundled: return true
                     case .plugin: return harness != .claudeCode
                     case .project(let url): return url == context
-                    case .package(let name, let project): return project.map { $0 == context } ?? !projectPackages.contains(name)
+                    case .package(_, let project): return project.map { $0 == context } ?? !hidden.contains(skill.id)
                     }
                 }
                 for (_, indices) in Dictionary(grouping: loaded, by: { skills[$0].name }) where indices.count > 1 {
@@ -201,9 +225,9 @@ public enum SkillScanner {
         return names.contains("SKILL.md") && isFile(dir.appending(path: "SKILL.md"))
     }
 
+    /// A regular file (links followed): a FIFO or device would block or never end.
     static func isFile(_ url: URL) -> Bool {
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && !isDir.boolValue
+        FileWalk.isRegularFile(url)
     }
 }
 

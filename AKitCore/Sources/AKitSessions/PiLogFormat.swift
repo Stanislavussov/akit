@@ -8,14 +8,16 @@ public enum PiLogFormat {
     public typealias Object = JSONLines.Object
 
     /// `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` from the global settings, then `<config>/sessions`.
-    /// A relative `sessionDir` points inside each project and is not followed.
+    /// A relative `sessionDir` points inside each project and is not followed. The default folder has
+    /// one `--<cwd>--` folder per working folder; a folder set by the variable or the setting holds
+    /// the session files themselves (Pi's session-manager.js), so readers take both.
+    /// PiAdapter.sessionsFolder (AKitHarnesses) repeats this rule: neither module may import the other.
     public static func folder(configRoot: URL, in env: HarnessEnvironment) -> URL {
         if let custom = env.variables["PI_CODING_AGENT_SESSION_DIR"], !custom.isEmpty {
             return env.expand(custom)
         }
-        if let data = try? Data(contentsOf: configRoot.appending(path: "settings.json")),
-           let settings = try? JSONSerialization.jsonObject(with: data) as? Object,
-           let dir = settings["sessionDir"] as? String, dir.hasPrefix("/") || dir.hasPrefix("~") {
+        if let dir = FileWalk.jsonObject(configRoot.appending(path: "settings.json"))?["sessionDir"] as? String,
+           dir.hasPrefix("/") || dir.hasPrefix("~") {
             return env.expand(dir)
         }
         return configRoot.appending(path: "sessions")

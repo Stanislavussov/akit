@@ -572,14 +572,16 @@ final class AppModel {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
-            async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, in: env)
+            // Read once per refresh: the Overview lists them, the skill scan adds their skills.
+            let piPackages = found.contains { $0.id == .pi }
+                ? HarnessCatalog.configRoot(of: .pi, in: env).map { PiPackages.list(configRoot: $0, projects: projects, in: env) } ?? []
+                : []
+            async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters,
+                                                 projects: projects, piPackages: piPackages, in: env)
             async let sessions = SessionScanner.scan(installations: found, in: env)
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
             async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
             async let brain = Brain.load(from: brainRoot)
-            let piPackages = found.contains { $0.id == .pi }
-                ? HarnessCatalog.configRoot(of: .pi, in: env).map { PiPackages.list(configRoot: $0, projects: projects, in: env) } ?? []
-                : []
             return (found, await skills, projects, await sessions, await mcp, await targets, await brain, piPackages)
         }.value
         // Before anything is shown: the session list and its projects change together.

@@ -178,10 +178,8 @@ public struct SessionImporter {
             }
         }
         let pi = PiLogFormat.folder(configRoot: HarnessCatalog.configRoot(of: .pi, in: env)!, in: env)
-        for folder in FileWalk.children(of: pi) where FileWalk.isDirectory(folder) {
-            for item in FileWalk.children(of: folder) where item.pathExtension == "jsonl" {
-                found += Self.logFile(item, harness: "pi", kind: "session").map { [$0] } ?? []
-            }
+        for item in FileWalk.files(withExtension: "jsonl", inAndBelow: pi) {
+            found += Self.logFile(item, harness: "pi", kind: "session").map { [$0] } ?? []
         }
         for item in FileWalk.children(of: InsightsPaths(env: env).spool) where item.pathExtension == "jsonl" {
             found += Self.logFile(item, harness: "akit", kind: "spool").map { [$0] } ?? []

@@ -1,8 +1,10 @@
+import Darwin
 import Foundation
 import Testing
 import AKitFoundation
 @testable import AKitHarnesses
 @testable import AKitSkills
+import AKitModel
 
 /// Skills of Pi packages, in the same fake home as the other scanner tests.
 extension SkillScannerTests {
@@ -43,6 +45,40 @@ extension SkillScannerTests {
         #expect(skills.count == 2)
         #expect(Set(skills.map(\.scope)) == [.package(name: "tools", project: nil), .package(name: "tools", project: project)])
         #expect(skills.allSatisfy { $0.warnings.isEmpty })
+    }
+
+    @Test func autoloadDeltaHidesTheGlobalSkillInItsProject() throws {
+        // The project turns the package's `review` off and has its own `review`: no collision there.
+        let project = home.appending(path: "Projects/app")
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:tools"]}"#)
+        try piPackage(".pi/agent/npm/node_modules/tools", name: "tools", skills: ["review", "lint"])
+        try write("Projects/app/.pi/settings.json",
+                  #"{"packages": [{"source": "npm:tools", "autoload": false, "skills": ["-skills/review"]}]}"#)
+        try write("Projects/app/.pi/skills/review/SKILL.md", skill("review"))
+
+        let skills = scan(extraProjects: [project])
+        #expect(skills.allSatisfy { $0.warnings.isEmpty })
+        // The package's files are listed once, under the global package.
+        #expect(skills.filter { $0.scope == .package(name: "tools", project: nil) }.map(\.name).sorted() == ["lint", "review"])
+    }
+
+    @Test func secretsAndPipesNeverBecomeSkills() throws {
+        let project = home.appending(path: "Projects/cloned")
+        try write(".pi/agent/auth.json", #"{"token": "fake"}"#)
+        try write("Projects/cloned/.pi/settings.json", #"{"packages": ["./kit"]}"#)
+        try write("Projects/cloned/.pi/kit/package.json",
+                  #"{"pi": {"skills": ["\#(home.path)/.pi/agent/auth.json", "../../../../.pi/agent/auth.json"]}}"#)
+        // A FIFO named SKILL.md would block a reader forever.
+        try fm.createDirectory(at: home.appending(path: ".agents/skills/pipe"), withIntermediateDirectories: true)
+        #expect(mkfifo(home.appending(path: ".agents/skills/pipe/SKILL.md").path, 0o600) == 0)
+
+        let skills = scan(extraProjects: [project])
+        #expect(skills.isEmpty)
+        // A listed root re-checks its files: one outside its folder is dropped.
+        let outside = SkillRoot(url: home.appending(path: "Projects/cloned/.pi/kit"), harness: .pi,
+                                scope: .package(name: "kit", project: project),
+                                layout: .listed([home.appending(path: ".pi/agent/auth.json")]), isReadOnly: true)
+        #expect(SkillScanner.found(in: outside).isEmpty)
     }
 
     @Test func projectPackageSkillCollidesInItsProjectOnly() throws {
