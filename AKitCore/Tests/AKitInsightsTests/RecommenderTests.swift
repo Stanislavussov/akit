@@ -286,6 +286,11 @@ extension RecommenderTests {
         try listedSessions(["dropped"], id: "d", in: db)
         let item = try #require(try recommend(db, .init(top: nil), inputs).recommendations.first)
         #expect(item.skill == "dropped" && item.evidence.sessions == 20 && item.evidence.distinctDays == 14)
+        // A model call in a session that listed it by name only still protects it.
+        try session("n", started: at(2), in: db)
+        try listing("n", "dropped", at: at(2), hash: nil, in: db)
+        try call("n", "dropped", at: at(2, 13), in: db)
+        #expect(try recommend(db, .init(top: nil), inputs).recommendations.isEmpty)
     }
 
     @Test func otherMacFileWithoutDescribedOnlyProtects() throws {

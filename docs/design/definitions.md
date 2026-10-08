@@ -70,7 +70,8 @@ Status: exposures and `desc_hash` are in the index. The described-only denominat
 recommendations and summaries count only described exposures, and `akit stats` and the
 Insights screen show the share of Claude sessions with a name-only exposure. The name-only
 reasons and "over budget" are not built (I1 left them out), so that share also counts skills
-set to `name-only` by the user and skills with an empty description.
+set to `name-only` by the user. A skill never listed with its description anywhere in the index
+(likely an empty description) is left out of it.
 
 ## Harness fingerprint
 

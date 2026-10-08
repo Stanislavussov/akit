@@ -179,7 +179,8 @@ The index and the session files never leave the Mac; Lab reviews send a digest t
 model only as Tier 2 in [`definitions.md`](definitions.md#data-tiers). On a machine marked **work**
 (see `layers.md`, "Work machines") the brain gets only one file,
 `insights/machines/<pseudonym>.json`: for each skill **that is in the brain**,
-sessions where it was listed and model / user calls, per day. No project ids,
+sessions where it was listed, model / user calls and sessions where it was listed with its
+description (`described`, step 8), per day. No project ids,
 paths, branches, plugins, third-party skill names or prompt text; the opt-in
 eval examples stay off there. Work projects' per-project summaries stay local.
 So a skill needed at work is not demoted at home, and the brain learns nothing it
@@ -216,8 +217,12 @@ day field as below; and one finding, "descriptions dropped by the harness": the 
 Claude sessions in the scope and period whose main listing had at least one name-only
 exposure, and the skills that lost their description in the most sessions (top 5). It is the
 last line of `akit stats`, `droppedDescriptions` in its JSON, and a line above the Insights
-screen's skills table. Without reasons, that share also counts a user's own `name-only`
-choice and skills with an empty description. A summary day is read per day: a day without
+screen's skills table. A name-only exposure counts there only when the skill was never listed
+with its description in that session (so the session really doesn't count as listed for it)
+and was listed with one somewhere in the index (a skill never described anywhere stands in
+for an empty description). Without reasons, the share still counts a user's own `name-only`
+choice, so the text says "usually because the listing was over Claude Code's budget, or
+because of a user override". A summary day is read per day: a day without
 `described` adds only its calls. A new akit writes `described` (maybe `{}`) on every day that
 lists a skill. Calls still count in every session from the skill's first listing, with or
 without its description. The rest of this list (reasons, the same-day rule, over budget, the

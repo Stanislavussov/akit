@@ -62,7 +62,8 @@ public struct StatsReport: Encodable, Equatable, Sendable {
         public let sessions: Int
         public let requests: Int
         public let firstRequestContext: FirstRequestContext
-        /// ≈ listing tokens per main request of the sessions whose skill list was recorded.
+        /// ≈ listing tokens per main request of the sessions whose skill list was recorded with at
+        /// least one description (name-only entries add no description tokens).
         public let approxListingTokensPerRequest: Int
         public let byOwner: [OwnerSummary]
     }
@@ -123,18 +124,21 @@ public struct StatsReport: Encodable, Equatable, Sendable {
         public let skills: Int
     }
 
-    /// Claude Code lists a skill by name only when its listing is over its budget (or the skill has
-    /// no description): the Claude sessions in scope whose main listing had such a skill.
+    /// Claude Code lists a skill by name only, usually because its listing is over its budget, or
+    /// because the user set it to `name-only`: the Claude sessions in scope whose main listing had
+    /// such a skill. Counted only for a skill never listed with its description in that session (so
+    /// the session doesn't count as listed for it) and listed with one somewhere in the index (a
+    /// skill never described anywhere likely has an empty description: nothing was dropped).
     public struct DroppedDescriptions: Encodable, Equatable, Sendable {
         public struct Skill: Encodable, Equatable, Sendable {
             public let name: String
-            /// Sessions where it was listed by name only.
+            /// Sessions where it was listed by name only and never with its description.
             public let sessions: Int
         }
 
         /// Claude sessions in scope with a skill listing.
         public let sessions: Int
-        /// Of those, sessions with at least one skill listed by name only.
+        /// Of those, sessions with at least one such skill.
         public let withNameOnly: Int
         public let share: Double
         /// The skills that lost their description in the most sessions, most first.
@@ -144,7 +148,8 @@ public struct StatsReport: Encodable, Equatable, Sendable {
         public var text: String? {
             guard sessions > 0 else { return nil }
             var text = "Descriptions dropped by the harness: \(withNameOnly) of \(sessions) Claude session\(sessions == 1 ? "" : "s") "
-                + "(\(Int((share * 100).rounded()))%) listed some skills by name only"
+                + "(\(Int((share * 100).rounded()))%) listed some skills by name only, usually because the listing was over "
+                + "Claude Code's budget, or because of a user override"
             if !skills.isEmpty { text += "; most often " + skills.map { "\($0.name) (\($0.sessions))" }.joined(separator: ", ") }
             return text + ". Such sessions don't count as listed for those skills."
         }
@@ -347,17 +352,25 @@ public enum InsightsStats {
     }
 
     /// The "descriptions dropped by the harness" finding: Claude sessions in scope whose main listing
-    /// had a skill by name only, and the skills that lost their description most often.
+    /// had a skill by name only, and the skills that lost their description most often (see
+    /// `StatsReport.DroppedDescriptions` for which name-only exposures count).
     static func droppedDescriptions(_ database: IndexDatabase, scope: Scope) throws -> StatsReport.DroppedDescriptions {
         let (scoped, values) = scope.cte
-        let counts = try database.rows("""
-            WITH \(scoped) SELECT COUNT(DISTINCT l.session_key), COUNT(DISTINCT CASE WHEN l.desc_hash IS NULL THEN l.session_key END)
-            FROM skill_listings l JOIN scoped s ON s.key = l.session_key WHERE l.harness = 'claude' AND l.is_subagent = 0
-            """, values).first
-        let sessions = counts?[0].int ?? 0, withNameOnly = counts?[1].int ?? 0
+        let dropped = """
+            dropped AS (SELECT DISTINCT l.session_key, l.skill FROM skill_listings l JOIN scoped s ON s.key = l.session_key
+              WHERE l.harness = 'claude' AND l.is_subagent = 0 AND l.desc_hash IS NULL
+                AND EXISTS(SELECT 1 FROM skill_listings d WHERE d.skill = l.skill AND d.desc_hash IS NOT NULL)
+                AND NOT EXISTS(SELECT 1 FROM skill_listings d WHERE d.session_key = l.session_key AND d.skill = l.skill
+                               AND d.is_subagent = 0 AND d.desc_hash IS NOT NULL))
+            """
+        let sessions = try database.rows("""
+            WITH \(scoped) SELECT COUNT(DISTINCT l.session_key) FROM skill_listings l JOIN scoped s ON s.key = l.session_key
+            WHERE l.harness = 'claude' AND l.is_subagent = 0
+            """, values).first?[0].int ?? 0
+        let withNameOnly = try database.rows("WITH \(scoped), \(dropped) SELECT COUNT(DISTINCT session_key) FROM dropped", values)
+            .first?[0].int ?? 0
         let skills = try database.rows("""
-            WITH \(scoped) SELECT l.skill, COUNT(DISTINCT l.session_key) AS n FROM skill_listings l JOIN scoped s ON s.key = l.session_key
-            WHERE l.harness = 'claude' AND l.is_subagent = 0 AND l.desc_hash IS NULL GROUP BY l.skill ORDER BY n DESC, l.skill LIMIT ?
+            WITH \(scoped), \(dropped) SELECT skill, COUNT(*) AS n FROM dropped GROUP BY skill ORDER BY n DESC, skill LIMIT ?
             """, values + [droppedTop]).compactMap { row in
             row[0].text.map { StatsReport.DroppedDescriptions.Skill(name: $0, sessions: row[1].int ?? 0) }
         }
@@ -402,9 +415,10 @@ public enum InsightsStats {
         let requests = try database.rows("""
             WITH \(scoped) SELECT COUNT(*) FROM requests r JOIN scoped s ON s.key = r.session_key WHERE r.is_subagent = 0
             """, scopeValues).first?[0].int ?? 0
+        // Requests of the sessions with a described listing: the context space counts only those.
         let listedRequests = try database.rows("""
             WITH \(scoped) SELECT COUNT(*) FROM requests r JOIN scoped s ON s.key = r.session_key WHERE r.is_subagent = 0
-            AND EXISTS(SELECT 1 FROM skill_listings l WHERE l.session_key = s.key AND l.is_subagent = 0)
+            AND EXISTS(SELECT 1 FROM skill_listings l WHERE l.session_key = s.key AND l.is_subagent = 0 AND l.desc_hash IS NOT NULL)
             """, scopeValues).first?[0].int ?? 0
         let firstContexts = try database.rows("""
             WITH \(scoped) SELECT (SELECT COALESCE(r.input, 0) + COALESCE(r.cache_read, 0) + COALESCE(r.cache_write, 0)

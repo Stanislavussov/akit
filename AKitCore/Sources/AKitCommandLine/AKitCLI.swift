@@ -103,9 +103,8 @@ public enum AKitCLI {
           akit recommend [--project ID|PATH | --all] [--details] [--min-sessions N] [--min-days D] [--bindings LIST] [--json]
                                           Skills listed with their description in ≥ N (20) sessions on ≥ D (14)
                                           distinct days and never called by the model anywhere (other Macs,
-                                          subagents, Pi), counted from
-                                          their current description (and, in a project, from when their layer
-                                          arrived there); sorted by ≈ context space. A layer skill gets a patch
+                                          subagents, Pi), counted from their current description (and, in a
+                                          project, from when their layer arrived there); sorted by ≈ context space. A layer skill gets a patch
                                           (mode: manual), anything else advice. A plugin is judged as a whole:
                                           disable it when the model called none of its skills, else at most
                                           one note on its unused ones. Imports new lines first
@@ -704,7 +703,7 @@ public enum AKitCLI {
                 var line = "  \(skill.name) (\(owner)): ≈ \(short(skill.approxContextSpace)) context space, "
                     + "≈ \(short(skill.approxTokens)) tokens per request; "
                     + "listed with its description in \(count(skill.listedSessions, "session")) on \(count(skill.listedDays, "day")); "
-                    + "model calls \(skill.modelCalls) (\(Int((skill.callRate * 100).rounded()))% of sessions), user calls \(skill.userCalls)"
+                    + "model calls \(skill.modelCalls) (\(Int((skill.callRate * 100).rounded()))% of those sessions), user calls \(skill.userCalls)"
                 if skill.piModelCalls > 0 { line += ", in Pi \(skill.piModelCalls)" }
                 lines.append(line)
                 if details {
@@ -713,6 +712,8 @@ public enum AKitCLI {
                 }
             }
             if report.omitted.skills > 0 { lines.append("\(count(report.omitted.skills, "more skill")): --top N, or --details for all.") }
+            lines.append("Model calls count in every session that listed the skill, by name only too (they protect it); "
+                         + "the % counts only the sessions with its description.")
         }
         if let dropped = report.droppedDescriptions.text {
             lines.append("")
@@ -965,7 +966,7 @@ public enum AKitCLI {
             lines.append("\(item.stale ? "[stale] " : "")\(item.id)  \(subject): \(item.type)")
             let period = evidence.from.map { from in " (\(from) … \(evidence.to ?? from))" } ?? ""
             let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
-            lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed in \(count(evidence.sessions, "session")) on "
+            lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed with its description in \(count(evidence.sessions, "session")) on "
                          + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
                          + "at 95%), user calls \(evidence.userCalls)")
             if let skills = evidence.skills {

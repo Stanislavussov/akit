@@ -355,7 +355,7 @@ struct InsightsView: View {
                     Label(dropped, systemImage: "text.badge.minus").font(.callout)
                         .foregroundStyle(stats.droppedDescriptions.withNameOnly > 0 ? .primary : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .help("Claude Code lists a skill by name only when its skill listing is over budget (1% of the context window by default) or the skill has no description. Such a skill can't be picked by its description, so the session doesn't count in Listed. Making unused skills manual gives the others their descriptions back.")
+                        .help("Some skills were listed by name only, usually because Claude Code's skill listing was over its budget (1% of the context window by default), or because of a user override (name-only). Such a skill can't be picked by its description, so the session doesn't count in Listed. Making unused skills manual gives the others their descriptions back.")
                 }
                 if stats.skills.isEmpty {
                     Text("No skill listings in this window.").foregroundStyle(.secondary)
@@ -382,6 +382,7 @@ struct InsightsView: View {
                                 Text("\(skill.listedSessions) · \(Self.count(skill.listedDays, "day"))")
                                     .help("Sessions where it was listed with its description, on how many days")
                                 Text(Self.modelCalls(skill))
+                                    .help("Model calls in every session that listed it, by name only too: they protect it. The % is the share of the sessions in Listed with a model call.")
                                 Text("\(skill.userCalls)")
                                 Text("≈ \(ContextSize.short(skill.approxTokens))")
                                     .help("Its description in every request where it is listed")
@@ -618,7 +619,7 @@ struct InsightsView: View {
         let period = evidence.from.map { " (\($0) … \(evidence.to ?? $0))" } ?? ""
         let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
         let rate = Int((evidence.callRateUpperBound95 * 100).rounded(.up))
-        return "≈ \(ContextSize.short(evidence.approxContextSpace)) context space · listed in \(count(evidence.sessions, "session")) on "
+        return "≈ \(ContextSize.short(evidence.approxContextSpace)) context space · listed with its description in \(count(evidence.sessions, "session")) on "
             + "\(count(evidence.distinctDays, "day"))\(period)\(macs) · model calls 0 (rate < \(rate)% at 95%) · user calls \(evidence.userCalls)"
     }
 }

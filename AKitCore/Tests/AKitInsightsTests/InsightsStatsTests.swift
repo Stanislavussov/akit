@@ -210,16 +210,25 @@ extension InsightsStatsTests {
         try listing("s2", "odd", at: at(3), hash: nil, in: db)
         try listing("s3", "rare", at: at(2), hash: nil, in: db)
         try listing("s3", "rare", at: at(2, 13), hash: nil, in: db)  // the same session twice counts once
-        // Not counted: a subagent's name-only listing, a session without any listing, a session out of the window.
-        try listing("s4", "sub", at: at(1, 13), hash: nil, subagent: true, in: db)
-        try session("empty", started: at(1), in: db)
+        // Both were listed with their description elsewhere in the index: in s1, and in a session out of the window.
+        try listing("s1", "rare", at: at(4, 13), hash: "R", in: db)
         try session("old", started: at(40), in: db)
         try listing("old", "rare", at: at(40), hash: nil, in: db)
+        try listing("old", "odd", at: at(40), hash: "O", in: db)
+        // Not counted: a skill never described anywhere (likely an empty description), a skill described later in
+        // the same session, a subagent's name-only listing, a session without any listing.
+        try listing("s4", "blank", at: at(1), hash: nil, in: db)
+        try listing("s4", "late", at: at(1), hash: nil, in: db)
+        try listing("s4", "late", at: at(1, 13), hash: "L", in: db)
+        try listing("s4", "sub", at: at(1, 13), hash: nil, subagent: true, in: db)
+        try listing("s1", "sub", at: at(4, 14), hash: "S", subagent: true, in: db)
+        try session("empty", started: at(1), in: db)
 
         let dropped = try report(db).droppedDescriptions
         #expect(dropped == .init(sessions: 4, withNameOnly: 2, share: 0.5,
                                  skills: [.init(name: "rare", sessions: 2), .init(name: "odd", sessions: 1)]), "\(dropped)")
-        #expect(dropped.text == "Descriptions dropped by the harness: 2 of 4 Claude sessions (50%) listed some skills by name only; "
+        #expect(dropped.text == "Descriptions dropped by the harness: 2 of 4 Claude sessions (50%) listed some skills by name only, "
+                + "usually because the listing was over Claude Code's budget, or because of a user override; "
                 + "most often rare (2), odd (1). Such sessions don't count as listed for those skills.")
         #expect(AKitCLI.statsText(try report(db), details: false).contains("\n\nDescriptions dropped by the harness: 2 of 4"))
         // A project: only its sessions.
@@ -382,7 +391,7 @@ extension InsightsStatsTests {
         #expect(compact.summary.byOwner.map(\.skills) == [1, 1, 1, 0, 0], "the summary covers every skill, not only the top")
         #expect(compact.summary.approxListingTokensPerRequest == 140, "(10 + 100 + 30) tokens in each of the 2 requests")
         let text = AKitCLI.statsText(compact, details: false)
-        #expect(text.contains("Top 2 by ≈ context space") && text.contains("mkt:big (plugin mkt): ≈ 200 context space, ≈ 100 tokens per request; listed with its description in 1 session on 1 day; model calls 0 (0% of sessions), user calls 0"), "\(text)")
+        #expect(text.contains("Top 2 by ≈ context space") && text.contains("mkt:big (plugin mkt): ≈ 200 context space, ≈ 100 tokens per request; listed with its description in 1 session on 1 day; model calls 0 (0% of those sessions), user calls 0"), "\(text)")
         #expect(!text.contains("small (") && text.contains("1 more skill: --top N, or --details for all."))
         #expect(text.contains("  plugin: 1 skill, ≈ 100") && !text.contains("built-in:"), "\(text)")
         #expect(!text.contains("counted since"))

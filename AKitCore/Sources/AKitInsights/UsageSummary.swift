@@ -8,7 +8,7 @@ import Foundation
 /// - `insights/machines/<id>.json` (personal Mac): every session, with first-request context
 ///   and the description hashes it saw (they feed `DescriptionWindow` on the other Macs).
 /// - `insights/machines/<pseudonym>.json` (work Mac): only skills that are in the brain, only
-///   their listed sessions and calls.
+///   their listed sessions and calls (`skills`) and their described sessions (`described`).
 /// - `<ProjectStore>/<project>/usage/<id>.json`: the sessions bound to one project, like the
 ///   personal machine file. On a work Mac that store is local, so they never reach the brain.
 ///
