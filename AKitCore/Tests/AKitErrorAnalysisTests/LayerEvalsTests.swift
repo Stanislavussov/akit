@@ -172,7 +172,7 @@ extension ControlRunsTests {
         #expect(continued.estimate.seconds != nil && continued.estimate.durations == 1)
         #expect(continued.estimate.timeText?.hasSuffix("median of 1 control run of this repository)") == true, "\(continued.estimate)")
         // More than the user allowed: refused, nothing queued.
-        #expect(await message { _ = try await queue(continued, calibrate: false, maxCost: 0.05) }?.contains("above the most you allowed") == true)
+        #expect(await message { _ = try await queue(continued, calibrate: false, maxCost: 0.05) }?.contains("A cell recorded a higher cost since the estimate") == true)
         let rest = try await queue(continued, calibrate: false, maxCost: 0.1)
         #expect(rest.runs.count == 9 && rest.skipped == 1)
         #expect(rest.runs.allSatisfy { $0.spec.controlSetup?.layer?.evalID == first.evalID })
@@ -240,6 +240,7 @@ extension ControlRunsTests {
         #expect(await message { _ = try await calibrate(red) }?.contains("fail on its reference commit") == true)
         #expect(LayerEvalStore.manifest(red.evalID, env: env) == nil
                 && !FileManager.default.fileExists(atPath: EvalPaths(env: env).layerEval(red.evalID).path))
+        #expect(!FileManager.default.fileExists(atPath: EvalPaths(env: env).layerEvals.appending(path: ".\(red.evalID).lock").path))
         task.referenceGreen = nil
         try ControlTasks.save(task, env: env)
 
@@ -254,6 +255,15 @@ extension ControlRunsTests {
         let guarded = try await calibrate(try await evalPlan(fixture, continuing: nil))
         _ = try await runQueued(guarded)
         #expect(try disallowed(guarded[0]) == ["Bash(git push:*)"] + ControlSetup.disallowedTools(ControlSetup.akitDenied))
+
+        // A cell an older version queued names no denied commands: it gets the default when it runs.
+        let older = try LabStore.create(RunSpec(id: RunSpec.newID(at: .now), kind: .control, title: "older", folder: task.cloneSource.path,
+                                                environment: .background, akit: "/usr/bin/true", agent: claude, repo: task.repo,
+                                                repeatIndex: 1, repeats: 1, keep: false, controlTask: task.id,
+                                                controlSetup: ControlSetup(name: "baseline", agent: claude)), env: env)
+        #expect(older.spec.controlSetup?.denied == nil)
+        _ = try await runQueued([older])
+        #expect(try disallowed(older).contains("Bash(swift run:*)") && ControlSetup.akitDenied.contains("swift run"))
     }
 
     /// Every Makefile target of AKit that installs AKit or starts it (or another app) is

@@ -130,6 +130,7 @@ extension AKitCLI {
         if options.json {
             var queued = 0
             if options.yes, plan.toQueue > 0 || calibrate {
+                if !calibrate, plan.estimate.perCell == nil { throw Failure(message: "No estimate yet: " + plan.estimate.costText + ".") }
                 let allowed = calibrate ? nil : try maxCostAllowing(maxCost, plan.estimate)
                 queued = try await queueEval(plan, calibrate: calibrate, maxCost: allowed, environment: environment, keep: keep, noStart: noStart,
                                              env: env, out: { _ in })
@@ -171,10 +172,9 @@ extension AKitCLI {
                 out(String(format: "The calibration cell is expected to cost $%.2f–$%.2f.", low / Double(plan.estimate.cells),
                            high / Double(plan.estimate.cells)))
             }
-        } else if plan.estimate.perCell != nil {
-            _ = try maxCostAllowing(maxCost, plan.estimate)
         }
-        let allowed = calibrate ? nil : Double(maxCost ?? "")
+        // No estimate: LayerEvals.queue refuses and names the calibration cell.
+        let allowed = calibrate || plan.estimate.perCell == nil ? nil : try maxCostAllowing(maxCost, plan.estimate)
         _ = try await queueEval(plan, calibrate: calibrate, maxCost: allowed, environment: environment, keep: keep, noStart: noStart, env: env,
                                 out: out)
         return 0

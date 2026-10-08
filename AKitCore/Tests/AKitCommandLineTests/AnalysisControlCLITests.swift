@@ -58,27 +58,47 @@ extension AKitCLITests {
         try write("Projects/task/rule.md", "- Check value.txt before saying done.\n")
         let asked = await akit("analysis", "control", "run", id, "--patch-file", "CLAUDE.md", "--patch-text", "@rule.md",
                                "--model", "sonnet", "--env", "background", "--no-start")
-        #expect(asked.code == 0 && asked.out.contains("Up to 6 cells") && asked.out.hasSuffix("Run it again with --yes to queue them."), "\(asked)")
+        #expect(asked.code == 0 && asked.out.contains("6 cells to run (0 already done or queued); no estimate yet")
+                && asked.out.hasSuffix("Run it again with --yes to queue them (no estimate yet)."), "\(asked)")
         let none = await akit("lab", "list", "--json")
         #expect((try JSONSerialization.jsonObject(with: Data(none.out.utf8)) as? [Any])?.isEmpty == true, "\(none)")
 
         // 3 repeats × (baseline, variant, read-only) with the chosen model and effort; the same again is all skipped.
         let run = await akit("analysis", "control", "run", String(id.prefix(10)), "--patch-file", "CLAUDE.md", "--patch-text", "@rule.md",
                              "--model", "sonnet", "--effort", "medium", "--read-only-setup", "--env", "background", "--no-start", "--yes")
-        #expect(run.code == 0 && run.out.contains("Up to 9 cells; no estimate yet") && run.out.contains("Queued 9 cells: 3 × 1 tasks × baseline · Claude Code · sonnet · medium"), "\(run)")
+        #expect(run.code == 0 && run.out.contains("9 cells to run (0 already done or queued); no estimate yet") && run.out.contains("Queued 9 cells: 3 × 1 tasks × baseline · Claude Code · sonnet · medium"), "\(run)")
         #expect(run.out.contains("variant · Claude Code · sonnet · medium · + CLAUDE.md") && run.out.contains("read-only"))
         let again = await akit("analysis", "control", "run", id, "--patch-file", "CLAUDE.md", "--patch-text", "@rule.md",
                                "--model", "sonnet", "--effort", "medium", "--read-only-setup", "--env", "background", "--no-start", "--yes")
         #expect(again.out.hasSuffix("Nothing to queue. Skipped 9 cells already done or queued."), "\(again)")
+        // Once a cost is recorded, paid cells need --max-cost, and no more than it allows.
+        try recordControlCost(0.5, model: "sonnet")
+        let more = ["analysis", "control", "run", id, "--patch-file", "CLAUDE.md", "--patch-text", "@rule.md", "--model", "sonnet",
+                    "--effort", "medium", "--read-only-setup", "--repeats", "4", "--env", "background", "--no-start"]
+        func cli(_ args: [String]) async -> (code: Int32, out: String, err: String) {
+            var out: [String] = []
+            var err: [String] = []
+            let code = await AKitCLI.run(args, env: env, cwd: project, projectsRoot: home.appending(path: "Projects"),
+                                         out: { out.append($0) }, err: { err.append($0) })
+            return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
+        }
+        let priced = await cli(more)
+        #expect(priced.out.contains("3 cells to run (9 already done or queued); ≈ $1.50 (range $1.50–$1.50)")
+                && priced.out.hasSuffix("Run it again with --yes --max-cost USD to queue them (USD: the most you allow)."), "\(priced)")
+        let unbounded = await cli(more + ["--yes"])
+        #expect(unbounded.code != 0 && unbounded.err.contains("add --max-cost USD"), "\(unbounded)")
+        #expect(await cli(more + ["--yes", "--max-cost", "1"]).err.contains("The estimate's high end $1.50 is above --max-cost $1.00."))
+        let bounded = await cli(more + ["--yes", "--max-cost", "2"])
+        #expect(bounded.code == 0 && bounded.out.contains("Queued 3 cells"), "\(bounded)")
         let runs = await akit("lab", "list", "--json")
         let specs = try #require(try JSONSerialization.jsonObject(with: Data(runs.out.utf8)) as? [[String: Any]]).compactMap { $0["spec"] as? [String: Any] }
-        #expect(specs.count == 9 && specs.allSatisfy { $0["kind"] as? String == "control" && $0["controlTask"] as? String == id })
+        #expect(specs.count == 12 && specs.allSatisfy { $0["kind"] as? String == "control" && $0["controlTask"] as? String == id })
         let agents = specs.compactMap { ($0["controlSetup"] as? [String: Any])?["agent"] as? [String: Any] }
-        #expect(agents.count == 9 && agents.allSatisfy { $0["model"] as? String == "sonnet" && $0["effort"] as? String == "medium" }, "\(agents)")
+        #expect(agents.count == 12 && agents.allSatisfy { $0["model"] as? String == "sonnet" && $0["effort"] as? String == "medium" }, "\(agents)")
         let patched = specs.compactMap { ($0["controlSetup"] as? [String: Any])?["patch"] as? [String: Any] }
-        #expect(patched.count == 3 && patched.allSatisfy { $0["text"] as? String == "- Check value.txt before saying done.\n" })
+        #expect(patched.count == 4 && patched.allSatisfy { $0["text"] as? String == "- Check value.txt before saying done.\n" })
 
-        #expect(await akit("analysis", "control", "compare", id).out.contains("No finished cells of \(id) yet. 9 queued or running."))
+        #expect(await akit("analysis", "control", "compare", id).out.contains("No finished cells of \(id) yet. 12 queued or running."))
 
         #expect(await akit("analysis", "control", "task", "remove", id).out == "Moved control task \(id) to the Trash.")
         #expect(await akit("analysis", "control", "tasks").out == "No control tasks.")
@@ -132,7 +152,6 @@ extension AKitCLITests {
                                       model: "sonnet", inputCharacters: 10, usage: SendUsage(cost: 0.5)), env: env)
         #expect(await run(["--env", "background", "--yes"]).err.contains("add --max-cost USD"))
         #expect(await run(["--env", "background", "--yes", "--max-cost", "1"]).err.contains("The estimate's high end $3.00 is above --max-cost $1.00."))
-        #expect(await akit("analysis", "control", "run", id, "--model", "sonnet", "--max-cost", "1").err.contains("go with --layer"))
 
         // The project's saved answers (found under the projects root) reach the render; an empty --answer keeps them.
         try write("brain/projects/local/task/answers.json", #"{"layers":["swiftui"],"values":{"ui_check":"make check"},"targets":["claude"]}"#)

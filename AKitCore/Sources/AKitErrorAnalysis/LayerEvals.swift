@@ -105,6 +105,16 @@ public enum LayerEvals {
                          calibrating: manifest.setups.contains { setup in !finished.contains { $0.spec.controlSetup == setup } })
     }
 
+    /// Queues prepared layer setups that weren't planned from a set (Run Cells… with a brain
+    /// layer, `run --layer`) the same way: `toQueue` and `maxCost` are what the user confirmed.
+    public static func queue(_ prepared: LayerSetups.Prepared, repeats: Int, toQueue: Int, maxCost: Double, environment: LabEnvironment?,
+                             keep: Bool, akit: URL, env: HarnessEnvironment) async throws -> (runs: [LabRun], skipped: Int) {
+        let agent = prepared.setups.first?.agent ?? LabAgent(harness: .claudeCode, model: "", effort: "")
+        let plan = EvalPlan(set: LayerSet(layer: prepared.layer), missing: [], prepared: prepared, repeats: repeats, toQueue: toQueue, skipped: 0,
+                            estimate: CostEstimate(cells: toQueue, agent: agent, basedOn: 0, source: .none, durations: 0), resumable: nil)
+        return try await queue(plan, calibrateOnly: false, maxCost: maxCost, environment: environment, keep: keep, akit: akit, env: env)
+    }
+
     /// Queues a planned eval: the cells counted and estimated again (refused when more would
     /// be queued than the plan said, or the estimate's high end is above `maxCost`), the monthly
     /// limit with that estimate, then the eval folder (a cell must find its overlay), then the
@@ -148,9 +158,13 @@ public enum LayerEvals {
                     throw LayerSetups.Failure(message: "No estimate yet: " + estimate.costText + ". Queue 1 calibration cell first "
                                                   + "(akit analysis control evaluate \(plan.layer) --calibrate --yes); the eval reuses it.")
                 }
-                if let maxCost, let high = estimate.high, high > maxCost {
-                    throw LayerSetups.Failure(message: String(format: "The estimate's high end $%.2f is above the most you allowed, $%.2f; "
-                                                                 + "check it again.", high, maxCost))
+                // Paid cells only up to an amount the user confirmed.
+                guard let maxCost else {
+                    throw LayerSetups.Failure(message: "Paid cells are queued only up to an amount you confirmed; none was given.")
+                }
+                if let high = estimate.high, high > maxCost {
+                    throw LayerSetups.Failure(message: String(format: "A cell recorded a higher cost since the estimate: its high end is now $%.2f, "
+                                                                 + "above the $%.2f you allowed; check it again.", high, maxCost))
                 }
             }
             try SendLog.checkLimit(estimate: calibrateOnly ? estimate.perCell : estimate.total,
@@ -167,7 +181,10 @@ public enum LayerEvals {
             } catch {
                 // A new eval with no cell is no eval: its folder goes, so no plan offers to continue it.
                 let queued = LabStore.list(env: env).contains { $0.spec.controlSetup?.layer?.evalID == prepared.evalID }
-                if isNew, !queued { try? FileManager.default.removeItem(at: paths.layerEval(prepared.evalID)) }
+                if isNew, !queued {
+                    try? FileManager.default.removeItem(at: paths.layerEval(prepared.evalID))
+                    try? FileManager.default.removeItem(at: lock)
+                }
                 throw error
             }
         }

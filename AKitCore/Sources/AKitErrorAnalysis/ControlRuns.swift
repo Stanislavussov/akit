@@ -136,7 +136,10 @@ public enum ControlRuns {
                 throw LabWorker.Failure(message: "The hidden tests of \(commit.prefix(7)) can't judge the cell: \(failure.message)")
             }
         }
-        let facts = try await ControlCell.run(run, setup: setup, repo: repo, base: task.base, prompt: prompt, oracle: oracle, overlay: overlay,
+        // A cell queued by an older akit names no denied commands: it gets the repository's
+        // default now. The key stays the setup's own.
+        let runSetup = ControlRuns.withDefaults(setup, task)
+        let facts = try await ControlCell.run(run, setup: runSetup, repo: repo, base: task.base, prompt: prompt, oracle: oracle, overlay: overlay,
                                               env: env, phase: phase, out: out)
         let session: String? = if case .session(let key) = task.source { key.description } else { nil }
         let logError = SendLog.appendAfterRun(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,

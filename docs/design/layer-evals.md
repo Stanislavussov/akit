@@ -326,11 +326,19 @@ Further choices of the step 4 plan, accepted on the same day:
   calibration cell, and the next Evaluate continues that eval by default while not every
   setup has a finished cell (so the paid cell is reused); `--new` (CLI) or the Continue
   toggle (app) starts another.
+- Every paid queue of **Run Cells…** (plain and patch setups too) counts the cells still to
+  run, estimates them and asks before queueing: "Queue up to N cells for about $X (range
+  $L–$H)?", or "Queue N cells with no estimate yet?" when no cost is recorded; the app counts
+  and estimates again before it queues. The hint for a variant without its baseline says "it
+  costs nothing" only when the baseline has no cell left to run. `control run --yes` without
+  `--layer` prints the cells to run and the estimate, and needs `--max-cost USD` once a cost
+  is recorded (without one, `--yes` alone with the count shown).
 - The same money rule for **Run Cells…** with a brain layer and `run --layer`: no recorded
   cost, no paid layer cell (the button stays disabled and points to Brain → layer →
   Evaluate… for the calibration cell; the CLI refuses with the `evaluate --calibrate`
   command); otherwise the button waits for the estimate and asks "Queue up to N cells for
-  about $X (range $L–$H)?", and the app counts and estimates again before queueing. The
+  about $X (range $L–$H)?"; both queue through `LayerEvals.queue` (the lock, the second count,
+  the cleanup of a new eval's folder and lock). The
   CLI's `--yes` for paid layer cells (`evaluate` and `run --layer`) needs `--max-cost USD`
   and refuses when the estimate's high end is above it; `--calibrate --yes` needs none (one
   cell) and prints the cell's expected range when there is one. The app's confirmations add
@@ -341,13 +349,15 @@ Further choices of the step 4 plan, accepted on the same day:
   test reads the fake `claude`'s argv). A layer eval gives the same list to both setups and
   the read-only cells, so the comparison stays fair. In AKit's own repository (it has
   `AKitCore/Package.swift`) the default is every Makefile target that builds, installs or
-  starts AKit or another app, and `open`: `make snapshot, make run, make restart, make
-  install, make install-cli, make screenshots, make open, open` (a test parses the Makefile
+  starts AKit or another app, `open` and `swift run` (`swift build` and `swift test` stay
+  allowed): `make snapshot, make run, make restart, make install, make install-cli, make
+  screenshots, make open, open, swift run` (a test parses the Makefile
   and fails when a new launching or installing target is missing). AKit's `CLAUDE.md` asks
   for `make snapshot` after UI changes, and these would build and start a development AKit
   against the real `~/.akit`. Other repositories get none. The default applies to **every**
   control cell (a setup with `denied` nil gets it when its cells are queued, `--no-deny`
-  stores an explicit empty list) and to every replay in AKit's own repository (at run time).
+  stores an explicit empty list; a cell an older version queued without the list gets it when
+  it runs, its key unchanged) and to every replay in AKit's own repository (at run time).
   The list is in the cell key only when it is not empty, so keys change only for cells in
   AKit's own repository: their earlier finished cells (without the list) don't count as done
   and run again. A continued eval keeps its own list; continuing one that denies nothing in
@@ -356,8 +366,8 @@ Further choices of the step 4 plan, accepted on the same day:
   through an `akit` whose `akit lab --help` names "denied commands". **What it doesn't
   catch:** a prefix rule sees the command as written, so `make -C . snapshot`,
   `make OUT=x snapshot`, `cd x && …` chains Claude Code splits differently, a script that
-  calls make, and running the built app's binary directly (`build/…/AKit.app/Contents/MacOS/AKit`)
-  are not denied; Pi cells get no list (Pi has no deny flag). It guards the commands the
+  calls make, and running a built binary directly (`build/…/AKit.app/Contents/MacOS/AKit`,
+  `AKitCore/.build/…/akit`, `xcodebuild` followed by either) are not denied; Pi cells get no list (Pi has no deny flag). It guards the commands the
   project's own instructions name.
 - UI: Brain → layer (not core) → **Evals** box: the last verdict per agent as a badge
   ("helps (offline)" · opus · high · the date · @a1b2c3d, the result lines in its help),

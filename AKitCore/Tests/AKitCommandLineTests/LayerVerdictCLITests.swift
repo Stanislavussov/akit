@@ -71,7 +71,7 @@ extension AKitCLITests {
 
         // A patch fix on the same tasks with the same passes still has no conclusion (D4).
         let patch = await akit("analysis", "control", "run", ids.joined(separator: ","), "--patch-file", "CLAUDE.md", "--patch-text", "x",
-                               "--model", "sonnet", "--env", "background", "--no-start", "--yes")
+                               "--model", "sonnet", "--env", "background", "--no-start", "--yes", "--max-cost", "100")
         #expect(patch.code == 0 && patch.out.contains("Queued 30 cells"), "\(patch)")
         try finishControlCells { spec in spec.controlSetup?.patch != nil || spec.repeatIndex == 1 }
         let both = await akit("analysis", "control", "compare", ids.joined(separator: ","))

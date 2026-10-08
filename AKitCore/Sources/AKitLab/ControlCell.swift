@@ -95,10 +95,11 @@ public struct ControlSetup: Codable, Sendable, Hashable {
     /// Commands an agent must not run in a clone of AKit's own repository: its CLAUDE.md asks
     /// for `make snapshot` after a UI change, and these build, install or start AKit (or
     /// Xcode) from the clone, against the real `~/.akit` (an index migration locks out the
-    /// installed app). `open` launches any app. Every Makefile target that does so is listed
-    /// (a test reads the Makefile).
+    /// installed app). `open` launches any app, `swift run` the package's `akit` (`swift build`
+    /// and `swift test` stay allowed). Every Makefile target that does so is listed (a test
+    /// reads the Makefile).
     public static let akitDenied = ["make snapshot", "make run", "make restart", "make install", "make install-cli",
-                                    "make screenshots", "make open", "open"]
+                                    "make screenshots", "make open", "open", "swift run"]
 
     /// The denied commands of a cell whose setup names none: `akitDenied` in AKit's own
     /// repository (it has `AKitCore/Package.swift`), else none.

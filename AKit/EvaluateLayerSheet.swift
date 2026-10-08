@@ -261,7 +261,13 @@ struct EvaluateLayerSheet: View {
         let waiting = model.labRuns.filter { $0.status == .queued }.count
         let others = waiting == 0 ? "" : " \(waiting) other queued \(waiting == 1 ? "run" : "runs") will start too."
         switch kind {
-        case .calibrate: return "1 paid cell to measure the cost; the eval reuses it. It runs " + account + others
+        case .calibrate:
+            // Known only when a replay or another model's cell gave a range.
+            let range = plan.flatMap { plan -> String? in
+                guard let low = plan.estimate.low, let high = plan.estimate.high, plan.estimate.cells > 0 else { return nil }
+                return String(format: " Expected: $%.2f–$%.2f.", low / Double(plan.estimate.cells), high / Double(plan.estimate.cells))
+            } ?? ""
+            return "1 paid cell to measure the cost; the eval reuses it." + range + " It runs " + account + others
         case .queue:
             return "They run " + account + (plan?.estimate.timeText.map { " \($0)." } ?? "") + others
         }

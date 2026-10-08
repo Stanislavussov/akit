@@ -21,11 +21,23 @@ struct RunCellsSheet: View {
         }
     }
 
-    /// What the estimate depends on.
+    /// What the plan and the estimate depend on: the cells that would be queued.
     private struct EstimateKey: Hashable {
-        var cells: Int
+        var tasks: [ControlTask]
+        var setups: [ControlSetup]
+        var repeats: Int
+        var sanity: ControlSetup?
+        var sanityTasks: [ControlTask]
         var agent: LabAgent
-        var repo: URL?
+    }
+
+    /// The cells still to run (a dry run of the queue), their estimate, and how many cells the
+    /// baseline alone would still run (the hint when the baseline is off).
+    private struct Planned {
+        var toQueue: Int
+        var skipped: Int
+        var estimate: CostEstimate
+        var baselineLeft: Int
     }
 
     /// What a layer eval's preparation depends on: a change prepares it again.
@@ -56,12 +68,12 @@ struct RunCellsSheet: View {
     @State private var repeats = 3
     @State private var environment: LabEnvironment?
     @State private var keep = false
-    /// The estimate for the current cells and agent (`ControlRuns.estimate`).
-    @State private var estimate: (key: EstimateKey, value: CostEstimate)?
+    /// The plan and estimate for the current cells (`ControlRuns.plan`, `ControlRuns.estimate`).
+    @State private var planned: (key: EstimateKey, value: Planned)?
     @State private var error: String?
     @State private var busy = false
-    /// A layer eval's cells wait for the user to confirm the amount.
-    @State private var confirmingLayer = false
+    /// Paid cells wait for the user to confirm the amount.
+    @State private var confirming = false
 
     /// `fixMode`: Try on Control Tasks… of a mode page (`--fix MODE`). `layer`: Run Cells… of a
     /// layer set's page, a layer eval of that layer.
@@ -162,13 +174,14 @@ struct RunCellsSheet: View {
                 Label(reason.message, systemImage: "info.circle").foregroundStyle(.orange).font(.callout)
             }
             if variant, !isLayer, !baseline {
-                Label("A variant is only compared with a baseline of the same agent: turn the baseline on. Cells already done are skipped, so it costs nothing where they ran before.",
+                Label("A variant is only compared with a baseline of the same agent: turn the baseline on."
+                      + (currentPlan?.baselineLeft == 0 ? " Its cells are all done or queued, so it costs nothing." : ""),
                       systemImage: "info.circle")
                     .foregroundStyle(.orange)
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if isLayer, layerEval != nil, let estimate = currentEstimate, estimate.perCell == nil {
+            if isLayer, layerEval != nil, let estimate = currentPlan?.estimate, estimate.perCell == nil {
                 Label("No paid layer cells without an estimate: queue 1 calibration cell in Brain → \(layerName ?? "the layer") → Evaluate… "
                       + "(the tasks must be in the layer's set); the eval reuses it.", systemImage: "info.circle")
                     .foregroundStyle(.orange)
@@ -184,29 +197,34 @@ struct RunCellsSheet: View {
                 if busy { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button((cells == 1 ? "Queue 1 Cell" : "Queue \(cells) Cells") + (isLayer ? "…" : "")) {
-                    if isLayer { confirmingLayer = true } else { queue() }
-                }
+                Button(currentPlan.map { $0.toQueue == 1 ? "Queue 1 Cell…" : "Queue \($0.toQueue) Cells…" } ?? "Queue Cells…") { confirming = true }
                     .keyboardShortcut(.defaultAction)
-                    // A layer eval's cells: only with an estimate from recorded cells, as in Evaluate….
-                    .disabled(busy || cells == 0 || !redTasks.isEmpty || (isLayer && currentEstimate?.perCell == nil)
+                    // Paid cells only after the plan and estimate; a layer eval's only with a recorded cost, as in Evaluate….
+                    .disabled(busy || cells == 0 || !redTasks.isEmpty || currentPlan == nil || currentPlan?.toQueue == 0
+                              || (isLayer && currentPlan?.estimate.perCell == nil)
                               || (variant && !isLayer && setups.allSatisfy { $0.patch == nil }) || (variant && !isLayer && !baseline)
                               || (harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty))
             }
         }
         .padding(20)
         .frame(width: 780)
-        .confirmationDialog(layerConfirmationTitle, isPresented: $confirmingLayer, titleVisibility: .visible) {
+        .confirmationDialog(confirmationTitle, isPresented: $confirming, titleVisibility: .visible) {
             Button("Queue", action: queue)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(layerConfirmationMessage)
+            Text(confirmationMessage)
         }
         .task(id: estimateKey) {
-            let key = estimateKey, env = analysis.env
-            let value = await Task.detached { ControlRuns.estimate(cells: key.cells, agent: key.agent, repo: key.repo, env: env) }.value
+            let key = estimateKey, env = analysis.env, baselineSetup = ControlSetup(name: "baseline", agent: agent)
+            let value = await Task.detached {
+                let sanity = key.sanity.map { ($0, key.sanityTasks, 1) }
+                let counts = ControlRuns.plan(tasks: key.tasks, setups: key.setups, repeats: key.repeats, sanity: sanity, env: env)
+                let estimate = ControlRuns.estimate(cells: counts.toQueue, agent: key.agent, repo: key.tasks.first?.mainFolder, env: env)
+                let baselineLeft = ControlRuns.plan(tasks: key.tasks, setups: [baselineSetup], repeats: key.repeats, env: env).toQueue
+                return Planned(toQueue: counts.toQueue, skipped: counts.skipped, estimate: estimate, baselineLeft: baselineLeft)
+            }.value
             guard !Task.isCancelled else { return }
-            estimate = (key, value)
+            planned = (key, value)
         }
         .task {
             // Snapshot hook: `--project <layer>` picks the layer.
@@ -357,51 +375,69 @@ struct RunCellsSheet: View {
         }
     }
 
-    private var estimateKey: EstimateKey { EstimateKey(cells: cells, agent: agent, repo: chosenTasks.first?.mainFolder) }
-
-    /// The current estimate, once computed for these cells and this agent.
-    private var currentEstimate: CostEstimate? {
-        guard let estimate, estimate.key == estimateKey else { return nil }
-        return estimate.value
+    private var estimateKey: EstimateKey {
+        if isLayer, let layerEval {
+            return EstimateKey(tasks: layerEval.runnable, setups: layerEval.setups, repeats: repeats, sanity: layerEval.sanitySetup,
+                               sanityTasks: layerEval.sanityTasks, agent: agent)
+        }
+        return EstimateKey(tasks: chosenTasks, setups: setups, repeats: repeats, sanity: nil, sanityTasks: [], agent: agent)
     }
 
-    private var layerConfirmationTitle: String {
-        guard let estimate = currentEstimate, let total = estimate.total, let low = estimate.low, let high = estimate.high else { return "" }
-        return String(format: "Queue up to %d cells for about $%.2f (range $%.2f–$%.2f)?", cells, total, low, high)
+    /// The current plan and estimate, once computed for these cells.
+    private var currentPlan: Planned? {
+        guard let planned, planned.key == estimateKey else { return nil }
+        return planned.value
     }
 
-    private var layerConfirmationMessage: String {
+    /// "Queue up to N cells for about $X (range $L–$H)?", or the count alone with no recorded cost.
+    private var confirmationTitle: String {
+        guard let plan = currentPlan else { return "" }
+        let count = plan.toQueue == 1 ? "1 cell" : "\(plan.toQueue) cells"
+        guard let total = plan.estimate.total, let low = plan.estimate.low, let high = plan.estimate.high else {
+            return "Queue \(count) with no estimate yet?"
+        }
+        return String(format: "Queue up to %@ for about $%.2f (range $%.2f–$%.2f)?", count, total, low, high)
+    }
+
+    private var confirmationMessage: String {
         let waiting = model.labRuns.filter { $0.status == .queued }.count
-        return "They run with your Claude Code account (\(agent.model), \(agent.effort)), go through the sending policy and count toward "
-            + "the monthly limit. Cells already done are skipped." + (currentEstimate?.timeText.map { " \($0)." } ?? "")
+        let agentText = "\(agent.harness.title) account (\(agent.model.isEmpty ? "default model" : agent.model), \(agent.effort))"
+        return (currentPlan?.estimate.perCell == nil ? "No control or replay cell of this model recorded a cost, so AKit can't say what they cost. " : "")
+            + "They run with your \(agentText), go through the sending policy and count toward the monthly limit."
+            + (currentPlan?.estimate.timeText.map { " \($0)." } ?? "")
             + (waiting == 0 ? "" : " \(waiting) other queued \(waiting == 1 ? "run" : "runs") will start too.")
     }
 
-    /// As the CLI prints it (`ControlRuns.estimate`): the recorded cost of earlier control
-    /// cells (else replays) of the same harness and model, and the time in the Lab queue.
+    /// As the CLI prints it (`ControlRuns.plan`, `ControlRuns.estimate`): the cells still to run,
+    /// the recorded cost of earlier control cells (else replays) of the same harness and model,
+    /// and the time in the Lab queue.
     private var costLine: String {
-        guard let estimate = currentEstimate else { return "Up to \(cells) cells; estimating…" }
-        return "Up to \(cells) cells; \(estimate.costText)." + (estimate.timeText.map { " \($0)." } ?? "")
+        guard let plan = currentPlan else { return cells == 0 ? "No cells." : "Counting the cells to run…" }
+        return "\(plan.toQueue) cells to run (\(plan.skipped) already done or queued); \(plan.estimate.costText)."
+            + (plan.estimate.timeText.map { " \($0)." } ?? "")
     }
 
     private func queue() {
         busy = true
         error = nil
         let tasks = chosenTasks, setups = setups, repeats = repeats, environment = environment, keep = keep
-        let estimate = currentEstimate?.total, maxCost = currentEstimate?.high ?? 0
+        guard let plan = currentPlan else { return }
+        let estimate = plan.estimate.total, maxCost = plan.estimate.high, confirmed = plan.toQueue
         let env = analysis.env
         let layerEval = isLayer ? layerEval : nil
         Task {
             do {
                 try await Task.detached { try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env) }.value
                 if let layerEval {
-                    let queued = try await model.queueLayerCells(layerEval, repeats: repeats, maxCost: maxCost, environment: environment, keep: keep)
+                    let queued = try await model.queueLayerCells(layerEval, repeats: repeats, toQueue: confirmed, maxCost: maxCost ?? 0,
+                                                                 environment: environment, keep: keep)
                     let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
                     analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
                         : "Queued \(queued.runs.count) cells of eval \(layerEval.evalID): \(repeats) × \(layerEval.runnable.count) tasks × "
                             + "without \(layerEval.layer), layer \(layerEval.layer).\(skipped)"
                 } else {
-                    let queued = try await model.queueControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep)
+                    let queued = try await model.queueControlRuns(tasks: tasks, setups: setups, repeats: repeats, toQueue: confirmed, maxCost: maxCost,
+                                                                  environment: environment, keep: keep)
                     let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
                     analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
                         : "Queued \(queued.runs.count) cells: \(repeats) × \(tasks.count) tasks × \(setups.map(\.name).joined(separator: ", ")).\(skipped)"
