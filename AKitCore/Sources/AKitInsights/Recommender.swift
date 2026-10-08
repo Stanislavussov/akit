@@ -86,9 +86,9 @@ public struct RecommendReport: Encodable, Equatable, Sendable {
     }
 
     public struct Evidence: Encodable, Equatable, Sendable {
-        /// Main sessions it was listed in, on every Mac in scope.
+        /// Main sessions it was listed in with its description, on every Mac in scope.
         public let sessions: Int
-        /// Distinct local calendar days it was listed, on every Mac in scope.
+        /// Distinct local calendar days it was listed with its description, on every Mac in scope.
         public let distinctDays: Int
         /// First and last of those days (`yyyy-MM-dd`).
         public let from: String?
@@ -179,8 +179,9 @@ public struct RecommendReport: Encodable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey { case version, rule, summary, recommendations, noData, hiddenByDismissal, omitted }
 }
 
-/// Rule `auto-to-manual`: a skill listed in at least N sessions on at least D distinct local days,
-/// summed over this Mac's index and the other Macs' summaries, and never called by the model
+/// Rule `auto-to-manual`: a skill listed with its description in at least N sessions on at least D
+/// distinct local days, summed over this Mac's index and the other Macs' summaries (their `described`
+/// day field; a day without it only adds calls), and never called by the model
 /// anywhere (other Macs, subagents, Pi), is better off manual. What to do depends on who owns it:
 /// a layer gets a `layer.yaml` patch, anything else advice. See docs/design/session-insights.md.
 public enum Recommender {
@@ -232,7 +233,7 @@ public enum Recommender {
         public init() {}
     }
 
-    /// Counts of one skill in other Macs' files from a local day on.
+    /// Counts of one skill in other Macs' files from a local day on. Listed: with its description.
     private struct Elsewhere {
         var listed = 0
         var model = 0
@@ -248,13 +249,16 @@ public enum Recommender {
         // A file with nothing from the day on (a retired Mac) says nothing about the window, nor is it stale for it.
         for (key, file) in files where file.days.keys.max().map({ $0 >= day }) == true {
             for (date, entry) in file.days {
-                guard let counts = entry.skills[skill], counts.count == 3 else { continue }
+                let counts = entry.skills[skill].flatMap { $0.count == 3 ? $0 : nil }
+                // Only described sessions count as listed: a day without `described` adds calls only.
+                let described = UsageSummary.described(entry, skill: skill)
+                guard counts != nil || described > 0 else { continue }
                 result.keys.insert(key)
                 guard date >= day else { continue }
-                result.listed += counts[0]
-                result.model += counts[1]
-                result.user += counts[2]
-                if counts[0] > 0 {
+                result.listed += described
+                result.model += counts?[1] ?? 0
+                result.user += counts?[2] ?? 0
+                if described > 0 {
                     result.days.insert(date)
                     result.listing.insert(key)
                 }
@@ -276,6 +280,7 @@ public enum Recommender {
         for file in scoped.values {
             for day in file.days.values {
                 for (skill, counts) in day.skills where (counts.first ?? 0) > 0 { names.insert(skill) }
+                for (skill, count) in day.described ?? [:] where count > 0 { names.insert(skill) }
             }
         }
         func owner(of name: String) -> SkillOwner {
@@ -340,8 +345,7 @@ public enum Recommender {
             var elsewhere = 0
             for file in scoped.values {
                 for (date, entry) in file.days {
-                    elsewhere += covered.map { date >= $0.startDay ? (entry.skills[$0.name].flatMap { $0.count == 3 ? $0[0] : nil } ?? 0) : 0 }
-                        .max() ?? 0
+                    elsewhere += covered.map { date >= $0.startDay ? UsageSummary.described(entry, skill: $0.name) : 0 }.max() ?? 0
                 }
             }
             return (here, here.count + elsewhere, days)

@@ -88,9 +88,10 @@ public struct StatsReport: Encodable, Equatable, Sendable {
     public struct SkillStats: Encodable, Equatable, Sendable {
         public let name: String
         public let owner: Owner
-        /// Main sessions where it was listed (subagent runs are no sessions).
+        /// Main sessions where it was listed with its description (subagent runs are no sessions; a
+        /// skill listed by name only can't be picked by its description, so those sessions don't count).
         public let listedSessions: Int
-        /// Distinct local calendar days it was listed in a main session.
+        /// Distinct local calendar days it was listed with its description in a main session.
         public let listedDays: Int
         /// Calls by the model in Claude Code, subagents included, after the session's first listing.
         public let modelCalls: Int
@@ -122,6 +123,33 @@ public struct StatsReport: Encodable, Equatable, Sendable {
         public let skills: Int
     }
 
+    /// Claude Code lists a skill by name only when its listing is over its budget (or the skill has
+    /// no description): the Claude sessions in scope whose main listing had such a skill.
+    public struct DroppedDescriptions: Encodable, Equatable, Sendable {
+        public struct Skill: Encodable, Equatable, Sendable {
+            public let name: String
+            /// Sessions where it was listed by name only.
+            public let sessions: Int
+        }
+
+        /// Claude sessions in scope with a skill listing.
+        public let sessions: Int
+        /// Of those, sessions with at least one skill listed by name only.
+        public let withNameOnly: Int
+        public let share: Double
+        /// The skills that lost their description in the most sessions, most first.
+        public let skills: [Skill]
+
+        /// The finding in one line, as `akit stats` and the Insights screen show it; nil without Claude listings.
+        public var text: String? {
+            guard sessions > 0 else { return nil }
+            var text = "Descriptions dropped by the harness: \(withNameOnly) of \(sessions) Claude session\(sessions == 1 ? "" : "s") "
+                + "(\(Int((share * 100).rounded()))%) listed some skills by name only"
+            if !skills.isEmpty { text += "; most often " + skills.map { "\($0.name) (\($0.sessions))" }.joined(separator: ", ") }
+            return text + ". Such sessions don't count as listed for those skills."
+        }
+    }
+
     let version: Int
     let generated: String
     public let window: Window
@@ -130,16 +158,19 @@ public struct StatsReport: Encodable, Equatable, Sendable {
     public let summary: Summary
     public let skills: [SkillStats]
     public let omitted: Omitted
+    public let droppedDescriptions: DroppedDescriptions
     public let notes: [String]
 
     private enum CodingKeys: String, CodingKey {
-        case version, generated, window, scope, importState = "import", summary, skills, omitted, notes
+        case version, generated, window, scope, importState = "import", summary, skills, omitted, droppedDescriptions, notes
     }
 }
 
 public enum InsightsStats {
     public static let defaultDays = 30
     public static let defaultTop = 10
+    /// Skills named in the "descriptions dropped" finding.
+    static let droppedTop = 5
     static let piNote = "Pi records no skill list; Pi calls only protect skills"
     static let noBrainNote = "No brain on this Mac: owners of layer skills are unknown"
 
@@ -246,19 +277,21 @@ public enum InsightsStats {
     }
 
     /// Listings, calls and ≈ context space per skill in the scope's sessions, each counted from the
-    /// skill's start (skills without one aren't counted). Model and user calls count after the
-    /// session's first listing; Pi lists nothing, so its calls count from the start on.
+    /// skill's start (skills without one aren't counted). Only described exposures count as listed
+    /// (`desc_hash` not NULL): a skill listed by name only can't be picked by its description. Model
+    /// and user calls count after the session's first listing of any kind; Pi lists nothing, so its
+    /// calls count from the start on.
     static func tallies(_ database: IndexDatabase, scope: Scope, starts: [String: Date], descriptions: [String: String],
                         calibration: ContextSize.Calibration) throws -> [String: Tally] {
         let (ctes, values) = try scope.cte(starts: starts)
         let with = "WITH \(ctes)"
 
         var tallies: [String: Tally] = [:]
-        // Main sessions: first listing, own description size, main requests from then on.
+        // Main sessions: first described listing, own description size, main requests from then on.
         for row in try database.rows("""
             \(with), firsts AS (SELECT l.session_key, l.skill, MIN(l.ts) AS first, MAX(l.desc_chars) AS chars
               FROM skill_listings l JOIN scoped s ON s.key = l.session_key JOIN starts st ON st.skill = l.skill
-              WHERE l.is_subagent = 0 AND l.ts >= st.start GROUP BY l.session_key, l.skill)
+              WHERE l.is_subagent = 0 AND l.desc_hash IS NOT NULL AND l.ts >= st.start GROUP BY l.session_key, l.skill)
             SELECT f.skill, f.session_key, f.first, f.chars, (SELECT COUNT(*) FROM requests r
               WHERE r.session_key = f.session_key AND r.is_subagent = 0 AND r.ts >= f.first) FROM firsts f
             """, values) {
@@ -274,7 +307,7 @@ public enum InsightsStats {
         for row in try database.rows("""
             \(with) SELECT DISTINCT l.skill, date(l.ts, 'unixepoch', 'localtime') FROM skill_listings l
             JOIN scoped s ON s.key = l.session_key JOIN starts st ON st.skill = l.skill
-            WHERE l.is_subagent = 0 AND l.ts >= st.start
+            WHERE l.is_subagent = 0 AND l.desc_hash IS NOT NULL AND l.ts >= st.start
             """, values) {
             guard let skill = row[0].text, let day = row[1].text else { continue }
             tallies[skill, default: Tally()].listedDays.insert(day)
@@ -311,6 +344,25 @@ public enum InsightsStats {
             }
         }
         return tallies
+    }
+
+    /// The "descriptions dropped by the harness" finding: Claude sessions in scope whose main listing
+    /// had a skill by name only, and the skills that lost their description most often.
+    static func droppedDescriptions(_ database: IndexDatabase, scope: Scope) throws -> StatsReport.DroppedDescriptions {
+        let (scoped, values) = scope.cte
+        let counts = try database.rows("""
+            WITH \(scoped) SELECT COUNT(DISTINCT l.session_key), COUNT(DISTINCT CASE WHEN l.desc_hash IS NULL THEN l.session_key END)
+            FROM skill_listings l JOIN scoped s ON s.key = l.session_key WHERE l.harness = 'claude' AND l.is_subagent = 0
+            """, values).first
+        let sessions = counts?[0].int ?? 0, withNameOnly = counts?[1].int ?? 0
+        let skills = try database.rows("""
+            WITH \(scoped) SELECT l.skill, COUNT(DISTINCT l.session_key) AS n FROM skill_listings l JOIN scoped s ON s.key = l.session_key
+            WHERE l.harness = 'claude' AND l.is_subagent = 0 AND l.desc_hash IS NULL GROUP BY l.skill ORDER BY n DESC, l.skill LIMIT ?
+            """, values + [droppedTop]).compactMap { row in
+            row[0].text.map { StatsReport.DroppedDescriptions.Skill(name: $0, sessions: row[1].int ?? 0) }
+        }
+        return .init(sessions: sessions, withNameOnly: withNameOnly,
+                     share: sessions > 0 ? (Double(withNameOnly) / Double(sessions) * 1000).rounded() / 1000 : 0, skills: skills)
     }
 
     public static func report(_ database: IndexDatabase, options: Options = Options(), inputs: Inputs = Inputs(),
@@ -375,7 +427,8 @@ public enum InsightsStats {
                            firstRequestContext: .init(median: rank(firstContexts, 0.5), p90: rank(firstContexts, 0.9)),
                            approxListingTokensPerRequest: listedRequests > 0 ? Int((Double(space) / Double(listedRequests)).rounded()) : 0,
                            byOwner: byOwner),
-            skills: shown, omitted: .init(skills: skills.count - shown.count), notes: notes)
+            skills: shown, omitted: .init(skills: skills.count - shown.count),
+            droppedDescriptions: try droppedDescriptions(database, scope: scope), notes: notes)
     }
 
     /// Owners from the skills installed on this Mac and, with a brain, which of them AKit rendered

@@ -12,6 +12,12 @@ import Foundation
 /// - `<ProjectStore>/<project>/usage/<id>.json`: the sessions bound to one project, like the
 ///   personal machine file. On a work Mac that store is local, so they never reach the brain.
 ///
+/// A day's `skills` keep `[listed, model, user]`, where listed counts every listing, as older akit
+/// versions read it. Only described exposures count toward a denominator, so each day also has
+/// `described`: sessions that listed the skill with its description. A day without `described`
+/// (written before it existed) is read like Pi data: its calls protect skills, its listings never
+/// demote one. The version stays 1, so older and newer akit keep reading each other's files.
+///
 /// Days are local `yyyy-MM-dd`, the last 120 of them. After a kind switch a key's days start the
 /// local day after `kindSince`; days up to it stay as that key's file had them, so a switched Mac
 /// never counts a day under two keys. A clone's new keys start the local day after `idSince`:
@@ -21,7 +27,7 @@ enum UsageSummary {
     static let retentionDays = 120
     static let ownKeysMeta = "own_machine_keys"
 
-    /// One local day. Work summaries have only `skills`.
+    /// One local day. Work summaries have only `skills` and `described`.
     struct Day: Codable, Equatable {
         var sessions: Int?
         /// Recorded context (input + cache read + cache write) of the first main request of the
@@ -30,7 +36,14 @@ enum UsageSummary {
         var firstContextN: Int?
         /// `[listedSessions, modelCalls, userCalls]`; all-zero entries are left out.
         var skills: [String: [Int]]
+        /// Main sessions that listed the skill with its description, counted on the day of that first
+        /// listing; zero entries are left out. `{}` on a day with listings but none described; nil
+        /// in files of older akit versions, and on days with no listing at all.
+        var described: [String: Int]?
     }
+
+    /// Sessions that listed `skill` with its description that day; 0 on a day without `described`.
+    static func described(_ day: Day, skill: String) -> Int { day.described?[skill] ?? 0 }
 
     struct File: Codable, Equatable {
         var version: Int
@@ -77,7 +90,7 @@ enum UsageSummary {
         var days: [String: Day] = [:]
         func update(_ day: String?, _ change: (inout Day) -> Void) {
             guard let day else { return }
-            var entry = days[day] ?? Day(sessions: 0, firstContextSum: 0, firstContextN: 0, skills: [:])
+            var entry = days[day] ?? Day(sessions: 0, firstContextSum: 0, firstContextN: 0, skills: [:], described: [:])
             change(&entry)
             days[day] = entry
         }
@@ -103,6 +116,16 @@ enum UsageSummary {
             guard let skill = row[1].text, let count = row[2].int else { continue }
             update(row[0].text) { $0.skills[skill, default: [0, 0, 0]][0] += count }
         }
+        // The same with its description: on the day it was first listed with one.
+        for row in try database.rows("""
+            SELECT date(f.first, \(local)), f.skill, COUNT(*) FROM (
+              SELECT l.session_key, l.skill, MIN(l.ts) AS first FROM skill_listings l \(join("l.session_key"))
+              WHERE l.is_subagent = 0 AND l.ts IS NOT NULL AND l.desc_hash IS NOT NULL GROUP BY l.session_key, l.skill) f
+            WHERE f.first >= ? GROUP BY 1, 2
+            """, values) {
+            guard let skill = row[1].text, let count = row[2].int else { continue }
+            update(row[0].text) { $0.described?[skill, default: 0] += count }
+        }
         // Calls by the model (subagents and Pi included) and skill calls by the user (not built-in commands).
         for row in try database.rows("""
             SELECT date(c.ts, \(local)), c.skill, c.by, COUNT(*) FROM skill_calls c \(join("c.session_key"))
@@ -117,9 +140,13 @@ enum UsageSummary {
         return days.mapValues(withoutZeroSkills)
     }
 
+    /// Leaves out all-zero skills and zero `described` entries; `described` stays (maybe `{}`) only
+    /// on a day that lists a skill, so a reader can tell "none described" from "not recorded".
     static func withoutZeroSkills(_ day: Day) -> Day {
         var day = day
         day.skills = day.skills.filter { $0.value.contains { $0 != 0 } }
+        day.described = day.described?.filter { $0.value > 0 }
+        if day.described?.isEmpty == true, !day.skills.values.contains(where: { ($0.first ?? 0) > 0 }) { day.described = nil }
         return day
     }
 
@@ -160,10 +187,11 @@ enum UsageSummary {
             return File(version: version, machine: key, name: name, updated: updated, days: days,
                         descHashes: try descHashes(database))
         }
-        // Work: skills in the brain, their listed sessions and calls; nothing else.
+        // Work: skills in the brain, their listed and described sessions and calls; nothing else.
         days = days.compactMapValues { day in
             let skills = day.skills.filter { brainSkills.contains($0.key) && $0.value.count == 3 && $0.value.contains { $0 != 0 } }
-            return skills.isEmpty ? nil : Day(skills: skills)
+            let entry = withoutZeroSkills(Day(skills: skills, described: day.described?.filter { brainSkills.contains($0.key) }))
+            return entry.skills.isEmpty && entry.described?.isEmpty != false ? nil : entry
         }
         return File(version: version, machine: key, updated: updated, days: days)
     }

@@ -270,7 +270,7 @@ struct InsightsView: View {
     private func recommendations(_ report: RecommendReport) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Recommendations").font(.headline)
-            Text("Auto skills the model never called: listed in ≥ \(Self.count(report.rule.minSessions, "session")) on ≥ \(Self.count(report.rule.minDistinctDays, "day")), summed over this Mac and the other Macs' summaries. Making one manual takes its description out of every request; /name still runs it.")
+            Text("Auto skills the model never called: listed with their description in ≥ \(Self.count(report.rule.minSessions, "session")) on ≥ \(Self.count(report.rule.minDistinctDays, "day")), summed over this Mac and the other Macs' summaries. Making one manual takes its description out of every request; /name still runs it.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -351,6 +351,12 @@ struct InsightsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text(Self.statsLine(stats)).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let dropped = stats.droppedDescriptions.text {
+                    Label(dropped, systemImage: "text.badge.minus").font(.callout)
+                        .foregroundStyle(stats.droppedDescriptions.withNameOnly > 0 ? .primary : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help("Claude Code lists a skill by name only when its skill listing is over budget (1% of the context window by default) or the skill has no description. Such a skill can't be picked by its description, so the session doesn't count in Listed. Making unused skills manual gives the others their descriptions back.")
+                }
                 if stats.skills.isEmpty {
                     Text("No skill listings in this window.").foregroundStyle(.secondary)
                 } else {
@@ -374,7 +380,7 @@ struct InsightsView: View {
                                 Text([Self.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))
                                     .lineLimit(1).foregroundStyle(.secondary)
                                 Text("\(skill.listedSessions) · \(Self.count(skill.listedDays, "day"))")
-                                    .help("Sessions where it was listed, on how many days")
+                                    .help("Sessions where it was listed with its description, on how many days")
                                 Text(Self.modelCalls(skill))
                                 Text("\(skill.userCalls)")
                                 Text("≈ \(ContextSize.short(skill.approxTokens))")

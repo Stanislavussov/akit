@@ -101,12 +101,16 @@ struct RecommenderTests {
         }
     }
 
-    /// Another Mac's summary with one day of counts per skill (`[listed, model, user]`).
+    /// Another Mac's summary with one day of counts per skill (`[listed, model, user]`). `described`:
+    /// every listing had its description, as a current akit writes it; false: an older akit's file.
     func otherMac(_ key: String = "abcdef0123456789", name: String? = "mbp", updatedDaysAgo: Int = 0,
-                  days: [String: [String: [Int]]], hashes: [String: [[String]]]? = nil) -> UsageSummary.File {
+                  days: [String: [String: [Int]]], hashes: [String: [[String]]]? = nil, described: Bool = true) -> UsageSummary.File {
         let updated = Date(timeIntervalSince1970: at(updatedDaysAgo, 8)).formatted(.iso8601)
         return UsageSummary.File(version: 1, machine: key, name: name, updated: updated,
-                                 days: days.mapValues { .init(sessions: 1, firstContextSum: 0, firstContextN: 0, skills: $0) },
+                                 days: days.mapValues { skills in
+                                     .init(sessions: 1, firstContextSum: 0, firstContextN: 0, skills: skills,
+                                           described: described ? skills.compactMapValues { ($0.first ?? 0) > 0 ? $0[0] : nil } : nil)
+                                 },
                                  descHashes: hashes)
     }
 
@@ -270,6 +274,45 @@ extension RecommenderTests {
         try session("elsewhere", started: at(2), in: db)
         try call("elsewhere", "tdd", at: at(2, 13), in: db)
         #expect(!skills(try recommend(db, .init(project: Self.project, top: nil), layerInputs(brain))).contains("tdd"))
+    }
+
+    @Test func nameOnlySessionsDoNotReachTheRule() throws {
+        let db = try database()
+        // 20 sessions over 14 days, all listing it by name only: they say nothing about its description.
+        try listedSessions(["dropped"], hash: nil, in: db)
+        let inputs = layerInputs(nil, owners: ["dropped": .handInstalled("~/dropped")])
+        #expect(try recommend(db, .init(top: nil), inputs).recommendations.isEmpty)
+        // With its description in 20 more sessions it does.
+        try listedSessions(["dropped"], id: "d", in: db)
+        let item = try #require(try recommend(db, .init(top: nil), inputs).recommendations.first)
+        #expect(item.skill == "dropped" && item.evidence.sessions == 20 && item.evidence.distinctDays == 14)
+    }
+
+    @Test func otherMacFileWithoutDescribedOnlyProtects() throws {
+        let db = try database()
+        // This Mac: 10 sessions on 7 days, too few alone.
+        try listedSessions(["tdd", "quiet"], count: 10, days: 7, firstDay: 8, in: db)
+        let inputs = layerInputs(nil, owners: ["tdd": .handInstalled("~/tdd"), "quiet": .handInstalled("~/quiet")])
+        let otherDays = Dictionary(uniqueKeysWithValues: (1...7).map { (day($0), ["tdd": [2, 0, 0], "quiet": [2, 0, 0]]) })
+        // A current akit's file: its described sessions add up to the rule.
+        var current = inputs
+        current.others.machines["abcdef0123456789"] = otherMac(days: otherDays)
+        #expect(Set(skills(try recommend(db, .init(top: nil), current))) == ["tdd", "quiet"])
+        // An older akit's file (no `described`): its listings never demote...
+        var older = inputs
+        older.others.machines["abcdef0123456789"] = otherMac(days: otherDays, described: false)
+        #expect(try recommend(db, .init(top: nil), older).recommendations.isEmpty)
+        // ...but its calls still protect: enough here alone, and the old file's model call blocks tdd.
+        try listedSessions(["tdd", "quiet"], count: 10, days: 7, id: "late", in: db)
+        older.others.machines["abcdef0123456789"] = otherMac(days: [day(3): ["tdd": [1, 1, 0]]], described: false)
+        #expect(skills(try recommend(db, .init(top: nil), older)) == ["quiet"])
+        // A day with listings but none described counts no session, nor a day.
+        var none = inputs
+        none.others.machines["abcdef0123456789"] = UsageSummary.File(
+            version: 1, machine: "abcdef0123456789", name: "mbp", updated: Date(timeIntervalSince1970: at(0, 8)).formatted(.iso8601),
+            days: [day(5): .init(skills: ["quiet": [5, 0, 0]], described: [:])])
+        let quiet = try #require(try recommend(db, .init(top: nil), none).recommendations.first { $0.skill == "quiet" })
+        #expect(quiet.evidence.sessions == 20 && quiet.evidence.machines.map(\.name) == ["this Mac"], "\(quiet.evidence)")
     }
 
     @Test func belowThresholdNoRecommendation() throws {

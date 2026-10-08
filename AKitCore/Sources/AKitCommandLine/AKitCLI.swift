@@ -101,8 +101,9 @@ public enum AKitCLI {
 
         Recommendations (auto skills the model never calls; counts from this Mac and the other Macs' summaries):
           akit recommend [--project ID|PATH | --all] [--details] [--min-sessions N] [--min-days D] [--bindings LIST] [--json]
-                                          Skills listed in ≥ N (20) sessions on ≥ D (14) distinct days and never
-                                          called by the model anywhere (other Macs, subagents, Pi), counted from
+                                          Skills listed with their description in ≥ N (20) sessions on ≥ D (14)
+                                          distinct days and never called by the model anywhere (other Macs,
+                                          subagents, Pi), counted from
                                           their current description (and, in a project, from when their layer
                                           arrived there); sorted by ≈ context space. A layer skill gets a patch
                                           (mode: manual), anything else advice. A plugin is judged as a whole:
@@ -702,7 +703,7 @@ public enum AKitCLI {
                 let owner = [ownerLabel(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " ")
                 var line = "  \(skill.name) (\(owner)): ≈ \(short(skill.approxContextSpace)) context space, "
                     + "≈ \(short(skill.approxTokens)) tokens per request; "
-                    + "listed in \(count(skill.listedSessions, "session")) on \(count(skill.listedDays, "day")); "
+                    + "listed with its description in \(count(skill.listedSessions, "session")) on \(count(skill.listedDays, "day")); "
                     + "model calls \(skill.modelCalls) (\(Int((skill.callRate * 100).rounded()))% of sessions), user calls \(skill.userCalls)"
                 if skill.piModelCalls > 0 { line += ", in Pi \(skill.piModelCalls)" }
                 lines.append(line)
@@ -712,6 +713,10 @@ public enum AKitCLI {
                 }
             }
             if report.omitted.skills > 0 { lines.append("\(count(report.omitted.skills, "more skill")): --top N, or --details for all.") }
+        }
+        if let dropped = report.droppedDescriptions.text {
+            lines.append("")
+            lines.append(dropped)
         }
         lines += report.notes.map { "note: \($0)" }
         return lines.joined(separator: "\n")
@@ -943,7 +948,7 @@ public enum AKitCLI {
         let short = ContextSize.short
         let rule = report.rule
         let scope = report.project.map { "project \($0), sessions bound at \(rule.bindings.joined(separator: ", "))" } ?? "all sessions"
-        var lines = ["Auto skills the model never called: listed in ≥ \(count(rule.minSessions, "session")) on ≥ \(count(rule.minDistinctDays, "day")), "
+        var lines = ["Auto skills the model never called: listed with their description in ≥ \(count(rule.minSessions, "session")) on ≥ \(count(rule.minDistinctDays, "day")), "
                      + "summed over this Mac and the other Macs' summaries (\(scope))."]
         let owners = report.summary.approxContextPerRequestByOwner.filter { $0.skills > 0 }
         if !owners.isEmpty {

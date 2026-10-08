@@ -198,8 +198,10 @@ extension UsageSummaryTests {
         #expect(machine.version == 1 && machine.machine == id && machine.name == "TestMac")
         #expect(machine.days == [
             day(1): .init(sessions: 2, firstContextSum: 4000, firstContextN: 2,
-                          skills: ["tdd": [2, 1, 1], "marketing:seo-audit": [1, 0, 0], "handmade": [1, 0, 0]]),
-            day(0): .init(sessions: 1, firstContextSum: 500, firstContextN: 1, skills: ["tdd": [1, 0, 0], "review": [1, 1, 0]]),
+                          skills: ["tdd": [2, 1, 1], "marketing:seo-audit": [1, 0, 0], "handmade": [1, 0, 0]],
+                          described: ["tdd": 2, "marketing:seo-audit": 1, "handmade": 1]),
+            day(0): .init(sessions: 1, firstContextSum: 500, firstContextN: 1, skills: ["tdd": [1, 0, 0], "review": [1, 1, 0]],
+                          described: ["tdd": 1, "review": 1]),
         ])
         #expect(machine.descHashes?["tdd"] == [[day(1), "h-tdd-1"], [day(0), "h-tdd-2"]])
 
@@ -207,10 +209,11 @@ extension UsageSummaryTests {
         let project = try summary(projectPath)
         #expect(project.machine == id && project.name == nil && project.descHashes == nil)
         #expect(project.days == [day(1): .init(sessions: 1, firstContextSum: 1000, firstContextN: 1,
-                                                skills: ["tdd": [1, 1, 0], "marketing:seo-audit": [1, 0, 0], "handmade": [1, 0, 0]])])
+                                                skills: ["tdd": [1, 1, 0], "marketing:seo-audit": [1, 0, 0], "handmade": [1, 0, 0]],
+                                                described: ["tdd": 1, "marketing:seo-audit": 1, "handmade": 1])])
         // Sorted keys, one day per line.
         let text = try bytes(machinePath)
-        #expect(text.hasPrefix("{\n\"days\": {\n  \"\(day(1))\": {\"firstContextN\":2,\"firstContextSum\":4000,\"sessions\":2,\"skills\":{"))
+        #expect(text.hasPrefix("{\n\"days\": {\n  \"\(day(1))\": {\"described\":{\"handmade\":1,\"marketing:seo-audit\":1,\"tdd\":2},\"firstContextN\":2,\"firstContextSum\":4000,\"sessions\":2,\"skills\":{"))
         #expect(text.hasSuffix("\"version\": 1\n}\n"))
     }
 
@@ -223,8 +226,8 @@ extension UsageSummaryTests {
         #expect(outcome.isWork && outcome.key == "work-abc123")
         let path = "insights/machines/work-abc123.json"
         #expect(try summary(path).days == [
-            day(1): .init(skills: ["tdd": [2, 1, 1]]),
-            day(0): .init(skills: ["tdd": [1, 0, 0], "review": [1, 1, 0]]),
+            day(1): .init(skills: ["tdd": [2, 1, 1]], described: ["tdd": 2]),
+            day(0): .init(skills: ["tdd": [1, 0, 0], "review": [1, 1, 0]], described: ["tdd": 1, "review": 1]),
         ])
         let text = try bytes(path)
         for leak in ["marketing", "seo-audit", "handmade", "acme", "secret", "TestMac", "testmac", "/Users", "feature",
@@ -439,6 +442,73 @@ extension UsageSummaryTests {
         #expect(file.days[day(0)]?.skills == ["tdd": [1, 0, 1]])
         #expect(file.descHashes == ["tdd": [[day(2), "h1"]], "quiet": [[day(2), "hq"]]])
         #expect(UsageSummary.withoutZeroSkills(.init(skills: ["a": [0, 0, 0], "b": [0, 1, 0]])).skills == ["b": [0, 1, 0]])
+    }
+
+    @Test func describedDayFieldWrittenAndRead() async throws {
+        try await setUpBrain()
+        let db = try database()
+        // Yesterday: tdd with its description in a, by name only in b; today only by name in c.
+        try session("a", started: at(1, 10), in: db)
+        try listing("a", "tdd", at: at(1, 10), hash: "h1", in: db)
+        try session("b", started: at(1, 12), in: db)
+        try listing("b", "tdd", at: at(1, 12), hash: nil, in: db)
+        try session("c", started: at(0, 9), in: db)
+        try listing("c", "tdd", at: at(0, 9), hash: nil, in: db)
+        try call("c", "tdd", at: at(0, 9.5), in: db)
+        try session("d", started: at(0, 10), in: db)  // no listing at all
+        _ = try await publish(db)
+        let id = try #require(MachineProfile.load(home: home).id)
+        let path = "insights/machines/\(id).json"
+        let file = try summary(path)
+        // `skills` keeps its meaning for older readers: every listing; `described` only the described ones.
+        #expect(file.days[day(1)]?.skills == ["tdd": [2, 0, 0]] && file.days[day(1)]?.described == ["tdd": 1])
+        #expect(file.days[day(0)]?.skills == ["tdd": [1, 1, 0]] && file.days[day(0)]?.described == [:], "listed, none described")
+        let today = try #require(file.days[day(0)])
+        #expect(UsageSummary.described(today, skill: "tdd") == 0)
+        #expect(try bytes(path).contains("\"described\":{},"))
+        // A day with no listing has no `described`.
+        #expect(UsageSummary.withoutZeroSkills(.init(sessions: 1, skills: [:], described: [:])).described == nil)
+
+        // An older akit's file decodes with no `described`; an older akit's decoder ignores the new key.
+        let old = Data(#"{"days":{"2026-09-20":{"skills":{"tdd":[3,0,0]}}},"machine":"fedcba9876543210","version":1}"#.utf8)
+        let decoded = try JSONDecoder().decode(UsageSummary.File.self, from: old)
+        let oldDay = try #require(decoded.days["2026-09-20"])
+        #expect(oldDay.described == nil && UsageSummary.described(oldDay, skill: "tdd") == 0)
+        struct OldDay: Decodable { let skills: [String: [Int]] }
+        struct OldFile: Decodable { let version: Int; let days: [String: OldDay] }
+        let readByOld = try JSONDecoder().decode(OldFile.self, from: Data(try bytes(path).utf8))
+        #expect(readByOld.version == 1 && readByOld.days[day(1)]?.skills == ["tdd": [2, 0, 0]])
+    }
+
+    @Test func workFilterAcceptsDescribedAndNothingElse() async throws {
+        try await setUpBrain()
+        try saveWorkProfile()
+        let db = try database()
+        try writeFacts(db)
+        try listing("b", "review", at: at(1, 15), hash: nil, in: db)  // by name only: in skills, not in described
+        _ = try await publish(db)
+        let path = "insights/machines/work-abc123.json"
+        #expect(try summary(path).days[day(1)] == .init(skills: ["tdd": [2, 1, 1], "review": [1, 0, 0]], described: ["tdd": 2]))
+        #expect(try await git("log", "-1", "--format=%s") == "Update usage summaries (work-abc123)\n")
+
+        func check(_ json: String) throws {
+            try WorkFilter.checkSummary(Data(json.utf8), pseudonym: "work-abc123", brainSkills: ["tdd", "review"], path: path)
+        }
+        func withDay(_ fields: String) -> String {
+            #"{"days":{"2026-09-20":"# + fields + #"},"machine":"work-abc123","updated":"2026-09-20T10:00:00Z","version":1}"#
+        }
+        try check(withDay(#"{"skills":{"tdd":[1,0,0]},"described":{"tdd":1}}"#))
+        try check(withDay(#"{"skills":{"tdd":[1,0,0]},"described":{}}"#))
+        try check(withDay(#"{"skills":{"tdd":[1,0,0]}}"#))
+        for refused in [#"{"skills":{"tdd":[1,0,0]},"described":{"marketing:seo-audit":1}}"#,
+                        #"{"skills":{"tdd":[1,0,0]},"described":{"tdd":-1}}"#,
+                        #"{"skills":{"tdd":[1,0,0]},"described":{"tdd":1.5}}"#,
+                        #"{"skills":{"tdd":[1,0,0]},"described":{"tdd":"one"}}"#,
+                        #"{"skills":{"tdd":[1,0,0]},"described":["tdd"]}"#,
+                        #"{"described":{"tdd":1}}"#,
+                        #"{"skills":{"tdd":[1,0,0]},"described":{"tdd":1},"sessions":3}"#] {
+            #expect(throws: WorkFilter.Failure.self, "\(refused)") { try check(withDay(refused)) }
+        }
     }
 }
 
