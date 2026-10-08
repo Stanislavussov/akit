@@ -61,6 +61,8 @@ public enum ProjectSetup {
         /// Paths an earlier render wrote that this one leaves alone without a change (a JSON
         /// file in the home folder, which is not rendered there yet): their lock entry stays.
         var carried: Set<String> = []
+        /// The previous merge records under the spelling this plan uses for each file.
+        var previousJSON: [String: ProjectRecords.Lock.MergedJSON] = [:]
 
         public var canApply: Bool { render.errors.isEmpty && blockers.isEmpty }
     }
@@ -142,13 +144,17 @@ public enum ProjectSetup {
         // JSON files the layers' keys merge into, and those an earlier render merged into
         // (their keys come out when the layers stop bringing them).
         let jsonOutputs = Dictionary(outputs.filter(\.mergesJSON).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        for path in Set(jsonOutputs.keys).union((previous?.json ?? [:]).keys).sorted() {
+        // A record is found under any spelling of its path (macOS ignores letter case).
+        let outputSpelling = Dictionary(jsonOutputs.keys.map { ($0.lowercased(), $0) }, uniquingKeysWith: { first, _ in first })
+        let previousJSON = Dictionary((previous?.json ?? [:]).map { (outputSpelling[$0.key.lowercased()] ?? $0.key, $0.value) },
+                                      uniquingKeysWith: { first, _ in first })
+        for path in Set(jsonOutputs.keys).union(previousJSON.keys).sorted() {
             let url = project.appending(path: path)
             let output = jsonOutputs[path]
             // Something AKit can't merge into stops Apply while the layers bring the file;
             // otherwise the file is left alone and keeps its record.
             func cannotMerge(_ problem: String) {
-                if output != nil { blockers.append(problem) } else if let old = previous?.json?[path] { jsonRecords[path] = old }
+                if output != nil { blockers.append(problem) } else if let old = previousJSON[path] { jsonRecords[path] = old }
             }
             if let problem = escapes(path, project: project) {
                 cannotMerge(problem)
@@ -167,8 +173,8 @@ public enum ProjectSetup {
                 }
                 layersTree = tree
             }
-            let merge = JSONMerge.plan(path: path, url: url, layers: layersTree, layerNames: output?.layers ?? previous?.json?[path]?.layers ?? [],
-                                       previous: previous?.json?[path], legacy: output == nil ? nil : previous?.files[path])
+            let merge = JSONMerge.plan(path: path, url: url, layers: layersTree, layerNames: output?.layers ?? previousJSON[path]?.layers ?? [],
+                                       previous: previousJSON[path], legacy: output == nil ? nil : previous?.files[path])
             warnings += merge.warnings
             if let blocker = merge.blocker {
                 cannotMerge(blocker)  // never overwritten
@@ -178,7 +184,7 @@ public enum ProjectSetup {
             if let write = merge.write { jsonWrites[path] = write }
             guard let kind = merge.kind else { continue }
             var change = Change(path: path, kind: kind, oldText: merge.oldText, newText: merge.newText, replacesUnmanaged: false,
-                                layers: output?.layers ?? previous?.json?[path]?.layers ?? [])
+                                layers: output?.layers ?? previousJSON[path]?.layers ?? [])
             change.mergesJSON = true
             changes.append(change)
             snapshot[path] = state(url)
@@ -286,7 +292,7 @@ public enum ProjectSetup {
         render = RenderResult(layers: render.layers, outputs: render.outputs, errors: render.errors, warnings: warnings, skills: render.skills)
         return Plan(project: project, id: id, answers: answers, render: render,
                     changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
-                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried)
+                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried, previousJSON: previousJSON)
     }
 
     // MARK: - Apply
@@ -411,7 +417,7 @@ public enum ProjectSetup {
         var json: [String: ProjectRecords.Lock.MergedJSON] = plan.jsonRecords
         for change in plan.changes where change.mergesJSON
             && (excluded.contains(change.path) || (change.kind == .own && !accepting.contains(change.path))) {
-            json[change.path] = plan.previous?.json?[change.path]
+            json[change.path] = plan.previousJSON[change.path]
             // Not migrated yet from an older AKit's whole-file entry: keep that entry.
             if json[change.path] == nil, let old = plan.previous?.files[change.path] { lock.files[change.path] = old }
         }

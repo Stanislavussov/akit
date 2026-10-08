@@ -68,7 +68,10 @@ enum JSONMerge {
         }
 
         var merged = existing
-        var containers = Set(previous?.containers ?? [])
+        // A record without containers (an early lock) of a file AKit created: every object is AKit's.
+        var containers = Set(previous?.containers ?? (previous?.created == true ? existing.objectPaths.map(JSONValue.pointer) : []))
+        let wasDeclined = Set(previous?.declined ?? [])
+        var declined: Set<String> = []
         var keys: [String: String] = [:]
         var warnings: [String] = []
         let brought = layers.leaves
@@ -91,12 +94,17 @@ enum JSONMerge {
         for leaf in brought {
             let pointer = JSONValue.pointer(leaf.path)
             let present = merged.value(at: leaf.path)
-            if present == leaf.value {
+            if wasDeclined.contains(pointer), present == nil {
+                // Deleted by the project earlier: stays out while the layers bring it.
+                declined.insert(pointer)
+                warnings.append("\(path): the project removed \(JSONValue.display(leaf.path)); AKit leaves it out.")
+            } else if present == leaf.value {
                 // Already there: AKit's only if AKit wrote this very value earlier (one the
                 // project set itself stays the project's, even when the layers now agree).
                 if previous?.keys[pointer] == hash(leaf.value) { keys[pointer] = hash(leaf.value) }
             } else if present == nil, previous?.keys[pointer] != nil {
-                // AKit wrote it and the project deleted it: the project's choice.
+                // AKit wrote it and the project deleted it: the project's choice, remembered.
+                declined.insert(pointer)
                 warnings.append("\(path): the project removed \(JSONValue.display(leaf.path)); AKit leaves it out.")
             } else if present == nil, !blocked(merged, leaf.path) {
                 for length in 1..<leaf.path.count where merged.value(at: Array(leaf.path.prefix(length))) == nil {
@@ -118,8 +126,9 @@ enum JSONMerge {
         }
 
         let created = current == nil || previous?.created == true
-        let record = keys.isEmpty ? nil : ProjectRecords.Lock.MergedJSON(keys: keys, created: created, layers: layerNames,
-                                                                        containers: containers.sorted())
+        let record = keys.isEmpty && declined.isEmpty ? nil
+            : ProjectRecords.Lock.MergedJSON(keys: keys, created: created, layers: layerNames, containers: containers.sorted(),
+                                             declined: declined.isEmpty ? nil : declined.sorted())
         let oldText = current.map { _ in existing.masked.pretty }
         var result = Result(oldText: oldText, record: record, warnings: warnings)
         if current == nil {

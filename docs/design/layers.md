@@ -267,7 +267,8 @@ recommendation later.
    reference reads `••••`, in the old and the new text, also inside lists of objects. The
    masked text is only for showing; Apply writes the real values. Every `.json` file the
    preview shows (also whole files and files an older AKit wrote) is shown re-printed and
-   masked; one that can't be read as JSON (or JSONC) reads "(JSON file; contents not
+   masked, for showing also under `environment` (OpenCode's MCP servers; the layer rule
+   stays `env` and `headers`); one that can't be read as JSON (or JSONC) reads "(JSON file; contents not
    shown)". `settings.local.json` and `auth.json` are never read or shown: a layer that
    targets one is a render error, and one an earlier render wrote is left alone with a
    warning. Backup folders are created readable only by the user (0700), since they now hold
@@ -280,13 +281,18 @@ recommendation later.
    - a leaf there with a different value that AKit did not write earlier: left alone, and
      the preview warns "the project sets `mcpServers.x.command` itself";
    - a leaf AKit wrote and the project deleted: the project's choice. Not added again; the
-     preview warns "the project removed X; AKit leaves it out", and it leaves the lock;
+     preview warns "the project removed X; AKit leaves it out". The lock remembers it in
+     `declined` (so the record stays even when all of AKit's leaves were deleted) until the
+     layers stop bringing it;
    - a merged file the project deleted entirely: like a deleted skeleton file. Not created
      again; the preview offers the layers' keys unticked ("the project's own"), taken only
      when ticked or with `akit apply --include PATH`;
    - `lock.json` keeps, per merged file, the key paths AKit wrote (RFC 6901 pointers) with a
-     hash of each value, and the objects AKit created to hold them, in a new optional key
-     `json` (`{path: {keys, created, layers, containers}}`). Older akit ignores the key, and
+     hash of each value, the objects AKit created to hold them, and the leaves the project
+     declined, in a new optional key `json` (`{path: {keys, created, layers, containers,
+     declined}}`; an early record without `containers` of a file AKit created counts every
+     object as AKit's). Lock paths are read in one spelling (`./AGENTS.md` is `AGENTS.md`),
+     and a merge record is found under any letter case of its path. Older akit ignores the key, and
      merged files are never in `files` (a lock that has both reads as merged), so an older
      akit never treats such a file as one it wrote whole. An older akit that saves the lock
      again drops `json`; AKit's keys then look like the project's, which is the safe side;

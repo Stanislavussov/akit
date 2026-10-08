@@ -330,6 +330,10 @@ public enum JSONValue: Hashable, Sendable {
     public static let secretKeys: Set<String> = ["env", "headers"]
 
     static func isSecretKey(_ key: String) -> Bool { secretKeys.contains(key.lowercased()) }
+
+    /// Keys masked when a file is shown: the layer rule's keys, plus other harnesses' names for
+    /// the same thing (OpenCode's `mcp.<name>.environment`), in any letter case.
+    public static let shownSecretKeys: Set<String> = secretKeys.union(["environment"])
     public static let mask = "••••"
 
     /// A whole-string `${NAME}` reference: the harness fills it from the environment.
@@ -353,15 +357,15 @@ public enum JSONValue: Hashable, Sendable {
         }.map(\.path)
     }
 
-    /// For showing: every value under an `env` or `headers` key that is not a `${NAME}`
-    /// reference becomes `••••`, also inside lists of objects.
+    /// For showing: every value under an `env`, `headers` or `environment` key that is not a
+    /// `${NAME}` reference becomes `••••`, also inside lists of objects.
     public var masked: JSONValue { masked(secret: false) }
 
     private func masked(secret: Bool) -> JSONValue {
         switch self {
         case .object(let members):
             return .object(Dictionary(uniqueKeysWithValues: members.map { key, value in
-                (key, value.masked(secret: secret || Self.isSecretKey(key)))
+                (key, value.masked(secret: secret || Self.shownSecretKeys.contains(key.lowercased())))
             }))
         case .array(let items):
             // A list right under env or headers is a value (args, tokens); deeper lists may hold objects.

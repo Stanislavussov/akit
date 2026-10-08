@@ -81,6 +81,15 @@ struct AKitCLITests {
         #expect(plan.out.contains("REMOVE (to the Trash) .mcp.json"), "\(plan.out)")
         #expect(!plan.out.contains("sk-live-123"))
         #expect(plan.out.contains("\"API_KEY\": \"••••\""))
+
+        // A whole opencode.json: its MCP `environment` values are masked too.
+        try write(".akit/registry/layers/oc/layer.yaml", "files:\n  - template: oc.json\n    to: opencode.json\n")
+        try write(".akit/registry/layers/oc/templates/oc.json", #"{"mcp": {"x": {"environment": {"KEY": "{env:KEY}"}}}}"#)
+        try write("Projects/task/opencode.json", #"{"mcp": {"x": {"environment": {"KEY": "oc-secret-789"}}}}"#)
+        let opencode = await akit("plan", "--layers", "oc")
+        #expect(opencode.code == 0, "\(opencode.err)")
+        #expect(opencode.out.contains("opencode.json"), "\(opencode.out)")
+        #expect(!opencode.out.contains("oc-secret-789"))
     }
 
     @Test func checkAndLayers() async throws {

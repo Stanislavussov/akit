@@ -364,6 +364,17 @@ struct JSONMergeTests {
         _ = try await ProjectSetup.apply(next, brain: brain, home: home, env: env, trash: trash)
         #expect(try tree(".mcp.json").value(at: ["mcpServers", "two", "args"]) == nil)
         #expect(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"]?.keys["/mcpServers/two/args"] == nil)
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"]?.declined == ["/mcpServers/two/args"])
+        // And the plan after that: still out.
+        let third = plan(["mcp"], brain: brain)
+        #expect(change(third)?.kind == .same)
+        _ = try await ProjectSetup.apply(third, brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".mcp.json").value(at: ["mcpServers", "two", "args"]) == nil)
+        // Once the layers stop bringing it, it is forgotten.
+        _ = try await ProjectSetup.apply(plan(["mcp"], two: false, brain: brain), brain: brain, home: home, env: env, trash: trash)
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"]?.declined == nil)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".mcp.json").value(at: ["mcpServers", "two", "args"]) == .array([.string("--fast")]))
 
         // The project deletes the whole file: not created again, only offered.
         try fm.removeItem(at: project.appending(path: ".mcp.json"))
@@ -377,6 +388,62 @@ struct JSONMergeTests {
         let offered = plan(["mcp"], brain: brain)
         _ = try await ProjectSetup.apply(offered, accepting: [".mcp.json"], brain: brain, home: home, env: env, trash: trash)
         #expect(try tree(".mcp.json").value(at: ["mcpServers", "one", "command"]) == .string("one-server"))
+    }
+
+    @Test func whenTheProjectDeletesEveryKeyOfAKitsNoneComesBack() async throws {
+        let brain = try await setUpBrain()
+        try write("Projects/task/.mcp.json", #"{"mine": true}"#)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        try write("Projects/task/.mcp.json", #"{"mine": true}"#)
+        for _ in 0..<3 {
+            let again = plan(["mcp"], brain: brain)
+            #expect(change(again)?.kind == .same)
+            _ = try await ProjectSetup.apply(again, brain: brain, home: home, env: env, trash: trash)
+            #expect(try tree(".mcp.json") == .object(["mine": .bool(true)]))
+        }
+        let record = try #require(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"])
+        #expect(record.keys.isEmpty && record.declined?.count == 4)
+    }
+
+    @Test func anEarlyRecordWithoutContainersTreatsEveryObjectOfAFileAKitCreatedAsItsOwn() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        var lock = try #require(ProjectRecords.savedLock(id: id, in: store))
+        lock.json?[".mcp.json"]?.containers = nil
+        try ProjectRecords.save(lock, answers: nil, id: id, in: store)
+        let none = plan([], brain: brain)
+        #expect(change(none)?.kind == .remove)
+    }
+
+    @Test func lockPathsAreReadInOneSpelling() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        let first = plan(["mcp"], brain: brain)
+        _ = try await ProjectSetup.apply(first, brain: brain, home: home, env: env, trash: trash)
+        var lock = try #require(ProjectRecords.savedLock(id: id, in: store))
+        lock.files["./AGENTS.md"] = .init(sha256: "00", link: nil, layers: ["old"])
+        lock.templates = ["./AGENTS.md": "00"]
+        lock.json = lock.json.map { Dictionary(uniqueKeysWithValues: $0.map { ("./" + $0.key, $0.value) }) }
+        try ProjectRecords.save(lock, answers: nil, id: id, in: store)
+        let read = try #require(ProjectRecords.savedLock(id: id, in: store))
+        #expect(read.files["AGENTS.md"] != nil && read.files["./AGENTS.md"] == nil)
+        #expect(read.templates?["AGENTS.md"] == "00")
+        #expect(read.json?[".mcp.json"] != nil)
+        #expect(change(plan(["mcp"], brain: brain))?.kind == .same)
+    }
+
+    @Test func wholeOpenCodeFilesShowNoEnvironmentValues() async throws {
+        let brain = try await setUpBrain()
+        try write(".akit/registry/layers/oc/layer.yaml", "files:\n  - template: oc.json\n    to: opencode.json\n")
+        try write(".akit/registry/layers/oc/templates/oc.json", #"{"mcp": {"x": {"type": "local", "environment": {"KEY": "{env:KEY}"}}}}"#)
+        try write("Projects/task/opencode.json", #"{"mcp": {"x": {"type": "local", "Environment": {"KEY": "oc-secret-789"}}}}"#)
+        let refreshed = try #require(Brain.load(from: brainRoot))
+        let plan = plan(["oc"], brain: refreshed)
+        let whole = try #require(change(plan, "opencode.json"))
+        #expect(!whole.mergesJSON)
+        #expect(whole.oldText?.contains("oc-secret-789") == false)
+        #expect(whole.oldText?.contains("\"KEY\": \"••••\"") == true)
     }
 
     @Test func onlyObjectsAKitCreatedAreCleanedUp() async throws {

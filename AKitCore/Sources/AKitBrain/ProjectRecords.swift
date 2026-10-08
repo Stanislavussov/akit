@@ -33,12 +33,16 @@ public enum ProjectRecords {
             /// Objects AKit created to hold its keys (pointers): only these are cleaned up when
             /// they become empty, never one the project had. Optional: absent in early locks.
             public var containers: [String]?
+            /// Key paths AKit wrote and the project deleted: never added again while the layers
+            /// bring them. Optional: absent in early locks.
+            public var declined: [String]?
 
-            public init(keys: [String: String], created: Bool, layers: [String], containers: [String]? = nil) {
+            public init(keys: [String: String], created: Bool, layers: [String], containers: [String]? = nil, declined: [String]? = nil) {
                 self.keys = keys
                 self.created = created
                 self.layers = layers
                 self.containers = containers
+                self.declined = declined
             }
         }
 
@@ -134,9 +138,15 @@ public enum ProjectRecords {
     public static func savedLock(id: String, in store: ProjectStore) -> Lock? {
         guard var lock = store.savedFile(id: id, "lock.json").flatMap({ try? Data(contentsOf: $0) })
             .flatMap({ try? JSONDecoder().decode(Lock.self, from: $0) }) else { return nil }
+        // One spelling per path (an older AKit kept `./AGENTS.md` as written), so a file now
+        // rendered as `AGENTS.md` is still known as AKit's and never trashed as a stale one.
+        lock.files = Dictionary(lock.files.map { (ProjectBundle.normalizedPath($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
+        lock.templates = lock.templates.map { Dictionary($0.map { (ProjectBundle.normalizedPath($0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
+        lock.json = lock.json.map { Dictionary($0.map { (ProjectBundle.normalizedPath($0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
         // A merged JSON file is never also a whole file AKit wrote (an older AKit's entry, or one
         // left by an interrupted Apply): the merge record wins.
-        for path in (lock.json ?? [:]).keys { lock.files[path] = nil }
+        let merged = Set((lock.json ?? [:]).keys.map { $0.lowercased() })
+        lock.files = lock.files.filter { !merged.contains($0.key.lowercased()) }
         return lock
     }
 
