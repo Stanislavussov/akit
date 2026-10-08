@@ -107,7 +107,8 @@ Further choices of the step 4 plan, accepted on the same day:
    depend on the task's repository, so an eval refuses tasks of more than one repository
    (and, from slice 2, a layer set refuses a task of another repository).
 2. **Merged JSON outputs are refused in v1.** A layer whose render has an output that is
-   merged key by key (`.mcp.json`, `.claude/settings.json`, `RenderedFile.mergesJSON`) can't
+   merged key by key (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json`, `.pi/settings.json`;
+   `RenderedFile.mergesJSON`) can't
    be evaluated yet: merging into the clone's file needs `JSONMerge` from
    `AKitProjectSetup`. Every other `.json` output (also inside skill folders) is an ordinary
    file.
