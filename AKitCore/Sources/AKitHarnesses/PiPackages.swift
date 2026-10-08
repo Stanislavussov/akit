@@ -50,8 +50,9 @@ public struct PiPackage: Sendable, Hashable, Identifiable {
 ///
 /// Packages come from settings a cloned repository may bring, so nothing listed may leave the
 /// package folder (links resolved), only regular files count, known secret files never show,
-/// and the work is bounded: at most `maxEntries` entries per settings file, `Limits` per package
-/// and per `list` call (folder entries read and glob matching done). Past a limit a package is
+/// and the work is bounded: at most `maxEntries` entries per settings file, and `Limits` per
+/// package and per settings file (folder entries and package.json kilobytes read, glob matching
+/// done), so one hostile project can't use up the work of the others. Past a limit a package is
 /// marked too large and the listing says what was left out.
 /// Differences from Pi: npm packages in the old global npm folder (`npm root -g`) are not found
 /// (finding it means running npm), `.gitignore` files inside packages are not applied, `**`
@@ -68,14 +69,16 @@ public enum PiPackages {
     static let entryBudget = 5_000
     /// Entries read from one settings file, after repeated ones are dropped.
     static let maxEntries = 200
-    /// Patterns (or manifest entries) read from one list.
-    static let maxPatterns = 32
+    /// Patterns (or manifest entries) read from one list; a longer list is cut and noted.
+    static let maxPatterns = 256
+    /// Bytes read from one package.json.
+    static let maxPackageJSON = 64 << 10
     /// Never listed, even inside a package.
     public static let secretNames: Set<String> = ["auth.json", "models-store.json", "settings.local.json"]
 
-    /// Work one `list` call may do across every package.
+    /// Work allowed for the packages of one settings file.
     final class Limits {
-        /// Folder entries read.
+        /// Folder entries read, plus one per kilobyte of package.json read.
         var entries: Int
         /// Glob matching: tokens × characters compared.
         var matchSteps: Int
@@ -101,22 +104,18 @@ public enum PiPackages {
 
     /// Packages of the global settings, then those of each project's `.pi/settings.json`.
     public static func list(configRoot: URL, projects: [URL], in env: HarnessEnvironment) -> Listing {
-        list(configRoot: configRoot, projects: projects, limits: Limits(), in: env)
+        list(configRoot: configRoot, projects: projects, limits: { Limits() }, in: env)
     }
 
-    static func list(configRoot: URL, projects: [URL], limits: Limits, in env: HarnessEnvironment) -> Listing {
+    /// `limits`: a fresh share of work for each settings file.
+    static func list(configRoot: URL, projects: [URL], limits: () -> Limits, in env: HarnessEnvironment) -> Listing {
         var listing = Listing()
         let global = packages(settings: configRoot.appending(path: "settings.json"), scope: .global,
-                              configRoot: configRoot, globals: [], limits: limits, env: env, into: &listing)
+                              configRoot: configRoot, globals: [], limits: limits(), env: env, into: &listing)
         var seen: Set<String> = []
         for project in projects where seen.insert(project.standardizedFileURL.path).inserted {
             _ = packages(settings: project.appending(path: ".pi/settings.json"), scope: .project(project),
-                         configRoot: configRoot, globals: global, limits: limits, env: env, into: &listing)
-        }
-        let skipped = listing.packages.filter(\.isTooLarge).count
-        if limits.isExhausted, skipped > 0 {
-            listing.notes.append("AKit stopped reading packages after its limit for one refresh: "
-                + "\(skipped) \(skipped == 1 ? "package is" : "packages are") not listed in full.")
+                         configRoot: configRoot, globals: global, limits: limits(), env: env, into: &listing)
         }
         return listing
     }
@@ -194,16 +193,27 @@ public enum PiPackages {
             listing.notes.append("\(file): only the first \(maxEntries) of \(order.count) packages are read.")
         }
         let picked = order.prefix(maxEntries).compactMap { chosen[$0] }.sorted { $0.index < $1.index }
+        var cut: [String] = []
         let result = picked.map { entry in
             package(index: entry.index, source: entry.source, parsed: entry.parsed, filter: entry.filter, scope: scope,
-                    settings: settings, base: base, configRoot: configRoot, globals: globals, limits: limits)
+                    settings: settings, base: base, configRoot: configRoot, globals: globals, limits: limits, cut: &cut)
         }
         listing.packages += result
+        for name in cut {
+            listing.notes.append("\(name): a list in its package.json or settings has more than \(maxPatterns) "
+                + "entries; only the first \(maxPatterns) are read, so it may be listed wrongly.")
+        }
+        let skipped = result.filter(\.isTooLarge).count
+        if limits.isExhausted, skipped > 0 {
+            listing.notes.append("\(file): AKit stopped reading packages after its limit for one settings file; "
+                + "\(skipped) \(skipped == 1 ? "package is" : "packages are") not listed.")
+        }
         return result
     }
 
     static func package(index: Int, source: String, parsed: Source, filter: [String: Any]?, scope: InstallScope,
-                        settings: URL, base: URL, configRoot: URL, globals: [PiPackage], limits: Limits) -> PiPackage {
+                        settings: URL, base: URL, configRoot: URL, globals: [PiPackage], limits: Limits,
+                        cut: inout [String]) -> PiPackage {
         // A project entry with `autoload: false` is a delta over the global entry of the same package.
         let deltaBase = filter?["autoload"] as? Bool == false
             ? globals.first { $0.identity == parsed.identity } : nil
@@ -230,10 +240,10 @@ public enum PiPackages {
         if let folder {
             if FileWalk.isDirectory(folder) {
                 let walk = Walk(root: folder, limits: limits)
-                manifest = walk.packageJSON(folder)
                 if limits.isExhausted {
                     tooLarge = true
                 } else {
+                    manifest = walk.packageJSON(folder)
                     let baseResources = deltaBase.map {
                         [.extensions: $0.extensions, .skills: $0.skills, .prompts: $0.prompts, .themes: $0.themes] as Resources
                     }
@@ -245,6 +255,9 @@ public enum PiPackages {
                     } else if case .local = parsed.kind {
                         // Only a local folder that offers nothing is loaded as one extension.
                         resources = [.extensions: [folder]]
+                    }
+                    if walk.cutList, !tooLarge {
+                        cut.append(manifest?["name"] as? String ?? parsed.fallbackName)
                     }
                 }
             } else if FileWalk.isRegularFile(folder), extensionFile(folder) {
@@ -400,6 +413,10 @@ public enum PiPackages {
         private var budget = PiPackages.entryBudget
         private var stopped = false
         private var globs: [String: Glob] = [:]
+        /// package.json files already read, by real path.
+        private var packageJSONs: [String: [String: Any]?] = [:]
+        /// A list longer than `maxPatterns` was cut.
+        private(set) var cutList = false
         private lazy var manifest: [ResourceType: [String]]? = manifest(of: root)
 
         /// The package's own limit or the refresh's was reached; what was found is incomplete.
@@ -454,9 +471,31 @@ public enum PiPackages {
         }
 
         /// `package.json` of a folder of the package, if it is a regular file inside the package.
+        /// Read once per real file, at most `maxPackageJSON` bytes, each kilobyte counted as an entry.
         func packageJSON(_ folder: URL) -> [String: Any]? {
             let file = folder.appending(path: "package.json")
-            return isFile(file) ? FileWalk.jsonObject(file) : nil
+            guard !exhausted, let real = realFile(file) else { return nil }
+            if let cached = packageJSONs[real] { return cached }
+            let data = FileWalk.head(of: URL(filePath: real), limit: PiPackages.maxPackageJSON + 1)
+            let cost = 1 + (data?.count ?? 0) / 1024
+            budget -= cost
+            limits.entries -= cost
+            if budget < 0 || limits.isExhausted {
+                stopped = true
+                return nil
+            }
+            var json: [String: Any]?
+            if let data, data.count <= PiPackages.maxPackageJSON {
+                json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            }
+            packageJSONs[real] = json
+            return json
+        }
+
+        /// The first `maxPatterns` entries of a list; notes when there were more.
+        private func capped(_ list: [String]) -> [String] {
+            if list.count > PiPackages.maxPatterns { cutList = true }
+            return Array(list.prefix(PiPackages.maxPatterns))
         }
 
         /// The `pi` key of package.json: only lists made of strings count.
@@ -484,7 +523,7 @@ public enum PiPackages {
 
         /// Manifest paths and globs, then its own `!`/`+`/`-` patterns.
         func manifestFiles(_ entries: [String], _ type: ResourceType) -> [URL] {
-            let entries = Array(entries.prefix(PiPackages.maxPatterns))
+            let entries = capped(entries)
             let paths = entries.filter { !PiPackages.isOverride($0) }.flatMap { entry -> [URL] in
                 PiPackages.hasGlob(entry) ? expandGlob(entry) : [PiPackages.path(entry, in: root)]
             }
@@ -510,9 +549,15 @@ public enum PiPackages {
 
         /// A regular file inside the package that isn't a known secret.
         func isFile(_ url: URL) -> Bool {
-            guard let real = inside(url), FileWalk.isRegularFile(URL(filePath: real)) else { return false }
-            return !PiPackages.secretNames.contains(url.lastPathComponent)
-                && !PiPackages.secretNames.contains((real as NSString).lastPathComponent)
+            realFile(url) != nil
+        }
+
+        /// Real path of a regular file inside the package that isn't a known secret.
+        private func realFile(_ url: URL) -> String? {
+            guard let real = inside(url), FileWalk.isRegularFile(URL(filePath: real)),
+                  !PiPackages.secretNames.contains(url.lastPathComponent),
+                  !PiPackages.secretNames.contains((real as NSString).lastPathComponent) else { return nil }
+            return real
         }
 
         private func inside(_ url: URL) -> String? {
@@ -581,11 +626,14 @@ public enum PiPackages {
         /// The folder's own entry (manifest `extensions`, `index.ts`, `index.js`), else `.ts`/`.js`
         /// files in it and the entries of its subfolders.
         private func extensionFiles(_ dir: URL) -> [URL] {
-            guard directory(dir) != nil else { return [] }
+            guard let real = directory(dir) else { return [] }
             if let own = extensionEntry(dir) { return own }
             var result: [URL] = []
+            // Linked subfolders that are one real folder count once.
+            var visited: Set<String> = [real]
             for child in children(dir) where child.lastPathComponent != "node_modules" {
-                if directory(child) != nil {
+                if let childReal = directory(child) {
+                    guard visited.insert(childReal).inserted else { continue }
                     result += extensionEntry(child) ?? []
                 } else if ["ts", "js"].contains(child.pathExtension), isFile(child) {
                     result.append(child)
@@ -596,7 +644,7 @@ public enum PiPackages {
 
         private func extensionEntry(_ dir: URL) -> [URL]? {
             if let listed = manifest(of: dir)?[.extensions], !listed.isEmpty {
-                let found = listed.prefix(PiPackages.maxPatterns).map { PiPackages.path($0, in: dir) }.filter(isFile)
+                let found = capped(listed).map { PiPackages.path($0, in: dir) }.filter(isFile)
                 if !found.isEmpty { return found }
             }
             for name in ["index.ts", "index.js"] where isFile(dir.appending(path: name)) {
@@ -676,7 +724,7 @@ public enum PiPackages {
         /// `+path` adds an exact path back, `-path` removes an exact path. Returns enabled paths.
         func apply(_ patterns: [String], to files: [URL]) -> Set<String> {
             var includes: [String] = [], excludes: [String] = [], forceIn: [String] = [], forceOut: [String] = []
-            for pattern in patterns.prefix(PiPackages.maxPatterns) {
+            for pattern in capped(patterns) {
                 switch pattern.first {
                 case "+": forceIn.append(String(pattern.dropFirst()))
                 case "-": forceOut.append(String(pattern.dropFirst()))
@@ -698,7 +746,7 @@ public enum PiPackages {
         /// or off (`!`, `-`); a later pattern wins. Files no pattern names are left out.
         func autoloadDelta(_ files: [URL], _ patterns: [String]) -> [String: Bool] {
             var result: [String: Bool] = [:]
-            for pattern in patterns.prefix(PiPackages.maxPatterns) {
+            for pattern in capped(patterns) {
                 let first = pattern.first
                 let target = PiPackages.isOverride(pattern) ? String(pattern.dropFirst()) : pattern
                 let exact = first == "+" || first == "-"

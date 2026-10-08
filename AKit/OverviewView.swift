@@ -214,7 +214,7 @@ private struct PiPackageRow: View {
                     Text("too large to list")
                         .font(.caption)
                         .foregroundStyle(.orange)
-                        .help("More than 5,000 files and folders, or AKit's reading limit for one refresh was used up")
+                        .help("More than 5,000 files and folders, or AKit's reading limit for its settings file was used up")
                 } else if package.isInstalled {
                     DisclosureGroup(isExpanded: $expanded) {
                         VStack(alignment: .leading, spacing: 2) {

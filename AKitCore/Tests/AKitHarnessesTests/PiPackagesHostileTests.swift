@@ -211,17 +211,56 @@ extension PiPackagesTests {
         let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
         #expect(Date().timeIntervalSince(start) < 10)
         #expect(listing.packages.allSatisfy { $0.isTooLarge && listed($0).isEmpty })
-        #expect(listing.notes.contains { $0.contains("limit for one refresh") })
+        #expect(listing.notes.contains { $0.contains("limit for one settings file") })
     }
 
-    @Test func oneLimitCoversEveryPackageOfARefresh() throws {
+    @Test func oneLimitCoversThePackagesOfASettingsFile() throws {
+        // The two global packages share one limit; a project's packages get their own.
+        let project = home.appending(path: "Projects/app")
         try write(".pi/agent/settings.json", #"{"packages": ["npm:first", "npm:second"]}"#)
-        for name in ["first", "second"] {
-            for index in 0..<30 { try write(".pi/agent/npm/node_modules/\(name)/prompts/p\(index).md") }
+        try write("Projects/app/.pi/settings.json", #"{"packages": ["npm:third"]}"#)
+        for folder in [".pi/agent/npm/node_modules/first", ".pi/agent/npm/node_modules/second",
+                       "Projects/app/.pi/npm/node_modules/third"] {
+            for index in 0..<30 { try write("\(folder)/prompts/p\(index).md") }
         }
-        let listing = PiPackages.list(configRoot: agent, projects: [], limits: .init(entries: 50), in: env)
-        #expect(listing.packages.map(\.isTooLarge) == [false, true])
-        #expect(listing.packages[0].prompts.count == 30)
+        let listing = PiPackages.list(configRoot: agent, projects: [project], limits: { .init(entries: 50) }, in: env)
+        #expect(listing.packages.map(\.isTooLarge) == [false, true, false])
+        #expect(listing.packages.map(\.prompts.count) == [30, 0, 30])
+        #expect(listing.notes.contains { $0.contains("settings.json: AKit stopped reading packages") })
+    }
+
+    @Test func linkedSubfoldersSharingAHugePackageJSONFinishFast() throws {
+        // 4,990 links to one folder whose package.json is 1 MB: read once at most, never parsed.
+        let pkg = home.appending(path: ".pi/agent/npm/node_modules/fan")
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:fan"]}"#)
+        try write(".pi/agent/npm/node_modules/fan/shared/index.ts")
+        let padding = String(repeating: "x", count: 1 << 20)
+        try write(".pi/agent/npm/node_modules/fan/shared/package.json",
+                  #"{"pi": {"extensions": ["./index.ts"]}, "padding": "\#(padding)"}"#)
+        let extensions = pkg.appending(path: "extensions")
+        try fm.createDirectory(at: extensions, withIntermediateDirectories: true)
+        for index in 0..<4_990 {
+            try fm.createSymbolicLink(atPath: extensions.appending(path: "d\(index)").path, withDestinationPath: "../shared")
+        }
+
+        let start = Date()
+        let fan = try #require(packages().first)
+        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(fan.isTooLarge || fan.extensions.count <= 1)
+    }
+
+    @Test func listsOverTheCapAreCutAndNoted() throws {
+        let pkg = ".pi/agent/npm/node_modules/long"
+        let files = (0..<300).map { "\"./prompts/p\($0).md\"" }.joined(separator: ",")
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:long"]}"#)
+        try write("\(pkg)/package.json", #"{"name": "long", "pi": {"prompts": [\#(files)]}}"#)
+        for index in 0..<300 { try write("\(pkg)/prompts/p\(index).md") }
+
+        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        let long = try #require(listing.packages.first)
+        #expect(long.prompts.count == PiPackages.maxPatterns)
+        #expect(!long.isTooLarge)
+        #expect(listing.notes.contains { $0.hasPrefix("long: a list") && $0.contains("more than 256") })
     }
 
     @Test func packageJSONMustBeTheirOwnFile() throws {
