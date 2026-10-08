@@ -318,7 +318,8 @@ public enum AKitCLI {
                     answers.layers = ["core"]
                 }
                 let include = Set(options.include), exclude = Set(options.exclude)
-                let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: options.home)
+                let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: options.home,
+                                             piAgentDir: env.piAgentDirectory)
                 out(planText(plan))
                 guard plan.canApply else { return 1 }
                 guard command == "apply" else { return 0 }
@@ -1081,18 +1082,22 @@ public enum AKitCLI {
                 let id = options.home ? homeID(hostName: hostName, env: env)
                     : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
-                guard let preview = ProjectForget.preview(id: id, folder: project, forHome: options.home, brain: brain, store: store) else {
+                guard let preview = ProjectForget.preview(id: id, folder: project, forHome: options.home, brain: brain, store: store,
+                                                          piAgentDir: env.piAgentDirectory) else {
                     out("Nothing is saved for \(id).")
                     return 1
                 }
                 var lines = [preview.ownRecord ? "Forget \(id) (\(store.describe(id: id)) goes to the Trash)." : "Forget \(id) on this Mac."]
                 if !options.keepFiles {
-                    if !preview.removals.isEmpty || preview.keysTakenOut.isEmpty {
+                    if !preview.removals.isEmpty || preview.keysTakenOut.isEmpty && preview.blocksTakenOut.isEmpty {
                         lines.append(preview.removals.isEmpty ? "No files AKit wrote are left there."
                                      : "Files AKit wrote go to the Trash: \(preview.removals.joined(separator: ", ")).")
                     }
                     if !preview.keysTakenOut.isEmpty {
                         lines.append("The keys AKit added come out of: \(preview.keysTakenOut.joined(separator: ", ")) (the project's own keys stay).")
+                    }
+                    if !preview.blocksTakenOut.isEmpty {
+                        lines.append("AKit's block comes out of: \(preview.blocksTakenOut.joined(separator: ", ")) (the text around it stays).")
                     }
                     if !preview.keysLeft.isEmpty {
                         lines.append("AKit's keys stay in \(preview.keysLeft.joined(separator: ", ")): AKit can't read it as JSON, so take them out by hand.")
@@ -1202,8 +1207,9 @@ public enum AKitCLI {
             if change.kind == .update && change.replacesUnmanaged { note = "  (AKit didn't write it: skipped unless --include)" }
             if change.kind == .update && change.editedSinceRender { note = "  (edited by hand since the last render: skipped unless --include)" }
             if change.mergesJSON && [.create, .update].contains(change.kind) { note = "  (keys merged; the project's own keys stay; env and headers values masked)" }
+            if change.block && [.create, .update].contains(change.kind) { note = "  (AKit's block between the akit:core markers; the text around it stays)" }
             lines.append("")
-            lines.append("\(label(change.kind)) \(change.path)\(note)")
+            lines.append("\(change.block && change.kind == .suggest ? "LAYERS CHANGED (AKit's block, edited by hand: kept unless --include)" : label(change.kind)) \(change.path)\(note)")
             let new = change.kind == .remove || change.kind == .keepEdited ? "" : change.newText ?? ""
             if change.oldText != nil || change.newText != nil {
                 lines += TextDiff.unified(TextDiff.lines(from: change.oldText ?? "", to: new))

@@ -460,9 +460,13 @@ struct ProjectSetupSheet: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(change.path).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
                         HStack(spacing: 4) {
-                            Text(label(change.kind)).foregroundStyle(tint(change.kind))
+                            Text(change.block && change.kind == .suggest ? "edited by hand · layers changed"
+                                 : change.block && change.kind == .own ? "edited by hand" : label(change.kind))
+                                .foregroundStyle(tint(change.kind))
                             if change.mergesJSON && [.create, .update].contains(change.kind) {
                                 Text("· keys merged; the project's own keys stay").foregroundStyle(.secondary)
+                            } else if change.block && [.create, .update].contains(change.kind) {
+                                Text("· AKit's block only; the text around it stays").foregroundStyle(.secondary)
                             } else if change.replacesUnmanaged && change.kind == .update {
                                 Text("· replaces a file AKit didn't write").foregroundStyle(.orange)
                             } else if change.editedSinceRender {

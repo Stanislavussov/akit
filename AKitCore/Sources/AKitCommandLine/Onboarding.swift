@@ -173,7 +173,8 @@ public enum Onboarding {
         // Harnesses installed since the last setup join in.
         answers.targets += installedTargets.filter { !answers.targets.contains($0) }
         if answers.targets.isEmpty { answers.targets = ["claude"] }
-        var plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true)
+        var plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true,
+                                     piAgentDir: env.piAgentDirectory)
 
         // Claude's own skills folder has to become a link to ~/.agents/skills.
         let claudeSkills = env.homeDirectory.appending(path: ".claude/skills")
@@ -183,7 +184,8 @@ public enum Onboarding {
             // Asked only: without a terminal they stay where they are.
             if let ask = io.ask, yes(ask("Move them to ~/.agents/skills and link ~/.claude/skills there? A backup is kept. [Y/n]"), default: true) {
                 try moveClaudeSkills(claudeSkills, home: env.homeDirectory, io: io)
-                plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true)
+                plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true,
+                                         piAgentDir: env.piAgentDirectory)
             }
         }
         guard plan.canApply else {

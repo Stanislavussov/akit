@@ -4,7 +4,9 @@ Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
-`.pi/mcp.json` and `.pi/settings.json`.
+`.pi/mcp.json` and `.pi/settings.json`. The home render writes the core layer's AGENTS.md
+text as a marked block into the harnesses' global instructions (2026-10-08, see
+[Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08)).
 
 Also built, though not roadmap steps: work machines, the "project owns its files" update
 rules, `keep_auto`, `override`, the home folder render (`akit apply --home`, and in the app
@@ -192,6 +194,10 @@ project/
 Targets (harnesses) are a project field, multi-select, default from the machine
 profile. Differences per harness go through `when: target == "claude"`.
 
+In the home folder, AGENTS.md is not written as `~/AGENTS.md` (no harness reads it): its
+text goes as a marked block into `~/.claude/CLAUDE.md` and `~/.pi/agent/AGENTS.md`, see
+[Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08).
+
 ## Several layers, one file
 
 - Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;
@@ -234,7 +240,9 @@ A layer is a shared starting point, not the owner of a project. Per project:
   They win over a brain skill with the same name, are never overwritten, and get
   the `.claude/skills` link when Claude is a target. The project page lists them
   (New Skill…, Edit, Move to Trash).
-- The home folder follows the core layer completely (no ownership rules there).
+- The home folder follows the core layer completely (no ownership rules there), except
+  for the instructions block: one edited by hand is kept and the layers' text only offered
+  (see [Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08)).
 - JSON files (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json`, `.pi/settings.json`):
   ownership is per key, not per file
   (2026-10-08). The file is the project's; AKit owns only the leaves it wrote. See
@@ -339,6 +347,62 @@ Where it lives: `JSONValue` (AKitFoundation: parse, print, key paths, masking),
 `ProjectBundle.resolve` (parse, fill, secret check), `Render.mergeJSON` (layers into one
 object, clashes), `JSONMerge` in AKitProjectSetup (into the project's file, the lock record).
 
+## Home folder: instructions block (built 2026-10-08)
+
+Decided 2026-10-08 ("block with markers"), built the same day. The home render used to write
+the core layer's AGENTS.md text to `~/AGENTS.md`, which no harness reads. Now it goes into
+each target harness's global instructions file of the home record (`answers.targets`):
+
+- `claude` → `~/.claude/CLAUDE.md`;
+- `pi` → `<Pi's config folder>/AGENTS.md`: `~/.pi/agent/AGENTS.md`, or the folder from
+  `PI_CODING_AGENT_DIR` (`HarnessEnvironment.piAgentDirectory`, the same as Pi's adapter). Pi
+  reads this file as its global instructions (Pi docs, usage.md "Context Files"). A folder
+  outside the home folder shows its absolute path in the preview and the lock.
+
+The text sits between two markers, and AKit owns only what is between them:
+
+```
+<!-- akit:core:start -->
+…the core layer's AGENTS.md text…
+<!-- akit:core:end -->
+```
+
+- **Text around the block** stays byte for byte. Other tools keep their own blocks in the
+  same file (oh-my-claudecode writes `<!-- OMC:START -->` … into `~/.claude/CLAUDE.md`).
+- **No block yet**: appended at the end, after one blank line. **File missing**: created
+  with only the block.
+- **Update**: only the block is replaced.
+- **Empty render** (the core layer has no AGENTS.md text, the target is no longer chosen,
+  Forget): the block and its markers go, with the blank line AKit put before it; the file
+  stays, even when empty. Only a block AKit wrote (it has a record) is taken out.
+- **Broken markers** (a start without an end, two starts, an end before the start): a
+  blocker in the preview; nothing is written. When AKit only wanted to take its block out,
+  the file is left alone with a warning and keeps its record.
+- **Edited by hand**: `lock.json` keeps, per file, a hash of the text AKit wrote in the
+  block and of the layers' text last offered (new optional key `blocks`, `{path: {sha256,
+  offered, layers}}`; older AKit ignores it). A block edited since is the user's, like an
+  edited template in a project: kept, and the layers' new text is offered unticked ("edited
+  by hand · layers changed"), once per new version; taken when ticked or with `akit apply
+  --include PATH`. A block found without a record and different from the layers' counts as
+  edited. A block (or the whole file) removed by hand is not added again, only offered. An
+  edited block outlives an empty render ("no longer rendered, but edited by hand: kept").
+- **Links**: a file that is a link blocks Apply, like a merged JSON file (AKit writes the
+  block only into a plain file). A linked parent folder (`~/.claude` in a dotfiles repo) is
+  fine: the paths are AKit's own, not a layer's.
+- **Preview and Apply**: the preview shows a diff of the whole file; Apply backs the file up
+  first and refuses if it changed since the preview, as for every other change.
+- **`~/AGENTS.md` of an older render** goes through the usual "an earlier render wrote it"
+  removal: to the Trash, unless edited since (then kept).
+- A core template that targets one of these files is a blocker (the file can't be both).
+
+Where it lives: `Render` marks the home folder's AGENTS.md output `instructionsBlock`;
+`ProjectSetup.plan` (with `piAgentDir`) maps it to the target files, `InstructionsBlock` in
+AKitProjectSetup finds, writes and takes out the block. `akit apply --home`, `akit setup`,
+**Update Home Folder…** and **Forget Project…** on the home folder all use it.
+
+Not built: the global files of other harnesses (Codex `~/.codex/AGENTS.md`, OpenCode
+`~/.config/opencode/AGENTS.md`).
+
 ## Agent draft
 
 Status: not built. What exists instead: every new brain starts with the manual `/akit`
@@ -399,4 +463,5 @@ Pi's `.pi/mcp.json` and `.pi/settings.json` joined the same day.
 - Pi has no native MCP (only via `pi-mcp-adapter`).
 - Subagents in layers: low priority, format stays open for them.
 - Rendering the core layer into the home folder: done (`akit apply --home`, and
-  **Update Home Folder…** in the app).
+  **Update Home Folder…** in the app); its AGENTS.md text as a block in Claude Code's and
+  Pi's global instructions since 2026-10-08.

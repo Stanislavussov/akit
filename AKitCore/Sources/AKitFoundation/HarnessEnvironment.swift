@@ -40,6 +40,12 @@ public struct HarnessEnvironment: Sendable {
         return HarnessEnvironment(homeDirectory: home, variables: vars, executableSearchPaths: paths)
     }
 
+    /// Pi's config folder: `~/.pi/agent`, or the folder from PI_CODING_AGENT_DIR.
+    public var piAgentDirectory: URL {
+        if let custom = variables["PI_CODING_AGENT_DIR"], !custom.isEmpty { return expand(custom) }
+        return homeDirectory.appending(path: ".pi/agent")
+    }
+
     /// `~/x` → full path; absolute paths are returned as is.
     public func expand(_ path: String) -> URL {
         if path == "~" { return homeDirectory }

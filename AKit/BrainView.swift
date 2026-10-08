@@ -200,18 +200,19 @@ struct BrainView: View {
                                 titleVisibility: .visible, presenting: forgetting) { request in
                 // The first button is the one Return picks: never the one that trashes files.
                 let preview = request.preview
-                let touchesFiles = !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty
-                // Keys come out of JSON files the project keeps: "Trash Files" would say too little.
-                let withKeys = !preview.keysTakenOut.isEmpty
+                let touchesFiles = !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty || !preview.blocksTakenOut.isEmpty
+                // Keys come out of JSON files the project keeps, or AKit's block out of instruction
+                // files the user keeps: "Trash Files" would say too little.
+                let parts = !preview.keysTakenOut.isEmpty ? " and Keys" : !preview.blocksTakenOut.isEmpty ? " and Blocks" : nil
                 if !preview.ownRecord {
                     if touchesFiles {
-                        Button(withKeys ? "Remove AKit's Files and Keys" : "Trash Files", role: .destructive) { forget(request, keepFiles: false) }
+                        Button(parts.map { "Remove AKit's Files\($0)" } ?? "Trash Files", role: .destructive) { forget(request, keepFiles: false) }
                     }
                 } else if !touchesFiles {
                     Button("Forget", role: .destructive) { forget(request, keepFiles: true) }
                 } else {
                     Button("Forget, Keep Files") { forget(request, keepFiles: true) }
-                    Button(withKeys ? "Forget and Remove AKit's Files and Keys" : "Forget and Trash Files", role: .destructive) {
+                    Button(parts.map { "Forget and Remove AKit's Files\($0)" } ?? "Forget and Trash Files", role: .destructive) {
                         forget(request, keepFiles: false)
                     }
                 }
@@ -356,7 +357,7 @@ struct BrainView: View {
         if preview.plan == nil {
             lines.append("Its folder is not among the project folders on this Mac, so its files stay where they are.")
         } else if preview.removals.isEmpty {
-            if preview.keysTakenOut.isEmpty { lines.append("No files AKit wrote are left\(place).") }
+            if preview.keysTakenOut.isEmpty && preview.blocksTakenOut.isEmpty { lines.append("No files AKit wrote are left\(place).") }
         } else {
             let shown = preview.removals.prefix(8).joined(separator: ", ")
             let more = preview.removals.count > 8 ? " and \(preview.removals.count - 8) more" : ""
@@ -364,6 +365,9 @@ struct BrainView: View {
         }
         if !preview.keysTakenOut.isEmpty {
             lines.append("The keys AKit added to \(preview.keysTakenOut.joined(separator: ", "))\(place) can come out; the project's own keys stay.")
+        }
+        if !preview.blocksTakenOut.isEmpty {
+            lines.append("AKit's block can come out of \(preview.blocksTakenOut.joined(separator: ", "))\(place); the text around it stays.")
         }
         if !preview.keysLeft.isEmpty {
             lines.append("AKit's keys stay in \(preview.keysLeft.joined(separator: ", ")): AKit can't read it as JSON, so take them out by hand.")

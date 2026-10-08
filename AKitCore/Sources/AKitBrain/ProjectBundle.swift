@@ -382,12 +382,16 @@ public struct RenderedFile: Hashable, Sendable {
     /// A JSON file of the layers' keys, merged key by key into the project's file (never
     /// written whole; see `ProjectSetup`).
     public let mergesJSON: Bool
+    /// The core layer's AGENTS.md text in the home folder: written as a marked block into the
+    /// global instructions file of each target harness, never as ~/AGENTS.md (see `ProjectSetup`).
+    public let instructionsBlock: Bool
 
-    public init(path: String, content: Content, layers: [String], mergesJSON: Bool = false) {
+    public init(path: String, content: Content, layers: [String], mergesJSON: Bool = false, instructionsBlock: Bool = false) {
         self.path = path
         self.content = content
         self.layers = layers
         self.mergesJSON = mergesJSON
+        self.instructionsBlock = instructionsBlock
     }
 
     public var text: String? {

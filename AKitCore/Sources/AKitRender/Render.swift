@@ -6,7 +6,9 @@ import Foundation
 /// files, the CLAUDE.md shim and the `.claude/skills` link. Pure: writes nothing.
 public enum Render {
     /// `forHome`: rendering the core layer into the home folder, where no harness reads
-    /// ~/AGENTS.md, so there is no CLAUDE.md shim (the .claude/skills link still applies).
+    /// ~/AGENTS.md: its text is marked `instructionsBlock` (ProjectSetup writes it as a block
+    /// into each harness's global instructions file), and there is no CLAUDE.md shim (the
+    /// .claude/skills link still applies).
     public static func render(_ bundle: ProjectBundle, forHome: Bool = false) -> RenderResult {
         var errors = bundle.errors
         var warnings = bundle.warnings
@@ -62,7 +64,7 @@ public enum Render {
                 let sections = filled.isEmpty && path != "AGENTS.md" ? all : filled
                 guard !sections.isEmpty else { continue }
                 outputs.append(RenderedFile(path: path, content: .data(Data((sections.map(\.text).joined(separator: "\n\n") + "\n").utf8)),
-                                            layers: sections.map(\.layer)))
+                                            layers: sections.map(\.layer), instructionsBlock: forHome && path.lowercased() == "agents.md"))
             } else if let winner = parts.last(where: \.override) ?? parts.last {
                 if parts.count > 1, !parts.contains(where: \.override) {
                     errors.append("\(path) comes from \(parts.map(\.layer).joined(separator: " and ")). Set override: true in the layer that should win.")

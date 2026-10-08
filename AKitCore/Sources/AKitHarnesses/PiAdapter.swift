@@ -11,12 +11,7 @@ struct PiAdapter: HarnessAdapter {
     public init() {}
 
     /// `~/.pi/agent`, or the folder from PI_CODING_AGENT_DIR.
-    public func configRoot(in env: HarnessEnvironment) -> URL {
-        if let custom = env.variables["PI_CODING_AGENT_DIR"], !custom.isEmpty {
-            return env.expand(custom)
-        }
-        return env.homeDirectory.appending(path: ".pi/agent")
-    }
+    public func configRoot(in env: HarnessEnvironment) -> URL { env.piAgentDirectory }
 
     public func detect(in env: HarnessEnvironment) -> HarnessInstallation? {
         let root = configRoot(in: env)

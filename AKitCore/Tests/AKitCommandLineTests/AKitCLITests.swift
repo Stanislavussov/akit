@@ -156,6 +156,29 @@ struct AKitCLITests {
         #expect(ProjectRecords.savedAnswers(id: "home/testmac", in: .brain(Brain.defaultRoot(home: home)))?.layers == ["core"])
     }
 
+    @Test func homeGetsTheCoreLayersInstructionsAsABlockInEachHarnessFile() async throws {
+        try await setUp()
+        try write(".akit/registry/layers/core/layer.yaml", "name: core\nfiles:\n  - template: AGENTS.md\n    to: AGENTS.md\n")
+        try write(".akit/registry/layers/core/templates/AGENTS.md", "Be brief.\n")
+        try write(".claude/CLAUDE.md", "# Mine\n")
+        // Pi's folder comes from PI_CODING_AGENT_DIR, like Pi's own.
+        var piEnv = env
+        piEnv.variables["PI_CODING_AGENT_DIR"] = "~/pi-config"
+        var out: [String] = []
+        let code = await AKitCLI.run(["apply", "--home", "--targets", "claude,pi"], env: piEnv, cwd: project, projectsRoot: home.appending(path: "Projects"),
+                                     hostName: "TestMac.local", installedTargets: ["claude"], out: { out.append($0) }, err: { out.append($0) },
+                                     trash: { _ in nil }, hardwareHash: { "test-hardware" })
+        #expect(code == 0, "\(out)")
+        let text = out.joined(separator: "\n")
+        #expect(text.contains("CHANGED .claude/CLAUDE.md  (AKit's block between the akit:core markers; the text around it stays)"), "\(text)")
+        #expect(text.contains("NEW pi-config/AGENTS.md"))
+        let block = "<!-- akit:core:start -->\nBe brief.\n<!-- akit:core:end -->\n"
+        #expect(try String(contentsOf: home.appending(path: ".claude/CLAUDE.md"), encoding: .utf8) == "# Mine\n\n" + block)
+        #expect(try String(contentsOf: home.appending(path: "pi-config/AGENTS.md"), encoding: .utf8) == block)
+        #expect(!fm.fileExists(atPath: home.appending(path: "AGENTS.md").path))
+        #expect(!fm.fileExists(atPath: home.appending(path: ".pi").path))
+    }
+
     @Test func homeIDs() {
         #expect(ProjectRecords.homeID(hostName: "Example-Mac.local") == "home/example-mac")
         #expect(ProjectRecords.homeID(hostName: "") == "home/mac")

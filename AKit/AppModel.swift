@@ -292,14 +292,20 @@ final class AppModel {
     func projectPlan(project: URL, id: String, answers: ProjectAnswers, forHome: Bool = false) async -> ProjectSetup.Plan? {
         guard let brain else { return nil }
         let store = projectStore
-        return await Task.detached { ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: forHome) }.value
+        let piAgentDir = HarnessEnvironment.current.piAgentDirectory
+        return await Task.detached {
+            ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: forHome, piAgentDir: piAgentDir)
+        }.value
     }
 
     /// What forgetting a project would trash; nil when nothing is saved for it. Only reads.
     func forgetPreview(id: String, folder: URL?, forHome: Bool) async -> ProjectForget.Preview? {
         guard let brain else { return nil }
         let store = projectStore
-        return await Task.detached { ProjectForget.preview(id: id, folder: folder, forHome: forHome, brain: brain, store: store) }.value
+        let piAgentDir = HarnessEnvironment.current.piAgentDirectory
+        return await Task.detached {
+            ProjectForget.preview(id: id, folder: folder, forHome: forHome, brain: brain, store: store, piAgentDir: piAgentDir)
+        }.value
     }
 
     /// Trashes the files AKit wrote in the project (unless `keepFiles`) and its record, then rescans.
