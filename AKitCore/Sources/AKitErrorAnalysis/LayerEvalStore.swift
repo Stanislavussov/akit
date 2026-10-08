@@ -22,6 +22,9 @@ public struct LayerEvalManifest: Codable, Sendable, Hashable, Identifiable {
     public var blocked: [String: String]
     public var notes: [String: [String]]
     public var overlap: [String]
+    /// Task id → the project's own file the layer's AGENTS.md text is appended to; nil in an
+    /// eval written before the verdict (slice 5) kept it.
+    public var ownFiles: [String: String]?
 
     /// The agent of the eval's setups.
     public var agent: LabAgent? { setups.first?.agent }
@@ -40,7 +43,8 @@ public enum LayerEvalStore {
         let manifest = LayerEvalManifest(id: prepared.evalID, layer: prepared.layer, createdAt: now, brainCommit: prepared.brainCommit,
                                          setups: prepared.setups, sanity: prepared.sanitySetup, tasks: prepared.runnable.map(\.id),
                                          sanityTasks: prepared.sanityTasks.map(\.id), repeats: repeats, blocked: prepared.blocked,
-                                         notes: prepared.notes, overlap: prepared.overlap)
+                                         notes: prepared.notes, overlap: prepared.overlap,
+                                         ownFiles: prepared.ownFiles.filter { id, _ in prepared.runnable.contains { $0.id == id } })
         if prepared.continuing, let existing = self.manifest(prepared.evalID, env: env) { return existing }
         let fm = FileManager.default
         guard !fm.fileExists(atPath: folder.path) else {

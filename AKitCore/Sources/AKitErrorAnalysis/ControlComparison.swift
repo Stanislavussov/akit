@@ -71,6 +71,9 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     public enum Verdict: String, Codable, Sendable {
         /// At least 95% of the bootstrap mass on improvement.
         case helped
+        /// A brain layer's own level (layer pairs only, never a patch fix): at least 95% of
+        /// the bootstrap mass on improvement, without the production guard.
+        case helpsOffline = "helps-offline"
         case notShown = "not-shown"
         /// Too few repeats or cells to say.
         case noConclusion = "no-conclusion"
@@ -78,6 +81,7 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var title: String {
             switch self {
             case .helped: "helped"
+            case .helpsOffline: "helps (offline)"
             case .notShown: "didn't show it helped"
             case .noConclusion: "no conclusion"
             }
@@ -95,6 +99,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var meanChange: Double?
         /// The share of bootstrap means above zero.
         public var improvementShare: Double?
+        /// The share of bootstrap means below zero; ties at zero count for neither.
+        public var worseShare: Double?
         /// The "not worse in production" guard: P(the mode's failure rate rose after the fix's T)
         /// from its check over indexed sessions, when both sides have enough sessions.
         public var productionHigher: Double?
@@ -119,7 +125,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     /// the same layer, eval and agent: never with a plain baseline, and patch variants never
     /// with a layer row. `production` is the fix's production signal (`production(for:env:)`):
     /// "helped" also needs it not worse, so without it there is no conclusion. It is a patch
-    /// fix's signal, so layer pairs never get it.
+    /// fix's signal, so layer pairs never get it: they are judged offline ("helps (offline)",
+    /// D4), unless a read-only cell of their eval passed.
     public static func compare(_ cells: [Cell], production: FixEvaluation? = nil, iterations: Int = 2000,
                                seed: UInt64 = 1) -> ControlComparison {
         let kept = cells.filter(\.overlayRecorded)
@@ -139,7 +146,13 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                       return other.role == .requiredOnly && other.layer == layer.layer && other.evalID == layer.evalID
                           && row.setup.agent == variant.setup.agent
                   }) else { return nil }
-            return pair(baseline: baseline, variant: variant, production: nil, iterations: iterations, seed: seed)
+            // The read-only sanity cells of the eval must fail: a pass means the oracle can't tell
+            // work from no work. The oracle's verdict counts, flagged or not.
+            let sanity = kept.first { cell in
+                cell.setup.readOnly && cell.passed && cell.setup.layer?.evalID == layer.evalID && cell.setup.agent == variant.setup.agent
+            }
+            return pair(baseline: baseline, variant: variant, production: nil, offline: true, readOnlyPassed: sanity?.task,
+                        iterations: iterations, seed: seed)
         }
         return ControlComparison(rows: rows, paired: paired, leftOut: cells.count - kept.count)
     }
@@ -186,8 +199,11 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     /// same cells give the same share). "Helped" is fixed before the run: ≥ 95% of the mass
     /// on improvement, with at least 3 repeats of every task and 15 cells on each side, and not
     /// worse in production: at most 50% that the mode's failure rate rose after T, with 15
-    /// sessions on each side.
-    static func pair(baseline: Row, variant: Row, production: FixEvaluation?, iterations: Int, seed: UInt64) -> Paired {
+    /// sessions on each side. `offline` (layer pairs only): the same share without the
+    /// production guard gives "helps (offline)"; `readOnlyPassed` names a task whose read-only
+    /// sanity cell passed, which leaves the pair without a conclusion.
+    static func pair(baseline: Row, variant: Row, production: FixEvaluation?, offline: Bool = false, readOnlyPassed: String? = nil,
+                     iterations: Int, seed: UInt64) -> Paired {
         let before = Dictionary(uniqueKeysWithValues: baseline.tasks.map { ($0.task, $0) })
         let shared = variant.tasks.compactMap { after in before[after.task].map { (before: $0, after: after) } }
         let baselineCells = shared.map(\.before.total).reduce(0, +)
@@ -207,22 +223,32 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         }
         var generator = SeededGenerator(seed: seed)
         var improved = 0
+        var worse = 0
         for _ in 0..<iterations {
             var sum = 0.0
             for _ in changes.indices { sum += changes[Int.random(in: 0..<changes.count, using: &generator)] }
-            if sum > 0 { improved += 1 }
+            if sum > 0 { improved += 1 } else if sum < 0 { worse += 1 }
         }
         let share = Double(improved) / Double(iterations)
         result.improvementShare = share
+        result.worseShare = Double(worse) / Double(iterations)
         let percent = String(format: "%.0f%%", 100 * share)
         if shared.contains(where: { $0.before.total < minimumRepeats || $0.after.total < minimumRepeats }) {
             result.reason = "A task has fewer than \(minimumRepeats) repeats on a side."
         } else if baselineCells < minimumCells || variantCells < minimumCells {
             result.reason = "Fewer than \(minimumCells) cells on a side (baseline \(baselineCells), variant \(variantCells))."
-        } else if variant.setup.layer != nil {
-            // Until layers get their own verdict level (slice 5), every layer pair stays open.
-            result.reason = "\(percent) of the bootstrap mass on improvement; a layer eval has no verdict level of its own yet, "
-                + "so this pair has no conclusion."
+        } else if offline {
+            // A brain layer's own level: judged before anyone uses it, so no production guard.
+            let shares = "\(percent) of the bootstrap mass on improvement, \(String(format: "%.0f%%", 100 * (result.worseShare ?? 0))) on worse"
+            if let readOnlyPassed {
+                result.reason = "A read-only agent passed \(readOnlyPassed): its oracle can't tell work from no work (\(shares))."
+            } else if share >= helpedShare {
+                result.verdict = .helpsOffline
+                result.reason = "\(shares) (needs \(Int(helpedShare * 100))%; offline, without the production guard)."
+            } else {
+                result.verdict = .notShown
+                result.reason = "Only \(shares) (needs \(Int(helpedShare * 100))%)."
+            }
         } else if share >= helpedShare {
             let control = "\(percent) of the bootstrap mass on improvement (needs \(Int(helpedShare * 100))%)"
             if let measured {

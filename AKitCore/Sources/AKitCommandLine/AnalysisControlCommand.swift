@@ -71,7 +71,13 @@ extension AKitCLI {
                                           and the applied fix is not worse in production; without
                                           production data, no conclusion. Cells with dropped or changed
                                           tests, or that read the exemplar, count as failed. A layer
-                                          pairs only with its eval's required layers; no conclusion yet
+                                          pairs only with its eval's required layers and has its own
+                                          level: "helps (offline)" at 95% without production data
+          akit analysis control compare --eval ID [--json]
+                                          One layer eval's cells and, once none is queued or running,
+                                          its verdict lines (success only), saved as the layer's last
+                                          verdict for this agent in ~/.akit/lab/evals/verdicts. A read-
+                                          only cell that passed leaves it without a conclusion
         """
 
     static func analysisControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
@@ -120,6 +126,7 @@ extension AKitCLI {
         case "layer-sets", "layer-set":
             return try layerSets(command ?? "", &args, json: json, env: env, cwd: cwd, out: out, trash: trash)
         case "compare":
+            if let evalID = args.value("--eval") { return try compareLayerEval(evalID, &args, json: json, env: env, out: out) }
             guard let list = args.positional() else { throw Failure(message: "Which tasks? akit analysis control compare TASK[,TASK…].") }
             try args.finish()
             let tasks = try controlTasks(list, env: env)

@@ -328,6 +328,16 @@ struct ControlRunsTests {
         #expect(comparison.paired[0].variant == prepared.setups[1] && comparison.paired[0].baseline == prepared.setups[0])
         #expect(comparison.paired[0].verdict == .noConclusion && comparison.paired[0].harnessVersions == ["2.1.290"])
 
+        // The finished eval's verdict (too few cells to conclude), saved locally; the brain stays as it was.
+        let manifest = try #require(LayerEvalStore.manifest(prepared.evalID, env: env))
+        let verdict = try #require(LayerVerdicts.verdict(of: manifest, runs: done, costs: SendLog.runCosts(SendLog.records(env: env))))
+        #expect(verdict.verdict == .noConclusion && verdict.tasks == 1 && verdict.baselineRate == 0 && verdict.layerRate == 1)
+        #expect(verdict.sanity == .passed && verdict.sanityCells == 1 && verdict.projectOwnContext == 1 && verdict.harnessVersions == ["2.1.290"])
+        #expect(verdict.cost.map { abs($0 - 0.05) < 1e-9 } == true, "\(String(describing: verdict.cost))")
+        #expect(try LayerVerdicts.save(verdict, env: env) && LayerVerdicts.load(layer: "swiftui", env: env)?.verdicts == [verdict])
+        #expect(await fixture.git("rev-parse", "HEAD", in: fixture.brain) == brainHead)
+        #expect(await fixture.git("status", "--porcelain", in: fixture.brain) == "")
+
         // Queuing the same eval again skips every cell.
         let again = try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: 2,
                                                         sanity: (sanity, prepared.sanityTasks, 1), environment: .background,
