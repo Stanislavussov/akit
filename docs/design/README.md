@@ -1,12 +1,13 @@
 # Design map
 
-Status: 2026-10-07, checked against the code. This is the index of `docs/design/`: what
+Status: 2026-10-08, checked against the code. This is the index of `docs/design/`: what
 each design is for, what is built, what to build next and in which order. Each design
 keeps its own details and its own status note; the order across designs and the open
 decisions live only here.
 
 The improvements and the order below are proposals from the 2026-10-03 review. They are
-not agreed yet; a proposal that is accepted moves into its design doc.
+not agreed yet, except where marked accepted; a proposal that is accepted moves into its
+design doc.
 
 ## The loop
 
@@ -43,7 +44,7 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 |---|---|---|---|---|
 | [`architecture.md`](architecture.md) | Which module owns what? | `AKitCore/Package.swift` | all 25 steps; 16 modules | — |
 | [`layers.md`](layers.md) | How does a project get exactly the setup it needs? | Brain screen; `akit plan` / `apply` | roadmap 1–3, update rules, work machines, home render, Update Home Folder… and Forget Project… (2026-10-07) | MCP in layers, JSON merge, `/akit-setup` draft, `machines/<name>.yaml` |
-| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen; `akit stats`, `akit recommend`, `akit insights` | steps 1–7 and 10 (the Insights screen) | steps 8, 9, 11–13 |
+| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen; `akit stats`, `akit recommend`, `akit insights` | steps 1–7 and 10 (the Insights screen); step 8 as simplified by I1 (2026-10-08): only described exposures count, and the "descriptions dropped" finding | steps 9, 11–13; step 8's name-only reasons and over-budget rule |
 | [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4 | index as a source, Pi replays |
 | [`error-analysis.md`](error-analysis.md) | What goes wrong again and again, and did the fix help? | Error Analysis screen; `akit analysis`; Pi ratings on Sessions | slices 1–8; quick ratings after a Pi run, with change, comment and remove; shown after their run and given to Lab reviews (2026-10-07) | manual calibration of cells, merge/split proposals |
 | [`layer-evals.md`](layer-evals.md) | Does layer X make the agent's work better? | — | nothing (design only) | slices 1–9 |
@@ -60,7 +61,7 @@ The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`
 | Add an MCP server from a public catalog | MCP Servers → Catalog… |
 | Update the home folder from the core layer | Brain → core → Update Home Folder… (or `akit apply --home`) |
 | Forget a project and trash the files AKit wrote there | Brain → the project → Forget Project… |
-| See which skills cost context and are never called | Insights (Apply… makes a layer skill manual; the Skills table lists every skill) |
+| See which skills cost context and are never called | Insights (Apply… makes a layer skill manual; the Skills table lists every skill; the line above it says how often Claude Code dropped descriptions) |
 | Check that a change reduced the context | Insights → Changes (Add Mark… for a change made by hand) |
 | See where one session's tokens went | Sessions → Analysis |
 | See which setup one session never used, and how its tool calls ended | Sessions → Overview (Lab review: Overview…) |
@@ -78,7 +79,7 @@ design doc and this table say so.
 | 0 | No code: label the bootstrap sessions, run one batch, write one fix draft | `error-analysis.md` | Error analysis is built and has no active mode yet. Its results show which of the later steps are needed |
 | 1 | Insights screen. Built 2026-10-03: recommendations with Apply… and Dismiss…. `akit setup` installs capture, and the screen says when it is off and has Install Capture…; the app's Sync publishes summaries (2026-10-06); the skills table, Changes with Add Mark… and Plan… after Apply (2026-10-07). Done, apart from a few small items listed in its status note | `session-insights.md`, step 10 | The feature had no button. Almost no new logic: the pieces move from the command line module into `AKitInsights` |
 | 2 | Buttons for "apply the core layer to the home folder" and "forget project". Built 2026-10-07: **Update Home Folder…** and **Forget Project…** on the Brain screen; Insights' Plan… covers the home folder too | `layers.md`, Roadmap | Same rule: every operation needs a button. Small |
-| 3 | Count only exposures with a description | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
+| 3 | Count only exposures with a description. Built 2026-10-08 as I1: stats, recommend and the summaries' `described` day field; the "descriptions dropped by the harness" line in `akit stats` and on Insights | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
 | 5 | Layer checks: slices 3 and 4 | `layer-evals.md` | Only if the pilot shows that success alone can't see the gain |
 | 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json` | `layers.md`, Roadmap 4 | One mechanism unblocks three plans: MCP in layers, hooks in layers, and writing `enabledPlugins` from a recommendation |
@@ -91,7 +92,7 @@ Each one removes work or removes a conflict. None adds a feature.
 
 | # | Proposal | Instead of | Why |
 |---|---|---|---|
-| I1 | Step 8 without name-only reasons: the denominator counts exposures with a description, and one finding shows the share of sessions that lost descriptions | reasons `override` / `empty` / `budget` / `unknown`, the same-day rule, a hook change | The reasons guard against `skillOverrides`, which is not set on this Mac (checked 2026-10-03) and may not work in user settings (step 12 says to check it first) |
+| I1 | Accepted 2026-10-08, built the same day. Step 8 without name-only reasons: the denominator counts exposures with a description, and one finding shows the share of sessions that lost descriptions | reasons `override` / `empty` / `budget` / `unknown`, the same-day rule, a hook change | The reasons guard against `skillOverrides`, which is not set on this Mac (checked 2026-10-03) and may not work in user settings (step 12 says to check it first) |
 | I2 | Layer evals v1 for Claude Code only, without the `parts` field; slices 7 (link to modes) and 9 (production level) wait for the first active modes; the pilot moves before the checks | Pi rules that are partly "blocked until verified", room for later variants, a production level with nothing to feed it | Half of the design depends on active modes, and there are none yet. The example run costs $142; the pilot shows whether the result is worth it |
 | I3 | One verdict ladder for patch fixes and layers: both get "helps (offline)" | a patch fix that always ends at "no conclusion" before it is applied | Today a control set can't judge a fix draft before the user applies it, which is when the answer is needed |
 | I4 | One shared function for the signal rules both parsers have (interrupts, tool errors, repeated calls), with one definition of each | an incremental `FailureSignals` reducer | The scanner already recomputes only files that changed; the real problem is two definitions, not speed |
