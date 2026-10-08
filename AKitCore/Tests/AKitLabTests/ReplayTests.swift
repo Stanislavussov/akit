@@ -188,16 +188,26 @@ struct ReplayTests {
                 == ["the commit 1c9cf65", "AKit's Lab folder", "the Trash"])
         #expect(LeakCheck.commitSigns(in: elsewhere, task: task, env: env) == ["the commit 1c9cf65", "AKit's Lab folder"])
 
-        // What a call writes is no sign: AKit's own sources mention ~/.akit/lab and ~/.Trash.
+        // What a call writes is no sign of the Lab folder or the session history: AKit's own sources mention them.
         let editing = try transcript([
             ["type": "assistant", "message": ["content": [
                 ["type": "tool_use", "name": "Edit", "input": ["file_path": "/w/AKitCore/Sources/AKitLab/LabPaths.swift",
-                                                              "old_string": "~/.akit/lab", "new_string": "~/.akit/lab/runs 1c9cf65 ~/.Trash"]],
+                                                              "old_string": "~/.akit/lab", "new_string": "~/.akit/lab/runs ~/.claude/projects"]],
                 ["type": "tool_use", "name": "Write", "input": ["file_path": "/w/docs/lab.md", "content": "Runs live in ~/.akit/lab."]],
                 ["type": "tool_use", "name": "Grep", "input": ["pattern": "akit/lab", "path": "/w/AKitCore"]],
             ]]],
         ])
         #expect(LeakCheck.leaks(in: editing, task: task, repo: URL(filePath: "/r"), env: env).isEmpty)
+        // The hash, the Trash and the real repository count in the whole input: a script written, then run.
+        let script = try transcript([
+            ["type": "assistant", "message": ["content": [
+                ["type": "tool_use", "name": "Write", "input": ["file_path": "/w/peek.sh",
+                                                               "content": "ls ~/.Trash/akit-replay-x\ngit -C /r show 1c9cf65\n"]],
+                ["type": "tool_use", "name": "Bash", "input": ["command": "sh /w/peek.sh"]],
+            ]]],
+        ])
+        #expect(LeakCheck.leaks(in: script, task: task, repo: URL(filePath: "/r"), env: env)
+                == ["the commit 1c9cf65", "the real repository", "the Trash"])
         // What a call reads or runs is.
         for input in [["command": "cat ~/.akit/lab/tasks/x.json"], ["file_path": home.path + "/.akit/lab/tasks/x.json"]] {
             let reading = try transcript([
@@ -206,7 +216,188 @@ struct ReplayTests {
             #expect(LeakCheck.commitSigns(in: reading, task: task, env: env) == ["AKit's Lab folder"], "\(input)")
         }
         #expect(LeakCheck.pathLikeInput(tool: "write", input: ["path": "a.swift", "content": "x"]) == "a.swift")
-        #expect(LeakCheck.pathLikeInput(tool: "WebFetch", input: ["url": "u"]).contains("\"url\""))
+        #expect(LeakCheck.pathLikeInput(tool: "WebFetch", input: ["url": "u", "n": 2]) == "2\nu")
+    }
+
+    func lines(_ entries: [[String: Any]], to url: URL) throws {
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let text = try entries.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n")
+        try Data(text.utf8).write(to: url)
+    }
+
+    func call(_ name: String, _ input: [String: Any], sidechain: Bool = false) -> [String: Any] {
+        ["type": "assistant", "isSidechain": sidechain, "message": ["content": [["type": "tool_use", "name": name, "input": input]]]]
+    }
+
+    var replayTask: ReplayTask {
+        ReplayTask(repo: "/r", commit: "1c9cf65aaaa", base: "b", subject: "s", prompt: "p", package: "", testFiles: [],
+                   failToPass: [], passToPass: [], validatedAt: .now, notes: [])
+    }
+
+    /// Grep's pattern is a content regex, not a path: searching AKit's sources for `.akit/lab`
+    /// is no sign; a file search under the Lab folder is. Claude Code and Pi alike.
+    @Test func grepPatternIsNoPathButGlobIs() throws {
+        let file = home.appending(path: "s.jsonl")
+        for input in [["pattern": ".akit/lab", "path": "/w/AKitCore"], ["pattern": "akit/lab", "glob": "*.swift"]] {
+            for name in ["Grep", "grep"] {
+                try lines([call(name, input)], to: file)
+                #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env).isEmpty, "\(name) \(input)")
+            }
+        }
+        for (name, input) in [("Glob", ["pattern": "**/*.json", "path": "~/.akit/lab"]), ("Glob", ["pattern": "~/.akit/lab/tasks/*.json"]),
+                              ("find", ["pattern": "*.json", "path": home.path + "/.akit/lab"]), ("ls", ["path": "~/.akit/lab"]),
+                              ("Grep", ["pattern": "commit", "path": "~/.akit/lab"]), ("grep", ["pattern": "x", "glob": "~/.akit/lab/**"])] {
+            try lines([call(name, input)], to: file)
+            #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env) == ["AKit's Lab folder"], "\(name) \(input)")
+        }
+    }
+
+    /// A subagent's tool calls count: its own file in `<session>/subagents/`, or side-chain
+    /// lines of the session file (older Claude Code).
+    @Test func subagentCallsAreSigns() throws {
+        let file = home.appending(path: "projects/-w/session-1.jsonl")
+        try lines([call("Task", ["prompt": "Find how tasks are cached", "subagent_type": "Explore"])], to: file)
+        #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env).isEmpty)
+        try lines([call("Read", ["file_path": "~/.akit/lab/tasks/x.json"])],
+                  to: home.appending(path: "projects/-w/session-1/subagents/agent-a1.jsonl"))
+        #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env) == ["AKit's Lab folder"])
+        #expect(LeakCheck.subagentCalls(of: file).map(\.name) == ["Read"])
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/r"), env: env) == ["AKit's Lab folder"])
+
+        let old = home.appending(path: "projects/-w/session-2.jsonl")
+        try lines([call("Task", ["prompt": "Look"]), call("Bash", ["command": "ls ~/.Trash"], sidechain: true)], to: old)
+        #expect(LeakCheck.subagentCalls(of: old).map(\.name) == ["Bash"])
+        #expect(LeakCheck.leaks(in: old, task: replayTask, repo: URL(filePath: "/r"), env: env) == ["the Trash"])
+    }
+
+    /// A worktree's repository is its main checkout: reading that is reading the real repository.
+    @Test func mainCheckoutOfAWorktreeIsTheRealRepository() throws {
+        let main = home.appending(path: "main", directoryHint: .isDirectory)
+        let worktree = main.appending(path: ".claude/worktrees/agent-1", directoryHint: .isDirectory)
+        try fm.createDirectory(at: main.appending(path: ".git/worktrees/agent-1"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try Data("gitdir: \(main.path)/.git/worktrees/agent-1\n".utf8).write(to: worktree.appending(path: ".git"))
+        try Data("../..\n".utf8).write(to: main.appending(path: ".git/worktrees/agent-1/commondir"))
+        let resolvedMain = main.standardizedFileURL.resolvingSymlinksInPath().path
+        #expect(LabGit.mainFolder(of: worktree.path).path == resolvedMain)
+
+        var task = replayTask
+        task.repo = worktree.path
+        let file = home.appending(path: "s.jsonl")
+        for path in [main.path, resolvedMain] {
+            try lines([call("Bash", ["command": "git -C \(path) log -p"])], to: file)
+            #expect(LeakCheck.leaks(in: file, task: task, repo: worktree, env: env) == ["the real repository"], "\(path)")
+        }
+        // The main folder's paths never include `/`: an unrelated absolute path is no sign.
+        #expect(!LeakCheck.repositoryPaths([worktree.path]).contains("/"))
+        try lines([call("Bash", ["command": "ls /tmp"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: task, repo: worktree, env: env).isEmpty)
+    }
+
+    /// The real repository is matched as a whole folder, not as the start of a longer name.
+    @Test func repositoryMatchesOnAPathBoundary() throws {
+        let repos = LeakCheck.repositoryPaths(["/x/akit"])
+        for text in ["cat /x/akit/file", #"{"path":"/x/akit"}"#, "cd /x/akit && swift test", "/x/akit", "ls /x/akit:", "(/x/akit)"] {
+            #expect(LeakCheck.mentions(text, anyOf: repos), "\(text)")
+        }
+        for text in ["cd /x/akit-other && ls", "/x/akit2/file", "/x/akit.git", "/x/akit_old"] {
+            #expect(!LeakCheck.mentions(text, anyOf: repos), "\(text)")
+        }
+        #expect(!LeakCheck.mentions("~/.akit/lab/runs", anyOf: LeakCheck.repositoryPaths(["/r"])))
+        // A `.` ends the name only at the end of a sentence.
+        #expect(LeakCheck.mentions("see /x/akit.", anyOf: repos) && LeakCheck.mentions("in /x/akit. Then", anyOf: repos))
+        #expect(!LeakCheck.mentions("/x/akit.swift", anyOf: repos))
+        let file = home.appending(path: "s.jsonl")
+        try lines([call("Bash", ["command": "ls /x/akit-other"]), call("Read", ["file_path": "/x/akit/Package.swift"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/x/akit"), env: env) == ["the real repository"])
+        try lines([call("Bash", ["command": "ls /x/akit-other"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/x/akit"), env: env).isEmpty)
+    }
+
+    /// A repository under the home folder is also named from it: `~/…`, `$HOME/…`, `${HOME}/…`.
+    @Test func repositoryUnderHomeIsNamedFromIt() throws {
+        let repo = home.appending(path: "Projects/akit").path
+        let file = home.appending(path: "s.jsonl")
+        for command in ["sh ~/Projects/akit/install.sh", "cd $HOME/Projects/akit && git log", #"cat "${HOME}/Projects/akit/README.md""#] {
+            try lines([call("Bash", ["command": command])], to: file)
+            #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: repo), env: env) == ["the real repository"], "\(command)")
+        }
+        try lines([call("Bash", ["command": "ls ~/Projects/akit-other $HOME/Projects ~/Projects/akit2"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: repo), env: env).isEmpty)
+        // This Mac's home too, when the environment's is another.
+        let real = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Projects/akit").path
+        #expect(LeakCheck.repositoryPaths([real]).isSuperset(of: ["~/Projects/akit", "$HOME/Projects/akit", "${HOME}/Projects/akit"]))
+    }
+
+    /// Written text keeps its own line breaks: the hash at the start of a line is a word of its own.
+    @Test func hashAtALineStartInWrittenText() throws {
+        let file = home.appending(path: "s.jsonl")
+        try lines([call("Bash", ["command": "git show \\\n1c9cf65"])], to: file)
+        #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env) == ["the commit 1c9cf65"])
+        try lines([call("Write", ["file_path": "/w/peek.sh", "content": "#!/bin/sh\ngit show \\\n\t1c9cf65aaaa\n"]),
+                   call("Bash", ["command": "sh /w/peek.sh"])], to: file)
+        #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env) == ["the commit 1c9cf65"])
+    }
+
+    /// Free text (a subagent's prompt, todos, a plan, a question) asks for nothing: no Lab or
+    /// history sign, while the hash, the repository and the Trash in it still count.
+    @Test func freeTextAsksForNothing() throws {
+        let file = home.appending(path: "s.jsonl")
+        let mentions = "Look in ~/.akit/lab/tasks and ~/.claude/projects"
+        let freeText: [(String, [String: Any])] = [
+            ("Task", ["prompt": mentions, "subagent_type": "Explore"]), ("Agent", ["prompt": mentions]),
+            ("TodoWrite", ["todos": [["content": mentions, "status": "pending"]]]), ("ExitPlanMode", ["plan": mentions]),
+            ("AskUserQuestion", ["questions": [["question": mentions]]]),
+        ]
+        for (name, input) in freeText {
+            try lines([call(name, input)], to: file)
+            #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/r"), env: env).isEmpty, "\(name)")
+        }
+        try lines([call("Task", ["prompt": "Run git -C /r show 1c9cf65 and ls ~/.Trash"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/r"), env: env)
+                == ["the commit 1c9cf65", "the real repository", "the Trash"])
+    }
+
+    /// A worktree that is gone belongs to a main checkout only when the layout proves it
+    /// (Claude Code's `<main>/.claude/worktrees/<name>`, or git's record still naming it) and
+    /// the main checkout holds the base commit. Otherwise it stays gone.
+    @Test func goneWorktreeFindsItsMainFolderOnlyWhenProven() async throws {
+        let main = home.appending(path: "work/main", directoryHint: .isDirectory)
+        try write("a.txt", "1\n", in: main)
+        _ = await git("init", "-q", "-b", "master", in: main)
+        _ = await git("add", "-A", in: main)
+        _ = await git("commit", "-q", "-m", "Start", in: main)
+        let base = try #require(await git("rev-parse", "HEAD", in: main))
+        let resolvedMain = main.standardizedFileURL.resolvingSymlinksInPath().path
+
+        // Claude Code's layout, removed with git.
+        let agent = main.appending(path: ".claude/worktrees/agent-1").path
+        _ = await git("worktree", "add", "-q", "--detach", agent, base, in: main)
+        _ = await git("worktree", "remove", "--force", agent, in: main)
+        #expect(!fm.fileExists(atPath: agent))
+        #expect(LabGit.mainFolder(ofGone: agent, base: base, env: env)?.path == resolvedMain)
+        #expect(LabGit.mainFolder(of: agent).path == URL(filePath: agent).standardizedFileURL.resolvingSymlinksInPath().path)
+        // The base must be in it.
+        #expect(LabGit.mainFolder(ofGone: agent, base: String(repeating: "0", count: 40), env: env) == nil)
+        // Deeper inside, or another folder of the main checkout: not a known layout.
+        #expect(LabGit.mainFolder(ofGone: agent + "/deeper", base: base, env: env) == nil)
+        try fm.createDirectory(at: main.appending(path: "other"), withIntermediateDirectories: true)
+        #expect(LabGit.mainFolder(ofGone: main.path + "/other/gone", base: base, env: env) == nil)
+
+        // Git's own record, the folder deleted without git: found by walking up.
+        let tree = main.appending(path: "trees/b").path
+        _ = await git("worktree", "add", "-q", "--detach", tree, base, in: main)
+        try fm.removeItem(atPath: tree)
+        #expect(LabGit.mainFolder(ofGone: tree, base: base, env: env)?.path == resolvedMain)
+
+        // A sibling, an existing folder, and a repository in the home folder itself: none.
+        #expect(LabGit.mainFolder(ofGone: home.appending(path: "work/main-wt").path, base: base, env: env) == nil)
+        #expect(LabGit.mainFolder(ofGone: main.path, base: base, env: env) == nil)
+        _ = await git("init", "-q", in: home)
+        _ = await git("fetch", "-q", main.path, "master", in: home)
+        #expect(await git("cat-file", "-e", "\(base)^{commit}", in: home) != nil)
+        let homeAgent = home.appending(path: ".claude/worktrees/agent-2").path
+        #expect(LabGit.mainFolder(ofGone: homeAgent, base: base, env: env) == nil)
     }
 
     @Test func comparisonPerSetup() {

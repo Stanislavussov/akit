@@ -35,6 +35,14 @@ public enum ProcessRunner {
         return result
     }
 
+    /// `run`, blocking the calling thread: for a quick question (a git lookup) in
+    /// synchronous code. Not for long programs or many at once.
+    public static func runAndWait(_ executable: URL, arguments: [String], directory: URL? = nil,
+                                  environment: [String: String], timeout: TimeInterval) -> Result? {
+        runBlocking(executable, arguments: arguments, directory: directory, environment: environment, timeout: timeout,
+                    killGrace: 2)
+    }
+
     private static let slots = Slots(limit: 16)
 
     /// At most `limit` holders at once; the others wait their turn, first come, first served.

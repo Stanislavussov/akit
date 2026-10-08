@@ -158,16 +158,18 @@ public enum ControlRuns {
         let logError = SendLog.appendAfterRun(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,
                                                          model: setup.agent.model, inputCharacters: prompt.count, usage: facts.usage),
                                               env: env, out: out)
-        let control = outcome(task: task, setup: setup, repeatIndex: run.spec.repeatIndex ?? 1, facts: facts)
+        let control = outcome(task: task, setup: setup, repeatIndex: run.spec.repeatIndex ?? 1, facts: facts, home: env.homeDirectory)
         return RunResult(metrics: facts.metrics, tests: facts.hiddenTests, leaks: control.leaks, agentError: facts.agentError ?? logError,
                          control: control)
     }
 
     /// The oracle's verdict on a cell, with its guard and leak flags.
-    static func outcome(task: ControlTask, setup: ControlSetup, repeatIndex: Int, facts: ControlCell.Facts) -> ControlOutcome {
+    static func outcome(task: ControlTask, setup: ControlSetup, repeatIndex: Int, facts: ControlCell.Facts, home: URL? = nil) -> ControlOutcome {
+        let subagents = facts.transcriptFile.map(LeakCheck.subagentCalls(of:)) ?? []
         var outcome = ControlOutcome(key: cellKey(task: task, setup: setup, repeatIndex: repeatIndex), passed: false, oracle: "",
                                      testsDropped: facts.testsDropped, changedTestFiles: facts.changedTestFiles,
-                                     leaks: (facts.transcript.map { leaks(in: $0, task: task) } ?? []) + facts.hiddenLeaks,
+                                     leaks: (facts.transcript.map { leaks(in: $0, subagents: subagents, task: task, home: home) } ?? [])
+                                         + facts.hiddenLeaks,
                                      // Always present on a layer cell: an older akit that ignored the layer leaves it out.
                                      overlay: setup.layer != nil ? (facts.overlayNotes ?? []) : nil,
                                      harnessVersion: facts.harnessVersion)
@@ -201,28 +203,31 @@ public enum ControlRuns {
         return outcome
     }
 
-    /// Signs the cell saw the exemplar: tool calls naming its session id, reading the
-    /// session history of Claude Code or Pi, a `session_search` tool, the real repository
-    /// (which holds the later fix), or the Trash (finished clones and a commit's validation
-    /// folder go there). Tool results aren't searched: harnesses mention their own folders there.
-    /// Of a call only what it asks for counts (`LeakCheck.pathLikeInput`), not the text it writes.
-    static func leaks(in transcript: SessionTranscript, task: ControlTask) -> [String] {
-        let calls = transcript.items.compactMap { item -> (name: String, text: String)? in
+    /// Signs the cell saw the exemplar, in its tool calls and its subagents' (`subagents`,
+    /// `LeakCheck.subagentCalls`). In a call's whole input, the text it writes included (a
+    /// script written and then run counts): the exemplar's session id, the real repository
+    /// (the task's folder or its main folder, which hold the later fix) and the Trash (finished
+    /// clones and a commit's validation folder go there). Only in what a call asks for
+    /// (`LeakCheck.pathLikeInput`), since AKit's own sources mention it: the session history of
+    /// Claude Code or Pi; a `session_search` tool too. Tool results aren't searched: harnesses
+    /// mention their own folders there. `home`: the user's home, for `~/…` forms of the
+    /// repository (`LeakCheck.repositoryPaths`).
+    static func leaks(in transcript: SessionTranscript, subagents: [LeakCheck.Call] = [], task: ControlTask, home: URL? = nil) -> [String] {
+        let calls = transcript.items.compactMap { item -> LeakCheck.Call? in
             guard case .toolCall(let name) = item.kind else { return nil }
-            let input = (try? JSONSerialization.jsonObject(with: Data(item.text.utf8))) ?? item.text
-            return (name, input is String ? item.text : LeakCheck.pathLikeInput(tool: name, input: input))
-        }
+            return LeakCheck.Call(name: name, input: (try? JSONSerialization.jsonObject(with: Data(item.text.utf8))) ?? item.text)
+        } + subagents
         var found: [String] = []
-        if case .session(let key) = task.source, calls.contains(where: { $0.text.contains(key.nativeID) }) {
+        if case .session(let key) = task.source, calls.contains(where: { $0.input.contains(key.nativeID) }) {
             found.append("the exemplar session \(key)")
         }
-        if calls.contains(where: { $0.text.contains(".claude/projects") || $0.text.contains(".pi/agent/sessions")
+        if calls.contains(where: { $0.asks.contains(".claude/projects") || $0.asks.contains(".pi/agent/sessions")
             || $0.name.contains("session_search") }) {
             found.append("the session history")
         }
-        let repo = URL(filePath: task.repo).standardizedFileURL.path
-        if calls.contains(where: { $0.text.contains(repo) }) { found.append("the real repository") }
-        if calls.contains(where: { $0.text.contains("/.Trash") }) { found.append("the Trash") }  // also ~/.Trash
+        let repos = LeakCheck.repositoryPaths([task.repo, task.mainFolder.path], home: home)
+        if calls.contains(where: { LeakCheck.mentions($0.input, anyOf: repos) }) { found.append("the real repository") }
+        if calls.contains(where: { $0.input.contains("/.Trash") }) { found.append("the Trash") }  // also ~/.Trash
         return found
     }
 }

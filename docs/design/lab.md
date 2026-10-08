@@ -270,7 +270,12 @@ The clone lives in a temporary folder with a random name, not in the run folder 
 clone goes to the Trash (build folder included: the Trash grows), or into the run folder
 as `work` when "keep" is ticked; no branch is left in the real repository. Beyond the
 hash and the session history, the leak flag also catches tool calls that name the real
-repository or `~/.akit/lab`.
+repository (or its main checkout, for a worktree), `~/.akit/lab` or the Trash. The hash,
+the real repository and the Trash count anywhere in a call's input, the text it writes
+included; `~/.akit/lab` and `~/.claude/projects` only in what it asks for (a command, a
+path, a file pattern), since AKit's own sources mention them. A subagent's calls (its own
+file in `<session>/subagents/`) count too. The exact rules: `layer-evals.md`, Built,
+"Leak signs".
 
 ### Test runner
 

@@ -215,25 +215,8 @@ public enum ControlTasks {
     }
 
     /// The main folder of a task's repository, also when the task was made in a linked
-    /// worktree: worktrees of one repository share its git folder (what `git rev-parse
-    /// --git-common-dir` names), read here from `.git` and `commondir`. Layer sets and layer
-    /// evals take one repository by this folder; the project's answers and `project_name`
-    /// come from it. Any other layout gives the folder itself.
-    public static func mainFolder(of repo: String) -> URL {
-        func resolved(_ path: String, from base: URL) -> URL {
-            let full = path.hasPrefix("/") ? path : (base.path as NSString).appendingPathComponent(path)
-            return URL(filePath: full, directoryHint: .isDirectory).standardizedFileURL.resolvingSymlinksInPath()
-        }
-        let folder = URL(filePath: repo, directoryHint: .isDirectory).standardizedFileURL.resolvingSymlinksInPath()
-        // A linked worktree's `.git` is a file: "gitdir: <main>/.git/worktrees/<name>".
-        guard let text = try? String(contentsOf: folder.appending(path: ".git"), encoding: .utf8), text.hasPrefix("gitdir:") else {
-            return folder
-        }
-        let gitDir = resolved(text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines), from: folder)
-        guard let common = try? String(contentsOf: gitDir.appending(path: "commondir"), encoding: .utf8) else { return folder }
-        let commonDir = resolved(common.trimmingCharacters(in: .whitespacesAndNewlines), from: gitDir)
-        return commonDir.lastPathComponent == ".git" ? commonDir.deletingLastPathComponent() : folder
-    }
+    /// worktree (`LabGit.mainFolder(of:)`).
+    public static func mainFolder(of repo: String) -> URL { LabGit.mainFolder(of: repo) }
 
     static func repository(_ folder: URL, env: HarnessEnvironment) async throws -> URL {
         guard let root = await git(["rev-parse", "--show-toplevel"], in: folder, env: env) else {
@@ -295,14 +278,26 @@ public enum ControlTasks {
     }
 
     public static func load(_ id: String, env: HarnessEnvironment) -> ControlTask? {
-        (try? Data(contentsOf: EvalPaths(env: env).task(id))).flatMap { try? AnalysisJSON.decoder.decode(ControlTask.self, from: $0) }
+        (try? Data(contentsOf: EvalPaths(env: env).task(id))).flatMap { decoded($0, env: env) }
+    }
+
+    /// A stored task. An old one without `mainRepo` whose worktree is gone gets its main
+    /// folder when that can be proven (`LabGit.mainFolder(ofGone:base:env:)`), in memory; a
+    /// later save keeps it. Its sets, evals and cells then use that folder, as for a new task.
+    static func decoded(_ data: Data, env: HarnessEnvironment) -> ControlTask? {
+        guard var task = try? AnalysisJSON.decoder.decode(ControlTask.self, from: data) else { return nil }
+        if task.mainRepo == nil, !FileManager.default.fileExists(atPath: task.repo),
+           let main = LabGit.mainFolder(ofGone: task.repo, base: task.base, env: env) {
+            task.mainRepo = main.path
+        }
+        return task
     }
 
     /// Every task, oldest first.
     public static func list(env: HarnessEnvironment) -> [ControlTask] {
         FileWalk.children(of: EvalPaths(env: env).tasks)
             .filter { $0.pathExtension == "json" }
-            .compactMap { (try? Data(contentsOf: $0)).flatMap { try? AnalysisJSON.decoder.decode(ControlTask.self, from: $0) } }
+            .compactMap { (try? Data(contentsOf: $0)).flatMap { decoded($0, env: env) } }
             .sorted { $0.createdAt < $1.createdAt }
     }
 
