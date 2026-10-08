@@ -37,6 +37,9 @@ public enum AKitCLI {
                                           AGENTS.md, CLAUDE.md and other layer templates follow
                                           the layers until the project edits them; after that a
                                           newer layer version is taken only with --include PATH.
+                                          .mcp.json and .claude/settings.json are merged key by
+                                          key: the project's keys stay, a key the project removed
+                                          isn't added back, env/headers values are shown masked.
 
         Remove (shows what happens; add --yes to do it; folders go to the Trash, one commit each):
           akit remove layer NAME              refused while other layers require it; dropped from
@@ -45,7 +48,9 @@ public enum AKitCLI {
           akit remove skill NAME --from LAYER only from that layer's skills list
           akit remove project [PROJECT|--home] [--keep-files]
                                               trashes the files AKit wrote there (not hand-edited
-                                              ones), then forgets the project in the brain
+                                              ones), takes AKit's keys out of .mcp.json and
+                                              .claude/settings.json, then forgets the project in
+                                              the brain
 
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
