@@ -67,12 +67,16 @@ sessions with fewer than 5 requests are skipped.
 - **Cheap signals.** The session index stores signals computed by code, no model call:
   - user interruptions;
   - pushback turns ("no", "not that", "I asked for", a revert);
-  - number of tool errors;
-  - repeated identical tool calls;
+  - rejected tool calls (since 2026-10-08);
+  - number of tool errors, without rejections and interruptions;
+  - repeated identical tool calls: runs of 3 or more in a row;
   - "done" with no test run or check after it;
   - session length.
 - **Strata.** The sample is stratified by these signals, plus harness and model. Each
   session records its inclusion probability and `sampling` (how it was chosen).
+  Interruptions, pushbacks and rejections share the stratum `pushback`. Interruptions,
+  rejections, tool errors and repeated calls are defined in `definitions.md`, "Failure
+  signals"; Lab counts them by the same rules.
 - **Random share.** 20–30% of every batch is drawn purely at random, so quiet failures
   that raise no signal are still seen.
 - **Weights.** Reported frequencies are weighted by inverse inclusion probability
@@ -859,7 +863,9 @@ What differs from the text above, found while building or on real sessions:
 - **Low-confidence routes** count in "seen in k notes" only after the user accepts them.
 - **Lab's own sessions** (replays, control cells, agent reviews) are left out of samples,
   bootstrap picks and check rates, so evals never enter production frequencies.
-- **Signals** live in the session index (schema v6, table `signals`), computed by
+- **Signals** live in the session index (schema v6, table `signals`; v9 added `rejected`
+  on 2026-10-08, when the shared `FailureSignals` replaced the scanner's own interrupt,
+  tool error and repeat rules and its version became 2), computed by
   `akit analysis signals` and after every `akit sessions import` once error analysis is in
   use, together with the code checks of active modes.
 - **Code checks.** Seed 9 has a mechanical check (output over 20 KB of a Read without a

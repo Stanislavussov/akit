@@ -1,12 +1,13 @@
 # Design map
 
-Status: 2026-10-07, checked against the code. This is the index of `docs/design/`: what
+Status: 2026-10-08, checked against the code. This is the index of `docs/design/`: what
 each design is for, what is built, what to build next and in which order. Each design
 keeps its own details and its own status note; the order across designs and the open
 decisions live only here.
 
 The improvements and the order below are proposals from the 2026-10-03 review. They are
-not agreed yet; a proposal that is accepted moves into its design doc.
+not agreed yet, except where a row says so; a proposal that is accepted moves into its
+design doc.
 
 ## The loop
 
@@ -43,12 +44,12 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 |---|---|---|---|---|
 | [`architecture.md`](architecture.md) | Which module owns what? | `AKitCore/Package.swift` | all 25 steps; 16 modules | — |
 | [`layers.md`](layers.md) | How does a project get exactly the setup it needs? | Brain screen; `akit plan` / `apply` | roadmap 1–3, update rules, work machines, home render, Update Home Folder… and Forget Project… (2026-10-07) | MCP in layers, JSON merge, `/akit-setup` draft, `machines/<name>.yaml` |
-| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen; `akit stats`, `akit recommend`, `akit insights` | steps 1–7 and 10 (the Insights screen) | steps 8, 9, 11–13 |
-| [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4 | index as a source, Pi replays |
+| [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen; `akit stats`, `akit recommend`, `akit insights` | steps 1–7 and 10 (the Insights screen); of step 11 the shared failure signals (2026-10-08) | steps 8, 9, the rest of 11, 12–13 |
+| [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4; failure signals by the shared rules, with repeated calls (2026-10-08) | index as a source, Pi replays |
 | [`error-analysis.md`](error-analysis.md) | What goes wrong again and again, and did the fix help? | Error Analysis screen; `akit analysis`; Pi ratings on Sessions | slices 1–8; quick ratings after a Pi run, with change, comment and remove; shown after their run and given to Lab reviews (2026-10-07) | manual calibration of cells, merge/split proposals |
 | [`layer-evals.md`](layer-evals.md) | Does layer X make the agent's work better? | — | nothing (design only) | slices 1–9 |
 | [`mcp-catalog.md`](mcp-catalog.md) | How to add an MCP server without looking up its config? | MCP Servers → Catalog… | search in two public catalogs, filling the Add Server form (2026-10-04) | marks for configured servers, arguments as values, version checks |
-| [`definitions.md`](definitions.md) | What does a shared term mean? | — | tiers, sending policy, keys | fingerprint, shared `FailureSignals`, `dirty` / `diff_hash` |
+| [`definitions.md`](definitions.md) | What does a shared term mean? | — | tiers, sending policy, keys, shared `FailureSignals` (2026-10-08) | fingerprint, `dirty` / `diff_hash` |
 
 The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`).
 
@@ -82,7 +83,7 @@ design doc and this table say so.
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
 | 5 | Layer checks: slices 3 and 4 | `layer-evals.md` | Only if the pilot shows that success alone can't see the gain |
 | 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json` | `layers.md`, Roadmap 4 | One mechanism unblocks three plans: MCP in layers, hooks in layers, and writing `enabledPlugins` from a recommendation |
-| 7 | One parser for failure signals | `definitions.md`; `session-insights.md`, step 11 (see I4) | Two parsers count the same signals differently today |
+| 7 | One parser for failure signals. Built 2026-10-08: `FailureSignals` in `AKitSessions` holds the rules of interrupts, rejections, tool errors and repeated calls; Lab and the index scanner both use it (I4, D1) | `definitions.md`; `session-insights.md`, step 11 (see I4) | Two parsers counted the same signals differently |
 | 8 | On demand | see Parked | No user yet |
 
 ## Proposed improvements
@@ -94,7 +95,7 @@ Each one removes work or removes a conflict. None adds a feature.
 | I1 | Step 8 without name-only reasons: the denominator counts exposures with a description, and one finding shows the share of sessions that lost descriptions | reasons `override` / `empty` / `budget` / `unknown`, the same-day rule, a hook change | The reasons guard against `skillOverrides`, which is not set on this Mac (checked 2026-10-03) and may not work in user settings (step 12 says to check it first) |
 | I2 | Layer evals v1 for Claude Code only, without the `parts` field; slices 7 (link to modes) and 9 (production level) wait for the first active modes; the pilot moves before the checks | Pi rules that are partly "blocked until verified", room for later variants, a production level with nothing to feed it | Half of the design depends on active modes, and there are none yet. The example run costs $142; the pilot shows whether the result is worth it |
 | I3 | One verdict ladder for patch fixes and layers: both get "helps (offline)" | a patch fix that always ends at "no conclusion" before it is applied | Today a control set can't judge a fix draft before the user applies it, which is when the answer is needed |
-| I4 | One shared function for the signal rules both parsers have (interrupts, tool errors, repeated calls), with one definition of each | an incremental `FailureSignals` reducer | The scanner already recomputes only files that changed; the real problem is two definitions, not speed |
+| I4 | One shared function for the signal rules both parsers have (interrupts, tool errors, repeated calls), with one definition of each. Accepted 2026-10-08 and built (step 7) | an incremental `FailureSignals` reducer | The scanner already recomputes only files that changed; the real problem is two definitions, not speed |
 | I5 | Rename `FixDraft.layer` to "kind of fix" in the screen and the docs | three meanings of "layer" (brain layer, kind of fix, fault layer) | Layer evals put a brain layer next to it on the same sheet |
 | I6 | Keep this map current: the commit that merges a step updates its row here and the status note of its design | status lines that go stale (five of seven docs had stale statements on 2026-10-03) | The map is only useful while it is true |
 
@@ -102,7 +103,7 @@ Each one removes work or removes a conflict. None adds a feature.
 
 | # | Question | Where |
 |---|---|---|
-| D1 | Which signal definitions win: "interrupt" by the start of the text or anywhere in it; "repeated calls" as 3 in a row or as any repeat? | `definitions.md`, Failure signals |
+| D1 | Which signal definitions win: "interrupt" by the start of the text or anywhere in it; "repeated calls" as 3 in a row or as any repeat? Decided 2026-10-08: the start of the text; 3 or more in a row, each run counted once | `definitions.md`, Failure signals |
 | D2 | Is the session fingerprint needed at all? Two are designed (session, home) and none is built; before/after already compares within one harness version and model | `definitions.md`; `layer-evals.md`, Baseline |
 | D3 | Layer evals append the layer's text to a project's own `CLAUDE.md`; Apply only offers it. Should Apply get an "append the layer's section" choice, or does the verdict stay offline only? | `layer-evals.md`, Open questions |
 | D4 | Accept I3 (one verdict ladder)? It changes a decided rule of error analysis | `error-analysis.md`, Fixes |

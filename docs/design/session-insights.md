@@ -42,9 +42,11 @@ Checked against the code on 2026-10-03:
   `akit stats changes` does; so opening the screen can move the ≈ numbers `akit recommend`
   and `akit stats` print next. A project's Changes show its applies and every mark (marks
   are Mac-wide).
-- Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
-  (2026-10-01), and the index has a `signals` table, filled by
-  `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.
+- Steps 8–13 are not built, with three exceptions inside step 11: the hook records `HEAD`
+  (2026-10-01); the index has a `signals` table, filled by
+  `AKitErrorAnalysis.SignalScanner`; and since 2026-10-08 the scanner and Lab count
+  interrupts, rejections, tool errors and repeated calls with one shared `FailureSignals`
+  in `AKitSessions` (step 7 of the design map).
 - The opt-in store for eval examples (`manual_call_examples`) is in the index; the export
   to skill-creator (step 12) is not built.
 
@@ -89,7 +91,8 @@ The index keeps the raw facts for it, so it can come later without a re-import.
 - `ProjectRecords.projectID`: `origin` remote normalized to `github.com/owner/repo`,
   else `local/…`.
 - Lab's `SessionAnalyzer` (`lab.md`): per-session friction counts (interrupts, rejected
-  tool calls, tool errors, re-reads, compactions) from one transcript.
+  tool calls, tool errors, repeated calls, re-reads, compactions) from one transcript;
+  the first four by the shared `FailureSignals` (2026-10-08).
 
 New in this design: a durable index, project binding that survives deleted worktrees,
 cross-session and cross-machine aggregation, recommendations.
@@ -448,17 +451,18 @@ went wrong. The index is where those facts can outlive the logs. Definitions are
   are always there (listing, context files, harness version, model). The settings
   components are extra filters: two sessions must match on one only when both have it.
   A session imported without a hook line simply lacks them.
-- **Failure signals.** Error analysis (2026-10-01) already keeps cheap per-session signals
-  (interrupts, pushbacks, tool errors, repeated calls, "done" with no check, length) in the
-  index's `signals` table (schema v6), computed by `AKitErrorAnalysis.SignalScanner` from
-  whole transcripts and refreshed after every import; this step should replace that with
-  the incremental reducer below and keep the table's columns. One parser in `AKitSessions`,
-  which both Insights and Lab already import: a `FailureSignals` reducer with its own version that takes transcript lines
-  one at a time, so the importer feeds it incrementally. Lab's `SessionAnalyzer` moves
-  its interrupt, rejection, error, compaction and re-read rules into it and calls it;
-  the importer stores its counts per session. New in this step: `repeated_calls` (needs
-  a hash of each tool input) and the version. Rewinds stay out until a marker is
-  verified on real logs. Claude Code's `tool_result_meta.non_execution_kind` (refusal
+- **Failure signals.** Built 2026-10-08 in a smaller form (design map, step 7, I4 and
+  D1). Error analysis (2026-10-01) keeps cheap per-session signals (interrupts,
+  pushbacks, rejections, tool errors, repeated calls, "done" with no check, length) in the
+  index's `signals` table (schema v6, `rejected` added in v9), computed by
+  `AKitErrorAnalysis.SignalScanner` from whole transcripts and refreshed after every
+  import; a row is recomputed when its file changes or the scanner's version does. The
+  rules both parsers have (interrupts, rejections, tool errors, repeated calls) live in
+  one `FailureSignals` in `AKitSessions`; Lab's `SessionAnalyzer` feeds it from log
+  lines, the scanner from transcript items. The incremental reducer designed here was
+  dropped: the scanner already recomputes only the files that changed, and the problem
+  was two definitions, not speed. Compactions and re-reads stay Lab's own. Rewinds stay
+  out until a marker is verified on real logs. Claude Code's `tool_result_meta.non_execution_kind` (refusal
   kinds) is used when present; it was in none of 364 recent files (2.1.283–2.1.287), so
   refusals are still read from the result text.
 
@@ -601,8 +605,9 @@ note at the top).
    pairs don't calibrate; the deviation flag; the cross-file tie rule for requests.
 10. Move the sync sequence, the layer-users query and mark writing into `AKitInsights`;
     Insights screen; the app's Sync publishes summaries.
-11. `FailureSignals` in `AKitSessions` (Lab switches to it); the hook's settings hashes,
-    `origin` and `HEAD`; fingerprint and signal counts in the index.
+11. `FailureSignals` in `AKitSessions` (Lab switches to it; built 2026-10-08, not as a
+    reducer); the hook's settings hashes, `origin` and `HEAD`; fingerprint and signal
+    counts in the index.
 12. The "user calls, no model calls" path with the skill-creator export; `name-only`
     advice after checking `skillOverrides` on the installed Claude Code.
 13. The `skillUsage` parser check in the debug stats.
