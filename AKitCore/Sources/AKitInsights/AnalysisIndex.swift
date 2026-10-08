@@ -46,7 +46,7 @@ public struct SessionSignals: Codable, Sendable, Hashable {
     public var interrupts: Int
     /// User turns that push back: "no", "not that", "I asked for", a revert.
     public var pushbacks: Int
-    /// Tool calls the user, a permission rule or a hook refused.
+    /// Tool calls that the user, a permission rule, a hook, the auto mode classifier or a Pi extension refused.
     public var rejected: Int
     /// Failed tool calls, without rejected and interrupted ones.
     public var toolErrors: Int
@@ -146,6 +146,13 @@ public enum AnalysisIndex {
                     """, key, stored.fileSize, stored.fileModified, stored.version, s.interrupts, s.pushbacks, s.toolErrors,
                                  s.repeatedCalls, s.unverifiedDone, s.userTurns, s.steps, s.rejected)
             }
+        }
+    }
+
+    /// Forgets the signals of these sessions.
+    public static func deleteSignals(_ keys: Set<String>, in database: IndexDatabase) throws {
+        try database.transaction {
+            for key in keys { _ = try database.run("DELETE FROM signals WHERE session_key = ?", key) }
         }
     }
 

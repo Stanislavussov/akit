@@ -158,7 +158,9 @@ public enum SessionAnalyzer {
                     metrics.toolCalls += 1
                     if let id = block["id"] as? String { tools[id] = (block["name"] as? String ?? "", input) }
                     toolStarted(block["name"] as? String ?? "", input: input)
-                    signals.toolCall(block["name"] as? String ?? "tool", input: FailureSignals.inputText(block["input"]))
+                    // A call with no input is not in the transcript either.
+                    let inputText = FailureSignals.inputText(block["input"])
+                    if !inputText.isEmpty { signals.toolCall(block["name"] as? String ?? "tool", input: inputText) }
                 default: break
                 }
             }
@@ -224,9 +226,9 @@ public enum SessionAnalyzer {
             if let call, call.name == "Read", block["is_error"] as? Bool != true, let path = call.input["file_path"] as? String {
                 readKeys[path, default: []].insert(Self.readKey(call.input))
             }
-            // The transcript leaves out a result with no text.
-            if counted, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                signals.toolResult(call?.name, text: text, isError: block["is_error"] as? Bool == true)
+            if counted {
+                let name = call?.name ?? ""
+                signals.toolResult(name, ToolResultOutcome(tool: name, result: text, isError: block["is_error"] as? Bool == true))
             }
             if let call, Self.readsCode(call.name, input: call.input) {
                 pending.readCode += text.count

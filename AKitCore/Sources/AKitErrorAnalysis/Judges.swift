@@ -67,7 +67,7 @@ public enum Judges {
         let harness = SessionKey.harness(of: key)
         let summary = NotesPipeline.Target(harness: harness, file: file).summary
         let items = try SessionReader.transcript(of: summary).items.map {
-            TranscriptItem(id: $0.id, kind: $0.kind, text: gate.scrub($0.text).text, timestamp: $0.timestamp)
+            TranscriptItem(id: $0.id, kind: $0.kind, text: gate.scrub($0.text).text, timestamp: $0.timestamp, outcome: $0.outcome)
         }
         // Like the notes: user turns and failed tool results are never cut, so a session whose
         // kept parts alone pass the budget isn't sent.

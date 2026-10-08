@@ -43,22 +43,32 @@ public enum SignalScanner {
     }
 
     /// Recomputes the signals of every indexed session whose file changed since (or that has
-    /// none yet). Returns how many were computed and how many sessions the index has.
+    /// none yet, or whose signals an older version computed). Signals of an older version whose
+    /// file is gone or can't be read are deleted: they would stratify by the old rules.
+    /// Returns how many were computed and how many sessions the index has.
     @discardableResult
     public static func refresh(env: HarnessEnvironment, progress: (Int, Int) -> Void = { _, _ in }) throws -> (computed: Int, total: Int) {
         guard let database = try AnalysisIndex.open(env: env) else { return (0, 0) }
         let sessions = try AnalysisIndex.sessions(database)
         let stored = try AnalysisIndex.signals(database)
         var fresh: [String: StoredSignals] = [:]
+        var stale = Set<String>()
         var computed = 0
         for (index, session) in sessions.enumerated() {
             progress(index, sessions.count)
-            guard let summary = IndexedSessions.summary(session) else { continue }
+            let outdated = stored[session.key].map { $0.version != version } ?? false
+            guard let summary = IndexedSessions.summary(session) else {
+                if outdated { stale.insert(session.key) }
+                continue
+            }
             let file = summary.file
             let info = JSONLines.fileInfo(file)
             let modified = info.modified.timeIntervalSince1970
             if let old = stored[session.key], old.version == version, old.fileSize == info.size, old.fileModified == modified { continue }
-            guard let transcript = try? SessionReader.transcript(of: summary) else { continue }
+            guard let transcript = try? SessionReader.transcript(of: summary) else {
+                if outdated { stale.insert(session.key) }
+                continue
+            }
             computed += 1
             fresh[session.key] = StoredSignals(signals: signals(of: transcript.items), fileSize: info.size, fileModified: modified,
                                                version: version)
@@ -69,6 +79,7 @@ public enum SignalScanner {
             }
         }
         try AnalysisIndex.store(fresh, in: database)
+        if !stale.isEmpty { try AnalysisIndex.deleteSignals(stale, in: database) }
         return (computed, sessions.count)
     }
 }

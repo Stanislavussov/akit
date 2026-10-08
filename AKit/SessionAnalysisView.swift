@@ -97,7 +97,7 @@ struct MetricsView: View {
             row("Re-reads", UsageText.full(metrics.rereads), warn: metrics.rereads > 0,
                 help: "Read of a file and range already read, with no edit of it in between")
             row("Rejected", UsageText.full(metrics.rejected), warn: metrics.rejected > 0,
-                help: "Tool calls refused by you, a permission rule or the auto mode classifier")
+                help: "Tool calls refused by you, a permission rule, a hook, the auto mode classifier or a Pi extension; Esc at the prompt counts as an interrupt")
             row("Interrupts", UsageText.full(metrics.interrupts), warn: metrics.interrupts > 0,
                 help: "Times you stopped the agent: your messages that start with [Request interrupted by user")
             if let repeated = metrics.repeatedCalls {

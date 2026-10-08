@@ -91,12 +91,16 @@ public struct TranscriptItem: Identifiable, Sendable, Hashable {
     public let kind: Kind
     public let text: String
     public let timestamp: Date?
+    /// A tool result's outcome, read from its real text before a secrets file's output was
+    /// hidden; nil for other items (and items made by hand, whose text is classified instead).
+    public let outcome: ToolResultOutcome?
 
-    public init(id: Int, kind: Kind, text: String, timestamp: Date?) {
+    public init(id: Int, kind: Kind, text: String, timestamp: Date?, outcome: ToolResultOutcome? = nil) {
         self.id = id
         self.kind = kind
         self.text = text
         self.timestamp = timestamp
+        self.outcome = outcome
     }
 }
 
@@ -106,11 +110,15 @@ struct TranscriptBuilder {
     private(set) var models: [String] = []
 
     /// Token-like values are masked (see SecretFilter).
-    mutating func add(_ kind: TranscriptItem.Kind, _ text: String, at timestamp: Date?) {
+    mutating func add(_ kind: TranscriptItem.Kind, _ text: String, at timestamp: Date?, outcome: ToolResultOutcome? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        items.append(TranscriptItem(id: items.count, kind: kind, text: SecretFilter.masked(trimmed), timestamp: timestamp))
+        items.append(TranscriptItem(id: items.count, kind: kind, text: SecretFilter.masked(trimmed), timestamp: timestamp,
+                                    outcome: outcome))
     }
+
+    /// The text of a failed tool call that returned none: the failure still shows and counts.
+    static let noOutput = "(no output)"
 
     private(set) var ratings: [RunRating] = []
     var endItems: [String: Int] = [:]
@@ -123,10 +131,17 @@ struct TranscriptBuilder {
         ratings.sort { ($0.afterItem ?? .max) < ($1.afterItem ?? .max) }
     }
 
-    /// Output of a tool that read a secrets file is replaced as a whole.
+    /// Output of a tool that read a secrets file is replaced as a whole; a tool result's outcome
+    /// is read from the real text first. A successful result with no text is left out.
     mutating func addToolOutput(_ kind: TranscriptItem.Kind, _ text: String, readSecretFile: Bool, at timestamp: Date?) {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        add(kind, readSecretFile ? SecretFilter.hiddenOutput : text, at: timestamp)
+        var outcome: ToolResultOutcome?
+        if case .toolResult(let name, let isError) = kind { outcome = ToolResultOutcome(tool: name ?? "", result: text, isError: isError) }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard case .toolResult(_, true) = kind else { return }
+            add(kind, Self.noOutput, at: timestamp, outcome: outcome)
+            return
+        }
+        add(kind, readSecretFile ? SecretFilter.hiddenOutput : text, at: timestamp, outcome: outcome)
     }
 
     mutating func noteModel(_ model: String?) {

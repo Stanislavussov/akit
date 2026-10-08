@@ -107,6 +107,10 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
         rejectionMarkers.contains { text.localizedCaseInsensitiveContains($0) }
     }
 
+    /// The user's own refusal. Claude Code writes it also when the user presses Esc at the
+    /// permission prompt, then follows it with `[Request interrupted by user for tool use]`.
+    public static let userRefusalMarker = "doesn't want to proceed with this tool use"
+
     public static let rejectionMarkers = [
         "doesn't want to proceed with this tool use",
         "Permission for this action was denied",
@@ -128,4 +132,18 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
         "not a directory", "enoent", "eisdir", "exceeds maximum allowed tokens", "unknown skill", "cannot be empty",
         "could not find the exact text",
     ]
+}
+
+/// How one tool result ended, read from its real text: a transcript hides the text of a call
+/// that touched a secrets file, so the outcome is taken before that and kept with the item.
+public struct ToolResultOutcome: Sendable, Hashable {
+    public let outcome: ToolOutcomes.Outcome
+    /// A refusal in the user's own words, the only one Esc at the permission prompt also writes.
+    public let userRefusal: Bool
+
+    public init(tool: String, result: String, isError: Bool) {
+        outcome = ToolOutcomes.outcome(tool: tool, result: result, isError: isError)
+        let head = result.split(whereSeparator: \.isNewline).prefix(2).joined(separator: " ")
+        userRefusal = outcome == .rejected && head.localizedCaseInsensitiveContains(ToolOutcomes.userRefusalMarker)
+    }
 }

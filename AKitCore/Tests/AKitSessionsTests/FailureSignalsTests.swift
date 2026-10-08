@@ -116,4 +116,39 @@ struct FailureSignalsTests {
         let signals = FailureSignals(log.items)
         #expect(signals.interrupts == 1 && signals.rejected == 1 && signals.toolErrors == 0)
     }
+
+    @Test func onlyEscAtThePromptCancelsARefusal() {
+        var log = Log()
+        let refusal = "The user doesn't want to proceed with this tool use. The tool use was rejected."
+        // A plain interrupt (Esc while the model wrote) is not about the refused call.
+        log.call("Edit", ["file_path": "/a"])
+        log.add(.toolResult(name: "Edit", isError: true), refusal)
+        log.add(.user, "[Request interrupted by user]")
+        // A permission rule's denial in an Esc batch stays a refusal; the user's own is cancelled.
+        log.call("Edit", ["file_path": "/b"])
+        log.call("Bash", ["command": "rm -rf /"])
+        log.add(.toolResult(name: "Edit", isError: true), refusal)
+        log.add(.toolResult(name: "Bash", isError: true), "Permission to use Bash with command rm -rf / has been denied.")
+        log.add(.user, "[Request interrupted by user for tool use]")
+        // A tool call between the refusal and the interrupt line: the refusal stands.
+        log.call("Edit", ["file_path": "/c"])
+        log.add(.toolResult(name: "Edit", isError: true), refusal)
+        log.call("Read", ["file_path": "/c"])
+        log.add(.user, "[Request interrupted by user for tool use]")
+        let signals = FailureSignals(log.items)
+        #expect(signals.interrupts == 3 && signals.rejected == 3)
+    }
+
+    @Test func anItemsOutcomeWinsOverItsHiddenText() {
+        let hidden = "[Hidden by AKit: this output comes from a file that usually holds secrets.]"
+        let refused = ToolResultOutcome(tool: "Read", result: "The user doesn't want to proceed with this tool use.", isError: true)
+        let items = [
+            TranscriptItem(id: 0, kind: .toolCall(name: "Read"), text: #"{"file_path":"/p/.env"}"#, timestamp: nil),
+            TranscriptItem(id: 1, kind: .toolResult(name: "Read", isError: true), text: hidden, timestamp: nil, outcome: refused),
+        ]
+        let signals = FailureSignals(items)
+        #expect(signals.rejected == 1 && signals.toolErrors == 0)
+        // Without the outcome, the hidden text would read as a plain error.
+        #expect(FailureSignals([items[0], TranscriptItem(id: 1, kind: items[1].kind, text: hidden, timestamp: nil)]).toolErrors == 1)
+    }
 }

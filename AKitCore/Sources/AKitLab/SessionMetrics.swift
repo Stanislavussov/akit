@@ -21,7 +21,7 @@ public struct SessionMetrics: Codable, Sendable, Hashable {
     public var rereads = 0
     /// User messages that start with `[Request interrupted by user`.
     public var interrupts = 0
-    /// Tool calls the user, a permission rule or the auto mode classifier refused.
+    /// Tool calls that the user, a permission rule, a hook, the auto mode classifier or a Pi extension refused.
     public var rejected = 0
     /// Runs of 3 or more calls of the same tool with the same input in a row, each run once.
     /// nil in results analyzed before it was counted.

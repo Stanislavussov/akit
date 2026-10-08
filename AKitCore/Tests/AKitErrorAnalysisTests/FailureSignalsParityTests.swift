@@ -82,6 +82,24 @@ struct FailureSignalsParityTests {
             results(at: 26, [("s1", "missing", true)], sidechain: true),
             call("m11", at: 27, [("t12", "Read", ["file_path": "/p/missing.swift"])]),
             results(at: 28, [("t12", "File does not exist.", true)]),
+            // Secrets files: the transcript hides the result text, the outcome still counts.
+            // A refused read of .env is rejected; Esc at the prompt for `cat .env` is an interrupt;
+            // a read of .env stopped while it ran is neither.
+            call("m12", at: 29, [("t13", "Read", ["file_path": "/p/.env"])]),
+            results(at: 30, [("t13", refusal + " To tell you how to proceed, the user said: no secrets", true)]),
+            call("m13", at: 31, [("t14", "Bash", ["command": "cat .env"])]),
+            results(at: 32, [("t14", refusal, true)], text: "[Request interrupted by user for tool use]"),
+            call("m14", at: 33, [("t15", "Read", ["file_path": "/p/.env.local"])]),
+            results(at: 34, [("t15", "[Request interrupted by user for tool use]", true)]),
+            // Esc at the prompt cancels the user's refusal only: a permission rule's denial in the
+            // same batch stays a rejection.
+            call("m15", at: 35, [("t16", "Edit", ["file_path": "/p/x.swift", "old_string": "x", "new_string": "y"]),
+                                 ("t17", "Bash", ["command": "rm -rf build"])]),
+            results(at: 36, [("t16", refusal, true), ("t17", "Permission to use Bash with command rm -rf build has been denied.", true)],
+                    text: "[Request interrupted by user for tool use]"),
+            // A failed call with no output is still a tool error.
+            call("m16", at: 37, [("t18", "Bash", ["command": "./flaky.sh"])]),
+            results(at: 38, [("t18", "", true)]),
         ])
         // A subagent's own file: its interrupts and errors are not the session's.
         try write(folder.appending(path: "-p/s1/subagents/agent-1.jsonl"), [
@@ -94,12 +112,17 @@ struct FailureSignalsParityTests {
         let transcript = try SessionReader.transcript(of: summary)
         let index = SignalScanner.signals(of: transcript.items)
 
-        #expect(lab.interrupts == 2 && lab.rejected == 1 && lab.toolErrors == 3 && lab.repeatedCalls == 1)
+        #expect(lab.interrupts == 4 && lab.rejected == 3 && lab.toolErrors == 4 && lab.repeatedCalls == 1)
         #expect(index.interrupts == lab.interrupts)
         #expect(index.rejected == lab.rejected)
         #expect(index.toolErrors == lab.toolErrors)
         #expect(index.repeatedCalls == lab.repeatedCalls)
-        // The session view's "failed" is the same count.
+        // The Usage tab's "failed" and the Overview tab's counts are the same.
         #expect(transcript.usage.toolErrors == lab.toolErrors)
+        let overview = try #require(try SessionOverview.read(summary)).tools
+        #expect(overview.failed == lab.toolErrors && overview.count(.rejected) == lab.rejected)
+        // Secrets stay hidden: the outcome travels with the item, not the text.
+        #expect(!transcript.items.contains { $0.text.contains("no secrets") })
+        #expect(transcript.items.contains { $0.text == SecretFilter.hiddenOutput && $0.outcome?.outcome == .rejected })
     }
 }

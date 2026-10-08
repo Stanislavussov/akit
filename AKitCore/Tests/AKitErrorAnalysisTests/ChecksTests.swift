@@ -115,6 +115,12 @@ struct ChecksTests {
         let afterError = [item(0, .user, "Run it"), item(1, .toolCall(name: "Bash"), json(["command": "swift test"])),
                           item(2, .toolResult(name: "Bash", isError: true), "Exit code 1"), item(3, .assistant, "All tests pass.")]
         #expect(check.check(SessionTranscript(items: afterError)).steps == [2, 3])
+        // A refused call is not a tool error the report leaves out.
+        let afterRefusal = [item(0, .user, "Run it"), item(1, .toolCall(name: "Bash"), json(["command": "swift test"])),
+                            item(2, .toolResult(name: "Bash", isError: true), "Permission to use Bash with command swift test has been denied."),
+                            item(3, .assistant, "All tests pass.")]
+        #expect(!check.check(SessionTranscript(items: afterRefusal)).positive)
+        #expect(check.version == 2)
     }
 
     @Test func weakeningTestsAndLongSessions() {
@@ -204,5 +210,12 @@ struct ChecksTests {
         #expect(rate.positive == 1 && rate.total == 2)
         #expect(results[0].verdicts["claude:\(first)"]?.steps == [1])
         #expect(CheckStore(env: env).load("large-file-read-whole")?.verdicts.count == 2)
+
+        // An older version's row whose file is gone is deleted: it would stratify by the old rules.
+        try AnalysisIndex.store(older, in: database)
+        try fm.removeItem(at: home.appending(path: ".claude/projects/-work/\(second).jsonl"))
+        #expect(try SignalScanner.refresh(env: env).computed == 1)
+        let left = try AnalysisIndex.signals(database)
+        #expect(left.keys.sorted() == ["claude:\(first)"] && left["claude:\(first)"]?.version == SignalScanner.version)
     }
 }

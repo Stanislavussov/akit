@@ -245,7 +245,7 @@ public enum ReviewRun {
         - analysis.json (Claude Code sessions): numbers AKit computed from the transcript and
           git: API calls, fresh tokens, context rent (baseline, reading code, own output,
           injections, other), tool errors, re-reads, rejected tool calls, interrupts,
-          compactions, commits.
+          repeated calls (runs of 3+ identical calls in a row), compactions, commits.
         - context.json (Claude Code and Pi sessions): where the context went and how the tool
           calls ended. footprint.parts: each part the harness loaded on its own (system prompt
           sections, tools, MCP servers, skills, subagents, rules files, hooks) with its

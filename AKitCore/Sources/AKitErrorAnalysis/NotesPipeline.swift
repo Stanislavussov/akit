@@ -122,7 +122,7 @@ public enum NotesPipeline {
         let items = transcript.items.map { item -> TranscriptItem in
             let result = gate.scrub(item.text)
             counts.merge(result.counts, uniquingKeysWith: +)
-            return TranscriptItem(id: item.id, kind: item.kind, text: result.text, timestamp: item.timestamp)
+            return TranscriptItem(id: item.id, kind: item.kind, text: result.text, timestamp: item.timestamp, outcome: item.outcome)
         }
         return (items, counts)
     }
