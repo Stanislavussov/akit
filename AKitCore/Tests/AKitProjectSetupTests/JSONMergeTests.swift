@@ -241,6 +241,60 @@ struct JSONMergeTests {
         #expect(plan.render.warnings == [".claude/settings.json (settings): JSON files are not rendered into the home folder yet; skipped."])
     }
 
+    @Test func aValueTheProjectSetIsNeverClaimedEvenWhenTheLayersAgree() async throws {
+        let brain = try await setUpBrain()
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: brain), brain: brain, home: home, env: env, trash: trash)
+        // The project changes AKit's value, then the layers bring the same new value.
+        var edited = try tree(".mcp.json")
+        edited.set(.string("new-two"), at: ["mcpServers", "two", "command"])
+        try write("Projects/task/.mcp.json", edited.pretty)
+        try write(".akit/registry/layers/mcp/templates/two.json", #"{"mcpServers": {"two": {"command": "new-two", "args": ["--fast"]}}}"#)
+        let agreeing = try #require(Brain.load(from: brainRoot))
+        _ = try await ProjectSetup.apply(plan(["mcp"], brain: agreeing), brain: agreeing, home: home, env: env, trash: trash)
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.json?[".mcp.json"]?.keys["/mcpServers/two/command"] == nil)
+        // Dropping the layer's server later leaves the project's value.
+        _ = try await ProjectSetup.apply(plan(["mcp"], two: false, brain: agreeing), brain: agreeing, home: home, env: env, trash: trash)
+        #expect(try tree(".mcp.json").value(at: ["mcpServers", "two"]) == .object(["command": .string("new-two")]))
+    }
+
+    @Test func aFileAnOlderAKitWroteWholeBecomesMerged() async throws {
+        let brain = try await setUpBrain()
+        // An older AKit wrote .mcp.json whole and recorded it in `files`.
+        let whole = #"{"mcpServers": {"old": {"command": "old-server"}, "one": {"command": "one-server"}}}"#
+        try write("Projects/task/.mcp.json", whole)
+        try ProjectRecords.save(ProjectRecords.Lock(brainCommit: nil, brainDirty: false,
+                                                    files: [".mcp.json": .init(sha256: Checksum.sha256(Data(whole.utf8)), link: nil, layers: ["mcp"])]),
+                                answers: nil, id: id, in: store)
+        let migrated = plan(["mcp"], two: false, brain: brain)
+        #expect(migrated.render.warnings.filter { $0.contains("itself") }.isEmpty, "\(migrated.render.warnings)")
+        _ = try await ProjectSetup.apply(migrated, brain: brain, home: home, env: env, trash: trash)
+        let result = try tree(".mcp.json")
+        // Untouched since the old render: every key was AKit's, so the one no layer brings goes.
+        #expect(result.value(at: ["mcpServers", "old"]) == nil)
+        #expect(result.value(at: ["mcpServers", "one", "command"]) == .string("one-server"))
+        let lock = try #require(ProjectRecords.savedLock(id: id, in: store))
+        #expect(lock.files[".mcp.json"] == nil)
+        #expect(lock.json?[".mcp.json"]?.created == true)
+        #expect(lock.json?[".mcp.json"]?.keys["/mcpServers/one/command"] != nil)
+    }
+
+    @Test func theHomeFolderNeverTrashesAJSONFileAnOlderAKitWrote() async throws {
+        let brain = try await setUpBrain()
+        try write(".claude/settings.json", #"{"permissions": {"defaultMode": "plan"}}"#)
+        let data = try Data(contentsOf: home.appending(path: ".claude/settings.json"))
+        try ProjectRecords.save(ProjectRecords.Lock(brainCommit: nil, brainDirty: false,
+                                                    files: [".claude/settings.json": .init(sha256: Checksum.sha256(data), link: nil, layers: ["settings"])]),
+                                answers: nil, id: "home/mac", in: store)
+        for layers in [["settings"], []] {
+            let plan = plan(layers, brain: brain, forHome: true)
+            #expect(plan.changes.isEmpty)
+            _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+            #expect(fm.fileExists(atPath: home.appending(path: ".claude/settings.json").path))
+            #expect(ProjectRecords.savedLock(id: "home/mac", in: store)?.files[".claude/settings.json"] != nil)
+        }
+    }
+
     @Test func locksOfEitherVersionStillRead() throws {
         // A lock written before merged JSON files existed.
         let old = #"{"brainCommit":"abc","brainDirty":false,"files":{"AGENTS.md":{"layers":["base"],"sha256":"00"}}}"#

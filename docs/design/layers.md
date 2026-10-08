@@ -259,12 +259,15 @@ recommendation later.
    `headers` key must be a whole-string `${NAME}` reference, else a render error. The
    preview never shows a secret: in a JSON change's texts every value under `env` and
    `headers` that is not a `${NAME}` reference reads `••••`, in the old and the new text.
-   The masked text is only for showing; Apply writes the real values. `settings.local.json`
-   is never read or shown: a layer that targets it is a render error.
+   The masked text is only for showing; Apply writes the real values. Masking also reaches
+   into lists of objects. `settings.local.json` and `auth.json` are never read or shown: a
+   layer that targets one is a render error. Other secret-holding keys of other formats
+   (OpenCode's `environment`) are not masked yet; v1 targets are Claude Code's files.
 4. **Ownership per key.** The project's existing file stays the project's. AKit adds the
    leaves the layers bring:
    - a leaf already there with the same value: nothing (it stays the project's unless AKit
-     wrote it earlier);
+     wrote this very value earlier, so a value the project set itself is never claimed, even
+     when the layers later bring the same value);
    - a leaf there with a different value that AKit did not write earlier: left alone, and
      the preview warns "the project sets `mcpServers.x.command` itself";
    - `lock.json` keeps, per merged file, the key paths AKit wrote (RFC 6901 pointers) with a
@@ -277,15 +280,22 @@ recommendation later.
      layers' new value;
    - when nothing of AKit's is left in a file AKit created and only `{}` remains, the file
      goes to the Trash like other files AKit wrote. **Forget Project…** takes AKit's keys out
-     of the files the project keeps.
+     of the files the project keeps;
+   - an older AKit wrote `.json` targets whole (`files` in the lock). On the first merge such
+     a file is taken over: untouched since, every key is AKit's (and AKit created it); edited,
+     only the keys that still hold the layers' value. Its `files` entry then goes.
 5. **Writing.** Only when the merged result differs from the file (compared as JSON, so a
    file whose keys already match is not reformatted). AKit writes pretty-printed JSON with
    sorted keys, a 2-space indent and a trailing newline; when that changes the file's
    formatting, the preview says so. Backup, diff and Apply are the same as for other files.
-   A file that exists and is not valid JSON (or not an object, or a link) blocks Apply with
-   a message and is never overwritten.
+   A file that exists and is not valid JSON (or not an object, or a link, or with a key given
+   twice in one object) blocks Apply with a message and is never overwritten. AKit reads JSON
+   with its own strict parser (`JSONValue`): numbers keep their text, so a rewrite never
+   rounds the project's values.
 6. **Home folder.** Not in v1: a JSON file of the core layer is a render warning ("JSON
-   files are not rendered into the home folder yet") and is skipped. Projects only.
+   files are not rendered into the home folder yet") and is skipped. Projects only. A JSON
+   file an older AKit wrote into the home folder is never removed for that: it keeps its
+   lock entry.
 7. **UI.** Set Up Project's preview lists merged files like other changes ("keys merged;
    the project's own keys stay"), with the masked diff and the per-key warnings at the top;
    merged changes start ticked, since they never replace a value of the project's. `akit

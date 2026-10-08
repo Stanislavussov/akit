@@ -6,30 +6,38 @@ struct JSONValueTests {
     func parse(_ text: String) throws -> JSONValue { try JSONValue.parse(Data(text.utf8)) }
 
     @Test func readsTypesAndPrintsLikeJSONStringify() throws {
-        let tree = try parse(#"{"b": [1, 2.5, 1.0, true, null, "a\"\n/é"], "a": {}, "c": {"x": false}, "n": 12345678901234567}"#)
-        #expect(tree.value(at: ["b"]) == .array([.number("1"), .number("2.5"), .number("1"), .bool(true), .null, .string("a\"\n/é")]))
-        #expect(tree.value(at: ["n"]) == .number("12345678901234567"))
+        let tree = try parse(#"{"b": [1, 2.5, 1.0, true, null, "a\"\n/é\u00e9\ud83d\ude00\/"], "a": {}, "c": {"x": false}, "n": 18446744073709551616, "f": -3.14159265358979323846e-2}"#)
+        #expect(tree.value(at: ["b"]) == .array([.number("1"), .number("2.5"), .number("1.0"), .bool(true), .null, .string("a\"\n/éé😀/")]))
+        // Numbers keep their text: a rewrite never rounds the project's values.
+        #expect(tree.value(at: ["n"]) == .number("18446744073709551616"))
+        #expect(tree.value(at: ["f"]) == .number("-3.14159265358979323846e-2"))
         #expect(tree.pretty == """
             {
               "a": {},
               "b": [
                 1,
                 2.5,
-                1,
+                1.0,
                 true,
                 null,
-                "a\\"\\n/é"
+                "a\\"\\n/éé😀/"
               ],
               "c": {
                 "x": false
               },
-              "n": 12345678901234567
+              "f": -3.14159265358979323846e-2,
+              "n": 18446744073709551616
             }
 
             """)
         #expect(try parse(tree.pretty) == tree)
-        #expect(tree.compact == #"{"a":{},"b":[1,2.5,1,true,null,"a\"\n/é"],"c":{"x":false},"n":12345678901234567}"#)
-        #expect(throws: JSONValue.ParseError.self) { try parse("{ nope") }
+        #expect(tree.compact == #"{"a":{},"b":[1,2.5,1.0,true,null,"a\"\n/éé😀/"],"c":{"x":false},"f":-3.14159265358979323846e-2,"n":18446744073709551616}"#)
+        #expect(try parse("\u{FEFF} [\"x\"] ") == .array([.string("x")]))
+        let bad = ["{ nope", #"{"a": 1,}"#, "[01]", #"{"a": 1} x"#, #""\ud800""#, #"{"dup": 1, "dup": 2}"#, "// c\n{}",
+                   String(repeating: "[", count: 150)]
+        for text in bad {
+            #expect(throws: JSONValue.ParseError.self, "\(text.prefix(20))") { try parse(text) }
+        }
     }
 
     @Test func keyPathsSetRemoveAndPointers() throws {
@@ -60,5 +68,9 @@ struct JSONValueTests {
         #expect(masked.value(at: ["s", "env", "B"]) == .string("••••"))
         #expect(masked.value(at: ["s", "env", "C"]) == .string("••••"))
         #expect(masked.value(at: ["s", "args"]) == .array([.string("secret")]))
+        // Inside a list of objects too.
+        let listed = try parse(#"{"servers": [{"env": {"T": "tok"}, "headers": {"R": "${R}"}, "name": "a"}]}"#).masked
+        #expect(listed.value(at: ["servers"]) == .array([.object([
+            "env": .object(["T": .string("••••")]), "headers": .object(["R": .string("${R}")]), "name": .string("a")])]))
     }
 }

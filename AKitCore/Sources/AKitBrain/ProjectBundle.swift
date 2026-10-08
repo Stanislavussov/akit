@@ -223,9 +223,15 @@ public struct ProjectBundle: Sendable {
                     // Merged key by key into the project's file: parsed first, fields filled only
                     // inside string values, so a value can't break the JSON.
                     let name = "\(layer.name)/\(file.template)"
-                    if (file.to as NSString).lastPathComponent.lowercased() == "settings.local.json" {
+                    // Files that hold secrets are never read or shown, so never merged into.
+                    switch (file.to as NSString).lastPathComponent.lowercased() {
+                    case "settings.local.json":
                         errors.append("\(name) targets \(file.to), the project's private settings; layers can't write it.")
                         continue
+                    case "auth.json":
+                        errors.append("\(name) targets \(file.to), a file that holds credentials; layers can't write it.")
+                        continue
+                    default: break
                     }
                     let tree: JSONValue
                     do {

@@ -21,8 +21,9 @@ enum JSONMerge {
     }
 
     /// `layers`: the layers' merged object (empty when no layer brings the file any more).
+    /// `legacy`: the lock entry of an older AKit that wrote the file whole.
     static func plan(path: String, url: URL, layers: JSONValue, layerNames: [String],
-                     previous: ProjectRecords.Lock.MergedJSON?) -> Result {
+                     previous: ProjectRecords.Lock.MergedJSON?, legacy: ProjectRecords.Lock.Entry? = nil) -> Result {
         let fm = FileManager.default
         if (try? fm.destinationOfSymbolicLink(atPath: url.path)) != nil {
             return Result(blocker: "\(path) is a link; AKit merges keys only into a plain file.")
@@ -44,6 +45,15 @@ enum JSONMerge {
             }
         }
 
+        var previous = previous
+        if previous == nil, let legacy, let current {
+            // An older AKit wrote the whole file. Untouched since: every key is AKit's. Edited:
+            // only the keys that still hold the layers' value.
+            let untouched = legacy.sha256 == Checksum.sha256(current)
+            let theirs = existing.leaves.filter { leaf in untouched || layers.value(at: leaf.path) == leaf.value }
+            previous = .init(keys: Dictionary(theirs.map { (JSONValue.pointer($0.path), hash($0.value)) }, uniquingKeysWith: { first, _ in first }),
+                             created: untouched, layers: layerNames)
+        }
         var merged = existing
         var keys: [String: String] = [:]
         var warnings: [String] = []
@@ -59,8 +69,9 @@ enum JSONMerge {
             let pointer = JSONValue.pointer(leaf.path)
             let present = merged.value(at: leaf.path)
             if present == leaf.value {
-                // Already there: AKit's only if AKit wrote it earlier.
-                if previous?.keys[pointer] != nil { keys[pointer] = hash(leaf.value) }
+                // Already there: AKit's only if AKit wrote this very value earlier (one the
+                // project set itself stays the project's, even when the layers now agree).
+                if previous?.keys[pointer] == hash(leaf.value) { keys[pointer] = hash(leaf.value) }
             } else if present == nil, !blocked(merged, leaf.path) {
                 merged.set(leaf.value, at: leaf.path)
                 keys[pointer] = hash(leaf.value)

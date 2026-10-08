@@ -1,4 +1,3 @@
-import CoreFoundation
 import Foundation
 
 /// A JSON document as a value: for merging JSON files key by key (layers into `.mcp.json`
@@ -7,7 +6,7 @@ public enum JSONValue: Hashable, Sendable {
     case object([String: JSONValue])
     case array([JSONValue])
     case string(String)
-    /// The number as JSON text (`1`, `2.5`, `1e+21`), so integers stay integers.
+    /// The number as written in the JSON text (`1`, `2.50`, `1e21`): never rounded.
     case number(String)
     case bool(Bool)
     case null
@@ -17,32 +16,157 @@ public enum JSONValue: Hashable, Sendable {
         public var errorDescription: String? { message }
     }
 
-    /// Strict JSON (no comments, no trailing commas).
+    /// Strict JSON (no comments, no trailing commas). Numbers keep their text, so a rewrite
+    /// never rounds them; a key given twice in one object is an error (harnesses would take
+    /// the last one, and a rewrite would silently keep only one).
     public static func parse(_ data: Data) throws(ParseError) -> JSONValue {
-        do {
-            return try value(JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]))
-        } catch let error as ParseError {
-            throw error
-        } catch {
-            let reason = (error as NSError).userInfo[NSDebugDescriptionErrorKey] as? String ?? error.localizedDescription
-            throw ParseError(message: reason)
-        }
+        var parser = Parser(bytes: Array(data))
+        if parser.bytes.starts(with: [0xEF, 0xBB, 0xBF]) { parser.index = 3 }
+        let value = try parser.value(depth: 0)
+        parser.skipSpace()
+        guard parser.index == parser.bytes.count else { throw parser.error("unexpected text after the end") }
+        return value
     }
 
-    private static func value(_ any: Any) throws -> JSONValue {
-        switch any {
-        case let object as [String: Any]: return .object(try object.mapValues(value))
-        case let array as [Any]: return .array(try array.map(value))
-        case let text as String: return .string(text)
-        case is NSNull: return .null
-        case let number as NSNumber:
-            if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
-            guard CFNumberIsFloatType(number) else { return .number(number.stringValue) }
-            let double = number.doubleValue
-            // 1.0 is printed as 1, like JSON.stringify.
-            if double == double.rounded(), abs(double) < 1e15 { return .number(String(Int64(double))) }
-            return .number("\(double)")
-        default: throw ParseError(message: "unexpected value \(type(of: any))")
+    private struct Parser {
+        let bytes: [UInt8]
+        var index = 0
+
+        func error(_ message: String) -> ParseError { ParseError(message: "\(message) at byte \(index)") }
+
+        mutating func skipSpace() {
+            while index < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[index]) { index += 1 }
+        }
+
+        mutating func expect(_ word: String) throws(ParseError) {
+            let utf8 = Array(word.utf8)
+            guard bytes[index...].starts(with: utf8) else { throw error("expected \(word)") }
+            index += utf8.count
+        }
+
+        mutating func value(depth: Int) throws(ParseError) -> JSONValue {
+            guard depth < 100 else { throw error("nested too deeply") }
+            skipSpace()
+            guard index < bytes.count else { throw error("unexpected end") }
+            switch bytes[index] {
+            case UInt8(ascii: "{"):
+                index += 1
+                var members: [String: JSONValue] = [:]
+                skipSpace()
+                if index < bytes.count, bytes[index] == UInt8(ascii: "}") { index += 1; return .object(members) }
+                while true {
+                    skipSpace()
+                    guard index < bytes.count, bytes[index] == UInt8(ascii: "\"") else { throw error("expected a key") }
+                    let key = try string()
+                    guard members[key] == nil else { throw error("the key \"\(key)\" appears twice") }
+                    skipSpace()
+                    try expect(":")
+                    members[key] = try value(depth: depth + 1)
+                    skipSpace()
+                    guard index < bytes.count else { throw error("unexpected end") }
+                    if bytes[index] == UInt8(ascii: ",") { index += 1; continue }
+                    try expect("}")
+                    return .object(members)
+                }
+            case UInt8(ascii: "["):
+                index += 1
+                var items: [JSONValue] = []
+                skipSpace()
+                if index < bytes.count, bytes[index] == UInt8(ascii: "]") { index += 1; return .array(items) }
+                while true {
+                    items.append(try value(depth: depth + 1))
+                    skipSpace()
+                    guard index < bytes.count else { throw error("unexpected end") }
+                    if bytes[index] == UInt8(ascii: ",") { index += 1; continue }
+                    try expect("]")
+                    return .array(items)
+                }
+            case UInt8(ascii: "\""): return .string(try string())
+            case UInt8(ascii: "t"): try expect("true"); return .bool(true)
+            case UInt8(ascii: "f"): try expect("false"); return .bool(false)
+            case UInt8(ascii: "n"): try expect("null"); return .null
+            default: return .number(try number())
+            }
+        }
+
+        /// `-? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?`, kept as written.
+        mutating func number() throws(ParseError) -> String {
+            let start = index
+            func digits() -> Int {
+                let from = index
+                while index < bytes.count, (0x30...0x39).contains(bytes[index]) { index += 1 }
+                return index - from
+            }
+            if index < bytes.count, bytes[index] == UInt8(ascii: "-") { index += 1 }
+            guard index < bytes.count, (0x30...0x39).contains(bytes[index]) else { throw error("unexpected character") }
+            if bytes[index] == UInt8(ascii: "0") { index += 1 } else { _ = digits() }
+            if index < bytes.count, bytes[index] == UInt8(ascii: ".") {
+                index += 1
+                guard digits() > 0 else { throw error("expected digits after the point") }
+            }
+            if index < bytes.count, bytes[index] == UInt8(ascii: "e") || bytes[index] == UInt8(ascii: "E") {
+                index += 1
+                if index < bytes.count, bytes[index] == UInt8(ascii: "+") || bytes[index] == UInt8(ascii: "-") { index += 1 }
+                guard digits() > 0 else { throw error("expected digits in the exponent") }
+            }
+            return String(decoding: bytes[start..<index], as: UTF8.self)
+        }
+
+        mutating func string() throws(ParseError) -> String {
+            index += 1  // the opening quote
+            var scalars = String.UnicodeScalarView()
+            var run = index  // start of plain bytes not yet copied
+            func flush(_ end: Int) throws(ParseError) {
+                guard let text = String(bytes: bytes[run..<end], encoding: .utf8) else { throw error("invalid UTF-8") }
+                scalars.append(contentsOf: text.unicodeScalars)
+            }
+            while true {
+                guard index < bytes.count else { throw error("unterminated string") }
+                let byte = bytes[index]
+                if byte == UInt8(ascii: "\"") {
+                    try flush(index)
+                    index += 1
+                    return String(scalars)
+                }
+                guard byte >= 0x20 else { throw error("control character in a string") }
+                guard byte == UInt8(ascii: "\\") else { index += 1; continue }
+                try flush(index)
+                index += 1
+                guard index < bytes.count else { throw error("unterminated string") }
+                let escape = bytes[index]
+                index += 1
+                switch escape {
+                case UInt8(ascii: "\""): scalars.append("\"")
+                case UInt8(ascii: "\\"): scalars.append("\\")
+                case UInt8(ascii: "/"): scalars.append("/")
+                case UInt8(ascii: "b"): scalars.append("\u{08}")
+                case UInt8(ascii: "f"): scalars.append("\u{0C}")
+                case UInt8(ascii: "n"): scalars.append("\n")
+                case UInt8(ascii: "r"): scalars.append("\r")
+                case UInt8(ascii: "t"): scalars.append("\t")
+                case UInt8(ascii: "u"):
+                    var code = try hex4()
+                    if (0xD800...0xDBFF).contains(code) {
+                        // A surrogate pair: \uD83D\uDE00.
+                        guard bytes[index...].starts(with: [UInt8(ascii: "\\"), UInt8(ascii: "u")]) else { throw error("lone surrogate") }
+                        index += 2
+                        let low = try hex4()
+                        guard (0xDC00...0xDFFF).contains(low) else { throw error("lone surrogate") }
+                        code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                    }
+                    guard let scalar = Unicode.Scalar(code) else { throw error("lone surrogate") }
+                    scalars.append(scalar)
+                default: throw error("unknown escape")
+                }
+                run = index
+            }
+        }
+
+        mutating func hex4() throws(ParseError) -> UInt32 {
+            guard index + 4 <= bytes.count, let code = UInt32(String(decoding: bytes[index..<index + 4], as: UTF8.self), radix: 16)
+            else { throw error("expected 4 hex digits") }
+            index += 4
+            return code
         }
     }
 
@@ -213,11 +337,24 @@ public enum JSONValue: Hashable, Sendable {
         }.map(\.path)
     }
 
-    /// For showing: every leaf under an `env` or `headers` key that is not a `${NAME}`
-    /// reference becomes `••••`.
-    public var masked: JSONValue {
-        var copy = self
-        for path in secretLeaves { copy.set(.string(Self.mask), at: path) }
-        return copy
+    /// For showing: every value under an `env` or `headers` key that is not a `${NAME}`
+    /// reference becomes `••••`, also inside lists of objects.
+    public var masked: JSONValue { masked(secret: false) }
+
+    private func masked(secret: Bool) -> JSONValue {
+        switch self {
+        case .object(let members):
+            return .object(Dictionary(uniqueKeysWithValues: members.map { key, value in
+                (key, value.masked(secret: secret || Self.secretKeys.contains(key)))
+            }))
+        case .array(let items):
+            // A list right under env or headers is a value (args, tokens); deeper lists may hold objects.
+            if secret, !items.isEmpty, !items.contains(where: \.isObject) { return .string(Self.mask) }
+            return .array(items.map { $0.masked(secret: secret) })
+        case .string(let text):
+            return secret && !Self.isVariableReference(text) ? .string(Self.mask) : self
+        case .number, .bool, .null:
+            return secret ? .string(Self.mask) : self
+        }
     }
 }

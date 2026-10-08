@@ -58,6 +58,9 @@ public enum ProjectSetup {
         /// Merged JSON files: the bytes Apply writes, and what the lock keeps after Apply.
         var jsonWrites: [String: Data] = [:]
         var jsonRecords: [String: ProjectRecords.Lock.MergedJSON] = [:]
+        /// Paths an earlier render wrote that this one leaves alone without a change (a JSON
+        /// file in the home folder, which is not rendered there yet): their lock entry stays.
+        var carried: Set<String> = []
 
         public var canApply: Bool { render.errors.isEmpty && blockers.isEmpty }
     }
@@ -161,7 +164,7 @@ public enum ProjectSetup {
                 return try? JSONValue.parse(data)
             } ?? .object([:])
             let merge = JSONMerge.plan(path: path, url: url, layers: layersTree, layerNames: output?.layers ?? previous?.json?[path]?.layers ?? [],
-                                       previous: previous?.json?[path])
+                                       previous: previous?.json?[path], legacy: output == nil ? nil : previous?.files[path])
             warnings += merge.warnings
             if let blocker = merge.blocker {
                 cannotMerge(blocker)  // never overwritten
@@ -248,9 +251,16 @@ public enum ProjectSetup {
             }
         }
 
+        var carried: Set<String> = []
         for (path, entry) in previous?.files ?? [:] where !rendered.contains(path) {
             let url = project.appending(path: path)
             guard escapes(path, project: project) == nil else { continue }
+            // JSON files are skipped in the home folder, not dropped: an older AKit may have
+            // written ~/.claude/settings.json, and it must never go to the Trash for that.
+            if forHome, ProjectBundle.isJSON(path), !path.hasPrefix(ProjectBundle.skillsFolder + "/") {
+                carried.insert(path)
+                continue
+            }
             if let link = entry.link {
                 guard (try? fm.destinationOfSymbolicLink(atPath: url.path)) == link else { continue }
                 changes.append(Change(path: path, kind: .remove, oldText: "→ \(link)", newText: nil, replacesUnmanaged: false, layers: entry.layers))
@@ -265,7 +275,7 @@ public enum ProjectSetup {
 
         return Plan(project: project, id: id, answers: answers, render: render,
                     changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
-                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords)
+                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried)
     }
 
     // MARK: - Apply
@@ -389,7 +399,10 @@ public enum ProjectSetup {
         var json: [String: ProjectRecords.Lock.MergedJSON] = plan.jsonRecords
         for change in plan.changes where change.mergesJSON && excluded.contains(change.path) {
             json[change.path] = plan.previous?.json?[change.path]
+            // Not migrated yet from an older AKit's whole-file entry: keep that entry.
+            if json[change.path] == nil, let old = plan.previous?.files[change.path] { lock.files[change.path] = old }
         }
+        for path in plan.carried { if let old = plan.previous?.files[path] { lock.files[path] = old } }
         lock.json = json.isEmpty ? nil : json
 
         let isRepo = fm.fileExists(atPath: brain.root.appending(path: ".git").path)

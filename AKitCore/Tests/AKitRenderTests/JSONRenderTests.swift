@@ -120,10 +120,12 @@ struct JSONRenderTests {
         #expect(output(accepted)?.text?.contains("${API_TOKEN}") == true)
     }
 
-    @Test func settingsLocalJSONIsNeverATarget() throws {
+    @Test func filesWithSecretsAreNeverATarget() throws {
         try layer("local", to: ".claude/settings.local.json", #"{"a": 1}"#)
-        let result = try render(["local"])
-        #expect(result.errors == ["local/t.json targets .claude/settings.local.json, the project's private settings; layers can't write it."])
+        try layer("auth", to: ".pi/agent/auth.json", #"{"a": 1}"#)
+        let result = try render(["local", "auth"])
+        #expect(result.errors == ["local/t.json targets .claude/settings.local.json, the project's private settings; layers can't write it.",
+                                  "auth/t.json targets .pi/agent/auth.json, a file that holds credentials; layers can't write it."])
         #expect(result.outputs.isEmpty)
     }
 
