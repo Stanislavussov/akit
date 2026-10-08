@@ -23,8 +23,16 @@ struct PiPackagesTests {
         try Data(text.utf8).write(to: url)
     }
 
+    /// The listing with a deadline far away, so a loaded machine can't make a test fail; only
+    /// the deadline test uses the real one.
+    func listing(projects: [URL] = [], configRoot: URL? = nil, in env: HarnessEnvironment? = nil) -> PiPackages.Listing {
+        let ceiling = PiPackages.Ceiling(seconds: 600)
+        return PiPackages.list(configRoot: configRoot ?? agent, projects: projects, ceiling: ceiling,
+                               limits: { .init(ceiling: ceiling) }, in: env ?? self.env)
+    }
+
     func packages(projects: [URL] = []) -> [PiPackage] {
-        PiPackages.list(configRoot: agent, projects: projects, in: env).packages
+        listing(projects: projects).packages
     }
 
     /// Paths relative to the package folder, for short expectations.
@@ -206,7 +214,7 @@ struct PiPackagesTests {
         var e = env
         e.variables["PI_CODING_AGENT_DIR"] = "~/custom-pi"
 
-        let list = PiPackages.list(configRoot: PiAdapter().configRoot(in: e), projects: [], in: e).packages
+        let list = listing(configRoot: PiAdapter().configRoot(in: e), in: e).packages
         let root = try #require(PiPackages.skillRoots(list).first)
         #expect(root.scope == .package(name: "tools", project: nil))
         #expect(root.origin == "npm:tools 2.0")

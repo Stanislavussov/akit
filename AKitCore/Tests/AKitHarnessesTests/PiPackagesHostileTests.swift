@@ -159,7 +159,7 @@ extension PiPackagesTests {
         try write("\(pkg)/package.json", #"{"name": "dup", "pi": {"skills": ["./skills", "./skills/a", "skills/*"]}}"#)
         try write("\(pkg)/skills/a/SKILL.md")
 
-        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        let listing = self.listing()
         // Like Pi, a global file keeps the first entry of a package.
         #expect(listing.packages.map(\.source) == ["npm:dup", "npm:other"])
         #expect(Set(listing.packages.map(\.id)).count == 2)
@@ -185,7 +185,7 @@ extension PiPackagesTests {
         try write(".pi/agent/kit/prompts/p.md")
 
         let start = Date()
-        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        let listing = self.listing()
         #expect(Date().timeIntervalSince(start) < 5)
         #expect(listing.packages.count == PiPackages.maxEntries)
         #expect(listing.packages.first?.prompts.count == 1)
@@ -208,7 +208,7 @@ extension PiPackagesTests {
         try write(".pi/agent/npm/node_modules/after/prompts/x.md")
 
         let start = Date()
-        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        let listing = self.listing()
         #expect(Date().timeIntervalSince(start) < 10)
         #expect(listing.packages.allSatisfy { $0.isTooLarge && listed($0).isEmpty })
         #expect(listing.notes.contains { $0.contains("limit for one settings file") })
@@ -223,7 +223,7 @@ extension PiPackagesTests {
                        "Projects/app/.pi/npm/node_modules/third"] {
             for index in 0..<30 { try write("\(folder)/prompts/p\(index).md") }
         }
-        let ceiling = PiPackages.Ceiling()
+        let ceiling = PiPackages.Ceiling(seconds: 600)
         let listing = PiPackages.list(configRoot: agent, projects: [project], ceiling: ceiling,
                                       limits: { .init(entries: 200, ceiling: ceiling) }, in: env)
         #expect(listing.packages.map(\.isTooLarge) == [false, true, false])
@@ -251,7 +251,7 @@ extension PiPackagesTests {
         }
 
         let start = Date()
-        let listing = PiPackages.list(configRoot: agent, projects: projects, in: env)
+        let listing = self.listing(projects: projects)
         #expect(Date().timeIntervalSince(start) < 5)
         #expect(listing.packages.count == 1) // one real package, one real project
         #expect(listing.notes.contains { $0.contains("199 repeated entries skipped") })
@@ -276,7 +276,7 @@ extension PiPackagesTests {
         for folder in [".pi/agent/npm/node_modules/first", "Projects/app/.pi/npm/node_modules/second"] {
             for index in 0..<30 { try write("\(folder)/prompts/p\(index).md") }
         }
-        let ceiling = PiPackages.Ceiling(entries: 100)
+        let ceiling = PiPackages.Ceiling(entries: 100, seconds: 600)
         let listing = PiPackages.list(configRoot: agent, projects: [project], ceiling: ceiling,
                                       limits: { .init(ceiling: ceiling) }, in: env)
         #expect(listing.packages.allSatisfy { $0.isTooLarge })
@@ -310,7 +310,7 @@ extension PiPackagesTests {
         try write("\(pkg)/package.json", #"{"name": "long", "pi": {"prompts": [\#(files)]}}"#)
         for index in 0..<300 { try write("\(pkg)/prompts/p\(index).md") }
 
-        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        let listing = self.listing()
         let long = try #require(listing.packages.first)
         #expect(long.prompts.count == PiPackages.maxPatterns)
         #expect(!long.isTooLarge)

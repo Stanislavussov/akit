@@ -82,17 +82,18 @@ public enum PiPackages {
     final class Ceiling {
         /// Folder entries, file checks and package.json kilobytes.
         var entries: Int
-        let deadline: Date
+        /// On the monotonic clock: changing the system time can't move it.
+        let deadline: ContinuousClock.Instant
         /// How long the listing may take, for the note.
         let seconds: Double
 
         init(entries: Int = 100_000, seconds: Double = 2) {
             self.entries = entries
             self.seconds = seconds
-            deadline = Date().addingTimeInterval(seconds)
+            deadline = .now + .seconds(seconds)
         }
 
-        var isPastDeadline: Bool { Date() > deadline }
+        var isPastDeadline: Bool { ContinuousClock.now > deadline }
         var isExhausted: Bool { entries < 0 || isPastDeadline }
     }
 
