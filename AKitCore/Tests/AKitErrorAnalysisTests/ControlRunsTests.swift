@@ -488,6 +488,14 @@ struct ControlRunsTests {
         }
         #expect(ControlRuns.leaks(in: transcript("git -C /work/other log"), task: linked).isEmpty)
         #expect(ControlRuns.leaks(in: transcript("ls \(repo.path)-other"), task: linked).isEmpty)
+        // From the home folder: `repo` is `<home>/repo`.
+        #expect(ControlRuns.leaks(in: transcript("cat ~/repo/value.txt"), task: linked, home: home) == ["the real repository"])
+        #expect(ControlRuns.leaks(in: transcript("cat ~/repo2/value.txt"), task: linked, home: home).isEmpty)
+        // A subagent's prompt asks for nothing; its text still names the repository.
+        #expect(ControlRuns.leaks(in: SessionTranscript(), subagents: [LeakCheck.Call(name: "Task", input: ["prompt": "See ~/.claude/projects"])],
+                                  task: linked).isEmpty)
+        #expect(ControlRuns.leaks(in: SessionTranscript(), subagents: [LeakCheck.Call(name: "Task", input: ["prompt": "See \(repo.path)."])],
+                                  task: linked) == ["the real repository"])
         await git("worktree", "remove", "--force", worktree.path, in: repo)
         linked.mainRepo = nil
         #expect(linked.mainFolder.path == resolved && linked.cloneSource.path == resolved)

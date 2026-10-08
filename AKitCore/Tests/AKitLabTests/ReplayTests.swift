@@ -216,7 +216,7 @@ struct ReplayTests {
             #expect(LeakCheck.commitSigns(in: reading, task: task, env: env) == ["AKit's Lab folder"], "\(input)")
         }
         #expect(LeakCheck.pathLikeInput(tool: "write", input: ["path": "a.swift", "content": "x"]) == "a.swift")
-        #expect(LeakCheck.pathLikeInput(tool: "WebFetch", input: ["url": "u"]).contains("\"url\""))
+        #expect(LeakCheck.pathLikeInput(tool: "WebFetch", input: ["url": "u", "n": 2]) == "2\nu")
     }
 
     func lines(_ entries: [[String: Any]], to url: URL) throws {
@@ -304,11 +304,58 @@ struct ReplayTests {
             #expect(!LeakCheck.mentions(text, anyOf: repos), "\(text)")
         }
         #expect(!LeakCheck.mentions("~/.akit/lab/runs", anyOf: LeakCheck.repositoryPaths(["/r"])))
+        // A `.` ends the name only at the end of a sentence.
+        #expect(LeakCheck.mentions("see /x/akit.", anyOf: repos) && LeakCheck.mentions("in /x/akit. Then", anyOf: repos))
+        #expect(!LeakCheck.mentions("/x/akit.swift", anyOf: repos))
         let file = home.appending(path: "s.jsonl")
         try lines([call("Bash", ["command": "ls /x/akit-other"]), call("Read", ["file_path": "/x/akit/Package.swift"])], to: file)
         #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/x/akit"), env: env) == ["the real repository"])
         try lines([call("Bash", ["command": "ls /x/akit-other"])], to: file)
         #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/x/akit"), env: env).isEmpty)
+    }
+
+    /// A repository under the home folder is also named from it: `~/…`, `$HOME/…`, `${HOME}/…`.
+    @Test func repositoryUnderHomeIsNamedFromIt() throws {
+        let repo = home.appending(path: "Projects/akit").path
+        let file = home.appending(path: "s.jsonl")
+        for command in ["sh ~/Projects/akit/install.sh", "cd $HOME/Projects/akit && git log", #"cat "${HOME}/Projects/akit/README.md""#] {
+            try lines([call("Bash", ["command": command])], to: file)
+            #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: repo), env: env) == ["the real repository"], "\(command)")
+        }
+        try lines([call("Bash", ["command": "ls ~/Projects/akit-other $HOME/Projects ~/Projects/akit2"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: repo), env: env).isEmpty)
+        // This Mac's home too, when the environment's is another.
+        let real = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Projects/akit").path
+        #expect(LeakCheck.repositoryPaths([real]).isSuperset(of: ["~/Projects/akit", "$HOME/Projects/akit", "${HOME}/Projects/akit"]))
+    }
+
+    /// Written text keeps its own line breaks: the hash at the start of a line is a word of its own.
+    @Test func hashAtALineStartInWrittenText() throws {
+        let file = home.appending(path: "s.jsonl")
+        try lines([call("Bash", ["command": "git show \\\n1c9cf65"])], to: file)
+        #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env) == ["the commit 1c9cf65"])
+        try lines([call("Write", ["file_path": "/w/peek.sh", "content": "#!/bin/sh\ngit show \\\n\t1c9cf65aaaa\n"]),
+                   call("Bash", ["command": "sh /w/peek.sh"])], to: file)
+        #expect(LeakCheck.commitSigns(in: file, task: replayTask, env: env) == ["the commit 1c9cf65"])
+    }
+
+    /// Free text (a subagent's prompt, todos, a plan, a question) asks for nothing: no Lab or
+    /// history sign, while the hash, the repository and the Trash in it still count.
+    @Test func freeTextAsksForNothing() throws {
+        let file = home.appending(path: "s.jsonl")
+        let mentions = "Look in ~/.akit/lab/tasks and ~/.claude/projects"
+        let freeText: [(String, [String: Any])] = [
+            ("Task", ["prompt": mentions, "subagent_type": "Explore"]), ("Agent", ["prompt": mentions]),
+            ("TodoWrite", ["todos": [["content": mentions, "status": "pending"]]]), ("ExitPlanMode", ["plan": mentions]),
+            ("AskUserQuestion", ["questions": [["question": mentions]]]),
+        ]
+        for (name, input) in freeText {
+            try lines([call(name, input)], to: file)
+            #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/r"), env: env).isEmpty, "\(name)")
+        }
+        try lines([call("Task", ["prompt": "Run git -C /r show 1c9cf65 and ls ~/.Trash"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/r"), env: env)
+                == ["the commit 1c9cf65", "the real repository", "the Trash"])
     }
 
     /// An old task without `mainRepo` whose worktree is gone: its main folder is the nearest

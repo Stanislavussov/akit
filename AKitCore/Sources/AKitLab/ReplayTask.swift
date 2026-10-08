@@ -241,8 +241,10 @@ enum IsolatedClone {
 public enum LeakCheck {
     /// What a tool call asks for: a shell command, the path or file pattern a file tool reads
     /// or searches (`Grep`'s `path` and `glob`, not its `pattern`, a content regex), the path
-    /// a file tool writes (not its content). An unknown tool's whole input. Names of Claude
-    /// Code and Pi tools alike, in any case (Pi's grep, find and ls take the same arguments).
+    /// a file tool writes (not its content). Nothing of a tool whose input is free text (a
+    /// subagent's prompt, a todo list, a plan, a question): its text counts only where the
+    /// whole input does. An unknown tool's whole input. Names of Claude Code and Pi tools
+    /// alike, in any case (Pi's grep, find and ls take the same arguments).
     public static func pathLikeInput(tool: String, input: Any?) -> String {
         let keys: [String]
         switch tool.lowercased() {
@@ -250,10 +252,23 @@ public enum LeakCheck {
         case "write", "edit", "multiedit", "notebookedit", "read": keys = ["file_path", "notebook_path", "path"]
         case "grep": keys = ["path", "glob"]
         case "glob", "find", "ls": keys = ["pattern", "path"]
-        default: return JSONLines.pretty(input)
+        case "task", "agent", "todowrite", "exitplanmode", "askuserquestion": return ""
+        default: return text(of: input)
         }
         let object = input as? JSONLines.Object ?? [:]
         return keys.compactMap { object[$0] as? String }.joined(separator: "\n")
+    }
+
+    /// The string values of a JSON value, one per line with their own line breaks (not
+    /// escaped as in JSON text, so a word at the start of a line stays one); numbers as text.
+    static func text(of value: Any?) -> String {
+        switch value {
+        case let string as String: string
+        case let object as JSONLines.Object: object.keys.sorted().map { text(of: object[$0]) }.filter { !$0.isEmpty }.joined(separator: "\n")
+        case let array as [Any]: array.map { text(of: $0) }.filter { !$0.isEmpty }.joined(separator: "\n")
+        case let number as NSNumber: number.stringValue
+        default: ""
+        }
     }
 
     /// One tool call as the signs read it.
@@ -267,7 +282,7 @@ public enum LeakCheck {
         /// `input`: the parsed JSON input, or text that isn't JSON (taken whole for both).
         public init(name: String, input: Any?) {
             self.name = name
-            self.input = JSONLines.pretty(input)
+            self.input = LeakCheck.text(of: input)
             asks = input is String ? self.input : LeakCheck.pathLikeInput(tool: name, input: input)
         }
     }
@@ -281,23 +296,44 @@ public enum LeakCheck {
     }
 
     /// The real repository as the signs look for it: each folder and its main folder (the
-    /// repository of a worktree), as given, standardized and with symlinks resolved.
-    public static func repositoryPaths(_ folders: [String]) -> Set<String> {
-        let all = folders.filter { !$0.isEmpty }.flatMap { [$0, LabGit.mainFolder(of: $0).path] }
-        return Set(all.flatMap { path -> [String] in
+    /// repository of a worktree), as given, standardized and with symlinks resolved; under
+    /// the user's home (this Mac's and `home`, when another) also as `~/…`, `$HOME/…` and
+    /// `${HOME}/…`.
+    public static func repositoryPaths(_ folders: [String], home: URL? = nil) -> Set<String> {
+        func forms(_ path: String) -> [String] {
             let url = URL(filePath: path).standardizedFileURL
             return [url.path, url.resolvingSymlinksInPath().path, (path as NSString).standardizingPath]
-        }).filter { $0 != "/" && !$0.isEmpty }
+        }
+        let all = folders.filter { !$0.isEmpty }.flatMap { [$0, LabGit.mainFolder(of: $0).path] }
+        let paths = Set(all.flatMap(forms)).filter { $0 != "/" && !$0.isEmpty }
+        let homes = Set(([FileManager.default.homeDirectoryForCurrentUser] + (home.map { [$0] } ?? [])).flatMap { forms($0.path) })
+            .filter { $0 != "/" && !$0.isEmpty }
+        var named = paths
+        for path in paths {
+            for home in homes where path.hasPrefix(home + "/") {
+                let rest = path.dropFirst(home.count)
+                named.formUnion(["~\(rest)", "$HOME\(rest)", "${HOME}\(rest)"])
+            }
+        }
+        return named
     }
 
     /// Whether `text` names one of `paths` as a whole folder: a match must be followed by `/`,
-    /// the end, or a character that can't continue a path name (quote, space, `:`, `)` …),
-    /// so `/x/akit-other` and `lab/runs` don't name `/x/akit` or `/r`.
+    /// the end, a character that can't continue a path name (quote, space, `:`, `)` …), or a
+    /// `.` that ends a sentence (before a space or the end), so `/x/akit-other`, `/x/akit.git`
+    /// and `lab/runs` don't name `/x/akit` or `/r`, while "see /x/akit." does.
     public static func mentions(_ text: String, anyOf paths: Set<String>) -> Bool {
         func continuesName(_ c: Character) -> Bool { c.isLetter || c.isNumber || "-_.~@+%".contains(c) }
-        return paths.contains { path in
-            text.ranges(of: path).contains { $0.upperBound == text.endIndex || !continuesName(text[$0.upperBound]) }
+        func endsName(at index: String.Index) -> Bool {
+            guard index < text.endIndex else { return true }
+            let next = text[index]
+            if next == "." {
+                let after = text.index(after: index)
+                return after == text.endIndex || text[after].isWhitespace
+            }
+            return !continuesName(next)
         }
+        return paths.contains { path in text.ranges(of: path).contains { endsName(at: $0.upperBound) } }
     }
 
     static func leaks(in transcript: URL, task: ReplayTask, repo: URL, env: HarnessEnvironment) -> [String] {
@@ -317,7 +353,7 @@ public enum LeakCheck {
         // The hash as a word of its own (any length from the short form), not inside another hex string.
         let hash = (try? Regex("\\b\(task.shortCommit)[0-9a-f]*\\b"))
         if let hash, (inputs + "\n" + calls.results).contains(hash) { found.append("the commit \(task.shortCommit)") }
-        if let repo, mentions(inputs, anyOf: repositoryPaths([repo.path, task.repo])) {
+        if let repo, mentions(inputs, anyOf: repositoryPaths([repo.path, task.repo], home: env.homeDirectory)) {
             found.append("the real repository")
         }
         // `~/.akit/lab`, `$HOME/.akit/lab`, `/Users/me/.akit/lab` alike.

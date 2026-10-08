@@ -206,22 +206,36 @@ Further choices of the step 4 plan, accepted on the same day:
   control cells (`ControlRuns.leaks`, plus `LeakCheck.commitSigns` for a commit task):
   - Read from the whole input of a tool call, the text it writes included (a script
     written and then run is caught): the real repository, the Trash (`/.Trash`), the
-    commit's hash (also in tool results) and the exemplar's session id. The real
-    repository is the task's folder and its main folder (`LeakCheck.repositoryPaths`:
-    as given, standardized, symlinks resolved; never `/`), so a worktree task whose agent
-    reads the main checkout is flagged. A path matches only as a whole folder
-    (`LeakCheck.mentions`): followed by `/`, the end, or a character that can't continue a
-    name (quote, space, `:`, `)` …), so `/x/akit-other` doesn't name `/x/akit`.
-  - The pilot must not pick commits that edit `ControlRuns.swift` or `ReplayTask.swift`:
-    their sources contain the leak strings (`/.Trash`), which now count in written text.
+    commit's hash (also in tool results) and the exemplar's session id. The whole input
+    is the input's string values, one per line with their own line breaks (not JSON
+    text, where a line break becomes `\n` and the hash at a line start isn't a word of
+    its own). The real repository is the task's folder and its main folder
+    (`LeakCheck.repositoryPaths`: as given, standardized, symlinks resolved; never `/`),
+    so a worktree task whose agent reads the main checkout is flagged; under the home
+    folder (this Mac's, and the environment's when another) also as `~/…`, `$HOME/…` and
+    `${HOME}/…`. A path matches only as a whole folder (`LeakCheck.mentions`): followed
+    by `/`, the end, a character that can't continue a name (quote, space, `:`, `)` …),
+    or a `.` before a space or the end, so `/x/akit-other` and `/x/akit.git` don't name
+    `/x/akit`, while "see /x/akit." does.
   - Read only from what a call asks for (`LeakCheck.pathLikeInput`), since AKit's own
     sources mention them and editing those is no leak: AKit's Lab folder (`.akit/lab`) and
     the session history (`.claude/projects`, `.pi/agent/sessions`; a `session_search`
     tool by name). What a call asks for: a shell command; `file_path`, `notebook_path` or
     `path` of a file tool that reads or writes (not its content); `path` and `glob` of
     `Grep` (not `pattern`, a content regex); `pattern` and `path` of `Glob`, `find`, `ls`.
-    Pi's `read`, `grep`, `find`, `ls` take the same argument names. An unknown tool's
-    whole input.
+    Pi's `read`, `grep`, `find`, `ls` take the same argument names. Nothing of free text:
+    `Task` and `Agent` (a subagent's prompt), `TodoWrite`, `ExitPlanMode`,
+    `AskUserQuestion`. An unknown tool's whole input.
+  - The pilot rejects commits whose diff contains `/.Trash` or the absolute repository
+    path (also as `~/…`, `$HOME/…`, `${HOME}/…`): an agent redoing them writes those
+    strings and is flagged. Known files that hold them today: `ControlRuns.swift`,
+    `ReplayTask.swift`, `ControlRunsTests.swift`, `ReplayTests.swift`, `ScrubberTests.swift`,
+    `docs/design/layer-evals.md`, `docs/guides/error-analysis.ru.md`, `install.sh`.
+  - Known gaps: a search rooted at the home folder that reaches a sign without naming it
+    (`grep -r <hash> ~` finds the hash, but `find ~ -name run.json` is not flagged); a
+    path split across commands (`cd ~/.akit && cat lab/…`); letter case (`~/.Akit/Lab`
+    on a case-insensitive disk); subagents of Pi extensions (only Claude Code's subagent
+    files are read).
   - Subagents count: Claude Code writes a `Task` subagent's calls to
     `<session>/subagents/*.jsonl` next to `<session>.jsonl` (older versions: side-chain
     lines of the session file). `LeakCheck` reads them for replays and commit signs;
