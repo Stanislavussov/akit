@@ -12,7 +12,9 @@ code. Three modules were added after the split, `AKitLab`, `AKitErrorAnalysis` a
 `AKitErrorAnalysis → AKitRender` for layer evals (`layer-evals.md`).
 
 2026-10-08 (JSON merge, `layers.md`): `AKitRender` also depends on `AKitFoundation`, for
-`JSONValue` (the JSON tree that Brain, Render and ProjectSetup share).
+`JSONValue` (`AKitFoundation/JSONValue.swift`, the JSON tree that Brain, Render and
+ProjectSetup share); the per-key merge into a project's file is
+`AKitProjectSetup/JSONMerge.swift`.
 
 ## Goal
 
