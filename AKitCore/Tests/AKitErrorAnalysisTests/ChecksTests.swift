@@ -115,6 +115,12 @@ struct ChecksTests {
         let afterError = [item(0, .user, "Run it"), item(1, .toolCall(name: "Bash"), json(["command": "swift test"])),
                           item(2, .toolResult(name: "Bash", isError: true), "Exit code 1"), item(3, .assistant, "All tests pass.")]
         #expect(check.check(SessionTranscript(items: afterError)).steps == [2, 3])
+        // A refused call is not a tool error the report leaves out.
+        let afterRefusal = [item(0, .user, "Run it"), item(1, .toolCall(name: "Bash"), json(["command": "swift test"])),
+                            item(2, .toolResult(name: "Bash", isError: true), "Permission to use Bash with command swift test has been denied."),
+                            item(3, .assistant, "All tests pass.")]
+        #expect(!check.check(SessionTranscript(items: afterRefusal)).positive)
+        #expect(check.version == 2)
     }
 
     @Test func weakeningTestsAndLongSessions() {
@@ -149,7 +155,8 @@ struct ChecksTests {
                      item(4, .user, "No, I asked for a menu item"), item(5, .user, "[Request interrupted by user]"),
                      item(6, .user, "нет, не то"), item(7, .assistant, "OK")]
         let signals = SignalScanner.signals(of: items)
-        #expect(signals.pushbacks == 2 && signals.interrupts == 1 && signals.toolErrors == 1 && signals.repeatedCalls == 1)
+        // Two reads of /a in a row are not a repeat yet; a third would be (see FailureSignalsTests).
+        #expect(signals.pushbacks == 2 && signals.interrupts == 1 && signals.toolErrors == 1 && signals.repeatedCalls == 0)
         #expect(signals.userTurns == 4 && signals.steps == 8 && signals.raised)
         #expect(!SignalScanner.isPushback("Now add the menu item"))
     }
@@ -190,11 +197,25 @@ struct ChecksTests {
         #expect(computed == 2 && total == 2)
         #expect(try SignalScanner.refresh(env: env).computed == 0)
         #expect(try AnalysisIndex.signals(database)["claude:\(first)"]?.signals.steps == 3)
+        // Rows an older scanner wrote are computed again.
+        let older = try AnalysisIndex.signals(database).mapValues {
+            StoredSignals(signals: $0.signals, fileSize: $0.fileSize, fileModified: $0.fileModified, version: SignalScanner.version - 1)
+        }
+        try AnalysisIndex.store(older, in: database)
+        #expect(try SignalScanner.refresh(env: env).computed == 2)
+        #expect(try AnalysisIndex.signals(database).values.allSatisfy { $0.version == SignalScanner.version })
 
         let results = try CheckRunner.run([CodeChecks.check(for: "large-file-read-whole")!], env: env)
         let rate = results[0].rate()
         #expect(rate.positive == 1 && rate.total == 2)
         #expect(results[0].verdicts["claude:\(first)"]?.steps == [1])
         #expect(CheckStore(env: env).load("large-file-read-whole")?.verdicts.count == 2)
+
+        // An older version's row whose file is gone is deleted: it would stratify by the old rules.
+        try AnalysisIndex.store(older, in: database)
+        try fm.removeItem(at: home.appending(path: ".claude/projects/-work/\(second).jsonl"))
+        #expect(try SignalScanner.refresh(env: env).computed == 1)
+        let left = try AnalysisIndex.signals(database)
+        #expect(left.keys.sorted() == ["claude:\(first)"] && left["claude:\(first)"]?.version == SignalScanner.version)
     }
 }

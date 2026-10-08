@@ -9,19 +9,20 @@ import Foundation
 /// index. They stratify the batch sample; no model is called.
 public enum SignalScanner {
     /// Bumped when the computation changes: every session is recomputed.
-    public static let version = 1
+    /// 2 (2026-10-08): interrupts, rejections, tool errors and repeated calls by `FailureSignals`.
+    /// 3 (2026-10-08): outcomes read before secrets are hidden, the user's refusal alone undone
+    /// by Esc, failed results with no text counted.
+    public static let version = 3
 
+    /// Interrupts, rejections, tool errors and repeated calls are `FailureSignals`, as in Lab.
     public static func signals(of items: [TranscriptItem]) -> SessionSignals {
         let facts = TranscriptFacts(items)
         let users = facts.userTurns
-        let interrupts = users.filter { $0.text.contains("[Request interrupted by user") }.count
-        let pushbacks = users.filter { !$0.text.contains("[Request interrupted by user") && isPushback($0.text) }.count
-        let toolErrors = items.filter { if case .toolResult(_, true) = $0.kind { true } else { false } }.count
-        var seen = Set<String>()
-        var repeated = 0
-        for call in facts.calls where !seen.insert(call.name + "\u{1}" + call.text).inserted { repeated += 1 }
-        return SessionSignals(interrupts: interrupts, pushbacks: pushbacks, toolErrors: toolErrors, repeatedCalls: repeated,
-                              unverifiedDone: unverifiedDone(facts), userTurns: users.count, steps: items.count)
+        let shared = FailureSignals(items)
+        let pushbacks = users.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
+        return SessionSignals(interrupts: shared.interrupts, pushbacks: pushbacks, rejected: shared.rejected, toolErrors: shared.toolErrors,
+                              repeatedCalls: shared.repeatedCalls, unverifiedDone: unverifiedDone(facts), userTurns: users.count,
+                              steps: items.count)
     }
 
     /// The final report claims the work is done, and nothing ran a test, build or check after
@@ -44,22 +45,32 @@ public enum SignalScanner {
     }
 
     /// Recomputes the signals of every indexed session whose file changed since (or that has
-    /// none yet). Returns how many were computed and how many sessions the index has.
+    /// none yet, or whose signals an older version computed). Signals of an older version whose
+    /// file is gone or can't be read are deleted: they would stratify by the old rules.
+    /// Returns how many were computed and how many sessions the index has.
     @discardableResult
     public static func refresh(env: HarnessEnvironment, progress: (Int, Int) -> Void = { _, _ in }) throws -> (computed: Int, total: Int) {
         guard let database = try AnalysisIndex.open(env: env) else { return (0, 0) }
         let sessions = try AnalysisIndex.sessions(database)
         let stored = try AnalysisIndex.signals(database)
         var fresh: [String: StoredSignals] = [:]
+        var stale = Set<String>()
         var computed = 0
         for (index, session) in sessions.enumerated() {
             progress(index, sessions.count)
-            guard let summary = IndexedSessions.summary(session) else { continue }
+            let outdated = stored[session.key].map { $0.version != version } ?? false
+            guard let summary = IndexedSessions.summary(session) else {
+                if outdated { stale.insert(session.key) }
+                continue
+            }
             let file = summary.file
             let info = JSONLines.fileInfo(file)
             let modified = info.modified.timeIntervalSince1970
             if let old = stored[session.key], old.version == version, old.fileSize == info.size, old.fileModified == modified { continue }
-            guard let transcript = try? SessionReader.transcript(of: summary) else { continue }
+            guard let transcript = try? SessionReader.transcript(of: summary) else {
+                if outdated { stale.insert(session.key) }
+                continue
+            }
             computed += 1
             fresh[session.key] = StoredSignals(signals: signals(of: transcript.items), fileSize: info.size, fileModified: modified,
                                                version: version)
@@ -70,6 +81,7 @@ public enum SignalScanner {
             }
         }
         try AnalysisIndex.store(fresh, in: database)
+        if !stale.isEmpty { try AnalysisIndex.deleteSignals(stale, in: database) }
         return (computed, sessions.count)
     }
 }

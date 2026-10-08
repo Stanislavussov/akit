@@ -7,9 +7,9 @@ defining these again.
 
 Checked against the code on 2026-10-03. Built: the data tiers with the sending policy,
 session and request keys, `first_request_context`, exposures with `desc_hash`, `origin`
-and `commit` of the repo snapshot. Not built: name-only reasons and "over budget", the
-harness fingerprint, `dirty` and `diff_hash`, the shared `FailureSignals` parser. Each
-section below says so where it applies.
+and `commit` of the repo snapshot; the shared `FailureSignals` (2026-10-08). Not built:
+name-only reasons and "over budget", the harness fingerprint, `dirty` and `diff_hash`.
+Each section below says so where it applies.
 
 ## Data tiers
 
@@ -121,35 +121,49 @@ type git, origin, commit, dirty).
 
 Per-session counts from structural markers only, never from reading message text. They
 are sampling strata for review and error analysis, not verdicts. Each count is stored
-with the version of the parser that produced it. One parser computes them:
-`FailureSignals` in `AKitSessions`, fed one transcript line at a time, used by Lab and by
-the index import alike.
+with the version of the parser that produced it.
 
-Status: `FailureSignals` is not built. Today two parsers exist, and the table below is the
-target, not what either of them stores:
+Status: built 2026-10-08 (step 7 of the design map, proposal I4, decision D1). The four
+signals both parsers have, `interrupts`, `rejected`, `tool_errors` and `repeated_calls`,
+have one definition: `FailureSignals` in `AKitSessions`. It is fed the main conversation
+in order: a user text, a tool call (tool name and input text), a tool result (tool, text,
+error flag).
 
-- Lab's `SessionAnalyzer` counts `interrupts`, `rejected`, `tool_errors`, `compactions`
-  and `rereads` for one transcript; nothing is stored in the index.
-- `AKitErrorAnalysis.SignalScanner` fills the index table `signals` (schema v6):
-  `interrupts`, `pushbacks`, `tool_errors`, `repeated_calls`, `unverified_done`,
-  `user_turns`, `steps`.
-- They differ: Lab counts an interrupt when the text starts with the marker, the scanner
-  when the text contains it; the scanner's `repeated_calls` counts every repeat of a tool
-  call with the same input anywhere in the session, not "3 or more in a row".
+- Lab's `SessionAnalyzer` feeds it from the log lines of one Claude Code transcript and
+  shows the counts on Sessions → Analysis and in Lab; nothing is stored in the index.
+- `AKitErrorAnalysis.SignalScanner` feeds it from the transcript items (Claude Code and
+  Pi) and stores the counts in the index table `signals` (schema v9 added the column
+  `rejected`), with the scanner's version (3 since 2026-10-08; 2 was the first shared version the same day). A row of an older version
+  is recomputed on the next scan, like a row whose file changed; one whose file is gone or
+  can't be read is deleted. A batch and the bootstrap pick scan before they sample.
+- The session's Usage tab ("N failed") counts `tool_errors` by the same rule, and the
+  Overview tab classifies each call with the same `ToolResultOutcome` and Esc rule and, like
+  the transcript, skips meta lines whole, so its "failed" and "rejected" match.
+- It is not an incremental reducer: the scanner already recomputes only the files that
+  changed.
+
+Signals that only one parser has stay with it: Lab's `compactions` and `rereads`; the
+scanner's `pushbacks`, `unverified_done`, `user_turns` and `steps`.
 
 | Signal | Counted from | Known noise |
 |---|---|---|
-| `interrupts` | user text starting `[Request interrupted by user` in the main transcript | the same text is written when a subagent is aborted or fails; subagent files don't count |
-| `rejected` | `tool_result` with `is_error` and the harness's refusal text | ESC during a tool can look like a refusal |
-| `tool_errors` | `tool_result` with `is_error`, without rejections and interrupts | |
-| `compactions` | `system` line with `subtype: "compact_boundary"` | |
-| `rereads` | a successful `Read` of a file and range already read, with no edit of that file in between; a Bash command that may write resets every file | |
-| `repeated_calls` | the same tool with the same input hash 3 or more times in a row | new |
+| `interrupts` | user text that starts with `[Request interrupted by user` (leading white space ignored) in the main transcript; the marker inside other text is not one; meta lines and compaction summaries are not user text | the same text is written when a subagent is aborted or fails; subagent files and side chains don't count. Pi writes no such marker: always 0 |
+| `rejected` | a tool result with the error flag that `ToolOutcomes.outcome` calls `rejected`: the harness's refusal text in its first two lines (the user, a permission rule, a hook, the auto mode classifier or a Pi extension's `Blocked …`). The outcome is read from the real text, before the transcript hides the output of a call that touched a secrets file, and travels with the transcript item. Esc at the permission prompt (`PromptEscapes`): the user's own refusal ("doesn't want to proceed…") followed by user text starting `[Request interrupted by user for tool use]` before the next tool call is not rejected; the Overview tab counts it as interrupted by the same rule. A permission rule's or hook's denial in the same batch stays rejected | |
+| `tool_errors` | a tool result with the error flag that is neither `rejected` nor `interrupted` (`[Request interrupted by user…` as the result, Pi's `Command aborted`). A failed result with no text counts too: the transcript shows it as `(no output)`. Such an item shifts the ids of the later steps in its session (none was found in the local logs on 2026-10-08) | |
+| `compactions` | `system` line with `subtype: "compact_boundary"` (Lab only) | |
+| `rereads` | a successful `Read` of a file and range already read, with no edit of that file in between; a Bash command that may write resets every file (Lab only) | |
+| `repeated_calls` | 3 or more calls in a row of the same tool with the same input: no other tool call between them (results, text and user turns between them don't break the run). Each run counts once, however long it is; a run broken by another call and started again counts again. The input is compared as the transcript shows it: JSON with sorted keys, secrets masked | polling (`sleep`, status checks) repeats on purpose; masking and the redaction of secrets-file content can make two different inputs look the same. A call with no input is not in the transcript and is not counted |
+
+D1, decided 2026-10-08: an interrupt is the start of the text, not anywhere in it; a
+repeat is 3 or more in a row, not any repeat. Counting a run once makes the number read
+as "times the agent got stuck", and a run of 10 doesn't outweigh 10 sessions with one.
 
 Rewinds are not counted until a marker for them is verified on real logs.
 
 Claude Code's transcript format is not documented and changes between versions; a
-missing field means "not recorded", never zero.
+missing field means "not recorded", never zero. Lab results analyzed before 2026-10-08
+have no `repeatedCalls` (the Repeated calls row is left out, as for any value not
+recorded) and keep the old counts of the other three.
 
 ## Statistics
 

@@ -44,6 +44,8 @@ struct SamplingTests {
         var again = SeededGenerator(seed: 7)
         #expect(Sampling.sample(sessions, signals: signals, size: 20, using: &again) == picks)
         #expect(Sampling.stratum(sessions[0], nil) == "claude|claude-opus|no-signals")
+        // A refused tool call is the user saying no: the pushback stratum, not tool errors.
+        #expect(Sampling.stratum(sessions[0], SessionSignals(rejected: 1, toolErrors: 1)) == "claude|claude-opus|pushback")
         #expect(Sampling.family("github-copilot/gpt-6.1-sol") == "gpt")
     }
 

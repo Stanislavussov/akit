@@ -89,7 +89,7 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
         if result.hasPrefix("[Request interrupted by user") || last == "Command aborted" { return .interrupted }
         if last.hasPrefix("Command timed out") { return .transient }
         if last.hasPrefix("Command exited with code") { return .commandFailed }
-        let head = lines.prefix(2).joined(separator: " ")
+        let head = head(lines)
         // Pi extensions that refuse a call answer "Blocked write: …", "Blocked edit: …".
         if isRejection(head) || head.wholeMatch(of: /Blocked [a-z_]+: .*/) != nil { return .rejected }
         // The command ran: whatever its output says (a test log may mention a timeout).
@@ -102,10 +102,22 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
         return .otherError
     }
 
+    /// The first two lines that say something, trimmed and joined: where a tool's own error
+    /// message or refusal is.
+    public static func head(_ result: String) -> String {
+        head(result.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+    }
+
+    private static func head(_ lines: [String]) -> String { lines.prefix(2).joined(separator: " ") }
+
     /// The user said no, or a permission rule, a hook or the auto mode classifier refused.
     public static func isRejection(_ text: String) -> Bool {
         rejectionMarkers.contains { text.localizedCaseInsensitiveContains($0) }
     }
+
+    /// The user's own refusal. Claude Code writes it also when the user presses Esc at the
+    /// permission prompt, then follows it with `[Request interrupted by user for tool use]`.
+    public static let userRefusalMarker = "doesn't want to proceed with this tool use"
 
     public static let rejectionMarkers = [
         "doesn't want to proceed with this tool use",
@@ -128,4 +140,17 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
         "not a directory", "enoent", "eisdir", "exceeds maximum allowed tokens", "unknown skill", "cannot be empty",
         "could not find the exact text",
     ]
+}
+
+/// How one tool result ended, read from its real text: a transcript hides the text of a call
+/// that touched a secrets file, so the outcome is taken before that and kept with the item.
+public struct ToolResultOutcome: Sendable, Hashable {
+    public let outcome: ToolOutcomes.Outcome
+    /// A refusal in the user's own words, the only one Esc at the permission prompt also writes.
+    public let userRefusal: Bool
+
+    public init(tool: String, result: String, isError: Bool) {
+        outcome = ToolOutcomes.outcome(tool: tool, result: result, isError: isError)
+        userRefusal = outcome == .rejected && ToolOutcomes.head(result).localizedCaseInsensitiveContains(ToolOutcomes.userRefusalMarker)
+    }
 }

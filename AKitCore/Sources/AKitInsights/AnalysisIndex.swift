@@ -39,12 +39,18 @@ public struct IndexedSession: Sendable, Hashable {
 
 /// Signals computed by code from a session's transcript, with no model call: what the batch
 /// sample is stratified by (`docs/design/error-analysis.md`, "Sampling").
+/// `interrupts`, `rejected`, `toolErrors` and `repeatedCalls` are `FailureSignals`, the rules
+/// Lab uses too (`docs/design/definitions.md`, "Failure signals").
 public struct SessionSignals: Codable, Sendable, Hashable {
+    /// User messages that start with `[Request interrupted by user`.
     public var interrupts: Int
     /// User turns that push back: "no", "not that", "I asked for", a revert.
     public var pushbacks: Int
+    /// Tool calls that the user, a permission rule, a hook, the auto mode classifier or a Pi extension refused.
+    public var rejected: Int
+    /// Failed tool calls, without rejected and interrupted ones.
     public var toolErrors: Int
-    /// Tool calls identical to an earlier one (same tool, same input).
+    /// Runs of 3 or more calls of the same tool with the same input in a row, each run once.
     public var repeatedCalls: Int
     /// "Done" with no test run or check after the last edit.
     public var unverifiedDone: Bool
@@ -52,10 +58,11 @@ public struct SessionSignals: Codable, Sendable, Hashable {
     /// Transcript items: the session's length in steps.
     public var steps: Int
 
-    public init(interrupts: Int = 0, pushbacks: Int = 0, toolErrors: Int = 0, repeatedCalls: Int = 0, unverifiedDone: Bool = false,
-                userTurns: Int = 0, steps: Int = 0) {
+    public init(interrupts: Int = 0, pushbacks: Int = 0, rejected: Int = 0, toolErrors: Int = 0, repeatedCalls: Int = 0,
+                unverifiedDone: Bool = false, userTurns: Int = 0, steps: Int = 0) {
         self.interrupts = interrupts
         self.pushbacks = pushbacks
+        self.rejected = rejected
         self.toolErrors = toolErrors
         self.repeatedCalls = repeatedCalls
         self.unverifiedDone = unverifiedDone
@@ -64,7 +71,7 @@ public struct SessionSignals: Codable, Sendable, Hashable {
     }
 
     /// Whether any signal says something went wrong.
-    public var raised: Bool { interrupts > 0 || pushbacks > 0 || toolErrors > 0 || repeatedCalls > 0 || unverifiedDone }
+    public var raised: Bool { interrupts > 0 || pushbacks > 0 || rejected > 0 || toolErrors > 0 || repeatedCalls > 0 || unverifiedDone }
 }
 
 /// The signals of one session and the file state they were computed from.
@@ -111,10 +118,11 @@ public enum AnalysisIndex {
         var result: [String: StoredSignals] = [:]
         for row in try database.rows("""
             SELECT session_key, file_size, file_mtime, version, interrupts, pushbacks, tool_errors, repeated_calls,
-              unverified_done, user_turns, steps FROM signals
+              unverified_done, user_turns, steps, rejected FROM signals
             """) {
             guard let key = row[0].text else { continue }
-            let signals = SessionSignals(interrupts: row[4].int ?? 0, pushbacks: row[5].int ?? 0, toolErrors: row[6].int ?? 0,
+            let signals = SessionSignals(interrupts: row[4].int ?? 0, pushbacks: row[5].int ?? 0, rejected: row[11].int ?? 0,
+                                         toolErrors: row[6].int ?? 0,
                                          repeatedCalls: row[7].int ?? 0, unverifiedDone: (row[8].int ?? 0) != 0,
                                          userTurns: row[9].int ?? 0, steps: row[10].int ?? 0)
             result[key] = StoredSignals(signals: signals, fileSize: row[1].int ?? 0, fileModified: row[2].double ?? 0,
@@ -129,14 +137,22 @@ public enum AnalysisIndex {
                 let s = stored.signals
                 try database.run("""
                     INSERT INTO signals(session_key, file_size, file_mtime, version, interrupts, pushbacks, tool_errors,
-                      repeated_calls, unverified_done, user_turns, steps) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      repeated_calls, unverified_done, user_turns, steps, rejected) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(session_key) DO UPDATE SET file_size = excluded.file_size, file_mtime = excluded.file_mtime,
                       version = excluded.version, interrupts = excluded.interrupts, pushbacks = excluded.pushbacks,
                       tool_errors = excluded.tool_errors, repeated_calls = excluded.repeated_calls,
-                      unverified_done = excluded.unverified_done, user_turns = excluded.user_turns, steps = excluded.steps
+                      unverified_done = excluded.unverified_done, user_turns = excluded.user_turns, steps = excluded.steps,
+                      rejected = excluded.rejected
                     """, key, stored.fileSize, stored.fileModified, stored.version, s.interrupts, s.pushbacks, s.toolErrors,
-                                 s.repeatedCalls, s.unverifiedDone, s.userTurns, s.steps)
+                                 s.repeatedCalls, s.unverifiedDone, s.userTurns, s.steps, s.rejected)
             }
+        }
+    }
+
+    /// Forgets the signals of these sessions.
+    public static func deleteSignals(_ keys: Set<String>, in database: IndexDatabase) throws {
+        try database.transaction {
+            for key in keys { _ = try database.run("DELETE FROM signals WHERE session_key = ?", key) }
         }
     }
 

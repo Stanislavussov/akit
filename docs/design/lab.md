@@ -7,7 +7,9 @@ Status: design proposal 2026-09-28; v1 built 2026-09-30, all four steps of the
 decision "AKit has no own eval runner" (see [Relation to other designs](#relation-to-other-designs)).
 
 Not built (checked against the code on 2026-10-03): reading the session index for session
-analysis, the shared `FailureSignals` parser, Pi replays, task sets in the brain.
+analysis, Pi replays, task sets in the brain. Built 2026-10-08: interrupts, rejected calls,
+tool errors and the new repeated calls come from the shared `FailureSignals` in
+`AKitSessions`, the rules the index uses too (`definitions.md`, "Failure signals").
 
 ## Goal
 
@@ -163,7 +165,7 @@ phase change:
                "contextRent": { "baseline": 1380000, "readCode": 1950000, "ownOutput": 1320000,
                                 "injections": 940000, "other": 690000 },
                "toolCalls": 180, "toolErrors": 5, "rereads": 0, "interrupts": 0, "rejected": 0,
-               "compactions": 0, "commits": [ { "sha": "1a2b3c4", "subject": "…", "onMainBranch": true } ],
+               "repeatedCalls": 0, "compactions": 0, "commits": [ { "sha": "1a2b3c4", "subject": "…", "onMainBranch": true } ],
                "wallSeconds": 1820, "activeSeconds": 1400, "subagentCalls": 0,
                "subagentFreshTokens": 0, "models": ["claude-opus-5-5"] },
   "tests": { "status": "passed | failed | not-run",
@@ -332,9 +334,9 @@ Lab screen shows the spread, not only the mean.
   runner" (that doc now says so). Skill-trigger evals still belong to skill-creator; Lab
   measures whole sessions and setups. Lab reuses its path templates for picking the
   environment; reading its SQLite index for session analysis is planned (`AKitLab` doesn't
-  depend on `AKitInsights` yet). The failure-signal rules move from `SessionAnalyzer` into
-  a shared `FailureSignals` in `AKitSessions`, so Lab and the index use one parser (step
-  11 there).
+  depend on `AKitInsights` yet). The shared failure-signal rules live in `FailureSignals`
+  in `AKitSessions` (2026-10-08); `SessionAnalyzer` feeds it, so Lab and the index count
+  interrupts, rejections, tool errors and repeated calls the same way.
 - **Shared terms** (`definitions.md`): data tiers, `first_request_context`, harness
   fingerprint, repo snapshot, failure signals and the statistics rules.
 - **Error analysis** (`error-analysis.md`): failure modes across many sessions, checks
@@ -360,7 +362,8 @@ is kept here.
      tokens, peak and baseline (first-call) context, context rent, tool errors, re-reads
      (a `Read` of the same file and range with no `Edit`/`Write` of it in between),
      interrupts (`[Request interrupted by user…`), rejected tool calls (the user's "doesn't
-     want to proceed" and permission denials), commits (the `[branch sha] subject` line in
+     want to proceed" and permission denials; since 2026-10-08 these, the tool errors and
+     repeated calls follow `definitions.md`, "Failure signals"), commits (the `[branch sha] subject` line in
      the output of a `git commit` Bash call), wall and active time.
    - Context rent: the growth of the context between two calls is split by characters
      over what arrived in between (the agent's own output, code reads: `Read`, `Grep`,

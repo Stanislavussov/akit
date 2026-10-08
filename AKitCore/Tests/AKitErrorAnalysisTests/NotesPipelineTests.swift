@@ -103,6 +103,29 @@ struct NotesPipelineTests {
         ((try? String(contentsOf: home.appending(path: "calls.txt"), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
     }
 
+    @Test func scrubbedItemsKeepTheOutcomeOfAHiddenResult() throws {
+        // A refused read of .env: the model sees the hidden text, signals still see the refusal.
+        let lines: [[String: Any]] = [
+            ["type": "user", "timestamp": "2026-10-01T10:00:00Z", "message": ["role": "user", "content": "Check the config"]],
+            ["type": "assistant", "timestamp": "2026-10-01T10:00:01Z",
+             "message": ["id": "m1", "model": "claude-opus-5-5", "role": "assistant",
+                         "content": [["type": "tool_use", "id": "t1", "name": "Read", "input": ["file_path": "/work/.env"]]]]],
+            ["type": "user", "timestamp": "2026-10-01T10:00:02Z",
+             "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "t1", "is_error": true,
+                                                      "content": "The user doesn't want to proceed with this tool use. Not that file."]]]],
+        ]
+        let file = home.appending(path: "refused-env.jsonl")
+        let text = try lines.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) }.joined(separator: "\n")
+        try Data((text + "\n").utf8).write(to: file)
+        let gate = SendGate(destination: SendDestination(harness: .claudeCode, provider: "anthropic", account: "me@example.com", org: "Me"),
+                            isWork: false, settings: LabSettings())
+        let items = try NotesPipeline.scrubbedItems(NotesPipeline.Target(harness: .claudeCode, file: file), gate: gate).items
+        let result = try #require(items.first { if case .toolResult = $0.kind { true } else { false } })
+        #expect(result.text == SecretFilter.hiddenOutput && result.outcome?.outcome == .rejected)
+        #expect(!items.contains { $0.text.contains("Not that file") })
+        #expect(SignalScanner.signals(of: items).rejected == 1)
+    }
+
     @Test func notesAreVerifiedInCodeThenByTheModel() async throws {
         try fakeClaude(notes: notesAnswer, verdicts: verdicts)
         let notes = try await review(try session())

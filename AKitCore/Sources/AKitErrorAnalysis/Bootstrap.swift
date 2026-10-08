@@ -29,6 +29,8 @@ public enum Bootstrap {
         }
         let reservations = BootstrapReservations(env: env)
         let reviewed = Set(NotesStore(env: env).all().map(\.sessionKey))
+        // The clusters are by stratum: signals of the current rules, as a batch uses.
+        try SignalScanner.refresh(env: env)
         let signals = try AnalysisIndex.signals(database).mapValues(\.signals)
         let candidates = Sampling.population(try AnalysisIndex.sessions(database), filter: Sampling.Filter(),
                                              reserved: reservations.keys().union(reviewed).union(IndexedSessions.labKeys(env: env)))
@@ -386,7 +388,8 @@ public enum Bootstrap {
         let settings = LabSettings.load(env: env)
         let summary = NotesPipeline.Target(harness: harness, file: URL(filePath: transcript)).summary
         return try SessionReader.transcript(of: summary).items.map {
-            TranscriptItem(id: $0.id, kind: $0.kind, text: Scrubber.scrub($0.text, own: settings.scrub).text, timestamp: $0.timestamp)
+            TranscriptItem(id: $0.id, kind: $0.kind, text: Scrubber.scrub($0.text, own: settings.scrub).text, timestamp: $0.timestamp,
+                           outcome: $0.outcome)
         }
     }
 

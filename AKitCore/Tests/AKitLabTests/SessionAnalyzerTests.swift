@@ -139,6 +139,31 @@ struct SessionAnalyzerTests {
         #expect(metrics.contextRent.total == 5_000 + 9_000 + 9_100 + 9_200 + 9_300 + 9_400 + 3_000)
     }
 
+    @Test func resultsAnalyzedBeforeRepeatedCallsStillRead() throws {
+        // An analysis.json written before 2026-10-08: no repeatedCalls.
+        let old = """
+            {"calls": 3, "freshTokens": 10, "cacheReadTokens": 0, "outputTokens": 5, "peakContext": 9, "baselineContext": 9,
+             "contextRent": {"baseline": 9, "readCode": 0, "ownOutput": 0, "injections": 0, "other": 0},
+             "toolCalls": 4, "toolErrors": 1, "rereads": 0, "interrupts": 0, "rejected": 0, "compactions": 0, "commits": [],
+             "subagentCalls": 0, "subagentFreshTokens": 0, "models": []}
+            """
+        let metrics = try JSONDecoder().decode(SessionMetrics.self, from: Data(old.utf8))
+        #expect(metrics.toolErrors == 1 && metrics.repeatedCalls == nil)
+        #expect(!MetricsText.lines(metrics).joined().contains("repeated"))
+    }
+
+    @Test func callsWithoutInputAreNotRepeats() throws {
+        // The transcript leaves out a call with no input, so the signals do too.
+        let file = try write("noinput.jsonl", [
+            prompt("Go", at: 0),
+            call("m1", context: 500, at: 1, [["type": "tool_use", "id": "t1", "name": "Mystery"]]),
+            call("m2", context: 500, at: 2, [["type": "tool_use", "id": "t2", "name": "Mystery"]]),
+            call("m3", context: 500, at: 3, [["type": "tool_use", "id": "t3", "name": "Mystery"]]),
+        ])
+        let metrics = try SessionAnalyzer.analyze(file: file)
+        #expect(metrics.toolCalls == 3 && metrics.repeatedCalls == 0)
+    }
+
     @Test func subagentFilesCountApart() throws {
         let file = try write("abc.jsonl", [prompt("Go", at: 0), call("m1", context: 500, at: 1, [["type": "text", "text": "ok"]])])
         _ = try write("abc/subagents/agent-1.jsonl", [

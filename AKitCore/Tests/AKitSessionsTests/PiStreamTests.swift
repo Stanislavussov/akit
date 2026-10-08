@@ -69,4 +69,23 @@ struct PiStreamTests {
         #expect(fromStream.items[0].timestamp == Date(timeIntervalSince1970: 1_790_000_000))
         #expect(fromStream.usage.models.first?.tokens.output == 25)
     }
+
+    @Test func aHiddenFailedResultKeepsItsOutcome() {
+        // An extension refuses a write to .env, and a read of .env fails: both texts are hidden.
+        let stream = [
+            ["role": "assistant", "model": "kimi-k3", "content": [
+                ["type": "toolCall", "id": "c1", "name": "write", "arguments": ["path": "/work/.env", "content": "A=1"]],
+                ["type": "toolCall", "id": "c2", "name": "read", "arguments": ["path": "/work/.env.local"]]]],
+            ["role": "toolResult", "toolCallId": "c1", "toolName": "write",
+             "content": [["type": "text", "text": "Blocked write: /work/.env is protected"]], "isError": true],
+            ["role": "toolResult", "toolCallId": "c2", "toolName": "read",
+             "content": [["type": "text", "text": "ENOENT: no such file or directory"]], "isError": true],
+        ].flatMap { [json(["type": "message_start", "message": $0]), json(["type": "message_end", "message": $0])] }
+        let items = PiSessions.transcript(ofStream: stream).items
+        let results = items.filter { if case .toolResult = $0.kind { true } else { false } }
+        #expect(results.map(\.text) == [SecretFilter.hiddenOutput, SecretFilter.hiddenOutput])
+        #expect(results.map { $0.resultOutcome?.outcome } == [.rejected, .inputMistake])
+        let signals = FailureSignals(items)
+        #expect(signals.rejected == 1 && signals.toolErrors == 1)
+    }
 }

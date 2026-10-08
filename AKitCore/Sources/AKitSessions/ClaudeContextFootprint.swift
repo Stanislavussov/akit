@@ -68,9 +68,8 @@ struct FootprintReader {
     /// Tool use id → tool name and whether it read a secret file, until its result comes.
     private var pending: [String: (name: String, readsSecret: Bool)] = [:]
     private var outcomeTools: [String: ToolOutcomes.Tool] = [:]
-    /// Tools whose results the latest user entry rejected: Claude Code follows a stopped tool
-    /// call's rejection with `[Request interrupted by user for tool use]`.
-    private var lastRejected: [String] = []
+    /// Refusals that turn out to be Esc at the prompt: the rule failure signals use too.
+    private var escapes = PromptEscapes()
 
     mutating func read(_ entry: Object) {
         switch entry["type"] as? String {
@@ -88,8 +87,6 @@ struct FootprintReader {
         case "assistant":
             guard let message = entry["message"] as? Object else { return }
             beforeFirstAnswer = false
-            // Parallel calls each get their own result entry; the interrupt line follows them all.
-            lastRejected = []
             if let usage = message["usage"] as? Object, message["model"] as? String != "<synthetic>" {
                 let id = message["id"] as? String ?? entry["requestId"] as? String ?? UUID().uuidString
                 if seenCalls.insert(id).inserted { contexts.append(ClaudeLogFormat.tokens(fromClaudeUsage: usage).context) }
@@ -98,6 +95,8 @@ struct FootprintReader {
                 let name = block["name"] as? String ?? ""
                 let input = block["input"] as? Object ?? [:]
                 toolCalls[name, default: 0] += 1
+                // A call with no input is not in the transcript, so it doesn't end the Esc window.
+                if !FailureSignals.inputText(block["input"]).isEmpty { escapes.toolCall() }
                 if let id = block["id"] as? String { pending[id] = (name, SecretFilter.readsSecretFile(input)) }
                 if name == "Skill", let skill = input["skill"] as? String { skillCalls[skill, default: 0] += 1 }
                 if name == "Agent" || name == "Task" {
@@ -105,22 +104,20 @@ struct FootprintReader {
                 }
             }
         case "user":
-            guard let message = entry["message"] as? Object else { return }
+            // Meta lines are the harness's, not the conversation: the transcript and the failure
+            // signals skip them whole, results included.
+            guard let message = entry["message"] as? Object, entry["isMeta"] as? Bool != true else { return }
             let blocks = message["content"] as? [Object] ?? []
             for block in blocks where block["type"] as? String == "tool_result" {
                 guard let id = block["tool_use_id"] as? String, let call = pending.removeValue(forKey: id) else { continue }
                 // Classified from the real text; a secret file's output is never kept as the example.
                 let result = JSONLines.text(of: block["content"])
-                let outcome = ToolOutcomes.outcome(tool: call.name, result: result, isError: block["is_error"] as? Bool == true)
-                record(call.name, outcome, example: call.readsSecret ? SecretFilter.hiddenOutput : result)
-                if outcome == .rejected { lastRejected.append(call.name) }
+                let outcome = ToolResultOutcome(tool: call.name, result: result, isError: block["is_error"] as? Bool == true)
+                record(call.name, outcome.outcome, example: call.readsSecret ? SecretFilter.hiddenOutput : result)
+                escapes.result(tool: call.name, outcome)
             }
-            guard entry["isMeta"] as? Bool != true else { return }
             let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.hasPrefix("[Request interrupted by user for tool use]") {
-                for tool in lastRejected { move(tool, from: .rejected, to: .interrupted) }
-                lastRejected = []
-            }
+            for tool in escapes.userText(text) { move(tool, from: .rejected, to: .interrupted) }
             // Same rule as Insights: a skill run by `/name` is written as `<command-message>…`.
             if text.hasPrefix("<command-message>"), let command = ClaudeLogFormat.tag("command-name", in: text),
                command.hasPrefix("/"), command.count > 1 {

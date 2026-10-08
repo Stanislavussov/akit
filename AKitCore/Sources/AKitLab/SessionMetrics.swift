@@ -14,13 +14,18 @@ public struct SessionMetrics: Codable, Sendable, Hashable {
     public var baselineContext = 0
     public var contextRent = ContextRent()
     public var toolCalls = 0
-    /// Failed tool calls, without rejected ones.
+    /// Failed tool calls, without rejected and interrupted ones. This and `interrupts`,
+    /// `rejected` and `repeatedCalls` are `FailureSignals`, the rules the index uses too.
     public var toolErrors = 0
     /// `Read` of a file and range already read, with no edit of that file in between.
     public var rereads = 0
+    /// User messages that start with `[Request interrupted by user`.
     public var interrupts = 0
-    /// Tool calls the user or a permission rule refused.
+    /// Tool calls that the user, a permission rule, a hook, the auto mode classifier or a Pi extension refused.
     public var rejected = 0
+    /// Runs of 3 or more calls of the same tool with the same input in a row, each run once.
+    /// nil in results analyzed before it was counted.
+    public var repeatedCalls: Int?
     public var compactions = 0
     public var commits: [LabCommit] = []
     /// First to last recorded message.

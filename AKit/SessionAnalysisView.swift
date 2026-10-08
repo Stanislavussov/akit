@@ -92,12 +92,18 @@ struct MetricsView: View {
     private var friction: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
             row("Tool calls", UsageText.full(metrics.toolCalls))
-            row("Failed", UsageText.full(metrics.toolErrors), warn: metrics.toolErrors > 0)
+            row("Failed", UsageText.full(metrics.toolErrors), warn: metrics.toolErrors > 0,
+                help: "Tool calls that ended with an error, without rejected and interrupted ones")
             row("Re-reads", UsageText.full(metrics.rereads), warn: metrics.rereads > 0,
                 help: "Read of a file and range already read, with no edit of it in between")
             row("Rejected", UsageText.full(metrics.rejected), warn: metrics.rejected > 0,
-                help: "Tool calls refused by you, a permission rule or the auto mode classifier")
-            row("Interrupts", UsageText.full(metrics.interrupts), warn: metrics.interrupts > 0)
+                help: "Tool calls refused by you, a permission rule, a hook, the auto mode classifier or a Pi extension; Esc at the prompt counts as an interrupt")
+            row("Interrupts", UsageText.full(metrics.interrupts), warn: metrics.interrupts > 0,
+                help: "Times you stopped the agent: your messages that start with [Request interrupted by user")
+            if let repeated = metrics.repeatedCalls {
+                row("Repeated calls", UsageText.full(repeated), warn: repeated > 0,
+                    help: "The same tool with the same input 3 or more times in a row; each run counts once")
+            }
             if metrics.compactions > 0 { row("Compactions", UsageText.full(metrics.compactions)) }
         }
         .monospacedDigit()
