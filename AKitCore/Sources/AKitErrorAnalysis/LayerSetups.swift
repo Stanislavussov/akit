@@ -79,12 +79,21 @@ public enum LayerSetups {
             if missing > 0 { warnings.append("\(missing) of the eval's tasks are gone from ~/.akit/lab/evals/tasks and are left out.") }
         }
         guard !chosen.isEmpty else { throw Failure(message: "Pick at least one task.") }
-        let repositories = Set(chosen.map(\.repo))
-        guard repositories.count == 1, let repoPath = repositories.first else {
-            throw Failure(message: "One eval takes the tasks of one repository for now; these come from "
-                              + repositories.sorted().map { URL(filePath: $0).lastPathComponent }.joined(separator: ", ") + ".")
+        // A task whose repository is gone from this Mac is blocked by itself, not counted as
+        // another repository.
+        let gone = chosen.filter { !$0.repositoryExists }
+        chosen.removeAll { !$0.repositoryExists }
+        guard !chosen.isEmpty else {
+            throw Failure(message: "The repositories of these tasks are gone from this Mac: "
+                              + Set(gone.map(\.mainFolder.path)).sorted().joined(separator: ", ") + ".")
         }
-        let repo = URL(filePath: repoPath, directoryHint: .isDirectory)
+        // Worktrees of one repository count as one (also after a worktree is removed); its main
+        // folder names the project.
+        let repositories = Set(chosen.map(\.mainFolder))
+        guard repositories.count == 1, let repo = repositories.first else {
+            throw Failure(message: "One eval takes the tasks of one repository for now; these come from "
+                              + repositories.map(\.lastPathComponent).sorted().joined(separator: ", ") + ".")
+        }
 
         // The brain must be committed where the layer comes from, so the eval names its commit.
         let closure = Brain.requiredClosure(of: layer, in: byName).sorted()
@@ -134,6 +143,7 @@ public enum LayerSetups {
         var trees: [String: CloneFiles] = [:]
         var runnable: [ControlTask] = []
         var blocked: [String: String] = [:]
+        for task in gone { blocked[task.id] = "Its repository is gone from this Mac (\(task.mainFolder.path))." }
         var notes: [String: [String]] = [:]
         var ownFiles: [String: String] = [:]
         var projectSkills: [String: [String]] = [:]
@@ -227,7 +237,8 @@ public enum LayerSetups {
         guard result.errors.isEmpty else {
             let what = role == .layer ? layer : "the layers \(layer) requires"
             let hint = result.errors.contains { $0.contains(" is required by ") }
-                ? " Set it with --answer, or answer it for the project in Brain → Set Up Project…." : ""
+                ? " Set it in the layer's set (Error Analysis → Evals, or akit analysis control layer-set \(layer) answer FIELD=VALUE), "
+                    + "with --answer, or answer it for the project in Brain → Set Up Project…." : ""
             throw Failure(message: "\(what.prefix(1).uppercased() + what.dropFirst()) can't be rendered: "
                               + result.errors.joined(separator: " ") + hint)
         }

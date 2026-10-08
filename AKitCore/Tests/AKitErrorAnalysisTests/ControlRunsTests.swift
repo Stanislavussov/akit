@@ -77,6 +77,14 @@ struct ControlRunsTests {
             if grep -q WEAKEN-TESTS CLAUDE.md; then echo 2 > value.txt; echo '@Test func one() {}' > Tests/ValueTests.swift; fi
             if grep -q REPEAT CLAUDE.md; then call "swift build" 2; call "swift build" 3; call "swift build" 4; fi
             if grep -q PEEK CLAUDE.md; then call "ls ~/.claude/projects" 5; fi
+            if grep -q FIX-ADD CLAUDE.md; then
+              printf 'public func add(_ a: Int, _ b: Int) -> Int { a + b }\n' > Pkg/Sources/Lib/Lib.swift
+              printf 'struct Extra {}\n' >> Pkg/Tests/LibTests/LibTests.swift
+              call "swift build" 6
+            fi
+            if grep -q LOOK-UP-COMMIT CLAUDE.md; then
+              sha=$(sed -n 's/.*LOOK-UP-COMMIT //p' CLAUDE.md); call "git show $sha" 7; rm Pkg/Package.swift
+            fi
             echo '{"type":"assistant","timestamp":"2026-10-01T10:00:09Z","message":{"id":"m9","model":"claude-opus-5-5","content":[{"type":"text","text":"Finished."}],"usage":{"input_tokens":10,"output_tokens":5}}}' >> "$t"
             echo '{"type":"system","subtype":"init","model":"claude-opus-5-5","session_id":"'"$id"'"}'
             echo '{"type":"result","num_turns":2,"duration_ms":1000,"usage":{"input_tokens":20,"output_tokens":10},"total_cost_usd":0.05}'
@@ -354,6 +362,70 @@ struct ControlRunsTests {
         }
     }
 
+    /// A Swift package whose second commit fixes `add` and adds a test for it.
+    func packageRepository() async throws -> (repo: URL, fix: String) {
+        let repo = home.appending(path: "pkg-repo")
+        try write("CLAUDE.md", "# Rules\n", in: repo)
+        try write("Pkg/Package.swift", """
+            // swift-tools-version: 6.0
+            import PackageDescription
+            let package = Package(name: "Pkg", targets: [.target(name: "Lib"), .testTarget(name: "LibTests", dependencies: ["Lib"])])
+
+            """, in: repo)
+        try write("Pkg/Sources/Lib/Lib.swift", "public func add(_ a: Int, _ b: Int) -> Int { a - b }\n", in: repo)
+        try write("Pkg/Tests/LibTests/LibTests.swift", "import Testing\n@testable import Lib\nstruct LibTests {\n    @Test func zero() { #expect(add(0, 0) == 0) }\n}\n",
+                  in: repo)
+        await git("init", "-q", "-b", "master", in: repo)
+        await git("add", "-A", in: repo)
+        await git("commit", "-q", "-m", "Start", in: repo)
+        try write("Pkg/Sources/Lib/Lib.swift", "public func add(_ a: Int, _ b: Int) -> Int { a + b }\n", in: repo)
+        try write("Pkg/Tests/LibTests/LibTests.swift", """
+            import Testing
+            @testable import Lib
+            struct LibTests {
+                @Test func zero() { #expect(add(0, 0) == 0) }
+                @Test func adds() { #expect(add(2, 2) == 4) }
+            }
+
+            """, in: repo)
+        await git("commit", "-q", "-am", "Fix add\n\nIt subtracted.", in: repo)
+        return (repo, try #require(await git("rev-parse", "HEAD", in: repo)))
+    }
+
+    /// A task from a commit, judged by the commit's own tests after the agent (real builds of a
+    /// tiny package, a few seconds each; the agent is the fake).
+    @Test func commitTaskIsJudgedByItsHiddenTests() async throws {
+        try fakeClaude()
+        #expect(env.findExecutable("claude")?.path == home.appending(path: "bin/claude").path)
+        let (repo, fix) = try await packageRepository()
+        let task = try await ControlTasks.fromCommit(String(fix.prefix(7)), repo: repo, env: env)
+        #expect(task.source == .commit(sha: fix) && task.oracle == .hiddenTests(commit: fix) && task.oracle.label == "hidden tests of \(fix.prefix(7))")
+        #expect(task.reference == fix && task.referenceGreen == true && task.title == "Fix add" && task.prompt.hasPrefix("Fix add\n\nIt subtracted."))
+        #expect(task.base == (await git("rev-parse", "HEAD~1", in: repo)))
+        #expect(ReplayTasks.cached(fix, env: env)?.failToPass.map(\.id) == ["LibTests/adds"])
+
+        let runs = try await runAll(task, [baseline, variant("- FIX-ADD"), variant("- LOOK-UP-COMMIT \(fix.prefix(7))")])
+        let plain = try #require(runs[0].result?.control)
+        #expect(!plain.passed && plain.oracle == "hidden tests: 0/1 fail-to-pass, 1/1 pass-to-pass" && !plain.flagged)
+        #expect(runs[0].result?.tests?.failed == ["LibTests/adds"])
+        // The fix passes; adding to a test file the hidden tests replace isn't weakening them.
+        let fixed = try #require(runs[1].result?.control)
+        #expect(fixed.passed && fixed.oracle == "hidden tests: 1/1 fail-to-pass, 1/1 pass-to-pass" && !fixed.flagged, "\(fixed)")
+        #expect(runs[1].result?.tests?.status == .passed)
+        #expect(read(runs[1].folder.appending(path: "work/Pkg/Tests/LibTests/LibTests.swift")).contains("adds"))
+        // Looking up the commit is a leak: the cell is flagged.
+        let peeked = try #require(runs[2].result?.control)
+        #expect(!peeked.passed && peeked.leaks == ["the commit \(fix.prefix(7))"] && peeked.flagged)
+        #expect(peeked.oracle.contains("don't build"))
+        // The user's repository is untouched.
+        #expect(await git("status", "--porcelain", in: repo) == "")
+        #expect(await git("rev-parse", "HEAD", in: repo) == fix)
+
+        // The same commit again gives the same task.
+        try ControlTasks.save(task, env: env)
+        #expect(try await ControlTasks.fromCommit(fix, repo: repo, env: env).id == task.id)
+    }
+
     @Test func labAloneCantRunACell() async throws {
         let (repo, base) = try await repository()
         let task = task(repo, base, oracle: .tests(command: "true"))
@@ -374,6 +446,48 @@ struct ControlRunsTests {
         #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"grep -r exemplar-1 ~"}"#)]), task: task) == ["the exemplar session claude:exemplar-1"])
         #expect(ControlRuns.leaks(in: transcript([("read", #"{"path":"/Users/me/.pi/agent/sessions/x.jsonl"}"#)]), task: task) == ["the session history"])
         #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"git -C /work/repo log"}"#)]), task: task) == ["the real repository"])
+        // Finished clones (with the answer of an earlier cell) and a commit's validation folder are in the Trash.
+        #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"ls ~/.Trash"}"#)]), task: task) == ["the Trash"])
+        #expect(ControlRuns.leaks(in: transcript([("Read", #"{"file_path":"/Users/me/.Trash/akit-control-1/Lib.swift"}"#)]), task: task) == ["the Trash"])
+        // Text the agent writes is no sign.
+        #expect(ControlRuns.leaks(in: transcript([("Edit", #"{"file_path":"/w/a.swift","old_string":"x","new_string":"~/.Trash /work/repo"}"#),
+                                                  ("write", #"{"path":"/w/b.md","content":"see ~/.claude/projects"}"#)]), task: task).isEmpty)
+    }
+
+    /// A task made in a worktree that was removed later: its cells clone from the repository's
+    /// main folder, and it joins a set with the main folder's tasks.
+    @Test func taskOfARemovedWorktreeStillRuns() async throws {
+        try fakeClaude()
+        let (repo, base) = try await repository()
+        let worktree = home.appending(path: "wt", directoryHint: .isDirectory)
+        await git("worktree", "add", "-q", "--detach", worktree.path, base, in: repo)
+        let oracle = ControlTask.Oracle.tests(command: #"test "$(cat value.txt)" = 1"#)
+        let linked = try await ControlTasks.reproduction(repo: worktree, base: "HEAD", prompt: "Keep value 1", modeID: nil, oracle: oracle, env: env)
+        let main = try await ControlTasks.reproduction(repo: repo, base: "HEAD", prompt: "Keep value 1 here", modeID: nil, oracle: oracle, env: env)
+        #expect(linked.mainRepo == ControlTasks.mainFolder(of: repo.path).path && main.mainRepo == linked.mainRepo)
+        await git("worktree", "remove", "--force", worktree.path, in: repo)
+        #expect(!fm.fileExists(atPath: worktree.path))
+
+        #expect(linked.cloneSource.path == linked.mainFolder.path)
+        let runs = try await runAll(linked, [baseline])
+        #expect(runs.first?.result?.control?.passed == true, "\(String(describing: runs.first?.result))")
+        try ControlTasks.save(main, env: env)
+        #expect(try LayerSets.add([linked, main], to: "swiftui", env: env).tasks == [linked.id, main.id])
+    }
+
+    /// The commit-hash and Lab-folder signs are read from Claude Code's transcript file only.
+    @Test func hiddenTestTasksRunClaudeCodeOnly() async throws {
+        let (repo, base) = try await repository()
+        let task = ControlTask(id: "fix-add-abcd", title: "Fix add", repo: repo.path, base: base, prompt: "Fix add",
+                               source: .commit(sha: base), oracle: .hiddenTests(commit: base))
+        let pi = ControlSetup(name: "pi", agent: LabAgent(harness: .pi, model: "fake/m", effort: "low"))
+        await #expect { _ = try await ControlRuns.newControlRuns(tasks: [task], setups: [baseline, pi], repeats: 1, environment: .background,
+                                                                 keep: false, akit: URL(filePath: "/usr/bin/true"), env: env) } throws: {
+            $0.localizedDescription == "Hidden-test tasks run Claude Code only for now."
+        }
+        #expect(LabStore.list(env: env).isEmpty)
+        #expect(try await ControlRuns.newControlRuns(tasks: [task], setups: [baseline], repeats: 1, environment: .background, keep: false,
+                                                     akit: URL(filePath: "/usr/bin/true"), env: env).runs.count == 1)
     }
 
     @Test func aRedReferenceBlocksQueuingCells() async throws {

@@ -1,3 +1,4 @@
+import AKitBrain
 import AKitErrorAnalysis
 import AKitFoundation
 import AKitLab
@@ -173,6 +174,7 @@ extension AppModel {
     func queueControlRuns(tasks: [ControlTask], setups: [ControlSetup], repeats: Int, environment: LabEnvironment?,
                           keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
         let akit = try await analysisAkit()
+        try await checkHiddenTests(tasks)
         let queued = try await Task.detached {
             try await ControlRuns.newControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep,
                                                  akit: akit, env: .current)
@@ -181,8 +183,25 @@ extension AppModel {
         return queued
     }
 
+    /// Cells of a commit task: an older akit can't read the task and would stop with an error.
+    private func checkHiddenTests(_ tasks: [ControlTask]) async throws {
+        guard tasks.contains(where: { if case .hiddenTests = $0.oracle { true } else { false } }) else { return }
+        if let problem = await labProblem(needing: "hidden tests") { throw LabStore.Failure(message: problem) }
+    }
+
+    /// Brain layers a layer eval or a layer set can take: every one but core (the home folder's layer).
+    var evaluableLayers: [String] { (brain?.layers.map(\.name) ?? []).filter { $0 != "core" }.sorted() }
+
+    /// The fields of a layer and the layers it requires, as the render asks them.
+    func layerFields(of layer: String) -> [LayerField] {
+        let byName = Dictionary((brain?.layers ?? []).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        guard byName[layer] != nil else { return [] }
+        return Brain.requiredClosure(of: layer, in: byName).sorted().flatMap { byName[$0]?.fields ?? [] }
+    }
+
     /// A brain layer as an eval's setups for these tasks (`akit analysis control run --layer`):
-    /// rendered from the brain, checked against each task's base commit. Writes nothing.
+    /// rendered from the brain with the layer set's answers, checked against each task's base
+    /// commit. Writes nothing.
     func prepareLayerEval(layer: String, tasks: [ControlTask], agent: LabAgent, sanity: Bool) async throws -> LayerSetups.Prepared {
         let brain = brainRoot, projects = projectsRoot, store = projectStore
         // Claude Code's skills outside any project: a layer skill with one of these names overlaps.
@@ -192,8 +211,8 @@ extension AppModel {
             return true
         }.map(\.name))
         return try await Task.detached {
-            try await LayerSetups.prepare(layer: layer, tasks: tasks, answers: [:], agent: agent, sanity: sanity, homeSkills: homeSkills,
-                                          brain: brain, store: store, projectsRoot: projects, env: .current)
+            try await LayerSetups.prepare(layer: layer, tasks: tasks, answers: LayerSets.load(layer, env: .current)?.answers ?? [:], agent: agent,
+                                          sanity: sanity, homeSkills: homeSkills, brain: brain, store: store, projectsRoot: projects, env: .current)
         }.value
     }
 
@@ -203,6 +222,7 @@ extension AppModel {
                          keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
         // An older akit would run the cells without the layer.
         if let problem = await labProblem(needing: "brain layer") { throw LabStore.Failure(message: problem) }
+        try await checkHiddenTests(prepared.runnable)
         guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
         let queued = try await Task.detached {
             try LayerEvalStore.create(prepared, repeats: repeats, env: .current)

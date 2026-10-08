@@ -1,3 +1,4 @@
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
 import AKitLab
@@ -240,6 +241,8 @@ private struct SessionDetailView: View {
     @State private var error: String?
     @State private var copied = false
     @State private var showReview = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .sessions
+    /// Add to Layer Set…: a control task from this session (snapshot hook: `--query layerSet`).
+    @State private var addToSet = DebugSnapshot.options?.section == .sessions && DebugSnapshot.options?.query == "layerSet"
     @State private var tab = DebugSnapshot.options?.tab.flatMap(SessionDetailTab.init(rawValue:)) ?? .conversation
     /// The item the conversation scrolls to: the end of a rated run, picked in the header.
     @State private var focus: Int?
@@ -270,6 +273,12 @@ private struct SessionDetailView: View {
         .sheet(isPresented: $showReview) {
             NewLabRunSheet(session: session) { _ in model.section = .lab }
         }
+        .sheet(isPresented: $addToSet) {
+            if let key = SessionKey.of(session) {
+                NewControlTaskSheet(fromSession: true, preset: NewControlTaskSheet.Source(
+                    key: key.description, title: session.title, transcript: session.file.path, project: session.project?.path, exemplarOf: []))
+            }
+        }
         // Reload on selection change and after every rescan (⌘R).
         .task(id: "\(session.id)|\(session.modified.timeIntervalSince1970)") {
             transcript = nil
@@ -295,6 +304,11 @@ private struct SessionDetailView: View {
                     Button("Review in Terminal…", systemImage: "flask") { showReview = true }
                         .labelStyle(.iconOnly)
                         .help("Lab: an agent reviews this session in a terminal tab and writes what to change")
+                }
+                if SessionKey.of(session) != nil, !model.evaluableLayers.isEmpty {
+                    Button("Add to Layer Set…", systemImage: "square.3.layers.3d") { addToSet = true }
+                        .labelStyle(.iconOnly)
+                        .help("Make a control task from this session's first turn and add it to a brain layer's set (Error Analysis → Evals)")
                 }
                 copyMenu
                 if ExternalEditor.appURL != nil {

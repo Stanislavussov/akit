@@ -154,7 +154,8 @@ struct LayerSetupsTests {
 
         let missing = await message { _ = try await prepare(tasks: [task(base)]) }
         #expect(missing?.contains("(company) is required by swiftui") == true)
-        #expect(missing?.hasSuffix("Set it with --answer, or answer it for the project in Brain → Set Up Project….") == true)
+        #expect(missing?.contains("Set it in the layer's set (Error Analysis → Evals, or akit analysis control layer-set swiftui answer FIELD=VALUE)") == true)
+        #expect(missing?.hasSuffix("with --answer, or answer it for the project in Brain → Set Up Project….") == true)
         // An empty explicit answer keeps the default.
         let defaults = try await prepare(tasks: [task(base)], answers: ["company": .text("Acme"), "ui_check": .text("")])
         #expect(section(defaults).contains("make snapshot for Acme"))
@@ -169,6 +170,16 @@ struct LayerSetupsTests {
         #expect(section(saved).contains("make check for Saved"))
         let explicit = try await prepare(tasks: [task(base)], answers: ["company": .text("Given")], store: store)
         #expect(section(explicit).contains("make check for Given"))
+
+        // A task made in a worktree of the repository: one repository with the main folder's
+        // tasks, and the project's answers are found through the main folder.
+        let worktree = fixture.home.appending(path: "wt", directoryHint: .isDirectory)
+        await fixture.git("worktree", "add", "-q", "--detach", worktree.path, in: fixture.repo)
+        #expect(ControlTasks.mainFolder(of: worktree.path).path == ControlTasks.mainFolder(of: fixture.repo.path).path)
+        let both = try await prepare(tasks: [task(base), task(base, id: "in-worktree-abcd", repo: worktree)], store: store)
+        #expect(both.runnable.count == 2 && section(both).contains("make check for Saved"))
+        let alone = try await prepare(tasks: [task(base, id: "in-worktree-abcd", repo: worktree)], store: store)
+        #expect(section(alone).contains("make check for Saved"))
     }
 
     @Test func refusedLayersAgentsAndTaskSets() async throws {
@@ -179,6 +190,11 @@ struct LayerSetupsTests {
         #expect(pi?.contains("Claude Code only") == true)
         #expect(await message { _ = try await prepare("core", tasks: [task(base)]) }?.contains("core layer") == true)
         let other = task(base, id: "other-abcd", repo: fixture.home.appending(path: "other"))
+        // A task whose repository is gone is blocked for itself, not counted as another repository.
+        let gone = try await prepare(tasks: [task(base), other])
+        #expect(gone.runnable.map(\.id) == ["make-value-2-abcd"] && gone.blocked["other-abcd"]?.contains("gone from this Mac") == true)
+        #expect(await message { _ = try await prepare(tasks: [other]) }?.contains("gone from this Mac") == true)
+        try FileManager.default.createDirectory(at: fixture.home.appending(path: "other"), withIntermediateDirectories: true)
         #expect(await message { _ = try await prepare(tasks: [task(base), other]) }?.contains("one repository") == true)
 
         // A layer that merges keys into .mcp.json is refused in v1; a .json inside a skill isn't.

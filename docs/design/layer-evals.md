@@ -3,8 +3,8 @@
 Status: design 2026-10-03, decided in a grilling session and revised after a fact-check
 against the code. Narrowed on 2026-10-08 by the decisions I2, D2, D3 and D4 (see
 [Decisions (2026-10-08)](#decisions-2026-10-08)): v1 is for Claude Code only, without a
-home fingerprint, with the verdict offline only. Slice 1 built 2026-10-08 (see
-[Built](#built)); slices 2, 5 and 6, then the pilot, are next (step 4 of `README.md`).
+home fingerprint, with the verdict offline only. Slices 1 and 2 built 2026-10-08 (see
+[Built](#built)); slices 5 and 6, then the pilot, are next (step 4 of `README.md`).
 
 ## Goal
 
@@ -168,6 +168,55 @@ Further choices of the step 4 plan, accepted on the same day:
   only through an `akit` whose `akit lab --help` names "control cells with a brain layer".
   CLI: `akit analysis control run TASK[,…] --layer NAME [--answer FIELD=VALUE]… [--eval ID]
   [--brain DIR]`.
+
+**Slice 2, commit tasks and layer sets (2026-10-08).**
+
+- `ControlTask.Source.commit(sha:)` and `Oracle.hiddenTests(commit:)` ("hidden tests of
+  a1b2c3d"). `ControlTasks.fromCommit` checks the commit as a replay task (or takes the
+  cached one), base = parent, prompt = the replay prompt, reference = the commit
+  (`referenceGreen` true); a commit that already has a task gives that task back. Older
+  AKit builds can't decode the new cases and leave such tasks out: install the app and
+  `akit` together (the app queues them only through an `akit` whose `akit lab --help`
+  names "hidden tests").
+- `HiddenTests` (`AKitLab`) is the replay's hidden-test phase, moved out of `ReplayRun`
+  (replays unchanged) and used by `ControlCell.run(…, oracle: CellOracle)` (`.command`,
+  `.hidden`, `.none`). The cell result carries the outcome in `tests`; the oracle line
+  reads "hidden tests: 1/1 fail-to-pass, 1/1 pass-to-pass". The guard leaves the hidden
+  test files out of its before/after snapshots; the leak check adds the commit's hash (as
+  a word of its own, in tool calls or results) and AKit's Lab folder (any path with
+  `.akit/lab`), read from Claude Code's transcript file, so hidden-test tasks run Claude
+  Code only for now. Every control cell and replay also flags a tool call into the Trash
+  (`/.Trash`), where finished clones and a commit's validation folder go. The agent phase
+  of every control cell runs under the memory watchdog.
+- Layer sets `~/.akit/lab/evals/sets/<layer>.json` (`schema` 1; tasks, answers,
+  `createdAt`, `updatedAt`), changed under the file's lock; a newer schema is skipped and
+  never overwritten. One repository per set (v1): a task of another repository is refused
+  while the set holds tasks of one. Worktrees of one repository count as one (their shared
+  git folder, read from `.git` and `commondir`); an eval takes the project's answers and
+  `project_name` from the main folder, so a task made in a worktree finds them. A task
+  records that main folder when it is made (`mainRepo`; older tasks find it from `repo`),
+  so a removed worktree doesn't split the set: its cells clone from the main folder
+  (worktrees share the objects; the cell key has no repository path). A task whose
+  repository is gone altogether is blocked by itself. Note: an eval queued by slice 1 with
+  tasks of a worktree rendered `project_name` from the worktree's folder, so Continue of it
+  may refuse ("The layer changed since the eval…"); that fails safe, start a new eval.
+- Leak signs read only what a tool call asks for (`LeakCheck.pathLikeInput`: a shell
+  command, the path or pattern a file tool reads or searches, the path it writes), never
+  the text it writes: AKit's own sources mention `~/.akit/lab`, and editing them is no leak. Missing task ids are shown as missing and skipped. The
+  set's answers are the eval's explicit answers (`--answer` still wins in the CLI). Core
+  has no set.
+- UI: Evals → **From Commit…** (repository, recent commits that change Swift tests with
+  "checked" marks, **Check and Save**, optional set), **Layer Sets** in the sidebar with a
+  set page (tasks, missing marked, **Remove from Set**, the answers editor with **Save
+  Answers**, **Run Cells…** on the set's tasks with the layer chosen, **Delete Set…**),
+  **Add to Layer Set…** and "In sets" on a task, **Add to layer set** in the From
+  Session… and Reproduction… sheets, and **Add to Layer Set…** on a Claude Code or Pi
+  session of the Sessions screen (the From Session… sheet with that session). CLI: `akit
+  analysis control task new --commit SHA [--repo DIR]`, `--layer-set LAYER` on every form
+  of `task new`, `layer-sets`, `layer-set LAYER [add|remove TASK[,…] | answer FIELD=VALUE…
+  | delete]`.
+- Not in this slice: "From a failure mode" (slice 7, waits), a Continue that picks up tasks
+  added to the set later (by design, decision 5).
 
 Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (see
 [Open questions](#open-questions)); the check needs a transcript of a repository with

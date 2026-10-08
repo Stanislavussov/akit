@@ -184,7 +184,8 @@ A control cell adds `control` (`error-analysis.md`, "Controlled evals"): `key`, 
 Claude Code version of the stream's init event) and, for a layer cell only, `overlay`: the
 notes of placing the layer in the clone, `[]` when there were none. A layer cell without
 `overlay` was run by an akit that ignored the layer; comparisons leave it out. Its
-`run.json` has `controlSetup.layer` (`layer-evals.md`, "Format").
+`run.json` has `controlSetup.layer` (`layer-evals.md`, "Format"). A cell of a task made
+from a commit also has `tests`, the hidden tests' outcome as in a replay.
 
 Who writes what:
 
@@ -280,6 +281,11 @@ Rules learned in the pilot:
 - `--filter 'Suite/name\('`; a run with 0 tests is "not run", not "pass".
 - A watchdog kills test helpers above 2 GB (see the memory note about the 35 GB test).
   Builds are not held to it (compilers may need more); only test helpers are watched then.
+- The hidden-test phase (`HiddenTests`: copy the test files, build, run fail-to-pass and
+  pass-to-pass) is shared by replays and control cells of tasks made from a commit
+  (layer evals slice 2, 2026-10-08). The agent phase of every control cell runs under the
+  same watchdog (test helpers only), so an agent's own `swift test` in a large clone
+  can't grow without limit.
 
 ### Setups to compare (Claude Code)
 

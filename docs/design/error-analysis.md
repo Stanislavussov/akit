@@ -751,6 +751,20 @@ row pairs only with its own eval's required-layers row. Its offline verdict leve
 (offline)", slice 5) is for layer setups only: D4 (2026-10-08) kept the fix rule, so a
 patch fix never gets it.
 
+**Tasks from commits** (layer evals slice 2, 2026-10-08). A control task can also come
+from a commit (`Source.commit`), judged by the commit's own tests (`Oracle.hiddenTests`):
+the task points at the replay task cached in `~/.akit/lab/tasks/<sha>.json` (validated
+when the task is made: two local builds, no tokens), its prompt is the replay prompt, its
+reference is the commit itself. After the agent, the hidden test files are copied in and
+judged by fail-to-pass and pass-to-pass, the same code as a replay (`HiddenTests`,
+`lab.md`). For these cells the guard leaves out the hidden test files, and the leak check
+adds the replay's signs (the commit's hash in tool calls or results, AKit's Lab folder).
+Every control cell's agent runs under the memory watchdog. Evals → **From Commit…** and
+`akit analysis control task new --commit SHA` make one. **Layer sets**
+(`sets/<layer>.json`): the tasks a layer's evals run and the field answers they render
+with; Evals → Layer Sets, **Add to Layer Set…** on a task and on a session,
+`akit analysis control layer-set`.
+
 **Mapping.**
 
 | Error analysis | Control set |
@@ -837,8 +851,9 @@ a minimal reproduction: the simplest request that triggers the mode.
   fixes/<mode-id>.json       # fix drafts (the status lives in modes.json)
   work/                      # input files of model calls made from the app
   sends.jsonl                # send log
-~/.akit/lab/evals/           # control tasks and sets; cells are Lab runs; layer evals in
-                             # layer-evals/<eval-id>/ (layer-evals.md, Storage)
+~/.akit/lab/evals/           # cells are Lab runs; tasks/<id>.json control tasks (session,
+                             # reproduction or commit); sets/<layer>.json layer sets;
+                             # layer evals in layer-evals/<eval-id>/ (layer-evals.md, Storage)
 ```
 
 All of it is local and never goes into the brain repo. Everything outside `modes/` is

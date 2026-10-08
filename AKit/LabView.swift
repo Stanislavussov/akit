@@ -135,7 +135,8 @@ private struct LabRunRow: View {
                 if let agent = run.spec.agent, agent.harness != .claudeCode {
                     Text(agent.harness.title)
                 }
-                if let tests = run.result?.tests {
+                // A control cell's own mark covers its hidden tests.
+                if let tests = run.result?.tests, run.result?.control == nil {
                     Image(systemName: tests.status == .passed ? "checkmark.seal" : "xmark.seal")
                         .foregroundStyle(tests.status == .passed ? .green : .red)
                 }

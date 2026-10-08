@@ -53,14 +53,16 @@ struct RunCellsSheet: View {
     @State private var error: String?
     @State private var busy = false
 
-    /// `fixMode`: Try on Control Tasks… of a mode page (`--fix MODE`).
-    init(tasks: Set<String>, fixMode: String?) {
+    /// `fixMode`: Try on Control Tasks… of a mode page (`--fix MODE`). `layer`: Run Cells… of a
+    /// layer set's page, a layer eval of that layer.
+    init(tasks: Set<String>, fixMode: String?, layer layerSet: String? = nil) {
         // Snapshot hook: `--query layer` opens the sheet on a brain layer.
-        let layer = fixMode == nil && DebugSnapshot.options?.query == "layer"
+        let layer = fixMode == nil && (layerSet != nil || DebugSnapshot.options?.query == "layer")
         _tasks = State(initialValue: tasks)
         _variant = State(initialValue: fixMode != nil || layer)
         _patchSource = State(initialValue: fixMode != nil ? .fix : layer ? .layer : .text)
         _fixMode = State(initialValue: fixMode)
+        _layerName = State(initialValue: layerSet)
     }
 
     private var agent: LabAgent {
@@ -74,7 +76,7 @@ struct RunCellsSheet: View {
     private var isLayer: Bool { variant && patchSource == .layer }
 
     /// Brain layers that can be evaluated: every one but core (the home folder's layer).
-    private var layers: [String] { (model.brain?.layers.map(\.name) ?? []).filter { $0 != "core" }.sorted() }
+    private var layers: [String] { model.evaluableLayers }
 
     private var layerRequest: LayerRequest? {
         guard isLayer, let layerName, harness == .claudeCode, !agent.model.isEmpty, !tasks.isEmpty else { return nil }
@@ -269,7 +271,7 @@ struct RunCellsSheet: View {
             Picker("Layer", selection: $layerName) {
                 ForEach(layers, id: \.self) { Text($0).tag(String?.some($0)) }
             }
-            Text("Baseline: the layer's required layers alone; variant: them and the layer. Rendered once from the brain's commit with the project's saved answers and the layer's defaults; the layer's text is appended to the file Claude Code reads in the clone.")
+            Text("Baseline: the layer's required layers alone; variant: them and the layer. Rendered once from the brain's commit with the layer set's answers, then the project's saved answers and the layer's defaults; the layer's text is appended to the file Claude Code reads in the clone.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

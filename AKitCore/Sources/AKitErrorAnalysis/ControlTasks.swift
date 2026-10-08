@@ -41,6 +41,8 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
         case session(key: SessionKey)
         /// A minimal reproduction the user wrote.
         case reproduction
+        /// A commit, redone from its parent (its replay task in `~/.akit/lab/tasks/<sha>.json`).
+        case commit(sha: String)
     }
 
     public enum Oracle: Codable, Sendable, Hashable {
@@ -48,12 +50,16 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
         case tests(command: String)
         /// The mode's code check on the cell's transcript, a behavioural oracle.
         case assertion(modeID: String)
+        /// The commit's own tests, copied in after the agent: its fail-to-pass tests must pass
+        /// and its pass-to-pass tests must still pass (SwiftPM only, as replays).
+        case hiddenTests(commit: String)
 
-        /// "tests: swift test", "assertion: repeated-steps".
+        /// "tests: swift test", "assertion: repeated-steps", "hidden tests of a1b2c3d".
         public var label: String {
             switch self {
             case .tests(let command): "tests: \(command)"
             case .assertion(let modeID): "assertion: \(modeID)"
+            case .hiddenTests(let commit): "hidden tests of \(commit.prefix(7))"
             }
         }
     }
@@ -63,6 +69,9 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
     public var title: String
     /// Folder of the repository.
     public var repo: String
+    /// The repository's main folder when the task was made, also when `repo` is a linked
+    /// worktree (which may be removed later); nil in tasks made before it was recorded.
+    public var mainRepo: String?
     /// The commit the agent starts from.
     public var base: String
     public var prompt: String
@@ -78,11 +87,12 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
     public var referenceGreen: Bool?
     public var createdAt: Date
 
-    public init(id: String, title: String, repo: String, base: String, prompt: String, source: Source, modeID: String? = nil,
-                oracle: Oracle, successMode: Bool? = nil, reference: String? = nil, createdAt: Date = .now) {
+    public init(id: String, title: String, repo: String, mainRepo: String? = nil, base: String, prompt: String, source: Source,
+                modeID: String? = nil, oracle: Oracle, successMode: Bool? = nil, reference: String? = nil, createdAt: Date = .now) {
         self.id = id
         self.title = title
         self.repo = repo
+        self.mainRepo = mainRepo
         self.base = base
         self.prompt = prompt
         self.source = source
@@ -91,6 +101,21 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
         self.successMode = successMode
         self.reference = reference
         self.createdAt = createdAt
+    }
+
+    /// The repository's main folder: as recorded when the task was made, else found from `repo`.
+    /// Layer sets and evals take one repository by it.
+    public var mainFolder: URL {
+        mainRepo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? ControlTasks.mainFolder(of: repo)
+    }
+
+    /// Whether the repository is still on this Mac (its main folder).
+    public var repositoryExists: Bool { FileManager.default.fileExists(atPath: mainFolder.path) }
+
+    /// Where cells clone the base commit from: the task's folder, or the main folder once a
+    /// worktree is gone (worktrees share the repository's objects).
+    public var cloneSource: URL {
+        FileManager.default.fileExists(atPath: repo) ? URL(filePath: repo, directoryHint: .isDirectory) : mainFolder
     }
 }
 
@@ -123,8 +148,8 @@ public enum ControlTasks {
         guard let folder = session.project else { throw Failure(message: "The session \(key) records no folder.") }
         let repo = try await repository(folder, env: env)
         let full = try await commit(base, in: repo, env: env)
-        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path, base: full,
-                           prompt: prompt, source: .session(key: key), modeID: modeID, oracle: oracle,
+        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path,
+                           mainRepo: mainFolder(of: repo.path).path, base: full, prompt: prompt, source: .session(key: key), modeID: modeID, oracle: oracle,
                            successMode: successMode ? true : nil, reference: reference)
     }
 
@@ -136,14 +161,37 @@ public enum ControlTasks {
         guard !prompt.isEmpty else { throw Failure(message: "The prompt is empty.") }
         let repo = try await repository(folder, env: env)
         let full = try await commit(base, in: repo, env: env)
-        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path, base: full, prompt: prompt,
-                           source: .reproduction, modeID: modeID, oracle: oracle, successMode: successMode ? true : nil,
+        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path,
+                           mainRepo: mainFolder(of: repo.path).path, base: full, prompt: prompt, source: .reproduction, modeID: modeID, oracle: oracle, successMode: successMode ? true : nil,
                            reference: reference)
+    }
+
+    /// A task from a commit (`docs/design/layer-evals.md`, "Tasks and layer sets"): redo it
+    /// from its parent; the commit's own tests judge the cell. The commit is checked as a
+    /// replay task first (two local builds, minutes, no tokens) unless its replay task is
+    /// cached. A commit that already has a control task gives that task back.
+    public static func fromCommit(_ reference: String, repo: URL, env: HarnessEnvironment,
+                                  out: @escaping @Sendable (String) -> Void = { _ in }) async throws -> ControlTask {
+        let replay: ReplayTask
+        do {
+            replay = try await ReplayTasks.task(commit: reference, repo: repo, env: env, out: out)
+        } catch let failure as ReplayTasks.Failure {
+            throw Failure(message: failure.message)
+        }
+        if let existing = list(env: env).first(where: { $0.source == .commit(sha: replay.commit) }) { return existing }
+        var task = ControlTask(id: newID(replay.subject), title: JSONLines.titleLine(replay.subject, limit: 60), repo: replay.repo,
+                               mainRepo: mainFolder(of: replay.repo).path, base: replay.base, prompt: replay.prompt, source: .commit(sha: replay.commit),
+                               oracle: .hiddenTests(commit: replay.commit), reference: replay.commit)
+        // Validation ran the tests on the commit itself: they pass there.
+        task.referenceGreen = true
+        return task
     }
 
     /// An assertion needs a code check, and a mode one turn can show.
     static func checkOracle(_ oracle: ControlTask.Oracle) throws {
         switch oracle {
+        case .hiddenTests:
+            throw Failure(message: "Hidden tests come from a commit: make the task with --commit.")
         case .tests(let command):
             guard !command.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure(message: "The test command is empty.") }
         case .assertion(let modeID):
@@ -164,6 +212,27 @@ public enum ControlTasks {
         let slug = String(words.joined(separator: "-").unicodeScalars.filter(\.isASCII).prefix(40))
         let suffix = UUID().uuidString.prefix(4).lowercased()
         return slug.isEmpty ? "task-\(suffix)" : "\(slug)-\(suffix)"
+    }
+
+    /// The main folder of a task's repository, also when the task was made in a linked
+    /// worktree: worktrees of one repository share its git folder (what `git rev-parse
+    /// --git-common-dir` names), read here from `.git` and `commondir`. Layer sets and layer
+    /// evals take one repository by this folder; the project's answers and `project_name`
+    /// come from it. Any other layout gives the folder itself.
+    public static func mainFolder(of repo: String) -> URL {
+        func resolved(_ path: String, from base: URL) -> URL {
+            let full = path.hasPrefix("/") ? path : (base.path as NSString).appendingPathComponent(path)
+            return URL(filePath: full, directoryHint: .isDirectory).standardizedFileURL.resolvingSymlinksInPath()
+        }
+        let folder = URL(filePath: repo, directoryHint: .isDirectory).standardizedFileURL.resolvingSymlinksInPath()
+        // A linked worktree's `.git` is a file: "gitdir: <main>/.git/worktrees/<name>".
+        guard let text = try? String(contentsOf: folder.appending(path: ".git"), encoding: .utf8), text.hasPrefix("gitdir:") else {
+            return folder
+        }
+        let gitDir = resolved(text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines), from: folder)
+        guard let common = try? String(contentsOf: gitDir.appending(path: "commondir"), encoding: .utf8) else { return folder }
+        let commonDir = resolved(common.trimmingCharacters(in: .whitespacesAndNewlines), from: gitDir)
+        return commonDir.lastPathComponent == ".git" ? commonDir.deletingLastPathComponent() : folder
     }
 
     static func repository(_ folder: URL, env: HarnessEnvironment) async throws -> URL {

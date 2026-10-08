@@ -165,9 +165,19 @@ public struct ControlOutcome: Codable, Sendable, Hashable {
     }
 }
 
+/// What judges a control cell after its agent: the project's test command, a commit's hidden
+/// tests, or nothing here (an assertion on the transcript, which error analysis checks).
+public enum CellOracle: Sendable {
+    /// `/bin/sh -c` in the clone; exit 0 passes.
+    case command(String)
+    /// The commit's own tests, copied in after the agent, as in a replay.
+    case hidden(ReplayTask)
+    case none
+}
+
 /// Lab's part of a control cell: the agent works on a task in an isolated clone of the base
-/// commit with one setup, then the guard and the test command. Error analysis owns the
-/// tasks, the assertion and the comparison (`AnalysisRuns`).
+/// commit with one setup, then the guard and the oracle. Error analysis owns the tasks, the
+/// assertion and the comparison (`AnalysisRuns`).
 public enum ControlCell {
     public struct Facts: Sendable {
         /// The cell's own session, read like an indexed one; nil when the harness wrote none.
@@ -177,6 +187,11 @@ public enum ControlCell {
         public var usage: SendUsage
         /// The test command's verdict; nil without one.
         public var tests: TestCommand?
+        /// The hidden tests' verdict (a commit task); nil for other oracles.
+        public var hiddenTests: TestOutcome?
+        /// Signs in the transcript that a commit task's agent looked for the answer: the
+        /// commit's hash, AKit's Lab folder.
+        public var hiddenLeaks: [String]
         public var testsDropped: Bool
         public var changedTestFiles: [String]
         /// The overlay's notes; nil when the cell had no overlay.
@@ -187,13 +202,15 @@ public enum ControlCell {
         public var harnessVersion: String?
 
         public init(transcript: SessionTranscript?, metrics: SessionMetrics? = nil, agentError: String? = nil, usage: SendUsage = SendUsage(),
-                    tests: TestCommand? = nil, testsDropped: Bool = false, changedTestFiles: [String] = [], overlayNotes: [String]? = nil,
-                    transcriptFile: URL? = nil, harnessVersion: String? = nil) {
+                    tests: TestCommand? = nil, hiddenTests: TestOutcome? = nil, hiddenLeaks: [String] = [], testsDropped: Bool = false,
+                    changedTestFiles: [String] = [], overlayNotes: [String]? = nil, transcriptFile: URL? = nil, harnessVersion: String? = nil) {
             self.transcript = transcript
             self.metrics = metrics
             self.agentError = agentError
             self.usage = usage
             self.tests = tests
+            self.hiddenTests = hiddenTests
+            self.hiddenLeaks = hiddenLeaks
             self.testsDropped = testsDropped
             self.changedTestFiles = changedTestFiles
             self.overlayNotes = overlayNotes
@@ -215,8 +232,11 @@ public enum ControlCell {
     /// The clone goes to the Trash at the end, or into the run folder as `work` with `keep`.
     /// The agent gets the run folder for its stream only, never as `AKIT_LAB_DIR`. `overlay`:
     /// a layer setup's stored overlay, placed after the clone; a placement that is blocked
-    /// here (the task should have been refused when it was queued) stops the cell.
-    public static func run(_ run: LabRun, setup: ControlSetup, repo: URL, base: String, prompt: String, testCommand: String?,
+    /// here (the task should have been refused when it was queued) stops the cell. The agent
+    /// runs under the memory watchdog: its own `swift test` in a large clone must not grow
+    /// without limit. The guard leaves out the test files hidden tests copy in afterwards: the
+    /// agent may add tests to them, and they are replaced anyway.
+    public static func run(_ run: LabRun, setup: ControlSetup, repo: URL, base: String, prompt: String, oracle: CellOracle,
                            overlay: ControlOverlay? = nil, testLimit: TimeInterval = 15 * 60, env: HarnessEnvironment,
                            phase: @escaping @Sendable (RunState.Phase) -> Void,
                            out: @escaping @Sendable (String) -> Void) async throws -> Facts {
@@ -244,31 +264,54 @@ public enum ControlCell {
                 notes.forEach { out("Layer: \($0)") }
             }
         }
-        let before = TestFiles.state(of: work)
+        var hiddenFiles: Set<String> = []
+        if case .hidden(let task) = oracle { hiddenFiles = Set(task.testFiles) }
+        let before = TestFiles.state(of: work, ignoring: hiddenFiles)
         guard !Cancellation.isCancelled else { throw CancellationError() }
 
         phase(.agent)
         var spec = run.spec
         spec.agent = setup.agent
         spec.setup = nil
-        let agent = try await AgentRun.run(prompt: prompt, spec: spec, in: work, runFolder: run.folder, exposeRunFolder: false,
-                                           extra: setup.tools, env: env, out: out)
+        let agent: AgentRun.Outcome
+        do {
+            let watchdog = Watchdog(folder: work, watchesGroups: false) { out($0) }
+            // Leftover test helpers of the agent's own `swift test`, also when the agent throws.
+            defer { watchdog.killHelpers() }
+            agent = try await watchdog.watching {
+                try await AgentRun.run(prompt: prompt, spec: spec, in: work, runFolder: run.folder, exposeRunFolder: false,
+                                       extra: setup.tools, env: env, out: out)
+            }
+        }
         guard !agent.exit.cancelled else { throw CancellationError() }
-        let after = TestFiles.state(of: work)
+        let after = TestFiles.state(of: work, ignoring: hiddenFiles)
 
         var tests: TestCommand?
-        if let testCommand {
+        var hidden: TestOutcome?
+        switch oracle {
+        case .command(let command):
             phase(.tests)
-            tests = await runTests(testCommand, in: work, limit: testLimit, log: run.folder.appending(path: "check.log"), env: env, out: out)
+            tests = await runTests(command, in: work, limit: testLimit, log: run.folder.appending(path: "check.log"), env: env, out: out)
             guard !Cancellation.isCancelled else { throw CancellationError() }
+        case .hidden(let task):
+            phase(.tests)
+            let url = run.folder.appending(path: "check.log")
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            let log = try? FileHandle(forWritingTo: url)
+            defer { try? log?.close() }
+            hidden = try await HiddenTests.judge(task, in: work, log: log, env: env, out: out)
+        case .none:
+            break
         }
 
         phase(.metrics)
         let transcript = transcript(spec, runFolder: run.folder, env: env)
         let metrics = setup.agent.harness == .claudeCode ? await LabWorker.ownMetrics(spec, project: work, env: env) : nil
         let transcriptFile = setup.agent.harness == .claudeCode ? LabPaths.transcript(sessionID: spec.sessionID, env: env) : nil
+        var hiddenLeaks: [String] = []
+        if case .hidden(let task) = oracle, let transcriptFile { hiddenLeaks = LeakCheck.commitSigns(in: transcriptFile, task: task, env: env) }
         return Facts(transcript: transcript, metrics: metrics, agentError: agent.error, usage: agent.usage, tests: tests,
-                     testsDropped: after.markers < before.markers,
+                     hiddenTests: hidden, hiddenLeaks: hiddenLeaks, testsDropped: after.markers < before.markers,
                      changedTestFiles: before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted(),
                      overlayNotes: overlayNotes, transcriptFile: transcriptFile, harnessVersion: agent.harnessVersion)
     }
@@ -358,7 +401,8 @@ public struct TestFiles: Equatable {
         (try? NSRegularExpression(pattern: markerPattern))?.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text)) ?? 0
     }
 
-    static func state(of folder: URL) -> TestFiles {
+    /// `ignoring`: paths relative to `folder` left out (a commit task's hidden test files).
+    static func state(of folder: URL, ignoring: Set<String> = []) -> TestFiles {
         var state = TestFiles()
         guard let walker = FileManager.default.enumerator(atPath: folder.path) else { return state }
         while let path = walker.nextObject() as? String {
@@ -368,7 +412,7 @@ public struct TestFiles: Equatable {
                 if name.hasPrefix(".") || skipped.contains(name) { walker.skipDescendants() }
                 continue
             }
-            guard type == .typeRegular, !name.hasPrefix("."), isTestFile(path),
+            guard type == .typeRegular, !name.hasPrefix("."), isTestFile(path), !ignoring.contains(path),
                   let data = try? Data(contentsOf: folder.appending(path: path)) else { continue }
             state.hashes[path] = Checksum.sha256(data)
             state.markers += markers(in: String(decoding: data, as: UTF8.self))

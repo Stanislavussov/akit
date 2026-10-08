@@ -156,6 +156,42 @@ struct ControlTasksTests {
         #expect(throws: ControlTasks.Failure.self) { try ControlTasks.remove(task.id, env: env) { _ in nil } }
     }
 
+    /// A commit whose replay task is cached: the task points at it, nothing is built.
+    @Test func taskFromACachedCommit() async throws {
+        let sha = String(repeating: "c", count: 40), base = String(repeating: "b", count: 40)
+        let cache = home.appending(path: ".akit/lab/tasks/\(sha).json")
+        try fm.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("""
+            {"schema": 1, "repo": "/work/akit", "commit": "\(sha)", "base": "\(base)", "subject": "Report layer.yaml mistakes",
+             "prompt": "Report layer.yaml mistakes\\n\\n\(ReplayTask.instruction)", "package": "AKitCore",
+             "testFiles": ["AKitCore/Tests/AKitBrainTests/BrainTests.swift"],
+             "failToPass": [{"suite": "BrainTests", "name": "reportsMistakes"}], "passToPass": [],
+             "validatedAt": "2026-10-08T10:00:00Z", "notes": []}
+            """.utf8).write(to: cache)
+        let task = try await ControlTasks.fromCommit(sha, repo: home.appending(path: "nowhere"), env: env)
+        #expect(task.repo == "/work/akit" && task.base == base && task.reference == sha && task.referenceGreen == true)
+        #expect(task.source == .commit(sha: sha) && task.oracle == .hiddenTests(commit: sha) && task.title == "Report layer.yaml mistakes")
+        #expect(task.prompt.hasSuffix(ReplayTask.instruction) && task.id.hasPrefix("report-layer-yaml-mistakes-"))
+        // Hidden tests come only from a commit; their reference check is the validation itself.
+        await #expect(throws: ControlTasks.Failure.self) {
+            try await ControlTasks.reproduction(repo: home, base: base, prompt: "x", modeID: nil, oracle: .hiddenTests(commit: sha), env: env)
+        }
+        await #expect(throws: ControlTasks.Failure.self) { try await ControlTasks.checkReference(task, env: env) }
+
+        // On disk: the new source and oracle; task files written before them decode unchanged.
+        try ControlTasks.save(task, env: env)
+        let text = try String(contentsOf: EvalPaths(env: env).task(task.id), encoding: .utf8)
+        #expect(text.contains(#""commit" : {"#) && text.contains(#""hiddenTests" : {"#))
+        try Data("""
+            {"schema": 1, "id": "old-task-abcd", "title": "Old", "repo": "/r", "base": "\(base)", "prompt": "p",
+             "source": {"reproduction": {}}, "oracle": {"tests": {"command": "swift test"}}, "createdAt": "2026-10-01T10:00:00Z"}
+            """.utf8).write(to: EvalPaths(env: env).task("old-task-abcd"))
+        let old = try #require(ControlTasks.load("old-task-abcd", env: env))
+        #expect(old.source == .reproduction && old.oracle == .tests(command: "swift test") && ControlTasks.list(env: env).count == 2)
+        // Made before the main folder was recorded: found from its folder.
+        #expect(old.mainRepo == nil && old.mainFolder.path == "/r" && task.mainRepo == "/work/akit")
+    }
+
     @Test func theReferenceCheckRunsTheTestsOnTheReferenceCommit() async throws {
         let (repo, base) = try await repository()
         let head = try #require(await git("rev-parse", "HEAD", in: repo))
