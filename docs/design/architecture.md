@@ -11,6 +11,9 @@ code. Three modules were added after the split, `AKitLab`, `AKitErrorAnalysis` a
 `AKitMCPCatalog` (2026-10-04; 16 library targets now); the table has them, the graph does not. Planned, not built:
 `AKitErrorAnalysis → AKitRender` for layer evals (`layer-evals.md`).
 
+2026-10-08 (JSON merge, `layers.md`): `AKitRender` also depends on `AKitFoundation`, for
+`JSONValue` (the JSON tree that Brain, Render and ProjectSetup share).
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -105,7 +108,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitMCPCatalog` | MCP (the `MCPDraft` it fills) |
 | `AKitBrain` | Foundation, Model, Skills, Yams |
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
-| `AKitRender` | Brain |
+| `AKitRender` | Foundation (`JSONValue`), Brain |
 | `AKitProjectSetup` | Foundation, Brain, Render, Insights |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain |
@@ -315,7 +318,10 @@ Data going **into** the seam: `ProjectBundle`, defined in `AKitBrain`:
 - `layers`: resolved order (required first, then the user's selection order)
 - `files`: `[(layer, to, data, override)]`, every template output whose `when` holds,
   in layer order, with fields filled in. The AGENTS.md fragments are the ones with
-  `to == "AGENTS.md"`; the render glues Markdown files and checks the others for clashes
+  `to == "AGENTS.md"`; the render glues Markdown files, merges `.mcp.json` and `.claude/settings.json` key by key
+  and checks the others for clashes. Such a template arrives already parsed and printed
+  again: fields filled only inside string values, `env` and `headers` holding only `${VAR}`
+  references. No target is ever `settings.local.json` or `auth.json`
 - `skills`: `[(name, mode: auto|manual, source, files: [relativePath: Data])]` with fields filled in the `.md` files; `source` is a layer name or `projectSource` ("this project"); `files` is empty for a skill missing from the brain
 - `errors` / `warnings` from resolving (missing required field, unknown layer, conflicting layers, skill clash, missing skill or template)
 - the constants `skillsFolder` (`.agents/skills`) and `projectSource`
@@ -327,12 +333,15 @@ Data coming **out**: `RenderResult`, also defined in `AKitBrain`, so a
 replacement module needs nothing from the old one:
 
 - `outputs: [RenderedFile]`, each with `path` (relative to the project),
-  `content` (`.data` or `.link(destination)`) and `layers`
+  `content` (`.data` or `.link(destination)`), `layers` and `mergesJSON` (since
+  2026-10-08: the layers' keys of `.mcp.json` or `.claude/settings.json`, merged key by key into the project's
+  file by `ProjectSetup`, never written whole)
 - `layers` (render order) and `skills` (name, mode, source): the project form
   and the spool's `apply` line use them
 - `errors`, `warnings`: the bundle's, then the render's own (manual-only skill
-  without a header, two layers writing the same non-Markdown file, a layer writing
-  into `.claude/skills`, a path written twice or inside `.git`)
+  without a header, two layers writing the same non-Markdown, non-JSON file, two layers
+  giving one JSON leaf different values, a layer writing into `.claude/skills`, a path
+  written twice or inside `.git`; the warning that JSON files are skipped in the home folder)
 
 A rulesync-based `AKitRender` would:
 

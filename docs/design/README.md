@@ -43,7 +43,7 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 | Document | Question it answers | Where it shows | Built | Not built |
 |---|---|---|---|---|
 | [`architecture.md`](architecture.md) | Which module owns what? | `AKitCore/Package.swift` | all 25 steps; 16 modules | — |
-| [`layers.md`](layers.md) | How does a project get exactly the setup it needs? | Brain screen; `akit plan` / `apply` | roadmap 1–3, update rules, work machines, home render, Update Home Folder… and Forget Project… (2026-10-07) | MCP in layers, JSON merge, `/akit-setup` draft, `machines/<name>.yaml` |
+| [`layers.md`](layers.md) | How does a project get exactly the setup it needs? | Brain screen; `akit plan` / `apply` | roadmap 1–3, update rules, work machines, home render, Update Home Folder… and Forget Project… (2026-10-07), JSON merge into `.mcp.json` and `.claude/settings.json`, so MCP servers in layers (2026-10-08) | JSON merge into the home folder, MCP secrets from Keychain, `/akit-setup` draft, `machines/<name>.yaml` |
 | [`session-insights.md`](session-insights.md) | What does the setup cost in every request without being used? | Insights screen; `akit stats`, `akit recommend`, `akit insights` | steps 1–7 and 10 (the Insights screen); step 8 as simplified by I1 (2026-10-08): only described exposures count, and the "descriptions dropped" finding; of step 11 the shared failure signals (2026-10-08) | steps 9, the rest of 11, 12–13; step 8's name-only reasons and over-budget rule |
 | [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4; failure signals by the shared rules, with repeated calls (2026-10-08) | index as a source, Pi replays |
 | [`error-analysis.md`](error-analysis.md) | What goes wrong again and again, and did the fix help? | Error Analysis screen; `akit analysis`; Pi ratings on Sessions | slices 1–8; quick ratings after a Pi run, with change, comment and remove; shown after their run and given to Lab reviews (2026-10-07) | manual calibration of cells, merge/split proposals |
@@ -58,6 +58,7 @@ The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`
 | To do this | Use |
 |---|---|
 | Give a project its setup | Brain → Set Up Project… |
+| Give a project MCP servers or Claude Code settings from a layer | a layer file with `to: .mcp.json` or `to: .claude/settings.json`, then Brain → Set Up Project… (keys are merged; secrets only as `${VAR}`) |
 | Add an MCP server from a public catalog | MCP Servers → Catalog… |
 | Update the home folder from the core layer | Brain → core → Update Home Folder… (or `akit apply --home`) |
 | Forget a project and trash the files AKit wrote there | Brain → the project → Forget Project… |
@@ -82,7 +83,7 @@ design doc and this table say so.
 | 3 | Count only exposures with a description. Built 2026-10-08 as I1: stats, recommend and the summaries' `described` day field; the "descriptions dropped by the harness" line in `akit stats` and on Insights | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
 | 5 | Layer checks: slices 3 and 4 | `layer-evals.md` | Only if the pilot shows that success alone can't see the gain |
-| 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json` | `layers.md`, Roadmap 4 | One mechanism unblocks three plans: MCP in layers, hooks in layers, and writing `enabledPlugins` from a recommendation |
+| 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json`. Built 2026-10-08: the two files merge key by key, per-key ownership in the lock, `${VAR}`-only secrets, masked preview; not into the home folder yet. It is the base for hooks in layers, but arrays are leaves: lists from several layers (hooks, permissions) clash until named arrays get a union merge | `layers.md`, JSON merge; Roadmap 4 | One mechanism unblocks MCP in layers and writing `enabledPlugins` from a recommendation, and is the base for hooks in layers (array merge still to do) |
 | 7 | One parser for failure signals. Built 2026-10-08: `FailureSignals` in `AKitSessions` holds the rules of interrupts, rejections, tool errors and repeated calls; Lab and the index scanner both use it (I4, D1) | `definitions.md`; `session-insights.md`, step 11 (see I4) | Two parsers counted the same signals differently |
 | 8 | On demand | see Parked | No user yet |
 

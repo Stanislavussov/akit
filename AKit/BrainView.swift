@@ -175,15 +175,20 @@ struct BrainView: View {
                                 titleVisibility: .visible, presenting: forgetting) { request in
                 // The first button is the one Return picks: never the one that trashes files.
                 let preview = request.preview
+                let touchesFiles = !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty
+                // Keys come out of JSON files the project keeps: "Trash Files" would say too little.
+                let withKeys = !preview.keysTakenOut.isEmpty
                 if !preview.ownRecord {
-                    if !preview.removals.isEmpty {
-                        Button("Trash Files", role: .destructive) { forget(request, keepFiles: false) }
+                    if touchesFiles {
+                        Button(withKeys ? "Remove AKit's Files and Keys" : "Trash Files", role: .destructive) { forget(request, keepFiles: false) }
                     }
-                } else if preview.removals.isEmpty {
+                } else if !touchesFiles {
                     Button("Forget", role: .destructive) { forget(request, keepFiles: true) }
                 } else {
                     Button("Forget, Keep Files") { forget(request, keepFiles: true) }
-                    Button("Forget and Trash Files", role: .destructive) { forget(request, keepFiles: false) }
+                    Button(withKeys ? "Forget and Remove AKit's Files and Keys" : "Forget and Trash Files", role: .destructive) {
+                        forget(request, keepFiles: false)
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { request in
@@ -326,11 +331,17 @@ struct BrainView: View {
         if preview.plan == nil {
             lines.append("Its folder is not among the project folders on this Mac, so its files stay where they are.")
         } else if preview.removals.isEmpty {
-            lines.append("No files AKit wrote are left\(place).")
+            if preview.keysTakenOut.isEmpty { lines.append("No files AKit wrote are left\(place).") }
         } else {
             let shown = preview.removals.prefix(8).joined(separator: ", ")
             let more = preview.removals.count > 8 ? " and \(preview.removals.count - 8) more" : ""
             lines.append("Files AKit wrote\(place) can go to the Trash\(preview.ownRecord ? " too" : ""): \(shown)\(more).")
+        }
+        if !preview.keysTakenOut.isEmpty {
+            lines.append("The keys AKit added to \(preview.keysTakenOut.joined(separator: ", "))\(place) can come out; the project's own keys stay.")
+        }
+        if !preview.keysLeft.isEmpty {
+            lines.append("AKit's keys stay in \(preview.keysLeft.joined(separator: ", ")): AKit can't read it as JSON, so take them out by hand.")
         }
         if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
         return lines.joined(separator: "\n\n")

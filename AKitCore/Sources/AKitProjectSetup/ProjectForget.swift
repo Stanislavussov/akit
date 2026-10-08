@@ -18,6 +18,11 @@ public enum ProjectForget {
         public let brainCopyLeft: Bool
         /// Files AKit wrote that go to the Trash.
         public var removals: [String] { plan?.changes.filter { $0.kind == .remove }.map(\.path) ?? [] }
+        /// JSON files the project keeps, with the keys AKit merged into them taken out.
+        public var keysTakenOut: [String] { plan?.changes.filter { $0.mergesJSON && $0.kind == .update }.map(\.path) ?? [] }
+        /// JSON files where AKit's keys stay although the record goes: AKit can't read the file
+        /// as JSON (or it is a link or a folder), so it can't take them out.
+        public var keysLeft: [String] { plan?.jsonRecords.keys.sorted() ?? [] }
         /// Files AKit wrote and the user edited since: kept.
         public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited }.map(\.path) ?? [] }
     }
@@ -42,7 +47,7 @@ public enum ProjectForget {
         guard preview.store.isSamePlace(as: .current(brain: preview.store.brain ?? brain.root, home: home)) else {
             throw ProjectSetup.Failure(message: "This Mac's role (akit machine) changed since the preview; preview again.")
         }
-        if !keepFiles, let plan = preview.plan, !preview.removals.isEmpty {
+        if !keepFiles, let plan = preview.plan, !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty {
             _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
         }
         // Apply saved a lock again, in a local store too; forget the project with it.

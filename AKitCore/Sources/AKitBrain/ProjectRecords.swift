@@ -21,6 +21,31 @@ public enum ProjectRecords {
             }
         }
 
+        /// A JSON file the layers' keys were merged into (`.mcp.json`, `.claude/settings.json`).
+        /// The file is the project's; AKit owns only the keys it wrote.
+        public struct MergedJSON: Codable, Hashable, Sendable {
+            /// Key path (an RFC 6901 pointer, `/mcpServers/github/command`) → SHA-256 of the
+            /// value AKit wrote there, in `JSONValue.compact` form.
+            public var keys: [String: String]
+            /// AKit created the file, so it may go to the Trash once nothing but `{}` is left.
+            public var created: Bool
+            public var layers: [String]
+            /// Objects AKit created to hold its keys (pointers): only these are cleaned up when
+            /// they become empty, never one the project had. Optional: absent in early locks.
+            public var containers: [String]?
+            /// Key paths AKit wrote and the project deleted: never added again while the layers
+            /// bring them. Optional: absent in early locks.
+            public var declined: [String]?
+
+            public init(keys: [String: String], created: Bool, layers: [String], containers: [String]? = nil, declined: [String]? = nil) {
+                self.keys = keys
+                self.created = created
+                self.layers = layers
+                self.containers = containers
+                self.declined = declined
+            }
+        }
+
         /// Brain commit the files were rendered from.
         public var brainCommit: String?
         /// The brain had uncommitted changes, so the commit alone doesn't reproduce the render.
@@ -29,12 +54,17 @@ public enum ProjectRecords {
         /// Project-owned files (AGENTS.md, templates): hash of the layers' version when it
         /// was last written or offered. A suggestion appears only when that version changes.
         public var templates: [String: String]?
+        /// Merged JSON files by path. Kept out of `files`, so an older AKit, which ignores this
+        /// key, never treats such a file as one it wrote whole (and never trashes it).
+        public var json: [String: MergedJSON]?
 
-        public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil) {
+        public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil,
+                    json: [String: MergedJSON]? = nil) {
             self.brainCommit = brainCommit
             self.brainDirty = brainDirty
             self.files = files
             self.templates = templates
+            self.json = json
         }
     }
 
@@ -106,8 +136,18 @@ public enum ProjectRecords {
     }
 
     public static func savedLock(id: String, in store: ProjectStore) -> Lock? {
-        store.savedFile(id: id, "lock.json").flatMap { try? Data(contentsOf: $0) }
-            .flatMap { try? JSONDecoder().decode(Lock.self, from: $0) }
+        guard var lock = store.savedFile(id: id, "lock.json").flatMap({ try? Data(contentsOf: $0) })
+            .flatMap({ try? JSONDecoder().decode(Lock.self, from: $0) }) else { return nil }
+        // One spelling per path (an older AKit kept `./AGENTS.md` as written), so a file now
+        // rendered as `AGENTS.md` is still known as AKit's and never trashed as a stale one.
+        lock.files = Dictionary(lock.files.map { (ProjectBundle.normalizedPath($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
+        lock.templates = lock.templates.map { Dictionary($0.map { (ProjectBundle.normalizedPath($0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
+        lock.json = lock.json.map { Dictionary($0.map { (ProjectBundle.normalizedPath($0.key), $0.value) }, uniquingKeysWith: { first, _ in first }) }
+        // A merged JSON file is never also a whole file AKit wrote (an older AKit's entry, or one
+        // left by an interrupted Apply): the merge record wins.
+        let merged = Set((lock.json ?? [:]).keys.map { $0.lowercased() })
+        lock.files = lock.files.filter { !merged.contains($0.key.lowercased()) }
+        return lock
     }
 
     /// Writes lock.json (and answers.json, when given) under `<store>/<id>`.

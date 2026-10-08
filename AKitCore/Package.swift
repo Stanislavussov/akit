@@ -42,7 +42,7 @@ let package = Package(
         .target(name: "AKitBrain", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "Yams"]),
         .target(name: "AKitInsights", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain"]),
         // The rulesync seam: sees only the brain's ProjectBundle and RenderResult.
-        .target(name: "AKitRender", dependencies: ["AKitBrain"]),
+        .target(name: "AKitRender", dependencies: ["AKitFoundation", "AKitBrain"]),
         // Lab: session metrics, runs in a terminal, replay tasks (docs/design/lab.md).
         // Lab → Brain for one thing: whether this Mac is a work Mac (the sending policy).
         .target(name: "AKitLab", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitBrain"]),
@@ -61,7 +61,7 @@ let package = Package(
         .testTarget(name: "AKitMCPCatalogTests", dependencies: ["AKitMCPCatalog", "AKitMCP"]),
         .testTarget(name: "AKitBrainTests", dependencies: ["AKitBrain", "AKitFoundation", "AKitModel", "AKitSkills", "AKitProjectSetup", "AKitCommandLine"]),
         .testTarget(name: "AKitInsightsTests", dependencies: ["AKitInsights", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitSessions", "AKitBrain", "AKitProjectSetup", "AKitCommandLine"]),
-        .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain"]),
+        .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender"]),
         .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain"]),
         .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights"]),
