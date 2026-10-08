@@ -318,10 +318,10 @@ Data going **into** the seam: `ProjectBundle`, defined in `AKitBrain`:
 - `layers`: resolved order (required first, then the user's selection order)
 - `files`: `[(layer, to, data, override)]`, every template output whose `when` holds,
   in layer order, with fields filled in. The AGENTS.md fragments are the ones with
-  `to == "AGENTS.md"`; the render glues Markdown files, merges `.json` files key by key
-  and checks the others for clashes. A `.json` template arrives already parsed and printed
+  `to == "AGENTS.md"`; the render glues Markdown files, merges `.mcp.json` and `.claude/settings.json` key by key
+  and checks the others for clashes. Such a template arrives already parsed and printed
   again: fields filled only inside string values, `env` and `headers` holding only `${VAR}`
-  references, never `settings.local.json`
+  references. No target is ever `settings.local.json` or `auth.json`
 - `skills`: `[(name, mode: auto|manual, source, files: [relativePath: Data])]` with fields filled in the `.md` files; `source` is a layer name or `projectSource` ("this project"); `files` is empty for a skill missing from the brain
 - `errors` / `warnings` from resolving (missing required field, unknown layer, conflicting layers, skill clash, missing skill or template)
 - the constants `skillsFolder` (`.agents/skills`) and `projectSource`
@@ -334,7 +334,7 @@ replacement module needs nothing from the old one:
 
 - `outputs: [RenderedFile]`, each with `path` (relative to the project),
   `content` (`.data` or `.link(destination)`), `layers` and `mergesJSON` (since
-  2026-10-08: the layers' keys of a `.json` target, merged key by key into the project's
+  2026-10-08: the layers' keys of `.mcp.json` or `.claude/settings.json`, merged key by key into the project's
   file by `ProjectSetup`, never written whole)
 - `layers` (render order) and `skills` (name, mode, source): the project form
   and the spool's `apply` line use them

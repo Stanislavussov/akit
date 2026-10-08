@@ -82,7 +82,7 @@ design doc and this table say so.
 | 3 | Count only exposures with a description | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
 | 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
 | 5 | Layer checks: slices 3 and 4 | `layer-evals.md` | Only if the pilot shows that success alone can't see the gain |
-| 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json`. Built 2026-10-08: any `.json` target merges key by key, per-key ownership in the lock, `${VAR}`-only secrets, masked preview; not into the home folder yet | `layers.md`, JSON merge; Roadmap 4 | One mechanism unblocks three plans: MCP in layers, hooks in layers, and writing `enabledPlugins` from a recommendation |
+| 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json`. Built 2026-10-08: the two files merge key by key, per-key ownership in the lock, `${VAR}`-only secrets, masked preview; not into the home folder yet. It is the base for hooks in layers, but arrays are leaves: lists from several layers (hooks, permissions) clash until named arrays get a union merge | `layers.md`, JSON merge; Roadmap 4 | One mechanism unblocks MCP in layers and writing `enabledPlugins` from a recommendation, and is the base for hooks in layers (array merge still to do) |
 | 7 | One parser for failure signals | `definitions.md`; `session-insights.md`, step 11 (see I4) | Two parsers count the same signals differently today |
 | 8 | On demand | see Parked | No user yet |
 

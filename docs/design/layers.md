@@ -154,8 +154,8 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 - Built-in fields: `project_name`, `target` (the chosen harnesses: `claude`, `pi`,
   `opencode`, `codex`; `target == claude` holds when claude is among them).
 - An unanswered field is empty (`false` for bool, no items for multi).
-- A `.json` template is parsed first and `{{field}}` is filled only inside its string
-  values (see [JSON merge](#json-merge-built-2026-10-08)).
+- A `.mcp.json` or `.claude/settings.json` template is parsed first and `{{field}}` is
+  filled only inside its string values (see [JSON merge](#json-merge-built-2026-10-08)).
 - Skills fill `{{field}}` only in Markdown files; unknown names are left as is
   (a warning for templates).
 - Fields never hold secrets. Secrets come from Keychain (see MCP below).
@@ -194,7 +194,7 @@ profile. Differences per harness go through `when: target == "claude"`.
 
 - Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;
   sections are glued in layer order (`requires` first, then selection order).
-- JSON (any `.json` target, e.g. `.mcp.json`, `.claude/settings.json`; built 2026-10-08):
+- JSON (`.mcp.json` and `.claude/settings.json` only; built 2026-10-08):
   deep merge of keys. Two layers setting the same leaf to different values is an error,
   shown in the form before Apply, unless one sets `override: true`. The result is merged
   into the project's file key by key, see [JSON merge](#json-merge-built-2026-10-08).
@@ -244,25 +244,34 @@ Decided 2026-10-08, built the same day. One mechanism for three plans: MCP serve
 layers, hooks and permissions in layers, and writing `enabledPlugins` from a
 recommendation later.
 
-1. **Which files.** Any layer file whose `to:` ends in `.json` is merged, not glued or
-   owned whole. The v1 targets are `.mcp.json` and `.claude/settings.json` in a project, but
-   nothing is specific to them. Objects merge deeply; arrays, strings, numbers, booleans and
-   null are leaves (an array is never merged item by item). Two layers setting one leaf to
-   different values, or one a value where the other has an object, is a render error,
-   shown in the form before Apply. `override: true` on the file entry lets that layer win
-   (the later one when both set it), like for other files.
+1. **Which files.** Two files are merged, not glued or owned whole: `.mcp.json` and
+   `.claude/settings.json` in a project (exact paths, any letter case; an allow-list,
+   `ProjectBundle.mergedJSONFiles`, revised 2026-10-08 after review). Any other `.json`
+   target (`tsconfig.json`, `opencode.json`, …) stays a whole file like any template, with
+   text substitution, so JSONC files keep working. Targets are grouped ignoring letter case
+   and a leading `./`; one file spelled two ways is a render error. Objects merge deeply;
+   arrays, strings, numbers, booleans and null are leaves: an array is never merged item by
+   item, so `hooks` or `permissions.allow` lists from two layers clash today (a union merge
+   of named arrays is a later step). Two layers setting one leaf to different values, or one
+   a value where the other has an object, is a render error, shown in the form before
+   Apply. `override: true` on the file entry lets that layer win (the later one when both
+   set it), like for other files.
 2. **Templates.** The template is parsed as JSON first; `{{field}}` is filled only inside
    string values, never in keys and never as text, so a value with `"` or `\` can't break
    the file. A template that is not valid JSON, or not an object, is a render error naming
    the layer and the template.
 3. **Secrets.** A layer never carries secret values: every value at or under an `env` or
-   `headers` key must be a whole-string `${NAME}` reference, else a render error. The
-   preview never shows a secret: in a JSON change's texts every value under `env` and
-   `headers` that is not a `${NAME}` reference reads `••••`, in the old and the new text.
-   The masked text is only for showing; Apply writes the real values. Masking also reaches
-   into lists of objects. `settings.local.json` and `auth.json` are never read or shown: a
-   layer that targets one is a render error. Other secret-holding keys of other formats
-   (OpenCode's `environment`) are not masked yet; v1 targets are Claude Code's files.
+   `headers` key (any letter case) must be a whole-string `${NAME}` reference, else a render
+   error. So `"Bearer ${TOKEN}"` is refused for now. The preview never shows a secret: in a
+   JSON change's texts every value under `env` and `headers` that is not a `${NAME}`
+   reference reads `••••`, in the old and the new text, also inside lists of objects. The
+   masked text is only for showing; Apply writes the real values. Every `.json` file the
+   preview shows (also whole files and files an older AKit wrote) is shown re-printed and
+   masked; one that can't be read as JSON (or JSONC) reads "(JSON file; contents not
+   shown)". `settings.local.json` and `auth.json` are never read or shown: a layer that
+   targets one is a render error, and one an earlier render wrote is left alone with a
+   warning. Backup folders are created readable only by the user (0700), since they now hold
+   copies of these files.
 4. **Ownership per key.** The project's existing file stays the project's. AKit adds the
    leaves the layers bring:
    - a leaf already there with the same value: nothing (it stays the project's unless AKit
@@ -270,29 +279,38 @@ recommendation later.
      when the layers later bring the same value);
    - a leaf there with a different value that AKit did not write earlier: left alone, and
      the preview warns "the project sets `mcpServers.x.command` itself";
+   - a leaf AKit wrote and the project deleted: the project's choice. Not added again; the
+     preview warns "the project removed X; AKit leaves it out", and it leaves the lock;
+   - a merged file the project deleted entirely: like a deleted skeleton file. Not created
+     again; the preview offers the layers' keys unticked ("the project's own"), taken only
+     when ticked or with `akit apply --include PATH`;
    - `lock.json` keeps, per merged file, the key paths AKit wrote (RFC 6901 pointers) with a
-     hash of each value, in a new optional key `json` (`{path: {keys, created, layers}}`).
-     Older akit ignores the key, and merged files are never in `files`, so an older akit
-     never treats such a file as one it wrote whole;
+     hash of each value, and the objects AKit created to hold them, in a new optional key
+     `json` (`{path: {keys, created, layers, containers}}`). Older akit ignores the key, and
+     merged files are never in `files` (a lock that has both reads as merged), so an older
+     akit never treats such a file as one it wrote whole. An older akit that saves the lock
+     again drops `json`; AKit's keys then look like the project's, which is the safe side;
    - on a later render a leaf AKit wrote that the layers no longer bring is removed while
      it still holds AKit's value; a leaf the project changed is its own from then on (kept,
      dropped from the lock). A leaf AKit wrote and the project left alone is updated to the
-     layers' new value;
+     layers' new value. Objects that become empty go only if AKit created them; one the
+     project had (say `"mcpServers": {}`) stays;
    - when nothing of AKit's is left in a file AKit created and only `{}` remains, the file
      goes to the Trash like other files AKit wrote. **Forget Project…** takes AKit's keys out
-     of the files the project keeps;
+     of the files the project keeps, and says so when it can't (a file that is not valid
+     JSON keeps them);
    - an older AKit wrote `.json` targets whole (`files` in the lock). On the first merge such
-     a file is taken over: untouched since, every key is AKit's (and AKit created it); edited,
-     only the keys that still hold the layers' value. Its `files` entry then goes.
+     a file is taken over: untouched since, every key and object is AKit's (and AKit created
+     it); edited, only the keys that still hold the layers' value. Its `files` entry then goes.
 5. **Writing.** Only when the merged result differs from the file (compared as JSON, so a
    file whose keys already match is not reformatted). AKit writes pretty-printed JSON with
    sorted keys, a 2-space indent and a trailing newline; when that changes the file's
-   formatting, the preview says so. Backup, diff and Apply are the same as for other files.
-   A file that exists and is not valid JSON (or not an object, or a link, or with a key given
-   twice in one object) blocks Apply with a message and is never overwritten. AKit reads JSON
-   with its own strict parser (`JSONValue`): numbers keep their text, so a rewrite never
-   rounds the project's values.
-6. **Home folder.** Not in v1: a JSON file of the core layer is a render warning ("JSON
+   formatting, the preview says so. Backup, diff and Apply are the same as for other files,
+   and an edit after the preview stops Apply. A file that exists and is not valid JSON (or
+   not an object, or a link, or with a key given twice in one object) blocks Apply with a
+   message and is never overwritten. AKit reads JSON with its own strict parser
+   (`JSONValue`): numbers keep their text, so a rewrite never rounds the project's values.
+6. **Home folder.** Not in v1: a merged file of the core layer is a render warning ("JSON
    files are not rendered into the home folder yet") and is skipped. Projects only. A JSON
    file an older AKit wrote into the home folder is never removed for that: it keeps its
    lock entry.
@@ -300,6 +318,8 @@ recommendation later.
    the project's own keys stay"), with the masked diff and the per-key warnings at the top;
    merged changes start ticked, since they never replace a value of the project's. `akit
    plan` prints the same. Brain → a layer's page already lists its files; no new screen.
+   **Forget Project…** names its button after what goes: "Forget and Remove AKit's Files and
+   Keys" (on a work Mac "Remove AKit's Files and Keys") when keys come out of a JSON file.
 
 Where it lives: `JSONValue` (AKitFoundation: parse, print, key paths, masking),
 `ProjectBundle.resolve` (parse, fill, secret check), `Render.mergeJSON` (layers into one
@@ -353,8 +373,8 @@ core layer only, `akit apply --home` in the app. **Forget Project…** (a projec
 its context menu) is `akit remove project`: both use `ProjectForget`, and the dialog offers
 "Forget and Trash Files" or "Forget, Keep Files" (`--keep-files`).
 
-Step 6 of the design map, JSON merge (2026-10-08): `.json` targets merge key by key into
-the project's file, see [JSON merge](#json-merge-built-2026-10-08).
+Step 6 of the design map, JSON merge (2026-10-08): `.mcp.json` and `.claude/settings.json`
+merge key by key into the project's file, see [JSON merge](#json-merge-built-2026-10-08).
 
 ## Open questions
 
