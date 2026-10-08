@@ -23,6 +23,10 @@ final class AppModel {
     private(set) var skills: [Skill] = []
     /// Pi packages from Pi's global settings and the known projects' `.pi/settings.json`.
     private(set) var piPackages: [PiPackage] = []
+    /// What reading them left out (repeated entries, limits), for the Overview.
+    private(set) var piPackageNotes: [String] = []
+    /// Per project path: ids of global Pi package skills a session there doesn't load.
+    private(set) var piHiddenSkills: [String: Set<String>] = [:]
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
     /// The person's ratings of runs (`akit rate`, Pi's ⌥G / ⌥X / ⌥R), by session log path.
@@ -568,21 +572,23 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, projects, sessions, mcp, targets, brain, piPackages) = await Task.detached {
+        let (found, skills, projects, sessions, mcp, targets, brain, pi) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
-            // Read once per refresh: the Overview lists them, the skill scan adds their skills.
-            let piPackages = found.contains { $0.id == .pi }
-                ? HarnessCatalog.configRoot(of: .pi, in: env).map { PiPackages.list(configRoot: $0, projects: projects, in: env) } ?? []
-                : []
-            async let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters,
-                                                 projects: projects, piPackages: piPackages, in: env)
             async let sessions = SessionScanner.scan(installations: found, in: env)
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
             async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
             async let brain = Brain.load(from: brainRoot)
-            return (found, await skills, projects, await sessions, await mcp, await targets, await brain, piPackages)
+            // Read once per refresh: the Overview lists them, the skill scan adds their skills.
+            let listing = found.contains { $0.id == .pi }
+                ? HarnessCatalog.configRoot(of: .pi, in: env).map { PiPackages.list(configRoot: $0, projects: projects, in: env) }
+                : nil
+            let pi = (listing: listing ?? PiPackages.Listing(),
+                      hidden: PiPackages.skillsHidden(projects: projects, packages: listing?.packages ?? []))
+            let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, projects: projects,
+                                           piPackages: pi.listing.packages, piHidden: pi.hidden, in: env)
+            return (found, skills, projects, await sessions, await mcp, await targets, await brain, pi)
         }.value
         // Before anything is shown: the session list and its projects change together.
         let folders = Array(Set(sessions.compactMap { $0.project?.path }))
@@ -594,7 +600,9 @@ final class AppModel {
         brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
         installations = found
         self.skills = skills
-        self.piPackages = piPackages
+        piPackages = pi.listing.packages
+        piPackageNotes = pi.listing.notes
+        piHiddenSkills = pi.hidden
         self.projects = projects
         if let brain {
             brainProjectFolders = await projectFolders()

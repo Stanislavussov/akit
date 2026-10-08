@@ -8,13 +8,15 @@ public enum SkillScanner {
     /// Scan all skill roots of the installed harnesses and merge duplicates
     /// (the same real file reached through several roots/symlinks).
     /// `extraProjects`: folders found in the user's project roots (see ProjectFinder).
-    /// `projects` and `piPackages`: already computed by the caller (`projects(...)`,
-    /// `PiPackages.list`), so a refresh reads them once; nil = computed here.
+    /// `projects`, `piPackages` and `piHidden`: already computed by the caller (`projects(...)`,
+    /// `PiPackages.list`, `PiPackages.skillsHidden(projects:packages:)`), so a refresh reads them
+    /// once; nil = computed here.
     public static func scan(installations: [HarnessInstallation],
                             extraProjects: [URL] = [],
                             adapters: [any HarnessAdapter] = HarnessCatalog.adapters,
                             projects knownProjects: [URL]? = nil,
                             piPackages: [PiPackage]? = nil,
+                            piHidden: [String: Set<String>]? = nil,
                             in env: HarnessEnvironment) -> [Skill] {
         let installed = Set(installations.map(\.id))
         let active = adapters.filter { installed.contains($0.id) }
@@ -22,7 +24,7 @@ public enum SkillScanner {
             ?? projects(installations: installations, extraProjects: extraProjects, adapters: adapters, in: env)
         let packages = !installed.contains(.pi) ? []
             : piPackages ?? HarnessCatalog.configRoot(of: .pi, in: env).map {
-                PiPackages.list(configRoot: $0, projects: projects, in: env)
+                PiPackages.list(configRoot: $0, projects: projects, in: env).packages
             } ?? []
 
         // First root wins the scope; equal ranks keep their order (global packages before project ones).
@@ -32,10 +34,7 @@ public enum SkillScanner {
             .map(\.element)
         // Only files under Claude's own `skills/synced/` count as claude.ai skills.
         let syncedFolders = roots.compactMap(\.syncedFolder).map { $0.resolvingSymlinksInPath().path + "/" }
-        var hidden: [String: Set<String>] = [:]
-        for project in projects where !packages.isEmpty {
-            hidden[project.standardizedFileURL.path] = PiPackages.skillsHidden(in: project, packages: packages)
-        }
+        let hidden = piHidden ?? PiPackages.skillsHidden(projects: projects, packages: packages)
         return merge(roots.flatMap { found(in: $0) }, lock: SkillLock.read(in: env), home: env.homeDirectory,
                      syncedFolders: syncedFolders, hiddenInProject: hidden)
     }

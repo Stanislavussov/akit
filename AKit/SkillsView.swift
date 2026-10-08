@@ -1,6 +1,5 @@
 import AKitBrain
 import AKitFoundation
-import AKitHarnesses
 import AKitModel
 import AKitSkills
 import AppKit
@@ -254,7 +253,7 @@ struct SkillsView: View {
     private var scoped: [Skill] {
         // A project that lists a global Pi package itself replaces (or narrows) the global one.
         let hidden: Set<String> = if case .project(let project) = model.skillsFilter {
-            PiPackages.skillsHidden(in: project, packages: model.piPackages)
+            model.piHiddenSkills[project.standardizedFileURL.path] ?? []
         } else { [] }
         return model.skills.filter { skill in
             model.skillsFilter.includes(skill.scope) && !hidden.contains(skill.id)

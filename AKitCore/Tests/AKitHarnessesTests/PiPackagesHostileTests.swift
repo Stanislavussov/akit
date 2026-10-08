@@ -124,12 +124,14 @@ extension PiPackagesTests {
     @Test func credentialsInSourceURLsAreLeftOut() throws {
         try write(".pi/agent/settings.json", """
             {"packages": ["https://x-access-token:ghp_fake123@github.com/acme/repo.git",
-                          "git:https://user@gitlab.com/team/kit@v1"]}
+                          "git:https://user@gitlab.com/team/kit@v1",
+                          "https://bitbucket.org/team/tool.git?access_token=fake456#v2"]}
             """)
         try write(".pi/agent/git/github.com/acme/repo/skills/s/SKILL.md")
         let list = packages()
-        #expect(list.map(\.source) == ["https://github.com/acme/repo.git", "git:https://gitlab.com/team/kit@v1"])
-        #expect(list.map(\.identity) == ["git:github.com/acme/repo", "git:gitlab.com/team/kit"])
+        #expect(list.map(\.source) == ["https://github.com/acme/repo.git", "git:https://gitlab.com/team/kit@v1",
+                                       "https://bitbucket.org/team/tool.git#v2"])
+        #expect(list.map(\.identity) == ["git:github.com/acme/repo", "git:gitlab.com/team/kit", "git:bitbucket.org/team/tool"])
         let origin = try #require(PiPackages.skillRoots(list).first?.origin)
         #expect(!origin.contains("ghp_"))
     }
@@ -153,13 +155,88 @@ extension PiPackagesTests {
 
     @Test func duplicatesAreListedOnceAndEntriesKeepTheirOwnIDs() throws {
         let pkg = ".pi/agent/npm/node_modules/dup"
-        try write(".pi/agent/settings.json", #"{"packages": ["npm:dup", "npm:dup"]}"#)
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:dup", "npm:other", "npm:dup@2"]}"#)
         try write("\(pkg)/package.json", #"{"name": "dup", "pi": {"skills": ["./skills", "./skills/a", "skills/*"]}}"#)
         try write("\(pkg)/skills/a/SKILL.md")
 
+        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        // Like Pi, a global file keeps the first entry of a package.
+        #expect(listing.packages.map(\.source) == ["npm:dup", "npm:other"])
+        #expect(Set(listing.packages.map(\.id)).count == 2)
+        #expect(listing.notes.contains { $0.contains("1 repeated entry skipped") })
+        let dup = listing.packages[0]
+        #expect(names(dup.skills, in: dup) == ["skills/a/SKILL.md"])
+    }
+
+    @Test func aProjectFileKeepsTheLastRepeatedEntry() throws {
+        let project = home.appending(path: "Projects/app")
+        try write("Projects/app/.pi/settings.json", #"{"packages": ["npm:tools", {"source": "npm:tools", "skills": []}]}"#)
+        let list = packages(projects: [project])
+        #expect(list.count == 1)
+        #expect(list.first?.index == 1)
+        #expect(list.first?.isFiltered == true)
+    }
+
+    @Test func endlessSettingsFinishFast() throws {
+        // 50,000 copies of one entry fit in 1 MB; 300 different ones go over the entry limit.
+        let copies = Array(repeating: #""./kit""#, count: 50_000)
+        let distinct = (0..<300).map { #""./k\#($0)""# }
+        try write(".pi/agent/settings.json", #"{"packages": [\#((copies + distinct).joined(separator: ","))]}"#)
+        try write(".pi/agent/kit/prompts/p.md")
+
+        let start = Date()
+        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(listing.packages.count == PiPackages.maxEntries)
+        #expect(listing.packages.first?.prompts.count == 1)
+        #expect(listing.notes.contains { $0.contains("49999 repeated entries skipped") })
+        #expect(listing.notes.contains { $0.contains("only the first 200 of 301 packages") })
+    }
+
+    @Test func heavyPatternsUseUpTheRefreshLimitQuickly() throws {
+        let pkg = home.appending(path: ".pi/agent/npm/node_modules/heavy/prompts")
+        try fm.createDirectory(at: pkg, withIntermediateDirectories: true)
+        for index in 0..<1_000 {
+            fm.createFile(atPath: pkg.appending(path: "p\(index).md").path, contents: nil)
+        }
+        // 8 alternatives, 127 characters, many times: about the most work a pattern may ask for.
+        let heavy = "{" + (0..<8).map { "*\($0)*a*a*a" }.joined(separator: ",") + "}" + String(repeating: "*b", count: 27)
+        #expect(heavy.count <= PiPackages.Glob.maxLength)
+        #expect(PiPackages.Glob(heavy)?.alternatives.count == 8)
+        let patterns = Array(repeating: heavy, count: 256).map { "\"!\($0)\"" }.joined(separator: ",")
+        try write(".pi/agent/settings.json", #"{"packages": [{"source": "npm:heavy", "prompts": [\#(patterns)]}, "npm:after"]}"#)
+        try write(".pi/agent/npm/node_modules/after/prompts/x.md")
+
+        let start = Date()
+        let listing = PiPackages.list(configRoot: agent, projects: [], in: env)
+        #expect(Date().timeIntervalSince(start) < 10)
+        #expect(listing.packages.allSatisfy { $0.isTooLarge && listed($0).isEmpty })
+        #expect(listing.notes.contains { $0.contains("limit for one refresh") })
+    }
+
+    @Test func oneLimitCoversEveryPackageOfARefresh() throws {
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:first", "npm:second"]}"#)
+        for name in ["first", "second"] {
+            for index in 0..<30 { try write(".pi/agent/npm/node_modules/\(name)/prompts/p\(index).md") }
+        }
+        let listing = PiPackages.list(configRoot: agent, projects: [], limits: .init(entries: 50), in: env)
+        #expect(listing.packages.map(\.isTooLarge) == [false, true])
+        #expect(listing.packages[0].prompts.count == 30)
+    }
+
+    @Test func packageJSONMustBeTheirOwnFile() throws {
+        // A package.json linked to a secret or to a file outside the package isn't read.
+        try write(".pi/agent/settings.json", #"{"packages": ["npm:a", "npm:b"]}"#)
+        try write(".pi/agent/auth.json", #"{"name": "stolen", "pi": {"prompts": ["./x.md"]}}"#)
+        try write("outside/package.json", #"{"name": "outside", "version": "9"}"#)
+        try write(".pi/agent/npm/node_modules/a/x.md")
+        try link(".pi/agent/npm/node_modules/a/package.json", to: agent.appending(path: "auth.json").path)
+        try fm.createDirectory(at: agent.appending(path: "npm/node_modules/b"), withIntermediateDirectories: true)
+        try link(".pi/agent/npm/node_modules/b/package.json", to: home.appending(path: "outside/package.json").path)
+
         let list = packages()
-        #expect(Set(list.map(\.id)).count == 2)
-        #expect(names(list[0].skills, in: list[0]) == ["skills/a/SKILL.md"])
+        #expect(list.map(\.name) == ["a", "b"])
+        #expect(list.allSatisfy { $0.version == nil && listed($0).isEmpty })
     }
 
     @Test func globsSkipDotFoldersLikePi() throws {
@@ -183,13 +260,32 @@ extension PiPackagesTests {
             ("a?c", "a/c", false), ("[a-c]x", "bx", true), ("[!a-c]x", "bx", false),
             ("themes/{dark,light}.json", "themes/light.json", true), ("{a,{b,c}}", "c", true),
             ("extensions/*.ts", "extensions/legacy.ts", true), ("x", "xx", false),
+            // `**` spans folders only as a whole segment; elsewhere it is `*`.
+            ("a**", "abc", true), ("a**", "a/b", false), ("**a", "xa", true), ("**a", "x/a", false),
+            ("a/**/b", "a/b", true), ("a/**/b", "a/x/y/b", true),
+            // Wildcards don't match a name's leading dot unless the pattern spells it.
+            ("*", ".hidden", false), ("?x", ".x", false), ("[.]x", ".x", false), ("*.md", ".md", false),
+            ("**/a.md", ".h/a.md", false), ("skills/**", "skills/.x", false), ("a/**/b", "a/.x/b", false),
+            (".*", ".hidden", true), ("x/.h/*", "x/.h/a", true), ("a*", "a.b", true),
+            // A segment of only `*` needs a name.
+            ("*", "", false), ("a/*/b", "a//b", false), ("a*", "a", true),
+            // `{a}` and unbalanced braces stay literal.
+            ("{a}", "{a}", true), ("{a}", "a", false), ("{a,b", "{a,b", true),
+            // A leading `]` is a class member; `\` escapes.
+            ("[]a]", "]", true), ("[]a]", "a", true), ("[]a]", "b", false), ("[!]]", "]", false),
+            (#"\*"#, "*", true), (#"\*"#, "a", false), (#"\{a,b\}"#, "{a,b}", true), (#"[\]]"#, "]", true),
         ]
         for (pattern, text, expected) in cases {
             #expect(try #require(G(pattern)).matches(text) == expected, "\(pattern) vs \(text)")
         }
-        #expect(G(String(repeating: "*a", count: 300)) == nil) // too long
-        #expect(G("{a,b") == nil)
-        #expect(G("{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}") == nil) // 128 alternatives
+        #expect(G(String(repeating: "a", count: G.maxLength + 1)) == nil) // too long
+        #expect(G("{a,b}{c,d}{e,f}")?.alternatives.count == 8)
+        #expect(G("{a,b}{c,d}{e,f}{g,h}") == nil) // 16 alternatives
+        // The most work one pattern may ask for stays small.
+        let worst = try #require(G(String(repeating: "*a", count: 64)))
+        let start = Date()
+        #expect(!worst.matches(String(repeating: "a", count: 4_000) + "b"))
+        #expect(Date().timeIntervalSince(start) < 1)
         // Exponential for a backtracking regex; one pass per token here.
         let text = String(repeating: "a", count: 4_000)
         #expect(try #require(G("*a*a*a*a*a*a*a*a*a*a*a*a*b")).matches(text) == false)

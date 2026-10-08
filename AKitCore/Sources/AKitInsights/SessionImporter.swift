@@ -161,7 +161,8 @@ public struct SessionImporter {
 
     // MARK: - Files
 
-    /// Claude `projects/*/*.jsonl` and `projects/*/<session>/subagents/*.jsonl`; Pi `<sessions>/*/*.jsonl`;
+    /// Claude `projects/*/*.jsonl` and `projects/*/<session>/subagents/*.jsonl`; Pi `<sessions>/*/*.jsonl`
+    /// and, in a custom session folder (PI_CODING_AGENT_SESSION_DIR, `sessionDir`), `<sessions>/*.jsonl`;
     /// spool day files.
     func discover() -> [LogFile] {
         var found: [LogFile] = []

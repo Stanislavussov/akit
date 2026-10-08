@@ -43,8 +43,13 @@ public enum FileWalk {
     /// At most `limit` bytes from the start of a regular file; nil for anything else
     /// (a FIFO or device would block or never end).
     public static func head(of url: URL, limit: Int) -> Data? {
-        guard isRegularFile(url), let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        // Non-blocking open, then a check of what was opened: no gap between checking and opening.
+        let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { return nil }
         return (try? handle.read(upToCount: limit)) ?? Data()
     }
 

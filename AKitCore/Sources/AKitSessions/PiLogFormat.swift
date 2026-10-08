@@ -8,6 +8,7 @@ public enum PiLogFormat {
     public typealias Object = JSONLines.Object
 
     /// `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` from the global settings, then `<config>/sessions`.
+    /// Known difference: a `sessionDir` in a project's `.pi/settings.json` (or `--session-dir`) is not followed.
     /// A relative `sessionDir` points inside each project and is not followed. The default folder has
     /// one `--<cwd>--` folder per working folder; a folder set by the variable or the setting holds
     /// the session files themselves (Pi's session-manager.js), so readers take both.

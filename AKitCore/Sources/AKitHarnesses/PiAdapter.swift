@@ -109,7 +109,8 @@ struct PiAdapter: HarnessAdapter {
 
     /// The same rule as PiLogFormat.folder (AKitSessions), repeated because neither module may
     /// import the other: `PI_CODING_AGENT_SESSION_DIR`, then an absolute `sessionDir` from the
-    /// global settings, then `<Pi dir>/sessions`.
+    /// global settings, then `<Pi dir>/sessions`. Known difference: a `sessionDir` in a project's
+    /// `.pi/settings.json` (or `--session-dir`) is not followed; those sessions are not found.
     static func sessionsFolder(configRoot: URL, in env: HarnessEnvironment) -> URL {
         if let custom = env.variables["PI_CODING_AGENT_SESSION_DIR"], !custom.isEmpty {
             return env.expand(custom)

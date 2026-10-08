@@ -24,7 +24,7 @@ struct PiPackagesTests {
     }
 
     func packages(projects: [URL] = []) -> [PiPackage] {
-        PiPackages.list(configRoot: agent, projects: projects, in: env)
+        PiPackages.list(configRoot: agent, projects: projects, in: env).packages
     }
 
     /// Paths relative to the package folder, for short expectations.
@@ -205,7 +205,7 @@ struct PiPackagesTests {
         var e = env
         e.variables["PI_CODING_AGENT_DIR"] = "~/custom-pi"
 
-        let list = PiPackages.list(configRoot: PiAdapter().configRoot(in: e), projects: [], in: e)
+        let list = PiPackages.list(configRoot: PiAdapter().configRoot(in: e), projects: [], in: e).packages
         let root = try #require(PiPackages.skillRoots(list).first)
         #expect(root.scope == .package(name: "tools", project: nil))
         #expect(root.origin == "npm:tools 2.0")

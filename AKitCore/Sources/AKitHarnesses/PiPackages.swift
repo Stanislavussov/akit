@@ -11,7 +11,7 @@ public struct PiPackage: Sendable, Hashable, Identifiable {
     /// Position of the entry in the settings' `packages` list.
     public let index: Int
     /// As written in the settings (`npm:pi-subagents`, `git:github.com/a/b@v1`, `./tools`), with a
-    /// `user:password@` of a URL left out: it may hold a token.
+    /// URL's `user:password@` and `?query` left out: they may hold a token.
     public let source: String
     public let kind: Kind
     /// `.global` for `<Pi dir>/settings.json`, else the project whose `.pi/settings.json` lists it.
@@ -27,7 +27,8 @@ public struct PiPackage: Sendable, Hashable, Identifiable {
     public let version: String?
     /// The entry narrows what loads: it has resource filters or `autoload: false`.
     public let isFiltered: Bool
-    /// The package has more files than AKit walks for one package; its lists are left empty.
+    /// The package needs more reading than AKit allows (for it, or for the whole refresh);
+    /// its lists are left empty.
     public let isTooLarge: Bool
     /// What Pi loads from the package after its manifest and the settings' filters. Only regular
     /// files inside the package folder (links resolved) are listed.
@@ -45,13 +46,17 @@ public struct PiPackage: Sendable, Hashable, Identifiable {
 /// - local: the path, relative to the folder of the settings file (`<Pi dir>`, `.pi`).
 /// A package's `package.json` `pi` key lists `extensions`, `skills`, `prompts`, `themes` (paths
 /// and globs, `!`/`+`/`-` patterns); without it the folders of those names are read.
+/// Like Pi, one settings file loads a package once (global: the first entry, project: the last).
 ///
 /// Packages come from settings a cloned repository may bring, so nothing listed may leave the
 /// package folder (links resolved), only regular files count, known secret files never show,
-/// and one package is walked for at most `entryBudget` folder entries.
+/// and the work is bounded: at most `maxEntries` entries per settings file, `Limits` per package
+/// and per `list` call (folder entries read and glob matching done). Past a limit a package is
+/// marked too large and the listing says what was left out.
 /// Differences from Pi: npm packages in the old global npm folder (`npm root -g`) are not found
 /// (finding it means running npm), `.gitignore` files inside packages are not applied, `**`
-/// skips node_modules, and project packages are listed whether or not Pi trusts the project.
+/// skips node_modules, project packages are listed whether or not Pi trusts the project, and
+/// globs lack minimatch's extglobs (`+(a|b)`), `{1..3}` ranges and braces holding a `/`.
 public enum PiPackages {
     enum ResourceType: String, CaseIterable {
         case extensions, skills, prompts, themes
@@ -59,21 +64,61 @@ public enum PiPackages {
 
     typealias Resources = [ResourceType: [URL]]
 
+    /// Folder entries one package may cost.
     static let entryBudget = 5_000
+    /// Entries read from one settings file, after repeated ones are dropped.
+    static let maxEntries = 200
+    /// Patterns (or manifest entries) read from one list.
+    static let maxPatterns = 32
     /// Never listed, even inside a package.
     public static let secretNames: Set<String> = ["auth.json", "models-store.json", "settings.local.json"]
 
+    /// Work one `list` call may do across every package.
+    final class Limits {
+        /// Folder entries read.
+        var entries: Int
+        /// Glob matching: tokens × characters compared.
+        var matchSteps: Int
+        var isExhausted: Bool { entries < 0 || matchSteps < 0 }
+
+        init(entries: Int = 25_000, matchSteps: Int = 20_000_000) {
+            self.entries = entries
+            self.matchSteps = matchSteps
+        }
+    }
+
+    /// Packages and what was left out of them.
+    public struct Listing: Sendable {
+        public var packages: [PiPackage]
+        /// Plain sentences for the screen, e.g. repeated entries or entries over the limit.
+        public var notes: [String]
+
+        public init(packages: [PiPackage] = [], notes: [String] = []) {
+            self.packages = packages
+            self.notes = notes
+        }
+    }
+
     /// Packages of the global settings, then those of each project's `.pi/settings.json`.
-    public static func list(configRoot: URL, projects: [URL], in env: HarnessEnvironment) -> [PiPackage] {
+    public static func list(configRoot: URL, projects: [URL], in env: HarnessEnvironment) -> Listing {
+        list(configRoot: configRoot, projects: projects, limits: Limits(), in: env)
+    }
+
+    static func list(configRoot: URL, projects: [URL], limits: Limits, in env: HarnessEnvironment) -> Listing {
+        var listing = Listing()
         let global = packages(settings: configRoot.appending(path: "settings.json"), scope: .global,
-                              configRoot: configRoot, globals: [], env: env)
-        var result = global
+                              configRoot: configRoot, globals: [], limits: limits, env: env, into: &listing)
         var seen: Set<String> = []
         for project in projects where seen.insert(project.standardizedFileURL.path).inserted {
-            result += packages(settings: project.appending(path: ".pi/settings.json"), scope: .project(project),
-                               configRoot: configRoot, globals: global, env: env)
+            _ = packages(settings: project.appending(path: ".pi/settings.json"), scope: .project(project),
+                         configRoot: configRoot, globals: global, limits: limits, env: env, into: &listing)
         }
-        return result
+        let skipped = listing.packages.filter(\.isTooLarge).count
+        if limits.isExhausted, skipped > 0 {
+            listing.notes.append("AKit stopped reading packages after its limit for one refresh: "
+                + "\(skipped) \(skipped == 1 ? "package is" : "packages are") not listed in full.")
+        }
+        return listing
     }
 
     /// Read-only skill roots of the installed packages that have skills, global packages first.
@@ -89,7 +134,7 @@ public enum PiPackages {
 
     /// Real paths of global packages' skill files that a session in `project` does not load: the
     /// project's settings list the same package (same identity), which replaces the global entry,
-    /// or narrows it with `autoload: false`.
+    /// or narrows it with `autoload: false`. Resolves links: call it off the main thread.
     public static func skillsHidden(in project: URL, packages: [PiPackage]) -> Set<String> {
         let path = project.standardizedFileURL.path
         let local = packages.filter { package in
@@ -105,24 +150,60 @@ public enum PiPackages {
         return hidden
     }
 
-    static func packages(settings: URL, scope: InstallScope, configRoot: URL, globals: [PiPackage],
-                         env: HarnessEnvironment) -> [PiPackage] {
+    /// `skillsHidden` for each project that hides anything, keyed by the project's standardized path.
+    public static func skillsHidden(projects: [URL], packages: [PiPackage]) -> [String: Set<String>] {
+        guard packages.contains(where: { $0.scope != .global }) else { return [:] }
+        var result: [String: Set<String>] = [:]
+        for project in projects {
+            let hidden = skillsHidden(in: project, packages: packages)
+            if !hidden.isEmpty { result[project.standardizedFileURL.path] = hidden }
+        }
+        return result
+    }
+
+    /// The packages of one settings file, appended to `listing`; returns them.
+    static func packages(settings: URL, scope: InstallScope, configRoot: URL, globals: [PiPackage], limits: Limits,
+                         env: HarnessEnvironment, into listing: inout Listing) -> [PiPackage] {
         guard let entries = FileWalk.jsonObject(settings)?["packages"] as? [Any] else { return [] }
         let base: URL = switch scope {
         case .global: configRoot
         case .project(let project): project.appending(path: ".pi")
         }
-        return entries.enumerated().compactMap { index, entry in
+        // Pi's dedupePackages: one entry per identity; a global file keeps the first, a project file the last.
+        var chosen: [String: (index: Int, source: String, filter: [String: Any]?, parsed: Source)] = [:]
+        var order: [String] = []
+        var repeated = 0
+        for (index, entry) in entries.enumerated() {
             let filter = entry as? [String: Any]
-            guard let source = (entry as? String) ?? filter?["source"] as? String else { return nil }
-            return package(index: index, source: source, filter: filter, scope: scope, settings: settings, base: base,
-                           configRoot: configRoot, globals: globals, env: env)
+            guard let source = (entry as? String) ?? filter?["source"] as? String else { continue }
+            let parsed = Source(source, base: base, env: env)
+            if chosen[parsed.identity] == nil {
+                order.append(parsed.identity)
+            } else {
+                repeated += 1
+                if scope == .global { continue }
+            }
+            chosen[parsed.identity] = (index, source, filter, parsed)
         }
+        let file = FileWalk.tilde(settings, home: env.homeDirectory)
+        if repeated > 0 {
+            listing.notes.append("\(file): \(repeated) repeated \(repeated == 1 ? "entry" : "entries") skipped, "
+                + "Pi loads each package once.")
+        }
+        if order.count > maxEntries {
+            listing.notes.append("\(file): only the first \(maxEntries) of \(order.count) packages are read.")
+        }
+        let picked = order.prefix(maxEntries).compactMap { chosen[$0] }.sorted { $0.index < $1.index }
+        let result = picked.map { entry in
+            package(index: entry.index, source: entry.source, parsed: entry.parsed, filter: entry.filter, scope: scope,
+                    settings: settings, base: base, configRoot: configRoot, globals: globals, limits: limits)
+        }
+        listing.packages += result
+        return result
     }
 
-    static func package(index: Int, source: String, filter: [String: Any]?, scope: InstallScope, settings: URL,
-                        base: URL, configRoot: URL, globals: [PiPackage], env: HarnessEnvironment) -> PiPackage {
-        let parsed = Source(source, base: base, env: env)
+    static func package(index: Int, source: String, parsed: Source, filter: [String: Any]?, scope: InstallScope,
+                        settings: URL, base: URL, configRoot: URL, globals: [PiPackage], limits: Limits) -> PiPackage {
         // A project entry with `autoload: false` is a delta over the global entry of the same package.
         let deltaBase = filter?["autoload"] as? Bool == false
             ? globals.first { $0.identity == parsed.identity } : nil
@@ -148,20 +229,24 @@ public enum PiPackages {
         var manifest: [String: Any]?
         if let folder {
             if FileWalk.isDirectory(folder) {
-                let walk = Walk(root: folder)
-                let baseResources = deltaBase.map {
-                    [.extensions: $0.extensions, .skills: $0.skills, .prompts: $0.prompts, .themes: $0.themes] as Resources
-                }
-                let found = walk.resources(filter: filter, deltaBase: baseResources)
-                if walk.exhausted {
+                let walk = Walk(root: folder, limits: limits)
+                manifest = walk.packageJSON(folder)
+                if limits.isExhausted {
                     tooLarge = true
-                } else if let found {
-                    resources = found
-                } else if case .local = parsed.kind {
-                    // Only a local folder that offers nothing is loaded as one extension.
-                    resources = [.extensions: [folder]]
+                } else {
+                    let baseResources = deltaBase.map {
+                        [.extensions: $0.extensions, .skills: $0.skills, .prompts: $0.prompts, .themes: $0.themes] as Resources
+                    }
+                    let found = walk.resources(filter: filter, deltaBase: baseResources)
+                    if walk.exhausted {
+                        tooLarge = true
+                    } else if let found {
+                        resources = found
+                    } else if case .local = parsed.kind {
+                        // Only a local folder that offers nothing is loaded as one extension.
+                        resources = [.extensions: [folder]]
+                    }
                 }
-                manifest = FileWalk.jsonObject(folder.appending(path: "package.json"))
             } else if FileWalk.isRegularFile(folder), extensionFile(folder) {
                 resources = [.extensions: [folder]]
             }
@@ -238,10 +323,12 @@ public enum PiPackages {
             }
         }
 
-        /// `https://user:token@host/a/b` → `https://host/a/b`, also after a `git:` prefix.
+        /// `https://user:token@host/a/b?token=x#v1` → `https://host/a/b#v1`, also after a `git:` prefix.
         static func withoutCredentials(_ source: String) -> String {
-            source.replacingOccurrences(of: #"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]*@"#, with: "$1",
-                                        options: .regularExpression)
+            guard source.contains("://") else { return source }
+            return source
+                .replacingOccurrences(of: #"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]*@"#, with: "$1", options: .regularExpression)
+                .replacingOccurrences(of: #"\?[^#]*"#, with: "", options: .regularExpression)
         }
 
         /// `@scope/name@1.2` → `@scope/name`.
@@ -304,17 +391,23 @@ public enum PiPackages {
     // MARK: - Walking one package
 
     /// Everything read from one package folder: what its manifest and folders offer (Pi's
-    /// collectPackageResources), kept inside the folder and within the entry budget.
+    /// collectPackageResources), kept inside the folder and within the package's and the
+    /// refresh's limits.
     final class Walk {
         let root: URL
         private let rootReal: String
+        private let limits: Limits
         private var budget = PiPackages.entryBudget
-        private(set) var exhausted = false
+        private var stopped = false
         private var globs: [String: Glob] = [:]
-        private lazy var manifest: [ResourceType: [String]]? = Self.manifest(root)
+        private lazy var manifest: [ResourceType: [String]]? = manifest(of: root)
 
-        init(root: URL) {
+        /// The package's own limit or the refresh's was reached; what was found is incomplete.
+        var exhausted: Bool { stopped || limits.isExhausted }
+
+        init(root: URL, limits: Limits = Limits()) {
             self.root = root.standardizedFileURL
+            self.limits = limits
             rootReal = FileWalk.realPath(root) ?? root.standardizedFileURL.path
         }
 
@@ -360,11 +453,15 @@ public enum PiPackages {
             return anyFolder ? result : nil
         }
 
+        /// `package.json` of a folder of the package, if it is a regular file inside the package.
+        func packageJSON(_ folder: URL) -> [String: Any]? {
+            let file = folder.appending(path: "package.json")
+            return isFile(file) ? FileWalk.jsonObject(file) : nil
+        }
+
         /// The `pi` key of package.json: only lists made of strings count.
-        static func manifest(_ folder: URL) -> [ResourceType: [String]]? {
-            guard let pi = FileWalk.jsonObject(folder.appending(path: "package.json"))?["pi"] as? [String: Any] else {
-                return nil
-            }
+        func manifest(of folder: URL) -> [ResourceType: [String]]? {
+            guard let pi = packageJSON(folder)?["pi"] as? [String: Any] else { return nil }
             var result: [ResourceType: [String]] = [:]
             for type in ResourceType.allCases {
                 if let list = pi[type.rawValue] as? [Any] {
@@ -387,7 +484,7 @@ public enum PiPackages {
 
         /// Manifest paths and globs, then its own `!`/`+`/`-` patterns.
         func manifestFiles(_ entries: [String], _ type: ResourceType) -> [URL] {
-            let entries = Array(entries.prefix(256))
+            let entries = Array(entries.prefix(PiPackages.maxPatterns))
             let paths = entries.filter { !PiPackages.isOverride($0) }.flatMap { entry -> [URL] in
                 PiPackages.hasGlob(entry) ? expandGlob(entry) : [PiPackages.path(entry, in: root)]
             }
@@ -403,7 +500,7 @@ public enum PiPackages {
             return unique(files.filter { enabled.contains($0.path) })
         }
 
-        // MARK: Containment and budget
+        // MARK: Containment and limits
 
         /// Real path of a folder inside the package.
         func directory(_ url: URL) -> String? {
@@ -423,16 +520,28 @@ public enum PiPackages {
             return real == rootReal || real.hasPrefix(rootReal == "/" ? "/" : rootReal + "/") ? real : nil
         }
 
-        /// Visible entries of a folder; each one costs one unit of the budget.
+        /// Visible entries of a folder; each one costs one entry of the package's and the refresh's limit.
         private func children(_ dir: URL) -> [URL] {
             guard !exhausted else { return [] }
             let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
             budget -= names.count + 1
-            if budget < 0 {
-                exhausted = true
+            limits.entries -= names.count + 1
+            if budget < 0 || limits.isExhausted {
+                stopped = true
                 return []
             }
             return names.filter { !$0.hasPrefix(".") }.sorted().map { dir.appending(path: $0) }
+        }
+
+        /// Glob matching, counted into the refresh's limit; false once it is used up.
+        private func matches(_ glob: Glob, _ text: String) -> Bool {
+            guard !exhausted else { return false }
+            limits.matchSteps -= glob.steps(forLength: text.count)
+            if limits.isExhausted {
+                stopped = true
+                return false
+            }
+            return glob.matches(text)
         }
 
         private func unique(_ files: [URL]) -> [URL] {
@@ -486,8 +595,8 @@ public enum PiPackages {
         }
 
         private func extensionEntry(_ dir: URL) -> [URL]? {
-            if let listed = Self.manifest(dir)?[.extensions], !listed.isEmpty {
-                let found = listed.prefix(256).map { PiPackages.path($0, in: dir) }.filter(isFile)
+            if let listed = manifest(of: dir)?[.extensions], !listed.isEmpty {
+                let found = listed.prefix(PiPackages.maxPatterns).map { PiPackages.path($0, in: dir) }.filter(isFile)
                 if !found.isEmpty { return found }
             }
             for name in ["index.ts", "index.js"] where isFile(dir.appending(path: name)) {
@@ -517,7 +626,7 @@ public enum PiPackages {
         func expandGlob(_ pattern: String) -> [URL] {
             var pattern = pattern
             while pattern.hasPrefix("./") { pattern.removeFirst(2) }
-            guard pattern.count <= 512, !pattern.hasPrefix("/"), !pattern.hasPrefix("~") else { return [] }
+            guard pattern.count <= Glob.maxLength, !pattern.hasPrefix("/"), !pattern.hasPrefix("~") else { return [] }
             var current = [root]
             for segment in pattern.split(separator: "/").map(String.init) {
                 guard !exhausted else { return [] }
@@ -528,7 +637,7 @@ public enum PiPackages {
                 } else if PiPackages.hasGlob(segment) || segment.contains("[") || segment.contains("{") {
                     guard let glob = glob(segment) else { return [] }
                     for dir in current where directory(dir) != nil {
-                        next += children(dir).filter { glob.matches($0.lastPathComponent) }
+                        next += children(dir).filter { matches(glob, $0.lastPathComponent) }
                     }
                 } else {
                     next = current.map { $0.appending(path: segment) }
@@ -567,7 +676,7 @@ public enum PiPackages {
         /// `+path` adds an exact path back, `-path` removes an exact path. Returns enabled paths.
         func apply(_ patterns: [String], to files: [URL]) -> Set<String> {
             var includes: [String] = [], excludes: [String] = [], forceIn: [String] = [], forceOut: [String] = []
-            for pattern in patterns.prefix(256) {
+            for pattern in patterns.prefix(PiPackages.maxPatterns) {
                 switch pattern.first {
                 case "+": forceIn.append(String(pattern.dropFirst()))
                 case "-": forceOut.append(String(pattern.dropFirst()))
@@ -589,7 +698,7 @@ public enum PiPackages {
         /// or off (`!`, `-`); a later pattern wins. Files no pattern names are left out.
         func autoloadDelta(_ files: [URL], _ patterns: [String]) -> [String: Bool] {
             var result: [String: Bool] = [:]
-            for pattern in patterns.prefix(256) {
+            for pattern in patterns.prefix(PiPackages.maxPatterns) {
                 let first = pattern.first
                 let target = PiPackages.isOverride(pattern) ? String(pattern.dropFirst()) : pattern
                 let exact = first == "+" || first == "-"
@@ -610,7 +719,7 @@ public enum PiPackages {
             }
             return patterns.contains { pattern in
                 guard let glob = glob(pattern) else { return false }
-                return candidates.contains { glob.matches($0) }
+                return candidates.contains { matches(glob, $0) }
             }
         }
 
@@ -648,29 +757,45 @@ public enum PiPackages {
         (entry.hasPrefix("/") ? URL(filePath: entry) : root.appending(path: entry)).standardizedFileURL
     }
 
-    /// A minimatch-style glob: `**` any folders, `*` and `?` within one name, `[...]` classes
-    /// and `{a,b}` alternatives. Matched without backtracking (one pass per token over the text),
-    /// so a package's pattern can't make it slow. Too long patterns or too many alternatives
-    /// match nothing.
+    /// A glob with minimatch's meaning (Pi's default options): `**` as a whole segment spans
+    /// folders, elsewhere it acts like `*`; `*` and `?` stay within one name; `*`, `?`, `[...]`
+    /// and `**` don't match a name's leading dot unless the pattern spells the dot; a segment of
+    /// only `*` doesn't match an empty name; `[...]` classes (a leading `]` is a member, `!`/`^`
+    /// negate); `{a,b}` alternatives (`{a}` stays literal); `\` escapes the next character.
+    /// Matched without backtracking, one pass per token over the text. Patterns over `maxLength`
+    /// characters or with more than `maxAlternatives` alternatives match nothing.
     struct Glob {
+        static let maxLength = 128
+        static let maxAlternatives = 8
+
         enum Token: Equatable {
             case literal(Character)
             /// `?`: one character except `/`.
             case one
             /// `*`: any characters except `/`.
             case star
-            /// `**` not followed by `/`: any characters.
-            case any
-            /// `**/`: nothing, or anything ending in `/`.
-            case folders
             case set([ClosedRange<Character>], negated: Bool)
+            /// `**` as the last segment: any further names, none starting with a dot.
+            case names
+            /// `**/`: zero or more folders, none starting with a dot.
+            case folders
+            /// The name starting here must not start with a dot.
+            case noDot
+            /// The name starting here must not be empty.
+            case notEmpty
         }
 
         let alternatives: [[Token]]
 
         init?(_ pattern: String) {
-            guard pattern.count <= 512, let expanded = Self.expandBraces(pattern, limit: 64) else { return nil }
+            guard pattern.count <= Self.maxLength,
+                  let expanded = Self.expandBraces(pattern, limit: Self.maxAlternatives) else { return nil }
             alternatives = expanded.map(Self.tokens)
+        }
+
+        /// Upper bound of the work `matches` does for a text of this length.
+        func steps(forLength length: Int) -> Int {
+            alternatives.reduce(0) { $0 + $1.count } * (length + 1)
         }
 
         func matches(_ text: String) -> Bool {
@@ -678,81 +803,99 @@ public enum PiPackages {
             return alternatives.contains { Self.match($0, chars) }
         }
 
-        /// `a{b,c}d` → `abd`, `acd` (nested too). nil: unbalanced or more than `limit` results.
+        /// `a{b,c}d` → `abd`, `acd` (nested too). Braces without a top-level comma and unbalanced
+        /// ones stay literal. nil: more than `limit` results.
         static func expandBraces(_ pattern: String, limit: Int) -> [String]? {
             let chars = Array(pattern)
-            guard let open = chars.firstIndex(of: "{") else {
-                return chars.contains("}") ? nil : [pattern]
+            var index = 0
+            while index < chars.count {
+                if chars[index] == "\\" {
+                    index += 2
+                    continue
+                }
+                if chars[index] == "{", let (close, parts) = braceGroup(chars, open: index), parts.count > 1 {
+                    let head = String(chars[..<index])
+                    let tail = String(chars[(close + 1)...])
+                    var result: [String] = []
+                    for part in parts {
+                        guard let expanded = expandBraces(head + part + tail, limit: limit) else { return nil }
+                        result += expanded
+                        if result.count > limit { return nil }
+                    }
+                    return result
+                }
+                index += 1
             }
+            return [pattern]
+        }
+
+        /// The closing brace and the top-level parts of the group opening at `open`.
+        static func braceGroup(_ chars: [Character], open: Int) -> (Int, [String])? {
             var depth = 0
             var parts: [String] = []
             var current = ""
-            var close: Int?
-            for index in (open + 1)..<chars.count {
+            var index = open + 1
+            while index < chars.count {
                 let char = chars[index]
-                if char == "{" { depth += 1 }
-                if char == "}" {
-                    if depth == 0 { close = index; break }
-                    depth -= 1
+                if char == "\\", index + 1 < chars.count {
+                    current += String(chars[index...(index + 1)])
+                    index += 2
+                    continue
                 }
+                if char == "}", depth == 0 {
+                    parts.append(current)
+                    return (index, parts)
+                }
+                if char == "{" { depth += 1 }
+                if char == "}" { depth -= 1 }
                 if char == ",", depth == 0 {
                     parts.append(current)
                     current = ""
                 } else {
                     current.append(char)
                 }
+                index += 1
             }
-            guard let close else { return nil }
-            parts.append(current)
-            let head = String(chars[..<open])
-            let tail = String(chars[(close + 1)...])
-            var result: [String] = []
-            for part in parts {
-                guard let expanded = expandBraces(head + part + tail, limit: limit) else { return nil }
-                result += expanded
-                if result.count > limit { return nil }
-            }
-            return result
+            return nil
         }
 
         static func tokens(_ pattern: String) -> [Token] {
-            let chars = Array(pattern)
+            let segments = pattern.split(separator: "/", omittingEmptySubsequences: false).map { Array($0) }
+            var tokens: [Token] = []
+            for (number, segment) in segments.enumerated() {
+                let isLast = number == segments.count - 1
+                if segment == ["*", "*"] {
+                    tokens.append(isLast ? .names : .folders)
+                    continue // `**/` carries its own `/`
+                }
+                let parsed = segmentTokens(segment)
+                if let first = parsed.first, first != .literal(".") {
+                    if case .literal = first {} else { tokens.append(.noDot) }
+                }
+                if !parsed.isEmpty, parsed.allSatisfy({ $0 == .star }) { tokens.append(.notEmpty) }
+                tokens += parsed
+                if !isLast { tokens.append(.literal("/")) }
+            }
+            return tokens
+        }
+
+        /// One name's pattern: `**` inside a name acts like `*`.
+        static func segmentTokens(_ chars: [Character]) -> [Token] {
             var tokens: [Token] = []
             var index = 0
             while index < chars.count {
                 let char = chars[index]
                 switch char {
+                case "\\" where index + 1 < chars.count:
+                    tokens.append(.literal(chars[index + 1]))
+                    index += 1
                 case "*":
-                    var end = index
-                    while end + 1 < chars.count, chars[end + 1] == "*" { end += 1 }
-                    if end > index, end + 1 < chars.count, chars[end + 1] == "/" {
-                        tokens.append(.folders)
-                        end += 1
-                    } else if end > index {
-                        tokens.append(.any)
-                    } else if tokens.last != .star {
-                        tokens.append(.star)
-                    }
-                    index = end
+                    if tokens.last != .star { tokens.append(.star) }
                 case "?":
                     tokens.append(.one)
                 case "[":
-                    if let close = chars[(index + 1)...].firstIndex(of: "]"), close > index + 1 {
-                        var body = Array(chars[(index + 1)..<close])
-                        let negated = body.first == "!" || body.first == "^"
-                        if negated { body.removeFirst() }
-                        var ranges: [ClosedRange<Character>] = []
-                        var at = 0
-                        while at < body.count {
-                            if at + 2 < body.count, body[at + 1] == "-", body[at] <= body[at + 2] {
-                                ranges.append(body[at]...body[at + 2])
-                                at += 3
-                            } else {
-                                ranges.append(body[at]...body[at])
-                                at += 1
-                            }
-                        }
-                        tokens.append(.set(ranges, negated: negated))
+                    if let (set, close) = classToken(chars, open: index) {
+                        tokens.append(set)
                         index = close
                     } else {
                         tokens.append(.literal("["))
@@ -765,14 +908,52 @@ public enum PiPackages {
             return tokens
         }
 
+        /// `[abc]`, `[a-z]`, `[!x]`, `[^x]`, `[]a]` (a leading `]` is a member), `\` escapes.
+        static func classToken(_ chars: [Character], open: Int) -> (Token, Int)? {
+            var index = open + 1
+            var negated = false
+            if index < chars.count, chars[index] == "!" || chars[index] == "^" {
+                negated = true
+                index += 1
+            }
+            var members: [Character] = []
+            var first = true
+            while index < chars.count {
+                var char = chars[index]
+                if char == "]", !first {
+                    var ranges: [ClosedRange<Character>] = []
+                    var at = 0
+                    while at < members.count {
+                        if at + 2 < members.count, members[at + 1] == "-", members[at] <= members[at + 2] {
+                            ranges.append(members[at]...members[at + 2])
+                            at += 3
+                        } else {
+                            ranges.append(members[at]...members[at])
+                            at += 1
+                        }
+                    }
+                    return (.set(ranges, negated: negated), index)
+                }
+                if char == "\\", index + 1 < chars.count {
+                    index += 1
+                    char = chars[index]
+                }
+                members.append(char)
+                first = false
+                index += 1
+            }
+            return nil
+        }
+
         /// The set of text positions reachable after each token, carried left to right.
         static func match(_ tokens: [Token], _ text: [Character]) -> Bool {
             let count = text.count
+            func nameStart(_ index: Int) -> Bool { index == 0 || text[index - 1] == "/" }
             var reach = [Bool](repeating: false, count: count + 1)
             reach[0] = true
             for token in tokens {
                 var next = [Bool](repeating: false, count: count + 1)
-                var carry = false
+                var alive = false
                 for index in 0...count {
                     switch token {
                     case .literal(let char):
@@ -785,15 +966,28 @@ public enum PiPackages {
                             next[index + 1] = true
                         }
                     case .star:
-                        carry = reach[index] || (carry && text[index - 1] != "/")
-                        next[index] = carry
-                    case .any:
-                        carry = carry || reach[index]
-                        next[index] = carry
+                        alive = reach[index] || (alive && text[index - 1] != "/")
+                        next[index] = alive
+                    case .noDot:
+                        if reach[index], index == count || text[index] != "." { next[index] = true }
+                    case .notEmpty:
+                        if reach[index], index < count, text[index] != "/" { next[index] = true }
+                    case .names:
+                        if reach[index] { alive = true }
+                        next[index] = alive
+                        if index < count, alive, nameStart(index), text[index] == "." { alive = false }
                     case .folders:
-                        carry = carry || reach[index]
-                        if reach[index] { next[index] = true }
-                        if index < count, carry, text[index] == "/" { next[index + 1] = true }
+                        if reach[index] {
+                            alive = true
+                            next[index] = true
+                        }
+                        if index < count, alive {
+                            if nameStart(index), text[index] == "." {
+                                alive = false
+                            } else if text[index] == "/" {
+                                next[index + 1] = true
+                            }
+                        }
                     }
                 }
                 reach = next
