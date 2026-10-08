@@ -47,7 +47,7 @@ public enum Render {
             let parts = pieces[path] ?? []
             if ProjectBundle.mergesJSON(path) {
                 let layers = parts.map(\.layer).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-                // Not merged into the home folder yet (~/.claude/settings.json is the user's).
+                // Not merged into the home folder yet (~/.claude/settings.json, ~/.pi/agent/mcp.json are the user's).
                 guard !forHome else {
                     warnings.append("\(path) (\(layers.joined(separator: ", "))): JSON files are not rendered into the home folder yet; skipped.")
                     continue

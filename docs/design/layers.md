@@ -3,7 +3,8 @@
 Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
-bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`.
+bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
+`.pi/mcp.json` and `.pi/settings.json`.
 
 Also built, though not roadmap steps: work machines, the "project owns its files" update
 rules, `keep_auto`, `override`, the home folder render (`akit apply --home`, and in the app
@@ -154,8 +155,8 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 - Built-in fields: `project_name`, `target` (the chosen harnesses: `claude`, `pi`,
   `opencode`, `codex`; `target == claude` holds when claude is among them).
 - An unanswered field is empty (`false` for bool, no items for multi).
-- A `.mcp.json` or `.claude/settings.json` template is parsed first and `{{field}}` is
-  filled only inside its string values (see [JSON merge](#json-merge-built-2026-10-08)).
+- A template for a merged JSON file (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json`,
+  `.pi/settings.json`) is parsed first and `{{field}}` is filled only inside its string values (see [JSON merge](#json-merge-built-2026-10-08)).
 - Skills fill `{{field}}` only in Markdown files; unknown names are left as is
   (a warning for templates).
 - Fields never hold secrets. Secrets come from Keychain (see MCP below).
@@ -185,6 +186,7 @@ project/
   CLAUDE.md                    # "@AGENTS.md", only if Claude is a target
   .claude/skills -> ../.agents/skills   # symlink, only if Claude is a target
   .mcp.json, .claude/settings.json      # only the layers' keys, merged into the project's file
+  .pi/mcp.json, .pi/settings.json       # the same for Pi (MCP through pi-mcp-adapter)
 ```
 
 Targets (harnesses) are a project field, multi-select, default from the machine
@@ -194,7 +196,8 @@ profile. Differences per harness go through `when: target == "claude"`.
 
 - Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;
   sections are glued in layer order (`requires` first, then selection order).
-- JSON (`.mcp.json` and `.claude/settings.json` only; built 2026-10-08):
+- JSON (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json` and `.pi/settings.json` only;
+  built 2026-10-08):
   deep merge of keys. Two layers setting the same leaf to different values is an error,
   shown in the form before Apply, unless one sets `override: true`. The result is merged
   into the project's file key by key, see [JSON merge](#json-merge-built-2026-10-08).
@@ -232,7 +235,8 @@ A layer is a shared starting point, not the owner of a project. Per project:
   the `.claude/skills` link when Claude is a target. The project page lists them
   (New Skill…, Edit, Move to Trash).
 - The home folder follows the core layer completely (no ownership rules there).
-- JSON files (`.mcp.json`, `.claude/settings.json`): ownership is per key, not per file
+- JSON files (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json`, `.pi/settings.json`):
+  ownership is per key, not per file
   (2026-10-08). The file is the project's; AKit owns only the leaves it wrote. See
   [JSON merge](#json-merge-built-2026-10-08).
 
@@ -244,9 +248,11 @@ Decided 2026-10-08, built the same day. One mechanism for three plans: MCP serve
 layers, hooks and permissions in layers, and writing `enabledPlugins` from a
 recommendation later.
 
-1. **Which files.** Two files are merged, not glued or owned whole: `.mcp.json` and
-   `.claude/settings.json` in a project (exact paths, any letter case; an allow-list,
-   `ProjectBundle.mergedJSONFiles`, revised 2026-10-08 after review). Any other `.json`
+1. **Which files.** Four files are merged, not glued or owned whole: `.mcp.json` and
+   `.claude/settings.json` in a project, and Pi's `.pi/mcp.json` (read by the pi-mcp-adapter
+   package, which reads `.mcp.json` too) and `.pi/settings.json` (exact paths, any letter
+   case; an allow-list, `ProjectBundle.mergedJSONFiles`, revised 2026-10-08 after review; Pi's
+   two added 2026-10-08). Any other `.json`
    target (`tsconfig.json`, `opencode.json`, …) stays a whole file like any template, with
    text substitution, so JSONC files keep working. Targets are grouped ignoring letter case
    and a leading `./`; one file spelled two ways is a render error. Objects merge deeply;
@@ -262,7 +268,9 @@ recommendation later.
    the layer and the template.
 3. **Secrets.** A layer never carries secret values: every value at or under an `env` or
    `headers` key (any letter case) must be a whole-string `${NAME}` reference, else a render
-   error. So `"Bearer ${TOKEN}"` is refused for now. The preview never shows a secret: in a
+   error. So `"Bearer ${TOKEN}"` is refused for now. In `.mcp.json` and `.pi/mcp.json` a value
+   there starting with `!` gets its own error: pi-mcp-adapter runs such a value as a shell
+   command, and a layer never brings a command to run. The preview never shows a secret: in a
    JSON change's texts every value under `env` and `headers` that is not a `${NAME}`
    reference reads `••••`, in the old and the new text, also inside lists of objects. The
    masked text is only for showing; Apply writes the real values. Every `.json` file the
@@ -348,7 +356,8 @@ and deletes the draft. The form works without the agent.
 
 Status: possible since 2026-10-08 through JSON merge: a layer with an `.mcp.json`
 template brings project MCP servers (`"mcpServers": {…}`), and `.claude/settings.json`
-can enable them (`enabledMcpjsonServers`). Secrets are written only as `${VAR}` references
+can enable them (`enabledMcpjsonServers`). For Pi, `.pi/mcp.json` has the same shape (read by
+pi-mcp-adapter, which also reads `.mcp.json`). Secrets are written only as `${VAR}` references
 (enforced). Not built: the real values from Keychain (today they come from the
 environment the harness starts in), and MCP files of other harnesses (Codex TOML,
 OpenCode `opencode.json` has its own layout).
@@ -381,6 +390,7 @@ its context menu) is `akit remove project`: both use `ProjectForget`, and the di
 
 Step 6 of the design map, JSON merge (2026-10-08): `.mcp.json` and `.claude/settings.json`
 merge key by key into the project's file, see [JSON merge](#json-merge-built-2026-10-08).
+Pi's `.pi/mcp.json` and `.pi/settings.json` joined the same day.
 
 ## Open questions
 

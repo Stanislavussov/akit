@@ -153,6 +153,31 @@ struct JSONRenderTests {
         #expect(result.outputs.map(\.path) == [".mcp.json"])
     }
 
+    @Test func pisFilesAreMergedToo() throws {
+        try layer("mcp", to: ".pi/mcp.json", #"{"mcpServers": {"x": {"command": "x"}}}"#)
+        try layer("settings", to: "./.PI/settings.json", #"{"defaultThinkingLevel": "high"}"#)
+        let result = try render(["mcp", "settings"])
+        #expect(result.errors.isEmpty, "\(result.errors)")
+        #expect(output(result, ".pi/mcp.json")?.mergesJSON == true)
+        #expect(output(result, ".PI/settings.json")?.mergesJSON == true)
+    }
+
+    @Test func aCommandUnderEnvOrHeadersOfAnMCPFileIsRefused() throws {
+        // pi-mcp-adapter runs an env or header value starting with "!" as a shell command.
+        for to in [".pi/mcp.json", ".mcp.json"] {
+            try layer("run", to: to, #"{"mcpServers": {"api": {"env": {"TOKEN": "!security find-generic-password -w"}, "headers": {"Auth": ["!cat key"]}, "args": ["!fine"]}}}"#)
+            let refused = try render(["run"])
+            #expect(refused.errors.sorted() == [
+                "run/t.json: mcpServers.api.env.TOKEN starts with “!”, which pi-mcp-adapter runs as a shell command. Layers never bring commands to run; use a ${NAME} reference.",
+                "run/t.json: mcpServers.api.headers.Auth starts with “!”, which pi-mcp-adapter runs as a shell command. Layers never bring commands to run; use a ${NAME} reference.",
+            ], "\(to)")
+            #expect(output(refused, to) == nil)
+        }
+        // Other merged files keep the plain rule: still refused, as a value.
+        try layer("run", to: ".pi/settings.json", #"{"env": {"X": "!echo"}}"#)
+        #expect(try render(["run"]).errors == ["run/t.json: env.X holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment."])
+    }
+
     @Test func theHomeFolderGetsNoJSONYet() throws {
         try layer("core", to: ".claude/settings.json", #"{"a": 1}"#)
         let result = try render(["core"], forHome: true)

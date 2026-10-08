@@ -519,6 +519,87 @@ struct JSONMergeTests {
         #expect(preview.keysTakenOut.isEmpty)
     }
 
+    // MARK: - Pi's files
+
+    /// Layer `pi`: an MCP server in `.pi/mcp.json` and a key in `.pi/settings.json`.
+    func setUpPiBrain() async throws -> Brain {
+        _ = try await setUpBrain()
+        try write(".akit/registry/layers/pi/layer.yaml", """
+            files:
+              - template: mcp.json
+                to: .pi/mcp.json
+              - template: settings.json
+                to: .pi/settings.json
+            """)
+        try write(".akit/registry/layers/pi/templates/mcp.json",
+                  #"{"mcpServers": {"one": {"command": "one-server", "env": {"ONE_TOKEN": "${ONE_TOKEN}"}}}}"#)
+        try write(".akit/registry/layers/pi/templates/settings.json", #"{"defaultThinkingLevel": "high"}"#)
+        return try #require(Brain.load(from: brainRoot))
+    }
+
+    @Test func pisFilesGetTheLayersKeysAndTheLockRecordsThem() async throws {
+        let brain = try await setUpPiBrain()
+        try write("Projects/task/.pi/settings.json", #"{"theme": "dark", "defaultThinkingLevel": "low"}"#)
+        let first = plan(["pi"], brain: brain)
+        #expect(first.canApply, "\(first.render.errors) \(first.blockers)")
+        #expect(change(first, ".pi/mcp.json")?.kind == .create)
+        #expect(change(first, ".pi/mcp.json")?.mergesJSON == true)
+        #expect(change(first, ".pi/settings.json")?.kind == .same)
+        #expect(first.render.warnings.contains(".pi/settings.json: the project sets defaultThinkingLevel itself; AKit leaves it."))
+
+        _ = try await ProjectSetup.apply(first, brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".pi/mcp.json").value(at: ["mcpServers", "one", "env", "ONE_TOKEN"]) == .string("${ONE_TOKEN}"))
+        #expect(try tree(".pi/settings.json") == .object(["theme": .string("dark"), "defaultThinkingLevel": .string("low")]))
+        let lock = try #require(ProjectRecords.savedLock(id: id, in: store))
+        #expect(lock.files[".pi/mcp.json"] == nil)
+        #expect(lock.json?[".pi/mcp.json"]?.created == true)
+        #expect(lock.json?[".pi/mcp.json"]?.keys.keys.sorted() == ["/mcpServers/one/command", "/mcpServers/one/env/ONE_TOKEN"])
+        #expect(lock.json?[".pi/settings.json"] == nil)
+        #expect(change(plan(["pi"], brain: brain), ".pi/mcp.json")?.kind == .same)
+    }
+
+    @Test func pisMCPFileIsShownMaskedAndForgettingTakesAKitsKeysOut() async throws {
+        let brain = try await setUpPiBrain()
+        try write("Projects/task/.pi/mcp.json",
+                  #"{"mcpServers": {"api": {"command": "api", "env": {"API_KEY": "sk-live-123"}, "headers": {"X-Token": "!op read x"}}}}"#)
+        try write("Projects/task/.pi/settings.json", "{}")
+        let plan = plan(["pi"], brain: brain)
+        let merged = try #require(change(plan, ".pi/mcp.json"))
+        #expect(merged.kind == .update)
+        for text in [merged.oldText, merged.newText] {
+            let text = try #require(text)
+            #expect(!text.contains("sk-live-123") && !text.contains("op read"))
+            #expect(text.contains("\"API_KEY\": \"••••\"") && text.contains("\"X-Token\": \"••••\""))
+        }
+        _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".pi/mcp.json").value(at: ["mcpServers", "api", "env", "API_KEY"]) == .string("sk-live-123"))
+        #expect(try tree(".pi/settings.json") == .object(["defaultThinkingLevel": .string("high")]))
+
+        let preview = try #require(ProjectForget.preview(id: id, folder: project, forHome: false, brain: brain, store: store))
+        #expect(preview.keysTakenOut == [".pi/mcp.json", ".pi/settings.json"])
+        #expect(preview.removals.isEmpty)
+        try await ProjectForget.run(preview, keepFiles: false, brain: brain, home: home, env: env, trash: trash)
+        #expect(try tree(".pi/mcp.json").value(at: ["mcpServers", "one"]) == nil)
+        #expect(try tree(".pi/mcp.json").value(at: ["mcpServers", "api", "headers", "X-Token"]) == .string("!op read x"))
+        #expect(try tree(".pi/settings.json") == .object([:]))
+    }
+
+    @Test func aPiFileThatIsNotJSONBlocksApplyAndTheHomeFolderSkipsPisFiles() async throws {
+        let brain = try await setUpPiBrain()
+        try write("Projects/task/.pi/mcp.json", "{ broken")
+        let blocked = plan(["pi"], brain: brain)
+        #expect(blocked.blockers.contains { $0.hasPrefix(".pi/mcp.json is not valid JSON (") })
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(blocked, brain: brain, home: home, env: env, trash: trash)
+        }
+        #expect(read(".pi/mcp.json") == "{ broken")
+
+        let homePlan = plan(["pi"], brain: brain, forHome: true)
+        #expect(homePlan.changes.isEmpty)
+        #expect(homePlan.render.warnings == [".pi/mcp.json (pi): JSON files are not rendered into the home folder yet; skipped.",
+                                             ".pi/settings.json (pi): JSON files are not rendered into the home folder yet; skipped."])
+    }
+
     @Test func locksOfEitherVersionStillRead() throws {
         // A lock written before merged JSON files existed.
         let old = #"{"brainCommit":"abc","brainDirty":false,"files":{"AGENTS.md":{"layers":["base"],"sha256":"00"}}}"#

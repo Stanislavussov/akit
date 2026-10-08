@@ -357,6 +357,19 @@ public enum JSONValue: Hashable, Sendable {
         }.map(\.path)
     }
 
+    /// Key paths of the values at or under an `env` or `headers` key that start with `!` (a
+    /// string, or a string in a list): pi-mcp-adapter runs such a value as a shell command.
+    public var commandLeaves: [[String]] {
+        leaves.filter { leaf in
+            guard leaf.path.contains(where: Self.isSecretKey) else { return false }
+            switch leaf.value {
+            case .string(let text): return text.hasPrefix("!")
+            case .array(let items): return items.contains { if case .string(let text) = $0 { text.hasPrefix("!") } else { false } }
+            default: return false
+            }
+        }.map(\.path)
+    }
+
     /// For showing: every value under an `env`, `headers` or `environment` key that is not a
     /// `${NAME}` reference becomes `••••`, also inside lists of objects.
     public var masked: JSONValue { masked(secret: false) }

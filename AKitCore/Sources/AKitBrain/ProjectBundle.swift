@@ -249,9 +249,13 @@ public struct ProjectBundle: Sendable {
                         warnings.append("\(layer.name)/\(file.template) uses {{\(name)}}, which is not a field; it is left as is.")
                     }
                     // Secrets never live in the brain: env and headers hold only ${VAR} references.
+                    // In MCP files a value starting with `!` is a command pi-mcp-adapter runs: said so.
+                    let commands = runsCommands(file.to) ? Set(filled.commandLeaves) : []
                     let secrets = filled.secretLeaves
                     for path in secrets {
-                        errors.append("\(name): \(JSONValue.display(path)) holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment.")
+                        errors.append(commands.contains(path)
+                            ? "\(name): \(JSONValue.display(path)) starts with “!”, which pi-mcp-adapter runs as a shell command. Layers never bring commands to run; use a ${NAME} reference."
+                            : "\(name): \(JSONValue.display(path)) holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment.")
                     }
                     guard secrets.isEmpty else { continue }
                     files.append(File(layer: layer.name, to: file.to, data: Data(filled.pretty.utf8), override: file.override))
@@ -287,11 +291,16 @@ public struct ProjectBundle: Sendable {
     // MARK: - Pieces
 
     /// The JSON files merged key by key into the project's file instead of written whole:
-    /// Claude Code's project MCP servers and settings (any letter case). Other `.json` targets
-    /// (tsconfig.json, opencode.json, …) are whole files like any template.
-    public static let mergedJSONFiles: Set<String> = [".mcp.json", ".claude/settings.json"]
+    /// Claude Code's and Pi's project MCP servers and settings (any letter case; Pi's MCP files
+    /// are read by the pi-mcp-adapter package). Other `.json` targets (tsconfig.json,
+    /// opencode.json, …) are whole files like any template.
+    public static let mergedJSONFiles: Set<String> = [".mcp.json", ".claude/settings.json", ".pi/mcp.json", ".pi/settings.json"]
 
     public static func mergesJSON(_ path: String) -> Bool { mergedJSONFiles.contains(normalizedPath(path).lowercased()) }
+
+    /// MCP files whose `env` and `headers` values pi-mcp-adapter runs as a shell command when
+    /// they start with `!` (it reads `.mcp.json` too).
+    static func runsCommands(_ path: String) -> Bool { [".mcp.json", ".pi/mcp.json"].contains(normalizedPath(path).lowercased()) }
 
     /// Files AKit never reads, shows or writes, because they hold secrets.
     public static func isSecretFile(_ path: String) -> Bool {
