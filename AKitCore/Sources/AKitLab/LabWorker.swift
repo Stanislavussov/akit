@@ -321,38 +321,12 @@ enum ReplayRun {
                                               env: env, out: out)
 
         phase(.tests)
-        out("Hidden tests: \(task.failToPass.count) fail-to-pass, \(task.passToPass.count) pass-to-pass.")
-        try await IsolatedClone.copyTests(task.testFiles, from: URL(filePath: task.repo), commit: task.commit, into: work, env: env)
-        let package = task.package.isEmpty ? work : work.appending(path: task.package, directoryHint: .isDirectory)
-        let runner = SwiftTests(package: package, folder: work, env: env, log: log, out: out)
-        let outcome: TestOutcome
-        if await runner.build() {
-            let results = await runner.run(task.failToPass + task.passToPass)
-            guard !Cancellation.isCancelled else { throw CancellationError() }
-            outcome = Self.outcome(task, results)
-        } else {
-            guard !Cancellation.isCancelled else { throw CancellationError() }
-            outcome = TestOutcome(status: .failed, failToPass: .init(passed: 0, total: task.failToPass.count),
-                                  passToPass: .init(passed: 0, total: task.passToPass.count),
-                                  failed: (task.failToPass + task.passToPass).map(\.id),
-                                  note: "The tests don't build after the agent's changes (see check.log).")
-        }
+        let outcome = try await HiddenTests.judge(task, in: work, log: log, env: env, out: out)
 
         phase(.metrics)
         let metrics = await LabWorker.ownMetrics(run.spec, project: work, env: env)
         let leaks = LabPaths.transcript(sessionID: run.spec.sessionID, env: env)
             .map { LeakCheck.leaks(in: $0, task: task, repo: repo, env: env) } ?? []
         return RunResult(metrics: metrics, tests: outcome, leaks: leaks, agentError: agent.error ?? logError)
-    }
-
-    static func outcome(_ task: ReplayTask, _ results: [TestName: SwiftTests.Outcome]) -> TestOutcome {
-        func count(_ tests: [TestName]) -> TestOutcome.Count {
-            TestOutcome.Count(passed: tests.filter { results[$0] == .passed }.count, total: tests.count)
-        }
-        let all = task.failToPass + task.passToPass
-        let failed = all.filter { results[$0] != .passed }
-        return TestOutcome(status: failed.isEmpty ? .passed : .failed, failToPass: count(task.failToPass),
-                           passToPass: count(task.passToPass), timeouts: all.filter { results[$0] == .timedOut }.count,
-                           failed: failed.map(\.id))
     }
 }

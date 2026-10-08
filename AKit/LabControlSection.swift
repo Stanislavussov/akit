@@ -106,6 +106,7 @@ extension ControlTask {
         switch source {
         case .session(let key): "From session \(key)"
         case .reproduction: "Reproduction"
+        case .commit(let sha): "From commit \(sha.prefix(7))"
         }
     }
 }

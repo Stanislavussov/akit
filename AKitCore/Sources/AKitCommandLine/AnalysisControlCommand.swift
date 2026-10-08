@@ -24,6 +24,13 @@ extension AKitCLI {
           akit analysis control task new --repo DIR --base SHA --prompt TEXT [--mode MODE]
                               (--tests CMD | --assert MODE) [--reference SHA]
                                           A minimal reproduction: the simplest request that triggers the mode
+          akit analysis control task new --commit SHA [--repo DIR]
+                                          A task from a commit: redo it from its parent; the commit's own
+                                          tests judge each cell (fail-to-pass must pass, pass-to-pass
+                                          must still pass; SwiftPM only). The commit is checked first as
+                                          in akit lab task (two local builds, minutes, no tokens). Every
+                                          form of task new takes --layer-set LAYER: add the task to the
+                                          layer's set
           akit analysis control tasks [--json]
                                           Control tasks, oldest first
           akit analysis control task check ID
@@ -110,6 +117,8 @@ extension AKitCLI {
             return 0
         case "run":
             return try await runControl(&args, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
+        case "layer-sets", "layer-set":
+            return try layerSets(command ?? "", &args, json: json, env: env, cwd: cwd, out: out, trash: trash)
         case "compare":
             guard let list = args.positional() else { throw Failure(message: "Which tasks? akit analysis control compare TASK[,TASK…].") }
             try args.finish()
@@ -136,7 +145,15 @@ extension AKitCLI {
         let tests = args.value("--tests")
         let assert = args.value("--assert")
         let reference = args.value("--reference")
+        let commit = args.value("--commit")
+        let layerSet = args.value("--layer-set")
         try args.finish()
+        if let commit {
+            guard session == nil, base == nil, prompt == nil, mode == nil, tests == nil, assert == nil, reference == nil else {
+                throw Failure(message: "--commit takes the base, prompt and oracle from the commit; give only --repo and --layer-set with it.")
+            }
+            return try await newCommitTask(commit, repo: repo.map { resolve($0, cwd: cwd, env: env) } ?? cwd, layerSet: layerSet, env: env, out: out)
+        }
         let oracle: ControlTask.Oracle
         switch (tests, assert) {
         case (let command?, nil): oracle = .tests(command: command)
@@ -171,6 +188,7 @@ extension AKitCLI {
         try ControlTasks.save(task, env: env)
         out("Saved control task \(task.id): \(task.title)")
         out("  \(task.repo) at \(String(task.base.prefix(7))) · \(task.oracle.label)")
+        if let layerSet { try addToLayerSet(task, layerSet, env: env, out: out) }
         return 0
     }
 
@@ -333,7 +351,9 @@ extension AKitCLI {
         guard let brain = Brain.load(from: brainRoot) else {
             throw Failure(message: "No brain repo at \(brainRoot.path). Create it in AKit (Brain → Create Brain Repo) or pass --brain.")
         }
-        let answers = try layerAnswers(answerTexts, layer: layer, brain: brain)
+        // The layer set's answers, then --answer over them.
+        let answers = (LayerSets.load(layer, env: env)?.answers ?? [:])
+            .merging(try layerAnswers(answerTexts, layer: layer, brain: brain)) { $1 }
         let prepared: LayerSetups.Prepared
         do {
             prepared = try await LayerSetups.prepare(layer: layer, tasks: tasks, answers: answers, agent: agent, sanity: sanity,
@@ -426,7 +446,7 @@ extension AKitCLI {
     }
 
     /// Tasks by id or a unique id prefix, comma-separated.
-    private static func controlTasks(_ list: String, env: HarnessEnvironment) throws -> [ControlTask] {
+    static func controlTasks(_ list: String, env: HarnessEnvironment) throws -> [ControlTask] {
         let all = ControlTasks.list(env: env)
         return try list.split(separator: ",").map { part in
             let id = String(part)
@@ -460,6 +480,7 @@ extension AKitCLI {
         let source = switch task.source {
         case .session(let key): "from \(key)"
         case .reproduction: "reproduction"
+        case .commit(let sha): "from commit \(sha.prefix(7))"
         }
         return "\(task.id)  \(String(task.base.prefix(7)))  \(task.oracle.label)  \(source)  \(task.title)"
     }

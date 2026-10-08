@@ -41,6 +41,8 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
         case session(key: SessionKey)
         /// A minimal reproduction the user wrote.
         case reproduction
+        /// A commit, redone from its parent (its replay task in `~/.akit/lab/tasks/<sha>.json`).
+        case commit(sha: String)
     }
 
     public enum Oracle: Codable, Sendable, Hashable {
@@ -48,12 +50,16 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
         case tests(command: String)
         /// The mode's code check on the cell's transcript, a behavioural oracle.
         case assertion(modeID: String)
+        /// The commit's own tests, copied in after the agent: its fail-to-pass tests must pass
+        /// and its pass-to-pass tests must still pass (SwiftPM only, as replays).
+        case hiddenTests(commit: String)
 
-        /// "tests: swift test", "assertion: repeated-steps".
+        /// "tests: swift test", "assertion: repeated-steps", "hidden tests of a1b2c3d".
         public var label: String {
             switch self {
             case .tests(let command): "tests: \(command)"
             case .assertion(let modeID): "assertion: \(modeID)"
+            case .hiddenTests(let commit): "hidden tests of \(commit.prefix(7))"
             }
         }
     }
@@ -141,9 +147,32 @@ public enum ControlTasks {
                            reference: reference)
     }
 
+    /// A task from a commit (`docs/design/layer-evals.md`, "Tasks and layer sets"): redo it
+    /// from its parent; the commit's own tests judge the cell. The commit is checked as a
+    /// replay task first (two local builds, minutes, no tokens) unless its replay task is
+    /// cached. A commit that already has a control task gives that task back.
+    public static func fromCommit(_ reference: String, repo: URL, env: HarnessEnvironment,
+                                  out: @escaping @Sendable (String) -> Void = { _ in }) async throws -> ControlTask {
+        let replay: ReplayTask
+        do {
+            replay = try await ReplayTasks.task(commit: reference, repo: repo, env: env, out: out)
+        } catch let failure as ReplayTasks.Failure {
+            throw Failure(message: failure.message)
+        }
+        if let existing = list(env: env).first(where: { $0.source == .commit(sha: replay.commit) }) { return existing }
+        var task = ControlTask(id: newID(replay.subject), title: JSONLines.titleLine(replay.subject, limit: 60), repo: replay.repo,
+                               base: replay.base, prompt: replay.prompt, source: .commit(sha: replay.commit),
+                               oracle: .hiddenTests(commit: replay.commit), reference: replay.commit)
+        // Validation ran the tests on the commit itself: they pass there.
+        task.referenceGreen = true
+        return task
+    }
+
     /// An assertion needs a code check, and a mode one turn can show.
     static func checkOracle(_ oracle: ControlTask.Oracle) throws {
         switch oracle {
+        case .hiddenTests:
+            throw Failure(message: "Hidden tests come from a commit: make the task with --commit.")
         case .tests(let command):
             guard !command.trimmingCharacters(in: .whitespaces).isEmpty else { throw Failure(message: "The test command is empty.") }
         case .assertion(let modeID):

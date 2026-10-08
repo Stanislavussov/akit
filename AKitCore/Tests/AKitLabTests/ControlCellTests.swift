@@ -87,6 +87,25 @@ struct ControlCellTests {
         #expect(before.hashes.filter { after.hashes[$0.key] != $0.value }.map(\.key).sorted() == ["Tests/ValueTests.swift", "py/test_value.py"])
     }
 
+    /// A commit task's hidden test files are copied in after the agent: changes to them don't
+    /// weaken the oracle, changes to other test files still do.
+    @Test func guardIgnoresTheHiddenTestFiles() throws {
+        let folder = home.appending(path: "hidden")
+        try write("Pkg/Tests/LibTests/LibTests.swift", "@Test func zero() {}\n", in: folder)
+        try write("Pkg/Tests/LibTests/OtherTests.swift", "@Test func one() {}\n@Test func two() {}\n", in: folder)
+        let hidden: Set<String> = ["Pkg/Tests/LibTests/LibTests.swift"]
+        let before = TestFiles.state(of: folder, ignoring: hidden)
+        #expect(Set(before.hashes.keys) == ["Pkg/Tests/LibTests/OtherTests.swift"] && before.markers == 2)
+
+        // The agent rewrites the hidden file (fewer tests there) and drops a test elsewhere.
+        try write("Pkg/Tests/LibTests/LibTests.swift", "func helper() {}\n", in: folder)
+        let rewritten = TestFiles.state(of: folder, ignoring: hidden)
+        #expect(rewritten == before)
+        try write("Pkg/Tests/LibTests/OtherTests.swift", "@Test func one() {}\n", in: folder)
+        let after = TestFiles.state(of: folder, ignoring: hidden)
+        #expect(after.markers < before.markers && after.hashes != before.hashes)
+    }
+
     @Test func testCommandPassesOnExitZeroOnly() async throws {
         let folder = home.appending(path: "tests")
         try write("value.txt", "2\n", in: folder)

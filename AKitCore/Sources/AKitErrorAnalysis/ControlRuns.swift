@@ -130,23 +130,35 @@ public enum ControlRuns {
         try SendLog.checkLimit(estimate: nil, settings: gate.settings, env: env)
         guard !Cancellation.isCancelled else { throw CancellationError() }
         out("Control task “\(task.title)” from \(String(task.base.prefix(7))) · \(setup.label) · \(task.oracle.label)")
-        let testCommand: String? = if case .tests(let command) = task.oracle { command } else { nil }
-        let facts = try await ControlCell.run(run, setup: setup, repo: URL(filePath: task.repo, directoryHint: .isDirectory),
-                                              base: task.base, prompt: prompt, testCommand: testCommand, overlay: overlay, env: env,
-                                              phase: phase, out: out)
+        let repo = URL(filePath: task.repo, directoryHint: .isDirectory)
+        let oracle: CellOracle
+        switch task.oracle {
+        case .tests(let command): oracle = .command(command)
+        case .assertion: oracle = .none
+        case .hiddenTests(let commit):
+            // The replay task's cache, or the commit checked again (local builds, no tokens).
+            do {
+                oracle = .hidden(try await ReplayTasks.task(commit: commit, repo: repo, env: env, out: out))
+            } catch let failure as ReplayTasks.Failure {
+                throw LabWorker.Failure(message: "The hidden tests of \(commit.prefix(7)) can't judge the cell: \(failure.message)")
+            }
+        }
+        let facts = try await ControlCell.run(run, setup: setup, repo: repo, base: task.base, prompt: prompt, oracle: oracle, overlay: overlay,
+                                              env: env, phase: phase, out: out)
         let session: String? = if case .session(let key) = task.source { key.description } else { nil }
         let logError = SendLog.appendAfterRun(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,
                                                          model: setup.agent.model, inputCharacters: prompt.count, usage: facts.usage),
                                               env: env, out: out)
         let control = outcome(task: task, setup: setup, repeatIndex: run.spec.repeatIndex ?? 1, facts: facts)
-        return RunResult(metrics: facts.metrics, leaks: control.leaks, agentError: facts.agentError ?? logError, control: control)
+        return RunResult(metrics: facts.metrics, tests: facts.hiddenTests, leaks: control.leaks, agentError: facts.agentError ?? logError,
+                         control: control)
     }
 
     /// The oracle's verdict on a cell, with its guard and leak flags.
     static func outcome(task: ControlTask, setup: ControlSetup, repeatIndex: Int, facts: ControlCell.Facts) -> ControlOutcome {
         var outcome = ControlOutcome(key: cellKey(task: task, setup: setup, repeatIndex: repeatIndex), passed: false, oracle: "",
                                      testsDropped: facts.testsDropped, changedTestFiles: facts.changedTestFiles,
-                                     leaks: facts.transcript.map { leaks(in: $0, task: task) } ?? [],
+                                     leaks: (facts.transcript.map { leaks(in: $0, task: task) } ?? []) + facts.hiddenLeaks,
                                      // Always present on a layer cell: an older akit that ignored the layer leaves it out.
                                      overlay: setup.layer != nil ? (facts.overlayNotes ?? []) : nil,
                                      harnessVersion: facts.harnessVersion)
@@ -154,6 +166,14 @@ public enum ControlRuns {
         case .tests:
             outcome.passed = facts.tests?.passed ?? false
             outcome.oracle = facts.tests?.detail ?? "the tests didn't run"
+        case .hiddenTests:
+            guard let hidden = facts.hiddenTests else {
+                outcome.oracle = "the hidden tests didn't run"
+                break
+            }
+            outcome.passed = hidden.status == .passed
+            outcome.oracle = "hidden tests: \(hidden.failToPass.passed)/\(hidden.failToPass.total) fail-to-pass, "
+                + "\(hidden.passToPass.passed)/\(hidden.passToPass.total) pass-to-pass" + (hidden.note.map { " (\($0))" } ?? "")
         case .assertion(let modeID):
             guard let check = CodeChecks.check(for: modeID) else {
                 outcome.oracle = "no code check for \(modeID)"

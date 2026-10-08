@@ -21,7 +21,7 @@ extension AKitCLI {
                                           Run code checks over every indexed session (all of them
                                           without MODE): the share of sessions where each mode shows,
                                           with a 95% interval. Local, nothing is sent
-        """ + analysisModesUsage + analysisReportUsage + "\n\n" + analysisControlUsage
+        """ + analysisModesUsage + analysisReportUsage + "\n\n" + analysisControlUsage + "\n" + analysisLayerSetUsage
 
     /// `projectsRoot`: for the project ids of layer evals (their answers in the project store).
     static func analysis(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL,

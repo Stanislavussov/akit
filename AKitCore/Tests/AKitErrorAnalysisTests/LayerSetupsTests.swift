@@ -154,7 +154,8 @@ struct LayerSetupsTests {
 
         let missing = await message { _ = try await prepare(tasks: [task(base)]) }
         #expect(missing?.contains("(company) is required by swiftui") == true)
-        #expect(missing?.hasSuffix("Set it with --answer, or answer it for the project in Brain → Set Up Project….") == true)
+        #expect(missing?.contains("Set it in the layer's set (Error Analysis → Evals, or akit analysis control layer-set swiftui answer FIELD=VALUE)") == true)
+        #expect(missing?.hasSuffix("with --answer, or answer it for the project in Brain → Set Up Project….") == true)
         // An empty explicit answer keeps the default.
         let defaults = try await prepare(tasks: [task(base)], answers: ["company": .text("Acme"), "ui_check": .text("")])
         #expect(section(defaults).contains("make snapshot for Acme"))

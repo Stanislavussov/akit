@@ -234,30 +234,50 @@ enum IsolatedClone {
 /// mentions `~/.claude/projects` when it saves a long output there.
 enum LeakCheck {
     static func leaks(in transcript: URL, task: ReplayTask, repo: URL, env: HarnessEnvironment) -> [String] {
-        guard let data = try? Data(contentsOf: transcript), let entries = try? JSONLines.objects(in: data) else { return [] }
+        signs(toolCalls(in: transcript), task: task, repo: repo, env: env)
+    }
+
+    /// A control cell of a commit task: only the signs that error analysis's own check of a
+    /// cell (the real repository, the session history) doesn't look for.
+    static func commitSigns(in transcript: URL, task: ReplayTask, env: HarnessEnvironment) -> [String] {
+        signs(toolCalls(in: transcript), task: task, repo: nil, env: env)
+    }
+
+    private static func signs(_ calls: ToolCalls, task: ReplayTask, repo: URL?, env: HarnessEnvironment) -> [String] {
+        var found: [String] = []
+        if (calls.inputs + calls.results).contains(task.shortCommit) { found.append("the commit \(task.shortCommit)") }
+        if let repo {
+            let repoPaths = Set([repo.path, task.repo].map { URL(filePath: $0).standardizedFileURL.path })
+            if repoPaths.contains(where: { calls.inputs.contains($0) }) { found.append("the real repository") }
+        }
+        let home = env.homeDirectory.path
+        if calls.inputs.contains(home + "/.akit/lab") || calls.inputs.contains("~/.akit/lab") { found.append("AKit's Lab folder") }
+        if repo != nil, calls.inputs.contains(".claude/projects") || calls.usedSearch { found.append("Claude Code's session history") }
+        return found
+    }
+
+    private struct ToolCalls {
         var inputs = ""
         var results = ""
         var usedSearch = false
+    }
+
+    private static func toolCalls(in transcript: URL) -> ToolCalls {
+        var calls = ToolCalls()
+        guard let data = try? Data(contentsOf: transcript), let entries = try? JSONLines.objects(in: data) else { return calls }
         for entry in entries {
             let blocks = (entry["message"] as? JSONLines.Object)?["content"] as? [JSONLines.Object] ?? []
             for block in blocks {
                 switch block["type"] as? String {
                 case "tool_use":
-                    inputs += JSONLines.pretty(block["input"]) + "\n"
-                    if (block["name"] as? String ?? "").contains("session_search") { usedSearch = true }
-                case "tool_result": results += JSONLines.text(of: block["content"]) + "\n"
+                    calls.inputs += JSONLines.pretty(block["input"]) + "\n"
+                    if (block["name"] as? String ?? "").contains("session_search") { calls.usedSearch = true }
+                case "tool_result": calls.results += JSONLines.text(of: block["content"]) + "\n"
                 default: break
                 }
             }
         }
-        var found: [String] = []
-        if (inputs + results).contains(task.shortCommit) { found.append("the commit \(task.shortCommit)") }
-        let home = env.homeDirectory.path
-        let repoPaths = Set([repo.path, task.repo].map { URL(filePath: $0).standardizedFileURL.path })
-        if repoPaths.contains(where: { inputs.contains($0) }) { found.append("the real repository") }
-        if inputs.contains(home + "/.akit/lab") || inputs.contains("~/.akit/lab") { found.append("AKit's Lab folder") }
-        if inputs.contains(".claude/projects") || usedSearch { found.append("Claude Code's session history") }
-        return found
+        return calls
     }
 }
 

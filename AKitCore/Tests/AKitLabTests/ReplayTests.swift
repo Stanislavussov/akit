@@ -169,6 +169,10 @@ struct ReplayTests {
         ])
         #expect(LeakCheck.leaks(in: repoRead, task: task, repo: URL(filePath: "/r"), env: env)
                 == ["the real repository", "AKit's Lab folder"])
+        // A control cell of a commit task gets only the signs its own check doesn't look for.
+        #expect(LeakCheck.commitSigns(in: leaked, task: task, env: env) == ["the commit 1c9cf65"])
+        #expect(LeakCheck.commitSigns(in: repoRead, task: task, env: env) == ["AKit's Lab folder"])
+        #expect(LeakCheck.commitSigns(in: clean, task: task, env: env).isEmpty)
     }
 
     @Test func comparisonPerSetup() {

@@ -151,6 +151,81 @@ extension AKitCLITests {
         #expect(await cont([id]).code == 0)
     }
 
+    @Test func commitTasksAndLayerSetsFromTheCommandLine() async throws {
+        let head = try await repository()
+        let root = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["-C", project.path, "rev-parse", "--show-toplevel"],
+                                                        environment: env.gitVariables, timeout: 60)?.output.trimmingCharacters(in: .whitespacesAndNewlines))
+        // The commit's replay task is cached: nothing is built.
+        let base = String(repeating: "b", count: 40)
+        try write(".akit/lab/tasks/\(head).json", """
+            {"schema": 1, "repo": "\(root)", "commit": "\(head)", "base": "\(base)", "subject": "Make value 2",
+             "prompt": "Make value 2\\n\\nImplement this.", "package": "", "testFiles": ["Tests/ValueTests.swift"],
+             "failToPass": [{"suite": "ValueTests", "name": "two"}], "passToPass": [],
+             "validatedAt": "2026-10-08T10:00:00Z", "notes": []}
+            """)
+        let made = await akit("analysis", "control", "task", "new", "--commit", head, "--layer-set", "swiftui")
+        #expect(made.code == 0 && made.out.contains("Saved control task make-value-2-") && made.out.contains("hidden tests of \(head.prefix(7))")
+                && made.out.hasSuffix("Added to the swiftui set (1 task)."), "\(made)")
+        let id = try #require(ControlTasks.list(env: env).first?.id)
+        #expect(await akit("analysis", "control", "tasks").out.contains("from commit \(head.prefix(7))"))
+        // The same commit again is the same task.
+        let again = await akit("analysis", "control", "task", "new", "--commit", head)
+        #expect(again.out.hasPrefix("The commit is already control task \(id)") && ControlTasks.list(env: env).count == 1, "\(again)")
+        #expect(await akit("analysis", "control", "task", "new", "--commit", head, "--tests", "true").err.contains("--commit takes"))
+
+        // A reproduction joins the set from task new; another repository's task can't.
+        let repro = await akit("analysis", "control", "task", "new", "--repo", ".", "--base", "HEAD", "--prompt", "Other", "--tests", "true",
+                               "--layer-set", "swiftui")
+        #expect(repro.out.hasSuffix("Added to the swiftui set (2 tasks)."), "\(repro)")
+        let other = home.appending(path: "Projects/other")
+        try write("Projects/other/a.txt", "a\n")
+        for args in [["init", "-q", "-b", "master"], ["add", "-A"], ["commit", "-q", "-m", "Start"]] {
+            _ = await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["-C", other.path] + args, environment: env.gitVariables, timeout: 60)
+        }
+        let foreign = await akit("analysis", "control", "task", "new", "--repo", other.path, "--base", "HEAD", "--prompt", "Foreign",
+                                 "--tests", "true", "--layer-set", "swiftui")
+        #expect(foreign.code != 0 && foreign.err.contains("can't join the swiftui set") && foreign.err.contains("one repository"), "\(foreign)")
+
+        // Show, remove, add back, answers typed by the layer's fields.
+        let brain = home.appending(path: "brain")
+        try write("brain/layers/swiftui/layer.yaml", "fields:\n  - id: ui_check\n    default: make snapshot\n  - id: strict\n    type: bool\nfiles:\n  - template: s.md\n    to: AGENTS.md\n")
+        try write("brain/layers/swiftui/templates/s.md", "- LAYER {{ui_check}}\n")
+        for args in [["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "Brain"]] {
+            _ = await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["-C", brain.path] + args, environment: env.gitVariables, timeout: 60)
+        }
+        let answered = await akit("analysis", "control", "layer-set", "swiftui", "answer", "ui_check=make check", "strict=true", "--brain", brain.path)
+        #expect(answered.code == 0 && answered.out == "ui_check = make check\nstrict = true", "\(answered)")
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "answer", "strict=maybe", "--brain", brain.path).err.contains("true or false"))
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "answer", "strict=", "--brain", brain.path).out.contains("no answer in the set"))
+        let shown = await akit("analysis", "control", "layer-set", "swiftui")
+        #expect(shown.out.hasPrefix("swiftui: 2 tasks · repository task") && shown.out.contains("\(id)  \(base.prefix(7))  hidden tests of")
+                && shown.out.hasSuffix("Answers:\n  ui_check = make check"), "\(shown)")
+        #expect(await akit("analysis", "control", "layer-sets").out == "swiftui  2 tasks  1 answer")
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(await akit("analysis", "control", "layer-set", "swiftui", "--json").out.utf8))
+                                as? [String: Any])
+        #expect(json["schema"] as? Int == 1 && (json["answers"] as? [String: Any])?["ui_check"] as? String == "make check")
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "remove", String(id.prefix(12))).out == "The swiftui set has 1 task.")
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "add", id).out == "The swiftui set has 2 tasks.")
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "remove", "nope").err.contains("Not in the swiftui set: nope."))
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "add", id, "--model", "x").err.contains("leave out --model"))
+        #expect(await akit("analysis", "control", "layer-set", "core", "add", id).err.contains("core layer"))
+
+        // A layer eval renders with the set's answers.
+        let reproID = try #require(ControlTasks.list(env: env).first { $0.title == "Other" }?.id)
+        let eval = await akit("analysis", "control", "run", reproID, "--layer", "swiftui", "--brain", brain.path, "--model", "sonnet",
+                              "--env", "background", "--no-start", "--yes")
+        #expect(eval.code == 0, "\(eval)")
+        let folder = try #require(FileWalk.children(of: home.appending(path: ".akit/lab/evals/layer-evals")).first { !$0.lastPathComponent.hasPrefix(".") })
+        let sections = FileWalk.children(of: folder.appending(path: "overlays")).compactMap {
+            try? String(contentsOf: $0.appending(path: "files/AGENTS.md"), encoding: .utf8)
+        }
+        #expect(sections == ["- LAYER make check\n"], "\(sections)")
+
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "delete").out == "Moved the swiftui set to the Trash. Its tasks stay.")
+        #expect(await akit("analysis", "control", "layer-sets").out.hasPrefix("No layer sets."))
+        #expect(ControlTasks.list(env: env).count == 3)
+    }
+
     @Test func localAnalysisCommandsRefuseTheModelFlags() async throws {
         for (arguments, flags) in [(["notes", "--yes"], "--yes"), (["signals", "--model", "sonnet"], "--model"),
                                    (["check", "--harness", "pi", "--effort", "high"], "--harness, --effort")] {

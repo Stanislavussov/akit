@@ -227,7 +227,8 @@ public enum LayerSetups {
         guard result.errors.isEmpty else {
             let what = role == .layer ? layer : "the layers \(layer) requires"
             let hint = result.errors.contains { $0.contains(" is required by ") }
-                ? " Set it with --answer, or answer it for the project in Brain → Set Up Project…." : ""
+                ? " Set it in the layer's set (Error Analysis → Evals, or akit analysis control layer-set \(layer) answer FIELD=VALUE), "
+                    + "with --answer, or answer it for the project in Brain → Set Up Project…." : ""
             throw Failure(message: "\(what.prefix(1).uppercased() + what.dropFirst()) can't be rendered: "
                               + result.errors.joined(separator: " ") + hint)
         }
