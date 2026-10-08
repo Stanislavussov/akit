@@ -15,6 +15,21 @@ public struct EvalPaths: Sendable {
     public var tasks: URL { folder.appending(path: "tasks", directoryHint: .isDirectory) }
 
     public func task(_ id: String) -> URL { tasks.appending(path: AnalysisPaths.fileName(id) + ".json") }
+
+    /// Layer evals (`docs/design/layer-evals.md`): one folder per eval, with its manifest and overlays.
+    public var layerEvals: URL { folder.appending(path: "layer-evals", directoryHint: .isDirectory) }
+
+    public func layerEval(_ id: String) -> URL { layerEvals.appending(path: AnalysisPaths.fileName(id), directoryHint: .isDirectory) }
+
+    /// Layer sets: the tasks and field answers of each layer.
+    public var sets: URL { folder.appending(path: "sets", directoryHint: .isDirectory) }
+
+    public func set(_ layer: String) -> URL { sets.appending(path: AnalysisPaths.fileName(layer) + ".json") }
+
+    /// The last layer verdicts per agent, for the badge on the layer.
+    public var verdicts: URL { folder.appending(path: "verdicts", directoryHint: .isDirectory) }
+
+    public func verdict(_ layer: String) -> URL { verdicts.appending(path: AnalysisPaths.fileName(layer) + ".json") }
 }
 
 /// A fixed task for controlled evals (`docs/design/error-analysis.md`, "Controlled evals"):

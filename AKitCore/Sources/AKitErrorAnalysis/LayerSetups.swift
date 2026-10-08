@@ -1,0 +1,263 @@
+import AKitBrain
+import AKitFoundation
+import AKitLab
+import AKitRender
+import Foundation
+
+/// A brain layer as the setups of an eval (`docs/design/layer-evals.md`): the layer rendered
+/// once from a clean brain commit into two overlays, "required layers + X" and "required
+/// layers alone", checked against every task's base commit before anything is queued.
+/// Reads the brain and the task repository; writes nothing.
+public enum LayerSetups {
+    public struct Failure: Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+        public init(message: String) { self.message = message }
+    }
+
+    /// What an eval would queue, before anything is written.
+    public struct Prepared: Sendable {
+        public var evalID: String
+        public var layer: String
+        /// `[requiredOnly, layer]`.
+        public var setups: [ControlSetup]
+        /// The read-only sanity setup (the required layers alone, read-only tools), or nil.
+        public var sanitySetup: ControlSetup?
+        public var sanityTasks: [ControlTask]
+        /// The overlays to store, by hash.
+        public var overlays: [String: ControlOverlay]
+        /// Tasks whose placement works for both setups.
+        public var runnable: [ControlTask]
+        /// Task id → why the layer can't be placed in its clone.
+        public var blocked: [String: String]
+        /// Task id → what the layer's placement noted (appended to the project's own CLAUDE.md, …).
+        public var notes: [String: [String]]
+        /// Skills of the layer the agent already has elsewhere.
+        public var overlap: [String]
+        public var warnings: [String]
+        public var brainCommit: String
+        /// The field answers the render used (explicit, then the project's), before defaults.
+        public var values: [String: FieldValue]
+        /// Continues an eval: its folder exists, its finished cells are reused.
+        public var continuing: Bool
+    }
+
+    /// Read-only sanity cells: one repeat on the first tasks.
+    public static let sanityTaskCount = 3
+
+    /// `answers`: explicit field answers, which win over the project's saved answers (when the
+    /// task repository was set up through AKit), which win over the defaults of `layer.yaml`.
+    /// `homeSkills`: Claude Code skill names of the home folder and plugins, for the overlap
+    /// warning. `continuing`: an eval id; its setups and tasks are reused when the layer still
+    /// renders the same overlays.
+    public static func prepare(layer: String, tasks: [ControlTask], answers: [String: FieldValue], agent: LabAgent, sanity: Bool,
+                               continuing: String? = nil, homeSkills: Set<String>, brain brainRoot: URL, store: ProjectStore,
+                               projectsRoot: URL, now: Date = .now, env: HarnessEnvironment) async throws -> Prepared {
+        guard agent.harness == .claudeCode else {
+            throw Failure(message: "Layer evals run Claude Code only for now; pick Claude Code as the agent.")
+        }
+        guard layer != "core" else {
+            throw Failure(message: "The core layer is the home folder's layer: every cell already has it, so it can't be evaluated.")
+        }
+        guard let brain = Brain.load(from: brainRoot) else { throw Failure(message: "No brain repo at \(brainRoot.path).") }
+        let byName = Dictionary(brain.layers.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        guard let target = byName[layer] else { throw Failure(message: "The brain has no layer \(layer).") }
+
+        var warnings: [String] = []
+        var manifest: LayerEvalManifest?
+        var chosen = tasks
+        if let continuing {
+            guard let found = LayerEvalStore.manifest(continuing, env: env) else { throw Failure(message: "No eval \(continuing).") }
+            guard found.layer == layer else { throw Failure(message: "The eval \(continuing) is of \(found.layer), not \(layer).") }
+            manifest = found
+            // Only the eval's starting tasks: its task population never changes.
+            chosen = found.tasks.compactMap { ControlTasks.load($0, env: env) }
+            let missing = found.tasks.count - chosen.count
+            if missing > 0 { warnings.append("\(missing) of the eval's tasks are gone from ~/.akit/lab/evals/tasks and are left out.") }
+        }
+        guard !chosen.isEmpty else { throw Failure(message: "Pick at least one task.") }
+        let repositories = Set(chosen.map(\.repo))
+        guard repositories.count == 1, let repoPath = repositories.first else {
+            throw Failure(message: "One eval takes the tasks of one repository for now; these come from "
+                              + repositories.sorted().map { URL(filePath: $0).lastPathComponent }.joined(separator: ", ") + ".")
+        }
+        let repo = URL(filePath: repoPath, directoryHint: .isDirectory)
+
+        // The brain must be committed where the layer comes from, so the eval names its commit.
+        let closure = Brain.requiredClosure(of: layer, in: byName).sorted()
+        let skills = Set(closure.flatMap { byName[$0]?.skills.map(\.name) ?? [] }).sorted()
+        let paths = closure.map { "layers/\($0)" } + skills.map { "skills/\($0)" }
+        guard let status = await git(["status", "--porcelain", "--"] + paths, in: brainRoot, env: env),
+              let commit = await git(["rev-parse", "HEAD"], in: brainRoot, env: env) else {
+            throw Failure(message: "\(brainRoot.path) is not a git repository with a commit.")
+        }
+        guard status.isEmpty else {
+            // "XY path" lines; the output is trimmed, so the first may have lost a leading space.
+            let changed = status.split(separator: "\n")
+                .map { String($0.split(separator: " ", maxSplits: 1).last ?? $0) }.prefix(5).joined(separator: ", ")
+            throw Failure(message: "The brain has uncommitted changes in \(changed): commit or discard them first, so the eval names the commit it was rendered from.")
+        }
+
+        // Answers: explicit (an empty one keeps the default), then the project's, then defaults.
+        let projectID = await ProjectRecords.projectID(for: repo, projectsRoot: projectsRoot, env: env)
+        var values = ProjectRecords.savedAnswers(id: projectID, in: store)?.values ?? [:]
+        for (field, value) in answers {
+            if case .text(let text) = value, text.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+            values[field] = value
+        }
+
+        let projectName = repo.lastPathComponent
+        let full = try render(layers: [layer], role: .layer, of: layer, values: values, brain: brain, projectName: projectName)
+        let required = target.requires.isEmpty ? nil
+            : try render(layers: target.requires, role: .requiredOnly, of: layer, values: values, brain: brain, projectName: projectName)
+        let layerOverlay = full.overlay
+        let baseOverlay = required.flatMap { $0.overlay.entries.isEmpty ? nil : $0.overlay }
+        if layerOverlay.hash == (baseOverlay ?? ControlOverlay()).hash {
+            warnings.append("\(layer) renders nothing beyond its required layers here; both setups get the same files.")
+        }
+
+        if let manifest {
+            let hashes = (layer: manifest.setups.first { $0.layer?.role == .layer }?.layer?.overlayHash,
+                          base: manifest.setups.first { $0.layer?.role == .requiredOnly }?.layer?.overlayHash)
+            guard hashes.layer == layerOverlay.hash, hashes.base == baseOverlay?.hash else {
+                throw Failure(message: "The layer changed since the eval \(manifest.id) (its rendered files differ); start a new eval.")
+            }
+            if let first = manifest.setups.first, first.agent != agent {
+                warnings.append("The eval continues with its own agent: \(first.agent.harness.title) · \(first.agent.model) · \(first.agent.effort).")
+            }
+        }
+
+        // Each base commit's tracked files, read from git: no clone, no tokens.
+        var trees: [String: CloneFiles] = [:]
+        var runnable: [ControlTask] = []
+        var blocked: [String: String] = [:]
+        var notes: [String: [String]] = [:]
+        var projectSkills: [String: [String]] = [:]
+        let ownSkills = full.skills
+        for task in chosen {
+            let tree: CloneFiles
+            if let known = trees[task.base] {
+                tree = known
+            } else {
+                do {
+                    tree = try await CloneFiles.fromTree(repo: repo, base: task.base, env: env)
+                } catch {
+                    blocked[task.id] = error.localizedDescription
+                    continue
+                }
+                trees[task.base] = tree
+            }
+            for name in ownSkills where tree.has(skill: name) { projectSkills[name, default: []].append(String(task.base.prefix(7))) }
+            var reason: String?
+            for overlay in [baseOverlay, layerOverlay].compactMap({ $0 }) {
+                if case .blocked(let why) = ControlOverlay.place(overlay, in: tree) {
+                    reason = why
+                    break
+                }
+            }
+            if let reason {
+                blocked[task.id] = reason
+                continue
+            }
+            if case .writes(_, let placed) = ControlOverlay.place(layerOverlay, in: tree), !placed.isEmpty { notes[task.id] = placed }
+            runnable.append(task)
+        }
+
+        var overlap: [String] = []
+        for name in ownSkills where homeSkills.contains(name) {
+            overlap.append("\(name) is already installed in the home folder: the difference will look smaller than it is.")
+        }
+        for name in ownSkills {
+            guard let bases = projectSkills[name] else { continue }
+            let unique = bases.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            overlap.append("\(name) is already in the project (at \(unique.joined(separator: ", "))): the layer's copy is skipped there, so the difference will look smaller than it is.")
+        }
+
+        let evalID = manifest?.id ?? newID(layer: layer, at: now)
+        let brainCommit = manifest?.brainCommit ?? commit
+        var overlays: [String: ControlOverlay] = [layerOverlay.hash: layerOverlay]
+        if let baseOverlay { overlays[baseOverlay.hash] = baseOverlay }
+        let setups: [ControlSetup]
+        let sanitySetup: ControlSetup?
+        var sanityTasks: [ControlTask]
+        if let manifest {
+            setups = manifest.setups
+            sanitySetup = manifest.sanity
+            let ids = Set(runnable.map(\.id))
+            sanityTasks = manifest.sanityTasks.compactMap { id in runnable.first { $0.id == id } }
+            if sanityTasks.count < manifest.sanityTasks.count {
+                warnings.append("\(manifest.sanityTasks.filter { !ids.contains($0) }.count) sanity tasks can't run now and are left out.")
+            }
+        } else {
+            let baseline = LayerVariant(layer: layer, role: .requiredOnly, overlayHash: baseOverlay?.hash, evalID: evalID, brainCommit: brainCommit)
+            let variant = LayerVariant(layer: layer, role: .layer, overlayHash: layerOverlay.hash, evalID: evalID, brainCommit: brainCommit)
+            setups = [ControlSetup(name: "without \(layer)", agent: agent, layer: baseline),
+                      ControlSetup(name: "layer \(layer)", agent: agent, layer: variant)]
+            sanitySetup = sanity ? ControlSetup(name: "read-only", agent: agent, readOnly: true, layer: baseline) : nil
+            sanityTasks = sanity ? Array(runnable.prefix(sanityTaskCount)) : []
+        }
+        if sanitySetup == nil { sanityTasks = [] }
+        return Prepared(evalID: evalID, layer: layer, setups: setups, sanitySetup: sanitySetup, sanityTasks: sanityTasks, overlays: overlays,
+                        runnable: runnable, blocked: blocked, notes: notes, overlap: overlap, warnings: warnings + full.warnings,
+                        brainCommit: brainCommit, values: values, continuing: manifest != nil)
+    }
+
+    /// `<layer>-<yyyyMMdd-HHmm>-<4 hex>`.
+    static func newID(layer: String, at date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmm"
+        return "\(layer)-\(formatter.string(from: date))-\(UUID().uuidString.prefix(4).lowercased())"
+    }
+
+    /// One render for Claude Code into an overlay. Refuses a render with errors, and a layer
+    /// that merges keys into a JSON file (v1: merging into the clone's file needs JSONMerge).
+    static func render(layers: [String], role: LayerVariant.Role, of layer: String, values: [String: FieldValue], brain: Brain,
+                       projectName: String) throws -> (overlay: ControlOverlay, skills: [String], warnings: [String]) {
+        let bundle = ProjectBundle.resolve(ProjectAnswers(layers: layers, values: values, targets: ["claude"]), brain: brain,
+                                           projectName: projectName)
+        let result = Render.render(bundle, forHome: false)
+        guard result.errors.isEmpty else {
+            let what = role == .layer ? layer : "the layers \(layer) requires"
+            throw Failure(message: "\(what.prefix(1).uppercased() + what.dropFirst()) can't be rendered: " + result.errors.joined(separator: " "))
+        }
+        if let merged = result.outputs.first(where: \.mergesJSON) {
+            throw Failure(message: "\(merged.layers.joined(separator: ", ")) merges keys into \(merged.path) (MCP servers or Claude Code settings); "
+                              + "layer evals can't merge JSON into a clone yet, so this layer can't be evaluated.")
+        }
+        var overlay = ControlOverlay(layer: layer, role: role.rawValue, layers: result.layers)
+        let skillsPrefix = ProjectBundle.skillsFolder + "/"
+        for output in result.outputs {
+            switch output.content {
+            case .link(let target):
+                guard output.path == ".claude/skills" else {
+                    throw Failure(message: "The render links \(output.path), which layer evals don't know how to place.")
+                }
+                overlay.addLink(output.path, to: target)
+            case .data(let data):
+                let lower = output.path.lowercased()
+                if lower == "claude.md", output.layers.isEmpty { continue }  // the shim; the overlay decides about CLAUDE.md
+                if lower == "agents.md" {
+                    overlay.add(output.path, kind: .agentsSection, data: data)
+                } else if output.path.hasPrefix(skillsPrefix) {
+                    let name = output.path.dropFirst(skillsPrefix.count).split(separator: "/").first.map(String.init)
+                    overlay.add(output.path, kind: .skillFile, skill: name, data: data)
+                } else if lower.hasSuffix(".md") {
+                    overlay.add(output.path, kind: .markdown, data: data)
+                } else {
+                    overlay.add(output.path, kind: .file, data: data)
+                }
+            }
+        }
+        let own = result.skills.filter { $0.source == layer }.map(\.name)
+        return (overlay, role == .layer ? own : [], result.warnings)
+    }
+
+    private static func git(_ arguments: [String], in folder: URL, env: HarnessEnvironment) async -> String? {
+        guard let result = await ProcessRunner.run(env.findExecutable("git") ?? URL(filePath: "/usr/bin/git"),
+                                                   arguments: ["-C", folder.path] + arguments, environment: env.gitVariables,
+                                                   timeout: 60),
+              result.succeeded else { return nil }
+        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}

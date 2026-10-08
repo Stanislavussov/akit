@@ -217,7 +217,7 @@ extension ControlOverlay {
                 let name = entry.skill ?? entry.path.split(separator: "/").dropFirst(2).first.map(String.init) ?? entry.path
                 if skipped.contains(name) { continue }
                 // The project's own skill, as the clone had it (not one this overlay just wrote).
-                if files.exists(".agents/skills/\(name)") || files.exists(".claude/skills/\(name)") {
+                if files.has(skill: name) {
                     skipped.insert(name)
                     notes.append("The project has its own skill \(name); the layer's copy is skipped.")
                     continue
@@ -379,6 +379,9 @@ public struct CloneFiles: Sendable, Equatable {
     func kind(of path: String) -> Kind? { items[path.lowercased()]?.kind }
 
     func exists(_ path: String) -> Bool { resolve(path).map { kind(of: $0) != nil } ?? false }
+
+    /// The project has a skill folder of this name, for Claude Code or shared.
+    public func has(skill name: String) -> Bool { exists(".agents/skills/\(name)") || exists(".claude/skills/\(name)") }
 
     /// The clone's own spelling of a path (folder by folder), else the path as given.
     func spelled(_ path: String) -> String {

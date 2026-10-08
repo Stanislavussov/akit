@@ -113,6 +113,57 @@ struct ControlComparisonTests {
                           ControlComparison.Cell(task: "t1", setup: baseline, passed: false, flagged: true)])
     }
 
+    func layerSetup(_ role: LayerVariant.Role, eval: String = "swiftui-1", layer: String = "swiftui", readOnly: Bool = false,
+                    agent: LabAgent? = nil) -> ControlSetup {
+        ControlSetup(name: role == .layer ? "layer \(layer)" : "without \(layer)", agent: agent ?? self.agent, readOnly: readOnly,
+                     layer: LayerVariant(layer: layer, role: role, overlayHash: role == .layer ? "h" : nil, evalID: eval, brainCommit: "c"))
+    }
+
+    @Test func layerRowsPairOnlyWithinTheirEval() throws {
+        let one = cells(layerSetup(.requiredOnly), passes: [1, 1, 1, 1, 1]) + cells(layerSetup(.layer), passes: [3, 3, 3, 3, 3])
+        let two = cells(layerSetup(.requiredOnly, eval: "swiftui-2"), passes: [0, 0, 0, 0, 0])
+            + cells(layerSetup(.layer, eval: "swiftui-2"), passes: [2, 2, 2, 2, 2])
+        let all = cells(baseline, passes: [3, 3, 3, 3, 3]) + one + two + cells(layerSetup(.requiredOnly, readOnly: true), passes: [0, 0, 0])
+        let comparison = ControlComparison.compare(all, production: notWorse)
+        #expect(comparison.paired.count == 2)
+        // Two evals of one layer: two pairs, each with its own eval's required layers.
+        #expect(comparison.paired[0].baseline == layerSetup(.requiredOnly) && comparison.paired[0].variant == layerSetup(.layer))
+        #expect(comparison.paired[1].baseline == layerSetup(.requiredOnly, eval: "swiftui-2"))
+        // A layer pair never takes the fix's production signal: no conclusion until layers get their own level.
+        #expect(comparison.paired[0].improvementShare == 1 && comparison.paired[0].verdict == .noConclusion)
+        #expect(comparison.paired[0].productionHigher == nil && comparison.paired[0].reason.contains("layer eval"))
+
+        // A layer row never pairs with a plain baseline, nor with another agent's or layer's baseline.
+        let lonely = ControlComparison.compare(cells(baseline, passes: [1, 1, 1]) + cells(layerSetup(.layer), passes: [3, 3, 3])
+                                               + cells(layerSetup(.requiredOnly, agent: LabAgent(harness: .claudeCode, model: "sonnet", effort: "high")), passes: [1, 1, 1])
+                                               + cells(layerSetup(.requiredOnly, layer: "other"), passes: [1, 1, 1]))
+        #expect(lonely.paired.isEmpty)
+        // A patch variant never pairs with a layer row.
+        let patchOnly = ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: [1, 1, 1]) + cells(variant, passes: [3, 3, 3]))
+        #expect(patchOnly.paired.isEmpty)
+        let both = ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: [1, 1, 1]) + cells(baseline, passes: [1, 1, 1])
+                                             + cells(variant, passes: [3, 3, 3]))
+        #expect(both.paired.count == 1 && both.paired[0].baseline == baseline)
+    }
+
+    @Test func layerCellsRunWithoutTheLayerAreLeftOut() {
+        func run(_ id: String, setup: ControlSetup, overlay: [String]?, version: String? = nil) -> LabRun {
+            let spec = RunSpec(id: id, kind: .control, title: "", createdAt: Date(timeIntervalSince1970: Double(id.count)), folder: "/",
+                               environment: .background, akit: "/akit", controlTask: "t1", controlSetup: setup)
+            let control = ControlOutcome(key: id, passed: true, oracle: "", overlay: overlay, harnessVersion: version)
+            return LabRun(folder: URL(filePath: "/"), spec: spec, state: RunState(status: .finished), launch: nil, result: RunResult(control: control))
+        }
+        let cells = ControlComparison.Cell.of([run("a", setup: layerSetup(.layer), overlay: [], version: "2.1.290"),
+                                               run("bb", setup: layerSetup(.layer), overlay: nil),
+                                               run("ccc", setup: layerSetup(.requiredOnly), overlay: [], version: "2.1.291"),
+                                               run("dddd", setup: baseline, overlay: nil)])
+        #expect(cells.map(\.overlayRecorded) == [true, false, true, true])
+        let comparison = ControlComparison.compare(cells)
+        #expect(comparison.leftOut == 1 && comparison.rows.map(\.cells) == [1, 1, 1])
+        // Both versions show on the pair: the eval mixes them.
+        #expect(comparison.paired.first?.harnessVersions == ["2.1.290", "2.1.291"])
+    }
+
     @Test func passHatKSitsInsideItsInterval() throws {
         let setup = ControlSetup(name: "baseline", agent: LabAgent(harness: .claudeCode, model: "opus", effort: "low"))
         // Tasks with more cells than k: the unbiased estimate is not the share of all-pass tasks.
