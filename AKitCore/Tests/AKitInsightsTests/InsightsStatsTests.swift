@@ -169,7 +169,77 @@ extension InsightsStatsTests {
         try listing("s4", "bare", at: at(8), hash: nil, in: db)
         try listing("s1", "bare", at: at(10, 13), hash: nil, in: db)
         #expect(try DescriptionWindow.hashStarts(db)["bare"] == .init(date: Date(timeIntervalSince1970: at(10, 13)), versions: 0))
-        #expect(try skill("tdd", in: try report(db)).listedSessions == 3)
+        #expect(try skill("tdd", in: try report(db)).listedSessions == 2, "s2 listed it by name only")
+    }
+
+    @Test func nameOnlyExposuresDoNotCountAsListed() throws {
+        let db = try database()
+        // s1 lists tdd with its description; s2 and s3 by name only (over budget), s3 then with it.
+        try session("s1", started: at(3), in: db)
+        try listing("s1", "tdd", at: at(3), hash: "A", chars: 80, in: db)
+        try request("s1", at: at(3, 12.5), in: db)
+        try session("s2", started: at(2), in: db)
+        try listing("s2", "tdd", at: at(2), hash: nil, in: db)
+        try request("s2", at: at(2, 12.5), in: db)
+        try call("s2", "tdd", at: at(2, 13), in: db)
+        try session("s3", started: at(1), in: db)
+        try listing("s3", "tdd", at: at(1), hash: nil, in: db)
+        try request("s3", at: at(1, 12.2), in: db)
+        try listing("s3", "tdd", at: at(1, 12.4), hash: "A", chars: 80, in: db)
+        try request("s3", at: at(1, 12.5), in: db)
+        // Only ever by name: listed, but in no session with its description.
+        try listing("s2", "bare", at: at(2), hash: nil, in: db)
+
+        let result = try report(db)
+        let tdd = try skill("tdd", in: result)
+        #expect(tdd.listedSessions == 2 && tdd.listedDays == 2, "s1 and s3, not s2: \(tdd)")
+        #expect(tdd.approxContextSpace == 40, "80 chars / 4 × the one request after each described listing")
+        #expect(tdd.modelCalls == 1 && tdd.callRate == 0, "a call in a name-only session still counts as a call: \(tdd)")
+        let bare = try skill("bare", in: result)
+        #expect(bare.listedSessions == 0 && bare.listedDays == 0 && bare.approxContextSpace == 0)
+    }
+
+    @Test func droppedDescriptionsFinding() throws {
+        let db = try database()
+        // Four Claude sessions with a listing: two of them lost descriptions, one lost two skills.
+        for (id, day) in [("s1", 4), ("s2", 3), ("s3", 2), ("s4", 1)] {
+            try session(id, started: at(day), in: db)
+            try listing(id, "kept", at: at(day), hash: "K", in: db)
+        }
+        try listing("s2", "rare", at: at(3), hash: nil, in: db)
+        try listing("s2", "odd", at: at(3), hash: nil, in: db)
+        try listing("s3", "rare", at: at(2), hash: nil, in: db)
+        try listing("s3", "rare", at: at(2, 13), hash: nil, in: db)  // the same session twice counts once
+        // Both were listed with their description elsewhere in the index: in s1, and in a session out of the window.
+        try listing("s1", "rare", at: at(4, 13), hash: "R", in: db)
+        try session("old", started: at(40), in: db)
+        try listing("old", "rare", at: at(40), hash: nil, in: db)
+        try listing("old", "odd", at: at(40), hash: "O", in: db)
+        // Not counted: a skill never described anywhere (likely an empty description), a skill described later in
+        // the same session, a subagent's name-only listing, a session without any listing.
+        try listing("s4", "blank", at: at(1), hash: nil, in: db)
+        try listing("s4", "late", at: at(1), hash: nil, in: db)
+        try listing("s4", "late", at: at(1, 13), hash: "L", in: db)
+        try listing("s4", "sub", at: at(1, 13), hash: nil, subagent: true, in: db)
+        try listing("s1", "sub", at: at(4, 14), hash: "S", subagent: true, in: db)
+        try session("empty", started: at(1), in: db)
+
+        let dropped = try report(db).droppedDescriptions
+        #expect(dropped == .init(sessions: 4, withNameOnly: 2, share: 0.5,
+                                 skills: [.init(name: "rare", sessions: 2), .init(name: "odd", sessions: 1)]), "\(dropped)")
+        #expect(dropped.text == "Descriptions dropped by the harness: 2 of 4 Claude sessions (50%) listed some skills by name only, "
+                + "usually because the listing was over Claude Code's budget, or because of a user override; "
+                + "most often rare (2), odd (1). Such sessions don't count as listed for those skills.")
+        #expect(AKitCLI.statsText(try report(db), details: false).contains("\n\nDescriptions dropped by the harness: 2 of 4"))
+        // A project: only its sessions.
+        try bind("s2", to: "github.com/o/r", .exact, in: db)
+        try bind("s1", to: "github.com/o/r", .exact, in: db)
+        let project = try report(db, .init(project: "github.com/o/r", top: nil)).droppedDescriptions
+        #expect(project.sessions == 2 && project.withNameOnly == 1 && project.share == 0.5 && project.skills.map(\.name) == ["odd", "rare"])
+        // No Claude listing at all: no finding line.
+        let none = try report(db, .init(days: 0, top: nil))
+        #expect(none.droppedDescriptions.sessions == 0 && none.droppedDescriptions.text == nil)
+        #expect(!AKitCLI.statsText(none, details: false).contains("Descriptions dropped"))
     }
 
     @Test func oscillatingDescriptionsDoNotRestartWindow() throws {
@@ -321,7 +391,7 @@ extension InsightsStatsTests {
         #expect(compact.summary.byOwner.map(\.skills) == [1, 1, 1, 0, 0], "the summary covers every skill, not only the top")
         #expect(compact.summary.approxListingTokensPerRequest == 140, "(10 + 100 + 30) tokens in each of the 2 requests")
         let text = AKitCLI.statsText(compact, details: false)
-        #expect(text.contains("Top 2 by ≈ context space") && text.contains("mkt:big (plugin mkt): ≈ 200 context space, ≈ 100 tokens per request; listed in 1 session on 1 day; model calls 0 (0% of sessions), user calls 0"), "\(text)")
+        #expect(text.contains("Top 2 by ≈ context space") && text.contains("mkt:big (plugin mkt): ≈ 200 context space, ≈ 100 tokens per request; listed with its description in 1 session on 1 day; model calls 0 (0% of those sessions), user calls 0"), "\(text)")
         #expect(!text.contains("small (") && text.contains("1 more skill: --top N, or --details for all."))
         #expect(text.contains("  plugin: 1 skill, ≈ 100") && !text.contains("built-in:"), "\(text)")
         #expect(!text.contains("counted since"))
@@ -346,6 +416,14 @@ extension InsightsStatsTests {
         let report = try InsightsStats.report(db, inputs: .init(owners: ["alpha": .layer(["core"]), "mkt:seo": .plugin("mkt")]), now: now)
         #expect(AKitCLI.encode(report) == #"""
             {
+              "droppedDescriptions" : {
+                "sessions" : 1,
+                "share" : 0,
+                "skills" : [
+
+                ],
+                "withNameOnly" : 0
+              },
               "generated" : "2026-09-21T14:13:20Z",
               "import" : {
                 "last" : null,

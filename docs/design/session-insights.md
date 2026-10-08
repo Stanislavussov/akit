@@ -4,10 +4,11 @@ Status: design agreed 2026-09-26 (grilling session). Steps 0–7 and 10 of the O
 are implemented: SQLite index and import, capture (Claude plugin, Pi extension, hourly
 import), project binding, `akit stats`, per-machine summaries, `akit recommend`
 (apply, dismiss), before/after measurement with k calibration (`akit stats changes`,
-`akit stats mark`), and the Insights screen (2026-10-07). Revised 2026-10-01 after a review
-against Claude Code's own tools and open-source session analyzers: steps 8, 9 and 11–13
-(described exposures, plugin token costs, fingerprints and failure signals, more outcomes,
-a reconciliation check) are designed, not built. Terms shared with Lab and Error analysis are in
+`akit stats mark`), and the Insights screen (2026-10-07). Step 8 is built as simplified by
+proposal I1 of the design map (2026-10-08, see below). Revised 2026-10-01 after a review
+against Claude Code's own tools and open-source session analyzers: steps 9 and 11–13
+(plugin token costs, fingerprints and failure signals, more outcomes, a reconciliation
+check) are designed, not built. Terms shared with Lab and Error analysis are in
 [`definitions.md`](definitions.md).
 
 Checked against the code on 2026-10-03:
@@ -42,7 +43,18 @@ Checked against the code on 2026-10-03:
   `akit stats changes` does; so opening the screen can move the ≈ numbers `akit recommend`
   and `akit stats` print next. A project's Changes show its applies and every mark (marks
   are Mac-wide).
-- Steps 8–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
+- Step 8, simplified by I1 (2026-10-08): only described exposures count as listed, in
+  `InsightsStats.tallies` (`akit stats`, the skills table), `akit recommend` and the usage
+  summaries. Each summary day has a `described` field; a day without it (an older akit's
+  file) adds only its calls. `akit stats` and the Insights screen (a line above the skills
+  table) show the finding "descriptions dropped by the harness". Left out, as I1 decided: the
+  name-only reasons (`override`, `empty`, `budget`, `unknown`), the same-day rule, the hook
+  change for `skillOverrides`, the over-budget rule, and the `manual` recommendation
+  "description dropped by the harness". The JSON of `akit stats` and `akit recommend` keeps
+  version 1: `akit stats` only gained the `droppedDescriptions` field, and no field changed
+  its name or type (the counts behind `listedSessions` and `evidence.sessions` changed their
+  meaning; see Interface).
+- Steps 9 and 11–13 are not built, with two exceptions inside step 11: the hook records `HEAD`
   (2026-10-01), and the index has a `signals` table, filled by
   `AKitErrorAnalysis.SignalScanner` instead of a shared `FailureSignals`.
 - The opt-in store for eval examples (`manual_call_examples`) is in the index; the export
@@ -167,7 +179,8 @@ The index and the session files never leave the Mac; Lab reviews send a digest t
 model only as Tier 2 in [`definitions.md`](definitions.md#data-tiers). On a machine marked **work**
 (see `layers.md`, "Work machines") the brain gets only one file,
 `insights/machines/<pseudonym>.json`: for each skill **that is in the brain**,
-sessions where it was listed and model / user calls, per day. No project ids,
+sessions where it was listed, model / user calls and sessions where it was listed with its
+description (`described`, step 8), per day. No project ids,
 paths, branches, plugins, third-party skill names or prompt text; the opt-in
 eval examples stay off there. Work projects' per-project summaries stay local.
 So a skill needed at work is not demoted at home, and the brain learns nothing it
@@ -196,9 +209,27 @@ Only **described exposures** count (step 8), defined in
 entry capped at 1,536 characters). When it is over, Claude Code "drops descriptions
 starting with the skills you invoke least", and those skills appear as `- name` lines
 only. A skill listed without its description can't be picked by its description, so its
-"0 model calls" says nothing. The index already stores such an exposure with
-`desc_hash = NULL`, but `InsightsStats.tallies` and the usage summaries still count it.
-Step 8:
+"0 model calls" says nothing. The index stores such an exposure with `desc_hash = NULL`.
+
+Built 2026-10-08 as simplified by proposal I1 (design map): the denominator (stats,
+recommend, summaries) counts only exposures with a description; the summaries' `described`
+day field as below; and one finding, "descriptions dropped by the harness": the share of
+Claude sessions in the scope and period whose main listing had at least one name-only
+exposure, and the skills that lost their description in the most sessions (top 5). It is the
+last line of `akit stats`, `droppedDescriptions` in its JSON, and a line above the Insights
+screen's skills table. A name-only exposure counts there only when the skill was never listed
+with its description in that session (so the session really doesn't count as listed for it)
+and was listed with one somewhere in the index (a skill never described anywhere stands in
+for an empty description). Without reasons, the share still counts a user's own `name-only`
+choice, so the text says "usually because the listing was over Claude Code's budget, or
+because of a user override". A summary day is read per day: a day without
+`described` adds only its calls. A new akit writes `described` (maybe `{}`) on every day that
+lists a skill. Calls still count in every session from the skill's first listing, with or
+without its description. The rest of this list (reasons, the same-day rule, over budget, the
+`manual` recommendation for dropped descriptions) is not built; I1 left it out because
+`skillOverrides` is not set on this Mac and may not work in user settings (step 12).
+
+The step 8 design, of which the parts above are built:
 
 - a name-only exposure gets a reason at import: `override` when the session's start line
   lists the skill as `name-only` (the hook reads only the `skillOverrides` key of each
@@ -487,7 +518,10 @@ went wrong. The index is where those facts can outlive the logs. Definitions are
   (`apply <id>`, `dismiss <id>`). The JSON is the contract for `/akit` and the Insights
   screen.
 - Every JSON output carries `version` (the schema version). New fields keep it; a renamed
-  or removed field, or a changed meaning (step 8's denominator), raises it.
+  or removed field raises it. Step 8's denominator changed what `listedSessions`,
+  `listedDays` and `evidence.sessions` count (only described exposures) and kept version 1
+  (2026-10-08): the fields keep their names and types, and the only readers (`/akit` and the
+  Insights screen) read them by name.
 - A recommendation has a stable id, evidence (sessions, period, machines,
   binding method, confidence, ≈ context) and an edit as a layer patch that goes
   through the usual `plan`.
@@ -523,8 +557,9 @@ CLI, from the same core calls, so the screen and `--json` never disagree.
   (the files and commands) and runs `execute` only after the user confirms. Built as one plan
   per part with a checkbox each; a part said no to in `akit setup` starts unchecked.
 - **Context by owner.** One bar per owner (layers, plugins, hand-installed, built-in,
-  unknown) with ≈ tokens per request, and the over-budget finding when the listing
-  dropped descriptions (step 8). From `InsightsStats.report`.
+  unknown) with ≈ tokens per request. From `InsightsStats.report`. The "descriptions
+  dropped by the harness" finding (step 8) is built as a line above the Skills table, since
+  it is about the same window.
 - **Skills.** A table: skill, owner, sessions listed with description, model calls, user
   calls, call rate, ≈ context space, window start. Sorted by ≈ context space; Pi-only
   skills in a collapsed "no data" group.
@@ -576,8 +611,8 @@ Too much for one user on a few Macs, or against a decision above:
 
 ## Order
 
-Status: 1–7 and 10 built, 8, 9 and 11–13 not built (see the status
-note at the top).
+Status: 1–7, 8 (simplified by I1) and 10 built, 9 and 11–13 not built (see the
+status note at the top).
 
 0. By hand, today: `"cleanupPeriodDays": 365` in `~/.claude/settings.json`.
    Optionally disable the `marketing` and `customer-support` plugins where they
@@ -593,10 +628,11 @@ note at the top).
 5. Per-machine summaries in the brain.
 6. `akit recommend` + `dismiss`.
 7. Before/after measurement + calibration.
-8. The hook records the `name-only` skills from `skillOverrides`; described exposures
-   only in stats, recommend and summaries (`described` day field); name-only reasons
-   (same-day rule for older sessions) and the over-budget rule; the "descriptions dropped by the harness"
-   finding and its `manual` recommendation; stats and recommend JSON versions raised.
+8. Built 2026-10-08, simplified by I1: described exposures only in stats, recommend and
+   summaries (`described` day field); the "descriptions dropped by the harness" finding in
+   `akit stats` and on the Insights screen; JSON versions kept at 1. Left out: the hook
+   recording `name-only` skills from `skillOverrides`, name-only reasons (and the same-day
+   rule), the over-budget rule and the finding's `manual` recommendation.
 9. `claude plugin details` as the plugin token source and the offline k; over-budget
    pairs don't calibrate; the deviation flag; the cross-file tie rule for requests.
 10. Move the sync sequence, the layer-users query and mark writing into `AKitInsights`;

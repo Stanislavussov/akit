@@ -65,9 +65,13 @@ plainly instead of claiming "sessions never leave the machine".
   budget (1% of the context window by default).
 - **Over budget**: a listing with at least one `budget` exposure.
 
-Status: exposures and `desc_hash` are in the index. The name-only reasons, "over budget"
-and the described-only denominator are step 8 of `session-insights.md`, not built: stats,
-recommendations and summaries still count name-only exposures.
+Status: exposures and `desc_hash` are in the index. The described-only denominator is built
+(2026-10-08, step 8 of `session-insights.md` as simplified by proposal I1): stats,
+recommendations and summaries count only described exposures, and `akit stats` and the
+Insights screen show the share of Claude sessions with a name-only exposure. The name-only
+reasons and "over budget" are not built (I1 left them out), so that share also counts skills
+set to `name-only` by the user. A skill never listed with its description anywhere in the index
+(likely an empty description) is left out of it.
 
 ## Harness fingerprint
 

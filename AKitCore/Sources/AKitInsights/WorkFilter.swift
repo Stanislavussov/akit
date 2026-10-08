@@ -152,22 +152,33 @@ enum WorkFilter {
         guard Set(object.keys).isSubset(of: ["version", "machine", "updated", "days"]) else {
             throw refuse("has other fields than version, machine, updated and days")
         }
+        struct Day: Decodable {
+            let skills: [String: [Int]]
+            let described: [String: Int]?
+        }
         struct Shape: Decodable {
             let version: Int
             let machine: String
             let updated: String
-            let days: [String: [String: [String: [Int]]]]
+            let days: [String: Day]
         }
         guard let shape = try? JSONDecoder().decode(Shape.self, from: data) else { throw refuse("doesn't have the summary's shape") }
         guard shape.version == UsageSummary.version, shape.machine == pseudonym else { throw refuse("names another machine or version") }
         guard ISO8601DateFormatter().date(from: shape.updated) != nil else { throw refuse("has an update time that isn't a date") }
+        // The decoder ignores unknown keys: the day fields are checked on the raw object too.
+        let rawDays = object["days"] as? [String: Any] ?? [:]
         for (day, fields) in shape.days {
             guard day.count == 10, DescriptionWindow.day(day, calendar: Calendar(identifier: .gregorian)) != nil,
                   day.allSatisfy({ $0.isNumber || $0 == "-" }) else { throw refuse("has a day that isn't yyyy-MM-dd") }
-            guard Set(fields.keys) == ["skills"], let skills = fields["skills"] else { throw refuse("has other day fields than skills") }
-            for (skill, counts) in skills {
+            guard let raw = rawDays[day] as? [String: Any], raw["skills"] != nil,
+                  Set(raw.keys).isSubset(of: ["skills", "described"]) else { throw refuse("has other day fields than skills and described") }
+            for (skill, counts) in fields.skills {
                 guard brainSkills.contains(skill) else { throw refuse("names a skill that isn't in the brain") }
                 guard counts.count == 3, counts.allSatisfy({ $0 >= 0 }) else { throw refuse("has counts that aren't three whole numbers") }
+            }
+            for (skill, count) in fields.described ?? [:] {
+                guard brainSkills.contains(skill) else { throw refuse("names a skill that isn't in the brain") }
+                guard count >= 0 else { throw refuse("has a described count that isn't a whole number") }
             }
         }
     }
