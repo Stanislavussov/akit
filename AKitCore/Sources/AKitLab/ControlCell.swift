@@ -85,13 +85,20 @@ public struct ControlSetup: Codable, Sendable, Hashable {
     public var readOnly: Bool
     /// A brain layer instead of a patch (layer evals); at most one of `patch` and `layer`.
     public var layer: LayerVariant?
+    /// Shell commands the agent may not run, by prefix (`make snapshot`): Claude Code gets
+    /// `--disallowedTools "Bash(make snapshot:*)"`, next to the `git push` rule every run has.
+    /// A layer eval gives the same list to both setups, so the comparison stays fair. nil or
+    /// empty: none (older run.json files have none).
+    public var denied: [String]?
 
-    public init(name: String, agent: LabAgent, patch: ControlPatch? = nil, readOnly: Bool = false, layer: LayerVariant? = nil) {
+    public init(name: String, agent: LabAgent, patch: ControlPatch? = nil, readOnly: Bool = false, layer: LayerVariant? = nil,
+                denied: [String]? = nil) {
         self.name = name
         self.agent = agent
         self.patch = patch
         self.readOnly = readOnly
         self.layer = layer
+        self.denied = denied
     }
 
     /// "variant · Claude Code · opus · high · + CLAUDE.md"; a layer setup
@@ -106,11 +113,13 @@ public struct ControlSetup: Codable, Sendable, Hashable {
         return parts.joined(separator: " · ")
     }
 
-    /// Claude Code keeps a replay's tools; Pi's coding tools are named, since a coding agent
-    /// needs them.
+    /// Claude Code keeps a replay's tools, less the denied commands; Pi's coding tools are
+    /// named, since a coding agent needs them.
     var tools: [String] {
         switch agent.harness {
-        case .claudeCode: readOnly ? ["--tools", "Read,Grep,Glob"] : []
+        case .claudeCode:
+            (readOnly ? ["--tools", "Read,Grep,Glob"] : [])
+                + ((denied ?? []).isEmpty ? [] : ["--disallowedTools"] + (denied ?? []).map { "Bash(\($0):*)" })
         case .pi: ["--tools", readOnly ? "read,grep,find,ls" : "read,write,edit,bash,grep,find,ls"]
         }
     }

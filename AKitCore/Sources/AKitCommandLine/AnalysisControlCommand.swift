@@ -85,7 +85,7 @@ extension AKitCLI {
         let json = options.json
         let command = args.positional()
         // Only cells run an agent; the other commands take none of its flags.
-        if let command, command != "run" { try options.refuseModelFlags("control \(command)") }
+        if let command, command != "run", command != "evaluate" { try options.refuseModelFlags("control \(command)") }
         switch command {
         case "task":
             switch args.positional() {
@@ -123,6 +123,8 @@ extension AKitCLI {
             return 0
         case "run":
             return try await runControl(&args, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
+        case "evaluate":
+            return try await evaluateLayer(&args, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
         case "layer-sets", "layer-set":
             return try layerSets(command ?? "", &args, json: json, env: env, cwd: cwd, out: out, trash: trash)
         case "compare":
@@ -332,20 +334,16 @@ extension AKitCLI {
     }
 
     /// Agent runs cost money (Copilot bills per token): an estimate from the recorded cost of
-    /// earlier control cells of the same harness and model, before anything is queued.
+    /// earlier control cells (else replays) of the same harness and model, before anything is
+    /// queued (`ControlRuns.estimate`).
     private static func printEstimate(cells: Int, agent: LabAgent, env: HarnessEnvironment, out: (String) -> Void) throws {
-        let earlier = SendLog.records(env: env).filter { $0.purpose == "control" && $0.harness == agent.harness && $0.model == agent.model }
-        let costs = earlier.compactMap(\.usage.cost)
-        if !costs.isEmpty {
-            let estimate = costs.reduce(0, +) / Double(costs.count) * Double(cells)
-            out(String(format: "Up to %d cells, ≈ $%.2f at the recorded cost of %d earlier cells.", cells, estimate, costs.count))
-            do {
-                try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env)
-            } catch {
-                throw Failure(message: error.localizedDescription)
-            }
-        } else {
-            out("Up to \(cells) cells; no estimate yet (no recorded cost of control cells with \(agent.harness.title) · \(agent.model)).")
+        let estimate = ControlRuns.estimate(cells: cells, agent: agent, env: env)
+        out("Up to \(cells) cells; \(estimate.costText).")
+        guard let total = estimate.total else { return }
+        do {
+            try SendLog.checkLimit(estimate: total, settings: LabSettings.loadForSending(env: env), env: env)
+        } catch {
+            throw Failure(message: error.localizedDescription)
         }
     }
 

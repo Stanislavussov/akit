@@ -43,18 +43,32 @@ public enum LayerSetups {
         public var values: [String: FieldValue]
         /// Continues an eval: its folder exists, its finished cells are reused.
         public var continuing: Bool
+        /// Shell commands the agent may not run in any cell of the eval (`ControlSetup.denied`).
+        public var denied: [String]
     }
 
     /// Read-only sanity cells: one repeat on the first tasks.
     public static let sanityTaskCount = 3
 
+    /// Commands an agent must not run in a clone of AKit's own repository: its CLAUDE.md asks
+    /// for `make snapshot` after a UI change, and these build and start a development AKit
+    /// against the real `~/.akit` (an index migration locks out the installed app).
+    public static let akitDenied = ["make snapshot", "make run", "make install"]
+
+    /// The denied commands an eval of tasks in `repo` gets unless it is given its own:
+    /// `akitDenied` for AKit's own repository (it has `AKitCore/Package.swift`), else none.
+    public static func defaultDenied(repo: URL) -> [String] {
+        FileManager.default.fileExists(atPath: repo.appending(path: "AKitCore/Package.swift").path) ? akitDenied : []
+    }
+
     /// `answers`: explicit field answers, which win over the project's saved answers (when the
     /// task repository was set up through AKit), which win over the defaults of `layer.yaml`.
     /// `homeSkills`: Claude Code skill names of the home folder and plugins, for the overlap
     /// warning. `continuing`: an eval id; its setups and tasks are reused when the layer still
-    /// renders the same overlays.
+    /// renders the same overlays. `denied`: shell commands no cell may run (both setups and the
+    /// sanity cells); nil takes `defaultDenied(repo:)`. A continued eval keeps its own.
     public static func prepare(layer: String, tasks: [ControlTask], answers: [String: FieldValue], agent: LabAgent, sanity: Bool,
-                               continuing: String? = nil, homeSkills: Set<String>, brain brainRoot: URL, store: ProjectStore,
+                               continuing: String? = nil, denied: [String]? = nil, homeSkills: Set<String>, brain brainRoot: URL, store: ProjectStore,
                                projectsRoot: URL, now: Date = .now, env: HarnessEnvironment) async throws -> Prepared {
         guard agent.harness == .claudeCode else {
             throw Failure(message: "Layer evals run Claude Code only for now; pick Claude Code as the agent.")
@@ -208,15 +222,18 @@ public enum LayerSetups {
         } else {
             let baseline = LayerVariant(layer: layer, role: .requiredOnly, overlayHash: baseOverlay?.hash, evalID: evalID, brainCommit: brainCommit)
             let variant = LayerVariant(layer: layer, role: .layer, overlayHash: layerOverlay.hash, evalID: evalID, brainCommit: brainCommit)
-            setups = [ControlSetup(name: "without \(layer)", agent: agent, layer: baseline),
-                      ControlSetup(name: "layer \(layer)", agent: agent, layer: variant)]
-            sanitySetup = sanity ? ControlSetup(name: "read-only", agent: agent, readOnly: true, layer: baseline) : nil
+            // The same denied commands on every setup, so the comparison stays fair.
+            let deny = (denied ?? defaultDenied(repo: repo)).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            let commands = deny.isEmpty ? nil : deny
+            setups = [ControlSetup(name: "without \(layer)", agent: agent, layer: baseline, denied: commands),
+                      ControlSetup(name: "layer \(layer)", agent: agent, layer: variant, denied: commands)]
+            sanitySetup = sanity ? ControlSetup(name: "read-only", agent: agent, readOnly: true, layer: baseline, denied: commands) : nil
             sanityTasks = sanity ? Array(runnable.prefix(sanityTaskCount)) : []
         }
         if sanitySetup == nil { sanityTasks = [] }
         return Prepared(evalID: evalID, layer: layer, setups: setups, sanitySetup: sanitySetup, sanityTasks: sanityTasks, overlays: overlays,
                         runnable: runnable, blocked: blocked, notes: notes, ownFiles: ownFiles, overlap: overlap, warnings: warnings + full.warnings,
-                        brainCommit: brainCommit, values: values, continuing: manifest != nil)
+                        brainCommit: brainCommit, values: values, continuing: manifest != nil, denied: setups.first?.denied ?? [])
     }
 
     /// `<layer>-<yyyyMMdd-HHmm>-<4 hex>`.

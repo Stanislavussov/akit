@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import AKitErrorAnalysis
 import AKitFoundation
+import AKitLab
 @testable import AKitCommandLine
 
 /// `akit analysis control …` against a temporary home and repository. Nothing is started:
@@ -251,5 +252,83 @@ extension AKitCLITests {
         let results = try #require(try JSONSerialization.jsonObject(with: Data(checked.out.utf8)) as? [[String: Any]], "\(checked)")
         // The import's upkeep and batches pass the version; a run without it would make them start over.
         #expect(results.first?["modeVersion"] as? Int != nil, "\(results)")
+    }
+
+    /// `akit analysis control evaluate LAYER`: the plan and estimate first, nothing queued
+    /// without --yes; no recorded cost means only the calibration cell; the next run continues
+    /// that eval with an estimate. Nothing is started (--no-start).
+    @Test func evaluateALayerFromTheCommandLine() async throws {
+        _ = try await repository()
+        try write("Projects/task/AKitCore/Package.swift", "// swift-tools-version: 6.0\n")
+        for prompt in ["Make value 2", "Make value 3"] {
+            _ = await akit("analysis", "control", "task", "new", "--repo", ".", "--base", "HEAD", "--prompt", prompt, "--tests", "true")
+        }
+        let ids = ControlTasks.list(env: env).map(\.id)
+        let brain = home.appending(path: "brain")
+        try write("brain/layers/base/layer.yaml", "files:\n  - template: base.md\n    to: AGENTS.md\n")
+        try write("brain/layers/base/templates/base.md", "- BASE\n")
+        try write("brain/layers/swiftui/layer.yaml", "requires: [base]\nfiles:\n  - template: s.md\n    to: AGENTS.md\n")
+        try write("brain/layers/swiftui/templates/s.md", "- LAYER\n")
+        for args in [["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "Brain"]] {
+            _ = await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["-C", brain.path] + args, environment: env.gitVariables, timeout: 60)
+        }
+        func evaluate(_ extra: String...) async -> (code: Int32, out: String, err: String) {
+            var out: [String] = []
+            var err: [String] = []
+            let code = await AKitCLI.run(["analysis", "control", "evaluate", "swiftui", "--brain", brain.path, "--model", "opus",
+                                          "--env", "background", "--no-start"] + extra,
+                                         env: env, cwd: project, projectsRoot: home.appending(path: "Projects"),
+                                         out: { out.append($0) }, err: { err.append($0) })
+            return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
+        }
+        func queued() -> [LabRun] { LabStore.list(env: env) }
+        #expect(await akit("analysis", "--help").out.contains("akit analysis control evaluate LAYER"))
+        #expect(await evaluate().err.contains("swiftui has no layer set"))
+        _ = await akit("analysis", "control", "layer-set", "swiftui", "add", ids.joined(separator: ","), "--brain", brain.path)
+
+        // The plan and "no estimate yet"; nothing is queued, --model is not refused.
+        let asked = await evaluate()
+        #expect(asked.code == 0 && asked.out.hasPrefix("Eval swiftui-") && asked.out.contains("Set: 2 tasks (0 missing, 0 blocked) · repository task"), "\(asked)")
+        #expect(asked.out.contains("Agent: Claude Code · opus · high · 3 repeats") && asked.out.contains("14 cells to run (0 already done or queued)"))
+        #expect(asked.out.contains("The agent may not run: make snapshot, make run, make install"))
+        #expect(asked.out.contains("No estimate yet: no recorded control or replay cell of Claude Code · opus."))
+        #expect(asked.out.hasSuffix("Run it again with --calibrate --yes to queue 1 cell that measures the cost; the eval reuses it."), "\(asked)")
+        #expect(queued().isEmpty)
+        let refused = await evaluate("--yes")
+        #expect(refused.code != 0 && refused.err.contains("No estimate yet") && queued().isEmpty, "\(refused)")
+        #expect(await evaluate("--harness", "pi").err.contains("Claude Code only"))
+        #expect(await evaluate("--deny", "x", "--no-deny").err.contains("not both"))
+        #expect(await evaluate("--no-deny").out.contains("The agent may not run: no extra commands"))
+
+        // The calibration cell: one paid cell, the eval's first.
+        let calibrated = await evaluate("--calibrate", "--yes")
+        #expect(calibrated.code == 0 && calibrated.out.contains("Queued 1 calibration cell of eval swiftui-"), "\(calibrated)")
+        let first = try #require(queued().first)
+        #expect(queued().count == 1 && first.spec.repeatIndex == 1 && first.spec.controlSetup?.denied == ["make snapshot", "make run", "make install"])
+        let evalID = try #require(first.spec.controlSetup?.layer?.evalID)
+
+        // Its cost recorded (as the cell would): the next evaluate continues that eval with an estimate.
+        try SendLog.append(SendRecord(purpose: "control", session: nil, runID: first.id,
+                                      destination: SendDestination(harness: .claudeCode, provider: "anthropic", account: "me", org: "me"),
+                                      model: "opus", inputCharacters: 10, usage: SendUsage(cost: 0.5)), env: env)
+        let estimated = await evaluate()
+        #expect(estimated.out.hasPrefix("Continuing the eval \(evalID)") && estimated.out.contains("Eval \(evalID) (continued)"), "\(estimated)")
+        #expect(estimated.out.contains("13 cells to run (1 already done or queued)"))
+        #expect(estimated.out.contains("≈ $6.50 (range $6.50–$6.50) from 1 recorded control cell of Claude Code · opus"))
+        #expect(estimated.out.hasSuffix("Run it again with --yes to queue them."))
+        #expect(await evaluate("--repeats", "5").err.contains("runs 3 repeats"))
+        #expect(await evaluate("--new").out.contains("The eval \(evalID) renders the same files: 0 of 14 cells done, 1 queued or running; --continue continues it."))
+
+        // The monthly limit is checked before anything is queued.
+        try LabSettings(monthlyLimit: 1).save(env: env)
+        let limited = await evaluate("--yes")
+        #expect(limited.code != 0 && limited.err.contains("monthly limit") && queued().count == 1, "\(limited)")
+        try LabSettings().save(env: env)
+        let all = await evaluate("--continue", evalID, "--yes")
+        #expect(all.code == 0 && all.out.contains("Queued 13 cells of eval \(evalID)"), "\(all)")
+        #expect(queued().count == 14 && queued().allSatisfy { $0.spec.controlSetup?.layer?.evalID == evalID })
+        #expect(await evaluate("--continue", "--yes").out.hasSuffix("Nothing to queue. Skipped 14 cells already done or queued."))
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(await evaluate("--continue", "--json").out.utf8)) as? [String: Any])
+        #expect(json["eval"] as? String == evalID && json["toQueue"] as? Int == 0 && json["continuing"] as? Bool == true)
     }
 }

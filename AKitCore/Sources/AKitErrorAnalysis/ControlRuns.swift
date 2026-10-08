@@ -8,8 +8,8 @@ import Foundation
 public enum ControlRuns {
     /// The cell key: the done key of the task (input) and of the setup with the base commit
     /// and the repeat number (config). The setup's name is a label, not part of what runs. A
-    /// layer setup adds its layer, role, overlay, eval and overlay rules; the keys of other
-    /// setups don't change. The brain commit is left out: Continue after a commit that renders
+    /// layer setup adds its layer, role, overlay, eval and overlay rules, a setup with denied
+    /// commands adds them; the keys of other setups don't change. The brain commit is left out: Continue after a commit that renders
     /// the same overlay reuses finished cells.
     public static func cellKey(task: ControlTask, setup: ControlSetup, repeatIndex: Int) -> String {
         struct Input: Encodable {
@@ -33,6 +33,8 @@ public enum ControlRuns {
             extra["eval"] = layer.evalID
             extra["overlayRules"] = String(ControlOverlay.rulesVersion)
         }
+        // Denied commands change what the agent may do; setups without them keep their keys.
+        if let denied = setup.denied, !denied.isEmpty { extra["denied"] = denied.joined(separator: "\n") }
         let config = StepConfig(step: "control", harness: setup.agent.harness.rawValue, model: setup.agent.model, extra: extra)
         return DoneKey.make(input: input, configs: [config])
     }
@@ -67,18 +69,7 @@ public enum ControlRuns {
             throw LabStore.Failure(message: "The tests of \(red.id) fail on its reference commit; fix the test command or the reference "
                                        + "first (akit analysis control task check \(red.id)).")
         }
-        let existing = LabStore.list(env: env).filter { $0.spec.kind == .control }
-        // A layer cell an older akit ran without the layer (no overlay notes) is not done:
-        // comparisons leave it out, so it runs again.
-        var done = Set(existing.compactMap { run -> String? in
-            guard run.status == .finished, let control = run.result?.control else { return nil }
-            return run.spec.controlSetup?.layer != nil && control.overlay == nil ? nil : control.key
-        })
-        let byID = Dictionary((tasks + (sanity?.tasks ?? [])).map { ($0.id, $0) }) { first, _ in first }
-        for run in existing where run.status == .queued || run.status == .running {
-            guard let task = run.spec.controlTask.flatMap({ byID[$0] }), let setup = run.spec.controlSetup else { continue }
-            done.insert(cellKey(task: task, setup: setup, repeatIndex: run.spec.repeatIndex ?? 1))
-        }
+        let done = doneKeys(tasks: tasks + (sanity?.tasks ?? []), env: env)
         let folder = tasks[0].cloneSource
         let chosen: LabEnvironment
         if let environment { chosen = environment } else { chosen = await Launcher.suggested(for: folder, env: env) }
@@ -99,15 +90,8 @@ public enum ControlRuns {
                                controlSetup: setup)
             runs.append(try LabStore.create(spec, env: env))
         }
-        for index in 1...repeats {
-            for task in tasks {
-                for setup in setups { try queue(task, setup, index, of: repeats) }
-            }
-            if index == 1, let sanity, sanity.repeats > 0 {
-                for sanityIndex in 1...sanity.repeats {
-                    for task in sanity.tasks { try queue(task, sanity.setup, sanityIndex, of: sanity.repeats) }
-                }
-            }
+        for cell in order(tasks: tasks, setups: setups, repeats: repeats, sanity: sanity) {
+            try queue(cell.task, cell.setup, cell.index, of: cell.of)
         }
         return (runs, skipped)
     }
