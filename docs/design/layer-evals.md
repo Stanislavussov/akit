@@ -3,7 +3,8 @@
 Status: design 2026-10-03, decided in a grilling session and revised after a fact-check
 against the code. Narrowed on 2026-10-08 by the decisions I2, D2, D3 and D4 (see
 [Decisions (2026-10-08)](#decisions-2026-10-08)): v1 is for Claude Code only, without a
-home fingerprint, with the verdict offline only. Not implemented yet.
+home fingerprint, with the verdict offline only. Slice 1 built 2026-10-08 (see
+[Built](#built)); slices 2, 5 and 6, then the pilot, are next (step 4 of `README.md`).
 
 ## Goal
 
@@ -125,7 +126,51 @@ Further choices of the step 4 plan, accepted on the same day:
 9. **A watchdog guards the agent phase** of control cells (slice 2), so an agent's own
    `swift test` in an AKitCore clone can't grow without limit.
 
+## Built
+
+**Slice 1, overlay and layer setup (2026-10-08).**
+
+- `ControlOverlay` (`AKitLab`): the entries (`agentsSection`, `markdown`, `skillFile`,
+  `claudeSkillsLink`, `file`), their hash (canonical JSON of the sorted entries and the
+  rules version; no dates, no brain commit), the stored form (`overlay.json` plus
+  `files/<path>`, each file checked against its hash when read), the placement rules of
+  [Layer setup: on top of the project](#layer-setup-on-top-of-the-project) and apply with
+  hiding. `CloneFiles` reads either the base commit's git tree (at queueing) or the clone's
+  folder (before the agent); a test proves both give the same placement. Paths are compared
+  ignoring letter case. A link out of the clone, an absolute path, `..` or `.git` blocks.
+- `LayerSetups.prepare` (`AKitErrorAnalysis`): refuses a Pi agent, the core layer, tasks of
+  more than one repository, a brain with uncommitted changes in the layer's closure or its
+  skills, a render error (a required field without a value) and merged JSON outputs; renders
+  "required layers + X" and "required layers alone" for `claude`; checks both against every
+  task's base commit (blocked tasks with their reason, notes such as "appended to the
+  project's own CLAUDE.md"); the overlap with Claude Code's home skills and the project's
+  tracked skills. Answers: explicit, then the project's saved answers (store of this Mac),
+  then the defaults; an empty explicit answer keeps the default.
+- Eval folder `layer-evals/<eval-id>/` with `manifest.json` and `overlays/<hash>/`, written
+  under a temporary name and moved into place before the cells are queued. Continue (`--eval
+  ID`) renders again and refuses when a hash differs; otherwise it reuses the manifest's
+  setups and tasks verbatim.
+- Cell key: layer setups add the layer, role, overlay hash, eval id and rules version; the
+  keys of other setups stay byte-identical (golden test). Read-only sanity cells (required
+  layers alone, read-only tools, the first 3 tasks, 1 repeat) are queued after the first
+  repeat.
+- `result.json`: `control.overlay` (always on a layer cell) and `control.harnessVersion`.
+  The comparison leaves out a layer cell without `overlay` ("n cells run by an older akit,
+  left out"), and warns when a pair mixes Claude Code versions.
+- Pairing as in [Format](#format). A layer pair gets today's rule without a production
+  signal: "no conclusion" until slice 5.
+- UI: Error Analysis → Evals → **Run Cells…** → Difference **A brain layer** (layer picker,
+  the two setups with their overlay hashes, blocked tasks, notes, overlap). The app queues
+  only through an `akit` whose `akit lab --help` names "control cells with a brain layer".
+  CLI: `akit analysis control run TASK[,…] --layer NAME [--answer FIELD=VALUE]… [--eval ID]
+  [--brain DIR]`.
+
+Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (see
+[Open questions](#open-questions)); the check needs a transcript of a repository with
+`AGENTS.md` and no import, which was not read in this slice.
+
 ## Terms
+
 
 - **Layer eval**: control cells of one layer's task set under two setups, baseline and
   layer, and their comparison.

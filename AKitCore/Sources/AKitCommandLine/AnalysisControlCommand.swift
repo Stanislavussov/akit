@@ -1,8 +1,11 @@
+import AKitBrain
 import AKitErrorAnalysis
 import AKitFoundation
+import AKitHarnesses
 import AKitInsights
 import AKitLab
 import AKitSessions
+import AKitSkills
 import Foundation
 
 /// `akit analysis control …`: controlled evals (docs/design/error-analysis.md, "Controlled evals").
@@ -40,16 +43,30 @@ extension AKitCLI {
                                           must fail. Cells already done (same task, setup, base, repeat)
                                           are skipped. The agent defaults to Claude Code with your model.
                                           The number of cells and the ≈ cost first; --yes queues them
+          akit analysis control run TASK[,TASK…] --layer LAYER [--answer FIELD=VALUE]… [--eval ID]
+                              [--brain DIR] [--model M] [--effort E] [--repeats N] [--read-only-setup]
+                              [--env orca|herdr|background] [--keep] [--no-start] [--yes]
+                                          A layer eval (Claude Code only): the brain layer is rendered
+                                          once from a clean brain commit, and each cell gets either its
+                                          required layers alone ("without LAYER") or them and LAYER
+                                          ("layer LAYER") in its clone. Field answers: --answer, then
+                                          the project's saved answers, then the layer's defaults (bool
+                                          true|false, a list a,b). Tasks whose clone can't take the
+                                          layer are listed and left out. --read-only-setup adds 1 read-
+                                          only cell on each of the first 3 tasks. A new eval queues new
+                                          cells; --eval ID continues one (its tasks and setups) while the
+                                          layer renders the same files. Pairs only within one eval
           akit analysis control compare TASK[,TASK…] [--json]
                                           pass@1 and pass^k per setup with 95% intervals, and for each
                                           variant the paired bootstrap over tasks: "helped" when at least
                                           95% of its mass is on improvement (3+ repeats, 15+ cells a side)
                                           and the applied fix is not worse in production; without
                                           production data, no conclusion. Cells with dropped or changed
-                                          tests, or that read the exemplar, count as failed
+                                          tests, or that read the exemplar, count as failed. A layer
+                                          pairs only with its eval's required layers; no conclusion yet
         """
 
-    static func analysisControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
+    static func analysisControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
                                 out: (String) -> Void, trash: (URL) throws -> URL?) async throws -> Int32 {
         let json = options.json
         let command = args.positional()
@@ -91,7 +108,7 @@ extension AKitCLI {
             out(tasks.isEmpty ? "No control tasks." : tasks.map(controlTaskLine).joined(separator: "\n"))
             return 0
         case "run":
-            return try await runControl(&args, options: options, env: env, cwd: cwd, out: out)
+            return try await runControl(&args, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
         case "compare":
             guard let list = args.positional() else { throw Failure(message: "Which tasks? akit analysis control compare TASK[,TASK…].") }
             try args.finish()
@@ -157,8 +174,12 @@ extension AKitCLI {
     }
 
     /// `--harness`, `--model`, `--effort` and `--yes` were taken out of `args` by `akit analysis`.
-    private static func runControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL,
+    private static func runControl(_ args: inout Arguments, options: AnalysisOptions, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
                                    out: (String) -> Void) async throws -> Int32 {
+        let layer = args.value("--layer")
+        let answerTexts = args.values("--answer")
+        let evalID = args.value("--eval")
+        let brainText = args.value("--brain")
         let setupsText = args.value("--setups")
         var patchFile = args.value("--patch-file")
         var patchText = args.value("--patch-text")
@@ -183,6 +204,21 @@ extension AKitCLI {
             throw Failure(message: "--effort for \(harness.title) is one of \(harness.efforts.joined(separator: ", ")).")
         }
         guard harness == .pi || !agent.model.isEmpty else { throw Failure(message: "Which model? --model.") }
+        let repeats = try positiveNumber(repeatsText, "--repeats") ?? 3
+
+        if let layer {
+            guard setupsText == nil, patchFile == nil, patchText == nil, fixMode == nil else {
+                throw Failure(message: "--layer makes its own setups (without \(layer), layer \(layer)); leave out --setups, --patch-file, --patch-text and --fix.")
+            }
+            guard harness == .claudeCode else { throw Failure(message: "Layer evals run Claude Code only for now; leave out --harness pi.") }
+            let brainRoot = brainText.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+            return try await runLayerControl(layer, tasks: tasks, answerTexts: answerTexts, evalID: evalID, brainRoot: brainRoot, agent: agent,
+                                             repeats: repeats, sanity: readOnly, environment: environment, keep: keep, noStart: noStart,
+                                             options: options, env: env, projectsRoot: projectsRoot, out: out)
+        }
+        guard answerTexts.isEmpty, evalID == nil, brainText == nil else {
+            throw Failure(message: "--answer, --eval and --brain go with --layer.")
+        }
 
         if let fixMode {
             // The fix draft's text, in the file its layer names: the variant's one difference.
@@ -217,24 +253,8 @@ extension AKitCLI {
             return ControlSetup(name: name, agent: agent, patch: patch)
         }
         if readOnly { setups.append(ControlSetup(name: "read-only", agent: agent, readOnly: true)) }
-        let repeats = try positiveNumber(repeatsText, "--repeats") ?? 3
 
-        // Agent runs cost money (Copilot bills per token): an estimate from the recorded cost of
-        // earlier control cells of the same harness and model, before anything is queued.
-        let cells = repeats * tasks.count * setups.count
-        let earlier = SendLog.records(env: env).filter { $0.purpose == "control" && $0.harness == agent.harness && $0.model == agent.model }
-        let costs = earlier.compactMap(\.usage.cost)
-        if !costs.isEmpty {
-            let estimate = costs.reduce(0, +) / Double(costs.count) * Double(cells)
-            out(String(format: "Up to %d cells, ≈ $%.2f at the recorded cost of %d earlier cells.", cells, estimate, costs.count))
-            do {
-                try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env)
-            } catch {
-                throw Failure(message: error.localizedDescription)
-            }
-        } else {
-            out("Up to \(cells) cells; no estimate yet (no recorded cost of control cells with \(agent.harness.title) · \(agent.model)).")
-        }
+        try printEstimate(cells: repeats * tasks.count * setups.count, agent: agent, env: env, out: out)
         guard options.yes else {
             out("Run it again with --yes to queue them.")
             return 0
@@ -257,7 +277,127 @@ extension AKitCLI {
         return 0
     }
 
+    /// Agent runs cost money (Copilot bills per token): an estimate from the recorded cost of
+    /// earlier control cells of the same harness and model, before anything is queued.
+    private static func printEstimate(cells: Int, agent: LabAgent, env: HarnessEnvironment, out: (String) -> Void) throws {
+        let earlier = SendLog.records(env: env).filter { $0.purpose == "control" && $0.harness == agent.harness && $0.model == agent.model }
+        let costs = earlier.compactMap(\.usage.cost)
+        if !costs.isEmpty {
+            let estimate = costs.reduce(0, +) / Double(costs.count) * Double(cells)
+            out(String(format: "Up to %d cells, ≈ $%.2f at the recorded cost of %d earlier cells.", cells, estimate, costs.count))
+            do {
+                try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env)
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+        } else {
+            out("Up to \(cells) cells; no estimate yet (no recorded cost of control cells with \(agent.harness.title) · \(agent.model)).")
+        }
+    }
+
+    /// `akit analysis control run … --layer LAYER`: the eval's setups from the brain, what can't
+    /// run and why, the estimate; with --yes the eval folder first, then the cells.
+    private static func runLayerControl(_ layer: String, tasks: [ControlTask], answerTexts: [String], evalID: String?, brainRoot: URL,
+                                        agent: LabAgent, repeats: Int, sanity: Bool, environment: LabEnvironment?, keep: Bool,
+                                        noStart: Bool, options: AnalysisOptions, env: HarnessEnvironment, projectsRoot: URL,
+                                        out: (String) -> Void) async throws -> Int32 {
+        guard let brain = Brain.load(from: brainRoot) else {
+            throw Failure(message: "No brain repo at \(brainRoot.path). Create it in AKit (Brain → Create Brain Repo) or pass --brain.")
+        }
+        let answers = try layerAnswers(answerTexts, layer: layer, brain: brain)
+        let prepared: LayerSetups.Prepared
+        do {
+            prepared = try await LayerSetups.prepare(layer: layer, tasks: tasks, answers: answers, agent: agent, sanity: sanity,
+                                                     continuing: evalID, homeSkills: claudeHomeSkills(env: env), brain: brainRoot,
+                                                     store: ProjectStore.current(brain: brainRoot, home: env.homeDirectory),
+                                                     projectsRoot: projectsRoot, env: env)
+        } catch {
+            throw Failure(message: error.localizedDescription)
+        }
+        out("Eval \(prepared.evalID)\(prepared.continuing ? " (continued)" : "") · brain \(prepared.brainCommit.prefix(7))")
+        for setup in prepared.setups {
+            out("  \(setup.label) · overlay \(setup.layer?.overlayHash.map { String($0.prefix(12)) } ?? "none (nothing written)")")
+        }
+        if let sanity = prepared.sanitySetup {
+            out("  \(sanity.label) · 1 cell on each of \(prepared.sanityTasks.count) tasks (must fail)")
+        }
+        out(prepared.overlap.isEmpty ? "Home overlap: none." : "Home overlap:")
+        prepared.overlap.forEach { out("  \($0)") }
+        for (id, reason) in prepared.blocked.sorted(by: { $0.key < $1.key }) { out("Blocked \(id): \(reason)") }
+        for (id, notes) in prepared.notes.sorted(by: { $0.key < $1.key }) { notes.forEach { out("Note \(id): \($0)") } }
+        prepared.warnings.forEach { out("Warning: \($0)") }
+        guard !prepared.runnable.isEmpty else { throw Failure(message: "No task can take the layer; see the blocked tasks above.") }
+
+        let cells = repeats * prepared.runnable.count * prepared.setups.count + prepared.sanityTasks.count
+        try printEstimate(cells: cells, agent: prepared.setups.first?.agent ?? agent, env: env, out: out)
+        guard options.yes else {
+            out("Run it again with --yes to queue them.")
+            return 0
+        }
+        let queued: (runs: [LabRun], skipped: Int)
+        do {
+            // The eval folder first: a queued cell must find its overlay.
+            try LayerEvalStore.create(prepared, repeats: repeats, env: env)
+            queued = try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats,
+                                                         sanity: prepared.sanitySetup.map { ($0, prepared.sanityTasks, 1) },
+                                                         environment: environment, keep: keep, akit: ownExecutable, env: env)
+        } catch {
+            throw Failure(message: error.localizedDescription)
+        }
+        let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
+        guard let first = queued.runs.first else {
+            out("Nothing to queue.\(skipped)")
+            return 0
+        }
+        out("Queued \(queued.runs.count) cells of eval \(prepared.evalID): \(repeats) × \(prepared.runnable.count) tasks × "
+            + "\(prepared.setups.count) setups" + (prepared.sanityTasks.isEmpty ? "" : " + \(prepared.sanityTasks.count) read-only")
+            + " (\(first.spec.environment.title)).\(skipped)")
+        if !noStart { try await startNext(env: env, out: out) }
+        return 0
+    }
+
+    /// `FIELD=VALUE` typed by the field's kind in the layer or the layers it requires: bool
+    /// `true|false`, a list `a,b`, else text. An empty value is dropped (the default stays).
+    static func layerAnswers(_ texts: [String], layer: String, brain: Brain) throws -> [String: FieldValue] {
+        let byName = Dictionary(brain.layers.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        guard byName[layer] != nil else { throw Failure(message: "The brain has no layer \(layer).") }
+        let fields = Brain.requiredClosure(of: layer, in: byName).sorted().flatMap { byName[$0]?.fields ?? [] }
+        var answers: [String: FieldValue] = [:]
+        for text in texts {
+            guard let equals = text.firstIndex(of: "=") else { throw Failure(message: "--answer takes FIELD=VALUE, not \(text).") }
+            let id = String(text[..<equals]).trimmingCharacters(in: .whitespaces)
+            let value = String(text[text.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
+            guard let field = fields.first(where: { $0.id == id }) else {
+                throw Failure(message: "\(layer) and the layers it requires have no field \(id)"
+                                  + (fields.isEmpty ? "." : " (fields: \(fields.map(\.id).joined(separator: ", ")))."))
+            }
+            guard !value.isEmpty else { continue }
+            switch field.kind {
+            case .bool:
+                guard ["true", "false"].contains(value.lowercased()) else { throw Failure(message: "\(id) is true or false.") }
+                answers[id] = .bool(value.lowercased() == "true")
+            case .multi:
+                answers[id] = .list(value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+            case .text, .choice:
+                answers[id] = .text(value)
+            }
+        }
+        return answers
+    }
+
+    /// Skill names Claude Code has outside any project: the home folder's, synced and plugin
+    /// skills. A layer skill with one of these names overlaps.
+    static func claudeHomeSkills(env: HarnessEnvironment) -> Set<String> {
+        let skills = SkillScanner.scan(installations: HarnessCatalog.detectAll(in: env), in: env)
+        return Set(skills.filter { skill in
+            guard skill.visibleTo.contains(.claudeCode) else { return false }
+            if case .project = skill.scope { return false }
+            return true
+        }.map(\.name))
+    }
+
     /// Tasks by id or a unique id prefix, comma-separated.
+
     private static func controlTasks(_ list: String, env: HarnessEnvironment) throws -> [ControlTask] {
         let all = ControlTasks.list(env: env)
         return try list.split(separator: ",").map { part in
@@ -316,6 +456,10 @@ extension AKitCLI {
             lines.append("\(pair.variant.name) vs \(pair.baseline.name): \(change) per task over \(pair.tasks) tasks; "
                          + "\(percent(pair.improvementShare)) of the bootstrap mass on improvement: \(pair.verdict.title).")
             lines.append("  \(pair.reason)")
+            if pair.harnessVersions.count > 1 { lines.append("  The cells mix Claude Code versions: \(pair.harnessVersions.joined(separator: ", ")).") }
+        }
+        if comparison.leftOut > 0 {
+            lines.append("\(comparison.leftOut) cells run by an older akit, left out: it ignored the layer. Install the app and akit together.")
         }
         if open > 0 { lines.append("\(open) cells still queued or running.") }
         return lines.joined(separator: "\n")

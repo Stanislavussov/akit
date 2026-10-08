@@ -72,6 +72,13 @@ struct ControlComparisonView: View {
             if open > 0 {
                 Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
             }
+            if comparison.leftOut > 0 {
+                Label("\(comparison.leftOut) cells run by an older akit, left out: it ignored the layer. Install the app and akit together.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let productionError {
                 Label("The production signal couldn't be read: \(productionError)", systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -80,7 +87,8 @@ struct ControlComparisonView: View {
             }
             Text("Helped: at least 95% of the bootstrap over tasks on improvement, with 3+ repeats of every task and 15+ cells a side, "
                  + "and not worse in production: at most 50% that the mode's failure rate rose after the fix was applied, with 15+ checked sessions on each side. "
-                 + "Without production data (no applied fix yet) there is no conclusion. Fixed before the run.")
+                 + "Without production data (no applied fix yet) there is no conclusion. Fixed before the run. "
+                 + "A brain layer is compared only with its own eval's required layers, and has no verdict of its own yet.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -151,6 +159,12 @@ private struct PairedVerdict: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if pair.harnessVersions.count > 1 {
+                    Label("The cells mix Claude Code versions: \(pair.harnessVersions.joined(separator: ", ")).", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
             }
         }
         .padding(10)

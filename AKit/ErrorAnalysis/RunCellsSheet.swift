@@ -6,11 +6,27 @@ import SwiftUI
 /// `akit analysis control run`: repeats × tasks × setups queued in the Lab, interleaved, each
 /// cell in an isolated clone. The baseline runs as is; the variant makes exactly one
 /// difference (text appended to CLAUDE.md, AGENTS.md or a skill), typed here or taken from a
-/// mode's fix draft. Cells already done are skipped.
+/// mode's fix draft. A brain layer as the difference (`--layer`) is a layer eval: its
+/// required layers alone against them and the layer (`docs/design/layer-evals.md`). Cells
+/// already done are skipped.
 struct RunCellsSheet: View {
     enum PatchSource: String, CaseIterable {
-        case text, fix
-        var title: String { self == .text ? "File and text" : "A mode's fix draft" }
+        case text, fix, layer
+        var title: String {
+            switch self {
+            case .text: "File and text"
+            case .fix: "A mode's fix draft"
+            case .layer: "A brain layer"
+            }
+        }
+    }
+
+    /// What a layer eval's preparation depends on: a change prepares it again.
+    private struct LayerRequest: Hashable {
+        var layer: String
+        var tasks: Set<String>
+        var agent: LabAgent
+        var sanity: Bool
     }
 
     @Environment(AnalysisModel.self) private var analysis
@@ -23,6 +39,9 @@ struct RunCellsSheet: View {
     @State private var patchFile = "CLAUDE.md"
     @State private var patchText = ""
     @State private var fixMode: String?
+    @State private var layerName: String?
+    /// The layer eval for the current request, or why it can't be prepared.
+    @State private var prepared: (request: LayerRequest, result: Result<LayerSetups.Prepared, AnalysisFailure>)?
     @State private var readOnly = false
     @State private var harness: LabHarness = .claudeCode
     @State private var modelName = ""
@@ -36,9 +55,11 @@ struct RunCellsSheet: View {
 
     /// `fixMode`: Try on Control Tasks… of a mode page (`--fix MODE`).
     init(tasks: Set<String>, fixMode: String?) {
+        // Snapshot hook: `--query layer` opens the sheet on a brain layer.
+        let layer = fixMode == nil && DebugSnapshot.options?.query == "layer"
         _tasks = State(initialValue: tasks)
-        _variant = State(initialValue: fixMode != nil)
-        _patchSource = State(initialValue: fixMode != nil ? .fix : .text)
+        _variant = State(initialValue: fixMode != nil || layer)
+        _patchSource = State(initialValue: fixMode != nil ? .fix : layer ? .layer : .text)
         _fixMode = State(initialValue: fixMode)
     }
 
@@ -47,6 +68,23 @@ struct RunCellsSheet: View {
         agent.model = modelName.trimmingCharacters(in: .whitespaces)
         agent.effort = effort
         return agent
+    }
+
+    /// A layer eval: its own two setups instead of the baseline and a patch.
+    private var isLayer: Bool { variant && patchSource == .layer }
+
+    /// Brain layers that can be evaluated: every one but core (the home folder's layer).
+    private var layers: [String] { (model.brain?.layers.map(\.name) ?? []).filter { $0 != "core" }.sorted() }
+
+    private var layerRequest: LayerRequest? {
+        guard isLayer, let layerName, harness == .claudeCode, !agent.model.isEmpty, !tasks.isEmpty else { return nil }
+        return LayerRequest(layer: layerName, tasks: tasks, agent: agent, sanity: readOnly)
+    }
+
+    /// The prepared layer eval when it matches the current request.
+    private var layerEval: LayerSetups.Prepared? {
+        guard let prepared, prepared.request == layerRequest, case .success(let eval) = prepared.result else { return nil }
+        return eval
     }
 
     /// The variant's one difference, or why there is none.
@@ -64,10 +102,13 @@ struct RunCellsSheet: View {
                 return .failure(AnalysisFailure("This draft's layer (\(draft.layer.title)) isn't a file in the repository, so it can't be tried here."))
             }
             return .success(patch)
+        case .layer:
+            return .failure(AnalysisFailure("A brain layer makes its own setups."))
         }
     }
 
     private var setups: [ControlSetup] {
+        if isLayer { return layerEval?.setups ?? [] }
         var setups: [ControlSetup] = []
         if baseline { setups.append(ControlSetup(name: "baseline", agent: agent)) }
         if variant, case .success(let patch) = patch { setups.append(ControlSetup(name: "variant", agent: agent, patch: patch)) }
@@ -76,7 +117,11 @@ struct RunCellsSheet: View {
     }
 
     private var chosenTasks: [ControlTask] { analysis.data.controlTasks.filter { tasks.contains($0.id) } }
-    private var cells: Int { repeats * chosenTasks.count * setups.count }
+    private var cells: Int {
+        guard isLayer else { return repeats * chosenTasks.count * setups.count }
+        guard let layerEval else { return 0 }
+        return repeats * layerEval.runnable.count * layerEval.setups.count + layerEval.sanityTasks.count
+    }
     /// Test oracles that fail on their reference commit can't tell a fix from noise.
     private var redTasks: [ControlTask] { chosenTasks.filter { $0.referenceGreen == false } }
 
@@ -101,10 +146,10 @@ struct RunCellsSheet: View {
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if variant, case .failure(let reason) = patch {
+            if variant, !isLayer, case .failure(let reason) = patch {
                 Label(reason.message, systemImage: "info.circle").foregroundStyle(.orange).font(.callout)
             }
-            if variant, !baseline {
+            if variant, !isLayer, !baseline {
                 Label("A variant is only compared with a baseline of the same agent: turn the baseline on. Cells already done are skipped, so it costs nothing where they ran before.",
                       systemImage: "info.circle")
                     .foregroundStyle(.orange)
@@ -122,7 +167,8 @@ struct RunCellsSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(cells == 1 ? "Queue 1 Cell" : "Queue \(cells) Cells", action: queue)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || cells == 0 || !redTasks.isEmpty || (variant && setups.allSatisfy { $0.patch == nil }) || (variant && !baseline)
+                    .disabled(busy || cells == 0 || !redTasks.isEmpty
+                              || (variant && !isLayer && setups.allSatisfy { $0.patch == nil }) || (variant && !isLayer && !baseline)
                               || (harness == .claudeCode && modelName.trimmingCharacters(in: .whitespaces).isEmpty))
             }
         }
@@ -131,6 +177,20 @@ struct RunCellsSheet: View {
         .task {
             let env = analysis.env
             records = await Task.detached { SendLog.records(env: env).filter { $0.purpose == "control" } }.value
+            // Snapshot hook: `--project <layer>` picks the layer.
+            if layerName == nil { layerName = DebugSnapshot.options?.project.flatMap { layers.contains($0) ? $0 : nil } ?? layers.first }
+        }
+        .task(id: layerRequest) {
+            guard let request = layerRequest, prepared?.request != request else { return }
+            let chosen = chosenTasks
+            do {
+                let eval = try await model.prepareLayerEval(layer: request.layer, tasks: chosen, agent: request.agent, sanity: request.sanity)
+                guard !Task.isCancelled else { return }
+                prepared = (request, .success(eval))
+            } catch {
+                guard !Task.isCancelled else { return }
+                prepared = (request, .failure(AnalysisFailure(error.localizedDescription)))
+            }
         }
     }
 
@@ -154,7 +214,7 @@ struct RunCellsSheet: View {
     private var form: some View {
         Form {
             Section("Setups") {
-                Toggle("Baseline: the task as is", isOn: $baseline)
+                if !isLayer { Toggle("Baseline: the task as is", isOn: $baseline) }
                 Toggle("Variant: one difference from the baseline", isOn: $variant)
                 if variant {
                     Picker("Difference", selection: $patchSource) {
@@ -179,9 +239,11 @@ struct RunCellsSheet: View {
                         if case .success(let patch) = patch {
                             Text("Appends the draft to \(patch.file) in the clone.").font(.caption).foregroundStyle(.secondary)
                         }
+                    case .layer:
+                        layerFields
                     }
                 }
-                Toggle("Read-only sanity setup (must fail)", isOn: $readOnly)
+                Toggle(isLayer ? "Read-only sanity cells on 3 tasks (must fail)" : "Read-only sanity setup (must fail)", isOn: $readOnly)
                     .help("An agent that can only read can't do the task: its cells failing shows the oracle works")
             }
             Section("Agent") {
@@ -196,6 +258,69 @@ struct RunCellsSheet: View {
         }
         .formStyle(.grouped)
         .frame(height: 470)
+    }
+
+    /// The layer picker and what its preparation found: the two setups, blocked tasks, notes
+    /// and the overlap with home skills.
+    @ViewBuilder private var layerFields: some View {
+        if layers.isEmpty {
+            Text("The brain has no layer to evaluate (the core layer is the home folder's).").font(.caption).foregroundStyle(.secondary)
+        } else {
+            Picker("Layer", selection: $layerName) {
+                ForEach(layers, id: \.self) { Text($0).tag(String?.some($0)) }
+            }
+            Text("Baseline: the layer's required layers alone; variant: them and the layer. Rendered once from the brain's commit with the project's saved answers and the layer's defaults; the layer's text is appended to the clone's own CLAUDE.md.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if harness != .claudeCode {
+                Label("Layer evals run Claude Code only for now.", systemImage: "info.circle").foregroundStyle(.orange).font(.caption)
+            } else if let prepared, prepared.request == layerRequest {
+                switch prepared.result {
+                case .failure(let failure):
+                    Label(failure.message, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .success(let eval):
+                    layerSummary(eval)
+                }
+            } else if layerRequest != nil {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Rendering the layer…").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func layerSummary(_ eval: LayerSetups.Prepared) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(eval.setups, id: \.self) { setup in
+                Text("\(setup.layer?.title ?? setup.name) · overlay \(setup.layer?.overlayHash.map { String($0.prefix(8)) } ?? "none")")
+                    .font(.caption.monospaced())
+            }
+            Text("\(eval.runnable.count) of \(chosenTasks.count) tasks can run · eval \(eval.evalID)")
+                .font(.caption)
+            ForEach(eval.blocked.sorted(by: { $0.key < $1.key }), id: \.key) { id, reason in
+                Label("\(chosenTasks.first { $0.id == id }?.title ?? id): \(reason)", systemImage: "nosign")
+                    .foregroundStyle(.orange)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !eval.notes.isEmpty {
+                Text("\(eval.notes.count) tasks: the layer's text goes into the project's own CLAUDE.md (the project gets it only by accepting the suggestion).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(eval.overlap + eval.warnings, id: \.self) { line in
+                Label(line, systemImage: "info.circle")
+                    .foregroundStyle(.orange)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     /// As the CLI prints it: an estimate from the recorded cost of earlier control cells of
@@ -216,13 +341,22 @@ struct RunCellsSheet: View {
         let costs = records.filter { $0.harness == agent.harness && $0.model == agent.model }.compactMap(\.usage.cost)
         let estimate = costs.isEmpty ? nil : costs.reduce(0, +) / Double(costs.count) * Double(cells)
         let env = analysis.env
+        let layerEval = isLayer ? layerEval : nil
         Task {
             do {
                 try await Task.detached { try SendLog.checkLimit(estimate: estimate, settings: LabSettings.loadForSending(env: env), env: env) }.value
-                let queued = try await model.queueControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep)
-                let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
-                analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
-                    : "Queued \(queued.runs.count) cells: \(repeats) × \(tasks.count) tasks × \(setups.map(\.name).joined(separator: ", ")).\(skipped)"
+                if let layerEval {
+                    let queued = try await model.queueLayerCells(layerEval, repeats: repeats, environment: environment, keep: keep)
+                    let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
+                    analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
+                        : "Queued \(queued.runs.count) cells of eval \(layerEval.evalID): \(repeats) × \(layerEval.runnable.count) tasks × "
+                            + "without \(layerEval.layer), layer \(layerEval.layer).\(skipped)"
+                } else {
+                    let queued = try await model.queueControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep)
+                    let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
+                    analysis.message = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
+                        : "Queued \(queued.runs.count) cells: \(repeats) × \(tasks.count) tasks × \(setups.map(\.name).joined(separator: ", ")).\(skipped)"
+                }
                 dismiss()
             } catch {
                 self.error = error.localizedDescription

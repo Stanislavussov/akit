@@ -744,8 +744,12 @@ answer "did the fix help" on fixed tasks, where the mix of tasks can't move the 
 They are Lab replay tasks (`lab.md`) extended in two ways: a task can be made from a
 session instead of a commit, and the agent can be Claude Code or Pi.
 
-A layer from the brain as the setup, instead of one patch, is designed in
-`layer-evals.md`; it adds an offline verdict level that doesn't need the production guard.
+A layer from the brain as the setup, instead of one patch, is `layer-evals.md`. Built
+(slice 1, 2026-10-08): Run Cells… → "A brain layer" and `akit analysis control run --layer`
+queue a layer eval, the layer's required layers alone against them and the layer; a layer
+row pairs only with its own eval's required-layers row. Its offline verdict level ("helps
+(offline)", slice 5) is for layer setups only: D4 (2026-10-08) kept the fix rule, so a
+patch fix never gets it.
 
 **Mapping.**
 
@@ -833,7 +837,9 @@ a minimal reproduction: the simplest request that triggers the mode.
   fixes/<mode-id>.json       # fix drafts (the status lives in modes.json)
   work/                      # input files of model calls made from the app
   sends.jsonl                # send log
-~/.akit/lab/evals/           # control tasks and sets; cells are Lab runs
+~/.akit/lab/evals/           # control tasks and sets; cells are Lab runs; layer evals in
+                             # layer-evals/<eval-id>/ (layer-evals.md, Storage)
+
 ```
 
 All of it is local and never goes into the brain repo. Everything outside `modes/` is

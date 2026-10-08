@@ -75,6 +75,62 @@ extension AKitCLITests {
         #expect(await akit("analysis", "control", "tasks").out == "No control tasks.")
     }
 
+    @Test func layerEvalFromTheCommandLine() async throws {
+        _ = try await repository()
+        let made = await akit("analysis", "control", "task", "new", "--repo", ".", "--base", "HEAD", "--prompt", "Make value 2",
+                              "--tests", #"test "$(cat value.txt)" = 2"#)
+        let id = try #require(made.out.split(separator: " ").dropFirst(3).first.map { String($0.dropLast()) }, "\(made)")
+        // A brain with base and swiftui (requires base), committed.
+        let brain = home.appending(path: "brain")
+        try write("brain/layers/base/layer.yaml", "files:\n  - template: base.md\n    to: AGENTS.md\n")
+        try write("brain/layers/base/templates/base.md", "- BASE\n")
+        try write("brain/layers/swiftui/layer.yaml", "requires: [base]\nfields:\n  - id: ui_check\n    default: make snapshot\n  - id: strict\n    type: bool\nfiles:\n  - template: s.md\n    to: AGENTS.md\n")
+        try write("brain/layers/swiftui/templates/s.md", "- LAYER {{ui_check}}\n")
+        for args in [["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "Brain"]] {
+            _ = await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["-C", brain.path] + args, environment: env.gitVariables, timeout: 60)
+        }
+
+        let asked = await akit("analysis", "control", "run", id, "--layer", "swiftui", "--brain", brain.path, "--model", "sonnet",
+                               "--env", "background", "--no-start")
+        #expect(asked.code == 0, "\(asked)")
+        #expect(asked.out.hasPrefix("Eval swiftui-") && asked.out.contains("without swiftui@") && asked.out.contains("layer swiftui@"))
+        #expect(asked.out.contains("· overlay ") && asked.out.contains("Home overlap: none."))
+        #expect(asked.out.contains("Up to 6 cells; no estimate yet") && asked.out.hasSuffix("Run it again with --yes to queue them."), "\(asked)")
+        #expect((try JSONSerialization.jsonObject(with: Data(await akit("lab", "list", "--json").out.utf8)) as? [Any])?.isEmpty == true)
+        #expect(!FileManager.default.fileExists(atPath: home.appending(path: ".akit/lab/evals/layer-evals").path))
+
+        // Refusals.
+        let base = ["analysis", "control", "run", id, "--layer", "swiftui", "--brain", brain.path, "--model", "sonnet", "--no-start"]
+        func run(_ extra: [String]) async -> (code: Int32, out: String, err: String) {
+            var out: [String] = []
+            var err: [String] = []
+            let code = await AKitCLI.run(base + extra, env: env, cwd: project, projectsRoot: home.appending(path: "Projects"),
+                                         out: { out.append($0) }, err: { err.append($0) })
+            return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
+        }
+        #expect(await run(["--harness", "pi"]).err.contains("Claude Code only"))
+        #expect(await run(["--setups", "baseline"]).err.contains("leave out --setups"))
+        #expect(await run(["--answer", "nope=1"]).err.contains("no field nope (fields: ui_check, strict)"))
+        #expect(await run(["--answer", "strict=maybe"]).err.contains("strict is true or false"))
+        #expect(await akit("analysis", "control", "run", id, "--eval", "x", "--model", "sonnet").err.contains("go with --layer"))
+
+        // The project's saved answers (found under the projects root) reach the render; an empty --answer keeps them.
+        try write("brain/projects/local/task/answers.json", #"{"layers":["swiftui"],"values":{"ui_check":"make check"},"targets":["claude"]}"#)
+        let queued = await run(["--answer", "ui_check=", "--answer", "strict=true", "--read-only-setup", "--env", "background", "--yes"])
+        #expect(queued.code == 0 && queued.out.contains("Queued 7 cells of eval swiftui-") && queued.out.contains("+ 1 read-only"), "\(queued)")
+        let evals = FileWalk.children(of: home.appending(path: ".akit/lab/evals/layer-evals")).filter { !$0.lastPathComponent.hasPrefix(".") }
+        let folder = try #require(evals.first)
+        #expect(evals.count == 1 && FileManager.default.fileExists(atPath: folder.appending(path: "manifest.json").path))
+        let sections = FileWalk.children(of: folder.appending(path: "overlays")).compactMap {
+            try? String(contentsOf: $0.appending(path: "files/AGENTS.md"), encoding: .utf8)
+        }
+        #expect(sections.sorted() == ["- BASE\n", "- BASE\n\n- LAYER make check\n"], "\(sections)")
+
+        // Continue the eval: its cells are all queued already.
+        let again = await run(["--eval", folder.lastPathComponent, "--read-only-setup", "--env", "background", "--yes"])
+        #expect(again.out.contains("(continued)") && again.out.hasSuffix("Nothing to queue. Skipped 7 cells already done or queued."), "\(again)")
+    }
+
     @Test func localAnalysisCommandsRefuseTheModelFlags() async throws {
         for (arguments, flags) in [(["notes", "--yes"], "--yes"), (["signals", "--model", "sonnet"], "--model"),
                                    (["check", "--harness", "pi", "--effort", "high"], "--harness, --effort")] {

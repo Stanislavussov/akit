@@ -76,6 +76,20 @@ struct LabControlSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let notes = control.overlay {
+                ForEach(notes, id: \.self) { note in
+                    Label(note, systemImage: "square.3.layers.3d").font(.caption).fixedSize(horizontal: false, vertical: true)
+                }
+            } else if run.spec.controlSetup?.layer != nil {
+                Label("Run by an akit that ignored the layer: left out of comparisons. Install the app and akit together.",
+                      systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let version = control.harnessVersion {
+                Text("Claude Code \(version)").font(.caption).foregroundStyle(.secondary)
+            }
+
         }
     }
 

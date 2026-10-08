@@ -179,6 +179,13 @@ phase change:
 Context rent parts are tokens × calls (they add up to all context sent); the app and
 `akit lab show` turn them into shares. Absent parts are left out (a review has no `tests`).
 
+A control cell adds `control` (`error-analysis.md`, "Controlled evals"): `key`, `passed`,
+`oracle`, `testsDropped`, `changedTestFiles`, `leaks`, `checkSteps`, `harnessVersion` (the
+Claude Code version of the stream's init event) and, for a layer cell only, `overlay`: the
+notes of placing the layer in the clone, `[]` when there were none. A layer cell without
+`overlay` was run by an akit that ignored the layer; comparisons leave it out. Its
+`run.json` has `controlSetup.layer` (`layer-evals.md`, "Format").
+
 Who writes what:
 
 - **Numbers come from `akit lab run`**, never from the agent: tokens, calls, context
@@ -343,8 +350,10 @@ Lab screen shows the spread, not only the mean.
   per mode and controlled evals of fixes; the one-session review becomes its first step.
   Its control sets are Lab runs too: control cells (kind `control`) built on replay's
   isolated clone.
-- **Layer evals** (`layer-evals.md`): control cells whose setup renders a brain layer into
-  the clone, with the layer's own checks next to the oracle.
+- **Layer evals** (`layer-evals.md`): control cells whose setup places a brain layer's
+  stored overlay into the clone (`ControlOverlay`, slice 1 built 2026-10-08); the layer's
+  own checks next to the oracle are step 5.
+
 - **Module split** (`architecture.md`, done 2026-09-29): Lab is its own module
   (`AKitLab`); launchers live inside it.
 

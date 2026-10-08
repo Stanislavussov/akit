@@ -1,6 +1,7 @@
 import AKitErrorAnalysis
 import AKitFoundation
 import AKitLab
+import AKitModel
 import AKitSessions
 import AppKit
 import Foundation
@@ -175,6 +176,39 @@ extension AppModel {
         let queued = try await Task.detached {
             try await ControlRuns.newControlRuns(tasks: tasks, setups: setups, repeats: repeats, environment: environment, keep: keep,
                                                  akit: akit, env: .current)
+        }.value
+        if !queued.runs.isEmpty { try? await startLabQueue() }
+        return queued
+    }
+
+    /// A brain layer as an eval's setups for these tasks (`akit analysis control run --layer`):
+    /// rendered from the brain, checked against each task's base commit. Writes nothing.
+    func prepareLayerEval(layer: String, tasks: [ControlTask], agent: LabAgent, sanity: Bool) async throws -> LayerSetups.Prepared {
+        let brain = brainRoot, projects = projectsRoot, store = projectStore
+        // Claude Code's skills outside any project: a layer skill with one of these names overlaps.
+        let homeSkills = Set(skills.filter { skill in
+            guard skill.visibleTo.contains(.claudeCode) else { return false }
+            if case .project = skill.scope { return false }
+            return true
+        }.map(\.name))
+        return try await Task.detached {
+            try await LayerSetups.prepare(layer: layer, tasks: tasks, answers: [:], agent: agent, sanity: sanity, homeSkills: homeSkills,
+                                          brain: brain, store: store, projectsRoot: projects, env: .current)
+        }.value
+    }
+
+    /// Queues a prepared layer eval: the eval folder first (a cell must find its overlay), then
+    /// the cells, read-only sanity cells after the first repeat.
+    func queueLayerCells(_ prepared: LayerSetups.Prepared, repeats: Int, environment: LabEnvironment?,
+                         keep: Bool) async throws -> (runs: [LabRun], skipped: Int) {
+        // An older akit would run the cells without the layer.
+        if let problem = await labProblem(needing: "brain layer") { throw LabStore.Failure(message: problem) }
+        guard let akit = Self.labAkit else { throw LabStore.Failure(message: "The akit command is not installed.") }
+        let queued = try await Task.detached {
+            try LayerEvalStore.create(prepared, repeats: repeats, env: .current)
+            return try await ControlRuns.newControlRuns(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats,
+                                                        sanity: prepared.sanitySetup.map { ($0, prepared.sanityTasks, 1) },
+                                                        environment: environment, keep: keep, akit: akit, env: .current)
         }.value
         if !queued.runs.isEmpty { try? await startLabQueue() }
         return queued

@@ -180,7 +180,9 @@ public enum AKitCLI {
                 return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
             }
             if arguments.first == "analysis" {
-                return try await analysis(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
+                return try await analysis(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, err: err,
+                                          trash: trash)
+
             }
             var args = Arguments(arguments)
             if args.flag("--help") || args.flag("-h") || args.isEmpty {
