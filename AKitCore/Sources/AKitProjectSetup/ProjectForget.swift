@@ -39,12 +39,12 @@ public enum ProjectForget {
     /// What forgetting would do; nil when nothing is saved for the id. Only reads.
     /// `piAgentDirSetting`: see `ProjectSetup.plan`.
     public static func preview(id: String, folder: URL?, forHome: Bool, brain: Brain, store: ProjectStore,
-                               piAgentDirSetting: String? = nil) -> Preview? {
+                               piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false) -> Preview? {
         guard var empty = ProjectRecords.savedAnswers(id: id, in: store) else { return nil }
         empty.layers = []
         empty.skills = []
         let plan = folder.map { ProjectSetup.plan(project: $0, id: id, answers: empty, brain: brain, store: store, forHome: forHome,
-                                                  piAgentDirSetting: piAgentDirSetting) }
+                                                  piAgentDirSetting: piAgentDirSetting, rememberPiAgentDir: rememberPiAgentDir) }
         let fm = FileManager.default
         return Preview(id: id, store: store, plan: plan,
                        ownRecord: !store.isLocal || fm.fileExists(atPath: store.folder(id: id).path),

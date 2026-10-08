@@ -206,16 +206,19 @@ public enum Onboarding {
         // The harnesses' own instruction files are the user's (and an older ~/AGENTS.md may hold
         // their edits): each change is named and asked; without a terminal nothing happens to them.
         var notAsked: [String] = []
-        for change in plan.changes where (change.block && [.create, .update].contains(change.kind))
+        for change in plan.changes where (change.block && [.create, .update, .remove].contains(change.kind))
             || (!change.block && change.path == "AGENTS.md" && change.kind == .remove) {
             let shown = change.path.hasPrefix("/") ? change.path : "~/\(change.path)"
-            let question = if !change.block {
+            let question = switch change.blockAction {
+            case nil:
                 "Move \(shown), written by an earlier AKit, to the Trash? The core layer's text now goes into the harnesses' own instruction files. [Y/n]"
-            } else if change.newText?.contains(InstructionsBlock.start) != true {
+            case .takeOut?:
                 "Take AKit's block out of \(shown)? The text around it stays; a backup is kept. [Y/n]"
-            } else if change.oldText?.contains(InstructionsBlock.start) == true {
+            case .trash?:
+                "Take AKit's block out of \(shown) and move the file, which AKit created and which is then empty, to the Trash? [Y/n]"
+            case .update?:
                 "Update AKit's block (the core layer's AGENTS.md) in \(shown)? The text around it stays; a backup is kept. [Y/n]"
-            } else {
+            case .add?:
                 "Add AKit's block (the core layer's AGENTS.md) to \(shown)? The text around it stays; a backup is kept. [Y/n]"
             }
             guard let ask = io.ask else {

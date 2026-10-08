@@ -367,11 +367,14 @@ global instructions file of each target harness of the home record (`answers.tar
   exists of `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`
   (`loadContextFileFromDir` in Pi's resource-loader; checked in the installed 0.8x package), so
   the block goes into that one, and AKit creates `AGENTS.md` only when none is there. The
-  folder is PI_CODING_AGENT_DIR (`~` and `file://` expanded, as Pi does), else the folder the
-  last home render used (`piAgentDir` in the lock: the app started from the Finder doesn't see
-  the shell's variables, so the block doesn't move between runs), else `~/.pi/agent`. A
-  relative PI_CODING_AGENT_DIR is resolved by Pi from the folder it starts in, so AKit leaves
-  Pi's file alone with a warning. A folder outside the home folder shows its absolute path.
+  preview names the files next to it that Pi doesn't read ("…; CLAUDE.md next to it is not read
+  by Pi"). The folder is PI_CODING_AGENT_DIR (`~` and `file://` expanded, as Pi does), else
+  `~/.pi/agent`. `akit` on the command line takes its environment as it is. The app, started
+  from the Finder, doesn't see the shell's variables: it uses the folder the last home render
+  used (`piAgentDir` in the lock) while that folder exists, and the preview says so ("Pi's
+  folder: … (remembered from an earlier render…)"). A relative PI_CODING_AGENT_DIR is resolved
+  by Pi from the folder it starts in, so AKit leaves Pi's file alone with a warning. A folder
+  outside the home folder shows its absolute path.
 
 The text sits between two markers, and AKit owns only what is between them:
 
@@ -382,21 +385,31 @@ The text sits between two markers, and AKit owns only what is between them:
 ```
 
 - **One text per target.** The text is rendered once per harness, so a section with
-  `when: target == pi` reaches only Pi's file. A layer text that holds a marker is a render
-  error.
-- **Markers** count only as whole lines (trailing spaces and `\r` ignored), never inside a
-  fenced code block, so a quoted marker in the user's text is just text.
-- **Bytes around the block** stay as they are. AKit works on bytes: CRLF files get a block with
-  CRLF lines, a BOM stays, and the separator AKit put before an appended block (`separator` in
-  the lock) goes with it, so append + take out gives back the same bytes (no final newline,
-  trailing blank lines, CRLF, BOM, text added after the block). Other tools keep their own
-  blocks in the same file (oh-my-claudecode writes `<!-- OMC:START -->` … into
+  `when: target == pi` reaches only Pi's file; an error in any target's render stops Apply. A
+  layer text that holds a marker is a render error.
+- **Markers** count only as whole lines (spaces, tabs and `\r` around them ignored), never
+  inside a fenced code block, so a quoted marker in the user's text is just text. A fence that
+  never closes doesn't count as one (else the block AKit appended after it would be invisible
+  and appended again).
+- **Bytes around the block** are AKit's to keep. AKit works on bytes: CRLF files get a block
+  with CRLF lines, a BOM stays. Text in UTF-16 or UTF-32 (a BOM of those, or NUL bytes) is
+  skipped with a warning. Taking the block out removes the separator AKit put before it
+  (`separator` in the lock) only while it is still there as AKit put it, and never joins the
+  user's line before the block with their text after it. So on a file the user left alone,
+  append + take out gives back the same bytes (no final newline, trailing blank lines, CRLF,
+  BOM); with the user's edits around the block, their text stays, with at most a line ending
+  added between two lines that would otherwise join. Permissions and extended attributes of
+  the file are kept (the atomic write makes a new file, so AKit copies them over). Other tools
+  keep their own blocks in the same file (oh-my-claudecode writes `<!-- OMC:START -->` … into
   `~/.claude/CLAUDE.md`).
 - **No block yet**: appended at the end, after one blank line. **File missing**: created with
   only the block. **Update**: only the block is replaced.
 - **Empty render** (the core layer has no AGENTS.md text, the target is no longer chosen,
   Forget): the block and its markers go; the file stays, even when empty. Only a block AKit
-  wrote (it has a record) is taken out; one without a record is only offered.
+  wrote (it has a record) is taken out; one without a record is only offered. One exception: a
+  Pi file AKit created (`created` in the lock) that is empty without the block goes to the
+  Trash, since Pi reads the first instructions file in its folder even when it is empty and
+  would no longer see a `CLAUDE.md` next to it.
 - **Broken markers** (a start without an end, two starts, an end before the start): a blocker
   in the preview; nothing is written. When AKit only wanted to take its block out, the file is
   left alone with a warning and keeps its record.
@@ -405,7 +418,7 @@ The text sits between two markers, and AKit owns only what is between them:
   home folder still updates. A linked parent folder (`~/.claude` in a dotfiles repo) is fine.
 - **Edited by hand**: `lock.json` keeps, per file, a hash of the text AKit wrote in the block
   and of the layers' text last offered (optional key `blocks`, `{path: {sha256, offered,
-  layers, separator, target}}`, plus `piAgentDir`). A block edited since is the user's, like an
+  layers, separator, target, created}}`, plus `piAgentDir`). A block edited since is the user's, like an
   edited template in a project: kept, and the layers' new text is offered unticked ("edited by
   hand · layers changed"), once per new version ("edited by hand" after that); taken when ticked
   or with `akit apply --include PATH`. A block (or the whole file) removed by hand is not added
@@ -418,8 +431,10 @@ The text sits between two markers, and AKit owns only what is between them:
   A block found without a record counts as edited, unless it holds the layers' text exactly
   (then it is AKit's again, with a record); Forget can't tell, so it leaves such a block and
   says so.
-- **Lock keys** are used only for files AKit writes: `.claude/CLAUDE.md`, or a file Pi reads in
-  its current, recorded or default folder. Others are kept in the lock and never touched.
+- **Lock keys** are used only for instruction files: `.claude/CLAUDE.md`, or a Pi record whose
+  file is one Pi reads (`AGENTS.md`, `CLAUDE.md`, …) in any folder, so a block in a folder Pi
+  used before can still be offered for taking out. Any other key is dropped from the lock with
+  a warning; its file is never touched.
 - **Preview and Apply**: the preview shows a diff of the whole file; Apply backs the file up
   first (a file outside the home folder under its full path) and refuses if it changed since
   the preview, checked again right before the block is written.

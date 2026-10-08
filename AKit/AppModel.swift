@@ -294,7 +294,8 @@ final class AppModel {
         let store = projectStore
         let piSetting = HarnessEnvironment.current.variables["PI_CODING_AGENT_DIR"]
         return await Task.detached {
-            ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: forHome, piAgentDirSetting: piSetting)
+            ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: forHome, piAgentDirSetting: piSetting,
+                              rememberPiAgentDir: true)
         }.value
     }
 
@@ -304,7 +305,8 @@ final class AppModel {
         let store = projectStore
         let piSetting = HarnessEnvironment.current.variables["PI_CODING_AGENT_DIR"]
         return await Task.detached {
-            ProjectForget.preview(id: id, folder: folder, forHome: forHome, brain: brain, store: store, piAgentDirSetting: piSetting)
+            ProjectForget.preview(id: id, folder: folder, forHome: forHome, brain: brain, store: store, piAgentDirSetting: piSetting,
+                                  rememberPiAgentDir: true)
         }.value
     }
 

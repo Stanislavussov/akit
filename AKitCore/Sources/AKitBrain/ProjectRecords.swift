@@ -62,13 +62,18 @@ public enum ProjectRecords {
             public var separator: String?
             /// The harness the file is for: `claude` or `pi`.
             public var target: String?
+            /// AKit created the file: a Pi file left empty when the block goes is trashed, since
+            /// Pi reads the first instructions file there even when it is empty.
+            public var created: Bool?
 
-            public init(sha256: String?, offered: String?, layers: [String], separator: String? = nil, target: String? = nil) {
+            public init(sha256: String?, offered: String?, layers: [String], separator: String? = nil, target: String? = nil,
+                        created: Bool? = nil) {
                 self.sha256 = sha256
                 self.offered = offered
                 self.layers = layers
                 self.separator = separator
                 self.target = target
+                self.created = created
             }
         }
 

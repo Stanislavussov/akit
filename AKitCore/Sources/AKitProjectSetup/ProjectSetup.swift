@@ -44,6 +44,17 @@ public enum ProjectSetup {
         public var block = false
         /// For a block: words shown instead of the kind's usual ones ("edited by hand", …).
         public var blockNote: String?
+        /// What a block change does to the file.
+        public enum BlockAction: Hashable, Sendable {
+            /// Appends the block (or creates the file with it).
+            case add
+            case update
+            /// Takes the block out; the file stays.
+            case takeOut
+            /// Takes the block out of a Pi file AKit created, which then goes to the Trash.
+            case trash
+        }
+        public var blockAction: BlockAction?
     }
 
     public struct Plan: Sendable {
@@ -113,8 +124,10 @@ public enum ProjectSetup {
 
     /// `piAgentDirSetting`: the environment's PI_CODING_AGENT_DIR, if any. In the home folder
     /// the file Pi reads in that folder gets the core layer's block (see `InstructionsBlock`).
+    /// `rememberPiAgentDir`: the app, which doesn't see the shell's variables, uses the folder
+    /// of the last home render when none is set; the command line takes its environment as is.
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
-                            forHome: Bool = false, piAgentDirSetting: String? = nil) -> Plan {
+                            forHome: Bool = false, piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false) -> Plan {
         let fm = FileManager.default
         let answers = ProjectBundle.pruned(answers, brain: brain, projectName: project.lastPathComponent)
         var render = Render.render(ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent), forHome: forHome)
@@ -215,14 +228,16 @@ public enum ProjectSetup {
         var blocks = InstructionsBlock.HomePlan()
         if forHome {
             blocks = InstructionsBlock.planHome(home: project, answers: answers, brain: brain, previous: previous,
-                                                otherPaths: outputs.map(\.path), piAgentDirSetting: piAgentDirSetting)
+                                                otherPaths: outputs.map(\.path), piAgentDirSetting: piAgentDirSetting,
+                                                rememberPiAgentDir: rememberPiAgentDir)
             changes += blocks.changes
             blockers += blocks.blockers
             warnings += blocks.warnings
             for (path, data) in blocks.snapshot { snapshot[path] = data }
         }
 
-        render = RenderResult(layers: render.layers, outputs: outputs, errors: render.errors + blocks.errors, warnings: warnings, skills: render.skills)
+        render = RenderResult(layers: render.layers, outputs: outputs, errors: render.errors + blocks.errors.filter { !render.errors.contains($0) },
+                              warnings: warnings, skills: render.skills)
 
         for output in render.outputs where !output.mergesJSON {
             let url = project.appending(path: output.path)
@@ -383,7 +398,7 @@ public enum ProjectSetup {
             }
             for change in todo {
                 let url = location(change)
-                if change.kind == .remove {
+                if change.kind == .remove || change.blockAction == .trash {
                     _ = try trash(url)
                     removed.append(change.path)
                     removeEmptyFolders(from: url.deletingLastPathComponent(), upTo: plan.project)
@@ -396,7 +411,7 @@ public enum ProjectSetup {
                         throw Failure(message: "\(change.path) changed since the preview. Look at the preview again.")
                     }
                     try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try data.write(to: url, options: .atomic)
+                    if change.block { try InstructionsBlock.write(data, to: url) } else { try data.write(to: url, options: .atomic) }
                     written.append(change.path)
                     continue
                 }
@@ -426,6 +441,7 @@ public enum ProjectSetup {
             // A trashed JSON file may still have a record: the keys the project declined.
             for path in removed {
                 partial.files[path] = nil
+                if partial.blocks?[path] != nil { partial.blocks?[path] = nil }
                 if partial.json != nil || plan.jsonRecords[path] != nil {
                     var json = partial.json ?? [:]
                     json[path] = plan.jsonRecords[path]

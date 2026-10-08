@@ -61,9 +61,10 @@ struct InstructionsBlockTests {
         return try #require(Brain.load(from: brainRoot))
     }
 
-    func plan(_ brain: Brain, targets: [String] = ["claude"], pi: String? = nil) -> ProjectSetup.Plan {
+    /// `remember`: as the app, which keeps the folder of the last render when none is set.
+    func plan(_ brain: Brain, targets: [String] = ["claude"], pi: String? = nil, remember: Bool = false) -> ProjectSetup.Plan {
         ProjectSetup.plan(project: home, id: id, answers: ProjectAnswers(layers: ["core"], targets: targets),
-                          brain: brain, store: store, forHome: true, piAgentDirSetting: pi)
+                          brain: brain, store: store, forHome: true, piAgentDirSetting: pi, rememberPiAgentDir: remember)
     }
 
     @discardableResult
@@ -127,8 +128,10 @@ struct InstructionsBlockTests {
         #expect(change(empty)?.kind == .update && change(empty)?.newText == Self.mine)
         try await apply(empty)
         #expect(read(".claude/CLAUDE.md") == Self.mine)
-        // The file AKit created holds nothing else: it stays, empty.
-        #expect(read(".pi/agent/AGENTS.md") == "")
+        // Pi's file AKit created holds nothing else: an empty one would still be the file Pi
+        // reads, so it goes to the Trash.
+        #expect(change(empty, ".pi/agent/AGENTS.md")?.kind == .remove && change(empty, ".pi/agent/AGENTS.md")?.blockAction == .trash)
+        #expect(!fm.fileExists(atPath: home.appending(path: ".pi/agent/AGENTS.md").path))
         #expect(ProjectRecords.savedLock(id: id, in: store)?.blocks == nil)
         #expect(plan(try await core(nil), targets: ["claude", "pi"]).changes.isEmpty)
     }
@@ -137,9 +140,9 @@ struct InstructionsBlockTests {
         let brain = try await core("Be brief.\n")
         try await apply(plan(brain, targets: ["claude", "pi"]))
         let claudeOnly = plan(brain, targets: ["claude"])
-        #expect(change(claudeOnly, ".pi/agent/AGENTS.md")?.kind == .update)
+        #expect(change(claudeOnly, ".pi/agent/AGENTS.md")?.kind == .remove)
         try await apply(claudeOnly)
-        #expect(read(".pi/agent/AGENTS.md") == "")
+        #expect(read(".pi/agent/AGENTS.md") == nil)
         #expect(read(".claude/CLAUDE.md") == Self.block)
         #expect(ProjectRecords.savedLock(id: id, in: store)?.blocks?.keys.sorted() == [".claude/CLAUDE.md"])
     }
@@ -164,6 +167,95 @@ struct InstructionsBlockTests {
         try write(".claude/CLAUDE.md", read(".claude/CLAUDE.md")! + "More\n")
         try await apply(plan(try await core(nil)))
         #expect(read(".claude/CLAUDE.md") == "A\nMore\n")
+    }
+
+    @Test func takingTheBlockOutNeverJoinsTheUsersLinesOrDropsTheirText() async throws {
+        let block = Self.block
+        // (original file, the file as the user left it around AKit's block, the file without the block)
+        let cases: [(String, (String) -> String, String)] = [
+            // No final newline; text added after the block.
+            ("A", { $0 + "B\n" }, "A\nB\n"),
+            // The blank line before the block deleted, text added after it.
+            ("A\n", { _ in "A\n" + block + "B\n" }, "A\nB\n"),
+            ("A", { _ in "A\n" + block + "B" }, "A\nB"),
+            // Text added before the block (after AKit's blank line), and both before and after.
+            ("A\n", { _ in "A\n\nX\n" + block }, "A\n\nX\n"),
+            ("A\n", { _ in "A\n\nX\n" + block + "Y\n" }, "A\n\nX\nY\n"),
+            // Blank lines added around the block.
+            ("A\n", { _ in "A\n\n\n" + block + "\nB\n" }, "A\n\n\nB\n"),
+            // The block moved to the top.
+            ("A\n", { _ in block + "A\n" }, "A\n"),
+            // CRLF, text added after.
+            ("A\r\n", { $0 + "B\r\n" }, "A\r\nB\r\n"),
+        ]
+        for (original, edit, expected) in cases {
+            try write(".claude/CLAUDE.md", original)
+            try await apply(plan(try await core("Be brief.\n")))
+            let written = try #require(read(".claude/CLAUDE.md"))
+            try write(".claude/CLAUDE.md", edit(written))
+            let out = plan(try await core(nil))
+            #expect(out.canApply, "\(out.blockers)")
+            try await apply(out)
+            #expect(read(".claude/CLAUDE.md") == expected, "\(original.debugDescription): got \(read(".claude/CLAUDE.md")?.debugDescription ?? "nil")")
+        }
+    }
+
+    @Test func aBlockAfterACodeFenceThatNeverClosesIsStillFound() async throws {
+        let original = "Notes\n```\ncode without an end\n"
+        try write(".claude/CLAUDE.md", original)
+        try await apply(plan(try await core("Be brief.\n")))
+        // Found again: nothing appended twice.
+        #expect(change(plan(try await core("Be brief.\n")))?.kind == .same)
+        try await apply(plan(try await core("Be brief.\nTwo.\n")))
+        #expect(read(".claude/CLAUDE.md") == original + "\n<!-- akit:core:start -->\nBe brief.\nTwo.\n<!-- akit:core:end -->\n")
+        let forget = try #require(ProjectForget.preview(id: id, folder: home, forHome: true, brain: try await core(nil), store: store))
+        #expect(forget.blocksTakenOut == [".claude/CLAUDE.md"])
+        try await apply(plan(try await core(nil)))
+        #expect(read(".claude/CLAUDE.md") == original)
+    }
+
+    @Test func indentedMarkersCountAndOtherEncodingsAreSkipped() async throws {
+        let brain = try await core("Be brief.\n")
+        try write(".claude/CLAUDE.md", "A\n  <!-- akit:core:start -->\nold\n\t<!-- akit:core:end -->\nB\n")
+        let indented = plan(brain)
+        #expect(indented.canApply && change(indented)?.kind == .suggest)  // found, no record
+        try await apply(indented, accepting: [".claude/CLAUDE.md"])
+        #expect(read(".claude/CLAUDE.md") == "A\n" + Self.block + "B\n")
+
+        // UTF-16 text (a BOM and NUL bytes): skipped with a warning, never written.
+        let utf16 = Data([0xFF, 0xFE]) + "A\n".data(using: .utf16LittleEndian)!
+        try utf16.write(to: home.appending(path: ".claude/CLAUDE.md"))
+        let skipped = plan(brain)
+        #expect(skipped.canApply && skipped.changes.isEmpty)
+        #expect(skipped.render.warnings.contains { $0.hasPrefix(".claude/CLAUDE.md is not UTF-8 text") })
+        try await apply(skipped)
+        #expect(bytes(".claude/CLAUDE.md") == utf16)
+    }
+
+    @Test func permissionsAndExtendedAttributesSurviveTheWrite() async throws {
+        try write(".claude/CLAUDE.md", Self.mine)
+        let url = home.appending(path: ".claude/CLAUDE.md")
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        let value = Array("kept".utf8)
+        #expect(setxattr(url.path, "dev.akit.test", value, value.count, 0, 0) == 0)
+        try await apply(plan(try await core("Be brief.\n")))
+        #expect(read(".claude/CLAUDE.md") == Self.mine + "\n" + Self.block)
+        #expect((try fm.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int) == 0o600)
+        var back = [UInt8](repeating: 0, count: 16)
+        let length = getxattr(url.path, "dev.akit.test", &back, back.count, 0, 0)
+        #expect(length == value.count && Array(back.prefix(max(length, 0))) == value)
+    }
+
+    @Test func anErrorOnlyOneTargetsRenderHasStopsApply() async throws {
+        // A section for every harness but Claude, whose template is missing: the render for all
+        // targets together doesn't include it, Pi's own render does.
+        _ = try await core("Be brief.\n")
+        try write(".akit/registry/layers/core/layer.yaml",
+                  "name: core\nfiles:\n  - template: AGENTS.md\n    to: AGENTS.md\n  - template: missing.md\n    to: AGENTS.md\n    when: target != claude\n")
+        let brain = try #require(Brain.load(from: brainRoot))
+        let plan = plan(brain, targets: ["claude", "pi"])
+        #expect(!plan.canApply)
+        #expect(plan.render.errors.contains { $0.contains("missing.md") }, "\(plan.render.errors)")
     }
 
     @Test func brokenMarkersBlockApplyAndNothingIsWritten() async throws {
@@ -279,6 +371,9 @@ struct InstructionsBlockTests {
         try await apply(plan(brain, targets: ["pi"]), accepting: [".pi/agent/CLAUDE.md"])
         #expect(read(".pi/agent/CLAUDE.md") == "mine\n")
         #expect(ProjectRecords.savedLock(id: id, in: store)?.blocks?.keys.sorted() == [".pi/agent/AGENTS.override.md"])
+        // The files next to it that Pi doesn't read are named.
+        #expect(plan(brain, targets: ["pi"]).render.warnings.contains(
+            "Pi reads .pi/agent/AGENTS.override.md and gets AKit's block there; CLAUDE.md next to it is not read by Pi."))
     }
 
     @Test func piAgentDirIsHonouredAndRememberedForAnEnvironmentWithoutIt() async throws {
@@ -289,8 +384,15 @@ struct InstructionsBlockTests {
         #expect(read("custom/pi/AGENTS.md") == Self.block)
         #expect(!fm.fileExists(atPath: home.appending(path: ".pi").path))
         #expect(ProjectRecords.savedLock(id: id, in: store)?.piAgentDir == home.appending(path: "custom/pi").standardizedFileURL.path)
-        // The app started from the Finder has no PI_CODING_AGENT_DIR: the recorded folder holds.
-        #expect(change(plan(brain, targets: ["pi"]), "custom/pi/AGENTS.md")?.kind == .same)
+        // The app started from the Finder has no PI_CODING_AGENT_DIR: the recorded folder holds,
+        // and the preview says where it comes from.
+        let remembered = plan(brain, targets: ["pi"], remember: true)
+        #expect(change(remembered, "custom/pi/AGENTS.md")?.kind == .same)
+        #expect(remembered.render.warnings.contains { $0.hasPrefix("Pi's folder: \(home.appending(path: "custom/pi").standardizedFileURL.path) (remembered") })
+        // A shell without it (akit on the command line) means Pi's default folder.
+        let shell = plan(brain, targets: ["pi"])
+        #expect(change(shell, ".pi/agent/AGENTS.md")?.kind == .create)
+        #expect(change(shell, "custom/pi/AGENTS.md")?.kind == .suggest && change(shell, "custom/pi/AGENTS.md")?.blockAction == .trash)
 
         // Moved outside the home folder: an absolute path; the old block is only offered for removal.
         let outside = fm.temporaryDirectory.appending(path: "akit-block-pi-\(UUID().uuidString)")
@@ -308,7 +410,10 @@ struct InstructionsBlockTests {
         #expect(try String(contentsOf: backup.appending(path: path), encoding: .utf8) == "theirs\n")
         #expect(read("custom/pi/AGENTS.md") == Self.block)
         #expect(Set(ProjectRecords.savedLock(id: id, in: store)?.blocks.map { Array($0.keys) } ?? []) == [path, "custom/pi/AGENTS.md"])
-        #expect(change(plan(brain, targets: ["pi"]), path)?.kind == .same)
+        #expect(change(plan(brain, targets: ["pi"], remember: true), path)?.kind == .same)
+        // A remembered folder that is gone: Pi's default again.
+        try fm.removeItem(at: outside)
+        #expect(change(plan(brain, targets: ["pi"], remember: true), ".pi/agent/AGENTS.md")?.kind == .create)
 
         // A relative setting: Pi resolves it from where it starts, so AKit leaves Pi alone.
         let relative = plan(brain, targets: ["pi"], pi: "pi-config")
@@ -357,11 +462,12 @@ struct InstructionsBlockTests {
         let brain = try await core("Be brief.\n")
         try await apply(plan(brain, targets: ["claude", "pi"]))
         let preview = try #require(ProjectForget.preview(id: id, folder: home, forHome: true, brain: brain, store: store))
-        #expect(preview.blocksTakenOut == [".claude/CLAUDE.md", ".pi/agent/AGENTS.md"])
-        #expect(preview.removals.isEmpty && preview.blocksLeft.isEmpty)
+        #expect(preview.blocksTakenOut == [".claude/CLAUDE.md"])
+        // Pi's file AKit created goes with its block.
+        #expect(preview.removals == [".pi/agent/AGENTS.md"] && preview.blocksLeft.isEmpty)
         try await ProjectForget.run(preview, keepFiles: false, brain: brain, home: home, env: env, trash: trash)
         #expect(read(".claude/CLAUDE.md") == Self.mine)
-        #expect(read(".pi/agent/AGENTS.md") == "")
+        #expect(read(".pi/agent/AGENTS.md") == nil)
     }
 
     @Test func aLockWithoutBlocksStillFindsAKitsOwnTextAndForgetSaysWhatStays() async throws {
@@ -392,9 +498,10 @@ struct InstructionsBlockTests {
                                 answers: nil, id: id, in: store)
         let plan = plan(brain)
         #expect(change(plan, "Documents/notes.md") == nil)
-        #expect(plan.render.warnings.contains("The lock names Documents/notes.md as an instructions file AKit wrote; it is not one AKit writes now, so AKit leaves it alone."))
+        #expect(plan.render.warnings.contains("The lock names Documents/notes.md as an instructions file AKit wrote; it is not one, so AKit forgets it and leaves the file alone."))
         try await apply(plan)
         #expect(read("Documents/notes.md") == "<!-- akit:core:start -->\nx\n<!-- akit:core:end -->\n")
+        #expect(ProjectRecords.savedLock(id: id, in: store)?.blocks?["Documents/notes.md"] == nil)
     }
 
     @Test func anEditAfterThePreviewStopsApplyAndLinkedFilesAreSkipped() async throws {
