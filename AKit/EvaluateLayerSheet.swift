@@ -99,10 +99,12 @@ struct EvaluateLayerSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
+                GuideButton(guide: .errorAnalysis, section: "evaluate-layer", help: "How Evaluate… works, field by field (in Russian)")
                 if busy || (planned?.request != request) { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                if let plan, plan.estimate.perCell == nil {
+                // Also beside a fallback estimate: calibration gives one per setup.
+                if let plan, plan.estimate.source != .setups, plan.calibration > 0 || plan.estimate.perCell == nil {
                     Button(Self.calibrationButton(plan.calibration)) { confirmation = .calibrate }
                         .disabled(busy || plan.prepared.runnable.isEmpty || plan.calibration == 0)
                         .help("One paid cell of each setup that has none yet, on the same task, measures what a cell of each setup "
@@ -233,11 +235,13 @@ struct EvaluateLayerSheet: View {
             Text("\(plan.toQueue) cells to run (\(plan.skipped) already done or queued)").fontWeight(.medium)
             Text(plan.estimate.line)
             if let time = plan.estimate.timeText { Text(time) }
-            if plan.estimate.perCell == nil {
-                Text(plan.calibration == 0
-                     ? "The calibration cells are queued or running: when they finish, their cost gives the estimate."
-                     : "\(Self.calibrationButton(plan.calibration)) runs one paid cell of each setup that has none yet (without \(layer) "
-                        + "and with it, on the same task) to measure the cost; the eval reuses them, and the estimate appears when they finish.")
+            if plan.estimate.perCell == nil, plan.calibration == 0 {
+                Text("The calibration cells are queued or running: when they finish, their cost gives the estimate.")
+                    .foregroundStyle(.secondary)
+            } else if plan.calibration > 0, plan.estimate.source != .setups {
+                Text("\(Self.calibrationButton(plan.calibration)) runs one paid cell of each setup that has none yet (without \(layer) "
+                     + "and with it, on the same task) to measure what each costs; the eval reuses them, and the estimate per setup "
+                     + "appears when they finish.")
                     .foregroundStyle(.secondary)
             }
         }
@@ -269,12 +273,19 @@ struct EvaluateLayerSheet: View {
         let others = waiting == 0 ? "" : " \(waiting) other queued \(waiting == 1 ? "run" : "runs") will start too."
         switch kind {
         case .calibrate:
-            // The sheet offers calibration only while there is no estimate, so there is no range to show.
             let count = plan?.calibration ?? 1
-            return count == 1
-                ? "1 paid cell of the setup that has none yet, to measure its cost; the eval reuses it. It runs " + account + others
-                : "\(count) paid cells, one of each setup on the same task, to measure what each costs; the eval reuses them. They run "
-                    + account + others
+            // A range only when other control cells of the model recorded a cost.
+            let range = plan?.calibrationEstimate.flatMap { estimate in
+                estimate.low.flatMap { low in estimate.high.map { String(format: " About $%.2f–$%.2f in all.", low, $0) } }
+            } ?? ""
+            // Another eval of this layer still waiting for its cells: this would pay for a second calibration.
+            let open = plan.flatMap { plan in plan.prepared.continuing ? nil : plan.resumable.flatMap { $0.open > 0 ? $0 : nil } }
+            let warning = open.map { " The eval of \($0.createdAt.formatted(date: .abbreviated, time: .omitted)) still has \($0.open) "
+                + "cells queued or running; this calibrates a new eval besides it." } ?? ""
+            return (count == 1
+                ? "1 paid cell of the setup that has none yet, to measure its cost; the eval reuses it. It runs "
+                : "\(count) paid cells, one of each setup on the same task, to measure what each costs; the eval reuses them. They run ")
+                + account + range + warning + others
         case .queue:
             return "They run " + account + (plan?.estimate.timeText.map { " \($0)." } ?? "") + others
         }
@@ -291,7 +302,7 @@ struct EvaluateLayerSheet: View {
                 let queued = try await model.queueLayerEval(plan, calibrateOnly: calibrateOnly, maxCost: calibrateOnly ? nil : plan.estimate.high,
                                                             environment: environment, keep: keep)
                 let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
-                let calibrated = queued.runs.count == 1 ? "1 calibration cell" : "\(queued.runs.count) calibration cells"
+                let calibrated = LayerEvals.calibrationCount(queued.runs.count)
                 let text = queued.runs.isEmpty ? "Nothing to queue.\(skipped)"
                     : calibrateOnly ? "Queued \(calibrated) of eval \(plan.evalID). When they finish, Evaluate… shows the estimate and continues this eval."
                     : "Queued \(queued.runs.count) cells of eval \(plan.evalID).\(skipped)"

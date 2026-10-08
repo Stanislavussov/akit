@@ -79,8 +79,9 @@ struct LayerFixture {
 
     /// A fake `claude`: it writes value 2 only when the clone's CLAUDE.md has the layer's
     /// marker, reports a Claude Code version, records `git status` as the agent saw it, and
-    /// leaves a marker file that proves the fake ran (not a real, paid Claude Code). Its
-    /// transcript lists the skills of the clone's `.claude/skills`, plus the names in
+    /// leaves a marker file that proves the fake ran (not a real, paid Claude Code). As the
+    /// real one does, its stream's init names every skill of the clone's `.claude/skills` and
+    /// its transcript's `skill_listing` those that aren't manual; both add the names in
     /// `~/also-listed.txt` (a skill from somewhere the setup check doesn't read).
     func fakeClaude() throws {
         try write("bin/claude", #"""
@@ -96,13 +97,19 @@ struct LayerFixture {
             mkdir -p "$HOME/.claude/projects/-fake"
             t="$HOME/.claude/projects/-fake/$id.jsonl"
             echo '{"type":"user","cwd":"/fake","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"Make value 2"}}' > "$t"
-            names=""
-            for d in .claude/skills/*/; do [ -d "$d" ] && names="$names\"$(basename "$d")\","; done
-            if [ -f "$HOME/also-listed.txt" ]; then for n in $(cat "$HOME/also-listed.txt"); do names="$names\"$n\","; done; fi
+            names=""; loaded=""
+            for d in .claude/skills/*/; do
+              [ -d "$d" ] || continue
+              n="$(basename "$d")"; loaded="$loaded\"$n\","
+              grep -q "disable-model-invocation: true" "$d/SKILL.md" 2>/dev/null || names="$names\"$n\","
+            done
+            if [ -f "$HOME/also-listed.txt" ]; then
+              for n in $(cat "$HOME/also-listed.txt"); do names="$names\"$n\","; loaded="$loaded\"$n\","; done
+            fi
             echo '{"type":"attachment","attachment":{"type":"skill_listing","isInitial":true,"names":['"${names%,}"'],"content":""}}' >> "$t"
             if grep -q LAYER-MARKER CLAUDE.md; then echo 2 > value.txt; fi
             echo '{"type":"assistant","timestamp":"2026-10-01T10:00:09Z","message":{"id":"m9","model":"claude-opus-5-5","content":[{"type":"text","text":"Finished."}],"usage":{"input_tokens":10,"output_tokens":5}}}' >> "$t"
-            echo '{"type":"system","subtype":"init","model":"claude-opus-5-5","claude_code_version":"2.1.290","session_id":"'"$id"'"}'
+            echo '{"type":"system","subtype":"init","model":"claude-opus-5-5","claude_code_version":"2.1.290","session_id":"'"$id"'","skills":['"${loaded%,}"']}'
             echo '{"type":"result","num_turns":2,"duration_ms":1000,"usage":{"input_tokens":20,"output_tokens":10},"total_cost_usd":0.01}'
             """#, in: home, executable: true)
     }

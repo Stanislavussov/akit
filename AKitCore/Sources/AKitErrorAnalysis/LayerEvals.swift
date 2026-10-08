@@ -81,11 +81,11 @@ public enum LayerEvals {
                                                      projectsRoot: projectsRoot, now: now, env: env)
         let records = SendLog.records(env: env), runs = LabStore.list(env: env)
         let counts = estimate(prepared, repeats: repeats, records: records, runs: runs, env: env)
-        let calibration = calibrationCells(prepared, runs: runs, env: env)
+        let calibration = calibrationCells(prepared, runs: runs)
         var resumable: Resumable?
         if !prepared.continuing, let latest = LayerEvalStore.latest(of: layer, agent: agent, env: env),
            overlays(of: latest.setups) == overlays(of: prepared.setups) {
-            resumable = self.resumable(latest, env: env)
+            resumable = self.resumable(latest, runs: runs, env: env)
         }
         return EvalPlan(set: set, missing: missing, prepared: prepared, repeats: repeats, toQueue: counts.toQueue, skipped: counts.skipped,
                         estimate: counts.estimate, resumable: resumable, calibration: calibration.count,
@@ -106,7 +106,7 @@ public enum LayerEvals {
                          env: HarnessEnvironment) -> (toQueue: Int, skipped: Int, estimate: CostEstimate) {
         let sanity = prepared.sanitySetup.map { ($0, prepared.sanityTasks, 1) }
         let all = ControlRuns.order(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats, sanity: sanity).count
-        let pending = ControlRuns.pending(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats, sanity: sanity, env: env)
+        let pending = ControlRuns.pending(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats, sanity: sanity, runs: runs)
         let agent = prepared.setups.first?.agent ?? LabAgent(harness: .claudeCode, model: "", effort: "")
         return (pending.count, all - pending.count,
                 ControlRuns.estimate(setups: pending.map(\.setup), agent: agent, repo: prepared.runnable.first?.mainFolder, records: records,
@@ -114,24 +114,37 @@ public enum LayerEvals {
     }
 
     /// The eval's calibration cells: for each setup (not the read-only one) that has no cell in
-    /// the eval yet (finished with the layer, queued or running), its first cell not yet done
-    /// in queue order, so both setups calibrate on the same task and repeat (repeat 1 of the
-    /// first task in a new eval). At most one per setup.
-    static func calibrationCells(_ prepared: LayerSetups.Prepared, runs: [LabRun], env: HarnessEnvironment)
-        -> [(task: ControlTask, setup: ControlSetup)] {
+    /// the eval yet (finished with the layer, queued or running), one cell of repeat 1 not yet
+    /// done: when another setup already has a cell, on the task of its first one, so the pair is
+    /// complete; else the first task (the same for both setups in a new eval). At most one per setup.
+    static func calibrationCells(_ prepared: LayerSetups.Prepared, runs: [LabRun]) -> [(task: ControlTask, setup: ControlSetup)] {
         let mine = runs.filter { $0.spec.kind == .control && $0.spec.controlSetup?.layer?.evalID == prepared.evalID }
-        let done = ControlRuns.doneKeys(tasks: prepared.runnable, env: env)
+            .sorted { $0.spec.createdAt < $1.spec.createdAt }
+        let done = ControlRuns.doneKeys(tasks: prepared.runnable, runs: runs)
+        func started(_ run: LabRun) -> Bool {
+            run.status == .queued || run.status == .running || (run.status == .finished && run.result?.control?.overlay != nil)
+        }
         return prepared.setups.compactMap { setup in
-            let started = mine.contains { run in
+            let own = mine.contains { run in
                 guard let other = run.spec.controlSetup, !other.readOnly, other.layer?.role == setup.layer?.role else { return false }
-                return run.status == .queued || run.status == .running || (run.status == .finished && run.result?.control?.overlay != nil)
+                return started(run)
             }
-            guard !started else { return nil }
-            return ControlRuns.order(tasks: prepared.runnable, setups: [setup], repeats: 1, sanity: nil)
-                .first { !done.contains(ControlRuns.cellKey(task: $0.task, setup: $0.setup, repeatIndex: $0.index)) }
-                .map { ($0.task, $0.setup) }
+            guard !own else { return nil }
+            // Calibration cells are repeat 1.
+            let cells = ControlRuns.order(tasks: prepared.runnable, setups: [setup], repeats: 1, sanity: nil)
+                .filter { !done.contains(ControlRuns.cellKey(task: $0.task, setup: $0.setup, repeatIndex: $0.index)) }
+            // The other setup's first cell names the task to pair with.
+            let partner = mine.first { run in
+                guard let other = run.spec.controlSetup, !other.readOnly, other.layer?.role != setup.layer?.role else { return false }
+                return started(run)
+            }
+            if let partner, let cell = cells.first(where: { $0.task.id == partner.spec.controlTask }) { return (cell.task, cell.setup) }
+            return cells.first.map { ($0.task, $0.setup) }
         }
     }
+
+    /// "1 calibration cell", "2 calibration cells".
+    public static func calibrationCount(_ count: Int) -> String { "\(count) calibration cell\(count == 1 ? "" : "s")" }
 
     /// The overlay hashes of an eval's two setups, by role.
     private static func overlays(of setups: [ControlSetup]) -> [String: String] {
@@ -140,12 +153,16 @@ public enum LayerEvals {
 
     /// An eval's progress from its Lab runs.
     public static func resumable(_ manifest: LayerEvalManifest, env: HarnessEnvironment) -> Resumable {
-        let runs = LabStore.list(env: env).filter { $0.spec.kind == .control && $0.spec.controlSetup?.layer?.evalID == manifest.id }
+        resumable(manifest, runs: LabStore.list(env: env), env: env)
+    }
+
+    static func resumable(_ manifest: LayerEvalManifest, runs all: [LabRun], env: HarnessEnvironment) -> Resumable {
+        let runs = all.filter { $0.spec.kind == .control && $0.spec.controlSetup?.layer?.evalID == manifest.id }
         let finished = runs.filter { $0.status == .finished && $0.result?.control?.overlay != nil }
         let tasks = manifest.tasks.compactMap { ControlTasks.load($0, env: env) }
         let sanityTasks = manifest.sanityTasks.compactMap { id in tasks.first { $0.id == id } }
-        let left = ControlRuns.plan(tasks: tasks, setups: manifest.setups, repeats: manifest.repeats,
-                                    sanity: manifest.sanity.map { ($0, sanityTasks, 1) }, env: env).toQueue
+        let left = ControlRuns.pending(tasks: tasks, setups: manifest.setups, repeats: manifest.repeats,
+                                       sanity: manifest.sanity.map { ($0, sanityTasks, 1) }, runs: all).count
         return Resumable(evalID: manifest.id, createdAt: manifest.createdAt,
                          total: manifest.repeats * manifest.tasks.count * manifest.setups.count + (manifest.sanity == nil ? 0 : manifest.sanityTasks.count),
                          finished: finished.count, open: runs.filter { $0.status == .queued || $0.status == .running }.count, left: left,
@@ -187,14 +204,14 @@ public enum LayerEvals {
             var calibration: [(task: ControlTask, setup: ControlSetup)] = []
             let estimate: CostEstimate
             if calibrateOnly {
-                calibration = calibrationCells(prepared, runs: runs, env: env)
+                calibration = calibrationCells(prepared, runs: runs)
                 guard !calibration.isEmpty else {
                     throw LayerSetups.Failure(message: "Every setup of the eval \(prepared.evalID) has a finished, queued or running cell: "
                                                   + "no calibration cell is left to run.")
                 }
                 // Calibration is confirmed by its count: never more cells than the user saw.
                 if calibration.count > plan.calibration {
-                    throw LayerSetups.Failure(message: "The eval changed since the estimate (\(calibration.count) calibration cells now, not "
+                    throw LayerSetups.Failure(message: "The eval changed since the estimate (\(calibrationCount(calibration.count)) now, not "
                                                   + "\(plan.calibration)); check it again.")
                 }
                 estimate = ControlRuns.estimate(setups: calibration.map(\.setup), agent: plan.agent ?? plan.estimate.agent,
@@ -222,8 +239,8 @@ public enum LayerEvals {
             // A layer's skill or text in ~/.claude (or above the clones) reaches every cell of a setup: none would start.
             let outside = prepared.checks.outsideProblems(layer: plan.layer, home: env.homeDirectory)
             if let first = outside.first {
-                throw LayerSetups.Failure(message: first + (outside.count > 1 ? " (and \(outside.count - 1) more)" : "")
-                                              + ". Every cell of that setup would fail its setup check before its agent; move it out of the way first.")
+                throw LayerSetups.Failure(message: first + (outside.count > 1 ? " And \(outside.count - 1) more." : "")
+                                              + " Every cell of that setup would fail its setup check before its agent, so nothing is queued.")
             }
             try SendLog.checkLimit(estimate: estimate.total, settings: LabSettings.loadForSending(env: env), env: env)
             let isNew = LayerEvalStore.manifest(prepared.evalID, env: env) == nil

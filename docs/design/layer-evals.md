@@ -127,11 +127,12 @@ Further choices of the step 4 plan, accepted on the same day:
 9. **A watchdog guards the agent phase** of control cells (slice 2), so an agent's own
    `swift test` in an AKitCore clone can't grow without limit.
 10. **A removed skill or text never leaks into the wrong setup** (the user, after slice 6):
-    every layer cell is checked statically before its agent starts and against its skill
-    listing after it ([Isolation check](#isolation-check)). This narrows decision 2: a skill or
-    text of the layer in `~/.claude` (or above the Lab's clones) now fails the setup without
-    the layer and refuses the queue, instead of only a warning. A same-name skill the
-    project tracks, or a plugin's, still only gets the overlap warning.
+    every layer cell is checked statically before its agent starts and against the skills it
+    loaded and listed after it ([Isolation check](#isolation-check)). This narrows decision 2: a
+    skill, command or text of the layer in `~/.claude` (or above the Lab's clones) now fails the
+    setup without the layer and refuses the queue, instead of only a warning. A same-name skill
+    the project tracks gets an overlap line (and blocks the task when the base holds all of the
+    layer); a plugin's or a synced claude.ai skill still only gets the overlap warning.
 
 ## Built
 
@@ -404,32 +405,42 @@ baseline only, while the layer adds context and costs more; the first pair resul
 wait. Now:
 
 - `LayerEvals.calibrationCells`: for each of the eval's two setups (not the read-only one)
-  that has no cell in the eval yet (finished with the layer, queued or running), its first
-  cell not yet done in queue order: repeat 1 of the first task for both in a new eval, so the
-  pair is on the same task and repeat. At most one per setup, so normally 2; an eval that
-  already has a cell of one setup (the eval queued by slice 6 with its one baseline cell)
-  gets only the missing setup's cell, on the task and repeat of the other when that one is
-  first. The plan carries the count (`EvalPlan.calibration`) and its estimate.
+  that has no cell in the eval yet (finished with the layer, queued or running), one cell of
+  repeat 1 not yet done: repeat 1 of the first task for both in a new eval, so the pair is on
+  the same task and repeat. At most one per setup, so normally 2; an eval that already has a
+  cell of one setup (the eval queued by slice 6 with its one baseline cell) gets only the
+  missing setup's cell, on the task of the other setup's first cell. The plan carries the
+  count (`EvalPlan.calibration`) and its estimate. Plans read the Lab runs once
+  (`ControlRuns.doneKeys(tasks:runs:)`, `pending(…, runs:)`).
 - The money rule stays: no paid cell without an estimate or a confirmed count. `queue`
   under the eval's lock counts the calibration cells again and refuses more than the plan
   said ("… calibration cells now, not …; check it again") and none left ("no calibration
   cell is left to run"); the monthly limit is checked with their estimate.
 - `ControlRuns.estimate(setups:…)` (`LayerEvals.estimate` for Evaluate, Run Cells… with a
   brain layer and `run --layer`): per setup once each main setup among the cells has recorded
-  control cells of the same harness and model. A setup's records are the control cells of the
-  same layer, role and overlay hash (of any eval: the same files cost the same); read-only
-  cells take their own records, else the baseline's. `CostEstimate.source` `setups` and
-  `parts` name the data: "≈ $8.50 (range $8.50–$8.50) from the recorded cells of each setup
-  (Claude Code · opus): without swiftui 5 × $0.50 (1 recorded), layer swiftui 5 × $1.00 (1
-  recorded), read-only 2 × $0.50 (0 recorded)". Otherwise the fallback (all control cells,
-  else replays) with a note: "(not per setup: the layer setup has no recorded cell yet)".
+  control cells of the same harness, model and effort. A setup's records are the control cells
+  of the same layer, role and overlay hash (of any eval: the same files cost the same);
+  read-only cells take their own records, else the baseline's. `CostEstimate.source` `setups`
+  and `parts` name the data, and a part from one cell says so, so its range isn't taken as
+  certain: "≈ $8.50 (range $8.50–$8.50) from the recorded cells of each setup (Claude Code ·
+  opus): without swiftui 5 × $0.50 (from 1 cell on 1 task), layer swiftui 5 × $1.00 (from 1
+  cell on 1 task), read-only 2 × $0.50 (no record of its own: as the baseline)"; more cells
+  read "(3 recorded on 2 tasks)". Otherwise the fallback (all control cells, else replays) with
+  a note: "(not per setup: the layer setup has no recorded cell yet)".
 - UI: **Queue 2 Calibration Cells…** (**Queue 1 Calibration Cell…** when one setup has a cell)
-  asks "Queue 2 calibration cells?" ("2 paid cells, one of each setup on the same task, to
-  measure what each costs; the eval reuses them. They run with …"); disabled while no
-  calibration cell is left ("The calibration cells are queued or running: …"). CLI: the plan
-  prints "Calibration: 2 calibration cells, one of each setup without a cell yet, on the same
-  task (--calibrate --yes)"; `--calibrate --yes` prints their expected range and "Queued 2
-  calibration cells of eval …"; `--json` has `calibration`.
+  is there whenever calibration cells are left and the estimate is not per setup (also beside
+  a fallback estimate), and asks "Queue 2 calibration cells?" ("2 paid cells, one of each setup
+  on the same task, to measure what each costs; the eval reuses them. They run with …", "About
+  $L–$H in all." when other cells recorded a cost, and "The eval of <date> still has n cells
+  queued or running; this calibrates a new eval besides it." when the Continue toggle is off
+  while another eval's cells wait); "The calibration cells are queued or running: …" while none
+  is left. CLI: the plan prints "Calibration: 2 calibration cells, one of each setup without a
+  cell yet, on the same task (--calibrate --yes)"; `--calibrate --yes` prints their expected
+  range and "Queued 2 calibration cells of eval …"; with `--new` while another eval's cells wait
+  it warns "the eval … still has n cells queued or running; --calibrate here pays for another
+  eval's calibration cells"; `--json` has `calibration` and the estimate's `parts` and `note`.
+- The Evaluate… sheet and Brain → layer → **Evals** have a **Guide** button that opens the
+  Error Analysis guide at "Оценка слоя из Brain: Evaluate…" (section `evaluate-layer`).
 
 **Isolation check (2026-10-08, after slice 6).** Built as designed in
 [Isolation check](#isolation-check): `SetupCheck` and `SetupCheckResult` (`AKitLab`),
@@ -439,6 +450,9 @@ wait. Now:
 outside the clone are warnings in Evaluate… and Run Cells… with a brain layer, and the queue
 refuses them; the comparison says "n cells failed the setup check, left out: …"; the verdict's
 lines "n cells failed the setup check, left out"; the cell's Lab run shows its setup check line.
+After the review the same day: the second source (`system/init` `skills`), commands, synced
+skills left to the overlap warning, the base commit's copy of the layer at planning, the
+circuit breaker and the resolved parent walk.
 
 Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (see
 [Open questions](#open-questions)); the check needs a transcript of a repository with
@@ -577,42 +591,75 @@ is checked twice; the first check needs no model call.
 **What Claude Code reads in a cell.** `ControlCell` starts `claude -p` in the clone with the
 user's own `HOME` and no `--setting-sources` (`AgentRun.arguments`), so the agent reads: the
 clone (`CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` and their `@` imports at the start,
-nested `CLAUDE.md` files and `.claude/skills` folders when it works there, `.claude/rules`),
-the folders above the clone up to `/` (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`,
-`.claude/skills`; the clones live in the temporary folder), and `~/.claude` (`CLAUDE.md` with
-its imports, `rules/**.md`, `skills/*` and `skills/synced/<account>/*`). Plugin skills are
-named `plugin:skill`, so they never carry a layer skill's name.
+nested `CLAUDE.md` files, `.claude/skills` and `.claude/commands` folders when it works there,
+`.claude/rules`), the folders above the clone up to `/`, links resolved (the clones live in
+the temporary folder, `/var/…` → `/private/var/…`: `CLAUDE.md`, `CLAUDE.local.md`,
+`.claude/CLAUDE.md`, `.claude/skills`, `.claude/commands`), and `~/.claude` (`CLAUDE.md` with
+its imports, `rules/**.md`, `skills/*`, `commands/**.md`). A command shares the skills' names
+(`commands/x.md` is `x`, `commands/git/x.md` is `git:x`), so commands count. Names that never
+equal a layer skill's are left out: plugin skills (`plugin:skill`) and claude.ai's synced skills
+in `skills/synced/<account>/` (`anthropic-skills:<name>`); they get the overlap warning only.
+Imports over 1 MB are not read; a file in a protected folder that can't be read is skipped.
 
 **What each setup must and must not show** (`LayerChecks`, from the render, stored in the
 manifest; the read-only sanity cells are checked as the baseline):
 
 | Setup | Must have | Must not have |
 |---|---|---|
-| without X | the required layers' skills at `.claude/skills/<name>/SKILL.md` | X's own skills (by folder name or SKILL.md `name:`), X's template texts (trimmed, fields filled) in any instruction file, X's other files byte for byte |
+| without X | the required layers' skills at `.claude/skills/<name>/SKILL.md` | X's own skills (by folder name or SKILL.md `name:`) and same-name commands, X's template texts (trimmed, fields filled) in any instruction file, X's other files byte for byte |
 | layer X | every rendered skill, a manual one with `disable-model-invocation: true` in its header; X's `AGENTS.md` texts in a file Claude Code reads at the start, its other Markdown in its file | every skill a layer of the closure names that the render leaves out (`mode: off`, with override, or dropped by `when` and the answers) |
+
+The setup without X is not checked for the skills X turns off: its required layers may bring
+them on purpose (that is what `mode: off` with override in X removes), so they belong there.
+
+**At planning** (`LayerSetups.prepare`, from each task's base commit, no clone): the layer's
+own skills the base tracks and its texts in the base's `CLAUDE.md`, `.claude/CLAUDE.md`,
+`CLAUDE.local.md`, `AGENTS.md` or the text's own file. Each is an overlap line ("the swiftui
+layer's AGENTS.md text is already in the project's CLAUDE.md at a1b2c3d: both setups have it,
+so the difference will look smaller than it is."); a task whose base holds every text and
+skill of the layer is blocked ("The project already holds everything the swiftui layer adds at
+a1b2c3d (…): both setups would be the same."). What lies outside the clone is the same for
+every cell, so it is a warning ("The setup without swiftui would see what it must not:
+~/.claude/skills/x holds the skill x, which this setup must not have (move ~/.claude/skills/x
+elsewhere while the eval runs). Its cells won't start while it is there."), and
+`LayerEvals.queue` refuses until it is moved away. Such a home skill gets no "already installed
+in the home folder" overlap line (that line stays for plugin and synced skills).
 
 **Before the agent** (`SetupCheck.problems`): after the clone, the patch and the overlay, before
 the agent phase. The overlay's writes must be in the clone as written (a created file byte for
 byte, an appended text inside its file, the `.claude/skills` link). What the base commit
 already holds (`projectContent`, read right after the clone) is the project's, in both setups:
-a project's own same-name skill doesn't count as a leak, and the layer cell doesn't check the
-mode of a skill the project's copy replaced. On a violation the cell throws "Setup check failed
-for <setup label>, so the agent didn't start and the cell doesn't count: <path> holds the skill
-<name>, which this setup must not have; …": the Lab run fails, nothing was sent, and it never
-counts in a comparison. A failed cell is not done, so Continue queues it again.
+it doesn't count as a leak (the run log says "Setup check: the project's own CLAUDE.md already
+holds the swiftui layer's AGENTS.md text: both setups have it."), and the layer cell doesn't
+check the mode of a skill the project's copy replaced. On a violation the cell throws "Setup
+check failed for <setup label>, so the agent didn't start and the cell doesn't count: <path>
+holds the skill <name>, which this setup must not have; …": the Lab run fails, nothing was
+sent, and it never counts in a comparison. A failed cell is not done, so Continue queues it
+again.
 
-**At queueing**: what lies outside the clone is the same for every cell, so `LayerSetups.prepare`
-shows it as a warning ("The setup without swiftui would see what it must not: ~/.claude/skills/…
-holds the skill …") and `LayerEvals.queue` refuses until it is moved away.
+**After the agent** (`SetupCheck.afterRun`), from two sources, verified on a real `-p` cell:
 
-**After the agent** (`SetupCheck.afterRun`): the names of every `skill_listing` attachment of
-the cell's transcript (the session's own lines, not a subagent's). The baseline's listing must
-not name X's own skills (unless the project tracks one of that name); the layer cell's must
-name every rendered skill that isn't manual, and none that is off. A mismatch records
-`setupCheck` "failed" in the result: the cell finished (and was paid) but is left out of
-`ControlComparison` and `LayerVerdicts`, which count it ("n cells failed the setup check, left
-out"). It stays done, so it isn't re-run automatically: another run would likely fail the same
-way and cost again. A transcript without a listing records "not checked" (never a failure).
+| Source | Holds | Leaves out |
+|---|---|---|
+| `skills` of the stream's `system/init` (`agent.jsonl`, `AgentRun.Outcome.skills`) | every skill Claude Code loaded, manual ones too | commands |
+| `skill_listing` attachments of the transcript (`~/.claude/projects/*/<session>.jsonl`; the session's own lines, not a subagent's) | what the model saw, commands too; synced skills as `anthropic-skills:<name>`, plugin skills as `plugin:skill` | manual skills |
+
+Neither may name one of the setup's absent skills (unless the project tracks one of that name):
+"Claude Code loaded swiftui-expert, which this setup must not have". The layer cell's init must
+name every rendered skill ("Claude Code didn't load …"), its listing every one that isn't manual
+("… didn't list … to the model") and no manual one ("… listed the manual … to the model"). A
+missing source is skipped; with both missing the result is "not checked" (never a failure). A
+mismatch records `setupCheck` "failed" in the result: the cell finished (and was paid) but is
+left out of `ControlComparison` and `LayerVerdicts`, which count it ("n cells failed the setup
+check, left out"). It stays done, so it isn't re-run automatically.
+
+**Circuit breaker** (`ControlRuns.execute`): before a layer cell starts, a finished cell of the
+same eval, role and read-only kind that failed its check after this cell was queued stops it:
+"An earlier cell of this setup (<run>) failed its setup check: …. The agent didn't start, so
+nothing was paid; fix the cause, then continue the eval to run this cell again." The stopped
+cell is not done; a Continue after the fix queues it again, and a cell queued after the failure
+runs.
+
 An eval queued before the check has no `checks` in its manifest: its cells derive them from the
 stored overlays (no off skills there), and a continue stores the full checks.
 
@@ -1004,6 +1051,10 @@ weakened tests or suppressions).
 - The overlap warning compares skill names only; two skills with different names and the
   same content aren't caught. The isolation check also goes by name (and SKILL.md `name:`)
   for skills; texts by exact text.
-- The isolation check's listing side assumes Claude Code lists every auto skill. If a future
-  version trims the listing (a budget for many skills), a layer cell could be marked "setup
-  check failed" wrongly; the detail names the missing skills, so it shows.
+- The isolation check's listing side assumes Claude Code lists every auto skill (a real `-p`
+  cell listed all 86, `names` equal to `skillCount`). If a future version trims the listing (a
+  budget for many skills), a layer cell could be marked "setup check failed" wrongly; the
+  detail names the missing skills, so it shows. The init's `skills` has no such budget.
+- Plugin and synced skills are left to the overlap warning because their names carry a
+  prefix. If Claude Code ever lets a plugin skill answer to a bare name, they would need the
+  same check.

@@ -52,6 +52,16 @@ public struct CostEstimate: Sendable, Hashable {
         public var high: Double
         /// Recorded cells of the setup itself (0: a read-only setup estimated from its baseline).
         public var basedOn: Int
+        /// The tasks those cells ran.
+        public var tasks: Int
+
+        /// "without swiftui 5 × $0.50 (from 1 cell on 1 task)", "… (3 recorded on 2 tasks)",
+        /// "read-only 2 × $0.50 (no record of its own: as the baseline)".
+        public var text: String {
+            let from = basedOn == 0 ? "no record of its own: as the baseline"
+                : basedOn == 1 ? "from 1 cell on 1 task" : "\(basedOn) recorded on \(tasks) task\(tasks == 1 ? "" : "s")"
+            return String(format: "%@ %d × $%.2f (%@)", label, cells, perCell, from)
+        }
     }
 
     /// The mean cost of all the cells; nil without records.
@@ -59,16 +69,15 @@ public struct CostEstimate: Sendable, Hashable {
 
     /// "≈ $48.20 (range $30.10–$75.00) from 14 recorded control cells of Claude Code ·
     /// opus", per setup "≈ $9.80 (range $8.00–$12.00) from the recorded cells of each setup
-    /// (Claude Code · opus): without swiftui 4 × $0.80 (2 recorded), layer swiftui 4 × $1.65
-    /// (1 recorded)", or
+    /// (Claude Code · opus): without swiftui 4 × $0.80 (2 recorded on 2 tasks), layer swiftui
+    /// 4 × $1.65 (from 1 cell on 1 task)", or
     /// "no estimate yet (no recorded control or replay cell of Claude Code · opus)". A `note`
     /// follows in parentheses.
     public var costText: String {
         guard let total, let low, let high else { return "no estimate yet (no recorded control or replay cell of \(agentText))" }
         if source == .setups {
             return String(format: "≈ $%.2f (range $%.2f–$%.2f) from the recorded cells of each setup (%@): ", total, low, high, agentText)
-                + parts.map { String(format: "%@ %d × $%.2f (%d recorded)", $0.label, $0.cells, $0.perCell, $0.basedOn) }
-                    .joined(separator: ", ")
+                + parts.map(\.text).joined(separator: ", ")
         }
         let kind = source == .replay ? "replay" : "control"
         return String(format: "≈ $%.2f (range $%.2f–$%.2f) from %d recorded %@ cell%@ of %@", total, low, high, basedOn, kind,
@@ -102,7 +111,12 @@ extension ControlRuns {
     /// older akit ran without the layer: comparisons leave it out, so it runs again) and queued
     /// or running ones of these tasks.
     static func doneKeys(tasks: [ControlTask], env: HarnessEnvironment) -> Set<String> {
-        let existing = LabStore.list(env: env).filter { $0.spec.kind == .control }
+        doneKeys(tasks: tasks, runs: LabStore.list(env: env))
+    }
+
+    /// `doneKeys` from Lab runs already read, so one plan reads them once.
+    static func doneKeys(tasks: [ControlTask], runs: [LabRun]) -> Set<String> {
+        let existing = runs.filter { $0.spec.kind == .control }
         var done = Set(existing.compactMap { run -> String? in
             guard run.status == .finished, let control = run.result?.control else { return nil }
             return run.spec.controlSetup?.layer != nil && control.overlay == nil ? nil : control.key
@@ -161,7 +175,13 @@ extension ControlRuns {
     static func pending(tasks: [ControlTask], setups: [ControlSetup], repeats: Int,
                         sanity: (setup: ControlSetup, tasks: [ControlTask], repeats: Int)? = nil,
                         env: HarnessEnvironment) -> [(task: ControlTask, setup: ControlSetup, index: Int, of: Int)] {
-        let done = doneKeys(tasks: tasks + (sanity?.tasks ?? []), env: env)
+        pending(tasks: tasks, setups: setups, repeats: repeats, sanity: sanity, runs: LabStore.list(env: env))
+    }
+
+    static func pending(tasks: [ControlTask], setups: [ControlSetup], repeats: Int,
+                        sanity: (setup: ControlSetup, tasks: [ControlTask], repeats: Int)?,
+                        runs: [LabRun]) -> [(task: ControlTask, setup: ControlSetup, index: Int, of: Int)] {
+        let done = doneKeys(tasks: tasks + (sanity?.tasks ?? []), runs: runs)
         return order(tasks: tasks, setups: setups, repeats: repeats, sanity: sanity)
             .filter { !done.contains(cellKey(task: $0.task, setup: $0.setup, repeatIndex: $0.index)) }
     }
@@ -242,9 +262,13 @@ extension ControlRuns {
         }
         let byRun = Dictionary(runs.map { ($0.id, $0) }) { first, _ in first }
         var costs: [Group: [Double]] = [:]
+        var tasks: [Group: Set<String>] = [:]
         for record in records where record.purpose == "control" && record.harness == agent.harness && record.model == agent.model {
-            guard let cost = record.usage.cost, let id = record.runID, let key = byRun[id]?.spec.controlSetup.flatMap(group) else { continue }
+            // The same effort too: it changes how much the agent thinks, so what a cell costs.
+            guard let cost = record.usage.cost, let id = record.runID, let run = byRun[id], let setup = run.spec.controlSetup,
+                  setup.agent.effort == agent.effort, let key = group(setup) else { continue }
             costs[key, default: []].append(cost)
+            tasks[key, default: []].insert(run.spec.controlTask ?? id)
         }
         var order: [Group] = []
         var counts: [Group: Int] = [:]
@@ -272,7 +296,7 @@ extension ControlRuns {
             }
             let label = key.readOnly ? "read-only" : (key.role == .layer ? "layer " : "without ") + key.layer
             parts.append(CostEstimate.Part(label: label, cells: counts[key] ?? 0, perCell: recorded.reduce(0, +) / Double(recorded.count),
-                                           low: low, high: high, basedOn: own.count))
+                                           low: low, high: high, basedOn: own.count, tasks: own.isEmpty ? 0 : tasks[key]?.count ?? 0))
         }
         estimate.source = .setups
         estimate.parts = parts

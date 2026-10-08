@@ -362,7 +362,14 @@ extension AKitCLITests {
         #expect(estimated.out.hasPrefix("Continuing the eval \(evalID)") && estimated.out.contains("Eval \(evalID) (continued)"), "\(estimated)")
         #expect(estimated.out.contains("12 cells to run (2 already done or queued)"))
         #expect(estimated.out.contains("≈ $8.50 (range $8.50–$8.50) from the recorded cells of each setup (Claude Code · opus): without swiftui "
-                                       + "5 × $0.50 (1 recorded), layer swiftui 5 × $1.00 (1 recorded), read-only 2 × $0.50 (0 recorded)"), "\(estimated)")
+                                       + "5 × $0.50 (from 1 cell on 1 task), layer swiftui 5 × $1.00 (from 1 cell on 1 task), read-only 2 × "
+                                       + "$0.50 (no record of its own: as the baseline)"), "\(estimated)")
+        // After the "Continuing the eval …" line.
+        let report = await evaluate("--json").out
+        let planned = try #require(try JSONSerialization.jsonObject(with: Data(report[(report.firstIndex(of: "{") ?? report.startIndex)...].utf8))
+            as? [String: Any], "\(report)")
+        let parts = try #require((planned["estimate"] as? [String: Any])?["parts"] as? [[String: Any]])
+        #expect(parts.map { $0["setup"] as? String } == ["without swiftui", "layer swiftui", "read-only"] && parts[0]["tasks"] as? Int == 1)
         #expect(estimated.out.hasSuffix("Run it again with --yes --max-cost USD to queue them (USD: the most you allow)."), "\(estimated)")
         #expect(await evaluate("--yes").err.contains("add --max-cost USD, the most you allow (the estimate's high end is $8.50)"))
         #expect(await evaluate("--yes", "--max-cost", "5").err.contains("The estimate's high end $8.50 is above --max-cost $5.00."))

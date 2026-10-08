@@ -59,8 +59,13 @@ struct ControlEstimateTests {
             record.runID = run.id
             return record
         }
+        // Another effort thinks differently, so costs differently: its cell doesn't count.
+        var lowSetup = setup(.layer)
+        lowSetup.agent.effort = "low"
         let base = cell(setup(.requiredOnly)), layer = cell(setup(.layer, eval: "e0")), other = cell(setup(.requiredOnly, overlay: "h-other"))
+        let low = cell(lowSetup)
         let cells = [setup(.requiredOnly), setup(.layer), setup(.requiredOnly), setup(.layer), setup(.requiredOnly, readOnly: true)]
+        #expect(ControlRuns.estimate(setups: cells, agent: opus, records: [record(base, 1), record(low, 4)], runs: [base, low]).source == .control)
 
         // Only the baseline recorded one: every control cell of the model, and why.
         let half = ControlRuns.estimate(setups: cells, agent: opus, records: [record(base, 1), record(other, 3)], runs: [base, other])
@@ -72,7 +77,8 @@ struct ControlEstimateTests {
         #expect(both.source == .setups && both.basedOn == 3 && both.parts.map(\.cells) == [2, 2, 1])
         #expect(both.total == 12.5 && both.low == 11 && both.high == 14)
         let text = "≈ $12.50 (range $11.00–$14.00) from the recorded cells of each setup (Claude Code · opus): without swiftui "
-            + "2 × $1.50 (2 recorded), layer swiftui 2 × $4.00 (1 recorded), read-only 1 × $1.50 (0 recorded)"
+            + "2 × $1.50 (2 recorded on 1 task), layer swiftui 2 × $4.00 (from 1 cell on 1 task), read-only 1 × $1.50 (no record of its own: "
+            + "as the baseline)"
         #expect(both.costText == text)
         // Cells without a layer: as before.
         #expect(ControlRuns.estimate(setups: [ControlSetup(name: "baseline", agent: opus)], agent: opus, records: [record(base, 1)], runs: [base])
@@ -192,7 +198,7 @@ extension ControlRunsTests {
         // The layer's cell is dropped after the plan: queueing now would run more cells than the plan said.
         try await LabStore.cancel(calibration[1], env: env)
         #expect(await message { _ = try await queue(waiting, calibrate: false) }?.contains("The eval changed since the estimate") == true)
-        #expect(await message { _ = try await queue(waiting, calibrate: true) }?.contains("1 calibration cells now, not 0") == true)
+        #expect(await message { _ = try await queue(waiting, calibrate: true) }?.contains("(1 calibration cell now, not 0)") == true)
         // Only the setup without a cell calibrates, on the same task and repeat as the other.
         let missing = try await evalPlan(fixture, continuing: first.evalID)
         #expect(missing.calibration == 1)
@@ -232,6 +238,28 @@ extension ControlRunsTests {
         await fixture.commitAll(fixture.brain)
         #expect(await message { _ = try await evalPlan(fixture, continuing: first.evalID) }?.contains("The layer changed since the eval") == true)
         #expect(try await evalPlan(fixture).resumable == nil)
+    }
+
+    /// The missing setup calibrates on the task and repeat of the other setup's cell, so the
+    /// pair is complete; with none, both on the first task.
+    @Test func calibrationPairsWithTheOtherSetupsCell() async throws {
+        let fixture = LayerFixture(home: home)
+        try await fixture.makeBrain()
+        let base = try await fixture.makeRepo()
+        let tasks = ["make-value-2-abcd", "make-value-2-ef01"].map { id in
+            ControlTask(id: id, title: "Make value 2", repo: fixture.repo.path, base: base, prompt: "Make value 2 (\(id))",
+                        source: .reproduction, oracle: .tests(command: "true"))
+        }
+        for task in tasks { try ControlTasks.save(task, env: env) }
+        try LayerSets.add(tasks, to: "swiftui", env: env)
+        let plan = try await evalPlan(fixture)
+        #expect(LayerEvals.calibrationCells(plan.prepared, runs: []).map(\.task.id) == [tasks[0].id, tasks[0].id])
+        // A baseline cell already waits on the second task (as a Run Cells… queue could leave it).
+        let spec = RunSpec(id: "waiting", kind: .control, title: "", folder: "/", environment: .background, akit: "/akit", repeatIndex: 1,
+                           controlTask: tasks[1].id, controlSetup: plan.prepared.setups[0])
+        let waiting = LabRun(folder: URL(filePath: "/"), spec: spec, state: RunState(status: .queued), launch: nil, result: nil)
+        let cells = LayerEvals.calibrationCells(plan.prepared, runs: [waiting])
+        #expect(cells.count == 1 && cells.first?.task.id == tasks[1].id && cells.first?.setup.layer?.role == .layer)
     }
 
     /// The setup check, end to end with the fake `claude`: a layer skill in the home folder
@@ -291,11 +319,32 @@ extension ControlRunsTests {
         try "swiftui-expert\n".write(to: home.appending(path: "also-listed.txt"), atomically: true, encoding: .utf8)
         let again = try await calibrate(try await evalPlan(fixture, continuing: evalID))
         #expect(again.count == 1 && again[0].spec.controlSetup?.layer?.role == .requiredOnly)
+        func queueRest() async throws -> [LabRun] {
+            try await LayerEvals.queue(try await evalPlan(fixture, continuing: evalID), calibrateOnly: false, maxCost: 1, environment: .background,
+                                       keep: false, akit: URL(filePath: "/usr/bin/true"), env: env).runs
+        }
+        // The rest of the eval is queued before that cell runs.
+        let rest = try await queueRest()
         let leaked = try #require(try await runQueued(again).first)
         let check = try #require(leaked.result?.control?.setupCheck)
-        #expect(check.status == .failed && check.detail == "Claude Code listed swiftui-expert, which this setup must not have")
+        #expect(check.status == .failed && check.detail == "Claude Code loaded swiftui-expert, which this setup must not have")
         let comparison = ControlComparison.compare(ControlComparison.Cell.of([leaked, layerCell]))
         #expect(comparison.setupCheckFailed == 1 && comparison.leftOut == 0 && comparison.rows.map(\.setup.layer?.role) == [.layer])
+
+        // The circuit breaker: the next cell of that setup, queued before the failure, stops before its agent (nothing paid).
+        let next = try #require(rest.first { $0.spec.controlSetup?.layer?.role == .requiredOnly && $0.spec.controlSetup?.readOnly == false })
+        let stoppedOutput = Output()
+        let stoppedCode = await LabWorker.run(id: next.id, env: env, startNext: false, handleSignals: false, execute: AnalysisRuns.execute,
+                                              out: stoppedOutput.add)
+        #expect(stoppedCode != 0 && LabStore.load(next.id, env: env)?.status != .finished)
+        #expect(stoppedOutput.lines.contains { $0.contains("An earlier cell of this setup (\(leaked.id)) failed its setup check: Claude Code loaded "
+                                                             + "swiftui-expert") }, "\(stoppedOutput.lines)")
+        // Once the cause is gone, Continue queues it again, and the new cell runs.
+        try FileManager.default.removeItem(at: home.appending(path: "also-listed.txt"))
+        let retry = try #require(try await queueRest().first)
+        #expect(retry.spec.controlSetup?.layer?.role == .requiredOnly && retry.spec.repeatIndex == next.spec.repeatIndex)
+        let fixed = try #require(try await runQueued([retry]).first)
+        #expect(fixed.result?.control?.setupCheck?.status == .passed, "\(String(describing: fixed.result?.control))")
     }
 
     @Test func akitsOwnRepositoryDeniesTheCommandsThatTouchTheRealHome() async throws {

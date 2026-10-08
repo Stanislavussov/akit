@@ -264,6 +264,42 @@ struct LayerSetupsTests {
         #expect(LayerEvalStore.problem(prepared.evalID, env: env)?.contains("newer AKit") == true)
     }
 
+    /// A project that already committed the layer's text or skills: both setups have them. Said
+    /// per task; a task that holds everything the layer adds is blocked (both setups would be
+    /// the same). A home skill the setup check finds is a blocking warning, not an overlap line.
+    @Test func whatTheProjectOrTheHomeFolderAlreadyHolds() async throws {
+        try await fixture.makeBrain()
+        let text = "- LAYER-MARKER: check with make snapshot"
+        let base = try await fixture.makeRepo(["CLAUDE.md": "# Rules\n\(text)\n"])
+        try ControlTasks.save(task(base), env: env)
+        let partly = try await prepare(tasks: [task(base)])
+        let short = String(base.prefix(7))
+        #expect(partly.runnable.count == 1 && partly.overlap == [
+            "the swiftui layer's AGENTS.md text is already in the project's CLAUDE.md at \(short): both setups have it, so the difference will "
+                + "look smaller than it is.",
+        ], "\(partly.overlap)")
+        try fixture.write(".agents/skills/swiftui-expert/SKILL.md", "---\nname: swiftui-expert\n---\n", in: fixture.repo)
+        await fixture.commitAll(fixture.repo)
+        let all = try #require(await fixture.git("rev-parse", "HEAD", in: fixture.repo))
+        let held = task(all, id: "held-abcd")
+        try ControlTasks.save(held, env: env)
+        let blocked = try await prepare(tasks: [task(base), held])
+        #expect(blocked.runnable.map(\.id) == [task(base).id])
+        #expect(blocked.blocked[held.id] == "The project already holds everything the swiftui layer adds at \(all.prefix(7)) (the swiftui layer's "
+                + "AGENTS.md text in CLAUDE.md, the skill swiftui-expert): both setups would be the same.", "\(blocked.blocked)")
+
+        // A plugin's skill of that name: an overlap line. One in ~/.claude/skills: the setup check's warning instead.
+        let plugin = try await prepare(tasks: [task(base)], homeSkills: ["swiftui-expert"])
+        #expect(plugin.overlap.contains("swiftui-expert is already installed in the home folder: the difference will look smaller than it is."))
+        try fixture.write(".claude/skills/swiftui-expert/SKILL.md", "---\nname: swiftui-expert\n---\n", in: fixture.home)
+        let home = try await prepare(tasks: [task(base)], homeSkills: ["swiftui-expert"])
+        #expect(!home.overlap.contains { $0.contains("installed in the home folder") }, "\(home.overlap)")
+        let path = fixture.home.appending(path: ".claude/skills/swiftui-expert").path
+        #expect(home.warnings.contains("The setup without swiftui would see what it must not: \(path) holds the skill swiftui-expert, which this "
+                                       + "setup must not have (move \(path) elsewhere while the eval runs). Its cells won't start while it is there."),
+                "\(home.warnings)")
+    }
+
     /// The setup checks from the render: the layer cell has every skill with its mode and none
     /// that is off (`mode: off` with override, or dropped by the answers); the baseline has none
     /// of the layer's own skills and texts. An eval stored before the checks derives them from its overlays.

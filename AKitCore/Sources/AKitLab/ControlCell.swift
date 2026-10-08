@@ -328,6 +328,10 @@ public enum ControlCell {
                                             + (problems.count > 5 ? "; and \(problems.count - 5) more" : "") + ".")
             }
             out("Setup check: the clone and the folders Claude Code reads hold what this setup must have, and nothing it must not.")
+            // Allowed, but worth seeing: the project itself already holds part of the layer.
+            for finding in projectContent.findings.sorted(by: { ($0.path, $0.what) < ($1.path, $1.what) }) {
+                out("Setup check: the project's own \(finding.path) already holds \(finding.what): both setups have it.")
+            }
         }
         var hiddenFiles: Set<String> = []
         if case .hidden(let task) = oracle { hiddenFiles = Set(task.testFiles) }
@@ -375,9 +379,10 @@ public enum ControlCell {
         let transcriptFile = setup.agent.harness == .claudeCode ? LabPaths.transcript(sessionID: spec.sessionID, env: env) : nil
         var hiddenLeaks: [String] = []
         if case .hidden(let task) = oracle, let transcriptFile { hiddenLeaks = LeakCheck.commitSigns(in: transcriptFile, task: task, env: env) }
-        // The skills Claude Code listed to the model: the same rule, seen from the other side.
+        // The skills Claude Code loaded and listed to the model: the same rule, seen from the other side.
         let setupCheck = check.map { check in
-            check.afterRun(listed: transcriptFile.flatMap(SetupCheck.listedSkills(in:)), projectSkills: projectContent?.skills ?? [])
+            check.afterRun(listed: transcriptFile.flatMap(SetupCheck.listedSkills(in:)), loaded: agent.skills.map(Set.init),
+                           projectSkills: projectContent?.skills ?? [])
         }
         if let setupCheck { out(setupCheck.line.prefix(1).uppercased() + setupCheck.line.dropFirst() + ".") }
         return Facts(transcript: transcript, metrics: metrics, agentError: agent.error, usage: agent.usage, tests: tests,

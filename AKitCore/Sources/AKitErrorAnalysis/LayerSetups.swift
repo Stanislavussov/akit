@@ -138,7 +138,8 @@ public enum LayerSetups {
         let checks = LayerChecks.make(layer: layer, full: full, required: required, layerOverlay: layerOverlay, baseOverlay: baseOverlay,
                                       declared: Set(closure.flatMap { byName[$0]?.skills.map(\.name) ?? [] }))
         // Shared by every cell, so every cell of that setup would fail before its agent.
-        warnings += checks.outsideProblems(layer: layer, home: env.homeDirectory).map { $0 + "; its cells won't start while it is there." }
+        warnings += checks.outsideProblems(layer: layer, home: env.homeDirectory).map { $0 + " Its cells won't start while it is there." }
+        let outsideSkills = Set(checks.baseline.outsideFindings(of: LayerChecks.cloneLocation, home: env.homeDirectory).compactMap(\.skill))
 
         if let manifest {
             let hashes = (layer: manifest.setups.first { $0.layer?.role == .layer }?.layer?.overlayHash,
@@ -164,6 +165,8 @@ public enum LayerSetups {
         var notes: [String: [String]] = [:]
         var ownFiles: [String: String] = [:]
         var projectSkills: [String: [String]] = [:]
+        var baseTexts: [String: String] = [:]
+        var textOverlap: [String] = []
         let ownSkills = full.skills
         for task in chosen {
             let tree: CloneFiles
@@ -178,7 +181,31 @@ public enum LayerSetups {
                 }
                 trees[task.base] = tree
             }
-            for name in ownSkills where tree.has(skill: name) { projectSkills[name, default: []].append(String(task.base.prefix(7))) }
+            let short = String(task.base.prefix(7))
+            let skillsInBase = ownSkills.filter { tree.has(skill: $0) }
+            for name in skillsInBase { projectSkills[name, default: []].append(short) }
+            // The layer's texts the project already committed: both setups have them.
+            var textsInBase: [(label: String, path: String)] = []
+            for text in checks.layer.texts {
+                for path in Set(["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", text.path]).sorted() {
+                    let key = "\(task.base):\(path)"
+                    if baseTexts[key] == nil { baseTexts[key] = await git(["show", key], in: repo, env: env) ?? "" }
+                    guard baseTexts[key]?.contains(text.text) == true else { continue }
+                    textsInBase.append((text.label, path))
+                    if !textOverlap.contains(where: { $0.hasPrefix("\(text.label) is already in the project's \(path) at \(short)") }) {
+                        textOverlap.append("\(text.label) is already in the project's \(path) at \(short): both setups have it, so the "
+                                           + "difference will look smaller than it is.")
+                    }
+                    break
+                }
+            }
+            let adds = checks.layer.texts.count + ownSkills.count
+            if adds > 0, textsInBase.count == checks.layer.texts.count, skillsInBase.count == ownSkills.count {
+                let what = textsInBase.map { "\($0.label) in \($0.path)" } + skillsInBase.map { "the skill \($0)" }
+                blocked[task.id] = "The project already holds everything the \(layer) layer adds at \(short) (\(what.joined(separator: ", "))): "
+                    + "both setups would be the same."
+                continue
+            }
             var reason: String?
             for overlay in [baseOverlay, layerOverlay].compactMap({ $0 }) {
                 if case .blocked(let why) = ControlOverlay.place(overlay, in: tree) {
@@ -198,7 +225,8 @@ public enum LayerSetups {
         }
 
         var overlap: [String] = []
-        for name in ownSkills where homeSkills.contains(name) {
+        // A home skill the setup check finds is a warning that blocks the queue (above), not an overlap.
+        for name in ownSkills where homeSkills.contains(name) && !outsideSkills.contains(name) {
             overlap.append("\(name) is already installed in the home folder: the difference will look smaller than it is.")
         }
         for name in ownSkills {
@@ -206,6 +234,7 @@ public enum LayerSetups {
             let unique = bases.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             overlap.append("\(name) is already in the project (at \(unique.joined(separator: ", "))): the layer's copy is skipped there, so the difference will look smaller than it is.")
         }
+        overlap += textOverlap
 
         let evalID = manifest?.id ?? newID(layer: layer, at: now)
         let brainCommit = manifest?.brainCommit ?? commit

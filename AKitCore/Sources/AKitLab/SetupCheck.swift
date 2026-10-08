@@ -72,6 +72,8 @@ public struct SetupCheck: Codable, Sendable, Hashable {
     public struct Finding: Sendable, Hashable {
         public var what: String
         public var path: String
+        /// The skill or command name, when the finding is one.
+        public var skill: String?
     }
 
     // MARK: - Before the agent
@@ -136,18 +138,28 @@ public struct SetupCheck: Codable, Sendable, Hashable {
         return problems
     }
 
-    /// What breaks the check outside a clone in `parent`: in the parent folders Claude Code
-    /// walks up through and in `~/.claude` (instructions, rules and skills). Both setups share
+    /// What breaks the check outside a clone: in the parent folders Claude Code walks up
+    /// through and in `~/.claude` (instructions, rules, skills and commands). Both setups share
     /// them, so a layer's skill or text there leaks into the setup without it. The queue checks
     /// this before any cell is paid.
     public func outsideProblems(of clone: URL, home: URL) -> [String] {
-        leaks(in: Self.outsideScan(of: clone, home: home), clone: nil).map { "\($0.path) holds \($0.what), which this setup must not have" }
+        outsideFindings(of: clone, home: home).map { finding in
+            "\(finding.path) holds \(finding.what), which this setup must not have ("
+                + (finding.skill != nil ? "move \(finding.path) elsewhere while the eval runs)" : "take that text out of it while the eval runs)")
+        }
+    }
+
+    /// `outsideProblems` as findings: absolute paths.
+    public func outsideFindings(of clone: URL, home: URL) -> [Finding] {
+        leaks(in: Self.outsideScan(of: clone, home: home), clone: nil)
     }
 
     private func leaks(in scan: Scan, clone: URL?) -> [Finding] {
         var found: [Finding] = []
         let absent = Set(absentSkills)
-        for skill in scan.skills where absent.contains(skill.name) { found.append(Finding(what: "the skill \(skill.name)", path: skill.path)) }
+        for skill in scan.skills where absent.contains(skill.name) {
+            found.append(Finding(what: "the \(skill.command ? "command" : "skill") \(skill.name)", path: skill.path, skill: skill.name))
+        }
         for (path, content) in scan.instructions.sorted(by: { $0.key < $1.key }) {
             for text in absentTexts where !text.text.isEmpty && content.contains(text.text) { found.append(Finding(what: text.label, path: path)) }
         }
@@ -163,21 +175,34 @@ public struct SetupCheck: Codable, Sendable, Hashable {
 
     // MARK: - After the agent
 
-    /// Checks the skills Claude Code listed to the model (`skill_listing` attachments of the
-    /// cell's transcript): none of `absentSkills`, and every skill that isn't manual. `listed`
-    /// nil (no listing in the transcript) is "not checked", never a failure. `projectSkills`:
-    /// the project's own skills, which the listing may name in any setup.
-    public func afterRun(listed: Set<String>?, projectSkills: Set<String> = []) -> SetupCheckResult {
-        guard let listed else {
-            return SetupCheckResult(status: .notChecked, detail: "the transcript lists no skills; checked before the agent only")
+    /// Checks what Claude Code loaded, from two sources: `loaded`, the `skills` of the stream's
+    /// `system/init` (every skill, manual ones too, no commands), and `listed`, the names of the
+    /// transcript's `skill_listing` (what the model saw: no manual skills, commands too; synced
+    /// and plugin skills carry a `prefix:`). Neither may name one of `absentSkills`; `loaded`
+    /// must name every skill of the setup; `listed` must name every one that isn't manual and
+    /// none that is. A missing source is skipped; both missing is "not checked", never a
+    /// failure. `projectSkills`: the project's own skills, which may show in any setup.
+    public func afterRun(listed: Set<String>?, loaded: Set<String>? = nil, projectSkills: Set<String> = []) -> SetupCheckResult {
+        guard listed != nil || loaded != nil else {
+            return SetupCheckResult(status: .notChecked, detail: "the stream and the transcript name no skills; checked before the agent only")
         }
-        let leaked = absentSkills.filter { listed.contains($0) && !projectSkills.contains($0) }.sorted()
-        let missing = skills.filter { !$0.manual && !listed.contains($0.name) }.map(\.name).sorted()
+        let seen = (listed ?? []).union(loaded ?? [])
         var wrong: [String] = []
-        if !leaked.isEmpty { wrong.append("Claude Code listed \(leaked.joined(separator: ", ")), which this setup must not have") }
-        if !missing.isEmpty { wrong.append("Claude Code didn't list \(missing.joined(separator: ", "))") }
+        let leaked = absentSkills.filter { seen.contains($0) && !projectSkills.contains($0) }.sorted()
+        if !leaked.isEmpty { wrong.append("Claude Code loaded \(leaked.joined(separator: ", ")), which this setup must not have") }
+        if let loaded {
+            let missing = skills.filter { !loaded.contains($0.name) }.map(\.name).sorted()
+            if !missing.isEmpty { wrong.append("Claude Code didn't load \(missing.joined(separator: ", "))") }
+        }
+        if let listed {
+            let unlisted = skills.filter { !$0.manual && !listed.contains($0.name) }.map(\.name).sorted()
+            if !unlisted.isEmpty { wrong.append("Claude Code didn't list \(unlisted.joined(separator: ", ")) to the model") }
+            let manual = skills.filter { $0.manual && listed.contains($0.name) && !projectSkills.contains($0.name) }.map(\.name).sorted()
+            if !manual.isEmpty { wrong.append("Claude Code listed the manual \(manual.joined(separator: ", ")) to the model") }
+        }
         guard wrong.isEmpty else { return SetupCheckResult(status: .failed, detail: wrong.joined(separator: "; ")) }
-        return SetupCheckResult(status: .passed, detail: "before the agent, and the skills Claude Code listed")
+        let sources = [loaded == nil ? nil : "the skills Claude Code loaded", listed == nil ? nil : "the skills it listed"].compactMap { $0 }
+        return SetupCheckResult(status: .passed, detail: "before the agent, and " + sources.joined(separator: " and "))
     }
 
     /// The skill names of every `skill_listing` attachment in a Claude Code transcript (the
@@ -196,8 +221,9 @@ public struct SetupCheck: Codable, Sendable, Hashable {
     // MARK: - Reading what Claude Code reads
 
     struct Scan {
-        /// Skill folders by name (the folder's, and its SKILL.md `name:`), with their paths.
-        var skills: [(name: String, path: String)] = []
+        /// Skill folders by name (the folder's, and its SKILL.md `name:`) and command files
+        /// (`commands/**.md`: the file name, `dir:name` in a subfolder), with their paths.
+        var skills: [(name: String, path: String, command: Bool)] = []
         /// Instruction files and what they import, by path.
         var instructions: [String: String] = [:]
         /// The files Claude Code reads at the clone's root when it starts: `CLAUDE.md`,
@@ -208,11 +234,13 @@ public struct SetupCheck: Codable, Sendable, Hashable {
     /// Folders never searched: build output and dependencies (a clone's own `.git` too).
     static let skipped: Set<String> = [".git", ".build", ".swiftpm", "node_modules", "Pods", "DerivedData", "__pycache__", "venv", ".venv"]
     static let instructionNames: Set<String> = ["claude.md", "claude.local.md", "agents.md"]
+    /// An instruction file or import larger than this is not read (a log or data file someone imported).
+    static let largestFile = 1 << 20
 
     /// The clone's skill folders (`.claude/skills/*` and `.agents/skills/*` in any folder, links
-    /// followed one level) and instruction files (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` in
-    /// any folder, `.claude/rules/**.md`, and what they import; `@~/…` from `home`). `extra`:
-    /// more files to read.
+    /// followed one level), commands (`.claude/commands/**.md` in any folder) and instruction
+    /// files (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` in any folder, `.claude/rules/**.md`,
+    /// and what they import; `@~/…` from `home`). `extra`: more files to read.
     static func scan(clone: URL, home: URL, extra: [String] = []) -> Scan {
         var scan = Scan()
         let fm = FileManager.default
@@ -237,6 +265,10 @@ public struct SetupCheck: Codable, Sendable, Hashable {
                     }
                 }
                 let lower = path.lowercased()
+                if type != .typeDirectory, let range = lower.range(of: ".claude/commands/"), range.lowerBound == lower.startIndex
+                    || lower[lower.index(before: range.lowerBound)] == "/" {
+                    addCommand(String(path[range.upperBound...]), path: path, to: &scan)
+                }
                 if type != .typeDirectory, instructionNames.contains(name.lowercased())
                     || (lower.hasSuffix(".md") && (lower.hasPrefix(".claude/rules/") || lower.contains("/.claude/rules/"))) {
                     instructionPaths.insert(path)
@@ -255,30 +287,29 @@ public struct SetupCheck: Codable, Sendable, Hashable {
         return scan
     }
 
-    /// Outside a clone: the parent folders Claude Code walks up through (`CLAUDE.md`,
-    /// `CLAUDE.local.md`, `.claude/CLAUDE.md`, `.claude/skills`), and the user's `~/.claude`
-    /// (`CLAUDE.md` and its imports, `rules/**.md`, `skills/*` and `skills/synced/*/*`), by
-    /// absolute path. Plugin skills are left out: Claude Code names them `plugin:skill`.
+    /// Outside a clone: the parent folders Claude Code walks up through, links resolved
+    /// (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, `.claude/skills`, `.claude/commands`),
+    /// and the user's `~/.claude` (`CLAUDE.md` and its imports, `rules/**.md`, `skills/*`,
+    /// `commands/**.md`), by absolute path. Left out: plugin skills (`plugin:skill`) and the
+    /// claude.ai skills in `skills/synced/` (`anthropic-skills:<name>`), whose names never equal
+    /// a layer skill's; the overlap warning names them.
     static func outsideScan(of clone: URL, home: URL) -> Scan {
         var scan = Scan()
         let fm = FileManager.default
         func skills(in folder: URL) {
-            for child in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] where !child.hasPrefix(".") {
-                let url = folder.appending(path: child)
-                if child == "synced", folder.standardizedFileURL.path == home.appending(path: ".claude/skills").standardizedFileURL.path {
-                    for account in (try? fm.contentsOfDirectory(atPath: url.path)) ?? [] where !account.hasPrefix(".") {
-                        for skill in (try? fm.contentsOfDirectory(atPath: url.appending(path: account).path)) ?? [] where !skill.hasPrefix(".") {
-                            let found = url.appending(path: account).appending(path: skill)
-                            addSkill(at: found, path: found.path, to: &scan)
-                        }
-                    }
-                    continue
-                }
-                addSkill(at: url, path: url.path, to: &scan)
+            for child in (try? fm.contentsOfDirectory(atPath: folder.path)) ?? [] where !child.hasPrefix(".") && child != "synced" {
+                addSkill(at: folder.appending(path: child), path: folder.appending(path: child).path, to: &scan)
             }
         }
-        // String paths with a bound: `URL("/").deletingLastPathComponent()` never stops.
-        var folder = clone.standardizedFileURL.path
+        func commands(in folder: URL) {
+            guard let walker = fm.enumerator(atPath: folder.path) else { return }
+            while let path = walker.nextObject() as? String {
+                addCommand(path, path: folder.appending(path: path).path, to: &scan)
+            }
+        }
+        // String paths with a bound: `URL("/").deletingLastPathComponent()` never stops. The
+        // temporary folder is a link (`/var` → `/private/var`); Claude Code walks the real path.
+        var folder = clone.resolvingSymlinksInPath().standardizedFileURL.path
         for _ in 0..<64 {
             let parent = (folder as NSString).deletingLastPathComponent
             guard !parent.isEmpty, parent != folder else { break }
@@ -288,6 +319,10 @@ public struct SetupCheck: Codable, Sendable, Hashable {
                 read(url.appending(path: name), key: url.appending(path: name).path, clone: nil, home: home, into: &scan.instructions, depth: 0)
             }
             skills(in: url.appending(path: ".claude/skills"))
+            // The home folder's own `.claude/commands` comes below, once.
+            if url.standardizedFileURL.path != home.resolvingSymlinksInPath().standardizedFileURL.path {
+                commands(in: url.appending(path: ".claude/commands"))
+            }
         }
         let claude = home.appending(path: ".claude", directoryHint: .isDirectory)
         read(claude.appending(path: "CLAUDE.md"), key: claude.appending(path: "CLAUDE.md").path, clone: nil, home: home,
@@ -299,7 +334,10 @@ public struct SetupCheck: Codable, Sendable, Hashable {
                 read(url, key: url.path, clone: nil, home: home, into: &scan.instructions, depth: 0)
             }
         }
-        skills(in: claude.appending(path: "skills"))
+        if !scan.skills.contains(where: { $0.path.hasPrefix(claude.appending(path: "skills").path + "/") }) {
+            skills(in: claude.appending(path: "skills"))
+        }
+        commands(in: claude.appending(path: "commands"))
         return scan
     }
 
@@ -307,18 +345,30 @@ public struct SetupCheck: Codable, Sendable, Hashable {
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder), isFolder.boolValue else { return }
         let name = folder.lastPathComponent
-        scan.skills.append((name, path))
+        scan.skills.append((name, path, false))
         if let text = try? String(contentsOf: folder.appending(path: "SKILL.md"), encoding: .utf8),
            let declared = header(of: text).first(where: { $0.key == "name" })?.value, !declared.isEmpty, declared != name {
-            scan.skills.append((declared, path))
+            scan.skills.append((declared, path, false))
         }
+    }
+
+    /// A command file, `relative` to its `commands` folder: `review.md` is `review`,
+    /// `git/commit.md` is `git:commit`, as Claude Code names it.
+    private static func addCommand(_ relative: String, path: String, to scan: inout Scan) {
+        guard relative.lowercased().hasSuffix(".md") else { return }
+        let name = String(relative.dropLast(3)).split(separator: "/").joined(separator: ":")
+        guard !name.isEmpty else { return }
+        scan.skills.append((name, path, true))
     }
 
     /// Reads an instruction file and, up to 5 levels deep, the files its `@path` lines import
     /// (relative to the file, or `@~/…` from the home folder). Keys: the clone's relative path
-    /// when inside `clone`, else the absolute path.
+    /// when inside `clone`, else the absolute path. Files over `largestFile` are skipped, and a
+    /// file that can't be read (a protected folder) is left out silently.
     private static func read(_ url: URL, key: String, clone: URL?, home: URL, into files: inout [String: String], depth: Int) {
-        guard depth <= 5, files[key] == nil, let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        guard depth <= 5, files[key] == nil,
+              ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0) <= largestFile,
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         files[key] = text
         let folder = url.deletingLastPathComponent()
         for match in text.matches(of: /(?:^|[\s(])@([^\s)`]+)/) {

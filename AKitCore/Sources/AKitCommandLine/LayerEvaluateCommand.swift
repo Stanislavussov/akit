@@ -27,10 +27,11 @@ extension AKitCLI {
                                           another). Every cell is checked before its agent starts:
                                           a skill or text of the layer where its setup must not
                                           have it (the clone, ~/.claude) fails the cell, and one in
-                                          ~/.claude refuses the queue; a cell whose transcript lists
-                                          the wrong skills is left out of the verdict. --continue
-                                          continues the latest eval of the layer and agent (or ID)
-                                          while the layer renders the same files. 1 read-only cell on each of the first 3 tasks unless
+                                          ~/.claude refuses the queue; a cell whose stream or
+                                          transcript names the wrong skills is left out of the
+                                          verdict. --continue continues the latest eval of the
+                                          layer and agent (or ID) while the layer renders the same
+                                          files. 1 read-only cell on each of the first 3 tasks unless
                                           --no-sanity. In AKit's own repository the agent may not run
                                           make snapshot, make run, make restart, make install(-cli),
                                           make screenshots, make open, open or swift run (every
@@ -47,6 +48,19 @@ extension AKitCLI {
             let basedOn: Int
             let source: String
             let seconds: Int?
+            /// Per setup (`source` "setups"): each setup's cells and recorded cost per cell.
+            let parts: [Part]
+            /// Why the estimate isn't per setup, when it could be.
+            let note: String?
+        }
+        struct Part: Encodable {
+            let setup: String
+            let cells: Int
+            let perCell: Double
+            let low: Double
+            let high: Double
+            let basedOn: Int
+            let tasks: Int
         }
         let eval: String
         let layer: String
@@ -150,7 +164,10 @@ extension AKitCLI {
                 tasks: prepared.runnable.map(\.id), missing: plan.missing, blocked: prepared.blocked, overlap: prepared.overlap,
                 denied: prepared.denied, repeats: plan.repeats, toQueue: plan.toQueue, skipped: plan.skipped,
                 estimate: .init(cells: estimate.cells, perCell: estimate.perCell, total: estimate.total, low: estimate.low, high: estimate.high,
-                                basedOn: estimate.basedOn, source: estimate.source.rawValue, seconds: estimate.seconds),
+                                basedOn: estimate.basedOn, source: estimate.source.rawValue, seconds: estimate.seconds,
+                                parts: estimate.parts.map { .init(setup: $0.label, cells: $0.cells, perCell: $0.perCell, low: $0.low, high: $0.high,
+                                                                  basedOn: $0.basedOn, tasks: $0.tasks) },
+                                note: estimate.note),
                 calibration: plan.calibration, continuable: plan.resumable?.evalID, queued: queued)))
             return 0
         }
@@ -162,6 +179,10 @@ extension AKitCLI {
         if let resumable = plan.resumable {
             out("The eval \(resumable.evalID) renders the same files: \(resumable.finished) of \(resumable.total) cells done"
                 + (resumable.open > 0 ? ", \(resumable.open) queued or running" : "") + "; --continue continues it.")
+            if calibrate, !prepared.continuing, resumable.open > 0 {
+                out("Warning: the eval \(resumable.evalID) still has \(resumable.open) cells queued or running; --calibrate here pays for "
+                    + "another eval's calibration cells. Wait for them, or leave out --new.")
+            }
         }
         guard !prepared.runnable.isEmpty else { throw Failure(message: "No task of the set can take the layer; see the blocked tasks above.") }
         guard options.yes else {
@@ -219,7 +240,7 @@ extension AKitCLI {
     }
 
     /// "1 calibration cell", "2 calibration cells".
-    private static func calibrationCount(_ count: Int) -> String { "\(count) calibration cell\(count == 1 ? "" : "s")" }
+    private static func calibrationCount(_ count: Int) -> String { LayerEvals.calibrationCount(count) }
 
     /// Queues the eval, or its calibration cells; returns how many cells were queued.
     private static func queueEval(_ plan: LayerEvals.EvalPlan, calibrate: Bool, maxCost: Double?, environment: LabEnvironment?, keep: Bool,

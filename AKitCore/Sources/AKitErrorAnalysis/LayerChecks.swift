@@ -101,12 +101,13 @@ public struct LayerChecks: Codable, Sendable, Hashable {
     /// Lab's clones): every cell of that setup would fail before its agent starts, so the eval
     /// isn't queued while it is so.
     public func outsideProblems(layer name: String, home: URL) -> [String] {
-        // The clones are made in the temporary folder: its parents are what Claude Code walks up through.
-        let clone = FileManager.default.temporaryDirectory.appending(path: "akit-control-check", directoryHint: .isDirectory)
-        return [("without \(name)", baseline), ("layer \(name)", layer)].flatMap { setup, check in
-            check.outsideProblems(of: clone, home: home).map { "The setup \(setup) would see what it must not: \($0)" }
+        [("without \(name)", baseline), ("layer \(name)", layer)].flatMap { setup, check in
+            check.outsideProblems(of: Self.cloneLocation, home: home).map { "The setup \(setup) would see what it must not: \($0)." }
         }
     }
+
+    /// Where a cell's clone is made (`ControlCell`): its parents are what Claude Code walks up through.
+    static var cloneLocation: URL { FileManager.default.temporaryDirectory.appending(path: "akit-control-check", directoryHint: .isDirectory) }
 
     /// The check of a layer cell's setup: the eval's stored checks, else derived from its stored
     /// overlays (an eval queued before the checks). Throws when the eval's manifest is gone: an

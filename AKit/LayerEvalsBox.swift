@@ -87,6 +87,9 @@ struct LayerEvalsBox: View {
                         Button("Create Layer Set", systemImage: "plus", action: createSet)
                             .help("An empty set for \(layer), opened in Error Analysis → Evals")
                     }
+                    Spacer()
+                    GuideButton(guide: .errorAnalysis, section: "evaluate-layer", help: "How layer evals work, button by button (in Russian)")
+                        .controlSize(.small)
                 }
                 .padding(.top, 2)
             }
