@@ -180,6 +180,14 @@ struct SetupCheckTests {
         #expect(printer.skills == ["tdd", "review"] && printer.version == "2.1.290")
     }
 
+    /// The parent walk starts from the real path: the temporary folder is under `/private/var`
+    /// on macOS, also for a clone not made yet.
+    @Test func theCloneIsWalkedFromItsRealPath() {
+        let later = fm.temporaryDirectory.appending(path: "akit-control-check/not-made")
+        #expect(SetupCheck.realPath(later).hasPrefix("/private/") && SetupCheck.realPath(later).hasSuffix("/akit-control-check/not-made"))
+        #expect(SetupCheck.realPath(URL(filePath: "/")) == "/")
+    }
+
     /// Two sources: the stream's init (`loaded`: every skill, manual ones too, no commands) and the
     /// transcript's `skill_listing` (`listed`: what the model saw, no manual skills, commands too).
     @Test func theSkillsAfterTheAgent() throws {
@@ -202,6 +210,17 @@ struct SetupCheckTests {
         #expect(layer.afterRun(listed: ["swiftui-expert", "old"], loaded: both).status == .failed)
         // Only the listing: the manual skill can't be checked for being loaded.
         #expect(layer.afterRun(listed: ["swiftui-expert"]).status == .passed)
+        // `user-invocable: false`: in the listing, not in the init's list (slash-invocable skills
+        // only); manual and hidden: in neither, so checked before the agent only.
+        let hidden = SetupCheck.Skill.of("helper", skillFile: "---\nname: helper\nuser-invocable: false\n---\n")
+        let manualHidden = SetupCheck.Skill.of("quiet", skillFile: "---\nname: quiet\ndisable-model-invocation: true\nuser-invocable: false\n---\n")
+        #expect(hidden == SetupCheck.Skill(name: "helper", manual: false, hidden: true) && manualHidden == SetupCheck.Skill(name: "quiet", manual: true, hidden: true))
+        let quiet = SetupCheck(skills: [hidden, manualHidden])
+        #expect(quiet.afterRun(listed: ["helper"], loaded: ["tdd"]).status == .passed)
+        #expect(quiet.afterRun(listed: ["tdd"], loaded: ["tdd"]).detail == "Claude Code didn't list helper to the model")
+        // A check stored before `hidden` decodes as user-invocable.
+        let old = try JSONDecoder().decode(SetupCheck.Skill.self, from: Data(#"{"name":"x","manual":false}"#.utf8))
+        #expect(old == SetupCheck.Skill(name: "x", manual: false))
 
         // Read from the transcript's skill_listing attachments; a subagent's don't count.
         let transcript = home.appending(path: "t.jsonl")

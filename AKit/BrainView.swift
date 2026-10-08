@@ -10,6 +10,7 @@ import SwiftUI
 /// edited (skills, modes, description, requires, AGENTS.md) and removed here.
 struct BrainView: View {
     @Environment(AppModel.self) private var model
+    @Environment(GuideNavigator.self) private var guides
     /// Snapshot `--select <layer>` picks that layer, `--select project:<id>` that project.
     @State private var selection: Item? = DebugSnapshot.options?.select.map {
         $0.hasPrefix("project:") ? .project(String($0.dropFirst("project:".count))) : .layer($0)
@@ -120,6 +121,8 @@ struct BrainView: View {
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
         .sheet(item: $evaluating) { request in
             EvaluateLayerSheet(layer: request.layer) { text in message = ("Evaluate \(request.layer)", text) }
+                // Its Guide button needs the navigator; sheets inherit it, said here so it never depends on that.
+                .environment(guides)
         }
         .task(id: "\(model.brain?.layers.map(\.name) ?? []) \(model.labRuns.filter { $0.spec.kind == .control && $0.status == .finished }.count)") {
             // The badges: verdicts are saved when an eval's comparison is shown or compared.

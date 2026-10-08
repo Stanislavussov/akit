@@ -80,8 +80,9 @@ struct LayerFixture {
     /// A fake `claude`: it writes value 2 only when the clone's CLAUDE.md has the layer's
     /// marker, reports a Claude Code version, records `git status` as the agent saw it, and
     /// leaves a marker file that proves the fake ran (not a real, paid Claude Code). As the
-    /// real one does, its stream's init names every skill of the clone's `.claude/skills` and
-    /// its transcript's `skill_listing` those that aren't manual; both add the names in
+    /// real one does, its stream's init names the skills of the clone's `.claude/skills` that
+    /// the user may start (not `user-invocable: false`) and its transcript's `skill_listing`
+    /// those that aren't manual; both add the names in
     /// `~/also-listed.txt` (a skill from somewhere the setup check doesn't read).
     func fakeClaude() throws {
         try write("bin/claude", #"""
@@ -100,7 +101,8 @@ struct LayerFixture {
             names=""; loaded=""
             for d in .claude/skills/*/; do
               [ -d "$d" ] || continue
-              n="$(basename "$d")"; loaded="$loaded\"$n\","
+              n="$(basename "$d")"
+              grep -q "user-invocable: false" "$d/SKILL.md" 2>/dev/null || loaded="$loaded\"$n\","
               grep -q "disable-model-invocation: true" "$d/SKILL.md" 2>/dev/null || names="$names\"$n\","
             done
             if [ -f "$HOME/also-listed.txt" ]; then

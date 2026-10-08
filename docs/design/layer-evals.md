@@ -617,7 +617,7 @@ own skills the base tracks and its texts in the base's `CLAUDE.md`, `.claude/CLA
 `CLAUDE.local.md`, `AGENTS.md` or the text's own file. Each is an overlap line ("the swiftui
 layer's AGENTS.md text is already in the project's CLAUDE.md at a1b2c3d: both setups have it,
 so the difference will look smaller than it is."); a task whose base holds every text and
-skill of the layer is blocked ("The project already holds everything the swiftui layer adds at
+skill of the layer, when the layer adds no other file, is blocked ("The project already holds everything the swiftui layer adds at
 a1b2c3d (…): both setups would be the same."). What lies outside the clone is the same for
 every cell, so it is a warning ("The setup without swiftui would see what it must not:
 ~/.claude/skills/x holds the skill x, which this setup must not have (move ~/.claude/skills/x
@@ -641,13 +641,18 @@ again.
 
 | Source | Holds | Leaves out |
 |---|---|---|
-| `skills` of the stream's `system/init` (`agent.jsonl`, `AgentRun.Outcome.skills`) | every skill Claude Code loaded, manual ones too | commands |
-| `skill_listing` attachments of the transcript (`~/.claude/projects/*/<session>.jsonl`; the session's own lines, not a subagent's) | what the model saw, commands too; synced skills as `anthropic-skills:<name>`, plugin skills as `plugin:skill` | manual skills |
+| `skills` of the stream's `system/init` (`agent.jsonl`, `AgentRun.Outcome.skills`) | the slash-invocable skills, manual ones too | commands; `user-invocable: false` skills |
+| `skill_listing` attachments of the transcript (`~/.claude/projects/*/<session>.jsonl`; the session's own lines, not a subagent's) | what the model saw: `user-invocable: false` skills and commands too; synced skills as `anthropic-skills:<name>`, plugin skills as `plugin:skill` | manual skills |
+
+A skill both manual and `user-invocable: false` is in neither list: it is checked before the
+agent only. `SetupCheck.Skill` carries `manual` and `hidden` (`user-invocable: false`), read from
+the rendered SKILL.md header (`Skill.of`; a layer's `mode: manual` counts as manual too).
 
 Neither may name one of the setup's absent skills (unless the project tracks one of that name):
 "Claude Code loaded swiftui-expert, which this setup must not have". The layer cell's init must
-name every rendered skill ("Claude Code didn't load …"), its listing every one that isn't manual
-("… didn't list … to the model") and no manual one ("… listed the manual … to the model"). A
+name every rendered skill that isn't hidden ("Claude Code didn't load …"), its listing every one
+that isn't manual ("… didn't list … to the model") and no manual one ("… listed the manual … to
+the model"). A
 missing source is skipped; with both missing the result is "not checked" (never a failure). A
 mismatch records `setupCheck` "failed" in the result: the cell finished (and was paid) but is
 left out of `ControlComparison` and `LayerVerdicts`, which count it ("n cells failed the setup

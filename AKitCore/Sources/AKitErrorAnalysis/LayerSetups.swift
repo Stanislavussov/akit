@@ -200,7 +200,9 @@ public enum LayerSetups {
                 }
             }
             let adds = checks.layer.texts.count + ownSkills.count
-            if adds > 0, textsInBase.count == checks.layer.texts.count, skillsInBase.count == ownSkills.count {
+            // A file the layer adds (not Markdown) still makes the setups differ.
+            if adds > 0, checks.baseline.absentFiles.isEmpty, textsInBase.count == checks.layer.texts.count,
+               skillsInBase.count == ownSkills.count {
                 let what = textsInBase.map { "\($0.label) in \($0.path)" } + skillsInBase.map { "the skill \($0)" }
                 blocked[task.id] = "The project already holds everything the \(layer) layer adds at \(short) (\(what.joined(separator: ", "))): "
                     + "both setups would be the same."
@@ -328,7 +330,11 @@ public enum LayerSetups {
         }
         let own = result.skills.filter { $0.source == layer }.map(\.name)
         return Rendered(overlay: overlay, skills: role == .layer ? own : [], warnings: result.warnings,
-                        rendered: result.skills.map { SetupCheck.Skill(name: $0.name, manual: $0.mode == .manual) },
+                        // The rendered SKILL.md says the rest: a header of its own may be manual or hidden.
+                        rendered: result.skills.map { skill in
+                            let file = overlay.contents["\(skillsPrefix)\(skill.name)/SKILL.md"].map { String(decoding: $0, as: UTF8.self) } ?? ""
+                            return SetupCheck.Skill.of(skill.name, skillFile: file, manual: skill.mode == .manual)
+                        },
                         files: role == .layer ? bundle.files.filter { $0.layer == layer } : [])
     }
 

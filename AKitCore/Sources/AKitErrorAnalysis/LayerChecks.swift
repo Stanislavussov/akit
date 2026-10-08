@@ -66,7 +66,7 @@ public struct LayerChecks: Codable, Sendable, Hashable {
             }
             return names.map { skill in
                 let file = overlay.contents[".agents/skills/\(skill)/SKILL.md"].map { String(decoding: $0, as: UTF8.self) } ?? ""
-                return SetupCheck.Skill(name: skill, manual: SetupCheck.header(of: file).contains { $0.key == "disable-model-invocation" && $0.value == "true" })
+                return SetupCheck.Skill.of(skill, skillFile: file)
             }
         }
         let base = skills(baseOverlay), full = skills(layerOverlay)

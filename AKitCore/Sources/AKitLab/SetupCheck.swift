@@ -14,10 +14,32 @@ public struct SetupCheck: Codable, Sendable, Hashable {
         /// Started by the user only: its SKILL.md carries `disable-model-invocation: true`, and
         /// the model's listing leaves it out.
         public var manual: Bool
+        /// Not started by the user: its SKILL.md carries `user-invocable: false`, and Claude
+        /// Code's list of slash-invocable skills (the stream's init `skills`) leaves it out.
+        public var hidden: Bool
 
-        public init(name: String, manual: Bool) {
+        public init(name: String, manual: Bool, hidden: Bool = false) {
             self.name = name
             self.manual = manual
+            self.hidden = hidden
+        }
+
+        private enum CodingKeys: String, CodingKey { case name, manual, hidden }
+
+        /// Checks stored before `hidden` existed read as user-invocable.
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            manual = try container.decode(Bool.self, forKey: .manual)
+            hidden = try container.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        }
+
+        /// From a rendered SKILL.md: manual with `disable-model-invocation: true` (or `manual`, the
+        /// layer's mode), hidden with `user-invocable: false`.
+        public static func of(_ name: String, skillFile text: String, manual: Bool = false) -> Skill {
+            let header = SetupCheck.header(of: text)
+            func value(_ key: String) -> String? { header.first { $0.key == key }?.value.lowercased() }
+            return Skill(name: name, manual: manual || value("disable-model-invocation") == "true", hidden: value("user-invocable") == "false")
         }
     }
 
@@ -176,11 +198,11 @@ public struct SetupCheck: Codable, Sendable, Hashable {
     // MARK: - After the agent
 
     /// Checks what Claude Code loaded, from two sources: `loaded`, the `skills` of the stream's
-    /// `system/init` (every skill, manual ones too, no commands), and `listed`, the names of the
-    /// transcript's `skill_listing` (what the model saw: no manual skills, commands too; synced
-    /// and plugin skills carry a `prefix:`). Neither may name one of `absentSkills`; `loaded`
-    /// must name every skill of the setup; `listed` must name every one that isn't manual and
-    /// none that is. A missing source is skipped; both missing is "not checked", never a
+    /// `system/init` (the slash-invocable skills: manual ones too, no `user-invocable: false`
+    /// ones, no commands), and `listed`, the names of the transcript's `skill_listing` (what the
+    /// model saw: no manual skills, hidden ones and commands too; synced and plugin skills carry a
+    /// `prefix:`). Neither may name one of `absentSkills`; `loaded` must name every skill of the
+    /// setup that isn't hidden; `listed` must name every one that isn't manual and none that is. A missing source is skipped; both missing is "not checked", never a
     /// failure. `projectSkills`: the project's own skills, which may show in any setup.
     public func afterRun(listed: Set<String>?, loaded: Set<String>? = nil, projectSkills: Set<String> = []) -> SetupCheckResult {
         guard listed != nil || loaded != nil else {
@@ -190,8 +212,10 @@ public struct SetupCheck: Codable, Sendable, Hashable {
         var wrong: [String] = []
         let leaked = absentSkills.filter { seen.contains($0) && !projectSkills.contains($0) }.sorted()
         if !leaked.isEmpty { wrong.append("Claude Code loaded \(leaked.joined(separator: ", ")), which this setup must not have") }
+        // The init's list holds the slash-invocable skills only: a hidden one isn't there, and
+        // one both manual and hidden is in neither list, so only the check before the agent sees it.
         if let loaded {
-            let missing = skills.filter { !loaded.contains($0.name) }.map(\.name).sorted()
+            let missing = skills.filter { !$0.hidden && !loaded.contains($0.name) }.map(\.name).sorted()
             if !missing.isEmpty { wrong.append("Claude Code didn't load \(missing.joined(separator: ", "))") }
         }
         if let listed {
@@ -309,7 +333,7 @@ public struct SetupCheck: Codable, Sendable, Hashable {
         }
         // String paths with a bound: `URL("/").deletingLastPathComponent()` never stops. The
         // temporary folder is a link (`/var` → `/private/var`); Claude Code walks the real path.
-        var folder = clone.resolvingSymlinksInPath().standardizedFileURL.path
+        var folder = realPath(clone)
         for _ in 0..<64 {
             let parent = (folder as NSString).deletingLastPathComponent
             guard !parent.isEmpty, parent != folder else { break }
@@ -320,7 +344,7 @@ public struct SetupCheck: Codable, Sendable, Hashable {
             }
             skills(in: url.appending(path: ".claude/skills"))
             // The home folder's own `.claude/commands` comes below, once.
-            if url.standardizedFileURL.path != home.resolvingSymlinksInPath().standardizedFileURL.path {
+            if folder != realPath(home) {
                 commands(in: url.appending(path: ".claude/commands"))
             }
         }
@@ -339,6 +363,25 @@ public struct SetupCheck: Codable, Sendable, Hashable {
         }
         commands(in: claude.appending(path: "commands"))
         return scan
+    }
+
+    /// The path with every link resolved by `realpath(3)`, `/private` included (Foundation's
+    /// `resolvingSymlinksInPath` drops it again). The clone may not exist yet (at queueing): its
+    /// nearest existing folder is resolved and the rest appended. Bounded string walk.
+    static func realPath(_ url: URL) -> String {
+        var existing = url.standardizedFileURL.path
+        var rest: [String] = []
+        for _ in 0..<64 {
+            if let resolved = realpath(existing, nil) {
+                defer { free(resolved) }
+                return ([String(cString: resolved)] + rest.reversed()).joined(separator: "/").replacingOccurrences(of: "//", with: "/")
+            }
+            let parent = (existing as NSString).deletingLastPathComponent
+            guard !parent.isEmpty, parent != existing else { break }
+            rest.append((existing as NSString).lastPathComponent)
+            existing = parent
+        }
+        return url.standardizedFileURL.path
     }
 
     private static func addSkill(at folder: URL, path: String, to scan: inout Scan) {

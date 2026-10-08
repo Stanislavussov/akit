@@ -262,6 +262,42 @@ extension ControlRunsTests {
         #expect(cells.count == 1 && cells.first?.task.id == tasks[1].id && cells.first?.setup.layer?.role == .layer)
     }
 
+    /// Layer skills the user can't start (`user-invocable: false`) are missing from Claude
+    /// Code's init list by design; one that is also manual is in neither list. Both pass.
+    @Test func hiddenLayerSkillsPassTheCheckAfterTheAgent() async throws {
+        let fixture = LayerFixture(home: home)
+        try fixture.fakeClaude()
+        #expect(env.findExecutable("claude")?.path == home.appending(path: "bin/claude").path)
+        try await fixture.makeBrain(swiftuiYAML: """
+            requires: [base]
+            skills:
+              - swiftui-expert
+              - name: quiet
+                mode: manual
+            files:
+              - template: swiftui.md
+                to: AGENTS.md
+
+            """)
+        try fixture.write("skills/swiftui-expert/SKILL.md", "---\nname: swiftui-expert\ndescription: SwiftUI\nuser-invocable: false\n---\nUse it.\n",
+                          in: fixture.brain)
+        try fixture.write("skills/quiet/SKILL.md", "---\nname: quiet\ndescription: x\nuser-invocable: false\n---\nDo it.\n", in: fixture.brain)
+        await fixture.commitAll(fixture.brain)
+        let base = try await fixture.makeRepo()
+        let task = ControlTask(id: "make-value-2-abcd", title: "Make value 2", repo: fixture.repo.path, base: base, prompt: "Make value 2",
+                               source: .reproduction, oracle: .tests(command: "true"))
+        try ControlTasks.save(task, env: env)
+        try LayerSets.add([task], to: "swiftui", env: env)
+        let plan = try await evalPlan(fixture)
+        #expect(plan.prepared.checks.layer.skills == [SetupCheck.Skill(name: "swiftui-expert", manual: false, hidden: true),
+                                                      SetupCheck.Skill(name: "quiet", manual: true, hidden: true)])
+        let pair = try await LayerEvals.queue(plan, calibrateOnly: true, environment: .background, keep: false,
+                                              akit: URL(filePath: "/usr/bin/true"), env: env).runs
+        let layerCell = try #require(try await runQueued(pair).last)
+        #expect(layerCell.spec.controlSetup?.layer?.role == .layer)
+        #expect(layerCell.result?.control?.setupCheck?.status == .passed, "\(String(describing: layerCell.result?.control))")
+    }
+
     /// The setup check, end to end with the fake `claude`: a layer skill in the home folder
     /// stops the queue and a baseline cell before its agent; a listing that names it after the
     /// agent leaves the cell out of the comparison and the verdict.
