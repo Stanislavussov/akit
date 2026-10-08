@@ -487,6 +487,7 @@ struct ControlRunsTests {
             #expect(ControlRuns.leaks(in: transcript("git -C \(path) log -p"), task: linked) == ["the real repository"], "\(path)")
         }
         #expect(ControlRuns.leaks(in: transcript("git -C /work/other log"), task: linked).isEmpty)
+        #expect(ControlRuns.leaks(in: transcript("ls \(repo.path)-other"), task: linked).isEmpty)
         await git("worktree", "remove", "--force", worktree.path, in: repo)
         linked.mainRepo = nil
         #expect(linked.mainFolder.path == resolved && linked.cloneSource.path == resolved)

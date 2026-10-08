@@ -209,7 +209,11 @@ Further choices of the step 4 plan, accepted on the same day:
     commit's hash (also in tool results) and the exemplar's session id. The real
     repository is the task's folder and its main folder (`LeakCheck.repositoryPaths`:
     as given, standardized, symlinks resolved; never `/`), so a worktree task whose agent
-    reads the main checkout is flagged.
+    reads the main checkout is flagged. A path matches only as a whole folder
+    (`LeakCheck.mentions`): followed by `/`, the end, or a character that can't continue a
+    name (quote, space, `:`, `)` …), so `/x/akit-other` doesn't name `/x/akit`.
+  - The pilot must not pick commits that edit `ControlRuns.swift` or `ReplayTask.swift`:
+    their sources contain the leak strings (`/.Trash`), which now count in written text.
   - Read only from what a call asks for (`LeakCheck.pathLikeInput`), since AKit's own
     sources mention them and editing those is no leak: AKit's Lab folder (`.akit/lab`) and
     the session history (`.claude/projects`, `.pi/agent/sessions`; a `session_search`

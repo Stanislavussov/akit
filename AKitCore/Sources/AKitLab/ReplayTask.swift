@@ -290,6 +290,16 @@ public enum LeakCheck {
         }).filter { $0 != "/" && !$0.isEmpty }
     }
 
+    /// Whether `text` names one of `paths` as a whole folder: a match must be followed by `/`,
+    /// the end, or a character that can't continue a path name (quote, space, `:`, `)` …),
+    /// so `/x/akit-other` and `lab/runs` don't name `/x/akit` or `/r`.
+    public static func mentions(_ text: String, anyOf paths: Set<String>) -> Bool {
+        func continuesName(_ c: Character) -> Bool { c.isLetter || c.isNumber || "-_.~@+%".contains(c) }
+        return paths.contains { path in
+            text.ranges(of: path).contains { $0.upperBound == text.endIndex || !continuesName(text[$0.upperBound]) }
+        }
+    }
+
     static func leaks(in transcript: URL, task: ReplayTask, repo: URL, env: HarnessEnvironment) -> [String] {
         signs(toolCalls(in: transcript), task: task, repo: repo, env: env)
     }
@@ -307,7 +317,7 @@ public enum LeakCheck {
         // The hash as a word of its own (any length from the short form), not inside another hex string.
         let hash = (try? Regex("\\b\(task.shortCommit)[0-9a-f]*\\b"))
         if let hash, (inputs + "\n" + calls.results).contains(hash) { found.append("the commit \(task.shortCommit)") }
-        if let repo, repositoryPaths([repo.path, task.repo]).contains(where: { inputs.contains($0) }) {
+        if let repo, mentions(inputs, anyOf: repositoryPaths([repo.path, task.repo])) {
             found.append("the real repository")
         }
         // `~/.akit/lab`, `$HOME/.akit/lab`, `/Users/me/.akit/lab` alike.

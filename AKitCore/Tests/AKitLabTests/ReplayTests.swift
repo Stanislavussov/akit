@@ -192,7 +192,7 @@ struct ReplayTests {
         let editing = try transcript([
             ["type": "assistant", "message": ["content": [
                 ["type": "tool_use", "name": "Edit", "input": ["file_path": "/w/AKitCore/Sources/AKitLab/LabPaths.swift",
-                                                              "old_string": "~/.akit/lab", "new_string": "~/.akit/lab ~/.claude/projects"]],
+                                                              "old_string": "~/.akit/lab", "new_string": "~/.akit/lab/runs ~/.claude/projects"]],
                 ["type": "tool_use", "name": "Write", "input": ["file_path": "/w/docs/lab.md", "content": "Runs live in ~/.akit/lab."]],
                 ["type": "tool_use", "name": "Grep", "input": ["pattern": "akit/lab", "path": "/w/AKitCore"]],
             ]]],
@@ -292,6 +292,23 @@ struct ReplayTests {
         #expect(!LeakCheck.repositoryPaths([worktree.path]).contains("/"))
         try lines([call("Bash", ["command": "ls /tmp"])], to: file)
         #expect(LeakCheck.leaks(in: file, task: task, repo: worktree, env: env).isEmpty)
+    }
+
+    /// The real repository is matched as a whole folder, not as the start of a longer name.
+    @Test func repositoryMatchesOnAPathBoundary() throws {
+        let repos = LeakCheck.repositoryPaths(["/x/akit"])
+        for text in ["cat /x/akit/file", #"{"path":"/x/akit"}"#, "cd /x/akit && swift test", "/x/akit", "ls /x/akit:", "(/x/akit)"] {
+            #expect(LeakCheck.mentions(text, anyOf: repos), "\(text)")
+        }
+        for text in ["cd /x/akit-other && ls", "/x/akit2/file", "/x/akit.git", "/x/akit_old"] {
+            #expect(!LeakCheck.mentions(text, anyOf: repos), "\(text)")
+        }
+        #expect(!LeakCheck.mentions("~/.akit/lab/runs", anyOf: LeakCheck.repositoryPaths(["/r"])))
+        let file = home.appending(path: "s.jsonl")
+        try lines([call("Bash", ["command": "ls /x/akit-other"]), call("Read", ["file_path": "/x/akit/Package.swift"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/x/akit"), env: env) == ["the real repository"])
+        try lines([call("Bash", ["command": "ls /x/akit-other"])], to: file)
+        #expect(LeakCheck.leaks(in: file, task: replayTask, repo: URL(filePath: "/x/akit"), env: env).isEmpty)
     }
 
     /// An old task without `mainRepo` whose worktree is gone: its main folder is the nearest

@@ -224,7 +224,7 @@ public enum ControlRuns {
             found.append("the session history")
         }
         let repos = LeakCheck.repositoryPaths([task.repo, task.mainFolder.path])
-        if calls.contains(where: { call in repos.contains { call.input.contains($0) } }) { found.append("the real repository") }
+        if calls.contains(where: { LeakCheck.mentions($0.input, anyOf: repos) }) { found.append("the real repository") }
         if calls.contains(where: { $0.input.contains("/.Trash") }) { found.append("the Trash") }  // also ~/.Trash
         return found
     }
