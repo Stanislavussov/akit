@@ -1,6 +1,7 @@
 import AKitHarnesses
 import AKitModel
 import AppKit
+import QuickLook
 import SwiftUI
 
 /// Overview screen: which harnesses were found and where their configs live.
@@ -128,6 +129,14 @@ private struct HarnessCard: View {
                 ForEach(installation.locations) { location in
                     LocationRow(location: location)
                 }
+
+                if installation.id == .pi, !model.piPackages.isEmpty {
+                    Divider()
+                    Text("Packages").font(.headline)
+                    ForEach(model.piPackages) { package in
+                        PiPackageRow(package: package)
+                    }
+                }
             }
             .padding(6)
         } label: {
@@ -163,6 +172,101 @@ private struct HarnessCard: View {
         } message: {
             Text(removeError ?? "")
         }
+    }
+}
+
+/// One package from Pi's settings and what Pi loads from it. Read-only: files open in Quick Look.
+private struct PiPackageRow: View {
+    let package: PiPackage
+    @State private var expanded = false
+    @State private var preview: URL?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: package.isInstalled ? "shippingbox.fill" : "shippingbox")
+                .foregroundStyle(package.isInstalled ? Color.blue : Color.secondary)
+                .help(package.isInstalled ? "Installed" : "Not installed")
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(package.name)
+                    if let version = package.version {
+                        Text(version).foregroundStyle(.secondary)
+                    }
+                    if case .project(let project) = package.scope {
+                        Text("Project · \(project.lastPathComponent)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .help(project.tildePath)
+                    }
+                }
+                Text(package.source)
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                if package.isInstalled {
+                    DisclosureGroup(isExpanded: $expanded) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            files("Extensions", package.extensions)
+                            files("Skills", package.skills)
+                            files("Prompt templates", package.prompts)
+                            files("Themes", package.themes)
+                        }
+                        .padding(.top, 2)
+                    } label: {
+                        Text(summary).font(.caption).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("not installed").font(.caption).foregroundStyle(.orange)
+                }
+                if package.isFiltered {
+                    Text("Narrowed by filters in \(package.settingsFile.tildePath)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                if let folder = package.folder { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+            } label: {
+                Image(systemName: "folder")
+            }
+            .buttonStyle(.borderless)
+            .disabled(!package.isInstalled)
+            .help("Show in Finder")
+        }
+        .opacity(package.isInstalled ? 1 : 0.6)
+        .quickLookPreview($preview)
+    }
+
+    /// "1 extension · 2 skills · 6 prompt templates".
+    private var summary: String {
+        let parts = [(package.extensions.count, "extension"), (package.skills.count, "skill"),
+                     (package.prompts.count, "prompt template"), (package.themes.count, "theme")]
+            .filter { $0.0 > 0 }
+            .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }
+        return parts.isEmpty ? "Nothing loads from it" : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func files(_ title: String, _ urls: [URL]) -> some View {
+        if !urls.isEmpty {
+            Text(title).font(.caption.weight(.semibold)).padding(.top, 4)
+            ForEach(urls, id: \.path) { url in
+                Button(relative(url)) { preview = url }
+                    .buttonStyle(.link)
+                    .font(.system(.caption, design: .monospaced))
+                    .help("Show read-only in Quick Look")
+            }
+        }
+    }
+
+    private func relative(_ url: URL) -> String {
+        guard let base = package.folder?.path, url.path.hasPrefix(base + "/") else { return url.tildePath }
+        return String(url.path.dropFirst(base.count + 1))
     }
 }
 

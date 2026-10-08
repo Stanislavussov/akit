@@ -21,6 +21,8 @@ final class AppModel {
     private(set) var installations: [HarnessInstallation] = []
     private(set) var versions: [HarnessID: String] = [:]
     private(set) var skills: [Skill] = []
+    /// Pi packages from Pi's global settings and the known projects' `.pi/settings.json`.
+    private(set) var piPackages: [PiPackage] = []
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
     /// The person's ratings of runs (`akit rate`, Pi's ⌥G / ⌥X / ⌥R), by session log path.
@@ -566,7 +568,7 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, projects, sessions, mcp, targets, brain) = await Task.detached {
+        let (found, skills, projects, sessions, mcp, targets, brain, piPackages) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
@@ -575,7 +577,10 @@ final class AppModel {
             async let mcp = MCPScanner.scan(installations: found, projects: projects, adapters: adapters, in: env)
             async let targets = MCPWriter.targets(installations: found, projects: projects, adapters: adapters, in: env)
             async let brain = Brain.load(from: brainRoot)
-            return (found, await skills, projects, await sessions, await mcp, await targets, await brain)
+            let piPackages = found.contains { $0.id == .pi }
+                ? HarnessCatalog.configRoot(of: .pi, in: env).map { PiPackages.list(configRoot: $0, projects: projects, in: env) } ?? []
+                : []
+            return (found, await skills, projects, await sessions, await mcp, await targets, await brain, piPackages)
         }.value
         // Before anything is shown: the session list and its projects change together.
         let folders = Array(Set(sessions.compactMap { $0.project?.path }))
@@ -587,6 +592,7 @@ final class AppModel {
         brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
         installations = found
         self.skills = skills
+        self.piPackages = piPackages
         self.projects = projects
         if let brain {
             brainProjectFolders = await projectFolders()
