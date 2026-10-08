@@ -85,6 +85,11 @@ struct ControlRunsTests {
             if grep -q LOOK-UP-COMMIT CLAUDE.md; then
               sha=$(sed -n 's/.*LOOK-UP-COMMIT //p' CLAUDE.md); call "git show $sha" 7; rm Pkg/Package.swift
             fi
+            if grep -q SUBAGENT-LAB CLAUDE.md; then
+              mkdir -p "${t%.jsonl}/subagents"
+              echo '{"type":"assistant","isSidechain":true,"message":{"id":"s1","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"s1","name":"Read","input":{"file_path":"~/.akit/lab/tasks/x.json"}}],"usage":{"input_tokens":10,"output_tokens":5}}}' > "${t%.jsonl}/subagents/agent-a1.jsonl"
+              rm -f Pkg/Package.swift
+            fi
             echo '{"type":"assistant","timestamp":"2026-10-01T10:00:09Z","message":{"id":"m9","model":"claude-opus-5-5","content":[{"type":"text","text":"Finished."}],"usage":{"input_tokens":10,"output_tokens":5}}}' >> "$t"
             echo '{"type":"system","subtype":"init","model":"claude-opus-5-5","session_id":"'"$id"'"}'
             echo '{"type":"result","num_turns":2,"duration_ms":1000,"usage":{"input_tokens":20,"output_tokens":10},"total_cost_usd":0.05}'
@@ -404,7 +409,8 @@ struct ControlRunsTests {
         #expect(task.base == (await git("rev-parse", "HEAD~1", in: repo)))
         #expect(ReplayTasks.cached(fix, env: env)?.failToPass.map(\.id) == ["LibTests/adds"])
 
-        let runs = try await runAll(task, [baseline, variant("- FIX-ADD"), variant("- LOOK-UP-COMMIT \(fix.prefix(7))")])
+        let runs = try await runAll(task, [baseline, variant("- FIX-ADD"), variant("- LOOK-UP-COMMIT \(fix.prefix(7))"),
+                                           variant("- SUBAGENT-LAB")])
         let plain = try #require(runs[0].result?.control)
         #expect(!plain.passed && plain.oracle == "hidden tests: 0/1 fail-to-pass, 1/1 pass-to-pass" && !plain.flagged)
         #expect(runs[0].result?.tests?.failed == ["LibTests/adds"])
@@ -417,6 +423,9 @@ struct ControlRunsTests {
         let peeked = try #require(runs[2].result?.control)
         #expect(!peeked.passed && peeked.leaks == ["the commit \(fix.prefix(7))"] && peeked.flagged)
         #expect(peeked.oracle.contains("don't build"))
+        // So is a subagent reading AKit's Lab folder (its calls are in its own transcript file).
+        let delegated = try #require(runs[3].result?.control)
+        #expect(!delegated.passed && delegated.leaks == ["AKit's Lab folder"] && delegated.flagged, "\(delegated)")
         // The user's repository is untouched.
         #expect(await git("status", "--porcelain", in: repo) == "")
         #expect(await git("rev-parse", "HEAD", in: repo) == fix)
@@ -449,9 +458,39 @@ struct ControlRunsTests {
         // Finished clones (with the answer of an earlier cell) and a commit's validation folder are in the Trash.
         #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"ls ~/.Trash"}"#)]), task: task) == ["the Trash"])
         #expect(ControlRuns.leaks(in: transcript([("Read", #"{"file_path":"/Users/me/.Trash/akit-control-1/Lib.swift"}"#)]), task: task) == ["the Trash"])
-        // Text the agent writes is no sign.
-        #expect(ControlRuns.leaks(in: transcript([("Edit", #"{"file_path":"/w/a.swift","old_string":"x","new_string":"~/.Trash /work/repo"}"#),
-                                                  ("write", #"{"path":"/w/b.md","content":"see ~/.claude/projects"}"#)]), task: task).isEmpty)
+        // Text the agent writes is no sign of the session history: AKit's own sources mention it.
+        #expect(ControlRuns.leaks(in: transcript([("Edit", #"{"file_path":"/w/a.swift","old_string":"x","new_string":"~/.claude/projects"}"#),
+                                                  ("write", #"{"path":"/w/b.md","content":"see ~/.pi/agent/sessions"}"#)]), task: task).isEmpty)
+        // The Trash, the real repository and the exemplar count in it: a script written, then run.
+        #expect(ControlRuns.leaks(in: transcript([("Write", #"{"file_path":"/w/peek.sh","content":"cat ~/.Trash/akit-control-1/Lib.swift\ngit -C /work/repo log\ngrep -r exemplar-1 ~"}"#),
+                                                  ("Bash", #"{"command":"sh /w/peek.sh"}"#)]), task: task)
+                == ["the exemplar session claude:exemplar-1", "the real repository", "the Trash"])
+        // A subagent's calls count too.
+        #expect(ControlRuns.leaks(in: transcript([("Task", #"{"prompt":"Look around"}"#)]),
+                                  subagents: [LeakCheck.Call(name: "Read", input: ["file_path": "/Users/me/.claude/projects/-w/x.jsonl"])], task: task)
+                == ["the session history"])
+    }
+
+    /// A task made in a worktree: reading the repository's main checkout is reading the real
+    /// repository, also once the worktree is gone and for an old task without `mainRepo`.
+    @Test func mainCheckoutOfAWorktreeTaskIsALeak() async throws {
+        let (repo, base) = try await repository()
+        let worktree = repo.appending(path: ".claude/worktrees/agent-1", directoryHint: .isDirectory)
+        await git("worktree", "add", "-q", "--detach", worktree.path, base, in: repo)
+        var linked = try await ControlTasks.reproduction(repo: worktree, base: "HEAD", prompt: "Keep value 1", modeID: nil,
+                                                         oracle: .tests(command: "true"), env: env)
+        func transcript(_ command: String) -> SessionTranscript {
+            SessionTranscript(items: [TranscriptItem(id: 0, kind: .toolCall(name: "Bash"), text: #"{"command":"\#(command)"}"#, timestamp: nil)])
+        }
+        let resolved = repo.standardizedFileURL.resolvingSymlinksInPath().path
+        for path in [repo.path, resolved] {
+            #expect(ControlRuns.leaks(in: transcript("git -C \(path) log -p"), task: linked) == ["the real repository"], "\(path)")
+        }
+        #expect(ControlRuns.leaks(in: transcript("git -C /work/other log"), task: linked).isEmpty)
+        await git("worktree", "remove", "--force", worktree.path, in: repo)
+        linked.mainRepo = nil
+        #expect(linked.mainFolder.path == resolved && linked.cloneSource.path == resolved)
+        #expect(ControlRuns.leaks(in: transcript("cat \(repo.path)/value.txt"), task: linked) == ["the real repository"])
     }
 
     /// A task made in a worktree that was removed later: its cells clone from the repository's

@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitSessions
 import Foundation
 
 /// A task made from a commit: redo it from its parent; the commit's own tests judge it.
@@ -226,28 +227,67 @@ enum IsolatedClone {
     }
 }
 
-/// Signs that a replay saw the answer. In what its tool calls ask for or get back: the
-/// commit's hash. In what its tool calls ask for: the real repository, AKit's Lab folder
-/// (run.json and the task cache name the commit), Claude Code's session history, a
-/// `session_search` tool, or the Trash (earlier clones with the answer go there). The subject line is not a sign: it is in the prompt, and the agent's
-/// own commit usually reuses it. Tool results aren't searched for paths: Claude Code itself
-/// mentions `~/.claude/projects` when it saves a long output there. Of a tool call only
-/// what it asks for is searched (`pathLikeInput`), never the text it writes: AKit's own
-/// sources mention `~/.akit/lab`, and editing them is no leak.
+/// Signs that a replay saw the answer, in its tool calls and its subagents' (Claude Code
+/// writes a `Task` subagent's calls to `<session>/subagents/*.jsonl`, older versions as
+/// side-chain lines of the session file). In a call's whole input, the text it writes
+/// included (a script written and then run counts), and in tool results: the commit's hash.
+/// In a call's whole input: the real repository (the task's folder, the replay's and their
+/// main folders) and the Trash (earlier clones with the answer go there). Only in what a call
+/// asks for (`pathLikeInput`), since AKit's own sources mention them and editing those is no
+/// leak: AKit's Lab folder (run.json and the task cache name the commit) and Claude Code's
+/// session history; a `session_search` tool too. The subject line is not a sign: it is in the
+/// prompt, and the agent's own commit usually reuses it. Tool results aren't searched for
+/// paths: Claude Code itself mentions `~/.claude/projects` when it saves a long output there.
 public enum LeakCheck {
-    /// What a tool call asks for: a shell command, the path or pattern a file tool reads or
-    /// searches, the path a file tool writes (not its content). An unknown tool's whole input.
-    /// Names of Claude Code and Pi tools alike, in any case.
+    /// What a tool call asks for: a shell command, the path or file pattern a file tool reads
+    /// or searches (`Grep`'s `path` and `glob`, not its `pattern`, a content regex), the path
+    /// a file tool writes (not its content). An unknown tool's whole input. Names of Claude
+    /// Code and Pi tools alike, in any case (Pi's grep, find and ls take the same arguments).
     public static func pathLikeInput(tool: String, input: Any?) -> String {
         let keys: [String]
         switch tool.lowercased() {
         case "bash": keys = ["command"]
-        case "write", "edit", "multiedit", "notebookedit": keys = ["file_path", "notebook_path", "path"]
-        case "read", "glob", "grep", "ls", "find": keys = ["file_path", "notebook_path", "path", "pattern"]
+        case "write", "edit", "multiedit", "notebookedit", "read": keys = ["file_path", "notebook_path", "path"]
+        case "grep": keys = ["path", "glob"]
+        case "glob", "find", "ls": keys = ["pattern", "path"]
         default: return JSONLines.pretty(input)
         }
         let object = input as? JSONLines.Object ?? [:]
         return keys.compactMap { object[$0] as? String }.joined(separator: "\n")
+    }
+
+    /// One tool call as the signs read it.
+    public struct Call: Sendable, Hashable {
+        public var name: String
+        /// The whole input, the text a call writes included.
+        public var input: String
+        /// What the call asks for (`pathLikeInput`).
+        public var asks: String
+
+        /// `input`: the parsed JSON input, or text that isn't JSON (taken whole for both).
+        public init(name: String, input: Any?) {
+            self.name = name
+            self.input = JSONLines.pretty(input)
+            asks = input is String ? self.input : LeakCheck.pathLikeInput(tool: name, input: input)
+        }
+    }
+
+    /// The tool calls of a Claude Code session's subagents: side-chain lines of the session
+    /// file and the files in `<session>/subagents/`.
+    public static func subagentCalls(of transcript: URL) -> [Call] {
+        (blocks(in: transcript, sidechainOnly: true) + subagentFiles(of: transcript).flatMap { blocks(in: $0) })
+            .filter { $0["type"] as? String == "tool_use" }
+            .map { Call(name: $0["name"] as? String ?? "", input: $0["input"]) }
+    }
+
+    /// The real repository as the signs look for it: each folder and its main folder (the
+    /// repository of a worktree), as given, standardized and with symlinks resolved.
+    public static func repositoryPaths(_ folders: [String]) -> Set<String> {
+        let all = folders.filter { !$0.isEmpty }.flatMap { [$0, LabGit.mainFolder(of: $0).path] }
+        return Set(all.flatMap { path -> [String] in
+            let url = URL(filePath: path).standardizedFileURL
+            return [url.path, url.resolvingSymlinksInPath().path, (path as NSString).standardizingPath]
+        }).filter { $0 != "/" && !$0.isEmpty }
     }
 
     static func leaks(in transcript: URL, task: ReplayTask, repo: URL, env: HarnessEnvironment) -> [String] {
@@ -255,51 +295,59 @@ public enum LeakCheck {
     }
 
     /// A control cell of a commit task: only the signs that error analysis's own check of a
-    /// cell (the real repository, the session history) doesn't look for.
+    /// cell (the real repository, the session history, the Trash) doesn't look for.
     static func commitSigns(in transcript: URL, task: ReplayTask, env: HarnessEnvironment) -> [String] {
         signs(toolCalls(in: transcript), task: task, repo: nil, env: env)
     }
 
     private static func signs(_ calls: ToolCalls, task: ReplayTask, repo: URL?, env: HarnessEnvironment) -> [String] {
+        let inputs = calls.calls.map(\.input).joined(separator: "\n")
+        let asks = calls.calls.map(\.asks).joined(separator: "\n")
         var found: [String] = []
         // The hash as a word of its own (any length from the short form), not inside another hex string.
         let hash = (try? Regex("\\b\(task.shortCommit)[0-9a-f]*\\b"))
-        if let hash, (calls.inputs + calls.results).contains(hash) { found.append("the commit \(task.shortCommit)") }
-        if let repo {
-            let repoPaths = Set([repo.path, task.repo].map { URL(filePath: $0).standardizedFileURL.path })
-            if repoPaths.contains(where: { calls.inputs.contains($0) }) { found.append("the real repository") }
+        if let hash, (inputs + "\n" + calls.results).contains(hash) { found.append("the commit \(task.shortCommit)") }
+        if let repo, repositoryPaths([repo.path, task.repo]).contains(where: { inputs.contains($0) }) {
+            found.append("the real repository")
         }
         // `~/.akit/lab`, `$HOME/.akit/lab`, `/Users/me/.akit/lab` alike.
-        if calls.inputs.contains(".akit/lab") { found.append("AKit's Lab folder") }
-        if repo != nil, calls.inputs.contains(".claude/projects") || calls.usedSearch { found.append("Claude Code's session history") }
+        if asks.contains(".akit/lab") { found.append("AKit's Lab folder") }
+        if repo != nil, asks.contains(".claude/projects") || calls.calls.contains(where: { $0.name.contains("session_search") }) {
+            found.append("Claude Code's session history")
+        }
         // Finished clones and a commit's validation folder go to the Trash (control cells check it in error analysis).
-        if repo != nil, calls.inputs.contains("/.Trash") { found.append("the Trash") }
+        if repo != nil, inputs.contains("/.Trash") { found.append("the Trash") }
         return found
     }
 
     private struct ToolCalls {
-        var inputs = ""
+        var calls: [Call] = []
         var results = ""
-        var usedSearch = false
     }
 
+    /// The session's tool calls and results, its subagents' included.
     private static func toolCalls(in transcript: URL) -> ToolCalls {
         var calls = ToolCalls()
-        guard let data = try? Data(contentsOf: transcript), let entries = try? JSONLines.objects(in: data) else { return calls }
-        for entry in entries {
-            let blocks = (entry["message"] as? JSONLines.Object)?["content"] as? [JSONLines.Object] ?? []
-            for block in blocks {
-                switch block["type"] as? String {
-                case "tool_use":
-                    let name = block["name"] as? String ?? ""
-                    calls.inputs += pathLikeInput(tool: name, input: block["input"]) + "\n"
-                    if name.contains("session_search") { calls.usedSearch = true }
-                case "tool_result": calls.results += JSONLines.text(of: block["content"]) + "\n"
-                default: break
-                }
+        for block in blocks(in: transcript) + subagentFiles(of: transcript).flatMap({ blocks(in: $0) }) {
+            switch block["type"] as? String {
+            case "tool_use": calls.calls.append(Call(name: block["name"] as? String ?? "", input: block["input"]))
+            case "tool_result": calls.results += JSONLines.text(of: block["content"]) + "\n"
+            default: break
             }
         }
         return calls
+    }
+
+    /// The content blocks of a Claude Code transcript file's messages.
+    private static func blocks(in file: URL, sidechainOnly: Bool = false) -> [JSONLines.Object] {
+        guard let data = try? Data(contentsOf: file), let entries = try? JSONLines.objects(in: data) else { return [] }
+        return entries.filter { !sidechainOnly || ClaudeLogFormat.isSidechain($0) }
+            .flatMap { ($0["message"] as? JSONLines.Object)?["content"] as? [JSONLines.Object] ?? [] }
+    }
+
+    /// `<session>/subagents/*.jsonl` next to `<session>.jsonl`, one level only.
+    private static func subagentFiles(of transcript: URL) -> [URL] {
+        FileWalk.children(of: transcript.deletingPathExtension().appending(path: "subagents")).filter { $0.pathExtension == "jsonl" }
     }
 }
 
