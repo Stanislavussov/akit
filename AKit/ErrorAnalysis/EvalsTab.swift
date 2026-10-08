@@ -64,6 +64,13 @@ struct EvalsTab: View {
         } message: { _ in
             Text("Only the task's file goes; its cells stay Lab runs.")
         }
+        .task(id: analysis.evalsFocus) {
+            // Brain → Show in Error Analysis: the layer's set, read again (it may be new).
+            guard let layer = analysis.evalsFocus else { return }
+            selection = [Self.setTag + layer]
+            analysis.evalsFocus = nil
+            await analysis.reload()
+        }
         .task {
             // Snapshots: `--tab evals --add` opens Run Cells…, `--query fromSession|reproduction|fromCommit` a new task sheet.
             guard DebugSnapshot.options != nil else { return }

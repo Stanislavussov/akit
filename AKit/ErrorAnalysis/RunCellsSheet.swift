@@ -21,6 +21,12 @@ struct RunCellsSheet: View {
         }
     }
 
+    /// What the estimate depends on.
+    private struct EstimateKey: Hashable {
+        var cells: Int
+        var agent: LabAgent
+    }
+
     /// What a layer eval's preparation depends on: a change prepares it again.
     private struct LayerRequest: Hashable {
         var layer: String
@@ -49,7 +55,8 @@ struct RunCellsSheet: View {
     @State private var repeats = 3
     @State private var environment: LabEnvironment?
     @State private var keep = false
-    @State private var records: [SendRecord] = []
+    /// The estimate for the current cells and agent (`ControlRuns.estimate`).
+    @State private var estimate: (key: EstimateKey, value: CostEstimate)?
     @State private var error: String?
     @State private var busy = false
 
@@ -176,9 +183,13 @@ struct RunCellsSheet: View {
         }
         .padding(20)
         .frame(width: 780)
+        .task(id: EstimateKey(cells: cells, agent: agent)) {
+            let key = EstimateKey(cells: cells, agent: agent), env = analysis.env
+            let value = await Task.detached { ControlRuns.estimate(cells: key.cells, agent: key.agent, env: env) }.value
+            guard !Task.isCancelled else { return }
+            estimate = (key, value)
+        }
         .task {
-            let env = analysis.env
-            records = await Task.detached { SendLog.records(env: env).filter { $0.purpose == "control" } }.value
             // Snapshot hook: `--project <layer>` picks the layer.
             if layerName == nil { layerName = DebugSnapshot.options?.project.flatMap { layers.contains($0) ? $0 : nil } ?? layers.first }
         }
@@ -327,23 +338,24 @@ struct RunCellsSheet: View {
         }
     }
 
-    /// As the CLI prints it: an estimate from the recorded cost of earlier control cells of
-    /// the same harness and model.
+    /// The current estimate, once computed for these cells and this agent.
+    private var currentEstimate: CostEstimate? {
+        guard let estimate, estimate.key == EstimateKey(cells: cells, agent: agent) else { return nil }
+        return estimate.value
+    }
+
+    /// As the CLI prints it (`ControlRuns.estimate`): the recorded cost of earlier control
+    /// cells (else replays) of the same harness and model, and the time in the Lab queue.
     private var costLine: String {
-        let costs = records.filter { $0.harness == agent.harness && $0.model == agent.model }.compactMap(\.usage.cost)
-        guard !costs.isEmpty else {
-            return "Up to \(cells) cells; no estimate yet (no recorded cost of control cells with \(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model))."
-        }
-        let estimate = costs.reduce(0, +) / Double(costs.count) * Double(cells)
-        return String(format: "Up to %d cells, ≈ $%.2f at the recorded cost of %d earlier cells.", cells, estimate, costs.count)
+        guard let estimate = currentEstimate else { return "Up to \(cells) cells; estimating…" }
+        return "Up to \(cells) cells; \(estimate.costText)." + (estimate.timeText.map { " \($0)." } ?? "")
     }
 
     private func queue() {
         busy = true
         error = nil
         let tasks = chosenTasks, setups = setups, repeats = repeats, environment = environment, keep = keep
-        let costs = records.filter { $0.harness == agent.harness && $0.model == agent.model }.compactMap(\.usage.cost)
-        let estimate = costs.isEmpty ? nil : costs.reduce(0, +) / Double(costs.count) * Double(cells)
+        let estimate = currentEstimate?.total
         let env = analysis.env
         let layerEval = isLayer ? layerEval : nil
         Task {
