@@ -234,6 +234,70 @@ extension ControlRunsTests {
         #expect(try await evalPlan(fixture).resumable == nil)
     }
 
+    /// The setup check, end to end with the fake `claude`: a layer skill in the home folder
+    /// stops the queue and a baseline cell before its agent; a listing that names it after the
+    /// agent leaves the cell out of the comparison and the verdict.
+    @Test func everyLayerCellIsCheckedBeforeAndAfterItsAgent() async throws {
+        let fixture = LayerFixture(home: home)
+        try fixture.fakeClaude()
+        #expect(env.findExecutable("claude")?.path == home.appending(path: "bin/claude").path)
+        try await fixture.makeBrain()
+        let base = try await fixture.makeRepo()
+        let task = ControlTask(id: "make-value-2-abcd", title: "Make value 2", repo: fixture.repo.path, base: base, prompt: "Make value 2",
+                               source: .reproduction, oracle: .tests(command: #"test "$(cat value.txt)" = 2"#))
+        try ControlTasks.save(task, env: env)
+        try LayerSets.add([task], to: "swiftui", env: env)
+        func calibrate(_ plan: LayerEvals.EvalPlan) async throws -> [LabRun] {
+            try await LayerEvals.queue(plan, calibrateOnly: true, environment: .background, keep: false, akit: URL(filePath: "/usr/bin/true"),
+                                       env: env).runs
+        }
+        let homeSkill = home.appending(path: ".claude/skills/swiftui-expert")
+        func plantHomeSkill() throws { try fixture.write(".claude/skills/swiftui-expert/SKILL.md", "---\nname: swiftui-expert\n---\n", in: home) }
+
+        // The checks come from the render and go into the manifest.
+        let first = try await evalPlan(fixture)
+        let checks = first.prepared.checks
+        #expect(checks.baseline.absentSkills == ["swiftui-expert"] && checks.layer.skills.map(\.name) == ["swiftui-expert"])
+        #expect(checks.baseline.absentTexts.map(\.text) == ["- LAYER-MARKER: check with make snapshot"] && checks.layer.texts == checks.baseline.absentTexts)
+
+        // A skill of the layer in the home folder reaches every baseline cell: shown, and nothing is queued.
+        try plantHomeSkill()
+        let warned = try await evalPlan(fixture)
+        let problem = "The setup without swiftui would see what it must not: \(homeSkill.path) holds the skill swiftui-expert, which this setup must not have"
+        #expect(warned.prepared.warnings.contains { $0.hasPrefix(problem) }, "\(warned.prepared.warnings)")
+        #expect(await message { _ = try await calibrate(warned) }?.hasPrefix(problem) == true)
+        #expect(LabStore.list(env: env).isEmpty)
+        try FileManager.default.removeItem(at: homeSkill)
+
+        // Queued while the home folder was clean; the skill shows up before the cell runs: the
+        // baseline cell stops before its agent, the layer cell (which may have it) runs.
+        let pair = try await calibrate(try await evalPlan(fixture))
+        let evalID = try #require(pair.first?.spec.controlSetup?.layer?.evalID)
+        #expect(pair.count == 2 && LayerEvalStore.manifest(evalID, env: env)?.checks == checks)
+        try plantHomeSkill()
+        let output = Output()
+        let code = await LabWorker.run(id: pair[0].id, env: env, startNext: false, handleSignals: false, execute: AnalysisRuns.execute,
+                                       out: output.add)
+        let stopped = try #require(LabStore.load(pair[0].id, env: env))
+        #expect(code != 0 && stopped.status != .finished && !FileManager.default.fileExists(atPath: home.appending(path: "fake-claude-ran").path))
+        #expect(output.lines.contains { $0.contains("Setup check failed for without swiftui@") && $0.contains("\(homeSkill.path) holds the skill swiftui-expert")
+            && $0.contains("the agent didn't start and the cell doesn't count") }, "\(output.lines)")
+        let layerCell = try #require(try await runQueued([pair[1]]).first)
+        #expect(layerCell.result?.control?.setupCheck?.status == .passed, "\(String(describing: layerCell.result?.control))")
+        try FileManager.default.removeItem(at: homeSkill)
+
+        // After the agent, its listing names the layer's skill (from a place the check before
+        // couldn't see): the cell finishes, but it is left out and counted.
+        try "swiftui-expert\n".write(to: home.appending(path: "also-listed.txt"), atomically: true, encoding: .utf8)
+        let again = try await calibrate(try await evalPlan(fixture, continuing: evalID))
+        #expect(again.count == 1 && again[0].spec.controlSetup?.layer?.role == .requiredOnly)
+        let leaked = try #require(try await runQueued(again).first)
+        let check = try #require(leaked.result?.control?.setupCheck)
+        #expect(check.status == .failed && check.detail == "Claude Code listed swiftui-expert, which this setup must not have")
+        let comparison = ControlComparison.compare(ControlComparison.Cell.of([leaked, layerCell]))
+        #expect(comparison.setupCheckFailed == 1 && comparison.leftOut == 0 && comparison.rows.map(\.setup.layer?.role) == [.layer])
+    }
+
     @Test func akitsOwnRepositoryDeniesTheCommandsThatTouchTheRealHome() async throws {
         let fixture = LayerFixture(home: home)
         try fixture.fakeClaude()

@@ -45,6 +45,8 @@ public enum LayerSetups {
         public var continuing: Bool
         /// Shell commands the agent may not run in any cell of the eval (`ControlSetup.denied`).
         public var denied: [String]
+        /// What each setup's cells must and must not show the agent (`LayerChecks`).
+        public var checks: LayerChecks
     }
 
     /// Read-only sanity cells: one repeat on the first tasks.
@@ -133,6 +135,10 @@ public enum LayerSetups {
         if layerOverlay.hash == (baseOverlay ?? ControlOverlay()).hash {
             warnings.append("\(layer) renders nothing beyond its required layers here; both setups get the same files.")
         }
+        let checks = LayerChecks.make(layer: layer, full: full, required: required, layerOverlay: layerOverlay, baseOverlay: baseOverlay,
+                                      declared: Set(closure.flatMap { byName[$0]?.skills.map(\.name) ?? [] }))
+        // Shared by every cell, so every cell of that setup would fail before its agent.
+        warnings += checks.outsideProblems(layer: layer, home: env.homeDirectory).map { $0 + "; its cells won't start while it is there." }
 
         if let manifest {
             let hashes = (layer: manifest.setups.first { $0.layer?.role == .layer }?.layer?.overlayHash,
@@ -232,7 +238,7 @@ public enum LayerSetups {
                         runnable: runnable, blocked: blocked, notes: notes, ownFiles: ownFiles, overlap: overlap, warnings: warnings + full.warnings,
                         brainCommit: brainCommit, values: values, continuing: manifest != nil,
                         // An older eval's setups name none: its cells get the default when queued.
-                        denied: setups.first?.denied ?? ControlSetup.defaultDenied(repo: repo))
+                        denied: setups.first?.denied ?? ControlSetup.defaultDenied(repo: repo), checks: checks)
     }
 
     /// `<layer>-<yyyyMMdd-HHmm>-<4 hex>`.
@@ -246,7 +252,7 @@ public enum LayerSetups {
     /// One render for Claude Code into an overlay. Refuses a render with errors, and a layer
     /// that merges keys into a JSON file (v1: merging into the clone's file needs JSONMerge).
     static func render(layers: [String], role: LayerVariant.Role, of layer: String, values: [String: FieldValue], brain: Brain,
-                       projectName: String) throws -> (overlay: ControlOverlay, skills: [String], warnings: [String]) {
+                       projectName: String) throws -> Rendered {
         let bundle = ProjectBundle.resolve(ProjectAnswers(layers: layers, values: values, targets: ["claude"]), brain: brain,
                                            projectName: projectName)
         let result = Render.render(bundle, forHome: false)
@@ -292,7 +298,21 @@ public enum LayerSetups {
             }
         }
         let own = result.skills.filter { $0.source == layer }.map(\.name)
-        return (overlay, role == .layer ? own : [], result.warnings)
+        return Rendered(overlay: overlay, skills: role == .layer ? own : [], warnings: result.warnings,
+                        rendered: result.skills.map { SetupCheck.Skill(name: $0.name, manual: $0.mode == .manual) },
+                        files: role == .layer ? bundle.files.filter { $0.layer == layer } : [])
+    }
+
+    /// One render as an overlay, with what the setup check needs.
+    struct Rendered {
+        var overlay: ControlOverlay
+        /// The layer's own skills (role `layer` only), for the overlap warning.
+        var skills: [String]
+        var warnings: [String]
+        /// Every skill the render brings, with its mode.
+        var rendered: [SetupCheck.Skill]
+        /// The template outputs of the evaluated layer itself (role `layer` only), fields filled.
+        var files: [ProjectBundle.File]
     }
 
     private static func git(_ arguments: [String], in folder: URL, env: HarnessEnvironment) async -> String? {

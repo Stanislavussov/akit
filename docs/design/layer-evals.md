@@ -4,7 +4,8 @@ Status: design 2026-10-03, decided in a grilling session and revised after a fac
 against the code. Narrowed on 2026-10-08 by the decisions I2, D2, D3 and D4 (see
 [Decisions (2026-10-08)](#decisions-2026-10-08)): v1 is for Claude Code only, without a
 home fingerprint, with the verdict offline only. Slices 1, 2, 5 and 6 built 2026-10-08 (see
-[Built](#built)); the pilot is next (step 4 of `README.md`).
+[Built](#built)), then paired calibration and the [isolation check](#isolation-check) on
+every layer cell; the pilot is next (step 4 of `README.md`).
 
 ## Goal
 
@@ -125,6 +126,12 @@ Further choices of the step 4 plan, accepted on the same day:
    [Paired calibration](#built)) is fine, but only after the user confirms it.
 9. **A watchdog guards the agent phase** of control cells (slice 2), so an agent's own
    `swift test` in an AKitCore clone can't grow without limit.
+10. **A removed skill or text never leaks into the wrong setup** (the user, after slice 6):
+    every layer cell is checked statically before its agent starts and against its skill
+    listing after it ([Isolation check](#isolation-check)). This narrows decision 2: a skill or
+    text of the layer in `~/.claude` (or above the Lab's clones) now fails the setup without
+    the layer and refuses the queue, instead of only a warning. A same-name skill the
+    project tracks, or a plugin's, still only gets the overlap warning.
 
 ## Built
 
@@ -424,6 +431,15 @@ wait. Now:
   task (--calibrate --yes)"; `--calibrate --yes` prints their expected range and "Queued 2
   calibration cells of eval …"; `--json` has `calibration`.
 
+**Isolation check (2026-10-08, after slice 6).** Built as designed in
+[Isolation check](#isolation-check): `SetupCheck` and `SetupCheckResult` (`AKitLab`),
+`LayerChecks` (`AKitErrorAnalysis`; in `LayerSetups.Prepared.checks` and
+`LayerEvalManifest.checks`), `ControlCell.run(…, check:)`, `ControlOutcome.setupCheck`,
+`ControlComparison.setupCheckFailed` and `LayerVerdict.setupCheckFailed`. UI: the problems
+outside the clone are warnings in Evaluate… and Run Cells… with a brain layer, and the queue
+refuses them; the comparison says "n cells failed the setup check, left out: …"; the verdict's
+lines "n cells failed the setup check, left out"; the cell's Lab run shows its setup check line.
+
 Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (see
 [Open questions](#open-questions)); the check needs a transcript of a repository with
 `AGENTS.md` and no import, which was not read in this slice.
@@ -552,6 +568,53 @@ changed path, **resolved** (the link's target, not the link), is hidden from `gi
 and `git diff` the way `ControlPatch.apply` does it (assume-unchanged for tracked files,
 `.git/info/exclude` for new ones), so the agent sees a clean checkout as in the baseline. The guard needs no such help: it compares file
 snapshots taken after the overlay and after the agent.
+
+### Isolation check
+
+A removed skill or text must never leak into the wrong setup (decision 10). Every layer cell
+is checked twice; the first check needs no model call.
+
+**What Claude Code reads in a cell.** `ControlCell` starts `claude -p` in the clone with the
+user's own `HOME` and no `--setting-sources` (`AgentRun.arguments`), so the agent reads: the
+clone (`CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` and their `@` imports at the start,
+nested `CLAUDE.md` files and `.claude/skills` folders when it works there, `.claude/rules`),
+the folders above the clone up to `/` (`CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`,
+`.claude/skills`; the clones live in the temporary folder), and `~/.claude` (`CLAUDE.md` with
+its imports, `rules/**.md`, `skills/*` and `skills/synced/<account>/*`). Plugin skills are
+named `plugin:skill`, so they never carry a layer skill's name.
+
+**What each setup must and must not show** (`LayerChecks`, from the render, stored in the
+manifest; the read-only sanity cells are checked as the baseline):
+
+| Setup | Must have | Must not have |
+|---|---|---|
+| without X | the required layers' skills at `.claude/skills/<name>/SKILL.md` | X's own skills (by folder name or SKILL.md `name:`), X's template texts (trimmed, fields filled) in any instruction file, X's other files byte for byte |
+| layer X | every rendered skill, a manual one with `disable-model-invocation: true` in its header; X's `AGENTS.md` texts in a file Claude Code reads at the start, its other Markdown in its file | every skill a layer of the closure names that the render leaves out (`mode: off`, with override, or dropped by `when` and the answers) |
+
+**Before the agent** (`SetupCheck.problems`): after the clone, the patch and the overlay, before
+the agent phase. The overlay's writes must be in the clone as written (a created file byte for
+byte, an appended text inside its file, the `.claude/skills` link). What the base commit
+already holds (`projectContent`, read right after the clone) is the project's, in both setups:
+a project's own same-name skill doesn't count as a leak, and the layer cell doesn't check the
+mode of a skill the project's copy replaced. On a violation the cell throws "Setup check failed
+for <setup label>, so the agent didn't start and the cell doesn't count: <path> holds the skill
+<name>, which this setup must not have; …": the Lab run fails, nothing was sent, and it never
+counts in a comparison. A failed cell is not done, so Continue queues it again.
+
+**At queueing**: what lies outside the clone is the same for every cell, so `LayerSetups.prepare`
+shows it as a warning ("The setup without swiftui would see what it must not: ~/.claude/skills/…
+holds the skill …") and `LayerEvals.queue` refuses until it is moved away.
+
+**After the agent** (`SetupCheck.afterRun`): the names of every `skill_listing` attachment of
+the cell's transcript (the session's own lines, not a subagent's). The baseline's listing must
+not name X's own skills (unless the project tracks one of that name); the layer cell's must
+name every rendered skill that isn't manual, and none that is off. A mismatch records
+`setupCheck` "failed" in the result: the cell finished (and was paid) but is left out of
+`ControlComparison` and `LayerVerdicts`, which count it ("n cells failed the setup check, left
+out"). It stays done, so it isn't re-run automatically: another run would likely fail the same
+way and cost again. A transcript without a listing records "not checked" (never a failure).
+An eval queued before the check has no `checks` in its manifest: its cells derive them from the
+stored overlays (no off skills there), and a continue stores the full checks.
 
 ### Format
 
@@ -939,4 +1002,8 @@ weakened tests or suppressions).
 - Pi's choice when a folder has both `AGENTS.md` and `CLAUDE.md` isn't verified (not in v1, I2).
 
 - The overlap warning compares skill names only; two skills with different names and the
-  same content aren't caught.
+  same content aren't caught. The isolation check also goes by name (and SKILL.md `name:`)
+  for skills; texts by exact text.
+- The isolation check's listing side assumes Claude Code lists every auto skill. If a future
+  version trims the listing (a budget for many skills), a layer cell could be marked "setup
+  check failed" wrongly; the detail names the missing skills, so it shows.

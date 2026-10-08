@@ -42,6 +42,9 @@ public struct LayerVerdict: Codable, Sendable, Hashable {
     public var flagged: Int
     /// Cells left out: an older akit ran them without the layer.
     public var leftOut: Int
+    /// Cells left out because the skills their transcript listed broke the setup check; nil in
+    /// a verdict saved before the check.
+    public var setupCheckFailed: Int?
     /// Tasks the layer couldn't be placed in.
     public var blocked: Int
     public var sanity: Sanity
@@ -91,7 +94,7 @@ public enum LayerVerdicts {
             let rates = (row?.tasks ?? []).filter { shared.contains($0.task) }.map(\.rate)
             return rates.isEmpty ? nil : rates.reduce(0, +) / Double(rates.count)
         }
-        let sanity = cells.filter { $0.overlayRecorded && $0.setup.readOnly }
+        let sanity = cells.filter { $0.counts && $0.setup.readOnly }
         let sanityPassed = sanity.filter(\.passed).count
         // In run order, so the same runs always give the same sum.
         let priced = mine.sorted { $0.id < $1.id }.compactMap { costs[$0.id]?.dollars }
@@ -107,7 +110,8 @@ public enum LayerVerdicts {
             tasks: pair.tasks, repeats: manifest.repeats, baselineCells: pair.baselineCells, layerCells: pair.variantCells,
             baselineRate: rate(before), layerRate: rate(after), meanChange: pair.meanChange,
             improvementShare: pair.improvementShare, worseShare: pair.worseShare, verdict: pair.verdict, reason: reason,
-            flagged: (before?.flagged ?? 0) + (after?.flagged ?? 0), leftOut: comparison.leftOut, blocked: manifest.blocked.count,
+            flagged: (before?.flagged ?? 0) + (after?.flagged ?? 0), leftOut: comparison.leftOut,
+            setupCheckFailed: comparison.setupCheckFailed, blocked: manifest.blocked.count,
             sanity: sanity.isEmpty ? .none : sanityPassed > 0 ? .failed : .passed, sanityCells: sanity.count, sanityPassed: sanityPassed,
             harnessVersions: Set(cells.compactMap(\.harnessVersion)).sorted(), overlap: manifest.overlap,
             projectOwnContext: manifest.ownFiles.map { files in manifest.tasks.filter { files[$0] != nil }.count },
@@ -182,6 +186,7 @@ public enum LayerVerdicts {
         if verdict.flagged > 0 { checks.append(count(verdict.flagged, "flagged cell")) }
         if verdict.blocked > 0 { checks.append(count(verdict.blocked, "blocked task")) }
         if verdict.leftOut > 0 { checks.append("\(count(verdict.leftOut, "cell")) run by an older akit, left out") }
+        if let failed = verdict.setupCheckFailed, failed > 0 { checks.append("\(count(failed, "cell")) failed the setup check, left out") }
         if !verdict.harnessVersions.isEmpty {
             checks.append("\(verdict.harness.title) \(verdict.harnessVersions.joined(separator: ", "))"
                           + (verdict.harnessVersions.count > 1 ? " (mixed versions)" : ""))

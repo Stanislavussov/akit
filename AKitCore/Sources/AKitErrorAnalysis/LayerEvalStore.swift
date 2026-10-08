@@ -25,6 +25,10 @@ public struct LayerEvalManifest: Codable, Sendable, Hashable, Identifiable {
     /// Task id → the project's own file the layer's AGENTS.md text is appended to; nil in an
     /// eval written before the verdict (slice 5) kept it.
     public var ownFiles: [String: String]?
+    /// What each setup's cells must and must not show the agent; nil in an eval written before
+    /// the setup check (its cells derive the check from the stored overlays until a continue
+    /// stores it).
+    public var checks: LayerChecks?
 
     /// The agent of the eval's setups.
     public var agent: LabAgent? { setups.first?.agent }
@@ -34,7 +38,8 @@ public struct LayerEvalManifest: Codable, Sendable, Hashable, Identifiable {
 /// eval goes into the brain.
 public enum LayerEvalStore {
     /// Writes the eval's folder under a temporary name, then moves it into place, so a reader
-    /// never sees half an eval. A continued eval already has its folder.
+    /// never sees half an eval. A continued eval already has its folder; one written before the
+    /// setup check gets its checks now (the overlays are the same, or the continue was refused).
     @discardableResult
     public static func create(_ prepared: LayerSetups.Prepared, repeats: Int, now: Date = .now,
                               env: HarnessEnvironment) throws -> LayerEvalManifest {
@@ -44,8 +49,15 @@ public enum LayerEvalStore {
                                          setups: prepared.setups, sanity: prepared.sanitySetup, tasks: prepared.runnable.map(\.id),
                                          sanityTasks: prepared.sanityTasks.map(\.id), repeats: repeats, blocked: prepared.blocked,
                                          notes: prepared.notes, overlap: prepared.overlap,
-                                         ownFiles: prepared.ownFiles.filter { id, _ in prepared.runnable.contains { $0.id == id } })
-        if prepared.continuing, let existing = self.manifest(prepared.evalID, env: env) { return existing }
+                                         ownFiles: prepared.ownFiles.filter { id, _ in prepared.runnable.contains { $0.id == id } },
+                                         checks: prepared.checks)
+        if prepared.continuing, var existing = self.manifest(prepared.evalID, env: env) {
+            if existing.checks == nil {
+                existing.checks = prepared.checks
+                try AnalysisJSON.encoder.encode(existing).write(to: folder.appending(path: "manifest.json"), options: .atomic)
+            }
+            return existing
+        }
         let fm = FileManager.default
         guard !fm.fileExists(atPath: folder.path) else {
             throw LayerSetups.Failure(message: "The eval \(prepared.evalID) already exists.")

@@ -106,9 +106,12 @@ public enum ControlRuns {
         guard let task = ControlTasks.load(id, env: env) else { throw LabWorker.Failure(message: "The control task \(id) is gone.") }
         // A layer setup's overlay, rendered when the cells were queued and stored with the eval.
         var overlay: ControlOverlay?
+        // And what the clone must and must not show the agent: checked before it starts.
+        var check: SetupCheck?
         if let layer = setup.layer {
             guard setup.agent.harness == .claudeCode else { throw LabWorker.Failure(message: "Layer evals run Claude Code only for now.") }
             if let hash = layer.overlayHash { overlay = try LayerEvalStore.overlay(hash: hash, eval: layer.evalID, env: env) }
+            check = try LayerChecks.check(for: setup, env: env)
         }
         let gate = try await SendGate.open(agent: setup.agent, env: env)
         try gate.check(.code(setup.agent.harness))
@@ -140,7 +143,7 @@ public enum ControlRuns {
         // default now. The key stays the setup's own.
         let runSetup = ControlRuns.withDefaults(setup, task)
         let facts = try await ControlCell.run(run, setup: runSetup, repo: repo, base: task.base, prompt: prompt, oracle: oracle, overlay: overlay,
-                                              env: env, phase: phase, out: out)
+                                              check: check, env: env, phase: phase, out: out)
         let session: String? = if case .session(let key) = task.source { key.description } else { nil }
         let logError = SendLog.appendAfterRun(SendRecord(purpose: "control", session: session, runID: run.id, destination: gate.destination,
                                                          model: setup.agent.model, inputCharacters: prompt.count, usage: facts.usage),
@@ -159,7 +162,7 @@ public enum ControlRuns {
                                          + facts.hiddenLeaks,
                                      // Always present on a layer cell: an older akit that ignored the layer leaves it out.
                                      overlay: setup.layer != nil ? (facts.overlayNotes ?? []) : nil,
-                                     harnessVersion: facts.harnessVersion)
+                                     harnessVersion: facts.harnessVersion, setupCheck: facts.setupCheck)
         switch task.oracle {
         case .tests:
             outcome.passed = facts.tests?.passed ?? false

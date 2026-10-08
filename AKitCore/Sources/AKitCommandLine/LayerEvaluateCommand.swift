@@ -24,9 +24,13 @@ extension AKitCLI {
                                           2: without and with the layer, same task and repeat), and
                                           the eval reuses them (an eval whose setups don't all have a
                                           finished cell yet is continued by default; --new starts
-                                          another). --continue continues the latest eval of
-                                          the layer and agent (or ID) while the layer renders the same
-                                          files. 1 read-only cell on each of the first 3 tasks unless
+                                          another). Every cell is checked before its agent starts:
+                                          a skill or text of the layer where its setup must not
+                                          have it (the clone, ~/.claude) fails the cell, and one in
+                                          ~/.claude refuses the queue; a cell whose transcript lists
+                                          the wrong skills is left out of the verdict. --continue
+                                          continues the latest eval of the layer and agent (or ID)
+                                          while the layer renders the same files. 1 read-only cell on each of the first 3 tasks unless
                                           --no-sanity. In AKit's own repository the agent may not run
                                           make snapshot, make run, make restart, make install(-cli),
                                           make screenshots, make open, open or swift run (every

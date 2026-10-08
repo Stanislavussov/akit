@@ -141,6 +141,13 @@ struct ControlComparisonView: View {
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if comparison.setupCheckFailed > 0 {
+                Label("\(comparison.setupCheckFailed) cells failed the setup check, left out: the skills Claude Code listed weren't the "
+                      + "setup's (the cell's Lab run names them).", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let productionError {
                 Label("The production signal couldn't be read: \(productionError)", systemImage: "exclamationmark.triangle")
                     .font(.caption)

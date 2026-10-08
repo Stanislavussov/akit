@@ -263,4 +263,64 @@ struct LayerSetupsTests {
         #expect(LayerEvalStore.manifest(prepared.evalID, env: env) == nil)
         #expect(LayerEvalStore.problem(prepared.evalID, env: env)?.contains("newer AKit") == true)
     }
+
+    /// The setup checks from the render: the layer cell has every skill with its mode and none
+    /// that is off (`mode: off` with override, or dropped by the answers); the baseline has none
+    /// of the layer's own skills and texts. An eval stored before the checks derives them from its overlays.
+    @Test func setupChecksComeFromTheRender() async throws {
+        try await fixture.makeBrain(swiftuiYAML: """
+            requires: [base]
+            fields:
+              - id: ui_check
+                prompt: Command that checks the screen
+                default: make snapshot
+            skills:
+              - swiftui-expert
+              - name: review
+                mode: manual
+              - name: old
+                mode: off
+                override: true
+              - name: lint
+                when: ui_check == never
+            files:
+              - template: swiftui.md
+                to: AGENTS.md
+
+            """)
+        try fixture.write("layers/base/layer.yaml", "skills: [old]\nfiles:\n  - template: base.md\n    to: AGENTS.md\n", in: fixture.brain)
+        for name in ["old", "review", "lint"] {
+            try fixture.write("skills/\(name)/SKILL.md", "---\nname: \(name)\ndescription: x\n---\nDo it.\n", in: fixture.brain)
+        }
+        await fixture.commitAll(fixture.brain)
+        let base = try await fixture.makeRepo()
+        try ControlTasks.save(task(base), env: env)
+        let prepared = try await prepare(tasks: [task(base)], sanity: true)
+        let checks = prepared.checks
+        #expect(checks.layer.skills == [.init(name: "swiftui-expert", manual: false), .init(name: "review", manual: true)])
+        #expect(checks.layer.absentSkills == ["lint", "old"])
+        #expect(checks.layer.texts == [SetupCheck.Text(label: "the swiftui layer's AGENTS.md text", text: "- LAYER-MARKER: check with make snapshot",
+                                                       path: "AGENTS.md")])
+        #expect(checks.baseline.skills == [.init(name: "old", manual: false)] && checks.baseline.absentSkills == ["review", "swiftui-expert"])
+        #expect(checks.baseline.absentTexts == checks.layer.texts && checks.baseline.texts.isEmpty)
+        // The read-only sanity cells are checked as the baseline.
+        #expect(checks.check(for: try #require(prepared.sanitySetup)) == checks.baseline && checks.check(for: prepared.setups[1]) == checks.layer)
+
+        let layerHash = try #require(prepared.setups[1].layer?.overlayHash)
+        let baseHash = try #require(prepared.setups[0].layer?.overlayHash)
+        let layerOverlay = try #require(prepared.overlays[layerHash])
+        let baseOverlay = try #require(prepared.overlays[baseHash])
+        let derived = LayerChecks.derived(layer: "swiftui", layerOverlay: layerOverlay, baseOverlay: baseOverlay)
+        #expect(Set(derived.layer.skills) == Set(checks.layer.skills) && derived.layer.absentSkills.isEmpty)
+        #expect(derived.baseline.absentSkills.sorted() == ["review", "swiftui-expert"] && derived.layer.texts == checks.layer.texts)
+
+        // An eval stored without checks gets them when it is continued.
+        var manifest = try LayerEvalStore.create(prepared, repeats: 1, env: env)
+        manifest.checks = nil
+        try AnalysisJSON.encoder.encode(manifest).write(to: EvalPaths(env: env).layerEval(prepared.evalID).appending(path: "manifest.json"))
+        #expect(try LayerChecks.check(for: prepared.setups[0], env: env) == derived.baseline)
+        let continued = try await prepare(tasks: [task(base)], continuing: prepared.evalID)
+        #expect(try LayerEvalStore.create(continued, repeats: 1, env: env).checks == checks)
+        #expect(try LayerChecks.check(for: prepared.setups[0], env: env) == checks.baseline)
+    }
 }

@@ -79,7 +79,9 @@ struct LayerFixture {
 
     /// A fake `claude`: it writes value 2 only when the clone's CLAUDE.md has the layer's
     /// marker, reports a Claude Code version, records `git status` as the agent saw it, and
-    /// leaves a marker file that proves the fake ran (not a real, paid Claude Code).
+    /// leaves a marker file that proves the fake ran (not a real, paid Claude Code). Its
+    /// transcript lists the skills of the clone's `.claude/skills`, plus the names in
+    /// `~/also-listed.txt` (a skill from somewhere the setup check doesn't read).
     func fakeClaude() throws {
         try write("bin/claude", #"""
             #!/bin/sh
@@ -94,6 +96,10 @@ struct LayerFixture {
             mkdir -p "$HOME/.claude/projects/-fake"
             t="$HOME/.claude/projects/-fake/$id.jsonl"
             echo '{"type":"user","cwd":"/fake","timestamp":"2026-10-01T10:00:00Z","message":{"role":"user","content":"Make value 2"}}' > "$t"
+            names=""
+            for d in .claude/skills/*/; do [ -d "$d" ] && names="$names\"$(basename "$d")\","; done
+            if [ -f "$HOME/also-listed.txt" ]; then for n in $(cat "$HOME/also-listed.txt"); do names="$names\"$n\","; done; fi
+            echo '{"type":"attachment","attachment":{"type":"skill_listing","isInitial":true,"names":['"${names%,}"'],"content":""}}' >> "$t"
             if grep -q LAYER-MARKER CLAUDE.md; then echo 2 > value.txt; fi
             echo '{"type":"assistant","timestamp":"2026-10-01T10:00:09Z","message":{"id":"m9","model":"claude-opus-5-5","content":[{"type":"text","text":"Finished."}],"usage":{"input_tokens":10,"output_tokens":5}}}' >> "$t"
             echo '{"type":"system","subtype":"init","model":"claude-opus-5-5","claude_code_version":"2.1.290","session_id":"'"$id"'"}'

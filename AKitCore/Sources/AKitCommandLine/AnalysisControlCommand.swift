@@ -545,6 +545,10 @@ extension AKitCLI {
         if comparison.leftOut > 0 {
             lines.append("\(comparison.leftOut) cells run by an older akit, left out: it ignored the layer. Install the app and akit together.")
         }
+        if comparison.setupCheckFailed > 0 {
+            lines.append("\(comparison.setupCheckFailed) cells failed the setup check, left out: the skills Claude Code listed weren't the "
+                         + "setup's (akit lab show ID names them).")
+        }
         if open > 0 { lines.append("\(open) cells still queued or running.") }
         return lines.joined(separator: "\n")
     }

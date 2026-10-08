@@ -219,6 +219,12 @@ public enum LayerEvals {
                                                                  + "above the $%.2f you allowed; check it again.", high, maxCost))
                 }
             }
+            // A layer's skill or text in ~/.claude (or above the clones) reaches every cell of a setup: none would start.
+            let outside = prepared.checks.outsideProblems(layer: plan.layer, home: env.homeDirectory)
+            if let first = outside.first {
+                throw LayerSetups.Failure(message: first + (outside.count > 1 ? " (and \(outside.count - 1) more)" : "")
+                                              + ". Every cell of that setup would fail its setup check before its agent; move it out of the way first.")
+            }
             try SendLog.checkLimit(estimate: estimate.total, settings: LabSettings.loadForSending(env: env), env: env)
             let isNew = LayerEvalStore.manifest(prepared.evalID, env: env) == nil
             try LayerEvalStore.create(prepared, repeats: plan.repeats, env: env)
