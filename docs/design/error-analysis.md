@@ -725,7 +725,7 @@ fix applied, an anchor like `akit stats mark`.
     needs it too: without production data (no applied fix with check results, or fewer
     than 15 sessions on a side of T) the control verdict is "no conclusion". Layer evals
     (`layer-evals.md`) give a layer its own verdict with an offline level that doesn't need
-    this guard; the mode's fix status keeps the rule.
+    this guard ("helps (offline)", layer pairs only); the mode's fix status keeps the rule.
   - With N < 15 on a side there is no conclusion.
 - **Why not plain intervals.** CLT intervals understate the uncertainty at N ≈ 15–50 per
   group, and clustering by task changes the standard errors.
@@ -748,8 +748,8 @@ A layer from the brain as the setup, instead of one patch, is `layer-evals.md`. 
 (slice 1, 2026-10-08): Run Cells… → "A brain layer" and `akit analysis control run --layer`
 queue a layer eval, the layer's required layers alone against them and the layer; a layer
 row pairs only with its own eval's required-layers row. Its offline verdict level ("helps
-(offline)", slice 5) is for layer setups only: D4 (2026-10-08) kept the fix rule, so a
-patch fix never gets it.
+(offline)", slice 5, built 2026-10-08) is for layer setups only: D4 (2026-10-08) kept the
+fix rule, so a patch fix never gets it.
 
 **Tasks from commits** (layer evals slice 2, 2026-10-08). A control task can also come
 from a commit (`Source.commit`), judged by the commit's own tests (`Oracle.hiddenTests`):
@@ -853,7 +853,8 @@ a minimal reproduction: the simplest request that triggers the mode.
   sends.jsonl                # send log
 ~/.akit/lab/evals/           # cells are Lab runs; tasks/<id>.json control tasks (session,
                              # reproduction or commit); sets/<layer>.json layer sets;
-                             # layer evals in layer-evals/<eval-id>/ (layer-evals.md, Storage)
+                             # layer evals in layer-evals/<eval-id>/, their last verdicts
+                             # per agent in verdicts/<layer>.json (layer-evals.md, Storage)
 ```
 
 All of it is local and never goes into the brain repo. Everything outside `modes/` is

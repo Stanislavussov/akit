@@ -71,6 +71,9 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     public enum Verdict: String, Codable, Sendable {
         /// At least 95% of the bootstrap mass on improvement.
         case helped
+        /// A brain layer's own level (layer pairs only, never a patch fix): at least 95% of
+        /// the bootstrap mass on improvement, without the production guard.
+        case helpsOffline = "helps-offline"
         case notShown = "not-shown"
         /// Too few repeats or cells to say.
         case noConclusion = "no-conclusion"
@@ -78,6 +81,7 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var title: String {
             switch self {
             case .helped: "helped"
+            case .helpsOffline: "helps (offline)"
             case .notShown: "didn't show it helped"
             case .noConclusion: "no conclusion"
             }
@@ -95,6 +99,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         public var meanChange: Double?
         /// The share of bootstrap means above zero.
         public var improvementShare: Double?
+        /// The share of bootstrap means below zero; ties at zero count for neither.
+        public var worseShare: Double?
         /// The "not worse in production" guard: P(the mode's failure rate rose after the fix's T)
         /// from its check over indexed sessions, when both sides have enough sessions.
         public var productionHigher: Double?
@@ -119,8 +125,11 @@ public struct ControlComparison: Codable, Sendable, Hashable {
     /// the same layer, eval and agent: never with a plain baseline, and patch variants never
     /// with a layer row. `production` is the fix's production signal (`production(for:env:)`):
     /// "helped" also needs it not worse, so without it there is no conclusion. It is a patch
-    /// fix's signal, so layer pairs never get it.
-    public static func compare(_ cells: [Cell], production: FixEvaluation? = nil, iterations: Int = 2000,
+    /// fix's signal, so layer pairs never get it: they are judged offline ("helps (offline)",
+    /// D4), unless a read-only cell of their eval passed.
+    /// `sanity`: more read-only cells of the layer evals among `cells` (their other tasks), for
+    /// the read-only rule only; they make no row.
+    public static func compare(_ cells: [Cell], sanity: [Cell] = [], production: FixEvaluation? = nil, iterations: Int = 2000,
                                seed: UInt64 = 1) -> ControlComparison {
         let kept = cells.filter(\.overlayRecorded)
         var order: [ControlSetup] = []
@@ -130,6 +139,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         let baselines = candidates.filter { $0.setup.patch == nil && $0.setup.layer == nil }
         let paired = candidates.compactMap { variant -> Paired? in
             if variant.setup.patch != nil {
+                // A setup makes one difference; one with both a patch and a layer is not paired.
+                guard variant.setup.layer == nil else { return nil }
                 guard let baseline = baselines.first(where: { $0.setup.agent == variant.setup.agent }) ?? baselines.first else { return nil }
                 return pair(baseline: baseline, variant: variant, production: production, iterations: iterations, seed: seed)
             }
@@ -137,9 +148,15 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                   let baseline = candidates.first(where: { row in
                       guard let other = row.setup.layer else { return false }
                       return other.role == .requiredOnly && other.layer == layer.layer && other.evalID == layer.evalID
-                          && row.setup.agent == variant.setup.agent
+                          && row.setup.agent == variant.setup.agent && row.setup.patch == nil
                   }) else { return nil }
-            return pair(baseline: baseline, variant: variant, production: nil, iterations: iterations, seed: seed)
+            // The read-only sanity cells of the eval must fail: a pass means the oracle can't tell
+            // work from no work. The oracle's verdict counts, flagged or not.
+            let readOnlyPass = (kept + sanity.filter(\.overlayRecorded)).first { cell in
+                cell.setup.readOnly && cell.passed && cell.setup.layer?.evalID == layer.evalID && cell.setup.agent == variant.setup.agent
+            }
+            return pair(baseline: baseline, variant: variant, production: nil, offline: true, readOnlyPassed: readOnlyPass?.task,
+                        iterations: iterations, seed: seed)
         }
         return ControlComparison(rows: rows, paired: paired, leftOut: cells.count - kept.count)
     }
@@ -182,12 +199,42 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                    harnessVersions: Set(cells.compactMap(\.harnessVersion)).sorted())
     }
 
+    /// Each task's change (passed/total after minus before) as an exact integer over one common
+    /// denominator, the least common multiple of the task totals: fractions like 1/3 − 2/3 + 1/3
+    /// then sum to exactly zero, so a tie never counts as improved or worse by a floating-point
+    /// residue. nil when the denominator, a scaled change or the largest possible bootstrap sum
+    /// (every draw the largest change) would overflow `Int`: the caller falls back to Doubles.
+    static func exactChanges(_ tasks: [(after: (passed: Int, total: Int), before: (passed: Int, total: Int))]) -> [Int]? {
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+        var denominator = 1
+        for total in tasks.flatMap({ [$0.after.total, $0.before.total] }) where total > 0 {
+            let (lcm, overflow) = (denominator / gcd(denominator, total)).multipliedReportingOverflow(by: total)
+            if overflow { return nil }
+            denominator = lcm
+        }
+        var changes: [Int] = []
+        for task in tasks {
+            guard task.after.total > 0, task.before.total > 0 else { return nil }
+            let (after, overflowAfter) = task.after.passed.multipliedReportingOverflow(by: denominator / task.after.total)
+            let (before, overflowBefore) = task.before.passed.multipliedReportingOverflow(by: denominator / task.before.total)
+            let (change, overflowChange) = after.subtractingReportingOverflow(before)
+            if overflowAfter || overflowBefore || overflowChange { return nil }
+            changes.append(change)
+        }
+        let largest = changes.map { $0.magnitude }.max() ?? 0
+        guard largest <= UInt(Int.max), !Int(largest).multipliedReportingOverflow(by: changes.count).overflow else { return nil }
+        return changes
+    }
+
     /// The paired bootstrap over tasks of the per-task change in pass rate (seeded, so the
     /// same cells give the same share). "Helped" is fixed before the run: ≥ 95% of the mass
     /// on improvement, with at least 3 repeats of every task and 15 cells on each side, and not
     /// worse in production: at most 50% that the mode's failure rate rose after T, with 15
-    /// sessions on each side.
-    static func pair(baseline: Row, variant: Row, production: FixEvaluation?, iterations: Int, seed: UInt64) -> Paired {
+    /// sessions on each side. `offline` (layer pairs only): the same share without the
+    /// production guard gives "helps (offline)"; `readOnlyPassed` names a task whose read-only
+    /// sanity cell passed, which leaves the pair without a conclusion.
+    static func pair(baseline: Row, variant: Row, production: FixEvaluation?, offline: Bool = false, readOnlyPassed: String? = nil,
+                     iterations: Int, seed: UInt64) -> Paired {
         let before = Dictionary(uniqueKeysWithValues: baseline.tasks.map { ($0.task, $0) })
         let shared = variant.tasks.compactMap { after in before[after.task].map { (before: $0, after: after) } }
         let baselineCells = shared.map(\.before.total).reduce(0, +)
@@ -205,24 +252,43 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             result.reason = "No task has cells of both setups."
             return result
         }
+        let exact = exactChanges(shared.map { (after: ($0.after.passed, $0.after.total), before: ($0.before.passed, $0.before.total)) })
         var generator = SeededGenerator(seed: seed)
         var improved = 0
+        var worse = 0
         for _ in 0..<iterations {
-            var sum = 0.0
-            for _ in changes.indices { sum += changes[Int.random(in: 0..<changes.count, using: &generator)] }
-            if sum > 0 { improved += 1 }
+            if let exact {
+                var sum = 0
+                for _ in exact.indices { sum += exact[Int.random(in: 0..<exact.count, using: &generator)] }
+                if sum > 0 { improved += 1 } else if sum < 0 { worse += 1 }
+            } else {
+                // Fallback when the exact integers would overflow: Double sums, with sums within
+                // 1e-9 of zero counted as ties (a residue of cancelling fractions is about 1e-16).
+                var sum = 0.0
+                for _ in changes.indices { sum += changes[Int.random(in: 0..<changes.count, using: &generator)] }
+                if sum > 1e-9 { improved += 1 } else if sum < -1e-9 { worse += 1 }
+            }
         }
         let share = Double(improved) / Double(iterations)
         result.improvementShare = share
+        result.worseShare = Double(worse) / Double(iterations)
         let percent = String(format: "%.0f%%", 100 * share)
         if shared.contains(where: { $0.before.total < minimumRepeats || $0.after.total < minimumRepeats }) {
             result.reason = "A task has fewer than \(minimumRepeats) repeats on a side."
         } else if baselineCells < minimumCells || variantCells < minimumCells {
             result.reason = "Fewer than \(minimumCells) cells on a side (baseline \(baselineCells), variant \(variantCells))."
-        } else if variant.setup.layer != nil {
-            // Until layers get their own verdict level (slice 5), every layer pair stays open.
-            result.reason = "\(percent) of the bootstrap mass on improvement; a layer eval has no verdict level of its own yet, "
-                + "so this pair has no conclusion."
+        } else if offline {
+            // A brain layer's own level: judged before anyone uses it, so no production guard.
+            let shares = "\(percent) of the bootstrap mass on improvement, \(String(format: "%.0f%%", 100 * (result.worseShare ?? 0))) on worse"
+            if let readOnlyPassed {
+                result.reason = "A read-only agent passed \(readOnlyPassed): its oracle can't tell work from no work (\(shares))."
+            } else if share >= helpedShare {
+                result.verdict = .helpsOffline
+                result.reason = "\(shares) (needs \(Int(helpedShare * 100))%; offline, without the production guard)."
+            } else {
+                result.verdict = .notShown
+                result.reason = "Only \(shares) (needs \(Int(helpedShare * 100))%)."
+            }
         } else if share >= helpedShare {
             let control = "\(percent) of the bootstrap mass on improvement (needs \(Int(helpedShare * 100))%)"
             if let measured {

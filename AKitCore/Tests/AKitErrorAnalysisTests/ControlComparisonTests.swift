@@ -129,9 +129,9 @@ struct ControlComparisonTests {
         // Two evals of one layer: two pairs, each with its own eval's required layers.
         #expect(comparison.paired[0].baseline == layerSetup(.requiredOnly) && comparison.paired[0].variant == layerSetup(.layer))
         #expect(comparison.paired[1].baseline == layerSetup(.requiredOnly, eval: "swiftui-2"))
-        // A layer pair never takes the fix's production signal: no conclusion until layers get their own level.
-        #expect(comparison.paired[0].improvementShare == 1 && comparison.paired[0].verdict == .noConclusion)
-        #expect(comparison.paired[0].productionHigher == nil && comparison.paired[0].reason.contains("layer eval"))
+        // A layer pair never takes the fix's production signal; it is judged offline. Its eval's read-only cells all failed.
+        #expect(comparison.paired[0].improvementShare == 1 && comparison.paired[0].verdict == .helpsOffline)
+        #expect(comparison.paired[0].productionHigher == nil && comparison.paired[0].reason.contains("offline"))
 
         // A layer row never pairs with a plain baseline, nor with another agent's or layer's baseline.
         let lonely = ControlComparison.compare(cells(baseline, passes: [1, 1, 1]) + cells(layerSetup(.layer), passes: [3, 3, 3])
@@ -146,19 +146,134 @@ struct ControlComparisonTests {
         #expect(both.paired.count == 1 && both.paired[0].baseline == baseline)
     }
 
-    @Test func everyLayerPairHasNoConclusionYet() throws {
-        // Enough cells and repeats, below 95%: a patch pair would say "didn't show it helped".
+    /// D4 (2026-10-08): "helps (offline)" is a layer's own level; a patch fix never gets it.
+    @Test func onlyLayerPairsGetHelpsOffline() throws {
+        let before = [1, 1, 1, 1, 1], after = [3, 3, 3, 3, 3]
+        let layer = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: before)
+                                                           + cells(layerSetup(.layer), passes: after)).paired.first)
+        #expect(layer.verdict == .helpsOffline && layer.improvementShare == 1 && layer.worseShare == 0 && layer.productionHigher == nil)
+        #expect(layer.verdict.title == "helps (offline)" && layer.verdict.rawValue == "helps-offline")
+        // The same cells as a patch pair: no conclusion without production, never "helps (offline)" whatever production says.
+        let patchCells = cells(baseline, passes: before) + cells(variant, passes: after)
+        let early = Fixes.evaluate(modeID: "m", appliedAt: .now, before: (10, 20, nil), after: (1, 5, nil), trust: .exact)
+        let worse = Fixes.evaluate(modeID: "m", appliedAt: .now, before: (4, 20, nil), after: (10, 20, nil), trust: .exact)
+        let patch = try #require(ControlComparison.compare(patchCells).paired.first)
+        #expect(patch.verdict == .noConclusion && patch.improvementShare == layer.improvementShare)
+        for production in [nil, notWorse, early, worse] {
+            let verdict = try #require(ControlComparison.compare(patchCells, production: production).paired.first).verdict
+            #expect(verdict != .helpsOffline)
+        }
+
+        // Enough cells and repeats, below 95%: both say "didn't show it helped", with the same share.
         let baseCells = [1, 1, 2, 3, 0, 2], variantCells = [3, 2, 1, 3, 1, 2]
-        let patch = try #require(ControlComparison.compare(cells(baseline, passes: baseCells) + cells(variant, passes: variantCells)).paired.first)
-        #expect(patch.verdict == .notShown && (patch.improvementShare ?? 1) < ControlComparison.helpedShare)
-        let layer = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: baseCells)
-                                                           + cells(layerSetup(.layer), passes: variantCells)).paired.first)
-        #expect(layer.verdict == .noConclusion && layer.improvementShare == patch.improvementShare)
-        #expect(layer.reason.contains("no verdict level of its own yet"))
-        // No mass on improvement at all: still no conclusion.
-        let same = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: [2, 1, 3, 0, 2])
-                                                          + cells(layerSetup(.layer), passes: [2, 1, 3, 0, 2])).paired.first)
-        #expect(same.verdict == .noConclusion && same.improvementShare == 0)
+        let patchBelow = try #require(ControlComparison.compare(cells(baseline, passes: baseCells) + cells(variant, passes: variantCells)).paired.first)
+        let layerBelow = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: baseCells)
+                                                                + cells(layerSetup(.layer), passes: variantCells)).paired.first)
+        #expect(patchBelow.verdict == .notShown && layerBelow.verdict == .notShown)
+        #expect(layerBelow.improvementShare == patchBelow.improvementShare && (layerBelow.improvementShare ?? 1) < ControlComparison.helpedShare)
+        #expect(layerBelow.reason.contains("on worse"))
+    }
+
+    @Test func layerPairsWithTooFewRepeatsOrCellsHaveNoConclusion() throws {
+        let twoRepeats = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: Array(repeating: 0, count: 8), repeats: 2)
+                                                                + cells(layerSetup(.layer), passes: Array(repeating: 2, count: 8), repeats: 2)).paired.first)
+        #expect(twoRepeats.verdict == .noConclusion && twoRepeats.improvementShare == 1 && twoRepeats.reason.contains("fewer than 3 repeats"))
+        let fourTasks = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: [0, 0, 0, 0])
+                                                               + cells(layerSetup(.layer), passes: [3, 3, 3, 3])).paired.first)
+        #expect(fourTasks.verdict == .noConclusion && fourTasks.reason.contains("Fewer than 15 cells"))
+    }
+
+    @Test func aReadOnlyCellThatPassedLeavesTheLayerPairOpen() throws {
+        let main = cells(layerSetup(.requiredOnly), passes: [1, 1, 1, 1, 1]) + cells(layerSetup(.layer), passes: [3, 3, 3, 3, 3])
+        let sanity = layerSetup(.requiredOnly, readOnly: true)
+        let passed = [ControlComparison.Cell(task: "t0", setup: sanity, passed: false), ControlComparison.Cell(task: "t2", setup: sanity, passed: true)]
+        let open = try #require(ControlComparison.compare(main + passed).paired.first)
+        #expect(open.verdict == .noConclusion && open.improvementShare == 1)
+        #expect(open.reason.hasPrefix("A read-only agent passed t2: its oracle can't tell work from no work"))
+        // A read-only pass of another eval doesn't count here.
+        let other = [ControlComparison.Cell(task: "t2", setup: layerSetup(.requiredOnly, eval: "swiftui-2", readOnly: true), passed: true)]
+        #expect(ControlComparison.compare(main + other).paired.first?.verdict == .helpsOffline)
+        // A passed read-only cell on a task that isn't compared still counts, without a row of its own.
+        let elsewhere = ControlComparison.compare(main, sanity: [ControlComparison.Cell(task: "t9", setup: sanity, passed: true)])
+        #expect(elsewhere.paired.first?.verdict == .noConclusion && elsewhere.paired.first?.reason.contains("passed t9") == true)
+        #expect(elsewhere.rows.count == 2)
+    }
+
+    /// Changes in thirds that cancel are ties, not ±1e-16: the shares come from exact sums.
+    @Test func fractionalTiesAreExactlyZero() throws {
+        // Per task −1/3 and +1/3 by turns: many resamples sum to exactly zero.
+        let before = [2, 1, 2, 1, 2, 1], after = [1, 2, 1, 2, 1, 2]
+        let pair = try #require(ControlComparison.compare(cells(baseline, passes: before) + cells(variant, passes: after)).paired.first)
+        // The same resampling with whole thirds: −1, +1, … .
+        var generator = SeededGenerator(seed: 1)
+        let thirds = zip(after, before).map { $0 - $1 }
+        var (up, down) = (0, 0)
+        for _ in 0..<2000 {
+            let sum = thirds.indices.reduce(0) { total, _ in total + thirds[Int.random(in: 0..<thirds.count, using: &generator)] }
+            if sum > 0 { up += 1 } else if sum < 0 { down += 1 }
+        }
+        #expect(pair.improvementShare == Double(up) / 2000 && pair.worseShare == Double(down) / 2000)
+        #expect(up + down < 2000)
+
+        // (variant, baseline) passes (1,0) (3,2) (3,2) (3,1) (0,1) of 3: about 94.6% exactly, which
+        // floating-point sums of thirds pushed over 95%. Not "helps (offline)", and the patch pair agrees.
+        let layer = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: [0, 2, 2, 1, 1])
+                                                           + cells(layerSetup(.layer), passes: [1, 3, 3, 3, 0])).paired.first)
+        #expect(layer.verdict == .notShown && (layer.improvementShare ?? 1) < ControlComparison.helpedShare, "\(layer.reason)")
+        let patch = try #require(ControlComparison.compare(cells(baseline, passes: [0, 2, 2, 1, 1]) + cells(variant, passes: [1, 3, 3, 3, 0]),
+                                                           production: notWorse).paired.first)
+        #expect(patch.verdict == .notShown && patch.improvementShare == layer.improvementShare)
+    }
+
+    /// 45 different task totals: their least common multiple overflows `Int`, so the shares
+    /// come from Double sums with a tolerance instead of a trap.
+    @Test func manyDifferentTaskTotalsFallBackWithoutATrap() throws {
+        let totals = Array(3...47)
+        #expect(ControlComparison.exactChanges(totals.map { (after: (1, $0), before: (0, $0)) }) == nil)
+        #expect(ControlComparison.exactChanges([(after: (2, 3), before: (1, 4))]) == [8 - 3])
+        func cells(_ setup: ControlSetup, passed: (Int) -> Int) -> [ControlComparison.Cell] {
+            totals.enumerated().flatMap { index, total in
+                (0..<total).map { ControlComparison.Cell(task: "t\(index)", setup: setup, passed: $0 < passed(total)) }
+            }
+        }
+        // One more pass on every task: all the mass on improvement.
+        let better = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly)) { $0 / 3 } + cells(layerSetup(.layer)) { $0 / 3 + 1 }).paired.first)
+        #expect(better.improvementShare == 1 && better.worseShare == 0 && better.verdict == .helpsOffline)
+        // The same passes: every sum is a tie.
+        let same = try #require(ControlComparison.compare(cells(baseline) { $0 / 2 } + cells(variant) { $0 / 2 }).paired.first)
+        #expect(same.improvementShare == 0 && same.worseShare == 0 && same.verdict == .notShown)
+        // Mixed changes, up on even totals and down on odd ones: the shares add up to at most 1.
+        let mixed = try #require(ControlComparison.compare(cells(baseline) { $0 / 2 } + cells(variant) { $0 / 2 + ($0 % 2 == 0 ? 1 : -1) }).paired.first)
+        #expect((mixed.improvementShare ?? 2) + (mixed.worseShare ?? 2) <= 1)
+    }
+
+    @Test func aSetupWithBothAPatchAndALayerIsNotPaired() {
+        var both = layerSetup(.layer)
+        both.patch = ControlPatch(file: "CLAUDE.md", text: "x")
+        let comparison = ControlComparison.compare(cells(baseline, passes: [1, 1, 1, 1, 1]) + cells(layerSetup(.requiredOnly), passes: [1, 1, 1, 1, 1])
+                                                   + cells(both, passes: [3, 3, 3, 3, 3]), production: notWorse)
+        #expect(comparison.paired.isEmpty)
+        // Nor is it a layer row's baseline.
+        var patchedBase = layerSetup(.requiredOnly)
+        patchedBase.patch = ControlPatch(file: "CLAUDE.md", text: "x")
+        #expect(ControlComparison.compare(cells(patchedBase, passes: [1, 1, 1, 1, 1]) + cells(layerSetup(.layer), passes: [3, 3, 3, 3, 3])).paired.isEmpty)
+    }
+
+    @Test func worseShareCountsSumsBelowZeroAndNotTies() throws {
+        // All tasks the same: every bootstrap sum is zero, so neither share has any mass.
+        let same = try #require(ControlComparison.compare(cells(baseline, passes: [2, 1, 3, 0, 2]) + cells(variant, passes: [2, 1, 3, 0, 2])).paired.first)
+        #expect(same.improvementShare == 0 && same.worseShare == 0)
+        // One task better, the rest tied: the sums are zero or above, never below.
+        let one = try #require(ControlComparison.compare(cells(baseline, passes: [1, 1, 1, 1, 0]) + cells(variant, passes: [1, 1, 1, 1, 3])).paired.first)
+        let up = try #require(one.improvementShare)
+        #expect(one.worseShare == 0 && up > 0.5 && up < 1)
+        // Every task worse: all the mass below zero.
+        let down = try #require(ControlComparison.compare(cells(baseline, passes: [3, 3, 3, 3, 3]) + cells(variant, passes: [1, 1, 1, 1, 1])).paired.first)
+        #expect(down.worseShare == 1 && down.improvementShare == 0)
+        // Mixed: both shares, which add up to at most 1.
+        let mixed = try #require(ControlComparison.compare(cells(baseline, passes: [1, 1, 2, 3, 0, 2]) + cells(variant, passes: [3, 2, 1, 3, 1, 2])).paired.first)
+        let (improved, worsened) = (try #require(mixed.improvementShare), try #require(mixed.worseShare))
+        #expect(worsened > 0 && improved + worsened <= 1)
     }
 
     @Test func layerCellsRunWithoutTheLayerAreLeftOut() {
