@@ -46,6 +46,8 @@ enum AgentRun {
         let answer: String?
         /// Tokens and cost the harness recorded, for the send log.
         let usage: SendUsage
+        /// Claude Code's version from the stream's init event; nil for Pi.
+        var harnessVersion: String? = nil
     }
 
     /// Runs the agent to the end (or the time limit). Throws when the harness can't start.
@@ -70,7 +72,7 @@ enum AgentRun {
         }
         guard let exit else { throw LabWorker.Failure(message: "Couldn't start \(command.path).") }
         if exit.timedOut { out("The agent was stopped after \(MetricsText.duration(Int(timeout))).") }
-        return Outcome(exit: exit, error: printer.error, answer: printer.answer, usage: printer.usage)
+        return Outcome(exit: exit, error: printer.error, answer: printer.answer, usage: printer.usage, harnessVersion: printer.version)
     }
 }
 
@@ -85,6 +87,10 @@ final class StreamPrinter: @unchecked Sendable {
     private var lastError: String?
     private var lastAnswer: String?
     private var recorded = SendUsage()
+    private var harnessVersion: String?
+
+    /// Claude Code's version from `system/init` (`claude_code_version`).
+    var version: String? { lock.withLock { harnessVersion } }
 
     /// Tokens and cost the harness recorded: Claude Code's result event, Pi's answers.
     var usage: SendUsage { lock.withLock { recorded } }
@@ -125,7 +131,10 @@ final class StreamPrinter: @unchecked Sendable {
                         .filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined(separator: "\n")
                     if !text.isEmpty { lastAnswer = text }
                 }
+            case .claudeCode where object["type"] as? String == "system" && object["subtype"] as? String == "init":
+                harnessVersion = object["claude_code_version"] as? String
             case .claudeCode where object["type"] as? String == "result":
+
                 recorded = ModelCall.claudeUsage(object)
                 lastError = object["is_error"] as? Bool == true
                     ? SecretFilter.masked(String((object["result"] as? String ?? "Claude Code stopped with an error.").prefix(300))) : nil
