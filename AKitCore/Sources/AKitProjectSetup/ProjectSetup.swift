@@ -401,7 +401,8 @@ public enum ProjectSetup {
                 if change.kind == .remove || change.blockAction == .trash {
                     _ = try trash(url)
                     removed.append(change.path)
-                    removeEmptyFolders(from: url.deletingLastPathComponent(), upTo: plan.project)
+                    // Not after a trashed instructions file: Pi's folder may be a link or meant to be empty.
+                    if change.blockAction != .trash { removeEmptyFolders(from: url.deletingLastPathComponent(), upTo: plan.project) }
                     continue
                 }
                 if change.mergesJSON || change.block {

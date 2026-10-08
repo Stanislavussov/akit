@@ -214,6 +214,57 @@ struct InstructionsBlockTests {
         #expect(read(".claude/CLAUDE.md") == original)
     }
 
+    @Test func aTrashedPiFileLeavesItsFolderEvenALinkedEmptyOne() async throws {
+        let brain = try await core("Be brief.\n")
+        try fm.createDirectory(at: home.appending(path: "dotfiles/pi"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: home.appending(path: ".pi"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: home.appending(path: ".pi/agent").path, withDestinationPath: "../dotfiles/pi")
+        try await apply(plan(brain, targets: ["pi"]))
+        #expect(read("dotfiles/pi/AGENTS.md") == Self.block)
+        // Spaces and newlines left by hand count as empty: the file AKit created still goes.
+        try write("dotfiles/pi/AGENTS.md", " \n" + Self.block + "\r\n\t\n")
+        let empty = plan(try await core(nil), targets: ["pi"])
+        #expect(change(empty, ".pi/agent/AGENTS.md")?.blockAction == .trash)
+        try await apply(empty)
+        #expect(read("dotfiles/pi/AGENTS.md") == nil)
+        #expect(try fm.destinationOfSymbolicLink(atPath: home.appending(path: ".pi/agent").path) == "../dotfiles/pi")
+        #expect(fm.fileExists(atPath: home.appending(path: "dotfiles/pi").path))
+    }
+
+    @Test func anEditedBlockInAFilePiNoLongerReadsIsKept() async throws {
+        let brain = try await core("Be brief.\n")
+        try await apply(plan(brain, targets: ["pi"]))
+        try write(".pi/agent/AGENTS.md", "<!-- akit:core:start -->\nMine.\n<!-- akit:core:end -->\n")
+        try write(".pi/agent/AGENTS.override.md", "override\n")
+        let moved = plan(brain, targets: ["pi"])
+        let old = try #require(change(moved, ".pi/agent/AGENTS.md"))
+        #expect(old.kind == .keepEdited && old.blockAction == nil && old.blockNote == "edited by hand · Pi no longer reads this file")
+        try await apply(moved, accepting: [".pi/agent/AGENTS.md"])
+        #expect(read(".pi/agent/AGENTS.md") == "<!-- akit:core:start -->\nMine.\n<!-- akit:core:end -->\n")
+    }
+
+    @Test func aSeparatorRecordedBeforeTheFileTurnedCRLFComesOutWhole() async throws {
+        try write(".claude/CLAUDE.md", "A\n")
+        try await apply(plan(try await core("Be brief.\n")))
+        // The user converts the file to CRLF; the block then counts as edited and is taken again.
+        try write(".claude/CLAUDE.md", read(".claude/CLAUDE.md")!.replacingOccurrences(of: "\n", with: "\r\n"))
+        try await apply(plan(try await core("Be brief!\n")), accepting: [".claude/CLAUDE.md"])
+        try await apply(plan(try await core(nil)))
+        #expect(bytes(".claude/CLAUDE.md") == Data("A\r\n".utf8))
+    }
+
+    @Test func manyFencesThatNeverCloseAreReadInOnePass() {
+        let padding = String(repeating: "x", count: 500)
+        let text = String(repeating: "```\(padding)\n", count: 2_000) + Self.block
+        let clock = ContinuousClock()
+        var found = InstructionsBlock.Found.none
+        let elapsed = clock.measure { found = InstructionsBlock.find(in: Array(text.utf8)) }
+        if case .block = found {} else { Issue.record("the block after unclosed fences is not found: \(found)") }
+        #expect(elapsed < .seconds(5), "\(elapsed)")
+        // Four spaces before a marker make it an indented code line, not a marker.
+        #expect(InstructionsBlock.find(in: Array("    <!-- akit:core:start -->\n".utf8)) == .none)
+    }
+
     @Test func indentedMarkersCountAndOtherEncodingsAreSkipped() async throws {
         let brain = try await core("Be brief.\n")
         try write(".claude/CLAUDE.md", "A\n  <!-- akit:core:start -->\nold\n\t<!-- akit:core:end -->\nB\n")

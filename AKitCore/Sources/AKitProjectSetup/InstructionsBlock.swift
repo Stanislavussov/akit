@@ -28,24 +28,15 @@ public enum InstructionsBlock {
         case broken(String)
     }
 
-    /// A marker counts only as a whole line (spaces, tabs and `\r` around it ignored), and never
-    /// inside a fenced code block, so examples and quotes of it don't count. A fence that never
-    /// closes is no fence (the block AKit appended after it must stay findable).
+    /// A marker counts only as a whole line (at most 3 spaces or tabs before it, any after it,
+    /// and `\r`), and never inside a fenced code block, so examples and quotes of it don't count.
+    /// A fence that never closes is no fence: the markers after its opening line count (the
+    /// block AKit appended after it must stay findable). One pass over the file.
     static func find(in bytes: [UInt8]) -> Found {
-        var ignored: Set<Int> = []
-        while true {
-            let lines = scan(bytes, ignoringFencesAt: ignored)
-            guard let unclosed = lines.unclosedFence else { return pair(lines.starts, lines.ends, in: bytes) }
-            ignored.insert(unclosed)
-        }
-    }
-
-    private typealias Line = (start: Int, next: Int)
-
-    /// Marker lines outside fences, and the opening line of a fence still open at the end.
-    private static func scan(_ bytes: [UInt8], ignoringFencesAt ignored: Set<Int>) -> (starts: [Line], ends: [Line], unclosedFence: Int?) {
         var starts: [Line] = [], ends: [Line] = []
-        var fence: (char: Character, length: Int, line: Int)?
+        // Markers inside the fence open now: dropped when it closes, counted if it never does.
+        var fencedStarts: [Line] = [], fencedEnds: [Line] = []
+        var fence: (char: Character, length: Int)?
         var index = 0
         while index < bytes.count {
             let newline = bytes[index...].firstIndex(of: 0x0A)
@@ -58,11 +49,20 @@ public enum InstructionsBlock {
                 lineStart = 3
             }
             while let last = line.unicodeScalars.last, last == "\r" || last == " " || last == "\t" { line.unicodeScalars.removeLast() }
-            let bare = line.drop { $0 == " " || $0 == "\t" }
+            let indent = line.prefix { $0 == " " || $0 == "\t" }.count
+            let bare = indent <= 3 ? line.dropFirst(indent) : ""
             if let open = fence {
-                if fenceRun(line).map({ $0.char == open.char && $0.length >= open.length && $0.rest.isEmpty }) == true { fence = nil }
-            } else if !ignored.contains(index), let run = fenceRun(line) {
-                fence = (run.char, run.length, index)
+                if fenceRun(line).map({ $0.char == open.char && $0.length >= open.length && $0.rest.isEmpty }) == true {
+                    fence = nil
+                    fencedStarts = []
+                    fencedEnds = []
+                } else if bare == start {
+                    fencedStarts.append((lineStart, next))
+                } else if bare == end {
+                    fencedEnds.append((lineStart, next))
+                }
+            } else if let run = fenceRun(line) {
+                fence = (run.char, run.length)
             } else if bare == start {
                 starts.append((lineStart, next))
             } else if bare == end {
@@ -70,8 +70,14 @@ public enum InstructionsBlock {
             }
             index = next
         }
-        return (starts, ends, fence?.line)
+        if fence != nil {
+            starts += fencedStarts
+            ends += fencedEnds
+        }
+        return pair(starts, ends, in: bytes)
     }
+
+    private typealias Line = (start: Int, next: Int)
 
     private static func pair(_ starts: [Line], _ ends: [Line], in bytes: [UInt8]) -> Found {
         if starts.isEmpty && ends.isEmpty { return .none }
@@ -246,7 +252,11 @@ public enum InstructionsBlock {
         }
         var foundInner: [UInt8]?
         if case .block(_, let inner) = found { foundInner = inner }
-        let separator = previous?.separator.map { Array($0.utf8) }
+        let eol = lineEnding(of: bytes)
+        // Recorded with the line ending the file had then: in this file's own one now.
+        let separator = previous?.separator.map {
+            Array($0.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: String(decoding: eol, as: UTF8.self)).utf8)
+        }
         let edited = foundInner.map { previous?.sha256 != Checksum.sha256($0) } ?? false
 
         guard let text else {
@@ -257,17 +267,14 @@ public enum InstructionsBlock {
                                 write: Data(after), record: nil, kept: previous, snapshot: snapshot, action: .takeOut)
             // A Pi file AKit created, empty without the block: an empty file would still be the
             // one Pi reads (hiding a CLAUDE.md next to it), so it goes to the Trash.
-            if previous?.created == true, target == "pi", after.isEmpty || after == Self.bom {
+            let content = after.starts(with: Self.bom) ? after.dropFirst(Self.bom.count) : after[...]
+            if previous?.created == true, target == "pi", content.allSatisfy({ [0x20, 0x09, 0x0D, 0x0A].contains($0) }) {
                 result.kind = .remove
                 result.action = .trash
                 result.newText = nil
                 result.write = nil
             }
-            if let moved {
-                result.kind = .suggest
-                result.note = "AKit's old block · tick to take it out"
-                result.warnings.append("\(path) has AKit's block, but Pi now reads \(moved). Tick \(path) in the preview (or akit apply --include \(path)) to take the old block out.")
-            } else if previous == nil {
+            if previous == nil {
                 result.kind = .suggest
                 result.note = "AKit's block, no record of it · tick to take it out"
             } else if edited {
@@ -275,11 +282,18 @@ public enum InstructionsBlock {
                 result.newText = shownOld
                 result.write = nil
                 result.action = nil
+                if let moved {
+                    result.note = "edited by hand · Pi no longer reads this file"
+                    result.warnings.append("\(path) has AKit's block, edited by hand, but Pi now reads \(moved). AKit leaves it; take it out by hand if you no longer need it.")
+                }
+            } else if let moved {
+                result.kind = .suggest
+                result.note = "AKit's old block · tick to take it out"
+                result.warnings.append("\(path) has AKit's block, but Pi now reads \(moved). Tick \(path) in the preview (or akit apply --include \(path)) to take the old block out.")
             }
             return result
         }
 
-        let eol = lineEnding(of: bytes)
         let wanted = inner(text, lineEnding: eol)
         let new = written(wanted, into: bytes, found: found, separator: separator)
         let offered = Checksum.sha256(Data(text.utf8))

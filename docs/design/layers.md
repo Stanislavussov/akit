@@ -387,14 +387,16 @@ The text sits between two markers, and AKit owns only what is between them:
 - **One text per target.** The text is rendered once per harness, so a section with
   `when: target == pi` reaches only Pi's file; an error in any target's render stops Apply. A
   layer text that holds a marker is a render error.
-- **Markers** count only as whole lines (spaces, tabs and `\r` around them ignored), never
-  inside a fenced code block, so a quoted marker in the user's text is just text. A fence that
-  never closes doesn't count as one (else the block AKit appended after it would be invisible
-  and appended again).
+- **Markers** count only as whole lines (at most 3 spaces or tabs before, any after, `\r`
+  ignored; 4 make an indented code line), never inside a fenced code block, so a quoted marker
+  in the user's text is just text. A fence that never closes doesn't count as one (else the
+  block AKit appended after it would be invisible and appended again); the file is read in one
+  pass, however many fences stay open.
 - **Bytes around the block** are AKit's to keep. AKit works on bytes: CRLF files get a block
   with CRLF lines, a BOM stays. Text in UTF-16 or UTF-32 (a BOM of those, or NUL bytes) is
   skipped with a warning. Taking the block out removes the separator AKit put before it
-  (`separator` in the lock) only while it is still there as AKit put it, and never joins the
+  (`separator` in the lock, in the file's line ending of today) only while it is still there
+  as AKit put it, and never joins the
   user's line before the block with their text after it. So on a file the user left alone,
   append + take out gives back the same bytes (no final newline, trailing blank lines, CRLF,
   BOM); with the user's edits around the block, their text stays, with at most a line ending
@@ -407,9 +409,10 @@ The text sits between two markers, and AKit owns only what is between them:
 - **Empty render** (the core layer has no AGENTS.md text, the target is no longer chosen,
   Forget): the block and its markers go; the file stays, even when empty. Only a block AKit
   wrote (it has a record) is taken out; one without a record is only offered. One exception: a
-  Pi file AKit created (`created` in the lock) that is empty without the block goes to the
-  Trash, since Pi reads the first instructions file in its folder even when it is empty and
-  would no longer see a `CLAUDE.md` next to it.
+  Pi file AKit created (`created` in the lock) that is empty without the block (or holds only
+  spaces and line endings) goes to the Trash, since Pi reads the first instructions file in its
+  folder even when it is empty and would no longer see a `CLAUDE.md` next to it. Its folder
+  stays, even when empty (it may be a link, or a PI_CODING_AGENT_DIR meant to be empty).
 - **Broken markers** (a start without an end, two starts, an end before the start): a blocker
   in the preview; nothing is written. When AKit only wanted to take its block out, the file is
   left alone with a warning and keeps its record.
@@ -426,7 +429,8 @@ The text sits between two markers, and AKit owns only what is between them:
   rendered, but edited by hand: kept").
 - **Pi reads another file now** (an `AGENTS.override.md` appeared, PI_CODING_AGENT_DIR
   changed): the block goes into the new file, and the old one is only offered for taking out
-  (unticked, with a warning).
+  (unticked, with a warning); an old block edited by hand is kept ("edited by hand · Pi no
+  longer reads this file").
 - **Older AKit**: it ignores `blocks` and `piAgentDir`, and drops them when it saves the lock.
   A block found without a record counts as edited, unless it holds the layers' text exactly
   (then it is AKit's again, with a record); Forget can't tell, so it leaves such a block and
