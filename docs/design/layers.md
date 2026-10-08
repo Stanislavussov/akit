@@ -3,7 +3,10 @@
 Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
-bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`.
+bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
+`.pi/mcp.json` and `.pi/settings.json`. The home render writes the core layer's AGENTS.md
+text as a marked block into the harnesses' global instructions (2026-10-08, see
+[Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08)).
 
 Also built, though not roadmap steps: work machines, the "project owns its files" update
 rules, `keep_auto`, `override`, the home folder render (`akit apply --home`, and in the app
@@ -154,8 +157,8 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 - Built-in fields: `project_name`, `target` (the chosen harnesses: `claude`, `pi`,
   `opencode`, `codex`; `target == claude` holds when claude is among them).
 - An unanswered field is empty (`false` for bool, no items for multi).
-- A `.mcp.json` or `.claude/settings.json` template is parsed first and `{{field}}` is
-  filled only inside its string values (see [JSON merge](#json-merge-built-2026-10-08)).
+- A template for a merged JSON file (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json`,
+  `.pi/settings.json`) is parsed first and `{{field}}` is filled only inside its string values (see [JSON merge](#json-merge-built-2026-10-08)).
 - Skills fill `{{field}}` only in Markdown files; unknown names are left as is
   (a warning for templates).
 - Fields never hold secrets. Secrets come from Keychain (see MCP below).
@@ -185,16 +188,23 @@ project/
   CLAUDE.md                    # "@AGENTS.md", only if Claude is a target
   .claude/skills -> ../.agents/skills   # symlink, only if Claude is a target
   .mcp.json, .claude/settings.json      # only the layers' keys, merged into the project's file
+  .pi/mcp.json, .pi/settings.json       # the same for Pi (MCP through pi-mcp-adapter)
 ```
 
 Targets (harnesses) are a project field, multi-select, default from the machine
 profile. Differences per harness go through `when: target == "claude"`.
 
+In the home folder, AGENTS.md is not written as `~/AGENTS.md` (Claude Code never reads it, Pi
+only below the home folder): its text goes as a marked block into `~/.claude/CLAUDE.md` and the
+file Pi reads in `~/.pi/agent`, see
+[Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08).
+
 ## Several layers, one file
 
 - Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;
   sections are glued in layer order (`requires` first, then selection order).
-- JSON (`.mcp.json` and `.claude/settings.json` only; built 2026-10-08):
+- JSON (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json` and `.pi/settings.json` only;
+  built 2026-10-08):
   deep merge of keys. Two layers setting the same leaf to different values is an error,
   shown in the form before Apply, unless one sets `override: true`. The result is merged
   into the project's file key by key, see [JSON merge](#json-merge-built-2026-10-08).
@@ -231,8 +241,11 @@ A layer is a shared starting point, not the owner of a project. Per project:
   They win over a brain skill with the same name, are never overwritten, and get
   the `.claude/skills` link when Claude is a target. The project page lists them
   (New Skill…, Edit, Move to Trash).
-- The home folder follows the core layer completely (no ownership rules there).
-- JSON files (`.mcp.json`, `.claude/settings.json`): ownership is per key, not per file
+- The home folder follows the core layer completely (no ownership rules there), except
+  for the instructions block: one edited by hand is kept and the layers' text only offered
+  (see [Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08)).
+- JSON files (`.mcp.json`, `.claude/settings.json`, `.pi/mcp.json`, `.pi/settings.json`):
+  ownership is per key, not per file
   (2026-10-08). The file is the project's; AKit owns only the leaves it wrote. See
   [JSON merge](#json-merge-built-2026-10-08).
 
@@ -244,9 +257,11 @@ Decided 2026-10-08, built the same day. One mechanism for three plans: MCP serve
 layers, hooks and permissions in layers, and writing `enabledPlugins` from a
 recommendation later.
 
-1. **Which files.** Two files are merged, not glued or owned whole: `.mcp.json` and
-   `.claude/settings.json` in a project (exact paths, any letter case; an allow-list,
-   `ProjectBundle.mergedJSONFiles`, revised 2026-10-08 after review). Any other `.json`
+1. **Which files.** Four files are merged, not glued or owned whole: `.mcp.json` and
+   `.claude/settings.json` in a project, and Pi's `.pi/mcp.json` (read by the pi-mcp-adapter
+   package, which reads `.mcp.json` too) and `.pi/settings.json` (exact paths, any letter
+   case; an allow-list, `ProjectBundle.mergedJSONFiles`, revised 2026-10-08 after review; Pi's
+   two added 2026-10-08). Any other `.json`
    target (`tsconfig.json`, `opencode.json`, …) stays a whole file like any template, with
    text substitution, so JSONC files keep working. Targets are grouped ignoring letter case
    and a leading `./`; one file spelled two ways is a render error. Objects merge deeply;
@@ -262,7 +277,16 @@ recommendation later.
    the layer and the template.
 3. **Secrets.** A layer never carries secret values: every value at or under an `env` or
    `headers` key (any letter case) must be a whole-string `${NAME}` reference, else a render
-   error. So `"Bearer ${TOKEN}"` is refused for now. The preview never shows a secret: in a
+   error. So `"Bearer ${TOKEN}"` is refused for now. In `.mcp.json` and `.pi/mcp.json` a value
+   there starting with `!` gets its own error: pi-mcp-adapter runs such a value as a shell
+   command, and a layer never brings a command to run. Open (2026-10-09): pi-mcp-adapter's
+   source was not available locally, so whether it also runs or expands other fields
+   (`bearerToken`, `auth`, …) is not checked; only `env` and `headers` are guarded and masked.
+   Keys a harness runs are allowed but named in the preview ("layer X sets `shellCommandPrefix`
+   in .pi/settings.json, which Pi runs"): Pi's `shellPath`, `shellCommandPrefix`, `npmCommand`,
+   `packages`, `extensions`, `externalEditor`; Claude Code's `hooks`, `apiKeyHelper`,
+   `statusLine`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`; and an MCP
+   server's `headersHelper` in `.mcp.json`. The preview never shows a secret: in a
    JSON change's texts every value under `env` and `headers` that is not a `${NAME}`
    reference reads `••••`, in the old and the new text, also inside lists of objects. The
    masked text is only for showing; Apply writes the real values. Every `.json` file the
@@ -331,6 +355,112 @@ Where it lives: `JSONValue` (AKitFoundation: parse, print, key paths, masking),
 `ProjectBundle.resolve` (parse, fill, secret check), `Render.mergeJSON` (layers into one
 object, clashes), `JSONMerge` in AKitProjectSetup (into the project's file, the lock record).
 
+## Home folder: instructions block (built 2026-10-08)
+
+Decided 2026-10-08 ("block with markers"), built the same day, revised 2026-10-09 after review.
+The home render used to write the core layer's AGENTS.md text to `~/AGENTS.md`, which Claude
+Code never reads and Pi reads only as a parent of the folder it starts in. Now it goes into the
+global instructions file of each target harness of the home record (`answers.targets`):
+
+- `claude` → `~/.claude/CLAUDE.md`;
+- `pi` → the file Pi reads in its config folder. Pi reads one file per folder, the first that
+  exists of `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`
+  (`loadContextFileFromDir` in Pi's resource-loader; checked in the installed 0.8x package), so
+  the block goes into that one, and AKit creates `AGENTS.md` only when none is there. The
+  preview names the files next to it that Pi doesn't read ("…; CLAUDE.md next to it is not read
+  by Pi"). The folder is PI_CODING_AGENT_DIR (`~` and `file://` expanded, as Pi does), else
+  `~/.pi/agent`. `akit` on the command line takes its environment as it is. The app, started
+  from the Finder, doesn't see the shell's variables: it uses the folder the last home render
+  used (`piAgentDir` in the lock) while that folder exists, and the preview says so ("Pi's
+  folder: … (remembered from an earlier render…)"). A relative PI_CODING_AGENT_DIR is resolved
+  by Pi from the folder it starts in, so AKit leaves Pi's file alone with a warning. A folder
+  outside the home folder shows its absolute path.
+
+The text sits between two markers, and AKit owns only what is between them:
+
+```
+<!-- akit:core:start -->
+…the core layer's AGENTS.md text…
+<!-- akit:core:end -->
+```
+
+- **One text per target.** The text is rendered once per harness, so a section with
+  `when: target == pi` reaches only Pi's file; an error in any target's render stops Apply. A
+  layer text that holds a marker is a render error.
+- **Markers** count only as whole lines (at most 3 spaces or tabs before, any after, `\r`
+  ignored; 4 make an indented code line), never inside a fenced code block, so a quoted marker
+  in the user's text is just text. A fence that never closes doesn't count as one (else the
+  block AKit appended after it would be invisible and appended again); the file is read in one
+  pass, however many fences stay open.
+- **Bytes around the block** are AKit's to keep. AKit works on bytes: CRLF files get a block
+  with CRLF lines, a BOM stays. Text in UTF-16 or UTF-32 (a BOM of those, or NUL bytes) is
+  skipped with a warning. Taking the block out removes the separator AKit put before it
+  (`separator` in the lock, in the file's line ending of today) only while it is still there
+  as AKit put it, and never joins the
+  user's line before the block with their text after it. So on a file the user left alone,
+  append + take out gives back the same bytes (no final newline, trailing blank lines, CRLF,
+  BOM); with the user's edits around the block, their text stays, with at most a line ending
+  added between two lines that would otherwise join. Permissions and extended attributes of
+  the file are kept (the atomic write makes a new file, so AKit copies them over). Other tools
+  keep their own blocks in the same file (oh-my-claudecode writes `<!-- OMC:START -->` … into
+  `~/.claude/CLAUDE.md`).
+- **No block yet**: appended at the end, after one blank line. **File missing**: created with
+  only the block. **Update**: only the block is replaced.
+- **Empty render** (the core layer has no AGENTS.md text, the target is no longer chosen,
+  Forget): the block and its markers go; the file stays, even when empty. Only a block AKit
+  wrote (it has a record) is taken out; one without a record is only offered. One exception: a
+  Pi file AKit created (`created` in the lock) that is empty without the block (or holds only
+  spaces and line endings) goes to the Trash, since Pi reads the first instructions file in its
+  folder even when it is empty and would no longer see a `CLAUDE.md` next to it. Its folder
+  stays, even when empty (it may be a link, or a PI_CODING_AGENT_DIR meant to be empty).
+- **Broken markers** (a start without an end, two starts, an end before the start): a blocker
+  in the preview; nothing is written. When AKit only wanted to take its block out, the file is
+  left alone with a warning and keeps its record.
+- **A file AKit can't safely write** (a link, a file with more than one hard link, which an
+  atomic write would cut, a folder, an unreadable file): skipped with a warning, the rest of the
+  home folder still updates. A linked parent folder (`~/.claude` in a dotfiles repo) is fine.
+- **Edited by hand**: `lock.json` keeps, per file, a hash of the text AKit wrote in the block
+  and of the layers' text last offered (optional key `blocks`, `{path: {sha256, offered,
+  layers, separator, target, created}}`, plus `piAgentDir`). A block edited since is the user's, like an
+  edited template in a project: kept, and the layers' new text is offered unticked ("edited by
+  hand · layers changed"), once per new version ("edited by hand" after that); taken when ticked
+  or with `akit apply --include PATH`. A block (or the whole file) removed by hand is not added
+  again, only offered ("removed by hand"). An edited block outlives an empty render ("no longer
+  rendered, but edited by hand: kept").
+- **Pi reads another file now** (an `AGENTS.override.md` appeared, PI_CODING_AGENT_DIR
+  changed): the block goes into the new file, and the old one is only offered for taking out
+  (unticked, with a warning); an old block edited by hand is kept ("edited by hand · Pi no
+  longer reads this file").
+- **Older AKit**: it ignores `blocks` and `piAgentDir`, and drops them when it saves the lock.
+  A block found without a record counts as edited, unless it holds the layers' text exactly
+  (then it is AKit's again, with a record); Forget can't tell, so it leaves such a block and
+  says so.
+- **Lock keys** are used only for instruction files: `.claude/CLAUDE.md`, or a Pi record whose
+  file is one Pi reads (`AGENTS.md`, `CLAUDE.md`, …) in any folder, so a block in a folder Pi
+  used before can still be offered for taking out. Any other key is dropped from the lock with
+  a warning; its file is never touched.
+- **Preview and Apply**: the preview shows a diff of the whole file; Apply backs the file up
+  first (a file outside the home folder under its full path) and refuses if it changed since
+  the preview, checked again right before the block is written.
+- **`~/AGENTS.md` of an older render** goes through the usual "an earlier render wrote it"
+  removal: to the Trash, unless edited since (then kept, and with Pi as a target the preview
+  warns that Pi reads it on top of its own file in every folder under the home folder).
+- **`akit setup`** names each block change and asks ("Add AKit's block … to ~/.claude/CLAUDE.md?
+  [Y/n]"), and the same for moving an older `~/AGENTS.md` to the Trash; without a terminal it
+  leaves them and says so.
+- **Forget** takes AKit's blocks out ("Forget and Remove AKit's Files and Blocks") and lists the
+  ones that stay (edited, without a record, or a file AKit doesn't write).
+- A core template that targets one of these files is a blocker (the file can't be both).
+
+Where it lives: `Render` marks the home folder's AGENTS.md output `instructionsBlock`;
+`InstructionsBlock.planHome` (called by `ProjectSetup.plan` with `piAgentDirSetting`) renders
+the text per target, picks the files and plans each one; `InstructionsBlock` finds, writes and
+takes out the block. `akit apply --home`, `akit setup`, **Update Home Folder…** and **Forget
+Project…** on the home folder all use it.
+
+Not built: the global files of other harnesses (Codex `~/.codex/AGENTS.md`, OpenCode
+`~/.config/opencode/AGENTS.md`).
+
 ## Agent draft
 
 Status: not built. What exists instead: every new brain starts with the manual `/akit`
@@ -348,7 +478,8 @@ and deletes the draft. The form works without the agent.
 
 Status: possible since 2026-10-08 through JSON merge: a layer with an `.mcp.json`
 template brings project MCP servers (`"mcpServers": {…}`), and `.claude/settings.json`
-can enable them (`enabledMcpjsonServers`). Secrets are written only as `${VAR}` references
+can enable them (`enabledMcpjsonServers`). For Pi, `.pi/mcp.json` has the same shape (read by
+pi-mcp-adapter, which also reads `.mcp.json`). Secrets are written only as `${VAR}` references
 (enforced). Not built: the real values from Keychain (today they come from the
 environment the harness starts in), and MCP files of other harnesses (Codex TOML,
 OpenCode `opencode.json` has its own layout).
@@ -381,6 +512,7 @@ its context menu) is `akit remove project`: both use `ProjectForget`, and the di
 
 Step 6 of the design map, JSON merge (2026-10-08): `.mcp.json` and `.claude/settings.json`
 merge key by key into the project's file, see [JSON merge](#json-merge-built-2026-10-08).
+Pi's `.pi/mcp.json` and `.pi/settings.json` joined the same day.
 
 ## Open questions
 
@@ -389,4 +521,5 @@ merge key by key into the project's file, see [JSON merge](#json-merge-built-202
 - Pi has no native MCP (only via `pi-mcp-adapter`).
 - Subagents in layers: low priority, format stays open for them.
 - Rendering the core layer into the home folder: done (`akit apply --home`, and
-  **Update Home Folder…** in the app).
+  **Update Home Folder…** in the app); its AGENTS.md text as a block in Claude Code's and
+  Pi's global instructions since 2026-10-08.

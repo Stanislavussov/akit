@@ -249,11 +249,19 @@ public struct ProjectBundle: Sendable {
                         warnings.append("\(layer.name)/\(file.template) uses {{\(name)}}, which is not a field; it is left as is.")
                     }
                     // Secrets never live in the brain: env and headers hold only ${VAR} references.
+                    // In MCP files a value starting with `!` is a command pi-mcp-adapter runs: said so.
+                    let commands = runsCommands(file.to) ? Set(filled.commandLeaves) : []
                     let secrets = filled.secretLeaves
                     for path in secrets {
-                        errors.append("\(name): \(JSONValue.display(path)) holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment.")
+                        errors.append(commands.contains(path)
+                            ? "\(name): \(JSONValue.display(path)) starts with “!”, and pi-mcp-adapter runs it as a shell command; under env and headers a layer may bring only a ${NAME} reference."
+                            : "\(name): \(JSONValue.display(path)) holds a value. Under env and headers a layer may bring only a ${NAME} reference; the value comes from the environment.")
                     }
                     guard secrets.isEmpty else { continue }
+                    // Keys whose value the harness runs: allowed, but named in the preview.
+                    for key in runningKeys(filled, path: file.to) {
+                        warnings.append("\(layer.name) sets \(key.key) in \(file.to), which \(key.harness) runs; check it before Apply.")
+                    }
                     files.append(File(layer: layer.name, to: file.to, data: Data(filled.pretty.utf8), override: file.override))
                     continue
                 }
@@ -287,11 +295,40 @@ public struct ProjectBundle: Sendable {
     // MARK: - Pieces
 
     /// The JSON files merged key by key into the project's file instead of written whole:
-    /// Claude Code's project MCP servers and settings (any letter case). Other `.json` targets
-    /// (tsconfig.json, opencode.json, …) are whole files like any template.
-    public static let mergedJSONFiles: Set<String> = [".mcp.json", ".claude/settings.json"]
+    /// Claude Code's and Pi's project MCP servers and settings (any letter case; Pi's MCP files
+    /// are read by the pi-mcp-adapter package). Other `.json` targets (tsconfig.json,
+    /// opencode.json, …) are whole files like any template.
+    public static let mergedJSONFiles: Set<String> = [".mcp.json", ".claude/settings.json", ".pi/mcp.json", ".pi/settings.json"]
 
     public static func mergesJSON(_ path: String) -> Bool { mergedJSONFiles.contains(normalizedPath(path).lowercased()) }
+
+    /// Settings whose value the harness runs as a command or loads as code, by merged file:
+    /// Pi's settings (settings-manager), Claude Code's settings, and a project MCP server's
+    /// `headersHelper` (any server, so `*`).
+    static let runningKeys: [String: (harness: String, paths: [[String]])] = [
+        ".pi/settings.json": ("Pi", [["shellPath"], ["shellCommandPrefix"], ["npmCommand"], ["packages"], ["extensions"], ["externalEditor"]]),
+        ".claude/settings.json": ("Claude Code", [["hooks"], ["apiKeyHelper"], ["statusLine"], ["awsAuthRefresh"], ["awsCredentialExport"],
+                                                  ["otelHeadersHelper"]]),
+        ".mcp.json": ("Claude Code", [["mcpServers", "*", "headersHelper"]]),
+    ]
+
+    /// The keys of `runningKeys` a layer's JSON sets, as shown (`mcpServers.api.headersHelper`).
+    static func runningKeys(_ tree: JSONValue, path: String) -> [(key: String, harness: String)] {
+        guard let entry = runningKeys[normalizedPath(path).lowercased()] else { return [] }
+        var found: [String] = []
+        for leaf in tree.leaves {
+            for pattern in entry.paths where leaf.path.count >= pattern.count
+                && zip(pattern, leaf.path).allSatisfy({ $0 == "*" || $0 == $1 }) {
+                let key = JSONValue.display(Array(leaf.path.prefix(pattern.count)))
+                if !found.contains(key) { found.append(key) }
+            }
+        }
+        return found.map { ($0, entry.harness) }
+    }
+
+    /// MCP files whose `env` and `headers` values pi-mcp-adapter runs as a shell command when
+    /// they start with `!` (it reads `.mcp.json` too).
+    static func runsCommands(_ path: String) -> Bool { [".mcp.json", ".pi/mcp.json"].contains(normalizedPath(path).lowercased()) }
 
     /// Files AKit never reads, shows or writes, because they hold secrets.
     public static func isSecretFile(_ path: String) -> Bool {
@@ -373,12 +410,16 @@ public struct RenderedFile: Hashable, Sendable {
     /// A JSON file of the layers' keys, merged key by key into the project's file (never
     /// written whole; see `ProjectSetup`).
     public let mergesJSON: Bool
+    /// The core layer's AGENTS.md text in the home folder: written as a marked block into the
+    /// global instructions file of each target harness, never as ~/AGENTS.md (see `ProjectSetup`).
+    public let instructionsBlock: Bool
 
-    public init(path: String, content: Content, layers: [String], mergesJSON: Bool = false) {
+    public init(path: String, content: Content, layers: [String], mergesJSON: Bool = false, instructionsBlock: Bool = false) {
         self.path = path
         self.content = content
         self.layers = layers
         self.mergesJSON = mergesJSON
+        self.instructionsBlock = instructionsBlock
     }
 
     public var text: String? {

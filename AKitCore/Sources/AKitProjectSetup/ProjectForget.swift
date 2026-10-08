@@ -20,19 +20,31 @@ public enum ProjectForget {
         public var removals: [String] { plan?.changes.filter { $0.kind == .remove }.map(\.path) ?? [] }
         /// JSON files the project keeps, with the keys AKit merged into them taken out.
         public var keysTakenOut: [String] { plan?.changes.filter { $0.mergesJSON && $0.kind == .update }.map(\.path) ?? [] }
+        /// Instruction files (home folder) the user keeps, with AKit's block taken out.
+        public var blocksTakenOut: [String] { plan?.changes.filter { $0.block && $0.kind == .update }.map(\.path) ?? [] }
         /// JSON files where AKit's keys stay although the record goes: AKit can't read the file
         /// as JSON (or it is a link or a folder), so it can't take them out.
         public var keysLeft: [String] { plan?.jsonRecords.keys.sorted() ?? [] }
+        /// Instruction files where AKit's block stays although the record goes: edited by hand,
+        /// found without a record, or a file AKit can't safely write (a link, broken markers).
+        public var blocksLeft: [String] {
+            guard let plan else { return [] }
+            let left = plan.changes.filter { $0.block && [.keepEdited, .suggest, .own].contains($0.kind) }.map(\.path)
+            return Set(left + plan.blockSkipped).sorted()
+        }
         /// Files AKit wrote and the user edited since: kept.
-        public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited }.map(\.path) ?? [] }
+        public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited && !$0.block }.map(\.path) ?? [] }
     }
 
     /// What forgetting would do; nil when nothing is saved for the id. Only reads.
-    public static func preview(id: String, folder: URL?, forHome: Bool, brain: Brain, store: ProjectStore) -> Preview? {
+    /// `piAgentDirSetting`: see `ProjectSetup.plan`.
+    public static func preview(id: String, folder: URL?, forHome: Bool, brain: Brain, store: ProjectStore,
+                               piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false) -> Preview? {
         guard var empty = ProjectRecords.savedAnswers(id: id, in: store) else { return nil }
         empty.layers = []
         empty.skills = []
-        let plan = folder.map { ProjectSetup.plan(project: $0, id: id, answers: empty, brain: brain, store: store, forHome: forHome) }
+        let plan = folder.map { ProjectSetup.plan(project: $0, id: id, answers: empty, brain: brain, store: store, forHome: forHome,
+                                                  piAgentDirSetting: piAgentDirSetting, rememberPiAgentDir: rememberPiAgentDir) }
         let fm = FileManager.default
         return Preview(id: id, store: store, plan: plan,
                        ownRecord: !store.isLocal || fm.fileExists(atPath: store.folder(id: id).path),
@@ -47,7 +59,7 @@ public enum ProjectForget {
         guard preview.store.isSamePlace(as: .current(brain: preview.store.brain ?? brain.root, home: home)) else {
             throw ProjectSetup.Failure(message: "This Mac's role (akit machine) changed since the preview; preview again.")
         }
-        if !keepFiles, let plan = preview.plan, !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty {
+        if !keepFiles, let plan = preview.plan, !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty || !preview.blocksTakenOut.isEmpty {
             _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
         }
         // Apply saved a lock again, in a local store too; forget the project with it.

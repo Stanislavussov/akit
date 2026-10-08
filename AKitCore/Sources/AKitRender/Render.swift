@@ -5,8 +5,11 @@ import Foundation
 /// Turns a `ProjectBundle` into harness files: skills in `.agents/skills`, glued Markdown
 /// files, the CLAUDE.md shim and the `.claude/skills` link. Pure: writes nothing.
 public enum Render {
-    /// `forHome`: rendering the core layer into the home folder, where no harness reads
-    /// ~/AGENTS.md, so there is no CLAUDE.md shim (the .claude/skills link still applies).
+    /// `forHome`: rendering the core layer into the home folder. ~/AGENTS.md is not the place
+    /// for global instructions (Claude Code never reads it; Pi reads it only as a parent of the
+    /// folder it starts in, and not when it starts elsewhere): the text is marked
+    /// `instructionsBlock` (ProjectSetup writes it as a block into each harness's global
+    /// instructions file), and there is no CLAUDE.md shim (the .claude/skills link still applies).
     public static func render(_ bundle: ProjectBundle, forHome: Bool = false) -> RenderResult {
         var errors = bundle.errors
         var warnings = bundle.warnings
@@ -47,7 +50,7 @@ public enum Render {
             let parts = pieces[path] ?? []
             if ProjectBundle.mergesJSON(path) {
                 let layers = parts.map(\.layer).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-                // Not merged into the home folder yet (~/.claude/settings.json is the user's).
+                // Not merged into the home folder yet (~/.claude/settings.json, ~/.pi/agent/mcp.json are the user's).
                 guard !forHome else {
                     warnings.append("\(path) (\(layers.joined(separator: ", "))): JSON files are not rendered into the home folder yet; skipped.")
                     continue
@@ -62,7 +65,7 @@ public enum Render {
                 let sections = filled.isEmpty && path != "AGENTS.md" ? all : filled
                 guard !sections.isEmpty else { continue }
                 outputs.append(RenderedFile(path: path, content: .data(Data((sections.map(\.text).joined(separator: "\n\n") + "\n").utf8)),
-                                            layers: sections.map(\.layer)))
+                                            layers: sections.map(\.layer), instructionsBlock: forHome && path.lowercased() == "agents.md"))
             } else if let winner = parts.last(where: \.override) ?? parts.last {
                 if parts.count > 1, !parts.contains(where: \.override) {
                     errors.append("\(path) comes from \(parts.map(\.layer).joined(separator: " and ")). Set override: true in the layer that should win.")

@@ -173,7 +173,8 @@ public enum Onboarding {
         // Harnesses installed since the last setup join in.
         answers.targets += installedTargets.filter { !answers.targets.contains($0) }
         if answers.targets.isEmpty { answers.targets = ["claude"] }
-        var plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true)
+        var plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true,
+                                     piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
 
         // Claude's own skills folder has to become a link to ~/.agents/skills.
         let claudeSkills = env.homeDirectory.appending(path: ".claude/skills")
@@ -183,7 +184,8 @@ public enum Onboarding {
             // Asked only: without a terminal they stay where they are.
             if let ask = io.ask, yes(ask("Move them to ~/.agents/skills and link ~/.claude/skills there? A backup is kept. [Y/n]"), default: true) {
                 try moveClaudeSkills(claudeSkills, home: env.homeDirectory, io: io)
-                plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true)
+                plan = ProjectSetup.plan(project: env.homeDirectory, id: id, answers: answers, brain: brain, store: store, forHome: true,
+                                         piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
             }
         }
         guard plan.canApply else {
@@ -201,10 +203,38 @@ public enum Onboarding {
             }
         }
         let keptNote = "  Kept your own versions of \(Set(skipped.map { skillName($0) ?? $0 }).count); replace them later with akit setup."
+        // The harnesses' own instruction files are the user's (and an older ~/AGENTS.md may hold
+        // their edits): each change is named and asked; without a terminal nothing happens to them.
+        var notAsked: [String] = []
+        for change in plan.changes where (change.block && [.create, .update, .remove].contains(change.kind))
+            || (!change.block && change.path == "AGENTS.md" && change.kind == .remove) {
+            let shown = change.path.hasPrefix("/") ? change.path : "~/\(change.path)"
+            let question = switch change.blockAction {
+            case nil:
+                "Move \(shown), written by an earlier AKit, to the Trash? The core layer's text now goes into the harnesses' own instruction files. [Y/n]"
+            case .takeOut?:
+                "Take AKit's block out of \(shown)? The text around it stays; a backup is kept. [Y/n]"
+            case .trash?:
+                "Take AKit's block out of \(shown) and move the file, which AKit created and which is then empty, to the Trash? [Y/n]"
+            case .update?:
+                "Update AKit's block (the core layer's AGENTS.md) in \(shown)? The text around it stays; a backup is kept. [Y/n]"
+            case .add?:
+                "Add AKit's block (the core layer's AGENTS.md) to \(shown)? The text around it stays; a backup is kept. [Y/n]"
+            }
+            guard let ask = io.ask else {
+                notAsked.append(shown)
+                skipped.insert(change.path)
+                continue
+            }
+            if !yes(ask(question), default: true) { skipped.insert(change.path) }
+        }
+        if !notAsked.isEmpty {
+            io.say("Home folder: left alone without a terminal: \(notAsked.joined(separator: ", ")) (AKit's instructions block). Review it with akit plan --home, then akit apply --home.")
+        }
         let changing = plan.changes.filter { $0.kind != .same && !skipped.contains($0.path) }
         guard !changing.isEmpty else {
             io.say("Home folder: nothing new from the core layer (\(answers.targets.joined(separator: ", "))).")
-            if !skipped.isEmpty { io.say(keptNote) }
+            if !theirs.isEmpty && !Set(theirs.map(\.path)).isDisjoint(with: skipped) { io.say(keptNote) }
             return
         }
         let outcome: ProjectSetup.Outcome
@@ -216,7 +246,10 @@ public enum Onboarding {
         let skills = Set(outcome.written.compactMap(skillName)).count
         io.say("Home folder: \(skills) skill\(skills == 1 ? "" : "s") from the core layer for \(answers.targets.joined(separator: ", "))"
                + (outcome.backup.map { " (backup: \($0.path))" } ?? "") + ".")
-        if !skipped.isEmpty { io.say(keptNote) }
+        let blocks = plan.changes.filter { $0.block && outcome.written.contains($0.path) }.map { $0.path.hasPrefix("/") ? $0.path : "~/\($0.path)" }
+        if !blocks.isEmpty { io.say("  AKit's instructions block: \(blocks.joined(separator: ", ")).") }
+        if outcome.removed.contains("AGENTS.md") { io.say("  ~/AGENTS.md went to the Trash.") }
+        if !Set(theirs.map(\.path)).isDisjoint(with: skipped) { io.say(keptNote) }
     }
 
     /// Session capture (`akit insights install`): asked once while none of it is on this Mac,

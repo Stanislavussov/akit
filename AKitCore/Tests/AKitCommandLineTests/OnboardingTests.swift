@@ -178,6 +178,26 @@ struct OnboardingTests {
         #expect(read(mine)?.contains("# AKit") == true)
     }
 
+    @Test func theInstructionsBlockIsNamedAndAskedForOrLeftAloneWithoutATerminal() async throws {
+        let first = await setup()
+        #expect(first.code == 0, "\(first.out)")
+        try write(".akit/registry/layers/core/layer.yaml", "name: core\nskills:\n  - name: akit\n    mode: manual\nfiles:\n  - template: AGENTS.md\n    to: AGENTS.md\n")
+        try write(".akit/registry/layers/core/templates/AGENTS.md", "Be brief.\n")
+        try write(".claude/CLAUDE.md", "# Mine\n")
+
+        let quiet = await setup(session: first.session)
+        #expect(quiet.code == 0, "\(quiet.out)")
+        #expect(quiet.out.contains("Home folder: left alone without a terminal: ~/.claude/CLAUDE.md (AKit's instructions block)."), "\(quiet.out)")
+        #expect(read(".claude/CLAUDE.md") == "# Mine\n")
+
+        let asked = await setup(answers: [], session: first.session)
+        #expect(asked.code == 0, "\(asked.out)")
+        #expect(asked.session.questions.contains("Add AKit's block (the core layer's AGENTS.md) to ~/.claude/CLAUDE.md? The text around it stays; a backup is kept. [Y/n]"),
+                "\(asked.session.questions)")
+        #expect(asked.out.contains("AKit's instructions block: ~/.claude/CLAUDE.md."), "\(asked.out)")
+        #expect(read(".claude/CLAUDE.md") == "# Mine\n\n<!-- akit:core:start -->\nBe brief.\n<!-- akit:core:end -->\n")
+    }
+
     @Test func skipHomeLeavesTheHomeFolderAlone() async throws {
         try fm.createDirectory(at: home.appending(path: ".pi/agent"), withIntermediateDirectories: true)
         let result = await setup(["--skip-home", "--yes"], answers: ["should not be asked"])

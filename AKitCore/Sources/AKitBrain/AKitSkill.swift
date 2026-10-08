@@ -117,7 +117,10 @@ Folders go to the Trash and each removal is one commit (then `akit sync`).
 The core layer is rendered into `~` for every harness (`~/.agents/skills`, and
 `~/.claude/skills` linked to it): `akit plan --home`, then after a yes
 `akit apply --home` (`--include-unmanaged` to take over old copies AKit didn't write;
-they are backed up). Run it after changing the core layer.
+they are backed up). Run it after changing the core layer. The core layer's AGENTS.md
+section goes into each harness's global instructions (`~/.claude/CLAUDE.md`, and the
+file Pi reads in `~/.pi/agent`) as a block between `<!-- akit:core:start -->` and
+`<!-- akit:core:end -->`; the text around it is the user's and stays.
 
 ## Sync between Macs
 

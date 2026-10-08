@@ -38,6 +38,23 @@ public enum ProjectSetup {
         /// A JSON file the layers' keys are merged into: the texts show the whole file with
         /// `env` and `headers` values masked; Apply writes the real values.
         public var mergesJSON = false
+        /// A harness's global instructions file that gets the core layer's AGENTS.md text as a
+        /// marked block (home folder only): the texts show the whole file; AKit changes only
+        /// its block. `path` is under the home folder, or absolute when the file is outside it.
+        public var block = false
+        /// For a block: words shown instead of the kind's usual ones ("edited by hand", …).
+        public var blockNote: String?
+        /// What a block change does to the file.
+        public enum BlockAction: Hashable, Sendable {
+            /// Appends the block (or creates the file with it).
+            case add
+            case update
+            /// Takes the block out; the file stays.
+            case takeOut
+            /// Takes the block out of a Pi file AKit created, which then goes to the Trash.
+            case trash
+        }
+        public var blockAction: BlockAction?
     }
 
     public struct Plan: Sendable {
@@ -63,6 +80,16 @@ public enum ProjectSetup {
         var carried: Set<String> = []
         /// The previous merge records under the spelling this plan uses for each file.
         var previousJSON: [String: ProjectRecords.Lock.MergedJSON] = [:]
+        /// Instruction blocks: each file, the bytes Apply writes, and what the lock keeps when
+        /// the change is applied (`blockRecords`) or not (`blockKept`).
+        var blockURLs: [String: URL] = [:]
+        var blockWrites: [String: Data] = [:]
+        var blockRecords: [String: ProjectRecords.Lock.Block] = [:]
+        var blockKept: [String: ProjectRecords.Lock.Block] = [:]
+        /// Instruction files whose block AKit had to leave alone (a link, broken markers).
+        var blockSkipped: [String] = []
+        /// Pi's config folder the home render used, kept in the lock.
+        var piAgentDir: String?
 
         public var canApply: Bool { render.errors.isEmpty && blockers.isEmpty }
     }
@@ -95,8 +122,12 @@ public enum ProjectSetup {
         Render.render(bundle, forHome: false)
     }
 
+    /// `piAgentDirSetting`: the environment's PI_CODING_AGENT_DIR, if any. In the home folder
+    /// the file Pi reads in that folder gets the core layer's block (see `InstructionsBlock`).
+    /// `rememberPiAgentDir`: the app, which doesn't see the shell's variables, uses the folder
+    /// of the last home render when none is set; the command line takes its environment as is.
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
-                            forHome: Bool = false) -> Plan {
+                            forHome: Bool = false, piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false) -> Plan {
         let fm = FileManager.default
         let answers = ProjectBundle.pruned(answers, brain: brain, projectName: project.lastPathComponent)
         var render = Render.render(ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent), forHome: forHome)
@@ -120,6 +151,8 @@ public enum ProjectSetup {
             if current != data { shadowed.insert(name) }
         }
         var outputs = render.outputs.filter { output in skillName(output.path).map { !shadowed.contains($0) } ?? true }
+        // The home folder's AGENTS.md text goes into the harnesses' own files as a block, below.
+        outputs.removeAll(where: \.instructionsBlock)
         var warnings = render.warnings + shadowed.sorted().map { "The project has its own \($0) skill in \(ProjectBundle.skillsFolder); the brain's is not written." }
         // Claude finds the project's own skills through the same link as the brain's, if
         // nothing else is at .claude/skills.
@@ -190,7 +223,21 @@ public enum ProjectSetup {
             snapshot[path] = state(url)
         }
 
-        render = RenderResult(layers: render.layers, outputs: outputs, errors: render.errors, warnings: warnings, skills: render.skills)
+        // The core layer's AGENTS.md text as a marked block in each target harness's global
+        // instructions file; blocks of an earlier render come out where they are no longer wanted.
+        var blocks = InstructionsBlock.HomePlan()
+        if forHome {
+            blocks = InstructionsBlock.planHome(home: project, answers: answers, brain: brain, previous: previous,
+                                                otherPaths: outputs.map(\.path), piAgentDirSetting: piAgentDirSetting,
+                                                rememberPiAgentDir: rememberPiAgentDir)
+            changes += blocks.changes
+            blockers += blocks.blockers
+            warnings += blocks.warnings
+            for (path, data) in blocks.snapshot { snapshot[path] = data }
+        }
+
+        render = RenderResult(layers: render.layers, outputs: outputs, errors: render.errors + blocks.errors.filter { !render.errors.contains($0) },
+                              warnings: warnings, skills: render.skills)
 
         for output in render.outputs where !output.mergesJSON {
             let url = project.appending(path: output.path)
@@ -265,6 +312,9 @@ public enum ProjectSetup {
         for (path, entry) in previous?.files ?? [:] where !rendered.contains(path) {
             let url = project.appending(path: path)
             guard escapes(path, project: project) == nil else { continue }
+            // A file an earlier render wrote whole that now gets the instructions block: the
+            // block takes it over, it never goes to the Trash.
+            if blocks.urls.keys.contains(where: { $0.lowercased() == path.lowercased() }) { continue }
             // JSON files are skipped in the home folder, not dropped: an older AKit may have
             // written ~/.claude/settings.json, and it must never go to the Trash for that.
             if forHome, ProjectBundle.mergesJSON(path) {
@@ -289,10 +339,17 @@ public enum ProjectSetup {
             }
         }
 
+        // Pi reads ~/AGENTS.md too, in every folder under the home folder (it walks up from where
+        // it starts): a kept one comes on top of AKit's block in Pi's own file.
+        if forHome, answers.targets.contains("pi"), changes.contains(where: { $0.path == "AGENTS.md" && $0.kind == .keepEdited }) {
+            warnings.append("AGENTS.md in the home folder is kept (edited by hand). Pi reads it in every folder under the home folder, on top of AKit's block in its own instructions file; move what you still need into the core layer and delete it.")
+        }
         render = RenderResult(layers: render.layers, outputs: render.outputs, errors: render.errors, warnings: warnings, skills: render.skills)
         return Plan(project: project, id: id, answers: answers, render: render,
                     changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
-                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried, previousJSON: previousJSON)
+                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried, previousJSON: previousJSON,
+                    blockURLs: blocks.urls, blockWrites: blocks.writes, blockRecords: blocks.records, blockKept: blocks.kept,
+                    blockSkipped: blocks.skipped, piAgentDir: blocks.piAgentDir ?? previous?.piAgentDir)
     }
 
     // MARK: - Apply
@@ -319,9 +376,12 @@ public enum ProjectSetup {
 
         // Stop if the project changed since the preview (a file, link or folder, or a parent
         // that became a link out of the project).
+        // An instruction block's file may be outside the home folder (a PI_CODING_AGENT_DIR elsewhere).
+        func location(_ change: Change) -> URL { plan.blockURLs[change.path] ?? plan.project.appending(path: change.path) }
         for change in todo {
-            let url = plan.project.appending(path: change.path)
-            if let problem = escapes(change.path, project: plan.project) { throw Failure(message: problem) }
+            let url = location(change)
+            // Instruction files are AKit's fixed paths, not a layer's; a linked ~/.claude is fine.
+            if !change.block, let problem = escapes(change.path, project: plan.project) { throw Failure(message: problem) }
             if state(url) != (plan.snapshot[change.path] ?? nil) {
                 throw Failure(message: "\(change.path) changed since the preview. Look at the preview again.")
             }
@@ -331,23 +391,28 @@ public enum ProjectSetup {
         var written: [String] = [], removed: [String] = [], notes: [String] = []
         do {
             for change in todo where change.kind != .create {
-                let url = plan.project.appending(path: change.path)
+                let url = location(change)
                 guard isLink(url) || fm.fileExists(atPath: url.path) else { continue }
                 if backup == nil { backup = try Backup.newFolder(home: home) }
                 try Backup.copy(url, into: backup!, home: home, keepLink: true)
             }
             for change in todo {
-                let url = plan.project.appending(path: change.path)
-                if change.kind == .remove {
+                let url = location(change)
+                if change.kind == .remove || change.blockAction == .trash {
                     _ = try trash(url)
                     removed.append(change.path)
-                    removeEmptyFolders(from: url.deletingLastPathComponent(), upTo: plan.project)
+                    // Not after a trashed instructions file: Pi's folder may be a link or meant to be empty.
+                    if change.blockAction != .trash { removeEmptyFolders(from: url.deletingLastPathComponent(), upTo: plan.project) }
                     continue
                 }
-                if change.mergesJSON {
-                    guard let data = plan.jsonWrites[change.path] else { continue }
+                if change.mergesJSON || change.block {
+                    guard let data = change.block ? plan.blockWrites[change.path] : plan.jsonWrites[change.path] else { continue }
+                    // The user's own file, which other tools write too: checked again right before.
+                    if change.block, state(url) != (plan.snapshot[change.path] ?? nil) {
+                        throw Failure(message: "\(change.path) changed since the preview. Look at the preview again.")
+                    }
                     try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try data.write(to: url, options: .atomic)
+                    if change.block { try InstructionsBlock.write(data, to: url) } else { try data.write(to: url, options: .atomic) }
                     written.append(change.path)
                     continue
                 }
@@ -377,6 +442,7 @@ public enum ProjectSetup {
             // A trashed JSON file may still have a record: the keys the project declined.
             for path in removed {
                 partial.files[path] = nil
+                if partial.blocks?[path] != nil { partial.blocks?[path] = nil }
                 if partial.json != nil || plan.jsonRecords[path] != nil {
                     var json = partial.json ?? [:]
                     json[path] = plan.jsonRecords[path]
@@ -384,7 +450,11 @@ public enum ProjectSetup {
                 }
             }
             for path in written {
-                if plan.jsonWrites[path] != nil {
+                if plan.blockWrites[path] != nil {
+                    var blocks = partial.blocks ?? [:]
+                    blocks[path] = plan.blockRecords[path]
+                    partial.blocks = blocks.isEmpty ? nil : blocks
+                } else if plan.jsonWrites[path] != nil {
                     var json = partial.json ?? [:]
                     json[path] = plan.jsonRecords[path]
                     partial.json = json
@@ -431,6 +501,14 @@ public enum ProjectSetup {
         }
         for path in plan.carried { if let old = plan.previous?.files[path] { lock.files[path] = old } }
         lock.json = json.isEmpty ? nil : json
+        // Instruction blocks: what was written, else what the plan keeps (left out, an offer not taken).
+        let done = Set(todo.map(\.path))
+        var blocks: [String: ProjectRecords.Lock.Block] = [:]
+        for path in Set(plan.blockRecords.keys).union(plan.blockKept.keys) {
+            blocks[path] = done.contains(path) ? plan.blockRecords[path] : plan.blockKept[path]
+        }
+        lock.blocks = blocks.isEmpty ? nil : blocks
+        lock.piAgentDir = plan.piAgentDir
 
         let isRepo = fm.fileExists(atPath: brain.root.appending(path: ".git").path)
         if isRepo {

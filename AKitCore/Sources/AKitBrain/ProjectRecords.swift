@@ -46,6 +46,37 @@ public enum ProjectRecords {
             }
         }
 
+        /// AKit's marked block in a harness's global instructions file (`~/.claude/CLAUDE.md`,
+        /// the file Pi reads in `~/.pi/agent`), written by the home render. The file is the user's; AKit owns
+        /// only the text between its markers.
+        public struct Block: Codable, Hashable, Sendable {
+            /// SHA-256 of the text AKit wrote between the markers; nil when the block there is
+            /// not AKit's text (found without a record and different from the layers').
+            public var sha256: String?
+            /// SHA-256 of the layers' text when it was last written or offered: an edited block
+            /// is offered the layers' text again only when this changes.
+            public var offered: String?
+            public var layers: [String]
+            /// The bytes AKit put before the block when it appended it (a newline or a blank
+            /// line), so taking the block out leaves the file as it was.
+            public var separator: String?
+            /// The harness the file is for: `claude` or `pi`.
+            public var target: String?
+            /// AKit created the file: a Pi file left empty when the block goes is trashed, since
+            /// Pi reads the first instructions file there even when it is empty.
+            public var created: Bool?
+
+            public init(sha256: String?, offered: String?, layers: [String], separator: String? = nil, target: String? = nil,
+                        created: Bool? = nil) {
+                self.sha256 = sha256
+                self.offered = offered
+                self.layers = layers
+                self.separator = separator
+                self.target = target
+                self.created = created
+            }
+        }
+
         /// Brain commit the files were rendered from.
         public var brainCommit: String?
         /// The brain had uncommitted changes, so the commit alone doesn't reproduce the render.
@@ -57,14 +88,23 @@ public enum ProjectRecords {
         /// Merged JSON files by path. Kept out of `files`, so an older AKit, which ignores this
         /// key, never treats such a file as one it wrote whole (and never trashes it).
         public var json: [String: MergedJSON]?
+        /// Instruction blocks by file: a path under the home folder, or an absolute path for one
+        /// outside it (a `PI_CODING_AGENT_DIR` elsewhere). Older AKit ignores the key.
+        public var blocks: [String: Block]?
+        /// Pi's config folder the last home render used (absolute): used again when the
+        /// environment doesn't set PI_CODING_AGENT_DIR (the app started from the Finder doesn't
+        /// see the shell's), so the block doesn't move between files from run to run.
+        public var piAgentDir: String?
 
         public init(brainCommit: String?, brainDirty: Bool, files: [String: Entry], templates: [String: String]? = nil,
-                    json: [String: MergedJSON]? = nil) {
+                    json: [String: MergedJSON]? = nil, blocks: [String: Block]? = nil, piAgentDir: String? = nil) {
+            self.piAgentDir = piAgentDir
             self.brainCommit = brainCommit
             self.brainDirty = brainDirty
             self.files = files
             self.templates = templates
             self.json = json
+            self.blocks = blocks
         }
     }
 
