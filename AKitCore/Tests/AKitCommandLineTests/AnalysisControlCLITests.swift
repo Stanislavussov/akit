@@ -209,6 +209,10 @@ extension AKitCLITests {
         #expect(await akit("analysis", "control", "layer-set", "swiftui", "remove", "nope").err.contains("Not in the swiftui set: nope."))
         #expect(await akit("analysis", "control", "layer-set", "swiftui", "add", id, "--model", "x").err.contains("leave out --model"))
         #expect(await akit("analysis", "control", "layer-set", "core", "add", id).err.contains("core layer"))
+        // With a brain, the layer must be one of its layers.
+        let typo = await akit("analysis", "control", "layer-set", "swiftiu", "add", id, "--brain", brain.path)
+        #expect(typo.code != 0 && typo.err.contains("The brain has no layer swiftiu"), "\(typo)")
+        #expect(await akit("analysis", "control", "layer-set", "swiftui", "add", id, "--brain", brain.path).out == "The swiftui set has 2 tasks.")
 
         // A layer eval renders with the set's answers.
         let reproID = try #require(ControlTasks.list(env: env).first { $0.title == "Other" }?.id)

@@ -170,6 +170,16 @@ struct LayerSetupsTests {
         #expect(section(saved).contains("make check for Saved"))
         let explicit = try await prepare(tasks: [task(base)], answers: ["company": .text("Given")], store: store)
         #expect(section(explicit).contains("make check for Given"))
+
+        // A task made in a worktree of the repository: one repository with the main folder's
+        // tasks, and the project's answers are found through the main folder.
+        let worktree = fixture.home.appending(path: "wt", directoryHint: .isDirectory)
+        await fixture.git("worktree", "add", "-q", "--detach", worktree.path, in: fixture.repo)
+        #expect(ControlTasks.mainFolder(of: worktree.path).path == ControlTasks.mainFolder(of: fixture.repo.path).path)
+        let both = try await prepare(tasks: [task(base), task(base, id: "in-worktree-abcd", repo: worktree)], store: store)
+        #expect(both.runnable.count == 2 && section(both).contains("make check for Saved"))
+        let alone = try await prepare(tasks: [task(base, id: "in-worktree-abcd", repo: worktree)], store: store)
+        #expect(section(alone).contains("make check for Saved"))
     }
 
     @Test func refusedLayersAgentsAndTaskSets() async throws {

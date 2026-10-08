@@ -173,6 +173,20 @@ struct ReplayTests {
         #expect(LeakCheck.commitSigns(in: leaked, task: task, env: env) == ["the commit 1c9cf65"])
         #expect(LeakCheck.commitSigns(in: repoRead, task: task, env: env) == ["AKit's Lab folder"])
         #expect(LeakCheck.commitSigns(in: clean, task: task, env: env).isEmpty)
+
+        // The hash only as a word of its own; the Lab folder however it is named; the Trash.
+        let other = try transcript([
+            ["type": "assistant", "message": ["content": [["type": "tool_use", "name": "Bash", "input": ["command": "git show deadbeef1c9cf65"]]]]],
+        ])
+        #expect(LeakCheck.leaks(in: other, task: task, repo: URL(filePath: "/r"), env: env).isEmpty)
+        let elsewhere = try transcript([
+            ["type": "assistant", "message": ["content": [["type": "tool_use", "name": "Bash",
+                                                            "input": ["command": "ls $HOME/.akit/lab && ls ~/.Trash/akit-replay-x"]]]]],
+            ["type": "user", "message": ["content": [["type": "tool_result", "content": "1c9cf65aaaa: Report layer.yaml mistakes"]]]],
+        ])
+        #expect(LeakCheck.leaks(in: elsewhere, task: task, repo: URL(filePath: "/r"), env: env)
+                == ["the commit 1c9cf65", "AKit's Lab folder", "the Trash"])
+        #expect(LeakCheck.commitSigns(in: elsewhere, task: task, env: env) == ["the commit 1c9cf65", "AKit's Lab folder"])
     }
 
     @Test func comparisonPerSetup() {

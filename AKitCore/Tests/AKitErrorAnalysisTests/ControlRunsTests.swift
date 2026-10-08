@@ -446,6 +446,24 @@ struct ControlRunsTests {
         #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"grep -r exemplar-1 ~"}"#)]), task: task) == ["the exemplar session claude:exemplar-1"])
         #expect(ControlRuns.leaks(in: transcript([("read", #"{"path":"/Users/me/.pi/agent/sessions/x.jsonl"}"#)]), task: task) == ["the session history"])
         #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"git -C /work/repo log"}"#)]), task: task) == ["the real repository"])
+        // Finished clones (with the answer of an earlier cell) and a commit's validation folder are in the Trash.
+        #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"ls ~/.Trash"}"#)]), task: task) == ["the Trash"])
+        #expect(ControlRuns.leaks(in: transcript([("Read", #"{"file_path":"/Users/me/.Trash/akit-control-1/Lib.swift"}"#)]), task: task) == ["the Trash"])
+    }
+
+    /// The commit-hash and Lab-folder signs are read from Claude Code's transcript file only.
+    @Test func hiddenTestTasksRunClaudeCodeOnly() async throws {
+        let (repo, base) = try await repository()
+        let task = ControlTask(id: "fix-add-abcd", title: "Fix add", repo: repo.path, base: base, prompt: "Fix add",
+                               source: .commit(sha: base), oracle: .hiddenTests(commit: base))
+        let pi = ControlSetup(name: "pi", agent: LabAgent(harness: .pi, model: "fake/m", effort: "low"))
+        await #expect { _ = try await ControlRuns.newControlRuns(tasks: [task], setups: [baseline, pi], repeats: 1, environment: .background,
+                                                                 keep: false, akit: URL(filePath: "/usr/bin/true"), env: env) } throws: {
+            $0.localizedDescription == "Hidden-test tasks run Claude Code only for now."
+        }
+        #expect(LabStore.list(env: env).isEmpty)
+        #expect(try await ControlRuns.newControlRuns(tasks: [task], setups: [baseline], repeats: 1, environment: .background, keep: false,
+                                                     akit: URL(filePath: "/usr/bin/true"), env: env).runs.count == 1)
     }
 
     @Test func aRedReferenceBlocksQueuingCells() async throws {

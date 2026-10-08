@@ -82,6 +82,25 @@ struct LayerSetsTests {
         #expect(throws: LayerSets.Failure.self) { try LayerSets.setAnswer("x", .text("y"), in: "core", env: env) }
     }
 
+    /// Worktrees of one repository count as one: the user works in worktrees.
+    @Test func worktreesOfOneRepositoryShareASet() async throws {
+        let repo = home.appending(path: "akit", directoryHint: .isDirectory)
+        try fm.createDirectory(at: repo, withIntermediateDirectories: true)
+        try Data("x\n".utf8).write(to: repo.appending(path: "x.txt"))
+        let variables = ["HOME": home.path, "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com",
+                         "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@example.com"]
+        let worktree = home.appending(path: "akit/.claude/worktrees/agent-1", directoryHint: .isDirectory)
+        for args in [["init", "-q", "-b", "master"], ["add", "-A"], ["commit", "-q", "-m", "Start"], ["worktree", "add", "-q", "--detach", worktree.path]] {
+            let result = await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["-C", repo.path] + args, environment: variables, timeout: 60)
+            #expect(result?.succeeded == true, "\(args): \(result?.output ?? "")")
+        }
+        #expect(ControlTasks.mainFolder(of: worktree.path).path == ControlTasks.mainFolder(of: repo.path).path)
+        #expect(ControlTasks.mainFolder(of: home.path).path == home.standardizedFileURL.resolvingSymlinksInPath().path)
+        let (main, linked) = (try task("main-abcd", repo: repo.path), try task("linked-abcd", repo: worktree.path))
+        #expect(try LayerSets.add([main, linked], to: "swiftui", env: env).tasks == ["main-abcd", "linked-abcd"])
+        #expect(throws: LayerSets.Failure.self) { try LayerSets.add([try task("other-abcd", repo: "/work/other")], to: "swiftui", env: env) }
+    }
+
     @Test func writersDontLoseEachOthersTasks() async throws {
         let tasks = try (0..<12).map { try task("task-\($0)-abcd") }
         let env = env

@@ -182,13 +182,18 @@ Further choices of the step 4 plan, accepted on the same day:
   (replays unchanged) and used by `ControlCell.run(…, oracle: CellOracle)` (`.command`,
   `.hidden`, `.none`). The cell result carries the outcome in `tests`; the oracle line
   reads "hidden tests: 1/1 fail-to-pass, 1/1 pass-to-pass". The guard leaves the hidden
-  test files out of its before/after snapshots; the leak check adds the commit's hash (in
-  tool calls or results) and AKit's Lab folder (Claude Code cells, from the transcript
-  file). The agent phase of every control cell runs under the memory watchdog.
+  test files out of its before/after snapshots; the leak check adds the commit's hash (as
+  a word of its own, in tool calls or results) and AKit's Lab folder (any path with
+  `.akit/lab`), read from Claude Code's transcript file, so hidden-test tasks run Claude
+  Code only for now. Every control cell and replay also flags a tool call into the Trash
+  (`/.Trash`), where finished clones and a commit's validation folder go. The agent phase
+  of every control cell runs under the memory watchdog.
 - Layer sets `~/.akit/lab/evals/sets/<layer>.json` (`schema` 1; tasks, answers,
   `createdAt`, `updatedAt`), changed under the file's lock; a newer schema is skipped and
   never overwritten. One repository per set (v1): a task of another repository is refused
-  while the set holds tasks of one. Missing task ids are shown as missing and skipped. The
+  while the set holds tasks of one. Worktrees of one repository count as one (their shared
+  git folder, read from `.git` and `commondir`); an eval takes the project's answers and
+  `project_name` from the main folder, so a task made in a worktree finds them. Missing task ids are shown as missing and skipped. The
   set's answers are the eval's explicit answers (`--answer` still wins in the CLI). Core
   has no set.
 - UI: Evals → **From Commit…** (repository, recent commits that change Swift tests with

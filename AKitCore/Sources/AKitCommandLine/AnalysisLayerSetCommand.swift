@@ -12,10 +12,11 @@ extension AKitCLI {
                                           field answers (~/.akit/lab/evals/sets; local only)
           akit analysis control layer-set LAYER [--json]
                                           One set: its tasks (missing ones marked) and answers
-          akit analysis control layer-set LAYER add TASK[,TASK…]
+          akit analysis control layer-set LAYER add TASK[,TASK…] [--brain DIR]
           akit analysis control layer-set LAYER remove TASK[,TASK…]
-                                          Add tasks to the set (made when the layer has none) or take
-                                          them out. A set takes the tasks of one repository for now
+                                          Add tasks to the set (made when the layer has none; the layer
+                                          must be in the brain) or take them out. A set takes the tasks
+                                          of one repository for now (its worktrees count as one)
           akit analysis control layer-set LAYER answer FIELD=VALUE… [--brain DIR]
                                           Field answers the layer's evals render with, over the
                                           project's saved answers and the layer's defaults (bool
@@ -50,9 +51,15 @@ extension AKitCLI {
                 if json { out(try labJSON(set)); return 0 }
                 out(layerSetText(set, env: env))
             case "add", "remove":
+                let brainText = action == "add" ? args.value("--brain") : nil
                 guard let list = args.positional() else { throw Failure(message: "Which tasks? akit analysis control layer-set \(layer) \(action ?? "") TASK[,TASK…].") }
                 try args.finish()
                 if action == "add" {
+                    // A set is a brain layer's: a typo would make a set no eval ever reads.
+                    let brainRoot = brainText.map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+                    if let brain = Brain.load(from: brainRoot), !brain.layers.contains(where: { $0.name == layer }) {
+                        throw Failure(message: "The brain has no layer \(layer) (\(brainRoot.path)).")
+                    }
                     let set = try LayerSets.add(try controlTasks(list, env: env), to: layer, env: env)
                     out("The \(layer) set has \(set.tasks.count) \(set.tasks.count == 1 ? "task" : "tasks").")
                 } else {

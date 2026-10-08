@@ -79,12 +79,12 @@ public enum LayerSetups {
             if missing > 0 { warnings.append("\(missing) of the eval's tasks are gone from ~/.akit/lab/evals/tasks and are left out.") }
         }
         guard !chosen.isEmpty else { throw Failure(message: "Pick at least one task.") }
-        let repositories = Set(chosen.map(\.repo))
-        guard repositories.count == 1, let repoPath = repositories.first else {
+        // Worktrees of one repository count as one; its main folder names the project.
+        let repositories = Set(chosen.map { ControlTasks.mainFolder(of: $0.repo) })
+        guard repositories.count == 1, let repo = repositories.first else {
             throw Failure(message: "One eval takes the tasks of one repository for now; these come from "
-                              + repositories.sorted().map { URL(filePath: $0).lastPathComponent }.joined(separator: ", ") + ".")
+                              + repositories.map(\.lastPathComponent).sorted().joined(separator: ", ") + ".")
         }
-        let repo = URL(filePath: repoPath, directoryHint: .isDirectory)
 
         // The brain must be committed where the layer comes from, so the eval names its commit.
         let closure = Brain.requiredClosure(of: layer, in: byName).sorted()

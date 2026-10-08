@@ -228,8 +228,8 @@ enum IsolatedClone {
 
 /// Signs that a replay saw the answer. Anywhere in its tool calls or their results: the
 /// commit's hash. In what its tool calls ask for: the real repository, AKit's Lab folder
-/// (run.json and the task cache name the commit), Claude Code's session history, or a
-/// `session_search` tool. The subject line is not a sign: it is in the prompt, and the agent's
+/// (run.json and the task cache name the commit), Claude Code's session history, a
+/// `session_search` tool, or the Trash (earlier clones with the answer go there). The subject line is not a sign: it is in the prompt, and the agent's
 /// own commit usually reuses it. Tool results aren't searched for paths: Claude Code itself
 /// mentions `~/.claude/projects` when it saves a long output there.
 enum LeakCheck {
@@ -245,14 +245,18 @@ enum LeakCheck {
 
     private static func signs(_ calls: ToolCalls, task: ReplayTask, repo: URL?, env: HarnessEnvironment) -> [String] {
         var found: [String] = []
-        if (calls.inputs + calls.results).contains(task.shortCommit) { found.append("the commit \(task.shortCommit)") }
+        // The hash as a word of its own (any length from the short form), not inside another hex string.
+        let hash = (try? Regex("\\b\(task.shortCommit)[0-9a-f]*\\b"))
+        if let hash, (calls.inputs + calls.results).contains(hash) { found.append("the commit \(task.shortCommit)") }
         if let repo {
             let repoPaths = Set([repo.path, task.repo].map { URL(filePath: $0).standardizedFileURL.path })
             if repoPaths.contains(where: { calls.inputs.contains($0) }) { found.append("the real repository") }
         }
-        let home = env.homeDirectory.path
-        if calls.inputs.contains(home + "/.akit/lab") || calls.inputs.contains("~/.akit/lab") { found.append("AKit's Lab folder") }
+        // `~/.akit/lab`, `$HOME/.akit/lab`, `/Users/me/.akit/lab` alike.
+        if calls.inputs.contains(".akit/lab") { found.append("AKit's Lab folder") }
         if repo != nil, calls.inputs.contains(".claude/projects") || calls.usedSearch { found.append("Claude Code's session history") }
+        // Finished clones and a commit's validation folder go to the Trash (control cells check it in error analysis).
+        if repo != nil, calls.inputs.contains("/.Trash") { found.append("the Trash") }
         return found
     }
 

@@ -54,6 +54,11 @@ public enum ControlRuns {
         if all.contains(where: { $0.layer != nil && $0.agent.harness != .claudeCode }) {
             throw LabStore.Failure(message: "Layer evals run Claude Code only for now.")
         }
+        // The commit-hash and Lab-folder leak signs are read from Claude Code's transcript file.
+        let hidden = (tasks + (sanity?.tasks ?? [])).contains { if case .hiddenTests = $0.oracle { true } else { false } }
+        if hidden, all.contains(where: { $0.agent.harness != .claudeCode }) {
+            throw LabStore.Failure(message: "Hidden-test tasks run Claude Code only for now.")
+        }
         if let both = all.first(where: { $0.layer != nil && $0.patch != nil }) {
             throw LabStore.Failure(message: "The setup \(both.name) has both a patch and a brain layer; a setup makes one difference.")
         }
@@ -193,9 +198,9 @@ public enum ControlRuns {
     }
 
     /// Signs the cell saw the exemplar: tool calls naming its session id, reading the
-    /// session history of Claude Code or Pi, a `session_search` tool, or the real repository
-    /// (which holds the later fix). Tool results aren't searched: harnesses mention their own
-    /// folders there.
+    /// session history of Claude Code or Pi, a `session_search` tool, the real repository
+    /// (which holds the later fix), or the Trash (finished clones and a commit's validation
+    /// folder go there). Tool results aren't searched: harnesses mention their own folders there.
     static func leaks(in transcript: SessionTranscript, task: ControlTask) -> [String] {
         let calls = transcript.items.compactMap { item -> (name: String, text: String)? in
             if case .toolCall(let name) = item.kind { (name, item.text) } else { nil }
@@ -210,6 +215,7 @@ public enum ControlRuns {
         }
         let repo = URL(filePath: task.repo).standardizedFileURL.path
         if calls.contains(where: { $0.text.contains(repo) }) { found.append("the real repository") }
+        if calls.contains(where: { $0.text.contains("/.Trash") }) { found.append("the Trash") }  // also ~/.Trash
         return found
     }
 }

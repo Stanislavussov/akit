@@ -273,12 +273,16 @@ public enum ControlCell {
         var spec = run.spec
         spec.agent = setup.agent
         spec.setup = nil
-        let watchdog = Watchdog(folder: work, watchesGroups: false) { out($0) }
-        let agent = try await watchdog.watching {
-            try await AgentRun.run(prompt: prompt, spec: spec, in: work, runFolder: run.folder, exposeRunFolder: false,
-                                   extra: setup.tools, env: env, out: out)
+        let agent: AgentRun.Outcome
+        do {
+            let watchdog = Watchdog(folder: work, watchesGroups: false) { out($0) }
+            // Leftover test helpers of the agent's own `swift test`, also when the agent throws.
+            defer { watchdog.killHelpers() }
+            agent = try await watchdog.watching {
+                try await AgentRun.run(prompt: prompt, spec: spec, in: work, runFolder: run.folder, exposeRunFolder: false,
+                                       extra: setup.tools, env: env, out: out)
+            }
         }
-        watchdog.killHelpers()
         guard !agent.exit.cancelled else { throw CancellationError() }
         let after = TestFiles.state(of: work, ignoring: hiddenFiles)
 

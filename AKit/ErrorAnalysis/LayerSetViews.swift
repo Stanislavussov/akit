@@ -46,6 +46,9 @@ struct NewCommitTaskSheet: View {
     @State private var progress: String?
     @State private var error: String?
     @State private var busy = false
+    /// The running check: Cancel stops its builds and nothing is saved.
+    @State private var work: Task<Void, Never>?
+    @State private var scope: Cancellation.Scope?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -97,7 +100,12 @@ struct NewCommitTaskSheet: View {
             HStack {
                 if busy { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") {
+                    scope?.cancel()
+                    work?.cancel()
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
                 Button("Check and Save", action: save)
                     .keyboardShortcut(.defaultAction)
                     .disabled(busy || repo == nil || commit.trimmingCharacters(in: .whitespaces).count < 4)
@@ -145,10 +153,16 @@ struct NewCommitTaskSheet: View {
         progress = "Reading the commit…"
         let commit = commit.trimmingCharacters(in: .whitespaces), layerSet = layerSet
         let report: @MainActor (String) -> Void = { progress = $0 }
-        Task {
+        let scope = Cancellation.Scope()
+        self.scope = scope
+        work = Task {
             do {
                 try await analysis.run { env in
-                    let task = try await ControlTasks.fromCommit(commit, repo: repo, env: env) { line in Task { @MainActor in report(line) } }
+                    // The check's git and build processes belong to this scope: Cancel stops them.
+                    let task = try await Cancellation.$scope.withValue(scope) {
+                        try await ControlTasks.fromCommit(commit, repo: repo, env: env) { line in Task { @MainActor in report(line) } }
+                    }
+                    guard !scope.isCancelled else { throw CancellationError() }
                     let known = ControlTasks.load(task.id, env: env) != nil
                     if !known { try ControlTasks.save(task, env: env) }
                     let saved = known ? "The commit is already control task \(task.id)." : "Saved control task \(task.id): \(task.title)."
@@ -222,7 +236,17 @@ struct LayerSetView: View {
             GroupBox("Answers") { answersEditor.padding(4) }
         }
         .onAppear { answers = set.answers }
-        .onChange(of: set) { answers = set.answers }
+        .onChange(of: set) { old, new in
+            // Another set: its own answers. The same set read again (after any change on the
+            // screen): only the fields whose saved answer changed; unsaved edits stay.
+            guard old.layer == new.layer else {
+                answers = new.answers
+                return
+            }
+            for field in Set(old.answers.keys).union(new.answers.keys) where old.answers[field] != new.answers[field] {
+                answers[field] = new.answers[field]
+            }
+        }
     }
 
     @ViewBuilder private var answersEditor: some View {

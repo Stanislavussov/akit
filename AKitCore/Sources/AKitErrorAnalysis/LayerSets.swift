@@ -57,13 +57,14 @@ public enum LayerSets {
     @discardableResult
     public static func add(_ tasks: [ControlTask], to layer: String, now: Date = .now, env: HarnessEnvironment) throws -> LayerSet {
         guard !tasks.isEmpty else { throw Failure(message: "Pick at least one task.") }
-        let repositories = Set(tasks.map(\.repo))
+        // Worktrees of one repository count as one.
+        let repositories = Set(tasks.map { ControlTasks.mainFolder(of: $0.repo).path })
         guard repositories.count == 1, let repo = repositories.first else {
             throw Failure(message: "A layer set takes the tasks of one repository for now; these come from \(names(repositories)).")
         }
         return try update(layer, now: now, env: env) { set in
             // The set's repository: that of the tasks it holds that still exist.
-            let held = Set(set.tasks.compactMap { ControlTasks.load($0, env: env)?.repo })
+            let held = Set(set.tasks.compactMap { ControlTasks.load($0, env: env).map { ControlTasks.mainFolder(of: $0.repo).path } })
             if let other = held.first(where: { $0 != repo }) {
                 throw Failure(message: "The \(layer) set holds tasks of \(URL(filePath: other).lastPathComponent); "
                                   + "a set takes the tasks of one repository for now, so tasks of \(URL(filePath: repo).lastPathComponent) can't join it.")
@@ -95,8 +96,11 @@ public enum LayerSets {
     /// Moves the set's file to the Trash; its tasks stay.
     public static func delete(_ layer: String, env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move) throws {
         let file = EvalPaths(env: env).set(layer)
-        guard FileManager.default.fileExists(atPath: file.path) else { throw Failure(message: "The layer \(layer) has no set.") }
-        _ = try trash(file)
+        // Under the lock: a writer in the middle of a change never brings the set back half-way.
+        try JSONFile.locked(file) {
+            guard FileManager.default.fileExists(atPath: file.path) else { throw Failure(message: "The layer \(layer) has no set.") }
+            _ = try trash(file)
+        }
     }
 
     /// The sets a task is in, by layer name.
