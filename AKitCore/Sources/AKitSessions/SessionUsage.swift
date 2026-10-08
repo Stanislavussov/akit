@@ -43,6 +43,7 @@ public struct SessionUsage: Sendable, Hashable {
 
     public var userPrompts = 0
     public var toolCalls = 0
+    /// Failed tool calls, without rejected and interrupted ones (`FailureSignals`).
     public var toolErrors = 0
     public var compactions = 0
     /// Most used first.

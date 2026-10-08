@@ -88,6 +88,8 @@ public enum SessionAnalyzer {
         /// `Read` keys (path, offset, limit) since the file was last edited.
         private var readKeys: [String: Set<String>] = [:]
         private var commitShas = Set<String>()
+        /// Interrupts, rejections, tool errors and repeated calls: the rules the index uses too.
+        private var signals = FailureSignals()
         private var first: Date?
         private var last: Date?
         private var turns: [DateInterval] = []
@@ -156,6 +158,7 @@ public enum SessionAnalyzer {
                     metrics.toolCalls += 1
                     if let id = block["id"] as? String { tools[id] = (block["name"] as? String ?? "", input) }
                     toolStarted(block["name"] as? String ?? "", input: input)
+                    signals.toolCall(block["name"] as? String ?? "tool", input: FailureSignals.inputText(block["input"]))
                 default: break
                 }
             }
@@ -187,42 +190,43 @@ public enum SessionAnalyzer {
             "\(input["offset"] ?? "")|\(input["limit"] ?? "")|\(input["pages"] ?? "")"
         }
 
+        /// Meta lines and compaction summaries are not the user's messages: the signals skip them,
+        /// as the transcript does.
         private mutating func user(_ entry: Object) {
             guard let message = entry["message"] as? Object else { return }
             let content = message["content"]
             let meta = entry["isMeta"] as? Bool == true
+            let counted = !meta && entry["isCompactSummary"] as? Bool != true
             guard let blocks = content as? [Object] else {
                 let text = content as? String ?? ""
-                if text.hasPrefix("[Request interrupted by user") { metrics.interrupts += 1 }
+                if counted { signals.userText(text) }
                 if meta { pending.injections += text.count } else { pending.other += text.count }
                 return
             }
             for block in blocks {
                 switch block["type"] as? String {
                 case "tool_result":
-                    toolResult(block)
+                    toolResult(block, counted: !meta)
                 case "text":
                     let text = block["text"] as? String ?? ""
-                    if text.hasPrefix("[Request interrupted by user") { metrics.interrupts += 1 }
                     if meta { pending.injections += text.count } else { pending.other += text.count }
                 default:
                     pending.other += Self.size(of: block)
                 }
             }
+            // One user message: its text blocks together, as the transcript joins them.
+            if counted { signals.userText(JSONLines.text(of: blocks.filter { $0["type"] as? String != "tool_result" })) }
         }
 
-        private mutating func toolResult(_ block: Object) {
+        private mutating func toolResult(_ block: Object, counted: Bool) {
             let text = JSONLines.text(of: block["content"])
             let call = (block["tool_use_id"] as? String).flatMap { tools.removeValue(forKey: $0) }
             if let call, call.name == "Read", block["is_error"] as? Bool != true, let path = call.input["file_path"] as? String {
                 readKeys[path, default: []].insert(Self.readKey(call.input))
             }
-            if block["is_error"] as? Bool == true {
-                if Self.isRejection(text) {
-                    metrics.rejected += 1
-                } else if !text.hasPrefix("[Request interrupted by user") {
-                    metrics.toolErrors += 1
-                }
+            // The transcript leaves out a result with no text.
+            if counted, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                signals.toolResult(call?.name, text: text, isError: block["is_error"] as? Bool == true)
             }
             if let call, Self.readsCode(call.name, input: call.input) {
                 pending.readCode += text.count
@@ -244,6 +248,10 @@ public enum SessionAnalyzer {
         /// The finished numbers.
         var result: SessionMetrics {
             var result = metrics
+            result.interrupts = signals.interrupts
+            result.rejected = signals.rejected
+            result.toolErrors = signals.toolErrors
+            result.repeatedCalls = signals.repeatedCalls
             result.calls = fresh.count
             result.freshTokens = fresh.reduce(0, +)
             result.outputTokens = output.reduce(0, +)
@@ -318,9 +326,6 @@ public enum SessionAnalyzer {
                   let data = try? JSONSerialization.data(withJSONObject: value) else { return 0 }
             return data.count
         }
-
-        /// The user said no, or a permission rule or the auto mode classifier refused.
-        static func isRejection(_ text: String) -> Bool { ToolOutcomes.isRejection(text) }
 
         static func readsCode(_ tool: String, input: Object) -> Bool {
             switch tool {

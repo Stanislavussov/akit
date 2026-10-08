@@ -14,8 +14,8 @@ extension AKitCLI {
                                           by the verifier), deviation steps and advice. Without
                                           SESSION: every reviewed session. Review one with
                                           akit lab new review SESSION
-          akit analysis signals [--json]  Compute cheap signals (interrupts, pushbacks, tool errors,
-                                          repeated calls, "done" with no check) for every indexed
+          akit analysis signals [--json]  Compute cheap signals (interrupts, pushbacks, rejections, tool
+                                          errors, repeated calls, "done" with no check) for every indexed
                                           session; local, no model call. Run akit sessions import first
           akit analysis check [MODE…] [--json]
                                           Run code checks over every indexed session (all of them
@@ -72,6 +72,7 @@ extension AKitCLI {
             out("Computed \(result.computed) of \(result.total) sessions. \(raised) raise a signal:")
             for (name, count) in [("interrupted", signals.values.filter { $0.interrupts > 0 }.count),
                                   ("pushback", signals.values.filter { $0.pushbacks > 0 }.count),
+                                  ("rejected", signals.values.filter { $0.rejected > 0 }.count),
                                   ("tool errors", signals.values.filter { $0.toolErrors > 0 }.count),
                                   ("repeated calls", signals.values.filter { $0.repeatedCalls > 0 }.count),
                                   ("done with no check", signals.values.filter(\.unverifiedDone).count)] {

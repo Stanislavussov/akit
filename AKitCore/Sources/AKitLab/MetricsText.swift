@@ -20,6 +20,7 @@ public enum MetricsText {
         }
         add("Tools", "\(metrics.toolCalls) calls · \(metrics.toolErrors) failed · \(metrics.rereads) re-reads · "
             + "\(metrics.rejected) rejected · \(metrics.interrupts) interrupts"
+            + (metrics.repeatedCalls.map { " · \($0) runs of repeated calls" } ?? "")
             + (metrics.compactions > 0 ? " · \(metrics.compactions) compactions" : ""))
         if !metrics.commits.isEmpty {
             let unmerged = metrics.unmergedCommits

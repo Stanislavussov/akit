@@ -142,6 +142,7 @@ struct SessionNotesSheet: View {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 3) {
                     row("Interrupted", "\(signals.interrupts)", raised: signals.interrupts > 0)
                     row("Pushbacks", "\(signals.pushbacks)", raised: signals.pushbacks > 0)
+                    row("Rejected", "\(signals.rejected)", raised: signals.rejected > 0)
                     row("Tool errors", "\(signals.toolErrors)", raised: signals.toolErrors > 0)
                     row("Repeated calls", "\(signals.repeatedCalls)", raised: signals.repeatedCalls > 0)
                     row("Done with no check", signals.unverifiedDone ? "yes" : "no", raised: signals.unverifiedDone)

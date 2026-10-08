@@ -55,7 +55,7 @@ public enum Sampling {
         let model = session.model.map(family) ?? "unknown"
         let signal: String
         if let signals {
-            if signals.interrupts > 0 || signals.pushbacks > 0 {
+            if signals.interrupts > 0 || signals.pushbacks > 0 || signals.rejected > 0 {
                 signal = "pushback"
             } else if signals.unverifiedDone {
                 signal = "unverified-done"

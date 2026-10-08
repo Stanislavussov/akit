@@ -113,6 +113,11 @@ public enum IndexSchema {
         ALTER TABLE ratings_v8 RENAME TO ratings;
         CREATE INDEX ratings_source ON ratings(source_id);
         """,
+        // v9: rejected tool calls as a signal of their own (`FailureSignals`): no longer part of
+        // tool_errors. The signals' version changed with it, so every row is recomputed.
+        """
+        ALTER TABLE signals ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0;
+        """,
     ]
 
     /// Brings the database to the latest version. Refuses an index written by a newer akit.

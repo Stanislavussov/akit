@@ -180,11 +180,11 @@ struct TranscriptBuilder {
             switch item.kind {
             case .user: result.userPrompts += 1
             case .toolCall(let name): tools[name, default: 0] += 1
-            case .toolResult(_, let isError): if isError { result.toolErrors += 1 }
             case .event(let title): if title == "Compacted" { result.compactions += 1 }
-            case .assistant, .thinking: break
+            case .assistant, .thinking, .toolResult: break
             }
         }
+        result.toolErrors = FailureSignals(items).toolErrors
         result.toolCalls = tools.values.reduce(0, +)
         result.tools = tools.map { ToolCount(name: $0.key, calls: $0.value) }
             .sorted { ($0.calls, $1.name) > ($1.calls, $0.name) }

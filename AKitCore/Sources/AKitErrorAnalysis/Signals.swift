@@ -9,19 +9,18 @@ import Foundation
 /// index. They stratify the batch sample; no model is called.
 public enum SignalScanner {
     /// Bumped when the computation changes: every session is recomputed.
-    public static let version = 1
+    /// 2 (2026-10-08): interrupts, rejections, tool errors and repeated calls by `FailureSignals`.
+    public static let version = 2
 
+    /// Interrupts, rejections, tool errors and repeated calls are `FailureSignals`, as in Lab.
     public static func signals(of items: [TranscriptItem]) -> SessionSignals {
         let facts = TranscriptFacts(items)
         let users = facts.userTurns
-        let interrupts = users.filter { $0.text.contains("[Request interrupted by user") }.count
-        let pushbacks = users.filter { !$0.text.contains("[Request interrupted by user") && isPushback($0.text) }.count
-        let toolErrors = items.filter { if case .toolResult(_, true) = $0.kind { true } else { false } }.count
-        var seen = Set<String>()
-        var repeated = 0
-        for call in facts.calls where !seen.insert(call.name + "\u{1}" + call.text).inserted { repeated += 1 }
-        return SessionSignals(interrupts: interrupts, pushbacks: pushbacks, toolErrors: toolErrors, repeatedCalls: repeated,
-                              unverifiedDone: unverifiedDone(facts), userTurns: users.count, steps: items.count)
+        let shared = FailureSignals(items)
+        let pushbacks = users.filter { !FailureSignals.isInterrupt($0.text) && isPushback($0.text) }.count
+        return SessionSignals(interrupts: shared.interrupts, pushbacks: pushbacks, rejected: shared.rejected, toolErrors: shared.toolErrors,
+                              repeatedCalls: shared.repeatedCalls, unverifiedDone: unverifiedDone(facts), userTurns: users.count,
+                              steps: items.count)
     }
 
     /// The final report claims the work is done, and nothing ran a test, build or check after

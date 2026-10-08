@@ -149,7 +149,8 @@ struct ChecksTests {
                      item(4, .user, "No, I asked for a menu item"), item(5, .user, "[Request interrupted by user]"),
                      item(6, .user, "нет, не то"), item(7, .assistant, "OK")]
         let signals = SignalScanner.signals(of: items)
-        #expect(signals.pushbacks == 2 && signals.interrupts == 1 && signals.toolErrors == 1 && signals.repeatedCalls == 1)
+        // Two reads of /a in a row are not a repeat yet; a third would be (see FailureSignalsTests).
+        #expect(signals.pushbacks == 2 && signals.interrupts == 1 && signals.toolErrors == 1 && signals.repeatedCalls == 0)
         #expect(signals.userTurns == 4 && signals.steps == 8 && signals.raised)
         #expect(!SignalScanner.isPushback("Now add the menu item"))
     }
@@ -190,6 +191,13 @@ struct ChecksTests {
         #expect(computed == 2 && total == 2)
         #expect(try SignalScanner.refresh(env: env).computed == 0)
         #expect(try AnalysisIndex.signals(database)["claude:\(first)"]?.signals.steps == 3)
+        // Rows an older scanner wrote are computed again.
+        let older = try AnalysisIndex.signals(database).mapValues {
+            StoredSignals(signals: $0.signals, fileSize: $0.fileSize, fileModified: $0.fileModified, version: SignalScanner.version - 1)
+        }
+        try AnalysisIndex.store(older, in: database)
+        #expect(try SignalScanner.refresh(env: env).computed == 2)
+        #expect(try AnalysisIndex.signals(database).values.allSatisfy { $0.version == SignalScanner.version })
 
         let results = try CheckRunner.run([CodeChecks.check(for: "large-file-read-whole")!], env: env)
         let rate = results[0].rate()
