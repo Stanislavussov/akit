@@ -79,8 +79,17 @@ public enum LayerSetups {
             if missing > 0 { warnings.append("\(missing) of the eval's tasks are gone from ~/.akit/lab/evals/tasks and are left out.") }
         }
         guard !chosen.isEmpty else { throw Failure(message: "Pick at least one task.") }
-        // Worktrees of one repository count as one; its main folder names the project.
-        let repositories = Set(chosen.map { ControlTasks.mainFolder(of: $0.repo) })
+        // A task whose repository is gone from this Mac is blocked by itself, not counted as
+        // another repository.
+        let gone = chosen.filter { !$0.repositoryExists }
+        chosen.removeAll { !$0.repositoryExists }
+        guard !chosen.isEmpty else {
+            throw Failure(message: "The repositories of these tasks are gone from this Mac: "
+                              + Set(gone.map(\.mainFolder.path)).sorted().joined(separator: ", ") + ".")
+        }
+        // Worktrees of one repository count as one (also after a worktree is removed); its main
+        // folder names the project.
+        let repositories = Set(chosen.map(\.mainFolder))
         guard repositories.count == 1, let repo = repositories.first else {
             throw Failure(message: "One eval takes the tasks of one repository for now; these come from "
                               + repositories.map(\.lastPathComponent).sorted().joined(separator: ", ") + ".")
@@ -134,6 +143,7 @@ public enum LayerSetups {
         var trees: [String: CloneFiles] = [:]
         var runnable: [ControlTask] = []
         var blocked: [String: String] = [:]
+        for task in gone { blocked[task.id] = "Its repository is gone from this Mac (\(task.mainFolder.path))." }
         var notes: [String: [String]] = [:]
         var ownFiles: [String: String] = [:]
         var projectSkills: [String: [String]] = [:]

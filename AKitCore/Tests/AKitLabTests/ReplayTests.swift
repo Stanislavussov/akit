@@ -187,6 +187,26 @@ struct ReplayTests {
         #expect(LeakCheck.leaks(in: elsewhere, task: task, repo: URL(filePath: "/r"), env: env)
                 == ["the commit 1c9cf65", "AKit's Lab folder", "the Trash"])
         #expect(LeakCheck.commitSigns(in: elsewhere, task: task, env: env) == ["the commit 1c9cf65", "AKit's Lab folder"])
+
+        // What a call writes is no sign: AKit's own sources mention ~/.akit/lab and ~/.Trash.
+        let editing = try transcript([
+            ["type": "assistant", "message": ["content": [
+                ["type": "tool_use", "name": "Edit", "input": ["file_path": "/w/AKitCore/Sources/AKitLab/LabPaths.swift",
+                                                              "old_string": "~/.akit/lab", "new_string": "~/.akit/lab/runs 1c9cf65 ~/.Trash"]],
+                ["type": "tool_use", "name": "Write", "input": ["file_path": "/w/docs/lab.md", "content": "Runs live in ~/.akit/lab."]],
+                ["type": "tool_use", "name": "Grep", "input": ["pattern": "akit/lab", "path": "/w/AKitCore"]],
+            ]]],
+        ])
+        #expect(LeakCheck.leaks(in: editing, task: task, repo: URL(filePath: "/r"), env: env).isEmpty)
+        // What a call reads or runs is.
+        for input in [["command": "cat ~/.akit/lab/tasks/x.json"], ["file_path": home.path + "/.akit/lab/tasks/x.json"]] {
+            let reading = try transcript([
+                ["type": "assistant", "message": ["content": [["type": "tool_use", "name": input["command"] == nil ? "Read" : "Bash", "input": input]]]],
+            ])
+            #expect(LeakCheck.commitSigns(in: reading, task: task, env: env) == ["AKit's Lab folder"], "\(input)")
+        }
+        #expect(LeakCheck.pathLikeInput(tool: "write", input: ["path": "a.swift", "content": "x"]) == "a.swift")
+        #expect(LeakCheck.pathLikeInput(tool: "WebFetch", input: ["url": "u"]).contains("\"url\""))
     }
 
     @Test func comparisonPerSetup() {

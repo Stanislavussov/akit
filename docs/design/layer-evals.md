@@ -193,7 +193,16 @@ Further choices of the step 4 plan, accepted on the same day:
   never overwritten. One repository per set (v1): a task of another repository is refused
   while the set holds tasks of one. Worktrees of one repository count as one (their shared
   git folder, read from `.git` and `commondir`); an eval takes the project's answers and
-  `project_name` from the main folder, so a task made in a worktree finds them. Missing task ids are shown as missing and skipped. The
+  `project_name` from the main folder, so a task made in a worktree finds them. A task
+  records that main folder when it is made (`mainRepo`; older tasks find it from `repo`),
+  so a removed worktree doesn't split the set: its cells clone from the main folder
+  (worktrees share the objects; the cell key has no repository path). A task whose
+  repository is gone altogether is blocked by itself. Note: an eval queued by slice 1 with
+  tasks of a worktree rendered `project_name` from the worktree's folder, so Continue of it
+  may refuse ("The layer changed since the eval…"); that fails safe, start a new eval.
+- Leak signs read only what a tool call asks for (`LeakCheck.pathLikeInput`: a shell
+  command, the path or pattern a file tool reads or searches, the path it writes), never
+  the text it writes: AKit's own sources mention `~/.akit/lab`, and editing them is no leak. Missing task ids are shown as missing and skipped. The
   set's answers are the eval's explicit answers (`--answer` still wins in the CLI). Core
   has no set.
 - UI: Evals → **From Commit…** (repository, recent commits that change Swift tests with

@@ -18,7 +18,13 @@ struct LayerSetsTests {
         HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path], executableSearchPaths: [URL(filePath: "/usr/bin")])
     }
 
-    func task(_ id: String, repo: String = "/work/akit") throws -> ControlTask {
+    /// `repo`: a folder name under the home (made here), or an absolute path as it is.
+    func task(_ id: String, repo: String = "akit") throws -> ControlTask {
+        var repo = repo
+        if !repo.hasPrefix("/") {
+            repo = home.appending(path: repo).path
+            try fm.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        }
         let task = ControlTask(id: id, title: id, repo: repo, base: String(repeating: "a", count: 40), prompt: "p", source: .reproduction,
                                oracle: .tests(command: "true"))
         try ControlTasks.save(task, env: env)
@@ -68,7 +74,7 @@ struct LayerSetsTests {
     }
 
     @Test func oneRepositoryPerSetAndNoCoreSet() throws {
-        let (akit, other, again) = (try task("a-abcd"), try task("b-abcd", repo: "/work/other"), try task("c-abcd"))
+        let (akit, other, again) = (try task("a-abcd"), try task("b-abcd", repo: "other"), try task("c-abcd"))
         #expect(throws: LayerSets.Failure.self) { try LayerSets.add([akit, other], to: "swiftui", env: env) }
         try LayerSets.add([akit], to: "swiftui", env: env)
         #expect { try LayerSets.add([other], to: "swiftui", env: env) } throws: {
@@ -80,6 +86,16 @@ struct LayerSetsTests {
         #expect(try LayerSets.add([other], to: "swiftui", env: env).tasks == ["b-abcd"])
         #expect(throws: LayerSets.Failure.self) { try LayerSets.add([akit], to: "core", env: env) }
         #expect(throws: LayerSets.Failure.self) { try LayerSets.setAnswer("x", .text("y"), in: "core", env: env) }
+
+        // A task whose repository is gone is refused for itself; held, it doesn't fix the set's repository.
+        let gone = try task("gone-abcd", repo: home.appending(path: "gone").path)
+        #expect { try LayerSets.add([gone], to: "swiftui", env: env) } throws: {
+            ($0 as? LayerSets.Failure)?.message.contains("gone-abcd is gone from this Mac") == true
+        }
+        try fm.createDirectory(at: home.appending(path: "gone"), withIntermediateDirectories: true)
+        try LayerSets.add([gone], to: "solo", env: env)
+        try fm.removeItem(at: home.appending(path: "gone"))
+        #expect(try LayerSets.add([other], to: "solo", env: env).tasks == ["gone-abcd", "b-abcd"])
     }
 
     /// Worktrees of one repository count as one: the user works in worktrees.
@@ -98,7 +114,7 @@ struct LayerSetsTests {
         #expect(ControlTasks.mainFolder(of: home.path).path == home.standardizedFileURL.resolvingSymlinksInPath().path)
         let (main, linked) = (try task("main-abcd", repo: repo.path), try task("linked-abcd", repo: worktree.path))
         #expect(try LayerSets.add([main, linked], to: "swiftui", env: env).tasks == ["main-abcd", "linked-abcd"])
-        #expect(throws: LayerSets.Failure.self) { try LayerSets.add([try task("other-abcd", repo: "/work/other")], to: "swiftui", env: env) }
+        #expect(throws: LayerSets.Failure.self) { try LayerSets.add([try task("other-abcd", repo: "other")], to: "swiftui", env: env) }
     }
 
     @Test func writersDontLoseEachOthersTasks() async throws {

@@ -226,13 +226,30 @@ enum IsolatedClone {
     }
 }
 
-/// Signs that a replay saw the answer. Anywhere in its tool calls or their results: the
+/// Signs that a replay saw the answer. In what its tool calls ask for or get back: the
 /// commit's hash. In what its tool calls ask for: the real repository, AKit's Lab folder
 /// (run.json and the task cache name the commit), Claude Code's session history, a
 /// `session_search` tool, or the Trash (earlier clones with the answer go there). The subject line is not a sign: it is in the prompt, and the agent's
 /// own commit usually reuses it. Tool results aren't searched for paths: Claude Code itself
-/// mentions `~/.claude/projects` when it saves a long output there.
-enum LeakCheck {
+/// mentions `~/.claude/projects` when it saves a long output there. Of a tool call only
+/// what it asks for is searched (`pathLikeInput`), never the text it writes: AKit's own
+/// sources mention `~/.akit/lab`, and editing them is no leak.
+public enum LeakCheck {
+    /// What a tool call asks for: a shell command, the path or pattern a file tool reads or
+    /// searches, the path a file tool writes (not its content). An unknown tool's whole input.
+    /// Names of Claude Code and Pi tools alike, in any case.
+    public static func pathLikeInput(tool: String, input: Any?) -> String {
+        let keys: [String]
+        switch tool.lowercased() {
+        case "bash": keys = ["command"]
+        case "write", "edit", "multiedit", "notebookedit": keys = ["file_path", "notebook_path", "path"]
+        case "read", "glob", "grep", "ls", "find": keys = ["file_path", "notebook_path", "path", "pattern"]
+        default: return JSONLines.pretty(input)
+        }
+        let object = input as? JSONLines.Object ?? [:]
+        return keys.compactMap { object[$0] as? String }.joined(separator: "\n")
+    }
+
     static func leaks(in transcript: URL, task: ReplayTask, repo: URL, env: HarnessEnvironment) -> [String] {
         signs(toolCalls(in: transcript), task: task, repo: repo, env: env)
     }
@@ -274,8 +291,9 @@ enum LeakCheck {
             for block in blocks {
                 switch block["type"] as? String {
                 case "tool_use":
-                    calls.inputs += JSONLines.pretty(block["input"]) + "\n"
-                    if (block["name"] as? String ?? "").contains("session_search") { calls.usedSearch = true }
+                    let name = block["name"] as? String ?? ""
+                    calls.inputs += pathLikeInput(tool: name, input: block["input"]) + "\n"
+                    if name.contains("session_search") { calls.usedSearch = true }
                 case "tool_result": calls.results += JSONLines.text(of: block["content"]) + "\n"
                 default: break
                 }

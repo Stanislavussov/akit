@@ -79,7 +79,7 @@ public enum ControlRuns {
             guard let task = run.spec.controlTask.flatMap({ byID[$0] }), let setup = run.spec.controlSetup else { continue }
             done.insert(cellKey(task: task, setup: setup, repeatIndex: run.spec.repeatIndex ?? 1))
         }
-        let folder = URL(filePath: tasks[0].repo, directoryHint: .isDirectory)
+        let folder = tasks[0].cloneSource
         let chosen: LabEnvironment
         if let environment { chosen = environment } else { chosen = await Launcher.suggested(for: folder, env: env) }
         var runs: [LabRun] = []
@@ -94,7 +94,7 @@ public enum ControlRuns {
             let created = start.addingTimeInterval(Double(runs.count) / 1000)
             let spec = RunSpec(id: RunSpec.newID(at: created), kind: .control,
                                title: "Control \(JSONLines.titleLine(task.title, limit: 40)) · \(setup.name) · \(index)/\(repeats)",
-                               createdAt: created, folder: task.repo, environment: chosen, akit: akit.path, agent: setup.agent,
+                               createdAt: created, folder: task.cloneSource.path, environment: chosen, akit: akit.path, agent: setup.agent,
                                repo: task.repo, repeatIndex: index, repeats: repeats, keep: keep, controlTask: task.id,
                                controlSetup: setup)
             runs.append(try LabStore.create(spec, env: env))
@@ -135,7 +135,8 @@ public enum ControlRuns {
         try SendLog.checkLimit(estimate: nil, settings: gate.settings, env: env)
         guard !Cancellation.isCancelled else { throw CancellationError() }
         out("Control task “\(task.title)” from \(String(task.base.prefix(7))) · \(setup.label) · \(task.oracle.label)")
-        let repo = URL(filePath: task.repo, directoryHint: .isDirectory)
+        // The task's folder, or its repository's main folder once a worktree is gone.
+        let repo = task.cloneSource
         let oracle: CellOracle
         switch task.oracle {
         case .tests(let command): oracle = .command(command)
@@ -143,7 +144,10 @@ public enum ControlRuns {
         case .hiddenTests(let commit):
             // The replay task's cache, or the commit checked again (local builds, no tokens).
             do {
-                oracle = .hidden(try await ReplayTasks.task(commit: commit, repo: repo, env: env, out: out))
+                var replay = try await ReplayTasks.task(commit: commit, repo: repo, env: env, out: out)
+                // Its test files are read from the repository it was checked in, or the main folder.
+                if !FileManager.default.fileExists(atPath: replay.repo) { replay.repo = repo.path }
+                oracle = .hidden(replay)
             } catch let failure as ReplayTasks.Failure {
                 throw LabWorker.Failure(message: "The hidden tests of \(commit.prefix(7)) can't judge the cell: \(failure.message)")
             }
@@ -201,9 +205,12 @@ public enum ControlRuns {
     /// session history of Claude Code or Pi, a `session_search` tool, the real repository
     /// (which holds the later fix), or the Trash (finished clones and a commit's validation
     /// folder go there). Tool results aren't searched: harnesses mention their own folders there.
+    /// Of a call only what it asks for counts (`LeakCheck.pathLikeInput`), not the text it writes.
     static func leaks(in transcript: SessionTranscript, task: ControlTask) -> [String] {
         let calls = transcript.items.compactMap { item -> (name: String, text: String)? in
-            if case .toolCall(let name) = item.kind { (name, item.text) } else { nil }
+            guard case .toolCall(let name) = item.kind else { return nil }
+            let input = (try? JSONSerialization.jsonObject(with: Data(item.text.utf8))) ?? item.text
+            return (name, input is String ? item.text : LeakCheck.pathLikeInput(tool: name, input: input))
         }
         var found: [String] = []
         if case .session(let key) = task.source, calls.contains(where: { $0.text.contains(key.nativeID) }) {

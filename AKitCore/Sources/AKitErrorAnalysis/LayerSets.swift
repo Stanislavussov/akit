@@ -57,14 +57,17 @@ public enum LayerSets {
     @discardableResult
     public static func add(_ tasks: [ControlTask], to layer: String, now: Date = .now, env: HarnessEnvironment) throws -> LayerSet {
         guard !tasks.isEmpty else { throw Failure(message: "Pick at least one task.") }
-        // Worktrees of one repository count as one.
-        let repositories = Set(tasks.map { ControlTasks.mainFolder(of: $0.repo).path })
+        if let gone = tasks.first(where: { !$0.repositoryExists }) {
+            throw Failure(message: "The repository of \(gone.id) is gone from this Mac (\(gone.mainFolder.path)).")
+        }
+        // Worktrees of one repository count as one, also after the worktree is removed.
+        let repositories = Set(tasks.map(\.mainFolder.path))
         guard repositories.count == 1, let repo = repositories.first else {
             throw Failure(message: "A layer set takes the tasks of one repository for now; these come from \(names(repositories)).")
         }
         return try update(layer, now: now, env: env) { set in
-            // The set's repository: that of the tasks it holds that still exist.
-            let held = Set(set.tasks.compactMap { ControlTasks.load($0, env: env).map { ControlTasks.mainFolder(of: $0.repo).path } })
+            // The set's repository: that of the tasks it holds that still exist, on this Mac.
+            let held = Set(set.tasks.compactMap { ControlTasks.load($0, env: env) }.filter(\.repositoryExists).map(\.mainFolder.path))
             if let other = held.first(where: { $0 != repo }) {
                 throw Failure(message: "The \(layer) set holds tasks of \(URL(filePath: other).lastPathComponent); "
                                   + "a set takes the tasks of one repository for now, so tasks of \(URL(filePath: repo).lastPathComponent) can't join it.")

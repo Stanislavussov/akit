@@ -190,6 +190,11 @@ struct LayerSetupsTests {
         #expect(pi?.contains("Claude Code only") == true)
         #expect(await message { _ = try await prepare("core", tasks: [task(base)]) }?.contains("core layer") == true)
         let other = task(base, id: "other-abcd", repo: fixture.home.appending(path: "other"))
+        // A task whose repository is gone is blocked for itself, not counted as another repository.
+        let gone = try await prepare(tasks: [task(base), other])
+        #expect(gone.runnable.map(\.id) == ["make-value-2-abcd"] && gone.blocked["other-abcd"]?.contains("gone from this Mac") == true)
+        #expect(await message { _ = try await prepare(tasks: [other]) }?.contains("gone from this Mac") == true)
+        try FileManager.default.createDirectory(at: fixture.home.appending(path: "other"), withIntermediateDirectories: true)
         #expect(await message { _ = try await prepare(tasks: [task(base), other]) }?.contains("one repository") == true)
 
         // A layer that merges keys into .mcp.json is refused in v1; a .json inside a skill isn't.

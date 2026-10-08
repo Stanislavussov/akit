@@ -69,6 +69,9 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
     public var title: String
     /// Folder of the repository.
     public var repo: String
+    /// The repository's main folder when the task was made, also when `repo` is a linked
+    /// worktree (which may be removed later); nil in tasks made before it was recorded.
+    public var mainRepo: String?
     /// The commit the agent starts from.
     public var base: String
     public var prompt: String
@@ -84,11 +87,12 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
     public var referenceGreen: Bool?
     public var createdAt: Date
 
-    public init(id: String, title: String, repo: String, base: String, prompt: String, source: Source, modeID: String? = nil,
-                oracle: Oracle, successMode: Bool? = nil, reference: String? = nil, createdAt: Date = .now) {
+    public init(id: String, title: String, repo: String, mainRepo: String? = nil, base: String, prompt: String, source: Source,
+                modeID: String? = nil, oracle: Oracle, successMode: Bool? = nil, reference: String? = nil, createdAt: Date = .now) {
         self.id = id
         self.title = title
         self.repo = repo
+        self.mainRepo = mainRepo
         self.base = base
         self.prompt = prompt
         self.source = source
@@ -97,6 +101,21 @@ public struct ControlTask: Codable, Sendable, Hashable, Identifiable {
         self.successMode = successMode
         self.reference = reference
         self.createdAt = createdAt
+    }
+
+    /// The repository's main folder: as recorded when the task was made, else found from `repo`.
+    /// Layer sets and evals take one repository by it.
+    public var mainFolder: URL {
+        mainRepo.map { URL(filePath: $0, directoryHint: .isDirectory) } ?? ControlTasks.mainFolder(of: repo)
+    }
+
+    /// Whether the repository is still on this Mac (its main folder).
+    public var repositoryExists: Bool { FileManager.default.fileExists(atPath: mainFolder.path) }
+
+    /// Where cells clone the base commit from: the task's folder, or the main folder once a
+    /// worktree is gone (worktrees share the repository's objects).
+    public var cloneSource: URL {
+        FileManager.default.fileExists(atPath: repo) ? URL(filePath: repo, directoryHint: .isDirectory) : mainFolder
     }
 }
 
@@ -129,8 +148,8 @@ public enum ControlTasks {
         guard let folder = session.project else { throw Failure(message: "The session \(key) records no folder.") }
         let repo = try await repository(folder, env: env)
         let full = try await commit(base, in: repo, env: env)
-        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path, base: full,
-                           prompt: prompt, source: .session(key: key), modeID: modeID, oracle: oracle,
+        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path,
+                           mainRepo: mainFolder(of: repo.path).path, base: full, prompt: prompt, source: .session(key: key), modeID: modeID, oracle: oracle,
                            successMode: successMode ? true : nil, reference: reference)
     }
 
@@ -142,8 +161,8 @@ public enum ControlTasks {
         guard !prompt.isEmpty else { throw Failure(message: "The prompt is empty.") }
         let repo = try await repository(folder, env: env)
         let full = try await commit(base, in: repo, env: env)
-        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path, base: full, prompt: prompt,
-                           source: .reproduction, modeID: modeID, oracle: oracle, successMode: successMode ? true : nil,
+        return ControlTask(id: newID(prompt), title: JSONLines.titleLine(prompt, limit: 60), repo: repo.path,
+                           mainRepo: mainFolder(of: repo.path).path, base: full, prompt: prompt, source: .reproduction, modeID: modeID, oracle: oracle, successMode: successMode ? true : nil,
                            reference: reference)
     }
 
@@ -161,7 +180,7 @@ public enum ControlTasks {
         }
         if let existing = list(env: env).first(where: { $0.source == .commit(sha: replay.commit) }) { return existing }
         var task = ControlTask(id: newID(replay.subject), title: JSONLines.titleLine(replay.subject, limit: 60), repo: replay.repo,
-                               base: replay.base, prompt: replay.prompt, source: .commit(sha: replay.commit),
+                               mainRepo: mainFolder(of: replay.repo).path, base: replay.base, prompt: replay.prompt, source: .commit(sha: replay.commit),
                                oracle: .hiddenTests(commit: replay.commit), reference: replay.commit)
         // Validation ran the tests on the commit itself: they pass there.
         task.referenceGreen = true

@@ -188,6 +188,8 @@ struct ControlTasksTests {
             """.utf8).write(to: EvalPaths(env: env).task("old-task-abcd"))
         let old = try #require(ControlTasks.load("old-task-abcd", env: env))
         #expect(old.source == .reproduction && old.oracle == .tests(command: "swift test") && ControlTasks.list(env: env).count == 2)
+        // Made before the main folder was recorded: found from its folder.
+        #expect(old.mainRepo == nil && old.mainFolder.path == "/r" && task.mainRepo == "/work/akit")
     }
 
     @Test func theReferenceCheckRunsTheTestsOnTheReferenceCommit() async throws {

@@ -449,6 +449,30 @@ struct ControlRunsTests {
         // Finished clones (with the answer of an earlier cell) and a commit's validation folder are in the Trash.
         #expect(ControlRuns.leaks(in: transcript([("Bash", #"{"command":"ls ~/.Trash"}"#)]), task: task) == ["the Trash"])
         #expect(ControlRuns.leaks(in: transcript([("Read", #"{"file_path":"/Users/me/.Trash/akit-control-1/Lib.swift"}"#)]), task: task) == ["the Trash"])
+        // Text the agent writes is no sign.
+        #expect(ControlRuns.leaks(in: transcript([("Edit", #"{"file_path":"/w/a.swift","old_string":"x","new_string":"~/.Trash /work/repo"}"#),
+                                                  ("write", #"{"path":"/w/b.md","content":"see ~/.claude/projects"}"#)]), task: task).isEmpty)
+    }
+
+    /// A task made in a worktree that was removed later: its cells clone from the repository's
+    /// main folder, and it joins a set with the main folder's tasks.
+    @Test func taskOfARemovedWorktreeStillRuns() async throws {
+        try fakeClaude()
+        let (repo, base) = try await repository()
+        let worktree = home.appending(path: "wt", directoryHint: .isDirectory)
+        await git("worktree", "add", "-q", "--detach", worktree.path, base, in: repo)
+        let oracle = ControlTask.Oracle.tests(command: #"test "$(cat value.txt)" = 1"#)
+        let linked = try await ControlTasks.reproduction(repo: worktree, base: "HEAD", prompt: "Keep value 1", modeID: nil, oracle: oracle, env: env)
+        let main = try await ControlTasks.reproduction(repo: repo, base: "HEAD", prompt: "Keep value 1 here", modeID: nil, oracle: oracle, env: env)
+        #expect(linked.mainRepo == ControlTasks.mainFolder(of: repo.path).path && main.mainRepo == linked.mainRepo)
+        await git("worktree", "remove", "--force", worktree.path, in: repo)
+        #expect(!fm.fileExists(atPath: worktree.path))
+
+        #expect(linked.cloneSource.path == linked.mainFolder.path)
+        let runs = try await runAll(linked, [baseline])
+        #expect(runs.first?.result?.control?.passed == true, "\(String(describing: runs.first?.result))")
+        try ControlTasks.save(main, env: env)
+        #expect(try LayerSets.add([linked, main], to: "swiftui", env: env).tasks == [linked.id, main.id])
     }
 
     /// The commit-hash and Lab-folder signs are read from Claude Code's transcript file only.
