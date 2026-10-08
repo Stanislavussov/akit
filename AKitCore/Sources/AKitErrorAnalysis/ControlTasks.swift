@@ -278,14 +278,26 @@ public enum ControlTasks {
     }
 
     public static func load(_ id: String, env: HarnessEnvironment) -> ControlTask? {
-        (try? Data(contentsOf: EvalPaths(env: env).task(id))).flatMap { try? AnalysisJSON.decoder.decode(ControlTask.self, from: $0) }
+        (try? Data(contentsOf: EvalPaths(env: env).task(id))).flatMap { decoded($0, env: env) }
+    }
+
+    /// A stored task. An old one without `mainRepo` whose worktree is gone gets its main
+    /// folder when that can be proven (`LabGit.mainFolder(ofGone:base:env:)`), in memory; a
+    /// later save keeps it. Its sets, evals and cells then use that folder, as for a new task.
+    static func decoded(_ data: Data, env: HarnessEnvironment) -> ControlTask? {
+        guard var task = try? AnalysisJSON.decoder.decode(ControlTask.self, from: data) else { return nil }
+        if task.mainRepo == nil, !FileManager.default.fileExists(atPath: task.repo),
+           let main = LabGit.mainFolder(ofGone: task.repo, base: task.base, env: env) {
+            task.mainRepo = main.path
+        }
+        return task
     }
 
     /// Every task, oldest first.
     public static func list(env: HarnessEnvironment) -> [ControlTask] {
         FileWalk.children(of: EvalPaths(env: env).tasks)
             .filter { $0.pathExtension == "json" }
-            .compactMap { (try? Data(contentsOf: $0)).flatMap { try? AnalysisJSON.decoder.decode(ControlTask.self, from: $0) } }
+            .compactMap { (try? Data(contentsOf: $0)).flatMap { decoded($0, env: env) } }
             .sorted { $0.createdAt < $1.createdAt }
     }
 

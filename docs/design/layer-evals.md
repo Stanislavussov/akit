@@ -240,10 +240,16 @@ Further choices of the step 4 plan, accepted on the same day:
     `<session>/subagents/*.jsonl` next to `<session>.jsonl` (older versions: side-chain
     lines of the session file). `LeakCheck` reads them for replays and commit signs;
     `LeakCheck.subagentCalls` feeds them to `ControlRuns.leaks` for cells.
-  - A task without `mainRepo` (made before it was recorded) whose worktree is gone finds
-    its main folder by walking up from the missing path to the nearest ancestor whose
-    `.git` is a folder (`LabGit.mainFolder(of:)`; never the home folder or `/`, where a
-    dotfiles repository may live); none found leaves the path itself.
+  - A task without `mainRepo` (made before it was recorded) whose worktree is gone gets
+    its main folder when it is loaded (`ControlTasks.load`/`list`,
+    `LabGit.mainFolder(ofGone:base:env:)`), only when both hold: the layout proves it (the
+    gone folder is `<main>/.claude/worktrees/<name>`, or an ancestor's
+    `.git/worktrees/*/gitdir` still names `<gone>/.git`; ancestors up to, not including,
+    the environment's home folder and `/`), and `<main>` holds the task's base commit
+    (`git cat-file -e`). Otherwise the task stays gone and blocked, as before. This is not
+    only a leak sign: the found folder is the task's main folder everywhere, so it decides
+    which set it may join (one repository per set), whether it is blocked in an eval, and
+    where its cells clone from.
 - UI: Evals → **From Commit…** (repository, recent commits that change Swift tests with
   "checked" marks, **Check and Save**, optional set), **Layer Sets** in the sidebar with a
   set page (tasks, missing marked, **Remove from Set**, the answers editor with **Save

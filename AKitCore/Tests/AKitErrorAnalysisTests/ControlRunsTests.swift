@@ -497,9 +497,20 @@ struct ControlRunsTests {
         #expect(ControlRuns.leaks(in: SessionTranscript(), subagents: [LeakCheck.Call(name: "Task", input: ["prompt": "See \(repo.path)."])],
                                   task: linked) == ["the real repository"])
         await git("worktree", "remove", "--force", worktree.path, in: repo)
+        // An old task (no `mainRepo`) finds its main folder when loaded; unloaded, it is gone.
         linked.mainRepo = nil
-        #expect(linked.mainFolder.path == resolved && linked.cloneSource.path == resolved)
-        #expect(ControlRuns.leaks(in: transcript("cat \(repo.path)/value.txt"), task: linked) == ["the real repository"])
+        #expect(linked.mainFolder.path != resolved && !linked.repositoryExists)
+        try ControlTasks.save(linked, env: env)
+        let loaded = try #require(ControlTasks.load(linked.id, env: env))
+        #expect(loaded.mainFolder.path == resolved && loaded.cloneSource.path == resolved && loaded.repositoryExists)
+        #expect(ControlTasks.list(env: env).first { $0.id == linked.id }?.mainRepo == resolved)
+        #expect(ControlRuns.leaks(in: transcript("cat \(repo.path)/value.txt"), task: loaded) == ["the real repository"])
+        // Not when the main folder lacks the base commit.
+        var foreign = linked
+        foreign.id = "foreign-abcd"
+        foreign.base = String(repeating: "0", count: 40)
+        try ControlTasks.save(foreign, env: env)
+        #expect(ControlTasks.load(foreign.id, env: env)?.mainRepo == nil)
     }
 
     /// A task made in a worktree that was removed later: its cells clone from the repository's

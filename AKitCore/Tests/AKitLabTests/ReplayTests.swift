@@ -358,22 +358,46 @@ struct ReplayTests {
                 == ["the commit 1c9cf65", "the real repository", "the Trash"])
     }
 
-    /// An old task without `mainRepo` whose worktree is gone: its main folder is the nearest
-    /// ancestor with a `.git` folder; none (below the home folder) leaves the path itself.
-    @Test func goneWorktreeFindsItsMainFolder() throws {
-        let main = home.appending(path: "main", directoryHint: .isDirectory)
-        try fm.createDirectory(at: main.appending(path: ".git"), withIntermediateDirectories: true)
-        try fm.createDirectory(at: main.appending(path: ".claude/worktrees"), withIntermediateDirectories: true)
+    /// A worktree that is gone belongs to a main checkout only when the layout proves it
+    /// (Claude Code's `<main>/.claude/worktrees/<name>`, or git's record still naming it) and
+    /// the main checkout holds the base commit. Otherwise it stays gone.
+    @Test func goneWorktreeFindsItsMainFolderOnlyWhenProven() async throws {
+        let main = home.appending(path: "work/main", directoryHint: .isDirectory)
+        try write("a.txt", "1\n", in: main)
+        _ = await git("init", "-q", "-b", "master", in: main)
+        _ = await git("add", "-A", in: main)
+        _ = await git("commit", "-q", "-m", "Start", in: main)
+        let base = try #require(await git("rev-parse", "HEAD", in: main))
         let resolvedMain = main.standardizedFileURL.resolvingSymlinksInPath().path
-        #expect(LabGit.mainFolder(of: main.path + "/.claude/worktrees/gone").path == resolvedMain)
-        #expect(LabGit.mainFolder(of: main.path + "/.claude/worktrees/gone/deeper/still").path == resolvedMain)
-        let sibling = home.appending(path: "sibling-gone").standardizedFileURL.resolvingSymlinksInPath().path
-        #expect(LabGit.mainFolder(of: sibling).path == sibling)
-        #expect(LabGit.mainFolder(of: "/r").path == "/r")
-        // An existing folder is never walked up from.
-        let plain = home.appending(path: "main/Sources", directoryHint: .isDirectory)
-        try fm.createDirectory(at: plain, withIntermediateDirectories: true)
-        #expect(LabGit.mainFolder(of: plain.path).path == plain.standardizedFileURL.resolvingSymlinksInPath().path)
+
+        // Claude Code's layout, removed with git.
+        let agent = main.appending(path: ".claude/worktrees/agent-1").path
+        _ = await git("worktree", "add", "-q", "--detach", agent, base, in: main)
+        _ = await git("worktree", "remove", "--force", agent, in: main)
+        #expect(!fm.fileExists(atPath: agent))
+        #expect(LabGit.mainFolder(ofGone: agent, base: base, env: env)?.path == resolvedMain)
+        #expect(LabGit.mainFolder(of: agent).path == URL(filePath: agent).standardizedFileURL.resolvingSymlinksInPath().path)
+        // The base must be in it.
+        #expect(LabGit.mainFolder(ofGone: agent, base: String(repeating: "0", count: 40), env: env) == nil)
+        // Deeper inside, or another folder of the main checkout: not a known layout.
+        #expect(LabGit.mainFolder(ofGone: agent + "/deeper", base: base, env: env) == nil)
+        try fm.createDirectory(at: main.appending(path: "other"), withIntermediateDirectories: true)
+        #expect(LabGit.mainFolder(ofGone: main.path + "/other/gone", base: base, env: env) == nil)
+
+        // Git's own record, the folder deleted without git: found by walking up.
+        let tree = main.appending(path: "trees/b").path
+        _ = await git("worktree", "add", "-q", "--detach", tree, base, in: main)
+        try fm.removeItem(atPath: tree)
+        #expect(LabGit.mainFolder(ofGone: tree, base: base, env: env)?.path == resolvedMain)
+
+        // A sibling, an existing folder, and a repository in the home folder itself: none.
+        #expect(LabGit.mainFolder(ofGone: home.appending(path: "work/main-wt").path, base: base, env: env) == nil)
+        #expect(LabGit.mainFolder(ofGone: main.path, base: base, env: env) == nil)
+        _ = await git("init", "-q", in: home)
+        _ = await git("fetch", "-q", main.path, "master", in: home)
+        #expect(await git("cat-file", "-e", "\(base)^{commit}", in: home) != nil)
+        let homeAgent = home.appending(path: ".claude/worktrees/agent-2").path
+        #expect(LabGit.mainFolder(ofGone: homeAgent, base: base, env: env) == nil)
     }
 
     @Test func comparisonPerSetup() {
