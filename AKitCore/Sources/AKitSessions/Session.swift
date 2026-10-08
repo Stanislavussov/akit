@@ -102,6 +102,12 @@ public struct TranscriptItem: Identifiable, Sendable, Hashable {
         self.timestamp = timestamp
         self.outcome = outcome
     }
+
+    /// A tool result's outcome: the recorded one, else read from the text; nil for other items.
+    public var resultOutcome: ToolResultOutcome? {
+        guard case .toolResult(let name, let isError) = kind else { return nil }
+        return outcome ?? ToolResultOutcome(tool: name ?? "", result: text, isError: isError)
+    }
 }
 
 /// Collects transcript items and numbers them.

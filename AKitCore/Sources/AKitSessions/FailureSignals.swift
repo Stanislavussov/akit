@@ -34,8 +34,8 @@ public struct FailureSignals: Sendable, Hashable {
             switch item.kind {
             case .user: userText(item.text)
             case .toolCall(let name): toolCall(name, input: item.text)
-            case .toolResult(let name, let isError):
-                toolResult(name ?? "", item.outcome ?? ToolResultOutcome(tool: name ?? "", result: item.text, isError: isError))
+            case .toolResult(let name, _):
+                if let outcome = item.resultOutcome { toolResult(name ?? "", outcome) }
             default: break
             }
         }

@@ -129,12 +129,12 @@ error flag).
   shows the counts on Sessions → Analysis and in Lab; nothing is stored in the index.
 - `AKitErrorAnalysis.SignalScanner` feeds it from the transcript items (Claude Code and
   Pi) and stores the counts in the index table `signals` (schema v9 added the column
-  `rejected`), with the scanner's version (2 since 2026-10-08). A row of an older version
+  `rejected`), with the scanner's version (3 since 2026-10-08; 2 was the first shared version the same day). A row of an older version
   is recomputed on the next scan, like a row whose file changed; one whose file is gone or
   can't be read is deleted. A batch and the bootstrap pick scan before they sample.
 - The session's Usage tab ("N failed") counts `tool_errors` by the same rule, and the
-  Overview tab classifies each call with the same `ToolResultOutcome` and Esc rule, so its
-  "failed" and "rejected" match.
+  Overview tab classifies each call with the same `ToolResultOutcome` and Esc rule and, like
+  the transcript, skips meta lines whole, so its "failed" and "rejected" match.
 - It is not an incremental reducer: the scanner already recomputes only the files that
   changed.
 
@@ -145,7 +145,7 @@ scanner's `pushbacks`, `unverified_done`, `user_turns` and `steps`.
 |---|---|---|
 | `interrupts` | user text that starts with `[Request interrupted by user` (leading white space ignored) in the main transcript; the marker inside other text is not one; meta lines and compaction summaries are not user text | the same text is written when a subagent is aborted or fails; subagent files and side chains don't count. Pi writes no such marker: always 0 |
 | `rejected` | a tool result with the error flag that `ToolOutcomes.outcome` calls `rejected`: the harness's refusal text in its first two lines (the user, a permission rule, a hook, the auto mode classifier or a Pi extension's `Blocked …`). The outcome is read from the real text, before the transcript hides the output of a call that touched a secrets file, and travels with the transcript item. Esc at the permission prompt (`PromptEscapes`): the user's own refusal ("doesn't want to proceed…") followed by user text starting `[Request interrupted by user for tool use]` before the next tool call is not rejected; the Overview tab counts it as interrupted by the same rule. A permission rule's or hook's denial in the same batch stays rejected | |
-| `tool_errors` | a tool result with the error flag that is neither `rejected` nor `interrupted` (`[Request interrupted by user…` as the result, Pi's `Command aborted`). A failed result with no text counts too: the transcript shows it as `(no output)` | |
+| `tool_errors` | a tool result with the error flag that is neither `rejected` nor `interrupted` (`[Request interrupted by user…` as the result, Pi's `Command aborted`). A failed result with no text counts too: the transcript shows it as `(no output)`. Such an item shifts the ids of the later steps in its session (none was found in the local logs on 2026-10-08) | |
 | `compactions` | `system` line with `subtype: "compact_boundary"` (Lab only) | |
 | `rereads` | a successful `Read` of a file and range already read, with no edit of that file in between; a Bash command that may write resets every file (Lab only) | |
 | `repeated_calls` | 3 or more calls in a row of the same tool with the same input: no other tool call between them (results, text and user turns between them don't break the run). Each run counts once, however long it is; a run broken by another call and started again counts again. The input is compared as the transcript shows it: JSON with sorted keys, secrets masked | polling (`sleep`, status checks) repeats on purpose; masking and the redaction of secrets-file content can make two different inputs look the same. A call with no input is not in the transcript and is not counted |

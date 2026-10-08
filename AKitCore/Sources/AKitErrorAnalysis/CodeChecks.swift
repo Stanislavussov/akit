@@ -155,8 +155,7 @@ public enum CodeChecks {
             guard item.id < report.id, case .toolResult = item.kind else { return false }
             return true
         }
-        if let lastResult, case .toolResult(let name, let isError) = lastResult.kind,
-           (lastResult.outcome ?? ToolResultOutcome(tool: name ?? "", result: lastResult.text, isError: isError)).outcome.isFailure {
+        if let lastResult, lastResult.resultOutcome?.outcome.isFailure == true {
             return (true, [lastResult.id, report.id], "done right after a tool error")
         }
         return (false, [], nil)

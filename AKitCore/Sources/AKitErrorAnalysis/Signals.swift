@@ -10,7 +10,9 @@ import Foundation
 public enum SignalScanner {
     /// Bumped when the computation changes: every session is recomputed.
     /// 2 (2026-10-08): interrupts, rejections, tool errors and repeated calls by `FailureSignals`.
-    public static let version = 2
+    /// 3 (2026-10-08): outcomes read before secrets are hidden, the user's refusal alone undone
+    /// by Esc, failed results with no text counted.
+    public static let version = 3
 
     /// Interrupts, rejections, tool errors and repeated calls are `FailureSignals`, as in Lab.
     public static func signals(of items: [TranscriptItem]) -> SessionSignals {

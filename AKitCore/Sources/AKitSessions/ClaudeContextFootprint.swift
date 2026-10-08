@@ -95,7 +95,8 @@ struct FootprintReader {
                 let name = block["name"] as? String ?? ""
                 let input = block["input"] as? Object ?? [:]
                 toolCalls[name, default: 0] += 1
-                if block["input"] != nil { escapes.toolCall() }
+                // A call with no input is not in the transcript, so it doesn't end the Esc window.
+                if !FailureSignals.inputText(block["input"]).isEmpty { escapes.toolCall() }
                 if let id = block["id"] as? String { pending[id] = (name, SecretFilter.readsSecretFile(input)) }
                 if name == "Skill", let skill = input["skill"] as? String { skillCalls[skill, default: 0] += 1 }
                 if name == "Agent" || name == "Task" {
@@ -103,7 +104,9 @@ struct FootprintReader {
                 }
             }
         case "user":
-            guard let message = entry["message"] as? Object else { return }
+            // Meta lines are the harness's, not the conversation: the transcript and the failure
+            // signals skip them whole, results included.
+            guard let message = entry["message"] as? Object, entry["isMeta"] as? Bool != true else { return }
             let blocks = message["content"] as? [Object] ?? []
             for block in blocks where block["type"] as? String == "tool_result" {
                 guard let id = block["tool_use_id"] as? String, let call = pending.removeValue(forKey: id) else { continue }
@@ -113,7 +116,6 @@ struct FootprintReader {
                 record(call.name, outcome.outcome, example: call.readsSecret ? SecretFilter.hiddenOutput : result)
                 escapes.result(tool: call.name, outcome)
             }
-            guard entry["isMeta"] as? Bool != true else { return }
             let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
             for tool in escapes.userText(text) { move(tool, from: .rejected, to: .interrupted) }
             // Same rule as Insights: a skill run by `/name` is written as `<command-message>…`.

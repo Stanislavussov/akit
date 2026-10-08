@@ -865,7 +865,7 @@ What differs from the text above, found while building or on real sessions:
   bootstrap picks and check rates, so evals never enter production frequencies.
 - **Signals** live in the session index (schema v6, table `signals`; v9 added `rejected`
   on 2026-10-08, when the shared `FailureSignals` replaced the scanner's own interrupt,
-  tool error and repeat rules and its version became 2), computed by
+  tool error and repeat rules; its version is 3), computed by
   `akit analysis signals` and after every `akit sessions import` once error analysis is in
   use, together with the code checks of active modes.
 - **Code checks.** Seed 9 has a mechanical check (output over 20 KB of a Read without a

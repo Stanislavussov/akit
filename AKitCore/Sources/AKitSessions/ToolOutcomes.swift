@@ -89,7 +89,7 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
         if result.hasPrefix("[Request interrupted by user") || last == "Command aborted" { return .interrupted }
         if last.hasPrefix("Command timed out") { return .transient }
         if last.hasPrefix("Command exited with code") { return .commandFailed }
-        let head = lines.prefix(2).joined(separator: " ")
+        let head = head(lines)
         // Pi extensions that refuse a call answer "Blocked write: …", "Blocked edit: …".
         if isRejection(head) || head.wholeMatch(of: /Blocked [a-z_]+: .*/) != nil { return .rejected }
         // The command ran: whatever its output says (a test log may mention a timeout).
@@ -101,6 +101,14 @@ public struct ToolOutcomes: Codable, Sendable, Hashable {
         if inputMarkers.contains(where: lowered.contains) { return .inputMistake }
         return .otherError
     }
+
+    /// The first two lines that say something, trimmed and joined: where a tool's own error
+    /// message or refusal is.
+    public static func head(_ result: String) -> String {
+        head(result.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+    }
+
+    private static func head(_ lines: [String]) -> String { lines.prefix(2).joined(separator: " ") }
 
     /// The user said no, or a permission rule, a hook or the auto mode classifier refused.
     public static func isRejection(_ text: String) -> Bool {
@@ -143,7 +151,6 @@ public struct ToolResultOutcome: Sendable, Hashable {
 
     public init(tool: String, result: String, isError: Bool) {
         outcome = ToolOutcomes.outcome(tool: tool, result: result, isError: isError)
-        let head = result.split(whereSeparator: \.isNewline).prefix(2).joined(separator: " ")
-        userRefusal = outcome == .rejected && head.localizedCaseInsensitiveContains(ToolOutcomes.userRefusalMarker)
+        userRefusal = outcome == .rejected && ToolOutcomes.head(result).localizedCaseInsensitiveContains(ToolOutcomes.userRefusalMarker)
     }
 }
