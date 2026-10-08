@@ -121,8 +121,8 @@ Further choices of the step 4 plan, accepted on the same day:
    overlap warning would always fire).
 7. **A project's own `.claude/skills` folder blocks the task** with a clear message, as it
    blocks Apply.
-8. **Paid calibration** (one cell to measure the cost, slice 6) is fine, but only after
-   the user confirms it.
+8. **Paid calibration** (slice 6; since 2026-10-08 one cell of each setup, see
+   [Paired calibration](#built)) is fine, but only after the user confirms it.
 9. **A watchdog guards the agent phase** of control cells (slice 2), so an agent's own
    `swift test` in an AKitCore clone can't grow without limit.
 
@@ -320,12 +320,10 @@ Further choices of the step 4 plan, accepted on the same day:
   limit with the fresh estimate (`SendLog.checkLimit`; a send log that exists but can't be
   read now refuses when a limit is set), writes the eval folder, and queues the cells. A new
   eval whose cells can't be queued has its folder removed again. Without an estimate it
-  refuses and only **calibration** is possible: exactly one cell, the first not yet done
-  (repeat 1 of the baseline of the first task in a new eval); under the lock a second
-  calibration cell is refused while one of the eval is queued or running. The eval keeps the
-  calibration cell, and the next Evaluate continues that eval by default while not every
-  setup has a finished cell (so the paid cell is reused); `--new` (CLI) or the Continue
-  toggle (app) starts another.
+  refuses and only **calibration** is possible (changed the same day to one cell of each
+  setup, see "Paired calibration" below). The eval keeps the calibration cells, and the next
+  Evaluate continues that eval by default while not every setup has a finished cell (so the
+  paid cells are reused); `--new` (CLI) or the Continue toggle (app) starts another.
 - Every paid queue of **Run Cells…** (plain and patch setups too) counts the cells still to
   run, estimates them and asks before queueing: "Queue up to N cells for about $X (range
   $L–$H)?", or "Queue N cells with no estimate yet?" when no cost is recorded; the app counts
@@ -380,19 +378,51 @@ Further choices of the step 4 plan, accepted on the same day:
   and under them the cells to run, the estimate and the time. **Queue N Cells…** asks "Queue N
   cells for about $X (range $L–$H)?" ("They run with your Claude Code account (…), go through
   the sending policy and count toward the monthly limit."); with no estimate it is disabled
-  and **Queue 1 Calibration Cell…** asks "Queue 1 calibration cell?" ("1 paid cell to measure
-  the cost; the eval reuses it."). Error Analysis → Evals → a layer set's page lists the
+  and **Queue 2 Calibration Cells…** asks "Queue 2 calibration cells?" (see "Paired
+  calibration" below). Error Analysis → Evals → a layer set's page lists the
   layer's evals (newest first) with the comparison of the chosen one. Snapshot hook:
   `--section brain --select <layer> --tab evaluate`.
 - CLI: `akit analysis control evaluate LAYER [--model M] [--effort E] [--repeats N]
   [--no-sanity] [--continue [ID] | --new] [--deny CMD[,CMD…] | --no-deny] [--brain DIR]
   [--env …] [--keep] [--calibrate] [--yes [--max-cost USD]] [--no-start] [--json]`, exempt
   from the model-flag refusal. Without `--yes` it prints the plan and the estimate and queues
-  nothing; `--yes` without an estimate is refused; `--calibrate --yes` queues the one
-  calibration cell.
+  nothing; `--yes` without an estimate is refused; `--calibrate --yes` queues the
+  calibration cells.
 - Not in this slice: the sheet offers Continue only for the latest eval of the layer and
   agent; an older one continues with `--continue ID`. The sheet doesn't edit answers (the
   set's page is the one editor).
+
+**Paired calibration (2026-10-08, after slice 6).** One calibration cell measured the
+baseline only, while the layer adds context and costs more; the first pair result also had to
+wait. Now:
+
+- `LayerEvals.calibrationCells`: for each of the eval's two setups (not the read-only one)
+  that has no cell in the eval yet (finished with the layer, queued or running), its first
+  cell not yet done in queue order: repeat 1 of the first task for both in a new eval, so the
+  pair is on the same task and repeat. At most one per setup, so normally 2; an eval that
+  already has a cell of one setup (the eval queued by slice 6 with its one baseline cell)
+  gets only the missing setup's cell, on the task and repeat of the other when that one is
+  first. The plan carries the count (`EvalPlan.calibration`) and its estimate.
+- The money rule stays: no paid cell without an estimate or a confirmed count. `queue`
+  under the eval's lock counts the calibration cells again and refuses more than the plan
+  said ("… calibration cells now, not …; check it again") and none left ("no calibration
+  cell is left to run"); the monthly limit is checked with their estimate.
+- `ControlRuns.estimate(setups:…)` (`LayerEvals.estimate` for Evaluate, Run Cells… with a
+  brain layer and `run --layer`): per setup once each main setup among the cells has recorded
+  control cells of the same harness and model. A setup's records are the control cells of the
+  same layer, role and overlay hash (of any eval: the same files cost the same); read-only
+  cells take their own records, else the baseline's. `CostEstimate.source` `setups` and
+  `parts` name the data: "≈ $8.50 (range $8.50–$8.50) from the recorded cells of each setup
+  (Claude Code · opus): without swiftui 5 × $0.50 (1 recorded), layer swiftui 5 × $1.00 (1
+  recorded), read-only 2 × $0.50 (0 recorded)". Otherwise the fallback (all control cells,
+  else replays) with a note: "(not per setup: the layer setup has no recorded cell yet)".
+- UI: **Queue 2 Calibration Cells…** (**Queue 1 Calibration Cell…** when one setup has a cell)
+  asks "Queue 2 calibration cells?" ("2 paid cells, one of each setup on the same task, to
+  measure what each costs; the eval reuses them. They run with …"); disabled while no
+  calibration cell is left ("The calibration cells are queued or running: …"). CLI: the plan
+  prints "Calibration: 2 calibration cells, one of each setup without a cell yet, on the same
+  task (--calibrate --yes)"; `--calibrate --yes` prints their expected range and "Queued 2
+  calibration cells of eval …"; `--json` has `calibration`.
 
 Not checked yet: whether Claude Code reads a project's `AGENTS.md` by itself (see
 [Open questions](#open-questions)); the check needs a transcript of a repository with

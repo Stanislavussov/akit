@@ -125,7 +125,7 @@ extension AKitCLITests {
         #expect(asked.out.hasPrefix("Eval swiftui-") && asked.out.contains("without swiftui@") && asked.out.contains("layer swiftui@"))
         #expect(asked.out.contains("· overlay ") && asked.out.contains("Home overlap: none."))
         #expect(asked.out.contains("6 cells to run (0 already done or queued); no estimate yet"), "\(asked)")
-        #expect(asked.out.hasSuffix("the eval reuses it."), "\(asked)")
+        #expect(asked.out.hasSuffix("the eval reuses them."), "\(asked)")
         #expect((try JSONSerialization.jsonObject(with: Data(await akit("lab", "list", "--json").out.utf8)) as? [Any])?.isEmpty == true)
         #expect(!FileManager.default.fileExists(atPath: home.appending(path: ".akit/lab/evals/layer-evals").path))
 
@@ -294,8 +294,8 @@ extension AKitCLITests {
     }
 
     /// `akit analysis control evaluate LAYER`: the plan and estimate first, nothing queued
-    /// without --yes; no recorded cost means only the calibration cell; the next run continues
-    /// that eval with an estimate. Nothing is started (--no-start).
+    /// without --yes; no recorded cost means only the calibration cells (one of each setup); the
+    /// next run continues that eval with a per-setup estimate. Nothing is started (--no-start).
     @Test func evaluateALayerFromTheCommandLine() async throws {
         _ = try await repository()
         try write("Projects/task/AKitCore/Package.swift", "// swift-tools-version: 6.0\n")
@@ -331,7 +331,9 @@ extension AKitCLITests {
         #expect(asked.out.contains("Agent: Claude Code · opus · high · 3 repeats") && asked.out.contains("14 cells to run (0 already done or queued)"))
         #expect(asked.out.contains("The agent may not run: " + ControlSetup.akitDenied.joined(separator: ", ")))
         #expect(asked.out.contains("No estimate yet: no recorded control or replay cell of Claude Code · opus."))
-        #expect(asked.out.hasSuffix("Run it again with --calibrate --yes to queue 1 cell that measures the cost; the eval reuses it."), "\(asked)")
+        #expect(asked.out.contains("Calibration: 2 calibration cells, one of each setup without a cell yet, on the same task"), "\(asked)")
+        #expect(asked.out.hasSuffix("Run it again with --calibrate --yes to queue 2 calibration cells that measure the cost (one of each "
+                                    + "setup without a cell yet, on the same task); the eval reuses them."), "\(asked)")
         #expect(queued().isEmpty)
         let refused = await evaluate("--yes")
         #expect(refused.code != 0 && refused.err.contains("No estimate yet") && queued().isEmpty, "\(refused)")
@@ -340,34 +342,40 @@ extension AKitCLITests {
         #expect(await evaluate("--no-deny").out.contains("The agent may not run: no extra commands"))
         #expect(await evaluate("--deny", "Bash(make run:*)").err.contains("isn't a command prefix"))
 
-        // The calibration cell: one paid cell, the eval's first.
+        // The calibration cells: one paid cell of each setup, on the eval's first task and repeat.
         let calibrated = await evaluate("--calibrate", "--yes")
-        #expect(calibrated.code == 0 && calibrated.out.contains("Queued 1 calibration cell of eval swiftui-"), "\(calibrated)")
-        let first = try #require(queued().first)
-        #expect(queued().count == 1 && first.spec.repeatIndex == 1 && first.spec.controlSetup?.denied == ControlSetup.akitDenied)
-        let evalID = try #require(first.spec.controlSetup?.layer?.evalID)
+        #expect(calibrated.code == 0 && calibrated.out.contains("Queued 2 calibration cells of eval swiftui-"), "\(calibrated)")
+        let pair = queued().sorted { $0.spec.createdAt < $1.spec.createdAt }
+        #expect(pair.count == 2 && pair.allSatisfy { $0.spec.repeatIndex == 1 && $0.spec.controlSetup?.denied == ControlSetup.akitDenied })
+        #expect(pair.map { $0.spec.controlSetup?.layer?.role } == [.requiredOnly, .layer] && Set(pair.map(\.spec.controlTask)).count == 1)
+        let evalID = try #require(pair.first?.spec.controlSetup?.layer?.evalID)
+        // Nothing is left to calibrate while they wait.
+        #expect(await evaluate("--calibrate", "--yes").err.contains("no calibration cell is left to run"))
 
-        // Its cost recorded (as the cell would): the next evaluate continues that eval with an estimate.
-        try SendLog.append(SendRecord(purpose: "control", session: nil, runID: first.id,
-                                      destination: SendDestination(harness: .claudeCode, provider: "anthropic", account: "me", org: "me"),
-                                      model: "opus", inputCharacters: 10, usage: SendUsage(cost: 0.5)), env: env)
+        // Their costs recorded (as the cells would): the next evaluate continues that eval with a per-setup estimate.
+        for (run, cost) in zip(pair, [0.5, 1.0]) {
+            try SendLog.append(SendRecord(purpose: "control", session: nil, runID: run.id,
+                                          destination: SendDestination(harness: .claudeCode, provider: "anthropic", account: "me", org: "me"),
+                                          model: "opus", inputCharacters: 10, usage: SendUsage(cost: cost)), env: env)
+        }
         let estimated = await evaluate()
         #expect(estimated.out.hasPrefix("Continuing the eval \(evalID)") && estimated.out.contains("Eval \(evalID) (continued)"), "\(estimated)")
-        #expect(estimated.out.contains("13 cells to run (1 already done or queued)"))
-        #expect(estimated.out.contains("≈ $6.50 (range $6.50–$6.50) from 1 recorded control cell of Claude Code · opus"))
+        #expect(estimated.out.contains("12 cells to run (2 already done or queued)"))
+        #expect(estimated.out.contains("≈ $8.50 (range $8.50–$8.50) from the recorded cells of each setup (Claude Code · opus): without swiftui "
+                                       + "5 × $0.50 (1 recorded), layer swiftui 5 × $1.00 (1 recorded), read-only 2 × $0.50 (0 recorded)"), "\(estimated)")
         #expect(estimated.out.hasSuffix("Run it again with --yes --max-cost USD to queue them (USD: the most you allow)."), "\(estimated)")
-        #expect(await evaluate("--yes").err.contains("add --max-cost USD, the most you allow (the estimate's high end is $6.50)"))
-        #expect(await evaluate("--yes", "--max-cost", "5").err.contains("The estimate's high end $6.50 is above --max-cost $5.00."))
+        #expect(await evaluate("--yes").err.contains("add --max-cost USD, the most you allow (the estimate's high end is $8.50)"))
+        #expect(await evaluate("--yes", "--max-cost", "5").err.contains("The estimate's high end $8.50 is above --max-cost $5.00."))
         #expect(await evaluate("--repeats", "5").err.contains("runs 3 repeats"))
-        #expect(await evaluate("--new").out.contains("The eval \(evalID) renders the same files: 0 of 14 cells done, 1 queued or running; --continue continues it."))
+        #expect(await evaluate("--new").out.contains("The eval \(evalID) renders the same files: 0 of 14 cells done, 2 queued or running; --continue continues it."))
 
         // The monthly limit is checked before anything is queued.
         try LabSettings(monthlyLimit: 1).save(env: env)
         let limited = await evaluate("--yes", "--max-cost", "100")
-        #expect(limited.code != 0 && limited.err.contains("monthly limit") && queued().count == 1, "\(limited)")
+        #expect(limited.code != 0 && limited.err.contains("monthly limit") && queued().count == 2, "\(limited)")
         try LabSettings().save(env: env)
-        let all = await evaluate("--continue", evalID, "--yes", "--max-cost", "6.5")
-        #expect(all.code == 0 && all.out.contains("Queued 13 cells of eval \(evalID)"), "\(all)")
+        let all = await evaluate("--continue", evalID, "--yes", "--max-cost", "8.5")
+        #expect(all.code == 0 && all.out.contains("Queued 12 cells of eval \(evalID)"), "\(all)")
         #expect(queued().count == 14 && queued().allSatisfy { $0.spec.controlSetup?.layer?.evalID == evalID })
         #expect(await evaluate("--continue", "--yes").out.hasSuffix("Nothing to queue. Skipped 14 cells already done or queued."))
         let json = try #require(try JSONSerialization.jsonObject(with: Data(await evaluate("--continue", "--json").out.utf8)) as? [String: Any])

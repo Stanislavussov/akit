@@ -41,6 +41,45 @@ struct ControlEstimateTests {
         #expect(none.line == "No estimate yet: no recorded control or replay cell of Claude Code · opus.")
     }
 
+    /// Layer cells: per setup once both setups recorded a cost, since the layer's text makes its
+    /// cells cost more; else every control cell of the model, with a note why.
+    @Test func layerCellsPerSetupOnceEachSetupHasARecord() {
+        func setup(_ role: LayerVariant.Role, readOnly: Bool = false, overlay: String? = "h-base", eval: String = "e1") -> ControlSetup {
+            ControlSetup(name: role.rawValue, agent: opus, readOnly: readOnly,
+                         layer: LayerVariant(layer: "swiftui", role: role, overlayHash: role == .layer ? "h-layer" : overlay, evalID: eval,
+                                             brainCommit: "abc"))
+        }
+        func cell(_ setup: ControlSetup) -> LabRun {
+            let spec = RunSpec(id: UUID().uuidString, kind: .control, title: "", createdAt: start, folder: "/", environment: .background,
+                               akit: "/akit", controlSetup: setup)
+            return LabRun(folder: URL(filePath: "/"), spec: spec, state: nil, launch: nil, result: nil)
+        }
+        func record(_ run: LabRun, _ cost: Double) -> SendRecord {
+            var record = self.record("control", cost)
+            record.runID = run.id
+            return record
+        }
+        let base = cell(setup(.requiredOnly)), layer = cell(setup(.layer, eval: "e0")), other = cell(setup(.requiredOnly, overlay: "h-other"))
+        let cells = [setup(.requiredOnly), setup(.layer), setup(.requiredOnly), setup(.layer), setup(.requiredOnly, readOnly: true)]
+
+        // Only the baseline recorded one: every control cell of the model, and why.
+        let half = ControlRuns.estimate(setups: cells, agent: opus, records: [record(base, 1), record(other, 3)], runs: [base, other])
+        #expect(half.source == .control && half.basedOn == 2 && half.total == 10 && half.parts.isEmpty)
+        #expect(half.costText.hasSuffix("from 2 recorded control cells of Claude Code · opus (not per setup: the layer setup has no recorded cell yet)"))
+        // Both: per setup (another eval's cell with the same overlay counts); read-only cells cost as the baseline's.
+        let both = ControlRuns.estimate(setups: cells, agent: opus, records: [record(base, 1), record(base, 2), record(layer, 4), record(other, 9)],
+                                        runs: [base, layer, other])
+        #expect(both.source == .setups && both.basedOn == 3 && both.parts.map(\.cells) == [2, 2, 1])
+        #expect(both.total == 12.5 && both.low == 11 && both.high == 14)
+        let text = "≈ $12.50 (range $11.00–$14.00) from the recorded cells of each setup (Claude Code · opus): without swiftui "
+            + "2 × $1.50 (2 recorded), layer swiftui 2 × $4.00 (1 recorded), read-only 1 × $1.50 (0 recorded)"
+        #expect(both.costText == text)
+        // Cells without a layer: as before.
+        #expect(ControlRuns.estimate(setups: [ControlSetup(name: "baseline", agent: opus)], agent: opus, records: [record(base, 1)], runs: [base])
+                    .source == .control)
+        #expect(ControlRuns.estimate(setups: cells, agent: opus, records: [], runs: []).note == nil)
+    }
+
     @Test func durationsOfTheRepositoryFirst() {
         func run(_ minutes: Double, repo: String) -> LabRun {
             let spec = RunSpec(id: UUID().uuidString, kind: .control, title: "", createdAt: start, folder: repo, environment: .background,
@@ -137,44 +176,51 @@ extension ControlRunsTests {
                                        akit: URL(filePath: "/usr/bin/true"), env: env)
         }
 
-        // No recorded cost: no estimate, and only the calibration cell can be queued.
+        // No recorded cost: no estimate, and only the calibration cells can be queued: one of each setup.
         let first = try await evalPlan(fixture)
         #expect(first.toQueue == 2 * 2 * 2 + 2 && first.skipped == 0 && first.resumable == nil && first.prepared.denied.isEmpty)
-        #expect(first.estimate.perCell == nil && first.estimate.cells == 10)
+        #expect(first.estimate.perCell == nil && first.estimate.cells == 10 && first.calibration == 2)
         #expect(await message { _ = try await queue(first, calibrate: false) }?.hasPrefix("No estimate yet") == true)
         #expect(LabStore.list(env: env).isEmpty && LayerEvalStore.manifest(first.evalID, env: env) == nil)
         let calibration = try await queue(first, calibrate: true).runs
-        #expect(calibration.count == 1 && calibration[0].spec.controlTask == tasks[0].id && calibration[0].spec.repeatIndex == 1)
-        #expect(calibration[0].spec.controlSetup == first.prepared.setups[0] && LayerEvalStore.manifest(first.evalID, env: env) != nil)
-        // While it waits, a second calibration cell is refused: it would be paid twice.
+        #expect(calibration.count == 2 && calibration.allSatisfy { $0.spec.controlTask == tasks[0].id && $0.spec.repeatIndex == 1 })
+        #expect(calibration.map(\.spec.controlSetup) == first.prepared.setups && LayerEvalStore.manifest(first.evalID, env: env) != nil)
+        // While they wait, more calibration cells are refused: a setup would be paid twice.
         let waiting = try await evalPlan(fixture, continuing: first.evalID)
-        #expect(waiting.toQueue == 9)
-        #expect(await message { _ = try await queue(waiting, calibrate: true) }?.contains("is queued or running") == true)
-        // The queued cell is dropped after the plan: queueing now would run one cell more than the plan said.
-        try await LabStore.cancel(calibration[0], env: env)
+        #expect(waiting.toQueue == 8 && waiting.calibration == 0)
+        #expect(await message { _ = try await queue(waiting, calibrate: true) }?.contains("no calibration cell is left to run") == true)
+        // The layer's cell is dropped after the plan: queueing now would run more cells than the plan said.
+        try await LabStore.cancel(calibration[1], env: env)
         #expect(await message { _ = try await queue(waiting, calibrate: false) }?.contains("The eval changed since the estimate") == true)
-        let again = try await queue(waiting, calibrate: true).runs
-        #expect(again.count == 1 && again[0].spec.controlTask == tasks[0].id)
-        _ = try await runQueued(again)
+        #expect(await message { _ = try await queue(waiting, calibrate: true) }?.contains("1 calibration cells now, not 0") == true)
+        // Only the setup without a cell calibrates, on the same task and repeat as the other.
+        let missing = try await evalPlan(fixture, continuing: first.evalID)
+        #expect(missing.calibration == 1)
+        let again = try await queue(missing, calibrate: true).runs
+        #expect(again.count == 1 && again[0].spec.controlTask == tasks[0].id && again[0].spec.repeatIndex == 1)
+        #expect(again[0].spec.controlSetup == first.prepared.setups[1])
+        _ = try await runQueued([calibration[0], again[0]])
         #expect(FileManager.default.fileExists(atPath: home.appending(path: "fake-claude-ran").path))
         // One --disallowedTools flag: only the push rule outside AKit's own repository.
         #expect(try disallowed(again[0]) == ["Bash(git push:*)"])
 
-        // The calibration cell recorded its cost: the next Evaluate offers to continue that eval.
+        // Both setups recorded their cost: the next Evaluate offers to continue that eval, estimated per setup.
         let next = try await evalPlan(fixture)
         let resumable = try #require(next.resumable)
-        #expect(next.evalID != first.evalID && resumable.evalID == first.evalID && resumable.calibrating)
-        #expect(resumable.finished == 1 && resumable.open == 0 && resumable.total == 10 && resumable.left == 9)
+        #expect(next.evalID != first.evalID && resumable.evalID == first.evalID && !resumable.calibrating)
+        #expect(resumable.finished == 2 && resumable.open == 0 && resumable.total == 10 && resumable.left == 8)
         let continued = try await evalPlan(fixture, continuing: resumable.evalID)
-        #expect(continued.prepared.continuing && continued.evalID == first.evalID && continued.toQueue == 9 && continued.skipped == 1)
-        #expect(continued.estimate.source == .control && continued.estimate.basedOn == 1 && continued.estimate.cells == 9)
-        #expect(continued.estimate.total.map { abs($0 - 0.09) < 1e-9 } == true, "\(continued.estimate)")
-        #expect(continued.estimate.seconds != nil && continued.estimate.durations == 1)
-        #expect(continued.estimate.timeText?.hasSuffix("median of 1 control run of this repository)") == true, "\(continued.estimate)")
+        #expect(continued.prepared.continuing && continued.evalID == first.evalID && continued.toQueue == 8 && continued.skipped == 2)
+        #expect(continued.estimate.source == .setups && continued.estimate.basedOn == 2 && continued.estimate.cells == 8)
+        #expect(continued.estimate.parts.map(\.label) == ["without swiftui", "layer swiftui", "read-only"])
+        #expect(continued.estimate.parts.map(\.cells) == [3, 3, 2] && continued.estimate.parts.map(\.basedOn) == [1, 1, 0])
+        #expect(continued.estimate.total.map { abs($0 - 0.08) < 1e-9 } == true, "\(continued.estimate)")
+        #expect(continued.estimate.seconds != nil && continued.estimate.durations == 2)
+        #expect(continued.estimate.timeText?.hasSuffix("median of 2 control runs of this repository)") == true, "\(continued.estimate)")
         // More than the user allowed: refused, nothing queued.
         #expect(await message { _ = try await queue(continued, calibrate: false, maxCost: 0.05) }?.contains("A cell recorded a higher cost since the estimate") == true)
         let rest = try await queue(continued, calibrate: false, maxCost: 0.1)
-        #expect(rest.runs.count == 9 && rest.skipped == 1)
+        #expect(rest.runs.count == 8 && rest.skipped == 2)
         #expect(rest.runs.allSatisfy { $0.spec.controlSetup?.layer?.evalID == first.evalID })
         #expect(ControlRuns.plan(tasks: continued.prepared.runnable, setups: continued.prepared.setups, repeats: 2,
                                  sanity: continued.prepared.sanitySetup.map { ($0, continued.prepared.sanityTasks, 1) }, env: env) == (0, 10))

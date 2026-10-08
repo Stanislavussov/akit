@@ -14,14 +14,17 @@ extension AKitCLI {
                               [--no-start] [--json]
                                           The layer's set as one layer eval (Claude Code only): its
                                           tasks, blocked tasks, home overlap, the cells to queue, ≈ cost
-                                          (a range, from the recorded cost of earlier control cells of
-                                          the model, else replays) and ≈ time in the Lab queue. --yes
-                                          --max-cost USD queues them when the estimate's high end is
-                                          at most USD, after the monthly limit check. With no recorded
-                                          cost there is no estimate: --calibrate --yes queues 1 paid cell
-                                          to measure it, and the eval reuses it (an eval whose setups
-                                          don't all have a finished cell yet is continued by default;
-                                          --new starts another). --continue continues the latest eval of
+                                          (a range, from the recorded cells of each setup once both
+                                          have one, else of earlier control cells of the model, else
+                                          replays) and ≈ time in the Lab queue. --yes --max-cost USD
+                                          queues them when the estimate's high end is at most USD,
+                                          after the monthly limit check. With no recorded cost there
+                                          is no estimate: --calibrate --yes queues the calibration
+                                          cells, 1 paid cell of each setup that has none yet (normally
+                                          2: without and with the layer, same task and repeat), and
+                                          the eval reuses them (an eval whose setups don't all have a
+                                          finished cell yet is continued by default; --new starts
+                                          another). --continue continues the latest eval of
                                           the layer and agent (or ID) while the layer renders the same
                                           files. 1 read-only cell on each of the first 3 tasks unless
                                           --no-sanity. In AKit's own repository the agent may not run
@@ -54,6 +57,8 @@ extension AKitCLI {
         let toQueue: Int
         let skipped: Int
         let estimate: Estimate
+        /// Calibration cells `--calibrate` would queue: one of each setup without a cell yet.
+        let calibration: Int
         /// The eval it could continue instead (`--continue`).
         let continuable: String?
         let queued: Int
@@ -142,7 +147,7 @@ extension AKitCLI {
                 denied: prepared.denied, repeats: plan.repeats, toQueue: plan.toQueue, skipped: plan.skipped,
                 estimate: .init(cells: estimate.cells, perCell: estimate.perCell, total: estimate.total, low: estimate.low, high: estimate.high,
                                 basedOn: estimate.basedOn, source: estimate.source.rawValue, seconds: estimate.seconds),
-                continuable: plan.resumable?.evalID, queued: queued)))
+                calibration: plan.calibration, continuable: plan.resumable?.evalID, queued: queued)))
             return 0
         }
 
@@ -157,7 +162,10 @@ extension AKitCLI {
         guard !prepared.runnable.isEmpty else { throw Failure(message: "No task of the set can take the layer; see the blocked tasks above.") }
         guard options.yes else {
             if calibrate || (plan.toQueue > 0 && plan.estimate.perCell == nil) {
-                out("No paid cell is queued without --yes. Run it again with --calibrate --yes to queue 1 cell that measures the cost; the eval reuses it.")
+                out(plan.calibration == 0
+                    ? "No paid cell is queued without --yes. Every setup of the eval has a cell already; wait for them to finish for the estimate."
+                    : "No paid cell is queued without --yes. Run it again with --calibrate --yes to queue \(calibrationCount(plan.calibration)) "
+                        + "that measure the cost (one of each setup without a cell yet, on the same task); the eval reuses them.")
             } else {
                 out("Run it again with --yes --max-cost USD to queue them (USD: the most you allow).")
             }
@@ -167,11 +175,9 @@ extension AKitCLI {
             out("Nothing to queue. Skipped \(plan.skipped) cells already done or queued.")
             return 0
         }
-        if calibrate {
-            if let low = plan.estimate.low, let high = plan.estimate.high, plan.estimate.cells > 0 {
-                out(String(format: "The calibration cell is expected to cost $%.2f–$%.2f.", low / Double(plan.estimate.cells),
-                           high / Double(plan.estimate.cells)))
-            }
+        if calibrate, let estimate = plan.calibrationEstimate, let low = estimate.low, let high = estimate.high {
+            out(String(format: "The %@ expected to cost $%.2f–$%.2f in all.",
+                       plan.calibration == 1 ? "calibration cell is" : "\(plan.calibration) calibration cells are", low, high))
         }
         // No estimate: LayerEvals.queue refuses and names the calibration cell.
         let allowed = calibrate || plan.estimate.perCell == nil ? nil : try maxCostAllowing(maxCost, plan.estimate)
@@ -200,11 +206,18 @@ extension AKitCLI {
         let estimate = plan.estimate
         lines.append("  " + estimate.line)
         if let time = estimate.timeText { lines.append("  \(time)") }
+        if plan.calibration > 0 {
+            lines.append("  Calibration: \(calibrationCount(plan.calibration)), one of each setup without a cell yet, on the same task "
+                         + "(--calibrate --yes)")
+        }
         lines.append("  Home overlap: " + (prepared.overlap.isEmpty ? "none" : prepared.overlap.joined(separator: " ")))
         return lines
     }
 
-    /// Queues the eval, or its one calibration cell; returns how many cells were queued.
+    /// "1 calibration cell", "2 calibration cells".
+    private static func calibrationCount(_ count: Int) -> String { "\(count) calibration cell\(count == 1 ? "" : "s")" }
+
+    /// Queues the eval, or its calibration cells; returns how many cells were queued.
     private static func queueEval(_ plan: LayerEvals.EvalPlan, calibrate: Bool, maxCost: Double?, environment: LabEnvironment?, keep: Bool,
                                   noStart: Bool, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int {
         let queued: (runs: [LabRun], skipped: Int)
@@ -218,8 +231,9 @@ extension AKitCLI {
             return 0
         }
         if calibrate {
-            out("Queued 1 calibration cell of eval \(plan.evalID): \(first.spec.controlSetup?.label ?? "") on \(first.spec.controlTask ?? "")"
-                + " (\(first.spec.environment.title)). When it finishes, evaluate \(plan.layer) shows the estimate and continues this eval.")
+            let setups = queued.runs.compactMap { $0.spec.controlSetup?.label }.joined(separator: "; ")
+            out("Queued \(calibrationCount(queued.runs.count)) of eval \(plan.evalID): \(setups) on \(first.spec.controlTask ?? "")"
+                + " (\(first.spec.environment.title)). When they finish, evaluate \(plan.layer) shows the estimate and continues this eval.")
         } else {
             let skipped = queued.skipped > 0 ? " Skipped \(queued.skipped) cells already done or queued." : ""
             out("Queued \(queued.runs.count) cells of eval \(plan.evalID) (\(first.spec.environment.title)).\(skipped)")

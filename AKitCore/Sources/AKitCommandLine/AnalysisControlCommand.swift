@@ -383,10 +383,8 @@ extension AKitCLI {
         guard !prepared.runnable.isEmpty else { throw Failure(message: "No task can take the layer; see the blocked tasks above.") }
 
         // The money rule of evaluate: only cells still to run are estimated; no estimate, no paid cells.
-        let counts = ControlRuns.plan(tasks: prepared.runnable, setups: prepared.setups, repeats: repeats,
-                                      sanity: prepared.sanitySetup.map { ($0, prepared.sanityTasks, 1) }, env: env)
-        let estimate = ControlRuns.estimate(cells: counts.toQueue, agent: prepared.setups.first?.agent ?? agent,
-                                            repo: prepared.runnable.first?.mainFolder, env: env)
+        let counts = LayerEvals.estimate(prepared, repeats: repeats, env: env)
+        let estimate = counts.estimate
         out("\(counts.toQueue) cells to run (\(counts.skipped) already done or queued); \(estimate.costText).")
         if let time = estimate.timeText { out(time + ".") }
         guard counts.toQueue > 0 else {
@@ -394,8 +392,8 @@ extension AKitCLI {
             return 0
         }
         guard estimate.perCell != nil else {
-            let calibrate = "Queue 1 calibration cell first: add the tasks to the layer's set and run akit analysis control evaluate \(layer) "
-                + "--calibrate --yes (or Brain → \(layer) → Evaluate…); the eval reuses it."
+            let calibrate = "Queue the calibration cells first, one of each setup: add the tasks to the layer's set and run akit analysis "
+                + "control evaluate \(layer) --calibrate --yes (or Brain → \(layer) → Evaluate…); the eval reuses them."
             guard options.yes else {
                 out("No paid cell is queued without an estimate. " + calibrate)
                 return 0
