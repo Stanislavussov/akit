@@ -229,7 +229,10 @@ Further choices of the step 4 plan, accepted on the same day:
   both a patch and a layer is not paired.
   Patch pairs keep the fix rule and never get the offline level (D4; a test runs the same
   cells as both). `Paired.worseShare`: the share of bootstrap sums strictly below zero (ties
-  count for neither), computed for every pair.
+  count for neither), computed for every pair. Both shares come from exact sums: each
+  task's change is an integer over the least common multiple of the task totals, so changes
+  in thirds that cancel are ties, never a floating-point "improvement" (patch pairs too).
+  The stored `reason` never names a task (task ids come from prompts).
 - `LayerVerdicts` (`AKitErrorAnalysis`): `verdict(of:runs:costs:)` gives an eval's verdict
   once none of its cells is queued or running (nil before, and nil when no task has finished
   cells of both setups, so a cancelled eval never replaces a stored verdict); `save` keeps the last verdict per
@@ -562,7 +565,7 @@ Result lines (success only):
 swiftui · Claude Code · opus · high · 8 tasks × 3 · eval 2026-10-12 · brain a1b2c3d
 success: 71% → 75%, didn't show it helped (81% of the bootstrap mass on improvement, 12% on worse; needs 95%)
 read-only sanity: 0 of 3 passed · 1 flagged cell · Claude Code 2.1.290
-home overlap: none · 8 tasks with the project's own CLAUDE.md (the project gets the layer's text only by accepting the suggestion) · $48.20
+home overlap: none · 8 tasks with the project's own CLAUDE.md or AGENTS.md (the project gets the layer's text only by accepting the suggestion) · $48.20
 ```
 
 `cost` is the sum of the cost the eval's cells recorded (the send log); a cell without a

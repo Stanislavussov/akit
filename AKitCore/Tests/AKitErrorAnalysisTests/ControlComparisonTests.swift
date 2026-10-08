@@ -199,12 +199,42 @@ struct ControlComparisonTests {
         #expect(elsewhere.rows.count == 2)
     }
 
+    /// Changes in thirds that cancel are ties, not ±1e-16: the shares come from exact sums.
+    @Test func fractionalTiesAreExactlyZero() throws {
+        // Per task −1/3 and +1/3 by turns: many resamples sum to exactly zero.
+        let before = [2, 1, 2, 1, 2, 1], after = [1, 2, 1, 2, 1, 2]
+        let pair = try #require(ControlComparison.compare(cells(baseline, passes: before) + cells(variant, passes: after)).paired.first)
+        // The same resampling with whole thirds: −1, +1, … .
+        var generator = SeededGenerator(seed: 1)
+        let thirds = zip(after, before).map { $0 - $1 }
+        var (up, down) = (0, 0)
+        for _ in 0..<2000 {
+            let sum = thirds.indices.reduce(0) { total, _ in total + thirds[Int.random(in: 0..<thirds.count, using: &generator)] }
+            if sum > 0 { up += 1 } else if sum < 0 { down += 1 }
+        }
+        #expect(pair.improvementShare == Double(up) / 2000 && pair.worseShare == Double(down) / 2000)
+        #expect(up + down < 2000)
+
+        // (variant, baseline) passes (1,0) (3,2) (3,2) (3,1) (0,1) of 3: about 94.6% exactly, which
+        // floating-point sums of thirds pushed over 95%. Not "helps (offline)", and the patch pair agrees.
+        let layer = try #require(ControlComparison.compare(cells(layerSetup(.requiredOnly), passes: [0, 2, 2, 1, 1])
+                                                           + cells(layerSetup(.layer), passes: [1, 3, 3, 3, 0])).paired.first)
+        #expect(layer.verdict == .notShown && (layer.improvementShare ?? 1) < ControlComparison.helpedShare, "\(layer.reason)")
+        let patch = try #require(ControlComparison.compare(cells(baseline, passes: [0, 2, 2, 1, 1]) + cells(variant, passes: [1, 3, 3, 3, 0]),
+                                                           production: notWorse).paired.first)
+        #expect(patch.verdict == .notShown && patch.improvementShare == layer.improvementShare)
+    }
+
     @Test func aSetupWithBothAPatchAndALayerIsNotPaired() {
         var both = layerSetup(.layer)
         both.patch = ControlPatch(file: "CLAUDE.md", text: "x")
         let comparison = ControlComparison.compare(cells(baseline, passes: [1, 1, 1, 1, 1]) + cells(layerSetup(.requiredOnly), passes: [1, 1, 1, 1, 1])
                                                    + cells(both, passes: [3, 3, 3, 3, 3]), production: notWorse)
         #expect(comparison.paired.isEmpty)
+        // Nor is it a layer row's baseline.
+        var patchedBase = layerSetup(.requiredOnly)
+        patchedBase.patch = ControlPatch(file: "CLAUDE.md", text: "x")
+        #expect(ControlComparison.compare(cells(patchedBase, passes: [1, 1, 1, 1, 1]) + cells(layerSetup(.layer), passes: [3, 3, 3, 3, 3])).paired.isEmpty)
     }
 
     @Test func worseShareCountsSumsBelowZeroAndNotTies() throws {

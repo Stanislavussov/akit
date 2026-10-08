@@ -10,10 +10,12 @@ struct ControlComparisonView: View {
     @Environment(AppModel.self) private var model
     let tasks: [ControlTask]
     /// What a comparison is computed from: the finished cells of the tasks, and the state of
-    /// every cell of the layer evals among them (the verdict waits for all of an eval's cells).
+    /// every cell of the layer evals among them with its result (the verdict waits for all of
+    /// an eval's cells), and the send log's change date (the verdict's cost).
     private struct Inputs: Hashable {
         var cells: [ControlComparison.Cell]
         var evalRuns: [String]
+        var sends: Date?
     }
     /// The comparison of the inputs it was computed for: the bootstrap, the production signal
     /// (the mode's check before and after the fix) and the layer evals' verdicts run off the
@@ -22,8 +24,9 @@ struct ControlComparisonView: View {
     /// A layer eval's verdict once none of its cells is open, whether it was stored as the
     /// layer's last one, or why its manifest can't be read.
     struct EvalVerdict: Sendable {
+        enum Storage: Sendable { case stored, newerKept, notSaved }
         var verdict: LayerVerdict?
-        var saved = false
+        var storage = Storage.notSaved
         var problem: String?
     }
     /// Why the production signal couldn't be read; the comparison then has none.
@@ -40,7 +43,10 @@ struct ControlComparisonView: View {
         let evalRuns = model.labRuns.filter { run in
             run.spec.kind == .control && run.spec.controlSetup?.layer.map { evals.contains($0.evalID) } == true
         }
-        let inputs = Inputs(cells: cells, evalRuns: evalRuns.map { "\($0.id) \($0.status.rawValue)" })
+        let inputs = Inputs(cells: cells, evalRuns: evalRuns.map { run in
+            let control = run.result?.control
+            return "\(run.id) \(run.status.rawValue) \(control?.passed == true) \(control?.flagged == true)"
+        }, sends: model.labSendsChanged)
         VStack(alignment: .leading, spacing: 12) {
             Text(tasks.count == 1 ? "Setups compared" : "Setups compared over \(tasks.count) tasks").font(.title3.bold())
             if let computed, computed.inputs == inputs {
@@ -70,10 +76,14 @@ struct ControlComparisonView: View {
                     }
                     guard let verdict = LayerVerdicts.verdict(of: manifest, runs: evalRuns, costs: costs) else { continue }
                     var result = EvalVerdict(verdict: verdict)
-                    do { try LayerVerdicts.save(verdict, env: .current) } catch { saveFailure = error.localizedDescription }
-                    // Stored now or before; a newer eval's verdict for the agent is kept instead.
-                    result.saved = LayerVerdicts.load(layer: verdict.layer, env: .current)?.verdicts
-                        .first { $0.agent == verdict.agent }?.evalID == verdict.evalID
+                    do {
+                        try LayerVerdicts.save(verdict, env: .current)
+                        // Stored now or before; else a newer eval's verdict for the agent is kept.
+                        let stored = LayerVerdicts.load(layer: verdict.layer, env: .current)?.verdicts.first { $0.agent == verdict.agent }
+                        result.storage = stored?.evalID == verdict.evalID ? .stored : .newerKept
+                    } catch {
+                        saveFailure = error.localizedDescription
+                    }
                     verdicts[id] = result
                 }
                 // The eval's read-only cells on tasks not shown count for its pair too.
@@ -203,6 +213,11 @@ private struct PairedVerdict: View {
         case .noConclusion: .secondary
         }
         let worse = pair.variant.layer != nil ? ", \(AnalysisText.percent(pair.worseShare)) on worse" : ""
+        let heading = switch eval?.storage {
+        case .stored: "Verdict of the eval (all its tasks), saved for the layer:"
+        case .newerKept: "Verdict of the eval (all its tasks); a newer eval's verdict is kept for the layer:"
+        case .notSaved, nil: "Verdict of the eval (all its tasks), not saved:"
+        }
         HStack(alignment: .top, spacing: 10) {
             Text(pair.verdict.title)
                 .font(.callout.weight(.semibold))
@@ -230,8 +245,7 @@ private struct PairedVerdict: View {
                         .foregroundStyle(.orange)
                 } else if let verdict = eval?.verdict {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(eval?.saved == true ? "Verdict of the eval (all its tasks), saved for the layer:"
-                             : "Verdict of the eval (all its tasks); a newer eval's verdict is kept for the layer:")
+                        Text(heading)
                             .font(.caption.weight(.semibold))
                         ForEach(LayerVerdicts.lines(verdict), id: \.self) { line in
                             Text(line).font(.caption.monospaced()).fixedSize(horizontal: false, vertical: true)

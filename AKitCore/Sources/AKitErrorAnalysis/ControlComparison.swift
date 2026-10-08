@@ -148,7 +148,7 @@ public struct ControlComparison: Codable, Sendable, Hashable {
                   let baseline = candidates.first(where: { row in
                       guard let other = row.setup.layer else { return false }
                       return other.role == .requiredOnly && other.layer == layer.layer && other.evalID == layer.evalID
-                          && row.setup.agent == variant.setup.agent
+                          && row.setup.agent == variant.setup.agent && row.setup.patch == nil
                   }) else { return nil }
             // The read-only sanity cells of the eval must fail: a pass means the oracle can't tell
             // work from no work. The oracle's verdict counts, flagged or not.
@@ -225,12 +225,18 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             result.reason = "No task has cells of both setups."
             return result
         }
+        // Each task's change as an exact integer over one common denominator (the least common
+        // multiple of the task totals): fractions like 1/3 − 2/3 + 1/3 then sum to exactly zero,
+        // so a tie never counts as improved or worse by a floating-point residue.
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+        let denominator = shared.flatMap { [$0.before.total, $0.after.total] }.reduce(1) { lcm, total in lcm / gcd(lcm, total) * total }
+        let exact = shared.map { $0.after.passed * (denominator / $0.after.total) - $0.before.passed * (denominator / $0.before.total) }
         var generator = SeededGenerator(seed: seed)
         var improved = 0
         var worse = 0
         for _ in 0..<iterations {
-            var sum = 0.0
-            for _ in changes.indices { sum += changes[Int.random(in: 0..<changes.count, using: &generator)] }
+            var sum = 0
+            for _ in exact.indices { sum += exact[Int.random(in: 0..<exact.count, using: &generator)] }
             if sum > 0 { improved += 1 } else if sum < 0 { worse += 1 }
         }
         let share = Double(improved) / Double(iterations)

@@ -49,7 +49,7 @@ public struct LayerVerdict: Codable, Sendable, Hashable {
     public var sanityPassed: Int
     public var harnessVersions: [String]
     public var overlap: [String]
-    /// Tasks whose project has its own CLAUDE.md the layer's text is appended to; nil for an
+    /// Tasks whose project has its own CLAUDE.md or AGENTS.md the layer's text is appended to; nil for an
     /// eval that didn't record it.
     public var projectOwnContext: Int?
     /// The recorded cost of the eval's cells, US dollars; nil when none recorded one.
@@ -95,13 +95,18 @@ public enum LayerVerdicts {
         let sanityPassed = sanity.filter(\.passed).count
         // In run order, so the same runs always give the same sum.
         let priced = mine.sorted { $0.id < $1.id }.compactMap { costs[$0.id]?.dollars }
+        // Task ids come from prompts: the stored reason doesn't name one.
+        var reason = pair.reason
+        if let task = sanity.first(where: \.passed)?.task {
+            reason = reason.replacingOccurrences(of: "A read-only agent passed \(task):", with: "A read-only agent passed a task:")
+        }
         return LayerVerdict(
             layer: manifest.layer, evalID: manifest.id, evalCreatedAt: seconds(manifest.createdAt), harness: variant.agent.harness,
             model: variant.agent.model, effort: variant.agent.effort, brainCommit: manifest.brainCommit,
             overlay: variant.layer?.overlayHash, baselineOverlay: baseline.layer?.overlayHash,
             tasks: pair.tasks, repeats: manifest.repeats, baselineCells: pair.baselineCells, layerCells: pair.variantCells,
             baselineRate: rate(before), layerRate: rate(after), meanChange: pair.meanChange,
-            improvementShare: pair.improvementShare, worseShare: pair.worseShare, verdict: pair.verdict, reason: pair.reason,
+            improvementShare: pair.improvementShare, worseShare: pair.worseShare, verdict: pair.verdict, reason: reason,
             flagged: (before?.flagged ?? 0) + (after?.flagged ?? 0), leftOut: comparison.leftOut, blocked: manifest.blocked.count,
             sanity: sanity.isEmpty ? .none : sanityPassed > 0 ? .failed : .passed, sanityCells: sanity.count, sanityPassed: sanityPassed,
             harnessVersions: Set(cells.compactMap(\.harnessVersion)).sorted(), overlap: manifest.overlap,
@@ -114,21 +119,29 @@ public enum LayerVerdicts {
     private static func seconds(_ date: Date) -> Date { Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down)) }
 
     /// Stores the verdict as its agent's last one. An older eval never replaces a newer one's
-    /// verdict, so looking at an old eval leaves the badge alone. Returns whether it was stored.
+    /// verdict (evals created in the same second are ordered by id), so looking at an old eval
+    /// leaves the badge alone. Returns whether it was stored. A file that exists but can't be
+    /// read is never replaced.
     @discardableResult
     public static func save(_ verdict: LayerVerdict, env: HarnessEnvironment) throws -> Bool {
         let url = EvalPaths(env: env).verdict(verdict.layer)
         return try JSONFile.locked(url) {
             var file = LayerVerdictFile(layer: verdict.layer, verdicts: [])
-            if let data = try? Data(contentsOf: url) {
-                guard let read = decode(data) else {
-                    throw JSONFile.Failure(message: problem(data, url: url))
+            if FileManager.default.fileExists(atPath: url.path) {
+                guard let data = try? Data(contentsOf: url) else {
+                    throw JSONFile.Failure(message: "\(url.path) can't be read; fix or move it before AKit changes it.")
+                }
+                guard let read = decode(data) else { throw JSONFile.Failure(message: problem(data, url: url)) }
+                guard read.layer == verdict.layer else {
+                    throw JSONFile.Failure(message: "\(url.path) holds the verdicts of \(read.layer), not \(verdict.layer); fix or move it.")
                 }
                 file = read
             }
             if let index = file.verdicts.firstIndex(where: { $0.agent == verdict.agent }) {
                 let stored = file.verdicts[index]
-                guard stored.evalID == verdict.evalID || stored.evalCreatedAt < verdict.evalCreatedAt else { return false }
+                let newer = stored.evalCreatedAt < verdict.evalCreatedAt
+                    || (stored.evalCreatedAt == verdict.evalCreatedAt && stored.evalID < verdict.evalID)
+                guard stored.evalID == verdict.evalID || newer else { return false }
                 guard stored != verdict else { return false }
                 file.verdicts[index] = verdict
             } else {
@@ -150,7 +163,7 @@ public enum LayerVerdicts {
     /// swiftui · Claude Code · opus · high · 8 tasks × 3 · eval 2026-10-12 · brain a1b2c3d
     /// success: 71% → 75%, didn't show it helped (81% of the bootstrap mass on improvement, 12% on worse; needs 95%)
     /// read-only sanity: 0 of 3 passed · 1 flagged cell · Claude Code 2.1.290
-    /// home overlap: none · 8 tasks with the project's own CLAUDE.md (…) · $48.20
+    /// home overlap: none · 8 tasks with the project's own CLAUDE.md or AGENTS.md (…) · $48.20
     /// ```
     public static func lines(_ verdict: LayerVerdict, calendar: Calendar = .current) -> [String] {
         func percent(_ value: Double?) -> String { value.map { String(format: "%.0f%%", 100 * $0) } ?? "–" }
@@ -175,7 +188,7 @@ public enum LayerVerdicts {
         }
         var context = ["home overlap: " + (verdict.overlap.isEmpty ? "none" : verdict.overlap.joined(separator: " "))]
         if let own = verdict.projectOwnContext, own > 0 {
-            context.append("\(count(own, "task")) with the project's own CLAUDE.md (the project gets the layer's text only by accepting the suggestion)")
+            context.append("\(count(own, "task")) with the project's own CLAUDE.md or AGENTS.md (the project gets the layer's text only by accepting the suggestion)")
         }
         if let cost = verdict.cost { context.append(String(format: "$%.2f", cost)) }
         return [
