@@ -67,6 +67,9 @@ public enum SkillScanner {
             }
             return hits
 
+        case .listed(let files):
+            return files.filter(isFile).map { Hit(file: $0, root: root, isSingleFile: $0.lastPathComponent != "SKILL.md") }
+
         case .recursive(let rootMarkdown):
             var hits: [Hit] = []
             var visited = Set<String>()
@@ -151,16 +154,23 @@ public enum SkillScanner {
     /// Two different skills with one name that a harness would load in the same session.
     /// A session sees the global skills plus ONE project, so two projects never collide.
     /// Claude namespaces plugin skills (`plugin:skill`), so they never collide for Claude.
+    /// A Pi package in a project's settings replaces the same package from the global settings.
     static func addCollisionWarnings(_ skills: inout [Skill], home: URL) {
         let projects = Set(skills.compactMap { skill -> URL? in
-            if case .project(let url) = skill.scope { return url }
-            return nil
+            switch skill.scope {
+            case .project(let url), .package(_, let url?): url
+            default: nil
+            }
         })
         let contexts: [URL?] = projects.isEmpty ? [nil] : projects.map { Optional($0) }
 
         var messages: [Int: [String]] = [:]
         for harness in Set(skills.flatMap(\.visibleTo)) {
             for context in contexts {
+                let projectPackages = Set(skills.compactMap { skill -> String? in
+                    if case .package(let name, let project?) = skill.scope, project == context { return name }
+                    return nil
+                })
                 let loaded = skills.indices.filter { index in
                     let skill = skills[index]
                     guard skill.visibleTo.contains(harness) else { return false }
@@ -168,6 +178,7 @@ public enum SkillScanner {
                     case .global, .synced, .bundled: return true
                     case .plugin: return harness != .claudeCode
                     case .project(let url): return url == context
+                    case .package(let name, let project): return project.map { $0 == context } ?? !projectPackages.contains(name)
                     }
                 }
                 for (_, indices) in Dictionary(grouping: loaded, by: { skills[$0].name }) where indices.count > 1 {

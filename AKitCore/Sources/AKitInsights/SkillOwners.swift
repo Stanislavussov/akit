@@ -76,7 +76,7 @@ enum SkillOwners {
         let own = matches.filter { skill in
             switch skill.scope {
             case .global, .project: true
-            case .synced, .plugin, .bundled: false
+            case .synced, .plugin, .bundled, .package: false
             }
         }
         if own.isEmpty {

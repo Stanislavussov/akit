@@ -554,7 +554,7 @@ enum SkillsFilter: Hashable {
     func includes(_ scope: SkillScope) -> Bool {
         switch (self, scope) {
         case (.all, _): true
-        case (_, .project(let url)):
+        case (_, .project(let url)), (_, .package(_, let url?)):
             if case .project(let chosen) = self { url.standardizedFileURL.path == chosen.standardizedFileURL.path } else { false }
         default: true
         }
