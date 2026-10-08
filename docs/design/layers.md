@@ -2,13 +2,15 @@
 
 Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
+JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
+bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`.
 
 Also built, though not roadmap steps: work machines, the "project owns its files" update
 rules, `keep_auto`, `override`, the home folder render (`akit apply --home`, and in the app
 **Update Home Folder…**), brain sync,
 import of skills into the brain, the layer editor, and removing layers, skills and
-projects. Not built: MCP in layers, JSON merge, the `/akit-setup` draft,
-`machines/<name>.yaml`, `checks:`.
+projects. Not built: JSON merge into the home folder, MCP secrets from Keychain, the
+`/akit-setup` draft, `machines/<name>.yaml`, `checks:`.
 
 ## Goal
 
@@ -50,7 +52,8 @@ brain/
     templates/                 # files rendered into the project
   projects/<id>/
     answers.json               # layers + field values
-    lock.json                  # brain commit each file was rendered from
+    lock.json                  # brain commit each file was rendered from; keys AKit
+                               # merged into the project's JSON files (`json`)
     usage/<machine id>.json    # this project's skill use per day, one file per Mac
     dismissed.json             # recommendations dismissed for this project
   machines/<name>.yaml         # which harnesses and core layer per machine (not built: the
@@ -151,6 +154,8 @@ AKit reads it with Yams; mistakes are shown per layer, never silently dropped.
 - Built-in fields: `project_name`, `target` (the chosen harnesses: `claude`, `pi`,
   `opencode`, `codex`; `target == claude` holds when claude is among them).
 - An unanswered field is empty (`false` for bool, no items for multi).
+- A `.json` template is parsed first and `{{field}}` is filled only inside its string
+  values (see [JSON merge](#json-merge-built-2026-10-08)).
 - Skills fill `{{field}}` only in Markdown files; unknown names are left as is
   (a warning for templates).
 - Fields never hold secrets. Secrets come from Keychain (see MCP below).
@@ -179,6 +184,7 @@ project/
   .agents/skills/<name>/       # read by Pi, OpenCode, Codex
   CLAUDE.md                    # "@AGENTS.md", only if Claude is a target
   .claude/skills -> ../.agents/skills   # symlink, only if Claude is a target
+  .mcp.json, .claude/settings.json      # only the layers' keys, merged into the project's file
 ```
 
 Targets (harnesses) are a project field, multi-select, default from the machine
@@ -188,8 +194,10 @@ profile. Differences per harness go through `when: target == "claude"`.
 
 - Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;
   sections are glued in layer order (`requires` first, then selection order).
-- JSON (later: `.mcp.json`, settings; not built): deep merge of keys. Two layers setting
-  the same key to different values is an error, shown in the form before Apply.
+- JSON (any `.json` target, e.g. `.mcp.json`, `.claude/settings.json`; built 2026-10-08):
+  deep merge of keys. Two layers setting the same leaf to different values is an error,
+  shown in the form before Apply, unless one sets `override: true`. The result is merged
+  into the project's file key by key, see [JSON merge](#json-merge-built-2026-10-08).
 - Whole files and skills: two layers bringing the same path is an error, unless
   one of them sets `override: true` (that one wins; `mode: off` + override drops
   a skill). Output paths must be unique and never inside `.git`.
@@ -202,7 +210,8 @@ files edited by hand since the last render, start unticked. Apply backs up what
 it replaces in `~/.akit/backups/`, moves files only an earlier render wrote to the
 Trash (not when edited since), refuses if the project changed after the preview,
 and commits `projects/<id>/` in the brain. A real `.claude/skills` folder with
-files blocks Apply until its skills move to the brain or `.agents/skills`.
+files blocks Apply until its skills move to the brain or `.agents/skills`, and so does a
+JSON file the layers merge into that is not valid JSON.
 
 ## Updates: layers are a skeleton, the project owns its files (decided 2026-09-28)
 
@@ -223,8 +232,68 @@ A layer is a shared starting point, not the owner of a project. Per project:
   the `.claude/skills` link when Claude is a target. The project page lists them
   (New Skill…, Edit, Move to Trash).
 - The home folder follows the core layer completely (no ownership rules there).
+- JSON files (`.mcp.json`, `.claude/settings.json`): ownership is per key, not per file
+  (2026-10-08). The file is the project's; AKit owns only the leaves it wrote. See
+  [JSON merge](#json-merge-built-2026-10-08).
 
 This replaces the earlier plan of a 3-way merge and "detach".
+
+## JSON merge (built 2026-10-08)
+
+Decided 2026-10-08, built the same day. One mechanism for three plans: MCP servers in
+layers, hooks and permissions in layers, and writing `enabledPlugins` from a
+recommendation later.
+
+1. **Which files.** Any layer file whose `to:` ends in `.json` is merged, not glued or
+   owned whole. The v1 targets are `.mcp.json` and `.claude/settings.json` in a project, but
+   nothing is specific to them. Objects merge deeply; arrays, strings, numbers, booleans and
+   null are leaves (an array is never merged item by item). Two layers setting one leaf to
+   different values, or one a value where the other has an object, is a render error,
+   shown in the form before Apply. `override: true` on the file entry lets that layer win
+   (the later one when both set it), like for other files.
+2. **Templates.** The template is parsed as JSON first; `{{field}}` is filled only inside
+   string values, never in keys and never as text, so a value with `"` or `\` can't break
+   the file. A template that is not valid JSON, or not an object, is a render error naming
+   the layer and the template.
+3. **Secrets.** A layer never carries secret values: every value at or under an `env` or
+   `headers` key must be a whole-string `${NAME}` reference, else a render error. The
+   preview never shows a secret: in a JSON change's texts every value under `env` and
+   `headers` that is not a `${NAME}` reference reads `••••`, in the old and the new text.
+   The masked text is only for showing; Apply writes the real values. `settings.local.json`
+   is never read or shown: a layer that targets it is a render error.
+4. **Ownership per key.** The project's existing file stays the project's. AKit adds the
+   leaves the layers bring:
+   - a leaf already there with the same value: nothing (it stays the project's unless AKit
+     wrote it earlier);
+   - a leaf there with a different value that AKit did not write earlier: left alone, and
+     the preview warns "the project sets `mcpServers.x.command` itself";
+   - `lock.json` keeps, per merged file, the key paths AKit wrote (RFC 6901 pointers) with a
+     hash of each value, in a new optional key `json` (`{path: {keys, created, layers}}`).
+     Older akit ignores the key, and merged files are never in `files`, so an older akit
+     never treats such a file as one it wrote whole;
+   - on a later render a leaf AKit wrote that the layers no longer bring is removed while
+     it still holds AKit's value; a leaf the project changed is its own from then on (kept,
+     dropped from the lock). A leaf AKit wrote and the project left alone is updated to the
+     layers' new value;
+   - when nothing of AKit's is left in a file AKit created and only `{}` remains, the file
+     goes to the Trash like other files AKit wrote. **Forget Project…** takes AKit's keys out
+     of the files the project keeps.
+5. **Writing.** Only when the merged result differs from the file (compared as JSON, so a
+   file whose keys already match is not reformatted). AKit writes pretty-printed JSON with
+   sorted keys, a 2-space indent and a trailing newline; when that changes the file's
+   formatting, the preview says so. Backup, diff and Apply are the same as for other files.
+   A file that exists and is not valid JSON (or not an object, or a link) blocks Apply with
+   a message and is never overwritten.
+6. **Home folder.** Not in v1: a JSON file of the core layer is a render warning ("JSON
+   files are not rendered into the home folder yet") and is skipped. Projects only.
+7. **UI.** Set Up Project's preview lists merged files like other changes ("keys merged;
+   the project's own keys stay"), with the masked diff and the per-key warnings at the top;
+   merged changes start ticked, since they never replace a value of the project's. `akit
+   plan` prints the same. Brain → a layer's page already lists its files; no new screen.
+
+Where it lives: `JSONValue` (AKitFoundation: parse, print, key paths, masking),
+`ProjectBundle.resolve` (parse, fill, secret check), `Render.mergeJSON` (layers into one
+object, clashes), `JSONMerge` in AKitProjectSetup (into the project's file, the lock record).
 
 ## Agent draft
 
@@ -241,7 +310,12 @@ and deletes the draft. The form works without the agent.
 
 ## MCP (step after v1)
 
-Status: not built.
+Status: possible since 2026-10-08 through JSON merge: a layer with an `.mcp.json`
+template brings project MCP servers (`"mcpServers": {…}`), and `.claude/settings.json`
+can enable them (`enabledMcpjsonServers`). Secrets are written only as `${VAR}` references
+(enforced). Not built: the real values from Keychain (today they come from the
+environment the harness starts in), and MCP files of other harnesses (Codex TOML,
+OpenCode `opencode.json` has its own layout).
 
 Layers may bring MCP servers, merged into `.mcp.json`. Secrets are written only
 as `${VAR}` references; the real values come from Keychain.
@@ -255,7 +329,8 @@ as `${VAR}` references; the real values come from Keychain.
    **Update Home Folder…**).
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end. (Done.)
-4. MCP in layers. (Not built.)
+4. MCP in layers. (Possible since 2026-10-08 through JSON merge: `.mcp.json` templates,
+   `${VAR}` references only. Keychain values not built, see "MCP".)
 5. `/akit-setup` agent draft. (Not built; the `/akit` skill covers the agent-driven
    setup, see "Agent draft".)
 6. Updates. (Done 2026-09-28 as "the project owns its files", see "Updates". The 3-way
@@ -267,6 +342,9 @@ changed core, and as Plan… in Insights) opens Set Up Project for the home fold
 core layer only, `akit apply --home` in the app. **Forget Project…** (a project's page and
 its context menu) is `akit remove project`: both use `ProjectForget`, and the dialog offers
 "Forget and Trash Files" or "Forget, Keep Files" (`--keep-files`).
+
+Step 6 of the design map, JSON merge (2026-10-08): `.json` targets merge key by key into
+the project's file, see [JSON merge](#json-merge-built-2026-10-08).
 
 ## Open questions
 
