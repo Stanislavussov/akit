@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitDoctor
 import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
@@ -40,6 +41,13 @@ public enum AKitCLI {
                                           .mcp.json and .claude/settings.json are merged key by
                                           key: the project's keys stay, a key the project removed
                                           isn't added back, env/headers values are shown masked.
+
+        Worktrees (a local-only project's AKit files, linked into its other git worktrees):
+          akit worktrees [PROJECT]        Each worktree of the repository and the links it lacks
+          akit worktrees sync [PROJECT]   Make the missing links (only where nothing is; never
+                                          removes anything: Apply removes the links of the files it
+                                          drops). PROJECT may be a worktree: its main checkout is
+                                          used. For a tool's "after worktree created" hook
 
         Remove (shows what happens; add --yes to do it; folders go to the Trash, one commit each):
           akit remove layer NAME              refused while other layers require it; dropped from
@@ -126,6 +134,9 @@ public enum AKitCLI {
                                           and advice. akit analysis --help lists the rest
 
         This Mac (~/.akit/machine.json, never in the brain):
+          akit doctor                     What AKit sees on this Mac and what is wrong (lines with !,
+                                          each with what to do). Only reads, never shows a secret.
+                                          Run it first when AKit doesn't behave
           akit machine                    Show whether this is a personal or a work Mac
           akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
                                           ~/.akit/local/projects, nothing about them reaches the
@@ -137,6 +148,9 @@ public enum AKitCLI {
           --set field=value     A field value; bool: true/false, multi: a,b (repeatable)
           --unset field         Remove a value
           --targets claude,pi   Harnesses (default: saved, else the installed ones)
+          --local-only yes|no|auto
+                                Keep AKit's files out of git (a block in .git/info/exclude,
+                                links in the repo's worktrees). auto: a work Mac yes, else no
           --answers FILE        Answers JSON ({"layers":[],"values":{},"targets":[]}) instead
 
         Options:
@@ -195,7 +209,8 @@ public enum AKitCLI {
                                   include: args.values("--include"), exclude: args.values("--exclude"),
                                   home: args.flag("--home"), includeUnmanaged: args.flag("--include-unmanaged"),
                                   yes: args.flag("--yes"), keepFiles: args.flag("--keep-files"), from: args.value("--from"),
-                                  repo: args.value("--repo"), skipHome: args.flag("--skip-home"), name: args.value("--name"))
+                                  repo: args.value("--repo"), skipHome: args.flag("--skip-home"), name: args.value("--name"),
+                                  localOnly: args.value("--local-only"))
             let command = args.positional()
             if command == "sessions" {
                 try refuseProjectOptions(options, command: "sessions")
@@ -218,6 +233,20 @@ public enum AKitCLI {
                 return try await recommend(&args, options: options, env: env, cwd: cwd,
                                            projectsRoot: projectsRoot, hostName: hostName, hardwareHash: hardwareHash,
                                            runner: runner, out: out, err: err)
+            }
+            if command == "doctor" {
+                try refuseProjectOptions(options, command: "doctor")
+                try args.finish()
+                out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot])))
+                return 0
+            }
+            if command == "worktrees" {
+                try refuseProjectOptions(options, command: "worktrees")
+                let first = args.positional()
+                let sync = first == "sync"
+                let folder = resolve((sync ? args.positional() : first) ?? ".", cwd: cwd, env: env)
+                try args.finish()
+                return try worktrees(sync: sync, folder: folder, env: env, out: out, err: err)
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -308,8 +337,8 @@ public enum AKitCLI {
                     out(saved.map(encode) ?? "No saved answers for \(id).")
                     return saved == nil ? 1 : 0
                 }
-                if options.home, options.layers != nil || options.answersFile != nil {
-                    throw Failure(message: "The home folder always gets the core layer; --layers and --answers don't apply.")
+                if options.home, options.layers != nil || options.answersFile != nil || options.localOnly != nil {
+                    throw Failure(message: "The home folder always gets the core layer; --layers, --answers and --local-only don't apply.")
                 }
                 var answers = try readAnswers(options, id: id, brain: brain, store: store, cwd: cwd, env: env,
                                               installedTargets: installedTargets)
@@ -319,7 +348,7 @@ public enum AKitCLI {
                 }
                 let include = Set(options.include), exclude = Set(options.exclude)
                 let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: options.home,
-                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
+                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], env: env)
                 out(planText(plan))
                 guard plan.canApply else { return 1 }
                 guard command == "apply" else { return 0 }
@@ -349,6 +378,60 @@ public enum AKitCLI {
             err("akit: \(error.localizedDescription)")
             return 2
         }
+    }
+
+    // MARK: - Worktrees
+
+    /// `akit worktrees [sync] [PROJECT]`: the status of each worktree, or a sync. A folder inside
+    /// a checkout, or a linked worktree, stands for its main checkout.
+    private static func worktrees(sync: Bool, folder: URL, env: HarnessEnvironment, out: (String) -> Void,
+                                  err: (String) -> Void) throws -> Int32 {
+        guard FileManager.default.fileExists(atPath: folder.path) else { throw Failure(message: "No folder at \(folder.path).") }
+        guard let checkout = GitCheckout.containing(folder), let main = checkout.mainFolder else {
+            throw Failure(message: "\(folder.path) is not in a git repository.")
+        }
+        if let problem = LocalOnly.problem(in: checkout.excludeFile) { throw Failure(message: problem) }
+        guard let status = ProjectWorktrees.status(of: main, env: env) else {
+            throw Failure(message: "\(main.path) is not the top of a git checkout.")
+        }
+        guard sync else {
+            out(worktreesText(status))
+            return 0
+        }
+        // Without AKit's block there are no units, and no link AKit could know as its own.
+        guard LocalOnly.blockUnits(in: checkout.excludeFile) != nil else {
+            out("Nothing to sync: \(checkout.excludeFile.path) has no AKit block (the project is not local only, or not set up here).")
+            return 0
+        }
+        let outcome = ProjectWorktrees.sync(main, env: env)
+        var lines: [String] = []
+        if !outcome.created.isEmpty { lines.append("Linked: \(outcome.created.joined(separator: ", "))") }
+        if !outcome.removed.isEmpty { lines.append("Removed stale links: \(outcome.removed.joined(separator: ", "))") }
+        if !outcome.conflicts.isEmpty { lines.append("Left alone (something else is there): \(outcome.conflicts.joined(separator: ", "))") }
+        if lines.isEmpty {
+            lines.append(status.worktrees.isEmpty ? "No other worktrees of \(status.main.path)." : "Nothing to do: every worktree has its links.")
+        }
+        out(lines.joined(separator: "\n"))
+        for problem in outcome.problems { err("akit: \(problem)") }
+        return outcome.problems.isEmpty ? 0 : 1
+    }
+
+    static func worktreesText(_ status: ProjectWorktrees.Status) -> String {
+        var lines = ["Main checkout \(status.main.path)"]
+        lines.append(status.units.isEmpty ? "No AKit files to link (the project is not local only, or not set up here)."
+                     : "AKit's files (local only): \(status.units.joined(separator: ", "))")
+        if status.worktrees.isEmpty { lines.append("No other worktrees.") }
+        for tree in status.worktrees {
+            var parts: [String] = []
+            let linked = tree.links.filter { $0.state == .linked }.count
+            if linked > 0 { parts.append("\(linked) linked") }
+            if !tree.lacks.isEmpty { parts.append("lacks \(tree.lacks.joined(separator: ", "))") }
+            if !tree.stale.isEmpty { parts.append("stale \(tree.stale.joined(separator: ", "))") }
+            if !tree.conflicts.isEmpty { parts.append("left alone (something else is there) \(tree.conflicts.joined(separator: ", "))") }
+            lines.append("\(tree.needsSync ? "! " : "")Worktree \(tree.folder.path) (\(tree.branch ?? "detached")): \(parts.isEmpty ? "nothing to link" : parts.joined(separator: "; "))")
+        }
+        if status.needsSync { lines.append("Run akit worktrees sync to fix the lines marked !.") }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Machine
@@ -475,7 +558,7 @@ public enum AKitCLI {
             (options.answersFile != nil, "--answers"), (options.targets != nil, "--targets"), (!options.set.isEmpty, "--set"),
             (!options.unset.isEmpty, "--unset"), (!options.include.isEmpty, "--include"), (!options.exclude.isEmpty, "--exclude"),
             (options.includeUnmanaged, "--include-unmanaged"), (options.keepFiles, "--keep-files"), (options.repo != nil, "--repo"),
-            (options.skipHome, "--skip-home"), (options.name != nil, "--name"),
+            (options.skipHome, "--skip-home"), (options.name != nil, "--name"), (options.localOnly != nil, "--local-only"),
         ], command: command)
     }
 
@@ -1083,7 +1166,7 @@ public enum AKitCLI {
                     : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
                 guard let preview = ProjectForget.preview(id: id, folder: project, forHome: options.home, brain: brain, store: store,
-                                                          piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"]) else {
+                                                          piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], env: env) else {
                     out("Nothing is saved for \(id).")
                     return 1
                 }
@@ -1107,6 +1190,7 @@ public enum AKitCLI {
                     }
                     if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
                 }
+                if let file = preview.excludeTakenOut { lines.append("AKit's block comes out of \(file.path) (local only).") }
                 guard options.yes else { out((lines + [confirm]).joined(separator: "\n")); return 0 }
                 try await ProjectForget.run(preview, keepFiles: options.keepFiles, brain: brain, home: env.homeDirectory, env: env, trash: trash)
                 if preview.brainCopyLeft {
@@ -1144,6 +1228,7 @@ public enum AKitCLI {
         var repo: String?
         var skipHome: Bool
         var name: String?
+        var localOnly: String?
     }
 
     private static func readAnswers(_ options: Options, id: String, brain: Brain, store: ProjectStore, cwd: URL,
@@ -1192,6 +1277,13 @@ public enum AKitCLI {
             }
         }
         for key in options.unset { answers.values[key] = nil }
+        switch options.localOnly?.lowercased() {
+        case nil: break
+        case "yes", "true": answers.localOnly = true
+        case "no", "false": answers.localOnly = false
+        case "auto": answers.localOnly = nil
+        case let other?: throw Failure(message: "--local-only takes yes, no or auto, got “\(other)”.")
+        }
         return answers
     }
 
@@ -1203,6 +1295,7 @@ public enum AKitCLI {
         for error in plan.render.errors { lines.append("ERROR: \(error)") }
         for blocker in plan.blockers { lines.append("BLOCKED: \(blocker)") }
         for warning in plan.render.warnings { lines.append("warning: \(warning)") }
+        for note in plan.notes { lines.append("note: \(note)") }
         let changed = plan.changes.filter { $0.kind != .same && $0.kind != .own }
         if changed.isEmpty { lines.append("No changes.") }
         for change in changed {
@@ -1246,7 +1339,9 @@ public enum AKitCLI {
         lines += outcome.notes.map { "Note: \($0)" }
         let place = plan.store.isLocal ? "on this Mac only, in \(plan.store.describe(id: plan.id))" : "in the brain under \(plan.store.describe(id: plan.id))"
         lines.append(plan.id.hasPrefix("home/") ? "Saved \(place). Reload skills in your harness (e.g. /reload-skills)."
-                     : "Answers saved \(place). Commit the harness files in the project.")
+                     : plan.localOnly && plan.exclude != nil
+                        ? "Answers saved \(place). The harness files stay out of git (local only): nothing to commit."
+                        : "Answers saved \(place). Commit the harness files in the project.")
         return lines.joined(separator: "\n")
     }
 

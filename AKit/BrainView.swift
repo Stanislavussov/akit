@@ -379,6 +379,9 @@ struct BrainView: View {
             lines.append("AKit's block stays in \(preview.blocksLeft.joined(separator: ", ")): edited by hand, without a record, or a file AKit doesn't write, so take it out by hand.")
         }
         if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
+        if let exclude = preview.excludeTakenOut {
+            lines.append("AKit's block comes out of \(exclude.tildePath) (its files then show in git status), and its links out of the project's worktrees.")
+        }
         return lines.joined(separator: "\n\n")
     }
 
@@ -697,6 +700,9 @@ private struct BrainProjectDetailView: View {
     @State private var creatingSkill = false
     @State private var pendingTrash: ProjectSkills.Skill?
     @State private var problem: String?
+    /// The project's git worktrees (a local-only project); nil until read or when they can't be.
+    @State private var worktrees: ProjectWorktrees.Status?
+    @State private var worktreesRead = false
 
     var body: some View {
         ScrollView {
@@ -706,6 +712,7 @@ private struct BrainProjectDetailView: View {
                 if let folder, !project.isHome {
                     skills(folder)
                     agents(folder)
+                    if model.brainProjectCheckouts[project.id] != nil { worktreesBox(folder) }
                 }
                 if !project.answers.values.isEmpty { fields }
                 note
@@ -714,6 +721,9 @@ private struct BrainProjectDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: "\(project.id)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") { loadOwnSkills() }
+        .task(id: "\(project.id)|\(model.lastScan?.timeIntervalSince1970 ?? 0)|\(model.worktreeSyncs[project.id]?.date.timeIntervalSince1970 ?? 0)") {
+            await loadWorktrees()
+        }
         .sheet(isPresented: $creatingSkill) {
             if let folder {
                 NewProjectSkillSheet(project: folder) { file in
@@ -739,6 +749,108 @@ private struct BrainProjectDetailView: View {
     private func loadOwnSkills() {
         guard let folder, !project.isHome else { ownSkills = []; return }
         ownSkills = ProjectSkills.list(in: folder, id: project.id, store: model.projectStore)
+    }
+
+    private var isLocalOnly: Bool { project.answers.isLocalOnly(store: model.projectStore) }
+
+    private func loadWorktrees() async {
+        guard let folder, !project.isHome, isLocalOnly else {
+            worktrees = nil
+            worktreesRead = true
+            return
+        }
+        let status = await model.worktreeStatus(of: folder)
+        guard !Task.isCancelled else { return }
+        worktrees = status
+        worktreesRead = true
+    }
+
+    /// Committed, or local only: then each worktree with what it lacks, and Sync Worktrees.
+    private func worktreesBox(_ folder: URL) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                if !isLocalOnly {
+                    Text("Committed to git: worktrees get AKit's files from their branch once you commit them. To keep them out of git, open Layers & Skills… and pick Local only.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Local only: AKit's files are hidden from git in .git/info/exclude and linked into each of the project's git worktrees. Agents still read them.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let worktrees {
+                        if worktrees.worktrees.isEmpty {
+                            Text("No other worktrees.").foregroundStyle(.secondary)
+                        } else if worktrees.units.isEmpty {
+                            Text("AKit's block in .git/info/exclude lists nothing yet, so there is nothing to link. Apply (Layers & Skills…) writes it.")
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        ForEach(worktrees.worktrees) { tree in worktreeRow(tree, hasUnits: !worktrees.units.isEmpty) }
+                    } else if worktreesRead {
+                        Label("The worktrees can't be read: the folder is not the top of a main checkout, or AKit's block in .git/info/exclude is broken.",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    if let sync = model.worktreeSyncs[project.id] {
+                        Text(syncLine(sync)).font(.caption).foregroundStyle(sync.outcome.problems.isEmpty ? Color.secondary : .orange)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+            .padding(4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            HStack {
+                Text("Worktrees")
+                Spacer()
+                if isLocalOnly {
+                    let syncing = model.worktreesSyncing.contains(project.id)
+                    Button(syncing ? "Syncing…" : "Sync Worktrees", systemImage: "arrow.triangle.branch") {
+                        Task { await model.syncWorktrees(id: project.id, folder: folder) }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(syncing || !(worktrees?.needsSync ?? false))
+                    .help("Link AKit's files into the worktrees that lack them. Nothing else is touched; Apply removes the links of files it drops.")
+                }
+            }
+        }
+        .font(.callout)
+    }
+
+    private func worktreeRow(_ tree: ProjectWorktrees.Worktree, hasUnits: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+            Text(tree.folder.lastPathComponent).fontWeight(.medium)
+            Text(tree.branch ?? "detached").font(.caption.monospaced()).foregroundStyle(.secondary)
+            Spacer()
+            if tree.lacks.isEmpty && tree.conflicts.isEmpty {
+                if hasUnits {
+                    Text("linked").foregroundStyle(.green)
+                } else {
+                    Text("nothing to link").foregroundStyle(.secondary)
+                }
+            }
+            if !tree.lacks.isEmpty {
+                Text("lacks \(tree.lacks.count)").foregroundStyle(.orange)
+                    .help("Not linked yet: \(tree.lacks.joined(separator: ", "))")
+            }
+            if !tree.conflicts.isEmpty {
+                Text("\(tree.conflicts.count) conflict\(tree.conflicts.count == 1 ? "" : "s")").foregroundStyle(.secondary)
+                    .help("Something else is at these paths (the branch's own file or skill); AKit leaves them alone: \(tree.conflicts.joined(separator: ", "))")
+            }
+        }
+        .help(tree.folder.tildePath)
+    }
+
+    private func syncLine(_ sync: AppModel.WorktreeSync) -> String {
+        let outcome = sync.outcome
+        var parts: [String] = []
+        if !outcome.created.isEmpty { parts.append("linked \(outcome.created.count)") }
+        if !outcome.conflicts.isEmpty { parts.append("left \(outcome.conflicts.count) alone") }
+        parts += outcome.problems
+        let when = sync.date.formatted(date: .omitted, time: .shortened)
+        return "Last sync at \(when): \(parts.isEmpty ? "nothing to change" : parts.joined(separator: "; "))."
     }
 
     private func trash(_ skill: ProjectSkills.Skill) {

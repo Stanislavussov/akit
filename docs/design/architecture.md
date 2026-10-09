@@ -21,6 +21,13 @@ the arrows still point down. `AKitErrorAnalysisTests` also depends on `AKitBrain
 ProjectSetup share); the per-key merge into a project's file is
 `AKitProjectSetup/JSONMerge.swift`.
 
+2026-10-09 (local-only files and worktrees, `layers.md`): `AKitFoundation/GitCheckout.swift` reads
+a checkout's `.git` (its git folder, the common one, linked worktree or not) without running git;
+`AKitProjectSetup` uses it for the `info/exclude` block (`LocalOnly.swift`) and the worktree links,
+and the app to map a project id to its main checkout. New module `AKitDoctor` (17 library
+targets now): `Doctor.report`, the text of `akit doctor` and the app's Help → Copy Diagnostics
+(`machine-setup.md`); it sits above ProjectSetup and below CommandLine.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -66,6 +73,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitProjectSetup` | Writes rendered files into a project safely: diff preview, blockers, backup, Trash, `lock.json`, committing the answers in the brain, and the project's own skills. | `Brain/ProjectSetup.swift` (plan + apply, without the storage helpers); `Brain/ProjectSkills.swift` |
 | `AKitLab` | Lab (added 2026-09-30, `lab.md`): session metrics and context rent from a Claude Code transcript and git, runs in a terminal (Orca, herdr, background), replay tasks and their tests; the sending policy, send log and cost of every model call that sends session data. | new |
 | `AKitErrorAnalysis` | Error analysis (added 2026-10-01, `error-analysis.md`): blind notes and the verifier, bootstrap labels, failure modes, checks, batch runs and reports, fixes and control sets. | new |
+| `AKitDoctor` | `akit doctor` and Help → Copy Diagnostics (added 2026-10-09, `machine-setup.md`): a read-only report of what AKit sees on this Mac, never a secret. | new |
 | `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
 | `AKit` (app) | SwiftUI shell. | `AKit/*` |
@@ -119,7 +127,8 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitProjectSetup` | Foundation, Brain, Render, Insights |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
-| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis |
+| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |
+| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
 Rules:

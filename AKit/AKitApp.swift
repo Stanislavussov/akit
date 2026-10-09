@@ -50,6 +50,16 @@ struct AKitApp: App {
             }
             CommandGroup(replacing: .help) {
                 GuideMenuItems(navigator: guides)
+                Divider()
+                Button("Copy Diagnostics") {
+                    Task {
+                        let report = await model.diagnostics()
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(report, forType: .string)
+                        model.showDiagnosticsNotice("Diagnostics copied: what AKit sees on this Mac, without secrets")
+                    }
+                }
+                .help("Copy a read-only report of AKit, the brain, the harnesses and the projects (the same as akit doctor)")
             }
             CommandMenu("Develop") {
                 Button(rebuild.state == .building ? "Rebuilding…" : "Rebuild and Relaunch") {

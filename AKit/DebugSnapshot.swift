@@ -18,7 +18,7 @@ import SwiftUI
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
 /// `--click 640,400` clicks there (snapshot points from the top left) before the capture;
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
-/// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--capture` for the preview).
+/// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--local-only` picks Local only, `--capture` for the preview).
 /// Lab: `--tab sends` shows the send log; with `--select <run id>` of a review, `--tab notes` opens its
 /// notes' disclosures and `--tab recheck` the Re-check sheet (`tools/demo-home.sh` has one). Settings: `--tab lab` (or `scrub`) scrolls to the sending
 /// policy, `--add` opens Add Destination, `--capture` checks the accounts. Error Analysis (`--section analysis`):
@@ -33,7 +33,7 @@ import SwiftUI
 /// give it `--delay 8`.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
-/// a value (`--add`, `--capture`, `--own-copy`, `--settings`) last: Cocoa pairs arguments as "-key value", and a
+/// a value (`--add`, `--capture`, `--own-copy`, `--settings`, `--local-only`) last: Cocoa pairs arguments as "-key value", and a
 /// word left over is opened as a document, whose error alert keeps the window from appearing.
 enum DebugSnapshot {
     struct Options {
@@ -68,6 +68,8 @@ enum DebugSnapshot {
         /// A real mouse click before the capture, in the snapshot's points from its top left
         /// (pixels / 2 on a Retina screen): checks what a click hits, not just what is drawn.
         var click: CGPoint?
+        /// Set Up Project: pick Local only (hidden from git).
+        var localOnly: Bool
     }
 
     static let options: Options? = {
@@ -101,7 +103,8 @@ enum DebugSnapshot {
             click: value("--click").flatMap { text -> CGPoint? in
                 let parts = text.split(separator: ",").compactMap { Double($0) }
                 return parts.count == 2 ? CGPoint(x: parts[0], y: parts[1]) : nil
-            }
+            },
+            localOnly: args.contains("--local-only")
         )
     }()
 

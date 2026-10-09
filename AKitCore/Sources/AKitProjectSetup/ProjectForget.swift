@@ -32,6 +32,8 @@ public enum ProjectForget {
             let left = plan.changes.filter { $0.block && [.keepEdited, .suggest, .own].contains($0.kind) }.map(\.path)
             return Set(left + plan.blockSkipped).sorted()
         }
+        /// The repository's exclude file whose AKit block comes out (a local-only project).
+        public var excludeTakenOut: URL? { plan?.exclude?.current == nil ? nil : plan?.exclude?.file }
         /// Files AKit wrote and the user edited since: kept.
         public var kept: [String] { plan?.changes.filter { $0.kind == .keepEdited && !$0.block }.map(\.path) ?? [] }
     }
@@ -39,12 +41,13 @@ public enum ProjectForget {
     /// What forgetting would do; nil when nothing is saved for the id. Only reads.
     /// `piAgentDirSetting`: see `ProjectSetup.plan`.
     public static func preview(id: String, folder: URL?, forHome: Bool, brain: Brain, store: ProjectStore,
-                               piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false) -> Preview? {
+                               piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false,
+                               env: HarnessEnvironment = .current) -> Preview? {
         guard var empty = ProjectRecords.savedAnswers(id: id, in: store) else { return nil }
         empty.layers = []
         empty.skills = []
         let plan = folder.map { ProjectSetup.plan(project: $0, id: id, answers: empty, brain: brain, store: store, forHome: forHome,
-                                                  piAgentDirSetting: piAgentDirSetting, rememberPiAgentDir: rememberPiAgentDir) }
+                                                  piAgentDirSetting: piAgentDirSetting, rememberPiAgentDir: rememberPiAgentDir, env: env) }
         let fm = FileManager.default
         return Preview(id: id, store: store, plan: plan,
                        ownRecord: !store.isLocal || fm.fileExists(atPath: store.folder(id: id).path),
@@ -52,7 +55,8 @@ public enum ProjectForget {
     }
 
     /// Trashes the files AKit wrote (unless `keepFiles`), then the record, committed when the
-    /// store is the brain's.
+    /// store is the brain's, then AKit's exclude block and worktree links (local only): if the
+    /// record can't go, the block still matches it.
     public static func run(_ preview: Preview, keepFiles: Bool, brain: Brain, home: URL, env: HarnessEnvironment,
                            trash: (URL) throws -> URL? = Trash.move) async throws {
         // The Mac may have become a work Mac (or stopped being one) since the preview.
@@ -67,5 +71,9 @@ public enum ProjectForget {
         if !store.isLocal || FileManager.default.fileExists(atPath: store.folder(id: preview.id).path) {
             try await BrainRemove.forgetProject(preview.id, in: store, env: env, trash: trash)
         }
+        // Local only: AKit's block leaves the exclude file even when the files stay.
+        var problem: String?
+        if let plan = preview.plan, !plan.forHome { problem = LocalOnly.takeOut(of: plan.project, env: env) }
+        if let problem { throw ProjectSetup.Failure(message: "The project is forgotten, but: \(problem)") }
     }
 }

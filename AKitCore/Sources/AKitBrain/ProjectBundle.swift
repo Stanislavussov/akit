@@ -23,15 +23,24 @@ public struct ProjectAnswers: Codable, Hashable, Sendable {
     public var targets: [String]
     /// This project's own skills from the brain, after the layers' skills.
     public var skills: [Skill]
+    /// AKit's files stay out of git (a block in `.git/info/exclude`, links in worktrees);
+    /// nil: the Mac's role decides (`isLocalOnly(store:)`). Left out of the JSON when nil.
+    public var localOnly: Bool?
 
-    public init(layers: [String] = [], values: [String: FieldValue] = [:], targets: [String] = [], skills: [Skill] = []) {
+    public init(layers: [String] = [], values: [String: FieldValue] = [:], targets: [String] = [], skills: [Skill] = [],
+                localOnly: Bool? = nil) {
         self.layers = layers
         self.values = values
         self.targets = targets
         self.skills = skills
+        self.localOnly = localOnly
     }
 
-    private enum CodingKeys: String, CodingKey { case layers, values, targets, skills }
+    private enum CodingKeys: String, CodingKey { case layers, values, targets, skills, localOnly }
+
+    /// Whether the project is local only: its own answer, else a work Mac (local store) is and a
+    /// personal Mac isn't.
+    public func isLocalOnly(store: ProjectStore) -> Bool { localOnly ?? store.isLocal }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -40,6 +49,7 @@ public struct ProjectAnswers: Codable, Hashable, Sendable {
         targets = try container.decode([String].self, forKey: .targets)
         // Answers saved before project skills existed have none.
         skills = try container.decodeIfPresent([Skill].self, forKey: .skills) ?? []
+        localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly)
     }
 
     /// Target names used in `when: target == …`.

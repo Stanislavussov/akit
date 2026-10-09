@@ -212,6 +212,12 @@ home folder's record is named `work` instead of the host name. Skills and layers
 from the brain. `akit machine` shows the current role; a broken `~/.akit/machine.json`
 counts as work.
 
+Projects on a work Mac are local only by default (`--local-only yes|no` changes it per
+project): AKit's files stay out of git through a block in the repository's
+`.git/info/exclude`, and every other git worktree of the repository gets links to them
+(`akit worktrees sync`, which a worktree tool's hook can run). When something doesn't work,
+`akit doctor` shows what AKit sees.
+
 ## Everyday use
 
 **With your agent** (Claude Code, Pi, …): `/akit` followed by what you want.
@@ -264,7 +270,9 @@ akit remove layer NAME                           refused while other layers requ
 akit remove skill NAME [--from LAYER]            from the brain, or only from one layer
 akit remove project [PROJECT|--home] [--keep-files]
 
+akit worktrees [sync] [PROJECT]                  a local-only project's files linked into its git worktrees
 akit machine [work [--name NAME] | personal]     a work Mac keeps project records out of the brain
+akit doctor                                      what AKit sees on this Mac and what is wrong (read-only)
 
 akit lab analyze SESSION                         metrics of one Claude Code session
 akit lab new review SESSION [--harness pi] [--model M]
@@ -285,6 +293,7 @@ akit analysis bootstrap …                        label 30+ sessions yourself; 
 akit analysis fix … / control …                  fix drafts, before/after, controlled evals on fixed tasks
 
 ANSWERS: --layers a,b  --set field=value  --unset field  --targets claude,pi  --answers FILE
+         --local-only yes|no|auto
 ```
 
 `PROJECT` defaults to the current folder. `remove` shows what it would do and needs `--yes`
