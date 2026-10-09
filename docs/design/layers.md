@@ -2,6 +2,8 @@
 
 Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
+Local-only files and git worktrees designed 2026-10-09 (see
+[Local-only files and git worktrees](#local-only-files-and-git-worktrees-designed-2026-10-09)).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
 `.pi/mcp.json` and `.pi/settings.json`. The home render writes the core layer's AGENTS.md
@@ -179,7 +181,8 @@ ignores the key.
 
 ## What lands in the project
 
-Only harness files. They are always committed. Nothing from AKit itself.
+Only harness files. Nothing from AKit itself. They are committed, unless the project is
+[local only](#local-only-files-and-git-worktrees-designed-2026-10-09).
 
 ```
 project/
@@ -198,6 +201,65 @@ In the home folder, AGENTS.md is not written as `~/AGENTS.md` (Claude Code never
 only below the home folder): its text goes as a marked block into `~/.claude/CLAUDE.md` and the
 file Pi reads in `~/.pi/agent`, see
 [Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08).
+
+## Local-only files and git worktrees (designed 2026-10-09)
+
+Feedback from a work Mac (2026-10-09): a work repo has its own skills in git, and the
+user's own skills and settings must not land there. Left untracked, AKit's files are
+missing from every new git worktree (git checks out only tracked files), so an agent
+started in a worktree by Pi, herdr or `git worktree add` has none of them.
+
+**Local only.** `answers.json` gets `localOnly` (true or false). Without it the machine
+role decides: a work Mac is local only, a personal Mac commits. Set Up Project shows the
+choice. In a local-only project:
+
+- Apply writes one marked block into `<git common dir>/info/exclude` with a line per unit
+  AKit wrote that git doesn't track: `/.agents/skills/<name>` for each skill folder (no
+  trailing slash, so the line also matches a link in a worktree), `/.claude/skills` for the
+  link, and the files AKit created (`/AGENTS.md`, `/CLAUDE.md`, a merged JSON file AKit
+  created). The project's own skills and its tracked files get no line.
+- The exclude file is shared by all worktrees of the repo and is never committed. It only
+  hides files from git: agents still read them. Pi 1.0.4 reads only `.gitignore`,
+  `.ignore` and `.fdignore` inside its skills folders, never `info/exclude` (checked in
+  `dist/core/skills.js`), so AKit never writes an ignore file into `.agents/skills`.
+- A tracked file AKit merges keys into (a tracked `.mcp.json`) can't be hidden: the
+  preview warns that AKit's keys show in `git diff`.
+- Switching to commit takes the block out; the files then show in `git status`.
+  Forget Project takes the block out too.
+- Not a git repo: nothing more to do.
+
+**Worktrees.** For a local-only project AKit reads `git worktree list --porcelain` in the
+main checkout. In each other worktree, each unit above becomes a symbolic link to the same
+path in the main checkout:
+
+```
+main checkout                         worktree (Pi, herdr, git worktree add)
+.agents/skills/
+├─ team-skill/   tracked      ─git─►  team-skill/          (from the branch)
+└─ my-skill/     AKit, excluded ◄──── my-skill -> <main>/.agents/skills/my-skill
+```
+
+- A unit missing in the worktree gets the link; parent folders are made as real folders.
+- A link that already points there is left. Anything else at that path (the branch has
+  its own file or skill) is left alone and reported.
+- A link into the main checkout's `.agents/skills` whose skill is no longer AKit's is
+  removed; Apply also removes, in every worktree, the links of units it dropped. AKit
+  removes only links that point into the main checkout, never a file or folder.
+- Edits to a skill reach every worktree at once (it is the same folder); only a new or a
+  removed unit needs a sync.
+- These writes have no diff preview: they only create links where nothing is and remove
+  AKit's own links. This is the one exception to "backup and diff first".
+
+When: after every Apply; on every refresh of the app; within about a second of a new
+worktree while the app runs (it watches `<git common dir>/worktrees` of each local-only
+project); on **Sync Worktrees** on the project's page (which also lists the worktrees and
+what each one lacks); and with `akit worktrees sync [PROJECT]`, which a tool's
+"after worktree created" hook can run while the app is closed. A Pi session started in a
+worktree before its links exist doesn't see the skills until it is restarted.
+
+Set Up Project in a linked worktree is blocked: it names the main checkout, which is the
+one to set up. The Brain screen maps a project id to its main checkout, never to one of
+its worktrees.
 
 ## Several layers, one file
 
