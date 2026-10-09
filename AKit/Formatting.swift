@@ -53,3 +53,16 @@ struct HarnessBadge: View {
         }
     }
 }
+
+extension Binding {
+    /// A binding to the element with this id. A row of `ForEach($list)` keeps its index after a
+    /// removal, so a text field that commits on losing focus wrote past the end and crashed the app;
+    /// this one reads the last known value and drops writes once the element is gone.
+    func element<Element: Identifiable>(_ element: Element) -> Binding<Element> where Value == [Element] {
+        Binding<Element>(
+            get: { wrappedValue.first { $0.id == element.id } ?? element },
+            set: { new in
+                if let index = wrappedValue.firstIndex(where: { $0.id == element.id }) { wrappedValue[index] = new }
+            })
+    }
+}

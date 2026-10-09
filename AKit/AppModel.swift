@@ -604,7 +604,8 @@ final class AppModel {
         let (sessionProjects, ratings) = await Task.detached {
             (SessionProjects.projectIDs(ofFolders: folders, env: env, projectsRoot: projectsRoot), Ratings.byTranscript(env: env))
         }.value
-        self.brain = brain
+        // A work Mac keeps its project records outside the brain; list them too.
+        self.brain = brain?.addingProjects(from: projectStore)
         brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
         installations = found
         self.skills = skills
