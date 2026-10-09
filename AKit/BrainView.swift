@@ -810,7 +810,7 @@ private struct BrainProjectDetailView: View {
                     }
                     .buttonStyle(.borderless)
                     .disabled(syncing || !(worktrees?.needsSync ?? false))
-                    .help("Link AKit's files into the worktrees that lack them and remove AKit's stale links. Nothing else is touched.")
+                    .help("Link AKit's files into the worktrees that lack them. Nothing else is touched; Apply removes the links of files it drops.")
                 }
             }
         }
@@ -824,7 +824,7 @@ private struct BrainProjectDetailView: View {
             Text(tree.folder.lastPathComponent).fontWeight(.medium)
             Text(tree.branch ?? "detached").font(.caption.monospaced()).foregroundStyle(.secondary)
             Spacer()
-            if tree.lacks.isEmpty && tree.stale.isEmpty && tree.conflicts.isEmpty {
+            if tree.lacks.isEmpty && tree.conflicts.isEmpty {
                 if hasUnits {
                     Text("linked").foregroundStyle(.green)
                 } else {
@@ -834,10 +834,6 @@ private struct BrainProjectDetailView: View {
             if !tree.lacks.isEmpty {
                 Text("lacks \(tree.lacks.count)").foregroundStyle(.orange)
                     .help("Not linked yet: \(tree.lacks.joined(separator: ", "))")
-            }
-            if !tree.stale.isEmpty {
-                Text("\(tree.stale.count) stale").foregroundStyle(.orange)
-                    .help("AKit's links whose files are no longer AKit's; Sync Worktrees removes them: \(tree.stale.joined(separator: ", "))")
             }
             if !tree.conflicts.isEmpty {
                 Text("\(tree.conflicts.count) conflict\(tree.conflicts.count == 1 ? "" : "s")").foregroundStyle(.secondary)
@@ -851,7 +847,6 @@ private struct BrainProjectDetailView: View {
         let outcome = sync.outcome
         var parts: [String] = []
         if !outcome.created.isEmpty { parts.append("linked \(outcome.created.count)") }
-        if !outcome.removed.isEmpty { parts.append("removed \(outcome.removed.count) stale link\(outcome.removed.count == 1 ? "" : "s")") }
         if !outcome.conflicts.isEmpty { parts.append("left \(outcome.conflicts.count) alone") }
         parts += outcome.problems
         let when = sync.date.formatted(date: .omitted, time: .shortened)
