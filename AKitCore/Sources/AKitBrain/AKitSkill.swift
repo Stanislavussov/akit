@@ -26,10 +26,13 @@ akit check                      # problems in layers/skills (exit 1 if any)
 akit layers [--json]            # what exists: fields, skills, files per layer
 akit skills                     # skills in the brain
 akit sync                       # pull other Macs' brain commits, push this one's
+akit doctor                     # when AKit doesn't behave, run this first: what it sees, what's wrong
 akit answers [PROJECT]          # saved answers of a project
 akit plan  [PROJECT] [ANSWERS]  # every change with a diff; never writes
 akit apply [PROJECT] [ANSWERS] [--include PATH]
 # ANSWERS: --layers a,b  --set field=value (repeat)  --unset field  --targets claude,pi
+#          --local-only yes|no|auto  (keep AKit's files out of git; auto: a work Mac yes)
+akit worktrees [sync] [PROJECT] # a local-only project's files linked into its git worktrees
 ```
 
 ## layer.yaml

@@ -108,4 +108,16 @@ struct LocalOnlyCLITests {
         let outside = await akit("worktrees", home.path)
         #expect(outside.code == 2 && outside.err.contains("is not in a git repository"))
     }
+
+    @Test func doctorReportsAndAlwaysExitsZero() async throws {
+        try await setUp()
+        try write(".pi/agent/auth.json", #"{"anthropic": {"access": "sk-ant-oat01-clidoctorsecret987"}}"#)
+        let doctor = await akit("doctor")
+        #expect(doctor.code == 0, "\(doctor.err)")
+        #expect(doctor.out.hasPrefix("AKit doctor"))
+        #expect(doctor.out.contains("! app: ~/Applications/AKit.app is missing"))
+        #expect(!doctor.out.contains("clidoctorsecret"))
+        #expect(await akit("doctor", "extra").code == 2)
+        #expect(AKitCLI.usage.contains("akit doctor") && AKitCLI.usage.contains("akit worktrees sync [PROJECT]"))
+    }
 }

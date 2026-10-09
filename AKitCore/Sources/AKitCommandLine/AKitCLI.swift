@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitDoctor
 import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
@@ -133,6 +134,9 @@ public enum AKitCLI {
                                           and advice. akit analysis --help lists the rest
 
         This Mac (~/.akit/machine.json, never in the brain):
+          akit doctor                     What AKit sees on this Mac and what is wrong (lines with !,
+                                          each with what to do). Only reads, never shows a secret.
+                                          Run it first when AKit doesn't behave
           akit machine                    Show whether this is a personal or a work Mac
           akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
                                           ~/.akit/local/projects, nothing about them reaches the
@@ -229,6 +233,13 @@ public enum AKitCLI {
                 return try await recommend(&args, options: options, env: env, cwd: cwd,
                                            projectsRoot: projectsRoot, hostName: hostName, hardwareHash: hardwareHash,
                                            runner: runner, out: out, err: err)
+            }
+            if command == "doctor" {
+                try refuseProjectOptions(options, command: "doctor")
+                try args.finish()
+                out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot],
+                                              hostName: hostName)))
+                return 0
             }
             if command == "worktrees" {
                 try refuseProjectOptions(options, command: "worktrees")

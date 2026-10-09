@@ -54,6 +54,13 @@ public enum LocalOnly {
         return Set(paths.filter { path in files.contains { $0 == path || $0.hasPrefix(path + "/") } })
     }
 
+    /// The units AKit's block should hold for this lock: what AKit wrote that git doesn't
+    /// track. nil when git didn't run. For checks (`akit doctor`).
+    public static func expectedUnits(of project: URL, lock: ProjectRecords.Lock, env: HarnessEnvironment) -> [String]? {
+        let candidates = candidates(of: lock)
+        return tracked(candidates, in: project, env: env).map { tracked in candidates.filter { !tracked.contains($0) } }
+    }
+
     // MARK: - Lines
 
     /// A unit as an exclude pattern, anchored at the top: `/` + the path, with what gitignore

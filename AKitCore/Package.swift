@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "AKitProjectSetup", targets: ["AKitProjectSetup"]),
         .library(name: "AKitLab", targets: ["AKitLab"]),
         .library(name: "AKitErrorAnalysis", targets: ["AKitErrorAnalysis"]),
+        .library(name: "AKitDoctor", targets: ["AKitDoctor"]),
         // `akit` command for agents and terminals (install: make install-cli).
         .executable(name: "akit", targets: ["akit"]),
     ],
@@ -50,7 +51,9 @@ let package = Package(
         // → Render: layer evals render a brain layer into a control cell (docs/design/layer-evals.md).
         .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain", "AKitRender"]),
         .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitBrain", "AKitRender", "AKitInsights"]),
-        .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis"]),
+        // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md).
+        .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitProjectSetup"]),
+        .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitModel", "AKitSkills"]),
@@ -66,6 +69,7 @@ let package = Package(
         .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender"]),
         .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain"]),
         .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitBrain", "AKitRender"]),
+        .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
         .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
     ]
 )

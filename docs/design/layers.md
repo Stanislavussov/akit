@@ -2,8 +2,9 @@
 
 Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
-Local-only files and git worktrees designed 2026-10-09 (see
-[Local-only files and git worktrees](#local-only-files-and-git-worktrees-designed-2026-10-09)).
+Local-only files and git worktrees built 2026-10-09 in the core and the `akit` command; the
+app's part is not built yet (see
+[Local-only files and git worktrees](#local-only-files-and-git-worktrees-built-2026-10-09)).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
 `.pi/mcp.json` and `.pi/settings.json`. The home render writes the core layer's AGENTS.md
@@ -182,7 +183,7 @@ ignores the key.
 ## What lands in the project
 
 Only harness files. Nothing from AKit itself. They are committed, unless the project is
-[local only](#local-only-files-and-git-worktrees-designed-2026-10-09).
+[local only](#local-only-files-and-git-worktrees-built-2026-10-09).
 
 ```
 project/
@@ -202,7 +203,16 @@ only below the home folder): its text goes as a marked block into `~/.claude/CLA
 file Pi reads in `~/.pi/agent`, see
 [Home folder: instructions block](#home-folder-instructions-block-built-2026-10-08).
 
-## Local-only files and git worktrees (designed 2026-10-09)
+## Local-only files and git worktrees (built 2026-10-09)
+
+Built 2026-10-09 in the core and the command line: `ProjectAnswers.localOnly`,
+`LocalOnly` (the exclude block, written by Apply, taken out by Forget), `ProjectWorktrees`
+(`status` and `sync`, run by Apply and Forget), the worktree blocker, `GitCheckout.preferred`
+for the Brain screen, `akit plan|apply --local-only yes|no|auto`, and
+`akit worktrees [sync] [PROJECT]` (a folder in a worktree stands for its main checkout). Not
+built yet, in the app: the choice in Set Up Project, the worktrees list and **Sync
+Worktrees** on the project's page, the watch on `<git common dir>/worktrees`, and the sync on
+refresh.
 
 Feedback from a work Mac (2026-10-09): a work repo has its own skills in git, and the
 user's own skills and settings must not land there. Left untracked, AKit's files are

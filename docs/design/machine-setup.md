@@ -1,9 +1,10 @@
 # Machine setup: diagnostics and onboarding
 
-Status: designed 2026-10-09 from a day of feedback on a work Mac. `akit doctor` and
-**Copy Diagnostics** are to be built with the worktree links (see `layers.md`,
-"Local-only files and git worktrees"). Onboarding in the app is a proposal; the user
-reviews it before it is built.
+Status: designed 2026-10-09 from a day of feedback on a work Mac. `akit doctor` built
+2026-10-09 (`AKitDoctor`, `Doctor.report`), with the worktree links (see `layers.md`,
+"Local-only files and git worktrees"); **Copy Diagnostics** in the app is not built yet (it
+calls the same `Doctor.report`). Onboarding in the app is a proposal; the user reviews it
+before it is built.
 
 ## Problem
 
