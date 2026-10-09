@@ -178,24 +178,26 @@ struct MCPServerEditor: View {
 
     private func values(_ title: String, _ list: Binding<[MCPDraft.Value]>, keyPrompt: String) -> some View {
         Section {
-            ForEach(list) { $value in
+            ForEach(list.wrappedValue) { row in
+                let field = list.element(row)
+                let value = field.wrappedValue
                 HStack {
-                    TextField("Name", text: $value.key, prompt: Text(keyPrompt))
+                    TextField("Name", text: field.key, prompt: Text(keyPrompt))
                         .font(.body.monospaced())
                         .frame(minWidth: 160, idealWidth: 270, maxWidth: 300)
                     Group {
                         if let account = value.keychainAccount {
-                            SecureField("Value", text: $value.value, prompt: Text("Keychain: \(account) (unchanged)"))
+                            SecureField("Value", text: field.value, prompt: Text("Keychain: \(account) (unchanged)"))
                         } else if value.hasHiddenValue {
-                            SecureField("Value", text: $value.value, prompt: Text("unchanged (hidden)"))
+                            SecureField("Value", text: field.value, prompt: Text("unchanged (hidden)"))
                         } else if value.isSecret {
-                            SecureField("Value", text: $value.value, prompt: Text("secret"))
+                            SecureField("Value", text: field.value, prompt: Text("secret"))
                         } else {
-                            TextField("Value", text: $value.value, prompt: Text("value or ${VAR}"))
+                            TextField("Value", text: field.value, prompt: Text("value or ${VAR}"))
                         }
                     }
                     .font(.body.monospaced())
-                    Toggle("Secret", isOn: $value.isSecret)
+                    Toggle("Secret", isOn: field.isSecret)
                         .toggleStyle(.checkbox)
                         .help(value.hasHiddenValue && value.value.isEmpty
                               ? "Move the value written in the file into the Keychain"

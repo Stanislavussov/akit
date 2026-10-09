@@ -193,6 +193,26 @@ struct BrainTests {
         #expect(brain.projects(using: "missing").isEmpty)
     }
 
+    @Test func aWorkMacListsItsLocalProjects() throws {
+        try write("layers/web/layer.yaml", "")
+        try write("projects/github.com/me/site/answers.json", #"{"layers": ["web"], "values": {}, "targets": []}"#)
+        try write("projects/github.com/me/old/answers.json", #"{"layers": [], "values": {}, "targets": []}"#)
+        let home = root.appending(path: "home")
+        let store = ProjectStore.local(home: home, readingBrain: root)
+        let local = store.root.appending(path: "github.com/me/site")
+        try fm.createDirectory(at: local, withIntermediateDirectories: true)
+        try Data(#"{"layers": [], "values": {}, "targets": []}"#.utf8).write(to: local.appending(path: "answers.json"))
+        try fm.createDirectory(at: store.root.appending(path: "work/tool"), withIntermediateDirectories: true)
+        try Data(#"{"layers": ["web"], "values": {}, "targets": []}"#.utf8).write(to: store.root.appending(path: "work/tool/answers.json"))
+
+        let brain = try load()
+        #expect(brain.addingProjects(from: .brain(root)).projects == brain.projects)
+        let merged = brain.addingProjects(from: store)
+        #expect(merged.projects.map(\.id) == ["github.com/me/old", "github.com/me/site", "work/tool"])
+        // The local record wins: its answers have no layers.
+        #expect(merged.projects(using: "web").map(\.id) == ["work/tool"])
+    }
+
     @Test func manyRedundantRequiresLoadFast() throws {
         // Each layer requires every earlier one: walking every path would take minutes.
         for i in 0..<40 {

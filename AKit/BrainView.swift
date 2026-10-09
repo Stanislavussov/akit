@@ -446,7 +446,8 @@ struct BrainView: View {
                     if let project = brain.projects.first(where: { $0.id == id }) {
                         let folder = model.brainProjectFolders[id]
                         BrainProjectDetailView(project: project, layers: brain.layers(of: project), folder: folder,
-                                               brainFolder: brain.root.appending(path: "projects/\(id)"),
+                                               brainFolder: model.projectStore.savedFile(id: id, "answers.json")?.deletingLastPathComponent()
+                                                   ?? brain.root.appending(path: "projects/\(id)"),
                                                onSelectLayer: { selection = .layer($0) },
                                                onChange: folder.map { folder in { setup = project.isHome ? SetupRequest(home: true) : SetupRequest(project: folder) } },
                                                // Another Mac's home folder is forgotten on that Mac (akit remove project --home).

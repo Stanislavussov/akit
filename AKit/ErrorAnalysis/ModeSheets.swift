@@ -243,17 +243,19 @@ private struct SplitModeSheet: View {
         } content: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach($parts) { $part in
+                    ForEach(parts) { row in
+                        let field = $parts.element(row)
+                        let part = field.wrappedValue
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
-                                TextField("Name", text: $part.name).textFieldStyle(.roundedBorder)
+                                TextField("Name", text: field.name).textFieldStyle(.roundedBorder)
                                 if parts.count > 2 {
                                     Button("Remove", systemImage: "minus.circle") { parts.removeAll { $0.id == part.id } }
                                         .labelStyle(.iconOnly)
                                         .buttonStyle(.borderless)
                                 }
                             }
-                            TextField("Definition: one or two sentences", text: $part.definition, axis: .vertical)
+                            TextField("Definition: one or two sentences", text: field.definition, axis: .vertical)
                                 .lineLimit(2...4)
                                 .textFieldStyle(.roundedBorder)
                         }

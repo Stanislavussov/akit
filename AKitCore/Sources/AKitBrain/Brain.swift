@@ -58,6 +58,19 @@ public struct Brain: Sendable {
 
     public func problems(of layer: String) -> [Problem] { problems.filter { $0.layer == layer } }
 
+    /// This brain with the projects of a work Mac's local store added, so the Brain screen lists
+    /// what was set up there. A local record wins over the brain's one with the same id.
+    public func addingProjects(from store: ProjectStore) -> Brain {
+        guard store.isLocal else { return self }
+        let local = BrainRemove.savedAnswers(in: store).map { saved in
+            Project(id: saved.id, answers: saved.answers, brainCommit: ProjectRecords.savedLock(id: saved.id, in: store)?.brainCommit)
+        }
+        let ids = Set(local.map(\.id))
+        var brain = self
+        brain.projects = (projects.filter { !ids.contains($0.id) } + local).sorted { $0.id < $1.id }
+        return brain
+    }
+
     /// Projects that get this layer: picked, or required by a picked layer.
     public func projects(using layer: String) -> [Project] {
         projects.filter { layers(of: $0).contains(layer) }
