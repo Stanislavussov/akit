@@ -95,6 +95,14 @@ public enum LocalOnly {
         return lines[range].dropFirst().dropLast().compactMap(unit(fromLine:))
     }
 
+    /// The file has AKit's markers, but not one start before one end: AKit leaves it alone.
+    static func blockIsBroken(in file: URL) -> Bool {
+        guard let text = try? String(contentsOf: file, encoding: .utf8), case .broken? = block(in: text.components(separatedBy: "\n")) else {
+            return false
+        }
+        return true
+    }
+
     enum Block { case found(ClosedRange<Int>), broken }
 
     /// Where AKit's block is (from its start marker to its end marker); nil when there is none.
@@ -178,6 +186,13 @@ public enum LocalOnly {
         plan.exclude = Exclude(file: file, current: current, units: units)
         if !units.isEmpty {
             plan.notes.append("Local only: AKit's block in \(shown) keeps these out of git: \(units.map(line(for:)).joined(separator: ", ")).")
+            let folder = plan.project.standardizedFileURL.path
+            let trees = GitCheckout.at(plan.project).map {
+                ProjectWorktrees.linkedWorktrees(of: $0, main: [folder, ProjectWorktrees.realPath(folder)], env: env)
+            } ?? []
+            if !trees.isEmpty {
+                plan.notes.append("Apply also links them into the repository's other worktrees: \(trees.map(\.folder.path).joined(separator: ", ")).")
+            }
         } else if current != nil {
             plan.notes.append("Local only: nothing of AKit's left to hide; its block comes out of \(shown).")
         }
@@ -190,8 +205,10 @@ public enum LocalOnly {
 
     /// After Apply saved `lock`: the block holds the untracked units in a local-only project, and
     /// comes out otherwise. Returns notes for the outcome.
+    /// The worktrees follow: links of new units are made, those of dropped units removed.
     static func afterApply(_ plan: ProjectSetup.Plan, lock: ProjectRecords.Lock, env: HarnessEnvironment) -> [String] {
         guard let file = excludeFile(of: plan.project) else { return [] }
+        let previous = blockUnits(in: file) ?? []
         var units: [String] = []
         if plan.localOnly {
             let candidates = candidates(of: lock)
@@ -202,13 +219,29 @@ public enum LocalOnly {
         } else if blockUnits(in: file) == nil {
             return []
         }
-        return write(units: units, to: file).map { [$0] } ?? []
+        if let problem = write(units: units, to: file) { return [problem] }
+        guard !(previous.isEmpty && units.isEmpty) else { return [] }
+        return notes(ProjectWorktrees.sync(plan.project, dropped: previous.filter { !units.contains($0) }, env: env))
     }
 
-    /// Forget: AKit's block comes out of the project's exclude file. Returns a problem, if any.
-    static func takeOut(of project: URL) -> String? {
-        guard let file = excludeFile(of: project), blockUnits(in: file) != nil else { return nil }
-        return write(units: [], to: file)
+    /// Forget: AKit's block comes out of the project's exclude file, and its links out of the
+    /// worktrees. Returns a problem, if any.
+    static func takeOut(of project: URL, env: HarnessEnvironment) -> String? {
+        guard let file = excludeFile(of: project), let previous = blockUnits(in: file) else { return nil }
+        if let problem = write(units: [], to: file) { return problem }
+        let problems = ProjectWorktrees.sync(project, dropped: previous, env: env).problems
+        return problems.isEmpty ? nil : problems.joined(separator: " ")
+    }
+
+    /// What a worktree sync did, for the outcome.
+    static func notes(_ outcome: ProjectWorktrees.Outcome) -> [String] {
+        var notes: [String] = []
+        if !outcome.created.isEmpty { notes.append("Linked into worktrees: \(outcome.created.joined(separator: ", ")).") }
+        if !outcome.removed.isEmpty { notes.append("Links removed from worktrees: \(outcome.removed.joined(separator: ", ")).") }
+        if !outcome.conflicts.isEmpty {
+            notes.append("Left alone in worktrees (something else is there): \(outcome.conflicts.joined(separator: ", ")).")
+        }
+        return notes + outcome.problems
     }
 
     /// `.git/info/exclude` inside the project, else the full path.

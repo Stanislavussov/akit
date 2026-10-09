@@ -282,15 +282,18 @@ final class AppModel {
     }
 
     /// Brain project ids found on this Mac → their folders: the home folder and every known project.
+    /// A project's main checkout wins over its git worktrees, which share its id.
     func projectFolders() async -> [String: URL] {
         let env = HarnessEnvironment.current
-        var folders = [ProjectRecords.homeID(machineName: machine.homeName): env.homeDirectory]
+        var found: [String: [URL]] = [:]
         await withTaskGroup(of: (String, URL).self) { group in
             for project in projects {
                 group.addTask { (await self.projectID(for: project), project) }
             }
-            for await (id, folder) in group where folders[id] == nil { folders[id] = folder }
+            for await (id, folder) in group { found[id, default: []].append(folder) }
         }
+        var folders = found.compactMapValues { GitCheckout.preferred($0) }
+        folders[ProjectRecords.homeID(machineName: machine.homeName)] = env.homeDirectory
         return folders
     }
 

@@ -41,6 +41,13 @@ public enum AKitCLI {
                                           key: the project's keys stay, a key the project removed
                                           isn't added back, env/headers values are shown masked.
 
+        Worktrees (a local-only project's AKit files, linked into its other git worktrees):
+          akit worktrees [PROJECT]        Each worktree of the repository and the links it lacks
+          akit worktrees sync [PROJECT]   Make the missing links and remove stale ones (only links
+                                          into the main checkout, never files or folders). PROJECT
+                                          may be a worktree: its main checkout is used. For a tool's
+                                          "after worktree created" hook
+
         Remove (shows what happens; add --yes to do it; folders go to the Trash, one commit each):
           akit remove layer NAME              refused while other layers require it; dropped from
                                               saved project answers (re-apply those projects)
@@ -223,6 +230,14 @@ public enum AKitCLI {
                                            projectsRoot: projectsRoot, hostName: hostName, hardwareHash: hardwareHash,
                                            runner: runner, out: out, err: err)
             }
+            if command == "worktrees" {
+                try refuseProjectOptions(options, command: "worktrees")
+                let first = args.positional()
+                let sync = first == "sync"
+                let folder = resolve((sync ? args.positional() : first) ?? ".", cwd: cwd, env: env)
+                try args.finish()
+                return try worktrees(sync: sync, folder: folder, env: env, out: out, err: err)
+            }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
                 try args.finish()
@@ -353,6 +368,54 @@ public enum AKitCLI {
             err("akit: \(error.localizedDescription)")
             return 2
         }
+    }
+
+    // MARK: - Worktrees
+
+    /// `akit worktrees [sync] [PROJECT]`: the status of each worktree, or a sync. A folder inside
+    /// a checkout, or a linked worktree, stands for its main checkout.
+    private static func worktrees(sync: Bool, folder: URL, env: HarnessEnvironment, out: (String) -> Void,
+                                  err: (String) -> Void) throws -> Int32 {
+        guard FileManager.default.fileExists(atPath: folder.path) else { throw Failure(message: "No folder at \(folder.path).") }
+        guard let checkout = GitCheckout.containing(folder), let main = checkout.mainFolder else {
+            throw Failure(message: "\(folder.path) is not in a git repository.")
+        }
+        guard let status = ProjectWorktrees.status(of: main, env: env) else {
+            throw Failure(message: "AKit's block in \(checkout.excludeFile.path) is broken (a marker is missing or doubled); fix it by hand first.")
+        }
+        guard sync else {
+            out(worktreesText(status))
+            return 0
+        }
+        let outcome = ProjectWorktrees.sync(main, env: env)
+        var lines: [String] = []
+        if !outcome.created.isEmpty { lines.append("Linked: \(outcome.created.joined(separator: ", "))") }
+        if !outcome.removed.isEmpty { lines.append("Removed stale links: \(outcome.removed.joined(separator: ", "))") }
+        if !outcome.conflicts.isEmpty { lines.append("Left alone (something else is there): \(outcome.conflicts.joined(separator: ", "))") }
+        if lines.isEmpty {
+            lines.append(status.worktrees.isEmpty ? "No other worktrees of \(status.main.path)." : "Nothing to do: every worktree has its links.")
+        }
+        out(lines.joined(separator: "\n"))
+        for problem in outcome.problems { err("akit: \(problem)") }
+        return outcome.problems.isEmpty ? 0 : 1
+    }
+
+    static func worktreesText(_ status: ProjectWorktrees.Status) -> String {
+        var lines = ["Main checkout \(status.main.path)"]
+        lines.append(status.units.isEmpty ? "No AKit files to link (the project is not local only, or not set up here)."
+                     : "AKit's files (local only): \(status.units.joined(separator: ", "))")
+        if status.worktrees.isEmpty { lines.append("No other worktrees.") }
+        for tree in status.worktrees {
+            var parts: [String] = []
+            let linked = tree.links.filter { $0.state == .linked }.count
+            if linked > 0 { parts.append("\(linked) linked") }
+            if !tree.lacks.isEmpty { parts.append("lacks \(tree.lacks.joined(separator: ", "))") }
+            if !tree.stale.isEmpty { parts.append("stale \(tree.stale.joined(separator: ", "))") }
+            if !tree.conflicts.isEmpty { parts.append("left alone (something else is there) \(tree.conflicts.joined(separator: ", "))") }
+            lines.append("\(tree.needsSync ? "! " : "")Worktree \(tree.folder.path) (\(tree.branch ?? "detached")): \(parts.isEmpty ? "nothing to link" : parts.joined(separator: "; "))")
+        }
+        if status.needsSync { lines.append("Run akit worktrees sync to fix the lines marked !.") }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Machine

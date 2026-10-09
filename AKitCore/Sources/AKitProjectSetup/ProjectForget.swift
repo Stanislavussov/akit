@@ -67,7 +67,7 @@ public enum ProjectForget {
         }
         // Local only: AKit's block leaves the exclude file even when the files stay.
         var problem: String?
-        if let plan = preview.plan, !plan.forHome { problem = LocalOnly.takeOut(of: plan.project) }
+        if let plan = preview.plan, !plan.forHome { problem = LocalOnly.takeOut(of: plan.project, env: env) }
         // Apply saved a lock again, in a local store too; forget the project with it.
         let store = preview.store
         if !store.isLocal || FileManager.default.fileExists(atPath: store.folder(id: preview.id).path) {

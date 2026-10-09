@@ -84,4 +84,28 @@ struct LocalOnlyCLITests {
         #expect(bad.code == 2 && bad.err.contains("--local-only takes yes, no or auto"))
         #expect(await akit("plan", "--home", "--local-only", "yes").code == 2)
     }
+
+    @Test func worktreesShowWhatEachLacksAndSyncFromInsideAWorktree() async throws {
+        try await setUp()
+        #expect(await akit("apply", "--layers", "task", "--local-only", "yes").code == 0)
+        let tree = home.appending(path: "trees/x")
+        try await git("worktree", "add", "-q", "-b", "x", tree.path)
+
+        let status = await akit("worktrees")
+        #expect(status.code == 0, "\(status.err)")
+        #expect(status.out.contains("AKit's files (local only): .agents/skills/tdd, .claude/skills, AGENTS.md, CLAUDE.md"), "\(status.out)")
+        #expect(status.out.contains("(x): lacks .agents/skills/tdd, .claude/skills, AGENTS.md, CLAUDE.md"))
+        #expect(status.out.contains("Run akit worktrees sync"))
+
+        // From the new worktree, as a tool's hook runs it.
+        let sync = await akit("worktrees", "sync", cwd: tree)
+        #expect(sync.code == 0, "\(sync.err)")
+        #expect(sync.out.hasPrefix("Linked: "))
+        #expect(fm.fileExists(atPath: tree.appending(path: ".agents/skills/tdd/SKILL.md").path))
+        #expect(await akit("worktrees", "sync", project.path).out == "Nothing to do: every worktree has its links.")
+        #expect(await akit("worktrees", cwd: tree).out.contains("(x): 4 linked"))
+
+        let outside = await akit("worktrees", home.path)
+        #expect(outside.code == 2 && outside.err.contains("is not in a git repository"))
+    }
 }
