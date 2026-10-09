@@ -21,6 +21,11 @@ the arrows still point down. `AKitErrorAnalysisTests` also depends on `AKitBrain
 ProjectSetup share); the per-key merge into a project's file is
 `AKitProjectSetup/JSONMerge.swift`.
 
+2026-10-09 (local-only files and worktrees, `layers.md`): `AKitFoundation/GitCheckout.swift` reads
+a checkout's `.git` (its git folder, the common one, linked worktree or not) without running git;
+`AKitProjectSetup` uses it for the `info/exclude` block (`LocalOnly.swift`) and the worktree links,
+and the app to map a project id to its main checkout.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).

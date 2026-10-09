@@ -137,6 +137,9 @@ public enum AKitCLI {
           --set field=value     A field value; bool: true/false, multi: a,b (repeatable)
           --unset field         Remove a value
           --targets claude,pi   Harnesses (default: saved, else the installed ones)
+          --local-only yes|no|auto
+                                Keep AKit's files out of git (a block in .git/info/exclude,
+                                links in the repo's worktrees). auto: a work Mac yes, else no
           --answers FILE        Answers JSON ({"layers":[],"values":{},"targets":[]}) instead
 
         Options:
@@ -195,7 +198,8 @@ public enum AKitCLI {
                                   include: args.values("--include"), exclude: args.values("--exclude"),
                                   home: args.flag("--home"), includeUnmanaged: args.flag("--include-unmanaged"),
                                   yes: args.flag("--yes"), keepFiles: args.flag("--keep-files"), from: args.value("--from"),
-                                  repo: args.value("--repo"), skipHome: args.flag("--skip-home"), name: args.value("--name"))
+                                  repo: args.value("--repo"), skipHome: args.flag("--skip-home"), name: args.value("--name"),
+                                  localOnly: args.value("--local-only"))
             let command = args.positional()
             if command == "sessions" {
                 try refuseProjectOptions(options, command: "sessions")
@@ -308,8 +312,8 @@ public enum AKitCLI {
                     out(saved.map(encode) ?? "No saved answers for \(id).")
                     return saved == nil ? 1 : 0
                 }
-                if options.home, options.layers != nil || options.answersFile != nil {
-                    throw Failure(message: "The home folder always gets the core layer; --layers and --answers don't apply.")
+                if options.home, options.layers != nil || options.answersFile != nil || options.localOnly != nil {
+                    throw Failure(message: "The home folder always gets the core layer; --layers, --answers and --local-only don't apply.")
                 }
                 var answers = try readAnswers(options, id: id, brain: brain, store: store, cwd: cwd, env: env,
                                               installedTargets: installedTargets)
@@ -319,7 +323,7 @@ public enum AKitCLI {
                 }
                 let include = Set(options.include), exclude = Set(options.exclude)
                 let plan = ProjectSetup.plan(project: project, id: id, answers: answers, brain: brain, store: store, forHome: options.home,
-                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
+                                             piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], env: env)
                 out(planText(plan))
                 guard plan.canApply else { return 1 }
                 guard command == "apply" else { return 0 }
@@ -475,7 +479,7 @@ public enum AKitCLI {
             (options.answersFile != nil, "--answers"), (options.targets != nil, "--targets"), (!options.set.isEmpty, "--set"),
             (!options.unset.isEmpty, "--unset"), (!options.include.isEmpty, "--include"), (!options.exclude.isEmpty, "--exclude"),
             (options.includeUnmanaged, "--include-unmanaged"), (options.keepFiles, "--keep-files"), (options.repo != nil, "--repo"),
-            (options.skipHome, "--skip-home"), (options.name != nil, "--name"),
+            (options.skipHome, "--skip-home"), (options.name != nil, "--name"), (options.localOnly != nil, "--local-only"),
         ], command: command)
     }
 
@@ -1083,7 +1087,7 @@ public enum AKitCLI {
                     : await ProjectRecords.projectID(for: project, projectsRoot: projectsRoot, env: env)
                 let store = ProjectStore.current(brain: brain.root, home: env.homeDirectory)
                 guard let preview = ProjectForget.preview(id: id, folder: project, forHome: options.home, brain: brain, store: store,
-                                                          piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"]) else {
+                                                          piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], env: env) else {
                     out("Nothing is saved for \(id).")
                     return 1
                 }
@@ -1107,6 +1111,7 @@ public enum AKitCLI {
                     }
                     if !preview.kept.isEmpty { lines.append("Kept (edited by hand): \(preview.kept.joined(separator: ", ")).") }
                 }
+                if let file = preview.excludeTakenOut { lines.append("AKit's block comes out of \(file.path) (local only).") }
                 guard options.yes else { out((lines + [confirm]).joined(separator: "\n")); return 0 }
                 try await ProjectForget.run(preview, keepFiles: options.keepFiles, brain: brain, home: env.homeDirectory, env: env, trash: trash)
                 if preview.brainCopyLeft {
@@ -1144,6 +1149,7 @@ public enum AKitCLI {
         var repo: String?
         var skipHome: Bool
         var name: String?
+        var localOnly: String?
     }
 
     private static func readAnswers(_ options: Options, id: String, brain: Brain, store: ProjectStore, cwd: URL,
@@ -1192,6 +1198,13 @@ public enum AKitCLI {
             }
         }
         for key in options.unset { answers.values[key] = nil }
+        switch options.localOnly?.lowercased() {
+        case nil: break
+        case "yes", "true": answers.localOnly = true
+        case "no", "false": answers.localOnly = false
+        case "auto": answers.localOnly = nil
+        case let other?: throw Failure(message: "--local-only takes yes, no or auto, got “\(other)”.")
+        }
         return answers
     }
 
@@ -1203,6 +1216,7 @@ public enum AKitCLI {
         for error in plan.render.errors { lines.append("ERROR: \(error)") }
         for blocker in plan.blockers { lines.append("BLOCKED: \(blocker)") }
         for warning in plan.render.warnings { lines.append("warning: \(warning)") }
+        for note in plan.notes { lines.append("note: \(note)") }
         let changed = plan.changes.filter { $0.kind != .same && $0.kind != .own }
         if changed.isEmpty { lines.append("No changes.") }
         for change in changed {

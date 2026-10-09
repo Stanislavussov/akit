@@ -61,7 +61,7 @@ public enum ProjectSetup {
         public let project: URL
         public let id: String
         public let answers: ProjectAnswers
-        public let render: RenderResult
+        public internal(set) var render: RenderResult
         /// Every path, including unchanged ones, sorted.
         public let changes: [Change]
         /// Things in the project that stop Apply.
@@ -90,6 +90,13 @@ public enum ProjectSetup {
         var blockSkipped: [String] = []
         /// Pi's config folder the home render used, kept in the lock.
         var piAgentDir: String?
+        /// AKit's files stay out of git (`ProjectAnswers.isLocalOnly`); never for the home folder.
+        public internal(set) var localOnly = false
+        /// What Apply does to AKit's block in the repository's `info/exclude`; nil when nothing
+        /// (the home folder, not the top of a git repository, git didn't run, no block and not local only).
+        public internal(set) var exclude: LocalOnly.Exclude?
+        /// What Apply does besides the files, for the preview (local only, worktrees).
+        public internal(set) var notes: [String] = []
 
         public var canApply: Bool { render.errors.isEmpty && blockers.isEmpty }
     }
@@ -126,8 +133,10 @@ public enum ProjectSetup {
     /// the file Pi reads in that folder gets the core layer's block (see `InstructionsBlock`).
     /// `rememberPiAgentDir`: the app, which doesn't see the shell's variables, uses the folder
     /// of the last home render when none is set; the command line takes its environment as is.
+    /// `env`: finds git, which a local-only plan runs once (`git ls-files`) to leave tracked files out.
     public static func plan(project: URL, id: String, answers: ProjectAnswers, brain: Brain, store: ProjectStore,
-                            forHome: Bool = false, piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false) -> Plan {
+                            forHome: Bool = false, piAgentDirSetting: String? = nil, rememberPiAgentDir: Bool = false,
+                            env: HarnessEnvironment = .current) -> Plan {
         let fm = FileManager.default
         let answers = ProjectBundle.pruned(answers, brain: brain, projectName: project.lastPathComponent)
         var render = Render.render(ProjectBundle.resolve(answers, brain: brain, projectName: project.lastPathComponent), forHome: forHome)
@@ -170,6 +179,11 @@ public enum ProjectSetup {
 
         var changes: [Change] = []
         var blockers: [String] = []
+        // A worktree shares the main checkout's exclude file and gets links to its files.
+        if !forHome, let checkout = GitCheckout.at(project), checkout.isLinkedWorktree {
+            let main = checkout.mainFolder?.path ?? checkout.commonDir.path
+            blockers.append("This folder is a git worktree of \(main). Set up \(main); AKit links its files into its worktrees.")
+        }
         var snapshot: [String: Data?] = [:]
         var jsonWrites: [String: Data] = [:]
         var jsonRecords: [String: ProjectRecords.Lock.MergedJSON] = [:]
@@ -345,11 +359,16 @@ public enum ProjectSetup {
             warnings.append("AGENTS.md in the home folder is kept (edited by hand). Pi reads it in every folder under the home folder, on top of AKit's block in its own instructions file; move what you still need into the core layer and delete it.")
         }
         render = RenderResult(layers: render.layers, outputs: render.outputs, errors: render.errors, warnings: warnings, skills: render.skills)
-        return Plan(project: project, id: id, answers: answers, render: render,
-                    changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
-                    forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried, previousJSON: previousJSON,
-                    blockURLs: blocks.urls, blockWrites: blocks.writes, blockRecords: blocks.records, blockKept: blocks.kept,
-                    blockSkipped: blocks.skipped, piAgentDir: blocks.piAgentDir ?? previous?.piAgentDir)
+        var plan = Plan(project: project, id: id, answers: answers, render: render,
+                        changes: changes.sorted { $0.path < $1.path }, blockers: blockers, store: store, previous: previous,
+                        forHome: forHome, snapshot: snapshot, jsonWrites: jsonWrites, jsonRecords: jsonRecords, carried: carried, previousJSON: previousJSON,
+                        blockURLs: blocks.urls, blockWrites: blocks.writes, blockRecords: blocks.records, blockKept: blocks.kept,
+                        blockSkipped: blocks.skipped, piAgentDir: blocks.piAgentDir ?? previous?.piAgentDir)
+        if !forHome {
+            plan.localOnly = answers.isLocalOnly(store: store)
+            LocalOnly.preview(&plan, env: env)
+        }
+        return plan
     }
 
     // MARK: - Apply
@@ -369,10 +388,7 @@ public enum ProjectSetup {
         }
         let fm = FileManager.default
         let outputs = Dictionary(plan.render.outputs.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
-        let todo = plan.changes.filter { change in
-            change.kind == .suggest || change.kind == .own ? accepting.contains(change.path) && !excluded.contains(change.path)
-                : !excluded.contains(change.path) && [.create, .update, .remove].contains(change.kind)
-        }
+        let todo = Self.todo(plan, excluding: excluded, accepting: accepting)
 
         // Stop if the project changed since the preview (a file, link or folder, or a parent
         // that became a link out of the project).
@@ -468,7 +484,52 @@ public enum ProjectSetup {
             throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")")
         }
 
-        // Lock: what AKit now owns in the project. Excluded paths keep their old entry, if any.
+        var lock = Self.lock(after: plan, excluding: excluded, accepting: accepting)
+
+        let isRepo = fm.fileExists(atPath: brain.root.appending(path: ".git").path)
+        if isRepo {
+            lock.brainCommit = try? await git(["rev-parse", "--short", "HEAD"], in: brain.root, env: env)
+            let dirty = (try? await git(["status", "--porcelain", "--", "skills", "layers"], in: brain.root, env: env)) ?? ""
+            lock.brainDirty = !dirty.isEmpty
+        }
+        do {
+            try ProjectRecords.save(lock, answers: plan.answers, id: plan.id, in: plan.store)
+        } catch {
+            throw Failure(message: "The project was written, but the answers couldn't be saved in \(plan.store.describe(id: plan.id)): \(error.localizedDescription)")
+        }
+        // Local only: AKit's block in the repository's exclude file follows the new lock.
+        if !plan.forHome { notes += LocalOnly.afterApply(plan, lock: lock, env: env) }
+        // For before/after measurements: a local spool line, never in the brain; can't fail the apply.
+        Spool.append(applyEvent(plan), home: home)
+        if lock.brainDirty { notes.append("The brain has uncommitted changes in skills/ or layers/; commit them so this render can be reproduced.") }
+        // A local store (work Mac) is never committed: nothing about the project reaches the brain.
+        if let storeBrain = plan.store.brain, fm.fileExists(atPath: storeBrain.appending(path: ".git").path) {
+            let path = "projects/\(plan.id)"
+            do {
+                _ = try await git(["add", "--", path], in: storeBrain, env: env)
+                let staged = try await git(["diff", "--cached", "--name-only", "--", path], in: storeBrain, env: env)
+                if !staged.isEmpty {
+                    _ = try await git(["commit", "--quiet", "-m", plan.id.hasPrefix("home/") ? "Render the core layer into \(plan.id)" : "Render \(plan.project.lastPathComponent)", "--", path], in: storeBrain, env: env)
+                }
+            } catch {
+                notes.append("The answers are saved in the brain but not committed: \(error.message)")
+            }
+        }
+        return Outcome(backup: backup, written: written, removed: removed, notes: notes)
+    }
+
+    /// The changes Apply carries out: everything but the excluded paths, and a suggestion or the
+    /// project's own version only when taken.
+    static func todo(_ plan: Plan, excluding excluded: Set<String>, accepting: Set<String>) -> [Change] {
+        plan.changes.filter { change in
+            change.kind == .suggest || change.kind == .own ? accepting.contains(change.path) && !excluded.contains(change.path)
+                : !excluded.contains(change.path) && [.create, .update, .remove].contains(change.kind)
+        }
+    }
+
+    /// The lock after applying `plan` (without the brain commit): what AKit then owns in the
+    /// project. Excluded paths keep their old entry, if any.
+    static func lock(after plan: Plan, excluding excluded: Set<String>, accepting: Set<String>) -> ProjectRecords.Lock {
         // A file that was already there with the same content stays the user's: AKit never
         // wrote it, so a later render or removal must not trash it.
         let kinds = Dictionary(plan.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
@@ -502,42 +563,14 @@ public enum ProjectSetup {
         for path in plan.carried { if let old = plan.previous?.files[path] { lock.files[path] = old } }
         lock.json = json.isEmpty ? nil : json
         // Instruction blocks: what was written, else what the plan keeps (left out, an offer not taken).
-        let done = Set(todo.map(\.path))
+        let done = Set(todo(plan, excluding: excluded, accepting: accepting).map(\.path))
         var blocks: [String: ProjectRecords.Lock.Block] = [:]
         for path in Set(plan.blockRecords.keys).union(plan.blockKept.keys) {
             blocks[path] = done.contains(path) ? plan.blockRecords[path] : plan.blockKept[path]
         }
         lock.blocks = blocks.isEmpty ? nil : blocks
         lock.piAgentDir = plan.piAgentDir
-
-        let isRepo = fm.fileExists(atPath: brain.root.appending(path: ".git").path)
-        if isRepo {
-            lock.brainCommit = try? await git(["rev-parse", "--short", "HEAD"], in: brain.root, env: env)
-            let dirty = (try? await git(["status", "--porcelain", "--", "skills", "layers"], in: brain.root, env: env)) ?? ""
-            lock.brainDirty = !dirty.isEmpty
-        }
-        do {
-            try ProjectRecords.save(lock, answers: plan.answers, id: plan.id, in: plan.store)
-        } catch {
-            throw Failure(message: "The project was written, but the answers couldn't be saved in \(plan.store.describe(id: plan.id)): \(error.localizedDescription)")
-        }
-        // For before/after measurements: a local spool line, never in the brain; can't fail the apply.
-        Spool.append(applyEvent(plan), home: home)
-        if lock.brainDirty { notes.append("The brain has uncommitted changes in skills/ or layers/; commit them so this render can be reproduced.") }
-        // A local store (work Mac) is never committed: nothing about the project reaches the brain.
-        if let storeBrain = plan.store.brain, fm.fileExists(atPath: storeBrain.appending(path: ".git").path) {
-            let path = "projects/\(plan.id)"
-            do {
-                _ = try await git(["add", "--", path], in: storeBrain, env: env)
-                let staged = try await git(["diff", "--cached", "--name-only", "--", path], in: storeBrain, env: env)
-                if !staged.isEmpty {
-                    _ = try await git(["commit", "--quiet", "-m", plan.id.hasPrefix("home/") ? "Render the core layer into \(plan.id)" : "Render \(plan.project.lastPathComponent)", "--", path], in: storeBrain, env: env)
-                }
-            } catch {
-                notes.append("The answers are saved in the brain but not committed: \(error.message)")
-            }
-        }
-        return Outcome(backup: backup, written: written, removed: removed, notes: notes)
+        return lock
     }
 
     /// The spool line an apply leaves: project, layers and skill modes, `ts` in Unix ms (two
