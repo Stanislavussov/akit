@@ -1339,7 +1339,9 @@ public enum AKitCLI {
         lines += outcome.notes.map { "Note: \($0)" }
         let place = plan.store.isLocal ? "on this Mac only, in \(plan.store.describe(id: plan.id))" : "in the brain under \(plan.store.describe(id: plan.id))"
         lines.append(plan.id.hasPrefix("home/") ? "Saved \(place). Reload skills in your harness (e.g. /reload-skills)."
-                     : "Answers saved \(place). Commit the harness files in the project.")
+                     : plan.localOnly && plan.exclude != nil
+                        ? "Answers saved \(place). The harness files stay out of git (local only): nothing to commit."
+                        : "Answers saved \(place). Commit the harness files in the project.")
         return lines.joined(separator: "\n")
     }
 

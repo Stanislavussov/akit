@@ -71,12 +71,16 @@ struct LocalOnlyCLITests {
         #expect(plan.code == 0, "\(plan.err)")
         #expect(plan.out.contains("note: Local only: AKit's block in .git/info/exclude keeps these out of git: /.agents/skills/tdd, /.claude/skills, /AGENTS.md, /CLAUDE.md."),
                 "\(plan.out)")
-        #expect(await akit("apply", "--layers", "task", "--local-only", "yes").code == 0)
+        let applied = await akit("apply", "--layers", "task", "--local-only", "yes")
+        #expect(applied.code == 0)
+        #expect(applied.out.contains("nothing to commit") && !applied.out.contains("Commit the harness files"), "\(applied.out)")
         #expect(exclude.contains("/.agents/skills/tdd\n"))
         #expect(await akit("answers").out.contains("\"localOnly\" : true"))
 
         // auto: the Mac's role decides (a personal Mac commits), and the answer is dropped.
-        #expect(await akit("apply", "--local-only", "auto").code == 0)
+        let committed = await akit("apply", "--local-only", "auto")
+        #expect(committed.code == 0)
+        #expect(committed.out.contains("Commit the harness files"), "\(committed.out)")
         #expect(!exclude.contains("akit"))
         #expect(!(await akit("answers").out.contains("localOnly")))
 
