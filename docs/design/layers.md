@@ -2,8 +2,8 @@
 
 Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 [Roadmap](#roadmap) for the status of each step, checked against the code on 2026-10-03).
-Local-only files and git worktrees built 2026-10-09 in the core and the `akit` command; the
-app's part is not built yet (see
+Local-only files and git worktrees built 2026-10-09 in the core and the `akit` command, and
+2026-10-10 in the app (see
 [Local-only files and git worktrees](#local-only-files-and-git-worktrees-built-2026-10-09)).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
@@ -209,10 +209,14 @@ Built 2026-10-09 in the core and the command line: `ProjectAnswers.localOnly`,
 `LocalOnly` (the exclude block, written by Apply, taken out by Forget), `ProjectWorktrees`
 (`status` and `sync`, run by Apply and Forget), the worktree blocker, `GitCheckout.preferred`
 for the Brain screen, `akit plan|apply --local-only yes|no|auto`, and
-`akit worktrees [sync] [PROJECT]` (a folder in a worktree stands for its main checkout). Not
-built yet, in the app: the choice in Set Up Project, the worktrees list and **Sync
-Worktrees** on the project's page, the watch on `<git common dir>/worktrees`, and the sync on
-refresh.
+`akit worktrees [sync] [PROJECT]` (a folder in a worktree stands for its main checkout).
+Built 2026-10-10 in the app: **Project files** in Set Up Project (**Commit to git** / **Local
+only (hidden from git)**, its notes in the preview, and Apply when only that choice or the
+block changes), the **Worktrees** box on the project's page (each worktree: linked, lacks N,
+stale, conflicts; **Sync Worktrees**; the last sync's result), the sync of every set-up
+local-only project on each refresh, and an FSEvents watch on `<git common dir>/worktrees`
+(`WorktreeWatcher`) that syncs only that project about a second after a worktree comes or
+goes. Snapshots (`make snapshot`) skip the automatic sync, so they change no files.
 
 Feedback from a work Mac (2026-10-09): a work repo has its own skills in git, and the
 user's own skills and settings must not land there. Left untracked, AKit's files are

@@ -160,6 +160,12 @@ struct RootView: View {
                 .padding(.vertical, 8)
                 .background(.regularMaterial, in: Capsule())
                 .padding(.bottom, 16)
+            } else if let notice = model.diagnosticsNotice {
+                Label(notice, systemImage: "stethoscope")
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.bottom, 16)
             }
         }
         .alert("Couldn't rebuild AKit", isPresented: Binding(get: { rebuildError != nil },

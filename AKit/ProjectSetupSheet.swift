@@ -30,6 +30,8 @@ struct ProjectSetupSheet: View {
     @State private var error: String?
     @State private var creatingLayer = false
     @State private var skillQuery = ""
+    /// The saved answers' `localOnly`, to tell whether Apply has to save a new choice.
+    @State private var savedLocalOnly: Bool?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -53,6 +55,7 @@ struct ProjectSetupSheet: View {
                let match = model.projects.first(where: { $0.lastPathComponent == name }) {
                 await choose(match)
                 if let layers = options.query { answers.layers = layers.split(separator: ",").map(String.init) }
+                if options.localOnly { answers.localOnly = true }
                 if options.capture { makePlan() }
             }
         }
@@ -79,6 +82,7 @@ struct ProjectSetupSheet: View {
                     VStack(alignment: .leading, spacing: 16) {
                         targetsBox
                         if !forHome {
+                            filesBox
                             layersBox
                             skillsBox
                         }
@@ -147,6 +151,40 @@ struct ProjectSetupSheet: View {
             }
             .padding(4)
         }
+    }
+
+    /// Commit AKit's files, or keep them out of git (`.git/info/exclude`) and link them into
+    /// the project's worktrees. Not for the home folder.
+    private var filesBox: some View {
+        GroupBox("Project files") {
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Project files", selection: Binding(get: { answers.isLocalOnly(store: model.projectStore) },
+                                                           set: { answers.localOnly = $0 })) {
+                    Text("Commit to git").tag(false)
+                    Text("Local only (hidden from git)").tag(true)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+                Text(filesCaption).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(4)
+        }
+    }
+
+    private var filesCaption: String {
+        let isRepo = project.map { GitCheckout.at($0) != nil } ?? false
+        let local = answers.isLocalOnly(store: model.projectStore)
+        var text = local
+            ? "AKit writes its paths into .git/info/exclude and links them into the project's git worktrees. Agents still read them; git doesn't show them."
+            : "You review and commit the files AKit writes, like any other change."
+        if answers.localOnly == nil {
+            text += " Default on this \(model.projectStore.isLocal ? "work" : "personal") Mac."
+        }
+        if local, !isRepo { text += " Not the top of a git repository: nothing to hide." }
+        return text
     }
 
     private var layersBox: some View {
@@ -354,6 +392,7 @@ struct ProjectSetupSheet: View {
         projectID = id
         answers = ProjectRecords.savedAnswers(id: id, in: model.projectStore)
             ?? ProjectAnswers(layers: [], values: [:], targets: model.installedTargets)
+        savedLocalOnly = answers.localOnly
         for name in initialLayers where !answers.layers.contains(name) { answers.layers.append(name) }
     }
 
@@ -406,12 +445,16 @@ struct ProjectSetupSheet: View {
                 ForEach(plan.render.errors + plan.blockers, id: \.self) {
                     Label($0, systemImage: "xmark.octagon.fill").foregroundStyle(.red).font(.callout).textSelection(.enabled)
                 }
-                ForEach(plan.render.warnings, id: \.self) {
+                ForEach(plan.render.warnings + plan.notes, id: \.self) {
                     Label($0, systemImage: "info.circle").foregroundStyle(.secondary).font(.callout).textSelection(.enabled)
                 }
-                if plan.changes.allSatisfy({ $0.kind == .same }) && plan.canApply {
+                if upToDate(plan) && plan.canApply {
                     ContentUnavailableView("\(forHome ? "The home folder" : plan.project.lastPathComponent) is up to date", systemImage: "checkmark.circle",
                                            description: Text("All \(plan.changes.count) files already match the layers. Go back to change the answers."))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if plan.changes.allSatisfy({ $0.kind == .same }) {
+                    ContentUnavailableView("All \(plan.changes.count) files already match the layers", systemImage: "eye.slash",
+                                           description: Text("Apply saves the choice of project files and updates AKit's block in .git/info/exclude, as listed above."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     HSplitView {
@@ -425,16 +468,28 @@ struct ProjectSetupSheet: View {
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3).textSelection(.enabled) }
                 Spacer()
                 Button("Back") { page = .form; error = nil }.keyboardShortcut(.cancelAction)
-                if plan?.changes.allSatisfy({ $0.kind == .same }) ?? false {
+                if let plan, upToDate(plan) {
                     Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
                 } else {
                     Button(isWorking ? "Applying…" : "Apply", action: apply)
                         .keyboardShortcut(.defaultAction)
                         // Only offers from the layers: Apply still records them as seen.
-                        .disabled(!(plan?.canApply ?? false) || isWorking || (pending.isEmpty && !hasOffers))
+                        .disabled(!(plan?.canApply ?? false) || isWorking || (pending.isEmpty && !hasOffers && !(plan.map(changesBesidesFiles) ?? false)))
                 }
             }
         }
+    }
+
+    /// Nothing to write: every file matches and the local-only choice and its block stay as they are.
+    private func upToDate(_ plan: ProjectSetup.Plan) -> Bool {
+        plan.changes.allSatisfy { $0.kind == .same } && !changesBesidesFiles(plan)
+    }
+
+    /// Apply saves a new local-only choice, or changes AKit's block in `.git/info/exclude`.
+    private func changesBesidesFiles(_ plan: ProjectSetup.Plan) -> Bool {
+        guard !forHome else { return false }
+        let block = plan.exclude.map { ($0.current ?? []) != $0.units } ?? false
+        return block || plan.answers.localOnly != savedLocalOnly
     }
 
     /// Changes that Apply would carry out.
@@ -561,7 +616,7 @@ struct ProjectSetupSheet: View {
                 ForEach(outcome.notes, id: \.self) { Label($0, systemImage: "info.circle") }
             }
             if let plan {
-                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)).\(forHome ? " Reload skills in your harness (e.g. /reload-skills)." : " Review and commit the new harness files in the project yourself.")")
+                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)).\(forHome ? " Reload skills in your harness (e.g. /reload-skills)." : plan.localOnly ? " AKit's files stay out of git (local only); nothing to commit." : " Review and commit the new harness files in the project yourself.")")
                     .foregroundStyle(.secondary)
             }
             Spacer()

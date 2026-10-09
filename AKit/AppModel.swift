@@ -1,4 +1,5 @@
 import AKitBrain
+import AKitDoctor
 import AKitErrorAnalysis
 import AKitFoundation
 import AKitHarnesses
@@ -339,6 +340,100 @@ final class AppModel {
         return try await ProjectSetup.apply(plan, excluding: excluding, accepting: accepting, brain: brain, home: env.homeDirectory, env: env)
     }
 
+    // MARK: Worktrees
+
+    /// What a worktree sync of a local-only project did, and when.
+    struct WorktreeSync {
+        let outcome: ProjectWorktrees.Outcome
+        let date: Date
+    }
+
+    /// The last worktree sync of each local-only project, by project id: on refresh, about a
+    /// second after a worktree is added or removed, or from Sync Worktrees.
+    private(set) var worktreeSyncs: [String: WorktreeSync] = [:]
+    /// Projects whose worktrees are being synced now.
+    private(set) var worktreesSyncing: Set<String> = []
+    /// A sync was asked for while one ran: run once more when it ends.
+    @ObservationIgnored private var worktreesSyncAgain: Set<String> = []
+    /// Set-up local-only projects on this Mac (main checkouts), by id, from the last scan.
+    @ObservationIgnored private var localOnlyFolders: [String: URL] = [:]
+    @ObservationIgnored private var worktreeWatcher: WorktreeWatcher?
+
+    /// The project's worktrees and what each lacks; nil when the folder is not the top of a main
+    /// checkout or AKit's block is broken. Only reads.
+    func worktreeStatus(of folder: URL) async -> ProjectWorktrees.Status? {
+        await Task.detached { ProjectWorktrees.status(of: folder, env: .current) }.value
+    }
+
+    /// Links AKit's files into the project's worktrees and removes its stale links (layers.md:
+    /// these writes need no preview). The outcome lands in `worktreeSyncs`.
+    func syncWorktrees(id: String, folder: URL) async {
+        guard !worktreesSyncing.contains(id) else {
+            worktreesSyncAgain.insert(id)
+            return
+        }
+        worktreesSyncing.insert(id)
+        defer { worktreesSyncing.remove(id) }
+        repeat {
+            worktreesSyncAgain.remove(id)
+            let outcome = await Task.detached { ProjectWorktrees.sync(folder, env: .current) }.value
+            worktreeSyncs[id] = WorktreeSync(outcome: outcome, date: .now)
+        } while worktreesSyncAgain.contains(id)
+    }
+
+    /// After a scan: watch the worktrees of every set-up local-only project on this Mac and sync
+    /// them, quietly. Snapshots change no files, so they skip it.
+    private func followLocalOnlyWorktrees() {
+        guard DebugSnapshot.options == nil else { return }
+        let store = projectStore
+        var folders: [String: URL] = [:], commonDirs: [String: URL] = [:]
+        for project in brain?.projects ?? [] where !project.isHome && project.answers.isLocalOnly(store: store) {
+            guard let folder = brainProjectFolders[project.id], let checkout = GitCheckout.at(folder), !checkout.isLinkedWorktree else { continue }
+            folders[project.id] = folder
+            commonDirs[project.id] = checkout.commonDir
+        }
+        localOnlyFolders = folders
+        if worktreeWatcher == nil, !commonDirs.isEmpty {
+            worktreeWatcher = WorktreeWatcher { [weak self] id in self?.worktreesChanged(id) }
+        }
+        worktreeWatcher?.watch(commonDirs)
+        Task {
+            for (id, folder) in folders { await syncWorktrees(id: id, folder: folder) }
+        }
+    }
+
+    /// A worktree of the project came or went: sync only that project, not a full refresh.
+    private func worktreesChanged(_ id: String) {
+        guard let folder = localOnlyFolders[id] else { return }
+        Task { await syncWorktrees(id: id, folder: folder) }
+    }
+
+    // MARK: Diagnostics
+
+    /// Collecting diagnostics, or they were just copied (Help → Copy Diagnostics).
+    private(set) var diagnosticsNotice: String?
+
+    /// `akit doctor`'s report with this app's settings and its view of the projects. Only reads.
+    func diagnostics() async -> String {
+        diagnosticsNotice = "Collecting diagnostics…"
+        let env = HarnessEnvironment.current
+        let brainRoot = brainRoot, roots = projectRoots.map(env.expand), app = Bundle.main.bundleURL
+        let folders = brainProjectFolders.isEmpty ? nil : brainProjectFolders
+        return await Task.detached {
+            await Doctor.report(Doctor.Input(env: env, brainRoot: brainRoot, projectRoots: roots, appBundle: app,
+                                             projectFolders: folders, hostName: ProcessInfo.processInfo.hostName))
+        }.value
+    }
+
+    /// Shows a short note for a few seconds (after the report is on the pasteboard).
+    func showDiagnosticsNotice(_ text: String) {
+        diagnosticsNotice = text
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            if diagnosticsNotice == text { diagnosticsNotice = nil }
+        }
+    }
+
     /// Harnesses described by the user in `~/.akit/harnesses.json`.
     private(set) var customHarnesses: [CustomHarness] = []
     /// Set when `~/.akit/harnesses.json` can't be read; AKit then refuses to overwrite it.
@@ -623,6 +718,7 @@ final class AppModel {
             brainProjectFolders = [:]
             brainLinks = [:]
         }
+        followLocalOnlyWorktrees()
         self.sessions = sessions
         self.sessionProjects = sessionProjects
         self.ratings = ratings

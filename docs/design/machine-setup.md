@@ -2,8 +2,9 @@
 
 Status: designed 2026-10-09 from a day of feedback on a work Mac. `akit doctor` built
 2026-10-09 (`AKitDoctor`, `Doctor.report`), with the worktree links (see `layers.md`,
-"Local-only files and git worktrees"); **Copy Diagnostics** in the app is not built yet (it
-calls the same `Doctor.report`). Onboarding in the app is a proposal; the user reviews it
+"Local-only files and git worktrees"); **Help → Copy Diagnostics** in the app built
+2026-10-10 (the same `Doctor.report`, with the app's settings and its project folders, and a
+short note at the bottom of the window when the report is on the clipboard). Onboarding in the app is a proposal; the user reviews it
 before it is built.
 
 ## Problem
