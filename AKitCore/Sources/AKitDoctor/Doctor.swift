@@ -22,16 +22,14 @@ public enum Doctor {
         /// Project id → folder on this Mac, when the caller knows them (the app's Brain screen);
         /// nil: found here from the harnesses' known projects and the projects folders.
         public var projectFolders: [String: URL]?
-        public var hostName: String
 
         public init(env: HarnessEnvironment, brainRoot: URL, projectRoots: [URL], appBundle: URL? = nil,
-                    projectFolders: [String: URL]? = nil, hostName: String = ProcessInfo.processInfo.hostName) {
+                    projectFolders: [String: URL]? = nil) {
             self.env = env
             self.brainRoot = brainRoot
             self.projectRoots = projectRoots
             self.appBundle = appBundle
             self.projectFolders = projectFolders
-            self.hostName = hostName
         }
     }
 
@@ -175,14 +173,21 @@ public enum Doctor {
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
-    /// Project id → folder: the main checkout among folders with the same id.
-    static func projectFolders(_ folders: [URL], projectsRoot: URL, env: HarnessEnvironment) async -> [String: URL] {
+    /// Project id → folder: the main checkout among folders with the same id. At most
+    /// `parallel` git runs at a time.
+    static func projectFolders(_ folders: [URL], projectsRoot: URL, env: HarnessEnvironment, parallel: Int = 8) async -> [String: URL] {
         var found: [String: [URL]] = [:]
         await withTaskGroup(of: (String, URL).self) { group in
-            for folder in folders {
+            var next = folders.makeIterator()
+            func addNext() {
+                guard let folder = next.next() else { return }
                 group.addTask { (await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env), folder) }
             }
-            for await (id, folder) in group { found[id, default: []].append(folder) }
+            for _ in 0..<max(parallel, 1) { addNext() }
+            for await (id, folder) in group {
+                found[id, default: []].append(folder)
+                addNext()
+            }
         }
         return found.compactMapValues { GitCheckout.preferred($0) }
     }
@@ -196,7 +201,11 @@ public enum Doctor {
         var problems: [String] = []
         let checkout = GitCheckout.at(folder)
         let block = checkout.flatMap { $0.isLinkedWorktree ? nil : LocalOnly.blockUnits(in: $0.excludeFile) }
-        if let checkout, !checkout.isLinkedWorktree {
+        if let checkout, !checkout.isLinkedWorktree, let problem = LocalOnly.problem(in: checkout.excludeFile) {
+            // `akit apply` can't fix a broken block: the problem names the fix by hand.
+            parts.append("exclude block: can't be used")
+            problems.append("! \(project.id): \(problem)")
+        } else if let checkout, !checkout.isLinkedWorktree {
             parts.append(block.map { "exclude block: \($0.count) line\($0.count == 1 ? "" : "s")" } ?? "no exclude block")
             if localOnly, let lock = ProjectRecords.savedLock(id: project.id, in: store),
                let expected = LocalOnly.expectedUnits(of: folder, lock: lock, env: env), Set(expected) != Set(block ?? []) {

@@ -44,10 +44,10 @@ public enum AKitCLI {
 
         Worktrees (a local-only project's AKit files, linked into its other git worktrees):
           akit worktrees [PROJECT]        Each worktree of the repository and the links it lacks
-          akit worktrees sync [PROJECT]   Make the missing links and remove stale ones (only links
-                                          into the main checkout, never files or folders). PROJECT
-                                          may be a worktree: its main checkout is used. For a tool's
-                                          "after worktree created" hook
+          akit worktrees sync [PROJECT]   Make the missing links (only where nothing is; never
+                                          removes anything: Apply removes the links of the files it
+                                          drops). PROJECT may be a worktree: its main checkout is
+                                          used. For a tool's "after worktree created" hook
 
         Remove (shows what happens; add --yes to do it; folders go to the Trash, one commit each):
           akit remove layer NAME              refused while other layers require it; dropped from
@@ -237,8 +237,7 @@ public enum AKitCLI {
             if command == "doctor" {
                 try refuseProjectOptions(options, command: "doctor")
                 try args.finish()
-                out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot],
-                                              hostName: hostName)))
+                out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot])))
                 return 0
             }
             if command == "worktrees" {
@@ -391,11 +390,17 @@ public enum AKitCLI {
         guard let checkout = GitCheckout.containing(folder), let main = checkout.mainFolder else {
             throw Failure(message: "\(folder.path) is not in a git repository.")
         }
+        if let problem = LocalOnly.problem(in: checkout.excludeFile) { throw Failure(message: problem) }
         guard let status = ProjectWorktrees.status(of: main, env: env) else {
-            throw Failure(message: "AKit's block in \(checkout.excludeFile.path) is broken (a marker is missing or doubled); fix it by hand first.")
+            throw Failure(message: "\(main.path) is not the top of a git checkout.")
         }
         guard sync else {
             out(worktreesText(status))
+            return 0
+        }
+        // Without AKit's block there are no units, and no link AKit could know as its own.
+        guard LocalOnly.blockUnits(in: checkout.excludeFile) != nil else {
+            out("Nothing to sync: \(checkout.excludeFile.path) has no AKit block (the project is not local only, or not set up here).")
             return 0
         }
         let outcome = ProjectWorktrees.sync(main, env: env)

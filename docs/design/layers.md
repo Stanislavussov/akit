@@ -239,7 +239,19 @@ choice. In a local-only project:
 - A tracked file AKit merges keys into (a tracked `.mcp.json`) can't be hidden: the
   preview warns that AKit's keys show in `git diff`.
 - Switching to commit takes the block out; the files then show in `git status`.
-  Forget Project takes the block out too.
+  Forget Project takes the block out too, after the project's record is gone (if the record
+  can't go, the block still matches it).
+- Apply writes the block before the files, with the old units and the planned ones, and
+  after the files shrinks it to what was written and is untracked. So a file AKit writes
+  never shows in `git status`, even when git fails after Apply.
+- AKit edits the exclude file as bytes, split on line ends: every other line stays byte for
+  byte (a line that is not UTF-8, a CRLF line). A linked `info/exclude` is written through
+  to the file it points to. A file AKit can't read, or a broken block (a marker missing or
+  doubled), is left alone: the preview, Apply and `akit doctor` say so and name the fix by
+  hand (delete the block's lines, then apply again).
+- The block may be edited by hand, so a line is a unit only when it names a path inside the
+  checkout: not empty, not absolute, no empty, `.` or `..` component, no line break. A path
+  of the lock that is not such a path gets no line; the preview names it.
 - Not a git repo: nothing more to do.
 
 **Worktrees.** For a local-only project AKit reads `git worktree list --porcelain` in the
@@ -256,9 +268,15 @@ main checkout                         worktree (Pi, herdr, git worktree add)
 - A unit missing in the worktree gets the link; parent folders are made as real folders.
 - A link that already points there is left. Anything else at that path (the branch has
   its own file or skill) is left alone and reported.
-- A link into the main checkout's `.agents/skills` whose skill is no longer AKit's is
-  removed; Apply also removes, in every worktree, the links of units it dropped. AKit
-  removes only links that point into the main checkout, never a file or folder.
+- Apply and Forget remove, in every worktree, the link of each unit they take out of the
+  block, when it points to the same path in the main checkout and its parent folders are
+  real folders. Nothing else is removed: AKit can't tell a link it made from one the user
+  made, so a plain sync (a refresh, **Sync Worktrees**, `akit worktrees sync`) only creates
+  links, and in a repository without AKit's block it does nothing. A link left behind (a
+  worktree that was gone during Apply, a line deleted from the block by hand) stays until
+  removed by hand. Never a file or folder.
+- A unit whose parent folder in the worktree is a link or a file (`.agents/skills` linked
+  elsewhere) is left alone and reported: AKit never creates or removes through a link.
 - Edits to a skill reach every worktree at once (it is the same folder); only a new or a
   removed unit needs a sync.
 - These writes have no diff preview: they only create links where nothing is and remove
@@ -270,6 +288,11 @@ project); on **Sync Worktrees** on the project's page (which also lists the work
 what each one lacks); and with `akit worktrees sync [PROJECT]`, which a tool's
 "after worktree created" hook can run while the app is closed. A Pi session started in a
 worktree before its links exist doesn't see the skills until it is restarted.
+
+Not supported: a `.git` that is a symbolic link (AKit treats the folder as not a git
+repository), and finding the main checkout from a linked worktree whose common git folder
+is not `<main>/.git` (`git init --separate-git-dir`, a submodule): run `akit worktrees sync`
+in the main checkout instead.
 
 Set Up Project in a linked worktree is blocked: it names the main checkout, which is the
 one to set up. The Brain screen maps a project id to its main checkout, never to one of

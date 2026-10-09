@@ -109,6 +109,19 @@ struct LocalOnlyCLITests {
         #expect(outside.code == 2 && outside.err.contains("is not in a git repository"))
     }
 
+    @Test func worktreesSyncWithoutABlockHasNothingToSync() async throws {
+        try await setUp()
+        let tree = home.appending(path: "trees/x")
+        try await git("worktree", "add", "-q", "-b", "x", tree.path)
+        // A link the user made, into the main checkout.
+        try fm.createDirectory(at: tree.appending(path: ".claude"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: tree.appending(path: ".claude/skills").path, withDestinationPath: project.path + "/.claude/skills")
+        let sync = await akit("worktrees", "sync")
+        #expect(sync.code == 0, "\(sync.err)")
+        #expect(sync.out.hasPrefix("Nothing to sync: ") && sync.out.contains("has no AKit block"), "\(sync.out)")
+        #expect((try? fm.destinationOfSymbolicLink(atPath: tree.appending(path: ".claude/skills").path)) != nil)
+    }
+
     @Test func doctorReportsAndAlwaysExitsZero() async throws {
         try await setUp()
         try write(".pi/agent/auth.json", #"{"anthropic": {"access": "sk-ant-oat01-clidoctorsecret987"}}"#)

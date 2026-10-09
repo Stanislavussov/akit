@@ -5,8 +5,9 @@ import Foundation
 /// The git worktrees of a local-only project (layers.md, "Local-only files and git worktrees"):
 /// git checks out only tracked files, so each unit of AKit's `info/exclude` block becomes, in
 /// every other worktree, a symbolic link to the same path in the main checkout. The block is
-/// the list of units. AKit only creates links where nothing is, and removes only links that
-/// point into the main checkout; never a file or a folder.
+/// the list of units. AKit only creates links where nothing is, and removes only links of
+/// units it just took out of the block that point to the same path in the main checkout;
+/// never a file or a folder, never a link it didn't make.
 public enum ProjectWorktrees {
     public struct Link: Hashable, Sendable {
         public enum State: String, Hashable, Sendable {
@@ -17,7 +18,8 @@ public enum ProjectWorktrees {
             /// Something else is at the path (the branch has its own file or skill, another
             /// link, a file in the way of a parent folder): left alone.
             case conflict
-            /// A link into the main checkout whose path is no longer a unit: sync removes it.
+            /// A link to the same path in the main checkout, of a unit an Apply or Forget just
+            /// took out of the block: sync removes it.
             case stale
         }
 
@@ -79,7 +81,8 @@ public enum ProjectWorktrees {
         guard let checkout = GitCheckout.at(project), !checkout.isLinkedWorktree,
               !LocalOnly.blockIsBroken(in: checkout.excludeFile) else { return nil }
         let main = URL(filePath: realPath(project.standardizedFileURL.path), directoryHint: .isDirectory)
-        let units = (LocalOnly.blockUnits(in: checkout.excludeFile) ?? []).filter { exists(main.path + "/" + $0) }
+        // Checked again: a unit from the block must name a path inside the checkout.
+        let units = (LocalOnly.blockUnits(in: checkout.excludeFile) ?? []).filter { LocalOnly.isSafe($0) && exists(main.path + "/" + $0) }
         let mainSpellings = Set([main.path, project.standardizedFileURL.path])
         let worktrees = linkedWorktrees(of: checkout, main: mainSpellings, env: env).map { tree in
             Worktree(folder: tree.folder, branch: tree.branch,
@@ -90,8 +93,8 @@ public enum ProjectWorktrees {
 
     // MARK: - Sync
 
-    /// Creates the missing links in every worktree and removes the stale ones (and those of
-    /// `dropped` units). Parent folders are made as real folders.
+    /// Creates the missing links in every worktree (and removes those of `dropped` units).
+    /// Parent folders are made as real folders.
     public static func sync(_ project: URL, env: HarnessEnvironment) -> Outcome {
         sync(project, dropped: [], env: env)
     }
@@ -109,10 +112,12 @@ public enum ProjectWorktrees {
                 case .conflict:
                     outcome.conflicts.append(path)
                 case .stale:
-                    // Checked again right before: only a link into the main checkout goes.
-                    guard let destination = try? fm.destinationOfSymbolicLink(atPath: path),
+                    // Checked again right before: only a link to the same path in the main
+                    // checkout goes, reached through real folders.
+                    guard parentsAreFolders(of: link.path, in: tree.folder.path, mustExist: true),
+                          let destination = try? fm.destinationOfSymbolicLink(atPath: path),
                           inside(destination, linkFolder: (path as NSString).deletingLastPathComponent,
-                                 main: [status.main.path, project.standardizedFileURL.path]) != nil else { continue }
+                                 main: [status.main.path, project.standardizedFileURL.path]) == link.path else { continue }
                     do {
                         try fm.removeItem(atPath: path)
                         outcome.removed.append(path)
@@ -150,17 +155,26 @@ public enum ProjectWorktrees {
         guard let result = ProcessRunner.runAndWait(git, arguments: ["-C", checkout.folder.path, "worktree", "list", "--porcelain", "-z"],
                                                     environment: env.gitVariables, timeout: 15),
               result.succeeded else { return [] }
+        // The first record is the main checkout, whatever its spelling.
+        return listed(fromPorcelain: result.output).filter { tree in
+            let path = tree.folder.path
+            return !main.contains(path) && !main.contains(realPath(path)) && FileWalk.isDirectory(tree.folder)
+                && realPath(path) != realPath(checkout.folder.path)
+        }
+    }
+
+    /// The records of `git worktree list --porcelain -z` output, without bare and prunable
+    /// ones. Only parses.
+    static func listed(fromPorcelain output: String) -> [Listed] {
         var listed: [Listed] = []
         var folder: String?, branch: String?, skip = false
         func close() {
-            if let folder, !skip, !main.contains(folder), !main.contains(realPath(folder)), FileWalk.isDirectory(URL(filePath: folder)) {
-                listed.append(Listed(folder: URL(filePath: folder, directoryHint: .isDirectory), branch: branch))
-            }
+            if let folder, !skip { listed.append(Listed(folder: URL(filePath: folder, directoryHint: .isDirectory), branch: branch)) }
             folder = nil
             branch = nil
             skip = false
         }
-        for item in result.output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init) {
+        for item in output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init) {
             if item.hasPrefix("worktree ") {
                 close()
                 folder = String(item.dropFirst("worktree ".count))
@@ -172,24 +186,19 @@ public enum ProjectWorktrees {
             }
         }
         close()
-        // The first record is the main checkout, whatever its spelling.
-        return listed.filter { realPath($0.folder.path) != realPath(checkout.folder.path) }
+        return listed
     }
 
-    /// Each unit's state in one worktree, then its stale links: a link into the main checkout
-    /// at the same path, in `.agents/skills`, at `.claude/skills`, or at a dropped unit.
+    /// Each unit's state in one worktree, then its stale links: of a dropped unit (one an Apply
+    /// or Forget just took out of the block), a link to the same path in the main checkout,
+    /// reached through real folders. Nothing else is stale: AKit can't tell a link it made
+    /// from one the user made, except by the block it just changed.
     static func links(in tree: String, units: [String], dropped: [String], main: Set<String>) -> [Link] {
-        let fm = FileManager.default
         var links = units.map { unit in Link(path: unit, state: state(of: unit, in: tree, main: main)) }
-        let unitSet = Set(units)
-        var candidates = Set(dropped + [".claude/skills"])
-        let skills = tree + "/" + ProjectBundle.skillsFolder
-        if isRealFolder(tree + "/.agents"), isRealFolder(skills) {
-            for name in (try? fm.contentsOfDirectory(atPath: skills)) ?? [] { candidates.insert(ProjectBundle.skillsFolder + "/" + name) }
-        }
-        for path in candidates.subtracting(unitSet).sorted() where !path.split(separator: "/").contains("..") {
+        for path in Set(dropped).subtracting(units).sorted() where LocalOnly.isSafe(path) {
             let full = tree + "/" + path
-            guard let destination = try? fm.destinationOfSymbolicLink(atPath: full),
+            guard parentsAreFolders(of: path, in: tree, mustExist: true),
+                  let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: full),
                   inside(destination, linkFolder: (full as NSString).deletingLastPathComponent, main: main) == path else { continue }
             links.append(Link(path: path, state: .stale))
         }
@@ -198,17 +207,23 @@ public enum ProjectWorktrees {
 
     static func state(of unit: String, in tree: String, main: Set<String>) -> Link.State {
         let path = tree + "/" + unit
+        // Every parent that is there must be a real folder (not a link out of the worktree).
+        guard parentsAreFolders(of: unit, in: tree, mustExist: false) else { return .conflict }
         if let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: path) {
             return inside(destination, linkFolder: (path as NSString).deletingLastPathComponent, main: main) == unit ? .linked : .conflict
         }
-        if exists(path) { return .conflict }
-        // Every parent that is there must be a real folder (not a link out of the worktree).
+        return exists(path) ? .conflict : .missing
+    }
+
+    /// Every parent folder of `unit` in the worktree is a real folder, not a link or a file;
+    /// `mustExist` false: a missing parent is fine too (sync makes it).
+    static func parentsAreFolders(of unit: String, in tree: String, mustExist: Bool) -> Bool {
         var parent = tree
         for component in unit.split(separator: "/").dropLast() {
             parent += "/" + component
-            if exists(parent), !isRealFolder(parent) { return .conflict }
+            if exists(parent) ? !isRealFolder(parent) : mustExist { return false }
         }
-        return .missing
+        return true
     }
 
     /// A link's destination as a path inside the main checkout (`.agents/skills/tdd`); nil when

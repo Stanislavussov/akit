@@ -55,7 +55,8 @@ public enum ProjectForget {
     }
 
     /// Trashes the files AKit wrote (unless `keepFiles`), then the record, committed when the
-    /// store is the brain's.
+    /// store is the brain's, then AKit's exclude block and worktree links (local only): if the
+    /// record can't go, the block still matches it.
     public static func run(_ preview: Preview, keepFiles: Bool, brain: Brain, home: URL, env: HarnessEnvironment,
                            trash: (URL) throws -> URL? = Trash.move) async throws {
         // The Mac may have become a work Mac (or stopped being one) since the preview.
@@ -65,14 +66,14 @@ public enum ProjectForget {
         if !keepFiles, let plan = preview.plan, !preview.removals.isEmpty || !preview.keysTakenOut.isEmpty || !preview.blocksTakenOut.isEmpty {
             _ = try await ProjectSetup.apply(plan, brain: brain, home: home, env: env, trash: trash)
         }
-        // Local only: AKit's block leaves the exclude file even when the files stay.
-        var problem: String?
-        if let plan = preview.plan, !plan.forHome { problem = LocalOnly.takeOut(of: plan.project, env: env) }
         // Apply saved a lock again, in a local store too; forget the project with it.
         let store = preview.store
         if !store.isLocal || FileManager.default.fileExists(atPath: store.folder(id: preview.id).path) {
             try await BrainRemove.forgetProject(preview.id, in: store, env: env, trash: trash)
         }
+        // Local only: AKit's block leaves the exclude file even when the files stay.
+        var problem: String?
+        if let plan = preview.plan, !plan.forHome { problem = LocalOnly.takeOut(of: plan.project, env: env) }
         if let problem { throw ProjectSetup.Failure(message: "The project is forgotten, but: \(problem)") }
     }
 }

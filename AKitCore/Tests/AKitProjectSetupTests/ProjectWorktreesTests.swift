@@ -67,12 +67,13 @@ struct ProjectWorktreesTests {
         #expect(destination(".agents/skills/tdd") == nil && destination(".claude/skills") == nil && destination("AGENTS.md") == nil)
     }
 
-    @Test func conflictsStayAndOnlyStaleLinksIntoTheMainCheckoutGo() async throws {
+    @Test func conflictsStayAndSyncRemovesNoLinkAKitDidntJustDrop() async throws {
         let brain = try await f.setUpBrain()
         try await f.initRepo()
         try await f.apply(f.answers(), brain: brain)
         try await addTree()
-        // The branch has its own AGENTS.md and its own skill folder; an old AKit link, a link elsewhere.
+        // The branch has its own AGENTS.md and its own skill folder; a link into the main
+        // checkout AKit can't know as its own, a link elsewhere.
         try Data("# Branch\n".utf8).write(to: tree.appending(path: "AGENTS.md"))
         let skills = tree.appending(path: ".agents/skills")
         try fm.createDirectory(at: skills.appending(path: "own"), withIntermediateDirectories: true)
@@ -84,15 +85,111 @@ struct ProjectWorktreesTests {
 
         let status = try #require(ProjectWorktrees.status(of: f.project, env: f.env)?.worktrees.first)
         #expect(Set(status.conflicts) == ["AGENTS.md", ".claude/skills"])
-        #expect(status.stale == [".agents/skills/old"])
+        #expect(status.stale.isEmpty)
 
         let outcome = ProjectWorktrees.sync(f.project, env: f.env)
-        #expect(outcome.removed.map(ProjectWorktrees.realPath) == [ProjectWorktrees.realPath(tree.path) + "/.agents/skills/old"])
+        #expect(outcome.removed.isEmpty)
         #expect(f.read("AGENTS.md", in: tree) == "# Branch\n")
         #expect(f.read(".agents/skills/own/SKILL.md", in: tree) == "own")
+        #expect(destination(".agents/skills/old") == main + "/.agents/skills/old")
         #expect(destination(".agents/skills/elsewhere") == f.home.path)
         #expect(f.read(".claude", in: tree) == "x")
         #expect(destination(".agents/skills/tdd") != nil)
+    }
+
+    @Test func withoutABlockSyncRemovesNoLink() async throws {
+        try await f.initRepo()
+        try await addTree()
+        try fm.createDirectory(at: tree.appending(path: ".agents/skills"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: tree.appending(path: ".claude"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: tree.appending(path: ".claude/skills").path, withDestinationPath: main + "/.claude/skills")
+        try fm.createSymbolicLink(atPath: tree.appending(path: ".agents/skills/mine").path, withDestinationPath: main + "/.agents/skills/mine")
+        let status = try #require(ProjectWorktrees.status(of: f.project, env: f.env))
+        #expect(status.units.isEmpty && !status.needsSync)
+        #expect(!ProjectWorktrees.sync(f.project, env: f.env).changed)
+        #expect(destination(".claude/skills") != nil && destination(".agents/skills/mine") != nil)
+    }
+
+    @Test func unitsThatLeaveTheCheckoutAreIgnored() async throws {
+        try await f.initRepo()
+        try await addTree()
+        // Edited by hand: a unit that climbs out of the checkout, which exists there.
+        try f.write("Projects/shared/x", "x")
+        try Data("\(LocalOnly.startMarker)\n/../shared/x\n/a/../../shared/x\n\(LocalOnly.endMarker)\n".utf8).write(to: f.excludeFile)
+        let status = try #require(ProjectWorktrees.status(of: f.project, env: f.env))
+        #expect(status.units.isEmpty)
+        #expect(!ProjectWorktrees.sync(f.project, env: f.env).changed)
+        #expect(!fm.fileExists(atPath: f.home.appending(path: "trees/shared").path))
+    }
+
+    @Test func aLinkedSkillsFolderInAWorktreeIsLeftAlone() async throws {
+        let brain = try await f.setUpBrain()
+        try await f.initRepo()
+        try await f.apply(f.answers(), brain: brain)
+        try await addTree()
+        // The worktree's .agents/skills is a link to a folder elsewhere, holding a link of `review`.
+        let elsewhere = f.home.appending(path: "elsewhere/skills")
+        try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: elsewhere.appending(path: "review").path, withDestinationPath: main + "/.agents/skills/review")
+        try fm.createDirectory(at: tree.appending(path: ".agents"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: tree.appending(path: ".agents/skills").path, withDestinationPath: elsewhere.path)
+
+        let status = try #require(ProjectWorktrees.status(of: f.project, env: f.env)?.worktrees.first)
+        #expect(Set(status.conflicts) == [".agents/skills/review", ".agents/skills/tdd"])
+        ProjectWorktrees.sync(f.project, env: f.env)
+        #expect(!fm.fileExists(atPath: elsewhere.appending(path: "tdd").path), "no link made through the linked folder")
+
+        // Dropping `review` doesn't reach through the link either.
+        try await f.apply(f.answers(review: false), brain: brain)
+        #expect((try? fm.destinationOfSymbolicLink(atPath: elsewhere.appending(path: "review").path)) == main + "/.agents/skills/review")
+    }
+
+    @Test func aWorktreeInsideTheMainCheckoutGetsItsLinks() async throws {
+        let brain = try await f.setUpBrain()
+        try await f.initRepo()
+        try await f.apply(f.answers(), brain: brain)
+        let nested = f.project.appending(path: ".claude/worktrees/x")
+        try await f.git("worktree", "add", "-q", "-b", "x", nested.path)
+        let status = try #require(ProjectWorktrees.status(of: f.project, env: f.env))
+        #expect(status.worktrees.count == 1 && status.worktrees.first?.lacks.count == 5, "\(status)")
+        let outcome = ProjectWorktrees.sync(f.project, env: f.env)
+        #expect(outcome.created.count == 5 && outcome.problems.isEmpty, "\(outcome)")
+        #expect(f.read(".agents/skills/tdd/SKILL.md", in: nested)?.contains("name: tdd") == true)
+        #expect(ProjectWorktrees.status(of: f.project, env: f.env)?.needsSync == false)
+        #expect(!ProjectWorktrees.sync(f.project, env: f.env).changed)
+    }
+
+    @Test func porcelainRecordsAreParsedWithoutGit() {
+        let output = [
+            "worktree /main", "HEAD 1111", "branch refs/heads/main", "",
+            "worktree /trees/with space", "HEAD 2222", "branch refs/heads/feature/x", "",
+            "worktree /trees/locked", "HEAD 3333", "branch refs/heads/l", "locked because", "",
+            "worktree /trees/detached", "HEAD 4444", "detached", "",
+            "worktree /trees/gone", "HEAD 5555", "branch refs/heads/g", "prunable gitdir file points to non-existent location", "",
+            "worktree /bare.git", "bare", "", "",
+        ].joined(separator: "\0")
+        let listed = ProjectWorktrees.listed(fromPorcelain: output)
+        #expect(listed.map(\.folder.path) == ["/main", "/trees/with space", "/trees/locked", "/trees/detached"])
+        #expect(listed.map(\.branch) == ["main", "feature/x", "l", nil])
+        #expect(ProjectWorktrees.listed(fromPorcelain: "").isEmpty)
+    }
+
+    @Test func gitCheckoutReadsARelativeGitdirAndStopsAtTheRoot() throws {
+        // A linked worktree's `.git` file and its `commondir`, both relative; no git run.
+        let common = f.home.appending(path: "repo/.git")
+        let record = common.appending(path: "worktrees/x")
+        try fm.createDirectory(at: record, withIntermediateDirectories: true)
+        try Data("../..\n".utf8).write(to: record.appending(path: "commondir"))
+        let tree = f.home.appending(path: "trees/x")
+        try fm.createDirectory(at: tree, withIntermediateDirectories: true)
+        try Data("gitdir: ../../repo/.git/worktrees/x\n".utf8).write(to: tree.appending(path: ".git"))
+        let checkout = try #require(GitCheckout.at(tree))
+        #expect(checkout.gitDir.standardizedFileURL.path == record.standardizedFileURL.path)
+        #expect(checkout.commonDir.standardizedFileURL.path == common.standardizedFileURL.path)
+        #expect(checkout.isLinkedWorktree)
+        #expect(checkout.mainFolder?.standardizedFileURL.path == f.home.appending(path: "repo").standardizedFileURL.path)
+        #expect(GitCheckout.containing(tree.appending(path: "a/b"))?.folder.standardizedFileURL.path == tree.standardizedFileURL.path)
+        #expect(GitCheckout.containing(URL(filePath: "/")) == nil)
     }
 
     @Test func forgetTakesEveryLinkOutOfTheWorktrees() async throws {

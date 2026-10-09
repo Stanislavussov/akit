@@ -421,7 +421,7 @@ final class AppModel {
         let folders = brainProjectFolders.isEmpty ? nil : brainProjectFolders
         return await Task.detached {
             await Doctor.report(Doctor.Input(env: env, brainRoot: brainRoot, projectRoots: roots, appBundle: app,
-                                             projectFolders: folders, hostName: ProcessInfo.processInfo.hostName))
+                                             projectFolders: folders))
         }.value
     }
 

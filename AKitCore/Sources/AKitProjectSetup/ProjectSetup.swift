@@ -403,6 +403,8 @@ public enum ProjectSetup {
             }
         }
 
+        // Local only: the block lists the files before they are written.
+        let previousBlock = plan.forHome ? nil : LocalOnly.beforeApply(plan)
         var backup: URL?
         var written: [String] = [], removed: [String] = [], notes: [String] = []
         do {
@@ -498,7 +500,7 @@ public enum ProjectSetup {
             throw Failure(message: "The project was written, but the answers couldn't be saved in \(plan.store.describe(id: plan.id)): \(error.localizedDescription)")
         }
         // Local only: AKit's block in the repository's exclude file follows the new lock.
-        if !plan.forHome { notes += LocalOnly.afterApply(plan, lock: lock, env: env) }
+        if !plan.forHome { notes += LocalOnly.afterApply(plan, lock: lock, previous: previousBlock, env: env) }
         // For before/after measurements: a local spool line, never in the brain; can't fail the apply.
         Spool.append(applyEvent(plan), home: home)
         if lock.brainDirty { notes.append("The brain has uncommitted changes in skills/ or layers/; commit them so this render can be reproduced.") }

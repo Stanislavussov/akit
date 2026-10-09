@@ -80,7 +80,7 @@ struct DoctorTests {
 
     @Test func theReportSaysWhatIsWrongAndNeverShowsASecret() async throws {
         try await setUp()
-        let report = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")], hostName: "TestMac"))
+        let report = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")]))
         for secret in secrets { #expect(!report.contains(secret), "leaked \(secret)") }
         for section in ["AKit", "This Mac", "Brain", "Tools", "Project folders", "Projects", "Logs"] {
             #expect(report.contains("\n\(section)\n"), "no section \(section)")
@@ -96,7 +96,7 @@ struct DoctorTests {
         #expect(report.contains("  no AKit crash reports"))
     }
 
-    @Test func aMissingBrainAndABrokenBlockAreProblems() async throws {
+    @Test func aMissingBrainAndAMissingProjectsFolderAreProblems() async throws {
         try write("Projects/task/README.md", "readme\n")
         let report = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Nowhere")]))
         #expect(report.contains("! no brain at ~/.akit/registry"))
@@ -110,5 +110,25 @@ struct DoctorTests {
         try Data(text.utf8).write(to: exclude)
         let report = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")]))
         #expect(report.contains("! local/task: AKit's block in .git/info/exclude doesn't match the files AKit wrote; run akit apply ~/Projects/task."))
+    }
+
+    @Test func aBrokenBlockIsAProblemToFixByHand() async throws {
+        try await setUp()
+        let exclude = project.appending(path: ".git/info/exclude")
+        let text = try String(contentsOf: exclude, encoding: .utf8) + "# >>> akit (local-only files of this project; managed by AKit)\n"
+        try Data(text.utf8).write(to: exclude)
+        let report = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")]))
+        #expect(report.contains("  local/task: ~/Projects/task · local only · exclude block: can't be used"), "\(report)")
+        #expect(report.contains("has a broken AKit block (a marker is missing or doubled); AKit left it alone. Delete the lines from"))
+        #expect(!report.contains("run akit apply"))
+    }
+
+    @Test func aRemoteWithCredentialsShowsOnlyItsID() async throws {
+        try await setUp()
+        try await git("remote", "add", "origin", "https://me:ghp_remoteTOKEN0123456789abcdefXYZ@github.com/me/brain.git?access_token=querySecret777#frag",
+                      in: brainRoot)
+        let report = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")]))
+        #expect(report.contains("  git repo; remote: github.com/me/brain\n"), "\(report)")
+        for secret in ["remoteTOKEN", "querySecret777", "access_token", "frag"] { #expect(!report.contains(secret), "leaked \(secret)") }
     }
 }

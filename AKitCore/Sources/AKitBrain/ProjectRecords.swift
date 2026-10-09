@@ -143,6 +143,8 @@ public enum ProjectRecords {
     /// → `github.com/owner/repo`.
     public static func normalizedRemote(_ remote: String) -> String? {
         var text = remote.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A query or fragment (`?access_token=…`) never reaches the id.
+        if let cut = text.firstIndex(where: { $0 == "?" || $0 == "#" }) { text = String(text[..<cut]) }
         guard !text.isEmpty else { return nil }
         if let scheme = text.range(of: "://") {
             text = String(text[scheme.upperBound...])

@@ -115,6 +115,9 @@ struct ProjectSetupTests {
         #expect(ProjectRecords.normalizedRemote("") == nil)
         #expect(ProjectRecords.normalizedRemote("https://me:p/ss@github.com/o/r.git") == "github.com/o/r")
         #expect(ProjectRecords.normalizedRemote("https://host/.git/x/y") == "host/x/y")
+        // A query or fragment never reaches the id.
+        #expect(ProjectRecords.normalizedRemote("https://github.com/o/r.git?access_token=XYZ") == "github.com/o/r")
+        #expect(ProjectRecords.normalizedRemote("https://u:t@github.com/o/r#main") == "github.com/o/r")
     }
 
     @Test func projectOutsideTheRootGetsAHashedID() async throws {
