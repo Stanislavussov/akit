@@ -216,7 +216,12 @@ block changes), the **Worktrees** box on the project's page (each worktree: link
 stale, conflicts; **Sync Worktrees**; the last sync's result), the sync of every set-up
 local-only project on each refresh, and an FSEvents watch on `<git common dir>/worktrees`
 (`WorktreeWatcher`) that syncs only that project about a second after a worktree comes or
-goes. Snapshots (`make snapshot`) skip the automatic sync, so they change no files.
+goes. The watch counts only a record coming or going (`worktrees/<name>`, its `gitdir` and
+`locked`), not the index, HEAD and logs git writes there on every command; a worktree git
+is still creating (`locked initializing`) is skipped until the lock goes. Apply and Forget
+hold the same per-project gate as the sync, so an automatic sync waits for them, and a link
+another sync just made counts as linked. Snapshots (`make snapshot`) skip the automatic
+sync, so they change no files.
 
 Feedback from a work Mac (2026-10-09): a work repo has its own skills in git, and the
 user's own skills and settings must not land there. Left untracked, AKit's files are

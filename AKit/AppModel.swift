@@ -108,6 +108,9 @@ final class AppModel {
     private(set) var brain: Brain?
     /// Brain project ids → their folders on this Mac (from the last scan).
     private(set) var brainProjectFolders: [String: URL] = [:]
+    /// Brain project ids → the git checkout whose top is their folder (from the last scan);
+    /// missing when the folder is not the top of one.
+    private(set) var brainProjectCheckouts: [String: GitCheckout] = [:]
     /// How each of your skills relates to the brain: rendered copy, same name, or not in it.
     private(set) var brainLinks: [Skill.ID: BrainLink] = [:]
 
@@ -327,7 +330,9 @@ final class AppModel {
         }
         defer { Task { await refresh() } }
         let env = HarnessEnvironment.current
-        try await ProjectForget.run(preview, keepFiles: keepFiles, brain: brain, home: env.homeDirectory, env: env)
+        try await holdingWorktrees(preview.id) {
+            try await ProjectForget.run(preview, keepFiles: keepFiles, brain: brain, home: env.homeDirectory, env: env)
+        }
     }
 
     /// Writes the project files (backup first), saves answers in the plan's store, then rescans.
@@ -337,7 +342,9 @@ final class AppModel {
         }
         defer { Task { await refresh() } }
         let env = HarnessEnvironment.current
-        return try await ProjectSetup.apply(plan, excluding: excluding, accepting: accepting, brain: brain, home: env.homeDirectory, env: env)
+        return try await holdingWorktrees(plan.id) {
+            try await ProjectSetup.apply(plan, excluding: excluding, accepting: accepting, brain: brain, home: env.homeDirectory, env: env)
+        }
     }
 
     // MARK: Worktrees
@@ -348,10 +355,11 @@ final class AppModel {
         let date: Date
     }
 
-    /// The last worktree sync of each local-only project, by project id: on refresh, about a
-    /// second after a worktree is added or removed, or from Sync Worktrees.
+    /// The last worktree sync of each local-only project that changed something or found
+    /// something new, by project id: on refresh, about a second after a worktree is added or
+    /// removed, or from Sync Worktrees.
     private(set) var worktreeSyncs: [String: WorktreeSync] = [:]
-    /// Projects whose worktrees are being synced now.
+    /// Projects whose worktrees are being synced now, or that an Apply or Forget is changing.
     private(set) var worktreesSyncing: Set<String> = []
     /// A sync was asked for while one ran: run once more when it ends.
     @ObservationIgnored private var worktreesSyncAgain: Set<String> = []
@@ -377,8 +385,24 @@ final class AppModel {
         repeat {
             worktreesSyncAgain.remove(id)
             let outcome = await Task.detached { ProjectWorktrees.sync(folder, env: .current) }.value
+            // The same result again changes nothing on screen, so the page doesn't reload.
+            if let last = worktreeSyncs[id]?.outcome, !outcome.changed, outcome.problems == last.problems,
+               outcome.conflicts == last.conflicts, outcome.worktrees == last.worktrees { continue }
             worktreeSyncs[id] = WorktreeSync(outcome: outcome, date: .now)
         } while worktreesSyncAgain.contains(id)
+    }
+
+    /// Runs an Apply or Forget, which sync the project's worktrees themselves, with the project
+    /// held in the same gate as `syncWorktrees`: a running sync ends first, and syncs asked for
+    /// meanwhile wait and run once after.
+    private func holdingWorktrees<T>(_ id: String, _ work: () async throws -> T) async throws -> T {
+        while worktreesSyncing.contains(id) { try? await Task.sleep(for: .milliseconds(100)) }
+        worktreesSyncing.insert(id)
+        defer {
+            worktreesSyncing.remove(id)
+            if worktreesSyncAgain.remove(id) != nil { worktreesChanged(id) }
+        }
+        return try await work()
     }
 
     /// After a scan: watch the worktrees of every set-up local-only project on this Mac and sync
@@ -388,7 +412,7 @@ final class AppModel {
         let store = projectStore
         var folders: [String: URL] = [:], commonDirs: [String: URL] = [:]
         for project in brain?.projects ?? [] where !project.isHome && project.answers.isLocalOnly(store: store) {
-            guard let folder = brainProjectFolders[project.id], let checkout = GitCheckout.at(folder), !checkout.isLinkedWorktree else { continue }
+            guard let folder = brainProjectFolders[project.id], let checkout = brainProjectCheckouts[project.id], !checkout.isLinkedWorktree else { continue }
             folders[project.id] = folder
             commonDirs[project.id] = checkout.commonDir
         }
@@ -713,9 +737,12 @@ final class AppModel {
         self.projects = projects
         if let brain {
             brainProjectFolders = await projectFolders()
+            let folders = brainProjectFolders
+            brainProjectCheckouts = await Task.detached { folders.compactMapValues { GitCheckout.at($0) } }.value
             brainLinks = BrainLinks.links(for: skills, brain: brain, folders: brainProjectFolders, store: projectStore)
         } else {
             brainProjectFolders = [:]
+            brainProjectCheckouts = [:]
             brainLinks = [:]
         }
         followLocalOnlyWorktrees()

@@ -5,9 +5,11 @@ import Foundation
 /// Watches `<git common dir>/worktrees` of each local-only project while the app runs
 /// (layers.md, "Local-only files and git worktrees"): about a second after a worktree is added
 /// or removed, `onChange` gets the project's id, so only that project's worktrees are synced.
-/// Before a repository's first worktree there is no `worktrees` folder: its common git folder
-/// is watched instead and only events under `worktrees` count. Used on the main thread only;
-/// the streams stop when the watcher goes away.
+/// Only a record coming or going counts (`worktrees` itself, its direct children, and each
+/// record's `gitdir` and `locked`), not the index, HEAD and logs git writes there on every
+/// command. Before a repository's first worktree there is no `worktrees` folder: its common
+/// git folder is watched instead and an event counts once `worktrees` is a folder. Used on
+/// the main thread only; the streams stop when the watcher goes away.
 final class WorktreeWatcher: @unchecked Sendable {
     private final class Watch {
         let id: String
@@ -24,6 +26,15 @@ final class WorktreeWatcher: @unchecked Sendable {
             self.commonDir = commonDir
             self.records = records
             self.root = root
+        }
+
+        /// `worktrees` itself, a record (`worktrees/<name>`) made or removed, or its `gitdir`
+        /// or `locked` (git drops the lock once the checkout is done).
+        func isRecordChange(_ path: String) -> Bool {
+            if path == records { return true }
+            guard path.hasPrefix(records + "/") else { return false }
+            let parts = path.dropFirst(records.count + 1).split(separator: "/", omittingEmptySubsequences: false)
+            return parts.count == 1 || (parts.count == 2 && (parts[1] == "gitdir" || parts[1] == "locked"))
         }
     }
 
@@ -56,13 +67,21 @@ final class WorktreeWatcher: @unchecked Sendable {
         stop(id)
         let watch = Watch(id: id, commonDir: commonDir, records: records, root: root)
         watch.owner = self
-        var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(watch).toOpaque(),
-                                           retain: nil, release: nil, copyDescription: nil)
+        // The stream owns its Watch: released with the stream.
+        let info = Unmanaged.passRetained(watch).toOpaque()
+        var context = FSEventStreamContext(version: 0, info: info, retain: nil,
+                                           release: { info in if let info { Unmanaged<Watch>.fromOpaque(info).release() } },
+                                           copyDescription: nil)
         let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
             guard let info else { return }
             let watch = Unmanaged<Watch>.fromOpaque(info).takeUnretainedValue()
-            let changed = (unsafeBitCast(paths, to: NSArray.self) as? [String]) ?? []
-            guard changed.contains(where: { $0 == watch.records || $0.hasPrefix(watch.records + "/") }) else { return }
+            if watch.root == watch.records {
+                let changed = (unsafeBitCast(paths, to: NSArray.self) as? [String]) ?? []
+                guard changed.contains(where: watch.isRecordChange) else { return }
+            } else {
+                // The common git folder: busy with every git command, so no paths are read.
+                guard FileWalk.isDirectory(URL(filePath: watch.records)) else { return }
+            }
             // The stream runs on the main queue.
             MainActor.assumeIsolated { watch.owner?.changed(watch.id) }
         }
@@ -70,7 +89,10 @@ final class WorktreeWatcher: @unchecked Sendable {
         // WatchRoot: a removed `worktrees` folder is reported too.
         let flags = FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot)
         guard let stream = FSEventStreamCreate(nil, callback, &context, [root] as CFArray,
-                                               FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.0, flags) else { return }
+                                               FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.0, flags) else {
+            Unmanaged<Watch>.fromOpaque(info).release()
+            return
+        }
         FSEventStreamSetDispatchQueue(stream, .main)
         guard FSEventStreamStart(stream) else {
             FSEventStreamInvalidate(stream)

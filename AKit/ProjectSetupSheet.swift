@@ -158,8 +158,9 @@ struct ProjectSetupSheet: View {
     private var filesBox: some View {
         GroupBox("Project files") {
             VStack(alignment: .leading, spacing: 6) {
+                // Back to this Mac's default with nothing saved: stays unset, so it follows the default.
                 Picker("Project files", selection: Binding(get: { answers.isLocalOnly(store: model.projectStore) },
-                                                           set: { answers.localOnly = $0 })) {
+                                                           set: { answers.localOnly = savedLocalOnly == nil && $0 == model.projectStore.isLocal ? nil : $0 })) {
                     Text("Commit to git").tag(false)
                     Text("Local only (hidden from git)").tag(true)
                 }
@@ -454,7 +455,9 @@ struct ProjectSetupSheet: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if plan.changes.allSatisfy({ $0.kind == .same }) {
                     ContentUnavailableView("All \(plan.changes.count) files already match the layers", systemImage: "eye.slash",
-                                           description: Text("Apply saves the choice of project files and updates AKit's block in .git/info/exclude, as listed above."))
+                                           description: Text(plan.canApply
+                                               ? "Apply saves the choice of project files and updates AKit's block in .git/info/exclude, as listed above."
+                                               : "Apply is off until the problems listed above are fixed."))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     HSplitView {
@@ -616,7 +619,7 @@ struct ProjectSetupSheet: View {
                 ForEach(outcome.notes, id: \.self) { Label($0, systemImage: "info.circle") }
             }
             if let plan {
-                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)).\(forHome ? " Reload skills in your harness (e.g. /reload-skills)." : plan.localOnly ? " AKit's files stay out of git (local only); nothing to commit." : " Review and commit the new harness files in the project yourself.")")
+                Text("Answers are saved \(plan.store.isLocal ? "on this Mac only, in" : "in the brain under") \(plan.store.describe(id: plan.id)).\(forHome ? " Reload skills in your harness (e.g. /reload-skills)." : plan.localOnly && plan.exclude != nil ? " AKit's files stay out of git (local only); nothing to commit." : " Review and commit the new harness files in the project yourself.")")
                     .foregroundStyle(.secondary)
             }
             Spacer()

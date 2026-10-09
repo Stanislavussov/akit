@@ -712,7 +712,7 @@ private struct BrainProjectDetailView: View {
                 if let folder, !project.isHome {
                     skills(folder)
                     agents(folder)
-                    if GitCheckout.at(folder) != nil { worktreesBox(folder) }
+                    if model.brainProjectCheckouts[project.id] != nil { worktreesBox(folder) }
                 }
                 if !project.answers.values.isEmpty { fields }
                 note
