@@ -63,6 +63,8 @@ public enum ProjectWorktrees {
         public var conflicts: [String] = []
         /// What went wrong (a link that couldn't be made, git didn't run).
         public var problems: [String] = []
+        /// The worktree folders looked at.
+        public var worktrees: [String] = []
 
         public var changed: Bool { !created.isEmpty || !removed.isEmpty }
     }
@@ -103,6 +105,7 @@ public enum ProjectWorktrees {
         var outcome = Outcome()
         guard let status = status(of: project, dropped: dropped, env: env) else { return outcome }
         let fm = FileManager.default
+        outcome.worktrees = status.worktrees.map(\.folder.path)
         for tree in status.worktrees {
             for link in tree.links {
                 let path = tree.folder.path + "/" + link.path
@@ -127,8 +130,7 @@ public enum ProjectWorktrees {
                 case .missing:
                     do {
                         try makeParents(of: link.path, in: tree.folder.path)
-                        try fm.createSymbolicLink(atPath: path, withDestinationPath: status.main.path + "/" + link.path)
-                        outcome.created.append(path)
+                        if try makeLink(at: path, to: status.main.path + "/" + link.path) { outcome.created.append(path) }
                     } catch {
                         outcome.problems.append("Couldn't link \(path): \(error.localizedDescription)")
                     }
@@ -146,7 +148,7 @@ public enum ProjectWorktrees {
     }
 
     /// `git worktree list --porcelain -z` in the main checkout, without the main one, bare ones,
-    /// prunable ones and folders that are gone. No git run when the repository has no
+    /// prunable ones, ones git is still creating and folders that are gone. No git run when the repository has no
     /// `worktrees` folder.
     static func linkedWorktrees(of checkout: GitCheckout, main: Set<String>, env: HarnessEnvironment) -> [Listed] {
         let records = checkout.commonDir.appending(path: "worktrees").path
@@ -164,7 +166,8 @@ public enum ProjectWorktrees {
     }
 
     /// The records of `git worktree list --porcelain -z` output, without bare and prunable
-    /// ones. Only parses.
+    /// ones and those `git worktree add` is still creating (`locked initializing`; the watcher
+    /// fires again when the lock goes). Only parses.
     static func listed(fromPorcelain output: String) -> [Listed] {
         var listed: [Listed] = []
         var folder: String?, branch: String?, skip = false
@@ -181,7 +184,7 @@ public enum ProjectWorktrees {
             } else if item.hasPrefix("branch ") {
                 let ref = item.dropFirst("branch ".count)
                 branch = ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : String(ref)
-            } else if item == "bare" || item == "prunable" || item.hasPrefix("prunable ") {
+            } else if item == "bare" || item == "prunable" || item.hasPrefix("prunable ") || item == "locked initializing" {
                 skip = true
             }
         }
@@ -235,6 +238,18 @@ public enum ProjectWorktrees {
             return String(path.dropFirst(base.count + 1))
         }
         return nil
+    }
+
+    /// Creates the link; false when another sync (Apply, Forget, the watcher) made the same
+    /// link in the meantime, which counts as linked.
+    static func makeLink(at path: String, to destination: String) throws -> Bool {
+        do {
+            try FileManager.default.createSymbolicLink(atPath: path, withDestinationPath: destination)
+            return true
+        } catch {
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) == destination { return false }
+            throw error
+        }
     }
 
     private static func makeParents(of unit: String, in tree: String) throws {

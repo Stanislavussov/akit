@@ -166,12 +166,25 @@ struct ProjectWorktreesTests {
             "worktree /trees/locked", "HEAD 3333", "branch refs/heads/l", "locked because", "",
             "worktree /trees/detached", "HEAD 4444", "detached", "",
             "worktree /trees/gone", "HEAD 5555", "branch refs/heads/g", "prunable gitdir file points to non-existent location", "",
+            // `git worktree add` is still checking it out.
+            "worktree /trees/new", "HEAD 6666", "branch refs/heads/n", "locked initializing", "",
             "worktree /bare.git", "bare", "", "",
         ].joined(separator: "\0")
         let listed = ProjectWorktrees.listed(fromPorcelain: output)
         #expect(listed.map(\.folder.path) == ["/main", "/trees/with space", "/trees/locked", "/trees/detached"])
         #expect(listed.map(\.branch) == ["main", "feature/x", "l", nil])
         #expect(ProjectWorktrees.listed(fromPorcelain: "").isEmpty)
+    }
+
+    @Test func aLinkAnotherSyncJustMadeCountsAsLinked() throws {
+        let folder = f.home.appending(path: "links")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        let path = folder.appending(path: "AGENTS.md").path
+        #expect(try ProjectWorktrees.makeLink(at: path, to: "/main/AGENTS.md"))
+        // The same link is there already (a sync raced this one): no new link, no problem.
+        #expect(try ProjectWorktrees.makeLink(at: path, to: "/main/AGENTS.md") == false)
+        // Something else is there: still an error.
+        #expect(throws: (any Error).self) { try ProjectWorktrees.makeLink(at: path, to: "/other/AGENTS.md") }
     }
 
     @Test func gitCheckoutReadsARelativeGitdirAndStopsAtTheRoot() throws {

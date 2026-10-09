@@ -340,6 +340,34 @@ struct LocalOnlyTests {
         #expect(try await f.git("status", "--porcelain", "--untracked-files=all").isEmpty)
     }
 
+    @Test func theExcludeFileKeepsItsPermissions() async throws {
+        let brain = try await f.setUpBrain()
+        try await f.initRepo()
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: f.excludeFile.path)
+        try await f.apply(f.answers(), brain: brain)
+        #expect(LocalOnly.blockUnits(in: f.excludeFile)?.contains("AGENTS.md") == true)
+        let mode = try FileManager.default.attributesOfItem(atPath: f.excludeFile.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+    }
+
+    @Test func aFailedApplyShrinksTheBlockToWhatIsOnDisk() async throws {
+        let brain = try await f.setUpBrain()
+        try await f.initRepo()
+        let plan = f.plan(f.answers(), brain: brain)
+        #expect(plan.exclude?.units.contains(".agents/skills/tdd") == true)
+        // A file where Apply needs the .agents folder: writing the skills fails part way.
+        try f.write("Projects/task/.agents", "in the way")
+        await #expect(throws: ProjectSetup.Failure.self) {
+            try await ProjectSetup.apply(plan, brain: brain, home: f.home, env: f.env, trash: f.trash)
+        }
+        let units = LocalOnly.blockUnits(in: f.excludeFile) ?? []
+        #expect(!units.contains(".agents/skills/tdd") && !units.contains(".agents/skills/review"), "\(units)")
+        for unit in units {
+            var info = stat()
+            #expect(lstat(f.project.appending(path: unit).path, &info) == 0, "\(unit) is in the block but not on disk")
+        }
+    }
+
     @Test func aFailedForgetLeavesTheBlock() async throws {
         let brain = try await f.setUpBrain()
         try await f.initRepo()

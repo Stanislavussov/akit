@@ -194,8 +194,8 @@ public enum LocalOnly {
     }
 
     /// Puts `units` into AKit's block of the exclude file (takes the block out when empty).
-    /// A link is written through to the file it points to. Returns a problem to report, nil
-    /// when done.
+    /// A link is written through to the file it points to; the file keeps its permissions.
+    /// Returns a problem to report, nil when done.
     static func write(units: [String], to file: URL) -> String? {
         let old: Data
         switch contents(of: file) {
@@ -210,9 +210,14 @@ public enum LocalOnly {
             guard let resolved = FileWalk.realPath(file) else { return "Couldn't follow the link \(file.path); AKit left it alone." }
             target = URL(filePath: resolved)
         }
+        // The atomic write makes a new file; it gets the old one's permissions.
+        let mode = stat(target.path, &info) == 0 ? info.st_mode & 0o7777 : nil
         do {
             try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try new.write(to: target, options: .atomic)
+            if let mode, chmod(target.path, mode) != 0 {
+                return "Updated \(file.path), but couldn't give it back its permissions (\(String(mode, radix: 8)))."
+            }
             return nil
         } catch {
             return "Couldn't update \(file.path): \(error.localizedDescription)"
@@ -296,6 +301,18 @@ public enum LocalOnly {
             if union != Set(previous ?? []) { _ = write(units: union.sorted(), to: file) }
         }
         return previous
+    }
+
+    /// After Apply stopped part way: the block shrinks back to its units before Apply plus
+    /// the planned ones now on disk, so it lists no file Apply never wrote. Returns a problem
+    /// to report, nil when done.
+    static func afterFailedApply(_ plan: ProjectSetup.Plan, previous: [String]?) -> String? {
+        guard plan.localOnly, let planned = plan.exclude?.units, let file = excludeFile(of: plan.project) else { return nil }
+        let base = plan.project.standardizedFileURL.path
+        var info = stat()
+        let kept = Set(previous ?? []).union(planned.filter { lstat(base + "/" + $0, &info) == 0 })
+        guard kept != Set(blockUnits(in: file) ?? []) else { return nil }
+        return write(units: kept.sorted(), to: file)
     }
 
     /// After Apply saved `lock`: the block holds the untracked units in a local-only project, and

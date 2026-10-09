@@ -482,8 +482,10 @@ public enum ProjectSetup {
                 }
             }
             try? ProjectRecords.save(partial, answers: nil, id: plan.id, in: plan.store)
+            // The block was widened for every planned file: back to what is on disk.
+            let blockProblem = plan.forHome ? nil : LocalOnly.afterFailedApply(plan, previous: previousBlock)
             let reason = (error as? Failure)?.message ?? error.localizedDescription
-            throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")")
+            throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")\(blockProblem.map { " \($0)" } ?? "")")
         }
 
         var lock = Self.lock(after: plan, excluding: excluded, accepting: accepting)

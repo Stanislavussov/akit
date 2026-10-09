@@ -143,16 +143,17 @@ public enum ProjectRecords {
     /// → `github.com/owner/repo`.
     public static func normalizedRemote(_ remote: String) -> String? {
         var text = remote.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A query or fragment (`?access_token=…`) never reaches the id.
-        if let cut = text.firstIndex(where: { $0 == "?" || $0 == "#" }) { text = String(text[..<cut]) }
         guard !text.isEmpty else { return nil }
         if let scheme = text.range(of: "://") {
             text = String(text[scheme.upperBound...])
         } else if let colon = text.firstIndex(of: ":"), !text[..<colon].contains("/") {
             text.replaceSubrange(colon...colon, with: "/")  // scp form host:path
         }
-        // user[:password]@ before the host; a password may itself hold "/", so cut at the last "@".
+        // user[:password]@ before the host; a password may itself hold "/", "?" or "#", so cut
+        // at the last "@", before the query.
         if let at = text.lastIndex(of: "@") { text = String(text[text.index(after: at)...]) }
+        // A query or fragment (`?access_token=…`) never reaches the id.
+        if let cut = text.firstIndex(where: { $0 == "?" || $0 == "#" }) { text = String(text[..<cut]) }
         var parts = text.split(separator: "/").map(String.init)
         guard parts.count >= 2 else { return nil }
         if let colon = parts[0].firstIndex(of: ":") { parts[0] = String(parts[0][..<colon]) }  // port
