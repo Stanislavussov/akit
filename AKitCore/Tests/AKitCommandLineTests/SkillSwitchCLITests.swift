@@ -51,6 +51,20 @@ struct SkillSwitchCLITests {
         #expect(again.out.contains("already Off"))
     }
 
+    @Test func aSkillMdNameResolvesToTheFolderClaudeUses() async throws {
+        try fm.createDirectory(at: home.appending(path: ".agents/skills/deploy-staging"), withIntermediateDirectories: true)
+        try Data("---\nname: deploy\ndescription: Deploys\n---\n".utf8).write(to: home.appending(path: ".agents/skills/deploy-staging/SKILL.md"))
+        let byName = await akit("skills", "set", "deploy", "--harness", "claude", "--state", "off", "--yes")
+        #expect(byName.code == 0)
+        #expect(byName.out.contains("Claude knows the skill as deploy-staging (its folder)"))
+        #expect(try settings().contains(#""deploy-staging": "off""#))
+        let state = await akit("skills", "state", "deploy-staging")
+        #expect(state.out.contains("Claude: Off (as deploy-staging)"))
+        let byFolder = await akit("skills", "set", "deploy-staging", "--harness", "claude", "--state", "on", "--yes")
+        #expect(byFolder.code == 0)
+        #expect(try settings() == "{\n  \"model\": \"opus\"\n}\n")
+    }
+
     @Test func refusesStatesAHarnessDoesntHaveAndUnknownSkills() async {
         #expect(await akit("skills", "set", "tdd", "--harness", "pi", "--state", "name-only").err.contains("offers On, Off"))
         #expect(await akit("skills", "set", "nope", "--harness", "claude", "--state", "off").err.contains("No skill named nope"))

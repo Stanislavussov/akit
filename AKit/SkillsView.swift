@@ -123,7 +123,6 @@ struct SkillsView: View {
         } message: {
             Text(deleteError ?? "")
         }
-        .skillSwitchSheet(model)
         .onAppear {
             // Use the menu's own URL for the chosen project, so the picker shows it as selected.
             if case .project(let chosen) = model.skillsFilter,
@@ -138,7 +137,7 @@ struct SkillsView: View {
             snapshotSwitch = false
             for harness in SkillSwitches.harnesses {
                 guard let options = SkillSwitches.options(for: skill, harness: harness, in: .current), options.unavailable == nil,
-                      let next = options.states.first(where: { $0 != model.skillStates[skill.id]?[harness] }) else { continue }
+                      let next = options.states.first(where: { $0 != model.skillStates[skill.id]?[harness]?.state }) else { continue }
                 model.requestSkillSwitch(skill, harness: harness, to: next)
                 return
             }

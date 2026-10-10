@@ -71,6 +71,21 @@ struct JSONTextEditTests {
         #expect(try JSONTextEdit.setting(.string("x"), at: ["b", "e"], in: text) == #"{"a": "}{\"[", "b": {"c": "]", "e": "x"}, "d": 1}"#)
     }
 
+    @Test func keysAreComparedByUnicodeScalars() throws {
+        let decomposed = "{\"cafe\u{301}\": 1}"
+        // The precomposed key is a different key to a harness: nothing to remove.
+        #expect(try JSONTextEdit.removing(at: ["caf\u{e9}"], in: decomposed) == decomposed)
+        #expect(try JSONTextEdit.removing(at: ["cafe\u{301}"], in: decomposed) == "{}")
+    }
+
+    @Test func crlfFilesKeepCrlf() throws {
+        let text = "{\r\n  \"a\": 1\r\n}\r\n"
+        #expect(try JSONTextEdit.setting(.array([.string("x")]), at: ["b"], in: text)
+                == "{\r\n  \"a\": 1,\r\n  \"b\": [\r\n    \"x\"\r\n  ]\r\n}\r\n")
+        #expect(try JSONTextEdit.setting(.string("x"), at: ["o", "k"], in: "{\r\n  \"o\": {}\r\n}")
+                == "{\r\n  \"o\": {\r\n    \"k\": \"x\"\r\n  }\r\n}")
+    }
+
     @Test func refusesBadFilesAndNonObjectsOnThePath() {
         #expect(throws: JSONTextEdit.Failure.self) { try JSONTextEdit.setting(.null, at: ["a"], in: "{\"a\": 1,}") }
         #expect(throws: JSONTextEdit.Failure.self) { try JSONTextEdit.setting(.null, at: ["a"], in: "[1]") }

@@ -30,10 +30,21 @@ public struct Skill: Identifiable, Hashable, Sendable {
     public internal(set) var places: [HarnessID: Place] = [:]
 
     /// A skill file as one harness reaches it: `base` is the parent of the skill root
-    /// (`~/.agents` for `~/.agents/skills`), `file` lies under it (links not resolved).
+    /// (`~/.agents` for `~/.agents/skills`), `file` lies under it (links not resolved), `scope`
+    /// is the scope of that root (a link from a personal folder into a project is still personal).
     public struct Place: Hashable, Sendable {
         public let file: URL
         public let base: URL
+        public let scope: SkillScope
+
+        public init(file: URL, base: URL, scope: SkillScope) {
+            self.file = file
+            self.base = base
+            self.scope = scope
+        }
+
+        /// The folder name the harness sees (`~/.claude/skills/<this>/SKILL.md`), links not resolved.
+        public var folderName: String { file.deletingLastPathComponent().lastPathComponent }
         /// `skills/tdd/SKILL.md`: the file relative to `base`.
         public var relativePath: String {
             let prefix = base.path.hasSuffix("/") ? base.path : base.path + "/"

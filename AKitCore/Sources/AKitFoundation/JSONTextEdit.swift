@@ -26,12 +26,12 @@ public enum JSONTextEdit {
         let scanner = try Scanner(text)
         var open = scanner.root
         for key in path.dropLast() {
-            guard let member = scanner.members(ofObjectAt: open).members.first(where: { $0.key == key }),
+            guard let member = scanner.members(ofObjectAt: open).members.first(where: { Self.same($0.key, key) }),
                   scanner.bytes[member.valueStart] == UInt8(ascii: "{") else { return text }
             open = member.valueStart
         }
         let (members, close) = scanner.members(ofObjectAt: open)
-        guard let index = members.firstIndex(where: { $0.key == path.last }) else { return text }
+        guard let index = members.firstIndex(where: { Self.same($0.key, path.last!) }) else { return text }
         var bytes = scanner.bytes
         let range: Range<Int>
         if members.count == 1 {
@@ -51,7 +51,7 @@ public enum JSONTextEdit {
                             into bytes: inout [UInt8]) throws(Failure) {
         let key = path.first!
         let (members, close) = scanner.members(ofObjectAt: open)
-        if let member = members.first(where: { $0.key == key }) {
+        if let member = members.first(where: { Self.same($0.key, key) }) {
             if path.count > 1 {
                 guard scanner.bytes[member.valueStart] == UInt8(ascii: "{") else {
                     throw Failure(message: "“\(key)” is not an object; AKit won't replace it.")
@@ -62,7 +62,8 @@ public enum JSONTextEdit {
             let old = scanner.bytes[member.valueStart..<member.valueEnd]
             let inline = !old.contains(UInt8(ascii: "\n"))
             let indent = scanner.indent(ofLineAt: member.keyStart)
-            bytes.replaceSubrange(member.valueStart..<member.valueEnd, with: Array(render(value, indent: indent, inline: inline).utf8))
+            bytes.replaceSubrange(member.valueStart..<member.valueEnd,
+                                  with: Array(render(value, indent: indent, inline: inline, newline: scanner.newline).utf8))
             return
         }
         // The rest of the path becomes nested objects around the value.
@@ -71,7 +72,7 @@ public enum JSONTextEdit {
         let quotedKey = JSONValue.string(key).compact
         if let last = members.last {
             if let indent = scanner.leadingIndent(at: last.keyStart) {
-                let text = ",\n" + indent + quotedKey + ": " + render(wrapped, indent: indent, inline: false)
+                let text = "," + scanner.newline + indent + quotedKey + ": " + render(wrapped, indent: indent, inline: false, newline: scanner.newline)
                 bytes.insert(contentsOf: Array(text.utf8), at: last.valueEnd)
             } else {
                 let text = ", " + quotedKey + ": " + render(wrapped, indent: "", inline: true)
@@ -80,18 +81,23 @@ public enum JSONTextEdit {
         } else {
             let outer = scanner.indent(ofLineAt: open)
             let inner = outer + scanner.indentUnit
-            let text = "{\n" + inner + quotedKey + ": " + render(wrapped, indent: inner, inline: false) + "\n" + outer + "}"
+            let newline = scanner.newline
+            let text = "{" + newline + inner + quotedKey + ": " + render(wrapped, indent: inner, inline: false, newline: newline) + newline + outer + "}"
             bytes.replaceSubrange(open...close, with: Array(text.utf8))
         }
     }
 
+    /// Keys are compared by their Unicode scalars, as harnesses compare them (Swift's `==` treats
+    /// precomposed and decomposed letters as equal).
+    static func same(_ a: String, _ b: String) -> Bool { a.unicodeScalars.elementsEqual(b.unicodeScalars) }
+
     /// The value as AKit writes it at this indentation; `inline`: on one line (`["a", "b"]`).
-    private static func render(_ value: JSONValue, indent: String, inline: Bool) -> String {
+    private static func render(_ value: JSONValue, indent: String, inline: Bool, newline: String = "\n") -> String {
         if inline {
             if case .array(let items) = value { return "[" + items.map(\.compact).joined(separator: ", ") + "]" }
             return value.compact
         }
-        return String(value.pretty.dropLast()).replacingOccurrences(of: "\n", with: "\n" + indent)
+        return String(value.pretty.dropLast()).replacingOccurrences(of: "\n", with: newline + indent)
     }
 
     // MARK: - Scanning
@@ -205,6 +211,12 @@ public enum JSONTextEdit {
             var end = start
             while end < bytes.count, bytes[end] == 0x20 || bytes[end] == 0x09 { end += 1 }
             return String(decoding: bytes[start..<end], as: UTF8.self)
+        }
+
+        /// The file's line ending: `\r\n` when it uses it, else `\n`.
+        var newline: String {
+            guard let first = bytes.firstIndex(of: UInt8(ascii: "\n")) else { return "\n" }
+            return first > 0 && bytes[first - 1] == UInt8(ascii: "\r") ? "\r\n" : "\n"
         }
 
         /// One level of indentation: the top-level object's first indented member, else two spaces.

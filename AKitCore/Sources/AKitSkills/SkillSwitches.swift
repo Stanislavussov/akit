@@ -40,10 +40,29 @@ public enum SkillSwitchState: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+/// A switch as read from the settings: a state, or why it can't be known (the file can't be
+/// read, or holds an entry AKit can't read).
+public enum SkillSwitchReading: Hashable, Sendable {
+    case state(SkillSwitchState)
+    case unknown(String)
+
+    public var state: SkillSwitchState? {
+        if case .state(let state) = self { return state }
+        return nil
+    }
+
+    public var title: String {
+        switch self {
+        case .state(let state): state.title
+        case .unknown: "Unknown"
+        }
+    }
+}
+
 /// Turning a skill on or off per harness (docs/design/harness-support.md, "Skill switches"):
 /// Claude Code's `skillOverrides` in `~/.claude/settings.json`, Pi's `skills` entries in
 /// `~/.pi/agent/settings.json` (or a project's `.pi/settings.json` for its own skills).
-/// Only that one entry changes; every other byte of the file stays.
+/// Only that one entry changes; every other byte of the file stays (`SettingsFile`).
 public enum SkillSwitches {
     /// The harnesses with a switch.
     public static let harnesses: [HarnessID] = [.claudeCode, .pi]
@@ -67,22 +86,35 @@ public enum SkillSwitches {
         public let note: String?
     }
 
+    /// The name Claude Code gives the skill and keys `skillOverrides` by: the folder name it
+    /// reaches the skill through (not the SKILL.md `name`; Claude Code 2.1.296 passes the directory
+    /// entry's name), `anthropic-skills:<folder>` for a skill synced from claude.ai.
+    public static func claudeName(of skill: Skill) -> String? {
+        guard skill.visibleTo.contains(.claudeCode) else { return nil }
+        let folder = skill.places[.claudeCode]?.folderName ?? skill.folder.lastPathComponent
+        return skill.scope == .synced ? "anthropic-skills:" + folder : folder
+    }
+
     /// nil when the harness doesn't see the skill or has no switch.
     public static func options(for skill: Skill, harness: HarnessID, in env: HarnessEnvironment) -> Options? {
         guard skill.visibleTo.contains(harness), let file = settingsFile(for: skill, harness: harness, in: env) else { return nil }
         switch harness {
         case .claudeCode:
-            let key = "skillOverrides.\(JSONValue.string(skill.name).compact)"
+            guard let name = claudeName(of: skill) else { return nil }
+            let key = "skillOverrides.\(JSONValue.string(name).compact)"
             if case .plugin = skill.scope {
                 return Options(states: [], file: file, key: key,
                                unavailable: "Claude Code ignores skillOverrides for plugin skills; turn the plugin on or off with /plugin.",
                                note: nil)
             }
-            if skill.name == "__proto__" {
+            if name == "__proto__" {
                 return Options(states: [], file: file, key: key,
                                unavailable: "Claude Code can't store a setting for a skill with this name.", note: nil)
             }
-            var notes = ["The entry is by name: it applies to every skill named \(skill.name), in every project (a project's own .claude/settings.json entry wins)."]
+            var notes = ["The entry is by name: it applies to every skill named \(name), in every project (a project's own .claude/settings.json entry wins)."]
+            if name != skill.name {
+                notes.append("Claude Code names the skill \(name) (its folder), not \(skill.name) (the name in its SKILL.md).")
+            }
             var states = SkillSwitchState.allCases
             if skill.disablesModelInvocation {
                 states = [.manual, .off]
@@ -92,13 +124,15 @@ public enum SkillSwitches {
         case .pi:
             guard let place = skill.places[.pi] else { return nil }
             let key = "skills: -\(place.relativePath)"
-            if case .package = skill.scope {
+            if case .package = place.scope {
                 return Options(states: [], file: file, key: "packages",
                                unavailable: "A Pi package skill is switched in its package's entry (pi config); AKit doesn't change package entries.",
                                note: nil)
             }
             var note = "Pi has no name-only state: a skill is loaded or not."
-            if case .global = skill.scope, place.relativePath.hasPrefix("skills/") {
+            if case .project = place.scope {
+                note += " Pi reads a project's .pi/settings.json only when it starts in that folder (not in a subfolder); the entry covers the skill in the project's .pi/skills and .agents/skills."
+            } else {
                 note += " The entry also covers a skill at the same path in the other personal folder (~/.agents and ~/.pi/agent)."
             }
             return Options(states: [.on, .off], file: file, key: key, unavailable: nil, note: note)
@@ -113,8 +147,9 @@ public enum SkillSwitches {
         case .claudeCode:
             return HarnessCatalog.configRoot(of: .claudeCode, in: env)?.appending(path: "settings.json")
         case .pi:
-            // Pi applies the global entries to personal skills and a project's entries to its own skills.
-            if case .project(let project) = skill.scope { return project.appending(path: ".pi/settings.json") }
+            // Pi applies the global entries to the skills of personal folders and a project's entries
+            // to that project's: what counts is the folder Pi found the skill in, not where a link leads.
+            if case .project(let project)? = skill.places[.pi]?.scope { return project.appending(path: ".pi/settings.json") }
             return HarnessCatalog.configRoot(of: .pi, in: env)?.appending(path: "settings.json")
         default:
             return nil
@@ -123,21 +158,25 @@ public enum SkillSwitches {
 
     // MARK: - Reading
 
-    /// Each skill's state per harness that has a switch for it. Reads every settings file once;
-    /// a file that is missing or can't be read counts as "every skill on".
-    public static func states(of skills: [Skill], in env: HarnessEnvironment) -> [Skill.ID: [HarnessID: SkillSwitchState]] {
-        var cache: [URL: JSONValue] = [:]
-        func settings(_ url: URL) -> JSONValue {
+    /// Each skill's switch per harness that has one for it. Reads every settings file once; a
+    /// file that can't be read makes its skills Unknown, with the reason.
+    public static func states(of skills: [Skill], in env: HarnessEnvironment) -> [Skill.ID: [HarnessID: SkillSwitchReading]] {
+        var cache: [URL: Result<JSONValue, SettingsFile.Failure>] = [:]
+        func settings(_ url: URL) -> Result<JSONValue, SettingsFile.Failure> {
             if let cached = cache[url] { return cached }
-            let value = (try? read(url))?.value ?? .object([:])
+            let value: Result<JSONValue, SettingsFile.Failure>
+            do { value = .success(try SettingsFile.read(url, home: env.homeDirectory)?.value ?? .object([:])) } catch { value = .failure(error) }
             cache[url] = value
             return value
         }
-        var result: [Skill.ID: [HarnessID: SkillSwitchState]] = [:]
+        var result: [Skill.ID: [HarnessID: SkillSwitchReading]] = [:]
         for skill in skills {
             for harness in harnesses {
                 guard let options = options(for: skill, harness: harness, in: env), options.unavailable == nil else { continue }
-                result[skill.id, default: [:]][harness] = state(of: skill, harness: harness, settings: settings(options.file))
+                switch settings(options.file) {
+                case .success(let value): result[skill.id, default: [:]][harness] = reading(of: skill, harness: harness, settings: value)
+                case .failure(let error): result[skill.id, default: [:]][harness] = .unknown(error.message)
+                }
             }
         }
         return result
@@ -149,45 +188,45 @@ public enum SkillSwitches {
         harness == .claudeCode && skill.disablesModelInvocation ? .manual : .on
     }
 
-    /// One skill's state in one harness's settings.
-    static func state(of skill: Skill, harness: HarnessID, settings: JSONValue) -> SkillSwitchState {
+    /// One skill's switch in one harness's settings.
+    static func reading(of skill: Skill, harness: HarnessID, settings: JSONValue) -> SkillSwitchReading {
         switch harness {
         case .claudeCode:
-            let written = settings.value(at: ["skillOverrides", skill.name]).flatMap { value -> SkillSwitchState? in
-                if case .string(let text) = value { return SkillSwitchState(rawValue: text) }
-                return nil
-            } ?? .on
+            guard let name = claudeName(of: skill) else { return .state(.on) }
+            var written = SkillSwitchState.on
+            switch settings.value(at: ["skillOverrides"]) {
+            case nil: break
+            case .object(let entries)?:
+                switch entries.first(where: { $0.key.unicodeScalars.elementsEqual(name.unicodeScalars) })?.value {
+                case nil: break
+                case .string(let text)? where SkillSwitchState(rawValue: text) != nil: written = SkillSwitchState(rawValue: text)!
+                case let other?: return .unknown("skillOverrides.\(name) is \(other.compact), not one of on, name-only, user-invocable-only, off.")
+                }
+            default:
+                return .unknown("skillOverrides in the settings is not an object.")
+            }
             // A SKILL.md with disable-model-invocation is Manual at most (Claude Code 2.1.296, `$C`).
-            if skill.disablesModelInvocation { return written == .off ? .off : .manual }
-            return written
+            if skill.disablesModelInvocation { return .state(written == .off ? .off : .manual) }
+            return .state(written)
         case .pi:
-            guard let place = skill.places[.pi] else { return .on }
-            return PiSkillFilter.isEnabled(place, entries: entries(in: settings)) ? .on : .off
+            guard let place = skill.places[.pi] else { return .state(.on) }
+            let list: [String]
+            do { list = try entries(in: settings) } catch { return .unknown(error.message) }
+            guard let enabled = PiSkillFilter.isEnabled(place, entries: list) else {
+                return .unknown("Set by a pattern AKit can't read: \(PiSkillFilter.unreadable(list).joined(separator: ", ")).")
+            }
+            return .state(enabled ? .on : .off)
         default:
-            return .on
+            return .state(.on)
         }
     }
 
     /// The string entries of Pi's `skills` list (other values are ignored, as Pi's filters do).
-    static func entries(in settings: JSONValue) -> [String] {
-        guard case .array(let items)? = settings.value(at: ["skills"]) else { return [] }
-        return items.compactMap { if case .string(let text) = $0 { text } else { nil } }
-    }
-
-    /// The file's bytes and its JSON; nil when there is no file.
-    static func read(_ url: URL) throws(Failure) -> (data: Data, value: JSONValue)? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        guard FileWalk.isRegularFile(url), let data = FileWalk.head(of: url, limit: 4 << 20 + 1), data.count <= 4 << 20 else {
-            throw Failure(message: "\(url.lastPathComponent) can't be read as a settings file.")
-        }
-        do {
-            let value = try JSONValue.parse(data)
-            guard case .object = value else { throw Failure(message: "\(url.path) is not a JSON object. AKit won't change it; fix the file first.") }
-            return (data, value)
-        } catch let error as Failure {
-            throw error
-        } catch {
-            throw Failure(message: "\(url.path) is not valid JSON (\(error.localizedDescription)). AKit won't change it; fix the file first.")
+    static func entries(in settings: JSONValue) throws(Failure) -> [String] {
+        switch settings.value(at: ["skills"]) {
+        case nil: return []
+        case .array(let items)?: return items.compactMap { if case .string(let text) = $0 { text } else { nil } }
+        default: throw Failure(message: "skills in Pi's settings is not a list.")
         }
     }
 
@@ -200,7 +239,7 @@ public enum SkillSwitches {
         public let from: SkillSwitchState
         public let to: SkillSwitchState
         public let file: URL
-        /// The masked diff for the preview (`env` and `headers` values as `••••`, sorted keys).
+        /// The preview: only the changed object (`skillOverrides`, Pi's `skills`), secrets hidden.
         public let diff: [TextDiff.Line]
         public let notes: [String]
         /// The file's bytes when the plan was made; nil = no file. Apply refuses if they changed.
@@ -219,93 +258,93 @@ public enum SkillSwitches {
             throw Failure(message: "\(harness.displayName) offers \(options.states.map(\.title).joined(separator: ", ")) for \(skill.name), not \(state.title).")
         }
         let file = options.file
-        if (try? FileManager.default.destinationOfSymbolicLink(atPath: file.path)) != nil,
-           !FileManager.default.fileExists(atPath: file.path) {
-            throw Failure(message: "\(file.path) is a link to a missing file.")
-        }
-        let current = try read(file)
+        let home = env.homeDirectory
+        let current: (data: Data, value: JSONValue)?
+        do { current = try SettingsFile.read(file, home: home) } catch { throw Failure(message: error.message) }
         let settings = current?.value ?? .object([:])
-        let from = Self.state(of: skill, harness: harness, settings: settings)
+        guard let from = reading(of: skill, harness: harness, settings: settings).state else {
+            if case .unknown(let reason) = reading(of: skill, harness: harness, settings: settings) {
+                throw Failure(message: "\(reason) Change it by hand, or with pi config.")
+            }
+            throw Failure(message: "The current state can't be read.")
+        }
         let text = current.map { String(decoding: $0.data, as: UTF8.self) } ?? "{}\n"
-        var after: String
+        var after = text
+        var expected = settings
+        let changed: [String]
         do {
             switch harness {
             case .claudeCode:
+                guard let name = claudeName(of: skill) else { throw Failure(message: "Claude Code doesn't see \(skill.name).") }
+                changed = ["skillOverrides"]
+                if let overrides = settings.value(at: ["skillOverrides"]), overrides.objectMembers == nil {
+                    throw Failure(message: "skillOverrides in \(FileWalk.tilde(file, home: home)) is not an object. AKit won't replace it.")
+                }
                 if state == defaultState(of: skill, harness: harness) {
-                    after = try JSONTextEdit.removing(at: ["skillOverrides", skill.name], in: text)
+                    after = try JSONTextEdit.removing(at: ["skillOverrides", name], in: text)
+                    expected.remove(at: ["skillOverrides", name])
                     // An entry list left empty goes too, like a key that was never set.
-                    if case .object(let left)? = try? JSONValue.parse(Data(after.utf8)).value(at: ["skillOverrides"]), left.isEmpty {
+                    if expected.value(at: ["skillOverrides"]) == .object([:]), settings.value(at: ["skillOverrides", name]) != nil {
                         after = try JSONTextEdit.removing(at: ["skillOverrides"], in: after)
+                        expected.remove(at: ["skillOverrides"])
                     }
                 } else {
-                    after = try JSONTextEdit.setting(.string(state.rawValue), at: ["skillOverrides", skill.name], in: text)
+                    after = try JSONTextEdit.setting(.string(state.rawValue), at: ["skillOverrides", name], in: text)
+                    expected.set(.string(state.rawValue), at: ["skillOverrides", name])
                 }
             case .pi:
                 guard let place = skill.places[.pi] else { throw Failure(message: "Pi doesn't see \(skill.name).") }
-                let old = entries(in: settings)
-                let new = PiSkillFilter.entries(old, setting: place, enabled: state == .on)
+                changed = ["skills"]
+                let old = try entries(in: settings)
+                guard let new = PiSkillFilter.entries(old, setting: place, enabled: state == .on) else {
+                    throw Failure(message: "Pi's skills list has a pattern AKit can't read (\(PiSkillFilter.unreadable(old).joined(separator: ", "))). Change it by hand, or with pi config.")
+                }
                 if new == old {
-                    after = text
-                } else if new.isEmpty {
+                    break
+                } else if new.isEmpty, case .array(let all)? = settings.value(at: ["skills"]), all.allSatisfy({ if case .string = $0 { true } else { false } }) {
                     after = try JSONTextEdit.removing(at: ["skills"], in: text)
+                    expected.remove(at: ["skills"])
                 } else {
-                    // Entries that aren't strings (Pi ignores them) stay where they were dropped from: at the end.
+                    // Entries that aren't strings (Pi ignores them) stay, after the strings.
                     var items = new.map(JSONValue.string)
                     if case .array(let all)? = settings.value(at: ["skills"]) {
                         items += all.filter { if case .string = $0 { false } else { true } }
                     }
                     after = try JSONTextEdit.setting(.array(items), at: ["skills"], in: text)
+                    expected.set(.array(items), at: ["skills"])
                 }
             default:
                 throw Failure(message: "\(harness.displayName) has no switch.")
             }
         } catch let error as JSONTextEdit.Failure {
-            throw Failure(message: "\(file.path): \(error.message)")
+            throw Failure(message: "\(FileWalk.tilde(file, home: home)): \(error.message)")
         } catch let error as Failure {
             throw error
         } catch {
             throw Failure(message: error.localizedDescription)
         }
         if current == nil, !after.hasSuffix("\n") { after += "\n" }
-        let newValue = (try? JSONValue.parse(Data(after.utf8))) ?? .object([:])
-        let diff = TextDiff.lines(from: current.map { shown($0.value) } ?? "", to: shown(newValue))
+        let data: Data
+        do { data = try SettingsFile.checked(after, expected: expected, file: file, home: home) } catch { throw Failure(message: error.message) }
         var notes: [String] = []
-        if current == nil { notes.append("Creates \(FileWalk.tilde(file, home: env.homeDirectory)).") }
-        notes.append("Only this entry changes; the rest of the file stays as it is. The preview shows the file with sorted keys and env/headers values hidden.")
+        if current == nil { notes.append("Creates \(FileWalk.tilde(file, home: home)).") }
+        notes.append("Only this entry changes; the rest of the file stays as it is. The preview shows only \(changed[0]).")
         if harness == .claudeCode { notes.append("Claude Code picks the change up in new sessions.") }
         if harness == .pi { notes.append("Pi picks the change up in new sessions (or after /reload).") }
-        let before = current?.data
-        return Plan(skill: skill.name, harness: harness, from: from, to: state, file: file, diff: diff, notes: notes,
-                    before: before, after: Data(after.utf8))
+        return Plan(skill: skill.name, harness: harness, from: from, to: state, file: file,
+                    diff: SettingsFile.preview(old: current?.value, new: expected, at: changed), notes: notes,
+                    before: current?.data, after: data)
     }
 
-    /// Writes the plan: refuses if the file changed since the plan was made (the harness may
-    /// have rewritten it), backs it up into `~/.akit/backups`, then writes it in place
-    /// (through a link, keeping its permissions). Returns the backup, nil for a new file.
+    /// Writes the plan (`SettingsFile.write`): refuses if the file changed since the plan was made
+    /// (the harness may have rewritten it), backs it up into `~/.akit/backups`, then replaces it
+    /// keeping its mode. Returns the backup, nil for a new file or no change.
     @discardableResult
     public static func apply(_ plan: Plan, home: URL) throws(Failure) -> URL? {
-        let fm = FileManager.default
-        let now: Data? = fm.fileExists(atPath: plan.file.path) ? (try? Data(contentsOf: plan.file)) ?? Data() : nil
-        guard now == plan.before else {
-            throw Failure(message: "\(FileWalk.tilde(plan.file, home: home)) changed after the preview. Check the change again.")
-        }
-        guard !plan.changesNothing else { return nil }
         do {
-            var backup: URL?
-            if now != nil { backup = try Backup.copy(plan.file, into: try Backup.newFolder(home: home), home: home) }
-            let real = plan.file.resolvingSymlinksInPath()
-            let permissions = (try? fm.attributesOfItem(atPath: real.path))?[.posixPermissions]
-            try fm.createDirectory(at: real.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try plan.after.write(to: real, options: .atomic)
-            if let permissions { try fm.setAttributes([.posixPermissions: permissions], ofItemAtPath: real.path) }
-            return backup
+            return try SettingsFile.write(plan.after, to: plan.file, expecting: plan.before, home: home)
         } catch {
-            throw Failure(message: "Couldn't write \(FileWalk.tilde(plan.file, home: home)): \(error.localizedDescription)")
+            throw Failure(message: error.message)
         }
-    }
-
-    /// A settings file as the preview shows it: sorted keys, secrets masked.
-    static func shown(_ value: JSONValue) -> String {
-        String(value.masked.mappingStrings(SecretFilter.masked).pretty.dropLast())
     }
 }

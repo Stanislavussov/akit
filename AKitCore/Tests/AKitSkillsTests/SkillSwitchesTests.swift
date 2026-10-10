@@ -47,6 +47,10 @@ struct SkillSwitchesTests {
     }
 
     func state(_ skill: Skill, _ harness: HarnessID) -> SkillSwitchState? {
+        SkillSwitches.states(of: [skill], in: env)[skill.id]?[harness]?.state
+    }
+
+    func reading(_ skill: Skill, _ harness: HarnessID) -> SkillSwitchReading? {
         SkillSwitches.states(of: [skill], in: env)[skill.id]?[harness]
     }
 
@@ -246,16 +250,138 @@ struct SkillSwitchesTests {
     }
 
     @Test func globSubset() {
-        #expect(Glob.matches("*.md", "a.md"))
-        #expect(!Glob.matches("*.md", "dir/a.md"))
-        #expect(Glob.matches("**/a.md", "x/y/a.md"))
-        #expect(Glob.matches("**/a.md", "a.md"))
-        #expect(!Glob.matches("*", ".hidden"))
-        #expect(!Glob.matches("**/a", ".git/a"))
-        #expect(Glob.matches("skills/{tdd,lint}", "skills/lint"))
-        #expect(Glob.matches("t?d", "tdd"))
-        #expect(Glob.matches("[a-c]x", "bx") && !Glob.matches("[!a-c]x", "bx"))
-        #expect(!Glob.matches("#tdd", "#tdd"))
-        #expect(Glob.matches("/Users/*/skills", "/Users/me/skills"))
+        #expect(Glob.matches("*.md", "a.md") == true)
+        #expect(Glob.matches("*.md", "dir/a.md") == false)
+        #expect(Glob.matches("**/a.md", "x/y/a.md") == true)
+        #expect(Glob.matches("**/a.md", "a.md") == true)
+        #expect(Glob.matches("*", ".hidden") == false)
+        #expect(Glob.matches("**/a", ".git/a") == false)
+        #expect(Glob.matches("skills/{tdd,lint}", "skills/lint") == true)
+        #expect(Glob.matches("t?d", "tdd") == true)
+        #expect(Glob.matches("[a-c]x", "bx") == true && Glob.matches("[!a-c]x", "bx") == false)
+        #expect(Glob.matches("#tdd", "#tdd") == false)
+        #expect(Glob.matches("/Users/*/skills", "/Users/me/skills") == true)
+    }
+
+    /// minimatch 10 behaviour the review listed.
+    @Test func globEdgesLikeMinimatch() {
+        #expect(Glob.matches("skills/**", "skills") == false)
+        #expect(Glob.matches("skills/**", "skills/a/b") == true)
+        #expect(Glob.matches("skills/**/x", "skills/x") == true)
+        #expect(Glob.matches("a/*", "a/") == false)
+        #expect(Glob.matches("skills//tdd", "skills/tdd") == true)
+        #expect(Glob.matches("/x/*", "x/a") == false)
+        // Syntax AKit doesn't read: unknown, never a guess.
+        for pattern in ["@(tdd|lint)", "+(a)", "!(tdd)", "?(a)", "*(a)", "[[:alpha:]]dd", "skill{1..3}"] {
+            #expect(Glob.matches(pattern, "tdd") == nil, "\(pattern)")
+        }
+    }
+
+    /// Patterns that take exponential time in a naive matcher finish at once.
+    @Test(.timeLimit(.minutes(1))) func hostileGlobsAreBounded() {
+        let start = Date()
+        #expect(Glob.matches(String(repeating: "{a,b}", count: 22), String(repeating: "a", count: 22)) == nil)
+        #expect(Glob.matches(String(repeating: "*a", count: 12) + "b", String(repeating: "a", count: 40)) == false)
+        #expect(Glob.matches(String(repeating: "**/", count: 30) + "x", Array(repeating: "d", count: 40).joined(separator: "/")) == false)
+        #expect(Date().timeIntervalSince(start) < 5)
+    }
+
+    // MARK: - Review round
+
+    @Test func claudeKeysByTheFolderNotTheSkillMdName() throws {
+        try write(".agents/skills/deploy-staging/SKILL.md", skill("deploy"))
+        try fm.createSymbolicLink(at: home.appending(path: ".claude/skills"), withDestinationURL: home.appending(path: ".agents/skills"))
+        let deploy = try #require(scan().first { $0.name == "deploy" })
+        #expect(SkillSwitches.claudeName(of: deploy) == "deploy-staging")
+        let options = try #require(SkillSwitches.options(for: deploy, harness: .claudeCode, in: env))
+        #expect(options.key == #"skillOverrides."deploy-staging""#)
+        #expect(options.note?.contains("deploy-staging (its folder), not deploy") == true)
+        try SkillSwitches.apply(try SkillSwitches.plan(deploy, harness: .claudeCode, to: .off, in: env), home: home)
+        #expect(try text(claudeSettings) == "{\n  \"skillOverrides\": {\n    \"deploy-staging\": \"off\"\n  }\n}\n")
+        // An entry under the SKILL.md name is not the skill's.
+        try write(".claude/settings.json", #"{"skillOverrides": {"deploy": "off"}}"#)
+        #expect(state(deploy, .claudeCode) == .on)
+    }
+
+    @Test func syncedSkillsUseTheQualifiedName() throws {
+        try write(".claude/skills/synced/bucket/pdf/SKILL.md", skill("pdf"))
+        let pdf = try #require(scan().first { $0.name == "pdf" })
+        #expect(pdf.scope == .synced)
+        #expect(SkillSwitches.claudeName(of: pdf) == "anthropic-skills:pdf")
+    }
+
+    @Test func piFileFollowsTheRootPiFoundTheSkillIn() throws {
+        // ~/.agents/skills/lint is a link into a project's own skills: Pi finds it in a personal folder.
+        let project = home.appending(path: "Projects/app")
+        try fm.createDirectory(at: project.appending(path: ".git"), withIntermediateDirectories: true)
+        try write("Projects/app/.agents/skills/lint/SKILL.md", skill("lint"))
+        try fm.createDirectory(at: home.appending(path: ".agents/skills"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: home.appending(path: ".agents/skills/lint"), withDestinationURL: project.appending(path: ".agents/skills/lint"))
+        let lint = try #require(scan().first { $0.name == "lint" })
+        #expect(lint.places[.pi]?.scope == .global)
+        #expect(SkillSwitches.settingsFile(for: lint, harness: .pi, in: env)?.path == piSettings.path)
+    }
+
+    @Test func aTextEditMustDoExactlyTheIntendedChange() throws {
+        // The file has "café" precomposed; a file URL gives the folder name decomposed (as macOS
+        // file names come back). The text edit (by Unicode scalars) adds a second key that Swift's tree
+        // sees as the same one: the check after the edit refuses instead of writing the key twice.
+        try write(".claude/settings.json", "{\"skillOverrides\": {\"caf\u{e9}\": \"off\"}}\n")
+        let file = home.appending(path: ".claude/skills/caf\u{e9}/SKILL.md")
+        let cafe = Skill(name: "caf\u{e9}", description: "", file: file, realFile: file, isSingleFile: false, scope: .global,
+                         visibleTo: [.claudeCode], isReadOnly: false, origin: nil, warnings: [], root: home.appending(path: ".claude/skills"),
+                         places: [.claudeCode: Skill.Place(file: file, base: home.appending(path: ".claude"), scope: .global)])
+        #expect(SkillSwitches.claudeName(of: cafe)?.unicodeScalars.count == 5)
+        #expect(throws: SkillSwitches.Failure.self) { try SkillSwitches.plan(cafe, harness: .claudeCode, to: .nameOnly, in: env) }
+        #expect(throws: SettingsFile.Failure.self) {
+            try SettingsFile.checked(#"{"a": 1, "b": 2}"#, expected: .object(["a": .number("1")]), file: claudeSettings, home: home)
+        }
+    }
+
+    @Test func previewShowsOnlyTheChangedObject() throws {
+        let tdd = try shared("tdd")
+        try write(".claude/settings.json", #"{"apiKeyHelper": "print-key --secret", "statusLine": {"command": "x"}, "skillOverrides": {"a": "off"}}"#)
+        let plan = try SkillSwitches.plan(tdd, harness: .claudeCode, to: .off, in: env)
+        let shown = plan.diff.map { "\($0)" }.joined(separator: "\n")
+        #expect(!shown.contains("apiKeyHelper") && !shown.contains("print-key") && !shown.contains("statusLine"))
+        #expect(plan.diff.contains(.same(#"  "skillOverrides": {"#)))
+        #expect(plan.diff.contains(.added(#"    "tdd": "off""#)))
+    }
+
+    @Test func unreadableFilesAndPatternsAreUnknown() throws {
+        let tdd = try shared("tdd")
+        try write(".claude/settings.json", "{ not json")
+        guard case .unknown(let reason)? = reading(tdd, .claudeCode) else { Issue.record("expected unknown"); return }
+        #expect(reason.contains("not valid JSON"))
+        try write(".pi/agent/settings.json", #"{"skills": ["!@(tdd|x)"]}"#)
+        guard case .unknown(let pattern)? = reading(tdd, .pi) else { Issue.record("expected unknown"); return }
+        #expect(pattern.contains("can't read"))
+        #expect(throws: SkillSwitches.Failure.self) { try SkillSwitches.plan(tdd, harness: .pi, to: .off, in: env) }
+        try write(".pi/agent/settings.json", #"{"skills": "tdd"}"#)
+        #expect(reading(tdd, .pi)?.state == nil)
+        #expect(throws: SkillSwitches.Failure.self) { try SkillSwitches.plan(tdd, harness: .pi, to: .off, in: env) }
+        try write(".claude/settings.json", #"{"skillOverrides": ["tdd"]}"#)
+        #expect(reading(tdd, .claudeCode)?.state == nil)
+        #expect(throws: SkillSwitches.Failure.self) { try SkillSwitches.plan(tdd, harness: .claudeCode, to: .off, in: env) }
+    }
+
+    @Test func crlfFilesGetCrlfLines() throws {
+        let tdd = try shared("tdd")
+        try write(".claude/settings.json", "{\r\n  \"model\": \"opus\"\r\n}\r\n")
+        try SkillSwitches.apply(try SkillSwitches.plan(tdd, harness: .claudeCode, to: .off, in: env), home: home)
+        #expect(try text(claudeSettings) == "{\r\n  \"model\": \"opus\",\r\n  \"skillOverrides\": {\r\n    \"tdd\": \"off\"\r\n  }\r\n}\r\n")
+    }
+
+    @Test func applyKeepsModeAndExtendedAttributes() throws {
+        let tdd = try shared("tdd")
+        try write(".claude/settings.json", "{}\n")
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: claudeSettings.path)
+        #expect(setxattr(claudeSettings.path, "com.akit.test", "v", 1, 0, 0) == 0)
+        try SkillSwitches.apply(try SkillSwitches.plan(tdd, harness: .claudeCode, to: .off, in: env), home: home)
+        #expect((try fm.attributesOfItem(atPath: claudeSettings.path)[.posixPermissions] as? Int) == 0o600)
+        var byte: UInt8 = 0
+        #expect(getxattr(claudeSettings.path, "com.akit.test", &byte, 1, 0, 0) == 1 && byte == UInt8(ascii: "v"))
+        // No temporary file is left next to it.
+        #expect(try fm.contentsOfDirectory(atPath: home.appending(path: ".claude").path).filter { $0.contains("akit-") }.isEmpty)
     }
 }

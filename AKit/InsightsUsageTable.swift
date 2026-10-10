@@ -64,7 +64,6 @@ struct InsightsUsageTable: View {
             Text("\(kind.title), Last \(stats.window.days) Days").font(.headline)
         }
         .help(kind == .skills ? "The same numbers as akit stats --details" : "The same numbers as akit stats tools --details")
-        .skillSwitchSheet(model)
     }
 
     private var controls: some View {

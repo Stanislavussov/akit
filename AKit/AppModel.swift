@@ -29,7 +29,7 @@ final class AppModel {
     /// Per project path: ids of global Pi package skills a session there doesn't load.
     private(set) var piHiddenSkills: [String: Set<String>] = [:]
     /// Each skill's switch per harness (Claude Code's skillOverrides, Pi's skills entries).
-    private(set) var skillStates: [Skill.ID: [HarnessID: SkillSwitchState]] = [:]
+    private(set) var skillStates: [Skill.ID: [HarnessID: SkillSwitchReading]] = [:]
     /// A skill switch change shown in its sheet until Apply or Cancel.
     var skillSwitchRequest: SkillSwitchRequest?
     /// Why a skill switch change couldn't be planned (shown in an alert).
@@ -528,13 +528,16 @@ final class AppModel {
         return backup
     }
 
-    /// The installed skill a name stands for (Insights lists plugin skills as `plugin:name`):
-    /// the personal one first, then a project's.
+    /// The installed skill a name from session records stands for: Claude Code's command name
+    /// (the folder, `anthropic-skills:<folder>` for claude.ai skills), Insights' `plugin:name` for a
+    /// plugin skill, else the SKILL.md name (Pi). The personal one first, then a project's.
     func installedSkill(named name: String) -> Skill? {
-        skills.filter { skill in
-            if case .plugin(let plugin) = skill.scope { return "\(plugin):\(skill.name)" == name }
-            return skill.name == name
-        }.min { $0.scope.sortRank < $1.scope.sortRank }
+        func names(_ skill: Skill) -> [String] {
+            if case .plugin(let plugin) = skill.scope { return ["\(plugin):\(skill.name)"] }
+            return [SkillSwitches.claudeName(of: skill), skill.name].compactMap { $0 }
+        }
+        let sorted = skills.sorted { $0.scope.sortRank < $1.scope.sortRank }
+        return sorted.first { names($0).first == name } ?? sorted.first { names($0).contains(name) }
     }
 
     /// The scanned skill that lives in this folder, if any.

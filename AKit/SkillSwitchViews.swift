@@ -22,9 +22,12 @@ struct SkillSwitchControls: View {
                     Text(harness.displayName).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
                     if let reason = options.unavailable {
                         Text("No switch").foregroundStyle(.secondary).help(reason)
+                    } else if case .unknown(let reason)? = model.skillStates[skill.id]?[harness] {
+                        Label("Unknown", systemImage: "questionmark.circle").foregroundStyle(.orange)
+                            .help("\(reason) \(SkillSwitchText.help(options, home: HarnessEnvironment.current.homeDirectory))")
                     } else {
                         Picker(harness.displayName, selection: Binding(
-                            get: { model.skillStates[skill.id]?[harness] ?? .on },
+                            get: { model.skillStates[skill.id]?[harness]?.state ?? SkillSwitches.defaultState(of: skill, harness: harness) },
                             set: { model.requestSkillSwitch(skill, harness: harness, to: $0) }
                         )) {
                             ForEach(options.states, id: \.self) { Text($0.title).tag($0) }
@@ -49,8 +52,10 @@ struct SkillSwitchMenu: View {
             if let options = SkillSwitches.options(for: skill, harness: harness, in: .current) {
                 if options.unavailable != nil {
                     Button("\(harness.displayName): No Switch") {}.disabled(true)
+                } else if model.skillStates[skill.id]?[harness]?.state == nil {
+                    Button("\(harness.displayName): Unknown") {}.disabled(true)
                 } else {
-                    let current = model.skillStates[skill.id]?[harness] ?? .on
+                    let current = model.skillStates[skill.id]?[harness]?.state ?? .on
                     Menu("\(harness.displayName): \(current.title)") {
                         ForEach(options.states, id: \.self) { state in
                             Button {
@@ -76,7 +81,7 @@ struct SkillSwitchMarks: View {
 
     var body: some View {
         let marks = SkillSwitches.harnesses.compactMap { harness -> (harness: HarnessID, state: SkillSwitchState)? in
-            guard let state = model.skillStates[skill.id]?[harness], state != SkillSwitches.defaultState(of: skill, harness: harness) else { return nil }
+            guard let state = model.skillStates[skill.id]?[harness]?.state, state != SkillSwitches.defaultState(of: skill, harness: harness) else { return nil }
             return (harness, state)
         }
         if !marks.isEmpty {

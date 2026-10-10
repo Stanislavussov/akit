@@ -126,7 +126,7 @@ public enum SkillScanner {
         for hit in hits {
             let real = hit.file.resolvingSymlinksInPath()
             let id = real.path
-            let place = Skill.Place(file: hit.file, base: hit.root.url.deletingLastPathComponent())
+            let place = Skill.Place(file: hit.file, base: hit.root.url.deletingLastPathComponent(), scope: hit.root.scope)
             if var existing = byID[id] {
                 if !existing.visibleTo.contains(hit.root.harness) { existing.visibleTo.append(hit.root.harness) }
                 if existing.places[hit.root.harness] == nil { existing.places[hit.root.harness] = place }
