@@ -24,13 +24,29 @@ public enum Backup {
 
     /// Saves `data` (a file's bytes as AKit read them) as the backup of `file` in a new backup
     /// folder, readable only by the user (settings files may hold tokens).
-    public static func save(_ data: Data, as file: URL, home: URL) throws -> URL {
-        let backup = try newFolder(home: home).appending(path: relative(file, home: home))
-        try FileManager.default.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+    /// `into`: an earlier backup of the same write (a retry), overwritten instead of a new one.
+    public static func save(_ data: Data, as file: URL, home: URL, into existing: URL? = nil) throws -> URL {
+        let backup = try existing ?? newFolder(home: home).appending(path: relative(file, home: home))
+        try FileManager.default.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        try? FileManager.default.removeItem(at: backup)
         guard FileManager.default.createFile(atPath: backup.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
             throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: backup.path])
         }
         return backup
+    }
+
+    /// Removes a backup that wasn't needed (the write didn't happen) and its folders left empty.
+    public static func discard(_ backup: URL, home: URL) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: backup)
+        let root = home.appending(path: ".akit/backups").standardizedFileURL.path
+        var parent = backup.deletingLastPathComponent()
+        // Bounded: every step drops one component, and the backups folder itself stays.
+        while parent.standardizedFileURL.path.hasPrefix(root + "/"), (try? fm.contentsOfDirectory(atPath: parent.path))?.isEmpty == true {
+            try? fm.removeItem(at: parent)
+            parent = parent.deletingLastPathComponent()
+        }
     }
 
     /// Deletes all but the newest `keep` backups of `file` (and backup folders left empty).

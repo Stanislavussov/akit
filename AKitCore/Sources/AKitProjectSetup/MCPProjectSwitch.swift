@@ -37,7 +37,7 @@ public enum MCPProjectSwitch {
             var mains: [String] = []
             if harness == .pi {
                 let status = MCPSwitches.statuses(of: [server], projects: known, in: env)[server.id]?[harness]
-                mains = (status?.offIn ?? []) + MCPSwitches.intents(home: env.homeDirectory)
+                mains = (status?.offIn ?? []) + (try MCPSwitches.intents(home: env.homeDirectory))
                     .filter { $0.harness == harness.rawValue && $0.server == server.name }.map(\.project)
             }
             var seen = Set<String>()
@@ -48,8 +48,15 @@ public enum MCPProjectSwitch {
             inner = .all(extra: families)
         }
         var plan = try MCPSwitches.plan(server, harness: harness, off: off, target: inner, includeUnmanaged: includeUnmanaged, known: known, in: env)
-        guard harness == .pi, off, !plan.piFolders.isEmpty else { return plan }
+        guard harness == .pi, !plan.piFolders.isEmpty else { return plan }
         let git = gitFacts(plan.piFolders, env: env)
+        if off, let refused = git.refused.first { throw MCPSwitches.Failure(refused) }
+        guard off else {
+            if git.excluded > 0 {
+                plan.notes.insert("The .pi/mcp.json line in AKit's MCP block of .git/info/exclude stays: AKit doesn't delete the file (it may hold other entries), and git should keep ignoring it.", at: 0)
+            }
+            return plan
+        }
         plan.excludes = git.excludes
         if !git.excludes.isEmpty {
             plan.notes.insert("Keeps .pi/mcp.json out of git: adds it to AKit's MCP block in \(git.excludes.keys.map { FileWalk.tilde($0, home: env.homeDirectory) }.sorted().joined(separator: ", ")).", at: 0)
@@ -76,8 +83,13 @@ public enum MCPProjectSwitch {
     /// the Pi entries they lack. Skips a worktree where git tracks `.pi/mcp.json` (or can't tell)
     /// and says so; adds the exclude line before writing. One sync at a time is the caller's job.
     public static func syncWorktrees(only: URL? = nil, env: HarnessEnvironment) -> (added: [String], problems: [String]) {
-        let intents = MCPSwitches.intents(home: env.homeDirectory).filter { $0.harness == HarnessID.pi.rawValue }
         var added: [String] = [], problems: [String] = []
+        let intents: [MCPSwitches.Intent]
+        do {
+            intents = try MCPSwitches.intents(home: env.homeDirectory).filter { $0.harness == HarnessID.pi.rawValue }
+        } catch {
+            return ([], [error.message])
+        }
         var families: [String: MCPSwitches.Family] = [:]
         for intent in intents where only == nil || only!.standardizedFileURL.path == intent.project {
             let family = families[intent.project] ?? family(of: URL(filePath: intent.project, directoryHint: .isDirectory), env: env)
@@ -87,7 +99,8 @@ public enum MCPProjectSwitch {
                 var plan = try MCPSwitches.worktreePlan(intent.server, worktrees: family.worktrees, in: env)
                 guard !plan.piFolders.isEmpty else { continue }
                 let git = gitFacts(plan.piFolders, env: env)
-                let blocked = git.tracked + git.unknown
+                let blocked = git.tracked + git.unknown + git.refusedFolders
+                for reason in git.refused { problems.append("\(intent.server) (Pi): \(reason)") }
                 if !blocked.isEmpty {
                     problems.append("\(intent.server) (Pi): .pi/mcp.json is tracked by git (or git couldn't tell) in \(blocked.map { FileWalk.tilde(URL(filePath: $0), home: env.homeDirectory) }.joined(separator: ", ")); AKit doesn't change it on its own. Use Off in Project… there.")
                     plan = try MCPSwitches.worktreePlan(intent.server, worktrees: family.worktrees.filter { !blocked.contains($0.standardizedFileURL.path) }, in: env)
@@ -107,11 +120,21 @@ public enum MCPProjectSwitch {
 
     /// For each folder whose `.pi/mcp.json` AKit writes: the exclude line it needs (the file is
     /// missing or untracked), or that git tracks it, or that git couldn't tell (no git: nothing).
-    static func gitFacts(_ folders: [URL], env: HarnessEnvironment) -> (excludes: [URL: [String]], tracked: [String], unknown: [String]) {
-        var excludes: [URL: [String]] = [:], tracked: [String] = [], unknown: [String] = []
+    /// `refused`: folders whose real path isn't inside their checkout's (a link out of it): AKit
+    /// doesn't write there, since no exclude line could cover the file. `excluded`: folders whose
+    /// file the MCP block already covers.
+    static func gitFacts(_ folders: [URL], env: HarnessEnvironment)
+        -> (excludes: [URL: [String]], tracked: [String], unknown: [String], refused: [String], refusedFolders: [String], excluded: Int) {
+        var excludes: [URL: [String]] = [:], tracked: [String] = [], unknown: [String] = [], refused: [String] = [], refusedFolders: [String] = []
+        var excluded = 0
         for folder in folders {
             guard let checkout = GitCheckout.containing(folder),
                   let top = FileWalk.realPath(checkout.folder), let inside = FileWalk.realPath(folder) else { continue }
+            guard inside == top || inside.hasPrefix(top + "/") else {
+                refused.append("\(FileWalk.tilde(folder, home: env.homeDirectory)) leads out of its git checkout (\(top)), so AKit can't keep its .pi/mcp.json out of git; it doesn't write there.")
+                refusedFolders.append(folder.standardizedFileURL.path)
+                continue
+            }
             let relative = inside == top ? "" : String(inside.dropFirst(top.count + 1)) + "/"
             let unit = relative + ".pi/mcp.json"
             guard LocalOnly.isSafe(unit) else { continue }
@@ -119,12 +142,14 @@ public enum MCPProjectSwitch {
             case nil: unknown.append(folder.standardizedFileURL.path)
             case let set? where set.contains(unit): tracked.append(folder.standardizedFileURL.path)
             default:
-                if LocalOnly.blockUnits(in: checkout.excludeFile, markers: .mcp)?.contains(unit) != true {
+                if LocalOnly.blockUnits(in: checkout.excludeFile, markers: .mcp)?.contains(unit) == true {
+                    excluded += 1
+                } else {
                     excludes[checkout.excludeFile, default: []].append(unit)
                 }
             }
         }
-        return (excludes.mapValues { Array(Set($0)).sorted() }, tracked, unknown)
+        return (excludes.mapValues { Array(Set($0)).sorted() }, tracked, unknown, refused, refusedFolders, excluded)
     }
 
     /// Adds units to AKit's MCP block of an exclude file (keeping those already there).

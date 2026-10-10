@@ -70,8 +70,9 @@ struct MCPSwitchesTests {
     func makeRepository() throws {
         try fm.createDirectory(at: project.appending(path: ".git/worktrees/app-feature"), withIntermediateDirectories: true)
         try write("Projects/app/.git/worktrees/app-feature/commondir", "../..\n")
-        try write("Projects/app/.git/worktrees/app-feature/gitdir", worktree.appending(path: ".git").path + "\n")
-        try write("trees/app-feature/.git", "gitdir: \(project.appending(path: ".git/worktrees/app-feature").path)\n")
+        // Physical paths, as `git worktree add` writes them.
+        try write("Projects/app/.git/worktrees/app-feature/gitdir", FileWalk.realPath(worktree)! + "/.git\n")
+        try write("trees/app-feature/.git", "gitdir: \(FileWalk.realPath(project.appending(path: ".git/worktrees/app-feature"))!)\n")
         try fm.createDirectory(at: project.appending(path: "Sources/Deep"), withIntermediateDirectories: true)
     }
 
@@ -84,6 +85,78 @@ struct MCPSwitchesTests {
         let outside = home.appending(path: "Notes", directoryHint: .isDirectory)
         try fm.createDirectory(at: outside, withIntermediateDirectories: true)
         #expect(MCPSwitches.claudeProjectKey(outside) == FileWalk.realPath(outside))
+    }
+
+    /// A linked worktree at `tree` of the git folder `common` (named `<name>` under worktrees).
+    func linkWorktree(_ tree: URL, common: URL, name: String, backLink: URL? = nil) throws {
+        let record = common.appending(path: "worktrees/\(name)")
+        try fm.createDirectory(at: record, withIntermediateDirectories: true)
+        try fm.createDirectory(at: tree, withIntermediateDirectories: true)
+        try Data("../..\n".utf8).write(to: record.appending(path: "commondir"))
+        // Physical paths, as `git worktree add` writes them.
+        let back = backLink.map { $0.appending(path: ".git").path } ?? FileWalk.realPath(tree)! + "/.git"
+        try Data((back + "\n").utf8).write(to: record.appending(path: "gitdir"))
+        try Data("gitdir: \(FileWalk.realPath(record)!)\n".utf8).write(to: tree.appending(path: ".git"))
+    }
+
+    @Test func claudeKeyEdgesLikeClaudeCode() throws {
+        // A bare repository's worktree: the bare folder (it holds no .git of its own).
+        let bare = home.appending(path: "bare/repo.git", directoryHint: .isDirectory)
+        try fm.createDirectory(at: bare, withIntermediateDirectories: true)
+        let bareTree = home.appending(path: "bare/tree", directoryHint: .isDirectory)
+        try linkWorktree(bareTree, common: bare, name: "tree")
+        #expect(MCPSwitches.claudeProjectKey(bareTree) == FileWalk.realPath(bare))
+
+        // A submodule: its gitdir is under .git/modules, not worktrees: its own top.
+        try fm.createDirectory(at: project.appending(path: ".git/modules/sub"), withIntermediateDirectories: true)
+        try write("Projects/app/sub/.git", "gitdir: ../.git/modules/sub\n")
+        #expect(MCPSwitches.claudeProjectKey(project.appending(path: "sub")) == FileWalk.realPath(project.appending(path: "sub")))
+
+        // A worktree moved without `git worktree repair`: its record points elsewhere: its own top.
+        let moved = home.appending(path: "trees/moved", directoryHint: .isDirectory)
+        try linkWorktree(moved, common: project.appending(path: ".git"), name: "moved", backLink: home.appending(path: "trees/old"))
+        #expect(MCPSwitches.claudeProjectKey(moved) == FileWalk.realPath(moved))
+        let fine = home.appending(path: "trees/fine", directoryHint: .isDirectory)
+        try linkWorktree(fine, common: project.appending(path: ".git"), name: "fine")
+        #expect(MCPSwitches.claudeProjectKey(fine) == key)
+
+        // A .git file without gitdir: still the checkout's top.
+        try write("Odd/.git", "not a pointer\n")
+        try fm.createDirectory(at: home.appending(path: "Odd/inner"), withIntermediateDirectories: true)
+        #expect(MCPSwitches.claudeProjectKey(home.appending(path: "Odd/inner")) == FileWalk.realPath(home.appending(path: "Odd")))
+
+        // A decomposed folder name gives a precomposed (NFC) key.
+        let decomposed = home.appending(path: "cafe\u{301}", directoryHint: .isDirectory)
+        try fm.createDirectory(at: decomposed, withIntermediateDirectories: true)
+        let nfc = MCPSwitches.claudeProjectKey(decomposed)
+        #expect(nfc.hasSuffix("/caf\u{e9}") && nfc.unicodeScalars.contains("\u{e9}"))
+
+        // /tmp is a link: Claude Code's key is the physical /private/tmp.
+        let temporary = URL(filePath: "/tmp/akit-key-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fm.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: temporary) }
+        #expect(MCPSwitches.claudeProjectKey(temporary) == "/private" + temporary.path)
+    }
+
+    @Test func aRecordWhoseEntryIsGoneIsDroppedAndACorruptStoreIsRefused() throws {
+        try claudeState()
+        let github = try server("github")
+        try MCPSwitches.apply(try MCPSwitches.plan(github, harness: .claudeCode, off: true, target: .projects([family]), in: env), home: home)
+        // Turned on by hand, then off again with /mcp: the second entry is the user's.
+        var value = try json(state)
+        value.set(.array([.string("other")]), at: ["projects", key, "disabledMcpServers"])
+        try Data(value.pretty.utf8).write(to: state)
+        _ = status(github, .claudeCode)
+        value.set(.array([.string("other"), .string("github")]), at: ["projects", key, "disabledMcpServers"])
+        try Data(value.pretty.utf8).write(to: state)
+        #expect(status(github, .claudeCode)?.outsideAKit.count == 1)
+        let on = try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .projects([family]), in: env)
+        #expect(on.changes.isEmpty && on.unmanaged.count == 1)
+
+        try write(".akit/mcp-off.json", "{ broken")
+        #expect(status(github, .claudeCode)?.unknown?.contains("mcp-off.json") == true)
+        #expect(throws: MCPSwitches.Failure.self) { try MCPSwitches.plan(github, harness: .claudeCode, off: true, target: .everywhere, in: env) }
+        #expect(try text(home.appending(path: ".akit/mcp-off.json")) == "{ broken")
     }
 
     @Test func claudeOffInProjectWritesOneEntryForTheRootAndOnRemovesIt() throws {
@@ -112,7 +185,7 @@ struct MCPSwitchesTests {
         #expect(status(github, .claudeCode)?.offIn == [key])
         #expect(status(github, .claudeCode)?.outsideAKit.isEmpty == true)
         // Nothing remembered for Claude Code: its entry already covers later worktrees.
-        #expect(MCPSwitches.intents(home: home).isEmpty)
+        #expect(try MCPSwitches.intents(home: home).isEmpty)
         #expect(!fm.fileExists(atPath: home.appending(path: ".claude.json.lock").path))
 
         let on = try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .projects([family]), in: env)

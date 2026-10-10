@@ -380,4 +380,19 @@ struct LocalOnlyTests {
         }
         #expect(f.exclude == block, "the record stays, so the block stays")
     }
+
+    @Test func theMCPBlockSurvivesALocalOnlyRewrite() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "akit-exclude-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appending(path: "exclude")
+        try Data("# git's own\n*.log\n".utf8).write(to: file)
+        #expect(MCPProjectSwitch.addExcludes([".pi/mcp.json"], to: file) == nil)
+        // Set Up Project writes and then empties its local-only block: the MCP block stays.
+        #expect(LocalOnly.write(units: [".agents/skills/tdd"], to: file) == nil)
+        #expect(LocalOnly.write(units: [], to: file) == nil)
+        #expect(LocalOnly.blockUnits(in: file, markers: .mcp) == [".pi/mcp.json"])
+        #expect(LocalOnly.blockUnits(in: file) == nil)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(text.hasPrefix("# git's own\n*.log\n") && text.contains("/.pi/mcp.json"))
+    }
 }

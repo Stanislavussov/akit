@@ -64,10 +64,55 @@ struct SettingsFileTests {
         #expect(throws: SettingsFile.Failure.self) { try SettingsFile.apply(again, home: home) }
     }
 
+    @Test func aWriteRacingTheHarnessIsRetriedWithOneBackup() throws {
+        try Data("{\"a\": \"x\", \"b\": 1}\n".utf8).write(to: file)
+        let planned = try change("y")
+        // The harness rewrites another key between AKit's read and its rename, once.
+        let raced = Raced()
+        SettingsFile.Hooks.set(file) {
+            guard raced.first() else { return }
+            try? Data("{\"a\": \"x\", \"b\": 2}\n".utf8).write(to: self.file)
+        }
+        defer { SettingsFile.Hooks.set(file, nil) }
+        let backup = try #require(try SettingsFile.apply(planned, home: home))
+        #expect(try String(contentsOf: file, encoding: .utf8) == "{\"a\": \"y\", \"b\": 2}\n")
+        // One backup folder, holding the bytes actually replaced; no empty folders left.
+        let root = home.appending(path: ".akit/backups")
+        #expect(try fm.contentsOfDirectory(atPath: root.path).count == 1)
+        #expect(try String(contentsOf: backup, encoding: .utf8) == "{\"a\": \"x\", \"b\": 2}\n")
+        #expect((try fm.attributesOfItem(atPath: root.path)[.posixPermissions] as? Int) == 0o700)
+        #expect((try fm.attributesOfItem(atPath: backup.deletingLastPathComponent().path)[.posixPermissions] as? Int) == 0o700)
+    }
+
+    @Test func aFailedWriteLeavesNoBackupFolder() throws {
+        try Data("{\"a\": \"x\"}\n".utf8).write(to: file)
+        let planned = try change("y")
+        // The harness keeps rewriting another key on every attempt: after 3 tries AKit gives up.
+        let counter = Raced()
+        SettingsFile.Hooks.set(file) { try? Data("{\"a\": \"x\", \"c\": \(counter.next())}\n".utf8).write(to: self.file) }
+        defer { SettingsFile.Hooks.set(file, nil) }
+        #expect(throws: SettingsFile.Failure.self) { try SettingsFile.apply(planned, home: home) }
+        let root = home.appending(path: ".akit/backups")
+        #expect(((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).isEmpty)
+    }
+
     @Test func checkComparesKeysByScalars() throws {
         // The same tree to Swift, two different files to a harness.
         #expect(throws: SettingsFile.Failure.self) {
             try SettingsFile.checked("{\"cafe\u{301}\": 1}", expected: .object(["caf\u{e9}": .number("1")]), file: file, home: home)
         }
+    }
+}
+
+/// True only the first time (a race that happens once).
+private final class Raced: @unchecked Sendable {
+    private var count = 0
+    func first() -> Bool {
+        defer { count += 1 }
+        return count == 0
+    }
+    func next() -> Int {
+        count += 1
+        return count
     }
 }

@@ -11,10 +11,13 @@ public enum SettingsFile {
         /// The file's bytes changed between reading and writing (worth a retry when the values
         /// the change touches are still the same).
         public let changedMeanwhile: Bool
+        /// The file was replaced, but the check after it failed.
+        public let written: Bool
         public var errorDescription: String? { message }
-        public init(_ message: String, changedMeanwhile: Bool = false) {
+        public init(_ message: String, changedMeanwhile: Bool = false, written: Bool = false) {
             self.message = message
             self.changedMeanwhile = changedMeanwhile
+            self.written = written
         }
     }
 
@@ -139,8 +142,9 @@ public enum SettingsFile {
 
     /// Applies a change on the file as it is now (see `Change`), under the harness's lock when
     /// it has one. When the file's bytes change between reading and the final rename but the
-    /// touched values don't, it tries again (3 times). Afterwards it reads the file again and
-    /// checks the edited values are there. Returns the backup, if any.
+    /// touched values don't, it tries again (3 times), reusing one backup. Afterwards it reads
+    /// the file again and checks the edited values are there; when they aren't, the failure says
+    /// the file was written (`written`). Returns the backup, if any.
     @discardableResult
     public static func apply(_ change: Change, home: URL) throws(Failure) -> URL? {
         let held = try change.lock.map { lock throws(Failure) in try Lock.acquire(lock, file: change.file, home: home) }
@@ -148,28 +152,35 @@ public enum SettingsFile {
         var expected = JSONValue.object([:])
         var backup: URL?
         var attempt = 0
-        while true {
-            attempt += 1
-            let current = try read(change.file, home: home, limit: change.limit)
-            let value = current?.value ?? .object([:])
-            for (path, old) in change.snapshot where value.value(at: path) != old {
-                throw Failure("\(FileWalk.tilde(change.file, home: home)) changed after the preview (\(JSONValue.display(path))). Check the change again.")
+        do throws(Failure) {
+            while true {
+                attempt += 1
+                let current = try read(change.file, home: home, limit: change.limit)
+                let value = current?.value ?? .object([:])
+                for (path, old) in change.snapshot where value.value(at: path) != old {
+                    throw Failure("\(FileWalk.tilde(change.file, home: home)) changed after the preview (\(JSONValue.display(path))). Check the change again.")
+                }
+                let text = current.map { String(decoding: $0.data, as: UTF8.self) } ?? "{}\n"
+                var result = try edited(text, value: value, edits: change.edits, file: change.file, home: home)
+                if current == nil, result.data.last != UInt8(ascii: "\n") { result.data.append(UInt8(ascii: "\n")) }
+                do {
+                    try write(result.data, to: change.file, expecting: current?.data, home: home, backup: &backup, deadline: held?.deadline)
+                    expected = result.value
+                    break
+                } catch where error.changedMeanwhile && attempt < 3 {
+                    continue
+                }
             }
-            let text = current.map { String(decoding: $0.data, as: UTF8.self) } ?? "{}\n"
-            var result = try edited(text, value: value, edits: change.edits, file: change.file, home: home)
-            if current == nil, result.data.last != UInt8(ascii: "\n") { result.data.append(UInt8(ascii: "\n")) }
-            do {
-                backup = try write(result.data, to: change.file, expecting: current?.data, home: home)
-                expected = result.value
-                break
-            } catch where error.changedMeanwhile && attempt < 3 {
-                continue
-            }
+        } catch {
+            if let backup { Backup.discard(backup, home: home) }
+            throw error
         }
+        if backup != nil { Backup.prune(change.file, home: home, keep: keptBackups) }
         // The harness may write right after: say so if the change isn't there any more.
         let written = (try? read(change.file, home: home, limit: change.limit))?.value
         for edit in change.edits where written?.value(at: edit.path) != expected.value(at: edit.path) {
-            throw Failure("\(FileWalk.tilde(change.file, home: home)) was written, but \(JSONValue.display(edit.path)) changed again right after (the harness rewrote the file). Check it and try again.")
+            throw Failure("\(FileWalk.tilde(change.file, home: home)) was written, but \(JSONValue.display(edit.path)) changed again right after (the harness rewrote the file). Check it and try again.",
+                          written: true)
         }
         return backup
     }
@@ -181,18 +192,28 @@ public enum SettingsFile {
     /// new file or no change.
     @discardableResult
     public static func write(_ data: Data, to file: URL, expecting before: Data?, home: URL) throws(Failure) -> URL? {
+        var backup: URL?
+        do {
+            try write(data, to: file, expecting: before, home: home, backup: &backup, deadline: nil)
+        } catch {
+            if let backup { Backup.discard(backup, home: home) }
+            throw error
+        }
+        if backup != nil { Backup.prune(file, home: home, keep: keptBackups) }
+        return backup
+    }
+
+    /// `write`, keeping its backup in `backup` (a retry saves into the same one). `deadline`: the
+    /// last moment the lock is surely still AKit's; the rename doesn't happen after it.
+    static func write(_ data: Data, to file: URL, expecting before: Data?, home: URL, backup: inout URL?, deadline: Date?) throws(Failure) {
         func now() -> Data? {
             FileManager.default.fileExists(atPath: file.path) ? (try? Data(contentsOf: file)) ?? Data() : nil
         }
         let changed = Failure("\(FileWalk.tilde(file, home: home)) changed after the preview. Check the change again.", changedMeanwhile: true)
         guard now() == before else { throw changed }
-        guard before != data else { return nil }
-        var backup: URL?
+        guard before != data else { return }
         do {
-            if let before {
-                backup = try Backup.save(before, as: file, home: home)
-                Backup.prune(file, home: home, keep: keptBackups)
-            }
+            if let before { backup = try Backup.save(before, as: file, home: home, into: backup) }
         } catch {
             throw Failure("Couldn't back up \(FileWalk.tilde(file, home: home)): \(error.localizedDescription)")
         }
@@ -205,17 +226,39 @@ public enum SettingsFile {
         } catch {
             throw Failure("Couldn't write \(FileWalk.tilde(file, home: home)): \(error.localizedDescription)")
         }
+        Hooks.beforeFinalCompare(file)
         guard now() == before else {
             unlink(temporary.path)
-            if let backup { try? FileManager.default.removeItem(at: backup) }
             throw changed
+        }
+        if let deadline, Date.now > deadline {
+            unlink(temporary.path)
+            throw Failure("Writing \(FileWalk.tilde(file, home: home)) took too long while holding the harness's lock; nothing was written. Try again.")
         }
         guard rename(temporary.path, real.path) == 0 else {
             let reason = String(cString: strerror(errno))
             unlink(temporary.path)
             throw Failure("Couldn't replace \(FileWalk.tilde(file, home: home)) (\(reason)).")
         }
-        return backup
+    }
+
+    /// Test hooks, by file: run right before the final byte compare (to change the file there).
+    enum Hooks {
+        nonisolated(unsafe) private static var hooks: [String: () -> Void] = [:]
+        private static let guardLock = NSLock()
+
+        static func set(_ file: URL, _ hook: (() -> Void)?) {
+            guardLock.lock()
+            defer { guardLock.unlock() }
+            hooks[file.path] = hook
+        }
+
+        static func beforeFinalCompare(_ file: URL) {
+            guardLock.lock()
+            let hook = hooks[file.path]
+            guardLock.unlock()
+            hook?()
+        }
     }
 
     /// A temporary file next to `real` with `data`, created with the old file's mode (so a 0600
@@ -247,19 +290,28 @@ public enum SettingsFile {
     // MARK: - The harness's lock
 
     /// Claude Code writes `~/.claude.json` under a proper-lockfile lock: a directory
-    /// `~/.claude.json.lock`, stale after 10 s without an update (2.1.296: `lockfilePath:
-    /// \`${e}.lock\``, `stale:1e4`). AKit takes the same directory while it writes, waits for it at
-    /// most a few seconds, and removes it when done.
+    /// `~/.claude.json.lock`, stale after 10 s without an update (2.1.296: `lockfilePath`
+    /// `${e}.lock`, `stale:1e4`). AKit takes the same directory while it writes, waits for it at
+    /// most a few seconds, never holds it longer than `hold` (well under `stale`, so it never needs
+    /// to refresh it), and on release removes it only while it is still the one it made.
     struct Lock {
         let url: URL
+        /// After this the lock may look stale to others: AKit doesn't rename after it.
+        let deadline: Date
+        let inode: UInt64
         static let stale: TimeInterval = 10
         static let wait: TimeInterval = 6
+        static let hold: TimeInterval = 7
 
         static func acquire(_ url: URL, file: URL, home: URL, wait: TimeInterval = Lock.wait) throws(Failure) -> Lock {
             let deadline = Date.now.addingTimeInterval(wait)
             var delay: UInt32 = 100_000
             while true {
-                if mkdir(url.path, 0o755) == 0 { return Lock(url: url) }
+                if mkdir(url.path, 0o755) == 0 {
+                    var info = stat()
+                    guard lstat(url.path, &info) == 0 else { throw Failure("Couldn't read \(FileWalk.tilde(url, home: home)) after taking it.") }
+                    return Lock(url: url, deadline: Date.now.addingTimeInterval(hold), inode: UInt64(info.st_ino))
+                }
                 guard errno == EEXIST else {
                     throw Failure("Couldn't take \(FileWalk.tilde(url, home: home)) (\(String(cString: strerror(errno)))).")
                 }
@@ -276,6 +328,11 @@ public enum SettingsFile {
             }
         }
 
-        func release() { rmdir(url.path) }
+        /// Removes the lock only if it is still the directory AKit made (same inode).
+        func release() {
+            var info = stat()
+            guard lstat(url.path, &info) == 0, UInt64(info.st_ino) == inode else { return }
+            rmdir(url.path)
+        }
     }
 }

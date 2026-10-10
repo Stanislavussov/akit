@@ -114,15 +114,82 @@ public enum MCPSwitches {
     }
 
     /// The key of a folder's entry in `~/.claude.json`, as Claude Code 2.1.296 computes it
-    /// (`getProjectPathForConfig` → `findCanonicalGitRoot`): the top of the git checkout the
-    /// folder is in, a linked worktree's main checkout (a bare repository's folder), or the
-    /// folder itself outside git. Physical paths, as Claude Code starts from `getcwd`
-    /// (`/private/tmp`, not `/tmp`).
+    /// (`getProjectPathForConfig` → `findCanonicalGitRoot`), NFC-normalized like its `On`:
+    ///
+    /// - `findGitRoot` (`Vn`): from the physical folder (Claude Code starts from `getcwd`) up to the
+    ///   first folder whose `.git` is a folder or a file (lstat; a `.git` link counts only when it
+    ///   leads to a readable text file, as `Ue` reads it); outside git, the folder itself.
+    /// - `findCanonicalGitRoot` (`gt`/`Xn`): a `.git` file whose `gitdir:` folder sits in
+    ///   `<commondir>/worktrees` and whose `gitdir` file points back to this checkout's `.git`
+    ///   (real paths) is a linked worktree: the key is the main checkout's top (`<commondir>/..`),
+    ///   or for a common dir not named `.git` (a bare repository) that folder unless it holds a
+    ///   `.git` itself. Anything else (a submodule, a moved worktree, a `.git` file without
+    ///   `gitdir:`, a link where a file should be) keeps the checkout's own top.
     public static func claudeProjectKey(_ folder: URL) -> String {
-        func physical(_ url: URL) -> String { FileWalk.realPath(url) ?? url.standardizedFileURL.path }
-        guard let checkout = GitCheckout.containing(URL(filePath: physical(folder), directoryHint: .isDirectory)) else { return physical(folder) }
-        guard checkout.isLinkedWorktree else { return physical(checkout.folder) }
-        return physical(checkout.mainFolder ?? checkout.commonDir)
+        let start = FileWalk.realPath(folder) ?? folder.standardizedFileURL.path
+        guard let root = gitRoot(from: start) else { return nfc(start) }
+        return nfc(canonicalRoot(root))
+    }
+
+    static func nfc(_ path: String) -> String { path.precomposedStringWithCanonicalMapping }
+
+    /// `Vn`: the nearest folder at or above `start` holding a usable `.git`.
+    static func gitRoot(from start: String) -> String? {
+        var path = start
+        for _ in 0..<256 {
+            if hasGitEntry(in: path) { return path }
+            let parent = (path as NSString).deletingLastPathComponent
+            guard !parent.isEmpty, parent != path else { return nil }
+            path = parent
+        }
+        return nil
+    }
+
+    /// `Ue`: `.git` is a folder or file; a link only when it leads to a file readable as UTF-8 text.
+    static func hasGitEntry(in folder: String) -> Bool {
+        let git = (folder as NSString).appendingPathComponent(".git")
+        var info = stat()
+        guard lstat(git, &info) == 0 else { return false }
+        switch info.st_mode & S_IFMT {
+        case S_IFDIR, S_IFREG: return true
+        case S_IFLNK:
+            guard let data = FileWalk.head(of: URL(filePath: git), limit: 1 << 20), !data.contains(0),
+                  String(data: data, encoding: .utf8) != nil else { return false }
+            return true
+        default: return false
+        }
+    }
+
+    /// `Xn`: the main checkout's top for a verified linked worktree, else `root`.
+    static func canonicalRoot(_ root: String) -> String {
+        func text(_ path: String, plainFileOnly: Bool) -> String? {
+            var info = stat()
+            if plainFileOnly { guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { return nil } }
+            guard let data = FileWalk.head(of: URL(filePath: path), limit: 1 << 20), !data.contains(0) else { return nil }
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func resolve(_ path: String, against base: String) -> String {
+            let joined = path.hasPrefix("/") ? path : base + "/" + path
+            var parts: [Substring] = []
+            for part in joined.split(separator: "/") {
+                if part == "." { continue }
+                if part == ".." { if !parts.isEmpty { parts.removeLast() }; continue }
+                parts.append(part)
+            }
+            return "/" + parts.joined(separator: "/")
+        }
+        guard let content = text(root + "/.git", plainFileOnly: false), content.hasPrefix("gitdir:") else { return root }
+        let gitdir = resolve(String(content.dropFirst("gitdir:".count)).trimmingCharacters(in: .whitespaces), against: root)
+        guard let commonText = text(gitdir + "/commondir", plainFileOnly: true) else { return root }
+        let common = resolve(commonText, against: gitdir)
+        guard (gitdir as NSString).deletingLastPathComponent == common + "/worktrees" else { return root }
+        guard let back = text(gitdir + "/gitdir", plainFileOnly: true),
+              let backReal = FileWalk.realPath(URL(filePath: resolve(back, against: gitdir))),
+              let rootReal = FileWalk.realPath(URL(filePath: root)), backReal == rootReal + "/.git" else { return root }
+        if (common as NSString).lastPathComponent != ".git" {
+            return hasGitEntry(in: common) ? root : common
+        }
+        return (common as NSString).deletingLastPathComponent
     }
 
     /// What Claude Code writes for a folder it hasn't seen yet (its own defaults, 2.1.296).
@@ -180,7 +247,15 @@ public enum MCPSwitches {
     /// Pi project files are read (Claude Code's entries are all in `~/.claude.json`).
     public static func statuses(of servers: [MCPServer], projects: [URL], in env: HarnessEnvironment) -> [MCPServer.ID: [HarnessID: Status]] {
         let home = env.homeDirectory
-        let owned = Store.load(home: home).owned
+        let owned: [Owned]
+        let storeProblem: String?
+        do {
+            owned = try Store.load(home: home).owned
+            storeProblem = nil
+        } catch {
+            owned = []
+            storeProblem = error.message
+        }
         var cache: [URL: Result<JSONValue, SettingsFile.Failure>] = [:]
         func json(_ url: URL, limit: Int = 4 << 20) -> Result<JSONValue, SettingsFile.Failure> {
             if let cached = cache[url] { return cached }
@@ -255,10 +330,28 @@ public enum MCPSwitches {
                     }
                     status.offIn = Array(Set(status.offIn)).sorted()
                 }
+                if let storeProblem { status.unknown = storeProblem }
                 statuses[server.id, default: [:]][harness] = status
             }
         }
+        // A record whose entry is gone (turned on by hand or by /mcp) is no longer AKit's: a later
+        // /mcp Disable of the same server is the user's. Only records of files read just now.
+        let evaluated = Set(servers.map(\.name))
+        let stale = owned.filter { record in
+            guard evaluated.contains(record.server), case .success(let value)? = cache[URL(filePath: record.file)] else { return false }
+            return !isPresent(record, in: value, env: env)
+        }
+        if !stale.isEmpty, storeProblem == nil { try? Store.update(StoreEdit(removeOwned: stale), home: home) }
         return statuses
+    }
+
+    /// Whether the entry a record names is in the file's JSON.
+    static func isPresent(_ record: Owned, in value: JSONValue, env: HarnessEnvironment) -> Bool {
+        if record.harness == HarnessID.claudeCode.rawValue {
+            if let folder = record.folder { return claudeOffFolders(record.server, in: value).contains(folder) }
+            return denyList(value).contains(denyRule(record.server))
+        }
+        return value.value(at: ["mcpServers", record.server, "enabled"]) == .bool(false)
     }
 
     /// The folder is the project or one of its worktrees.
@@ -355,7 +448,8 @@ public enum MCPSwitches {
             if let own = options.ownProject { families = families.filter { belongs($0.main, to: own) } }
         }
 
-        let store = Store.load(home: home)
+        let store: Store
+        do { store = try Store.load(home: home) } catch { throw Failure(error.message) }
         var edit = StoreEdit()
         var changes: [SettingsFile.Change] = []
         var skipped: [String] = []
@@ -510,6 +604,8 @@ public enum MCPSwitches {
                 if let backup = try SettingsFile.apply(change, home: home) { backups.append(backup) }
                 written.append(change.file.path)
             } catch {
+                // Replaced, but the check after it failed: what AKit wrote is still AKit's.
+                if error.written { written.append(change.file.path) }
                 let done = backups.isEmpty ? "" : " Files written before it: backups in \(backups.map { FileWalk.tilde($0, home: home) }.joined(separator: ", "))."
                 // What was written is AKit's: record it even when a later file failed.
                 try? Store.update(plan.store.limited(to: written), home: home)
@@ -629,15 +725,19 @@ public enum MCPSwitches {
 
         static func file(_ home: URL) -> URL { home.appending(path: ".akit/mcp-off.json") }
 
-        static func load(home: URL) -> Store {
-            guard let data = try? Data(contentsOf: file(home)) else { return Store() }
+        /// Empty when there is no file; a file that can't be read is refused, never replaced.
+        static func load(home: URL) throws(Failure) -> Store {
+            let url = file(home)
+            guard FileManager.default.fileExists(atPath: url.path) else { return Store() }
             struct Saved: Codable { let projects: [Intent]?; let owned: [Owned]? }
-            guard let saved = try? JSONDecoder().decode(Saved.self, from: data) else { return Store() }
+            guard let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode(Saved.self, from: data) else {
+                throw Failure("\(FileWalk.tilde(url, home: home)) can't be read; AKit won't change MCP switches until it is fixed or removed (it lists the entries AKit added).")
+            }
             return Store(projects: saved.projects ?? [], owned: saved.owned ?? [])
         }
 
         static func update(_ edit: StoreEdit, home: URL) throws {
-            var store = load(home: home)
+            var store = try load(home: home)
             store.projects.removeAll { edit.removeIntents.contains($0) }
             store.projects += edit.addIntents.filter { !store.projects.contains($0) }
             store.owned.removeAll { edit.removeOwned.contains($0) }
@@ -653,7 +753,7 @@ public enum MCPSwitches {
     }
 
     /// The remembered "Off in Project" entries (Pi).
-    public static func intents(home: URL) -> [Intent] { Store.load(home: home).projects }
+    public static func intents(home: URL) throws(Failure) -> [Intent] { try Store.load(home: home).projects }
 
     /// The Pi entries a remembered server lacks in these worktrees; by name, without a scanned server.
     public static func worktreePlan(_ name: String, worktrees: [URL], in env: HarnessEnvironment) throws(Failure) -> Plan {
