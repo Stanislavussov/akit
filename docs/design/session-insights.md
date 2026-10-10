@@ -63,8 +63,10 @@ Checked against the code on 2026-10-03:
   to skill-creator (step 12) is not built.
 - Unused over time (2026-10-10): the index records the tools each session had available
   (`tool_listings`, schema v10, parser versions 3), and `akit stats tools` reports tools and MCP
-  servers with no call in a window; `akit stats` gained the last call and `--unused`. See
-  "Tools and MCP servers over time".
+  servers with no call in a window; `akit stats` gained the last call and `--unused`. The
+  Insights screen's table switches between **Skills**, **MCP Servers** and **Tools**, with
+  **Unused Only**, a sort, and a **Custom…** window of 1–365 days. See "Tools and MCP servers
+  over time".
 
 ## Goal
 
@@ -310,6 +312,11 @@ Subagents are left out, as decided with the user.
   tools seen, tools called, calls, sessions with one of its tools, the last call, and its unused
   tools. A tool only a subagent run had is not a row. The JSON is version 1. Only recorded data:
   no sizes for tools, since Pi doesn't record their schemas.
+- **Screen.** The Insights table (`InsightsUsageTable`) switches between **Skills**, **MCP
+  Servers** and **Tools**; **Unused Only** keeps the rows without a call in the window; **Sort**
+  offers Context Space (skills only), Fewest Calls, Most Calls, Least Recently Used and Name. A
+  server row opens to the tools it never called. The Window picker has 7 / 30 / 90 Days and
+  **Custom…**, any number of days from 1 to 365. Every number has a tooltip saying what it counts.
 - **Skills.** `akit stats` gives each skill `lastCall` (the latest counted model or user call in
   the scope's sessions, also before the window; a new field, the JSON keeps version 1), and
   `--unused` keeps only skills without a call in the window.
@@ -586,7 +593,8 @@ A sidebar section **Insights** next to Usage and Lab. It shows the same reports 
 CLI, from the same core calls, so the screen and `--json` never disagree.
 
 - **Header.** Scope picker: this Mac (all sessions) or one project (from the project
-  list; bindings as in `akit stats`). Window picker: 7 / 30 / 90 days, for stats only;
+  list; bindings as in `akit stats`). Window picker: 7 / 30 / 90 days or Custom… (1–365, built
+  2026-10-10), for stats only;
   recommendations always use the rule's own window (N sessions, D days). Last import time
   and an **Import now** button (`QuickImport.run`). Capture status from
   `CaptureInstaller.status`; **Install capture…** shows `CaptureInstaller.installPlan`

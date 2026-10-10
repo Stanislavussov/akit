@@ -29,8 +29,9 @@ import SwiftUI
 /// (`--query layer` on a brain layer, `--project <layer>` picks it),
 /// `--query fromSession|reproduction` a new task sheet. Lab: `--tab analysis --add` opens New Lab Run on the batch form; `--select`
 /// takes a batch run's or a control cell's id too. Insights (`--section insights`): `--select <project id>` picks the
-/// scope, `--add` opens Apply… of the first layer patch and `--capture` opens Install Capture…; it imports first, so
-/// give it `--delay 8`.
+/// scope, `--add` opens Apply… of the first layer patch and `--capture` opens Install Capture…; `--tab skills|servers|tools`
+/// scrolls to that table, `--query unused` turns on Unused Only and `--query open` opens every MCP server's tool list; it
+/// imports first, so give it `--delay 8`.
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
 /// a value (`--add`, `--capture`, `--own-copy`, `--settings`, `--local-only`) last: Cocoa pairs arguments as "-key value", and a
