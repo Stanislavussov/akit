@@ -12,6 +12,16 @@ public enum LocalOnly {
     static let startMarker = "# >>> akit (local-only files of this project; managed by AKit)"
     static let endMarker = "# <<< akit"
 
+    /// The two marker lines of one AKit block in an exclude file.
+    struct Markers {
+        let start: String
+        let end: String
+        static let localOnly = Markers(start: startMarker, end: endMarker)
+        /// Files of AKit's MCP switches (`MCPProjectSwitch`), apart from the local-only block that
+        /// Set Up Project rewrites.
+        static let mcp = Markers(start: "# >>> akit mcp (files of AKit's MCP switches; managed by AKit)", end: "# <<< akit mcp")
+    }
+
     /// What local only does to a project's exclude file, shown before Apply.
     public struct Exclude: Sendable, Hashable {
         /// `<git common dir>/info/exclude`.
@@ -134,8 +144,10 @@ public enum LocalOnly {
 
     /// The units in AKit's block of an exclude file; nil when there is no block, its markers
     /// are broken, or the file can't be read.
-    public static func blockUnits(in file: URL) -> [String]? {
-        guard case .lines(let lines) = contents(of: file), case .found(let range)? = block(in: lines) else { return nil }
+    public static func blockUnits(in file: URL) -> [String]? { blockUnits(in: file, markers: .localOnly) }
+
+    static func blockUnits(in file: URL, markers: Markers) -> [String]? {
+        guard case .lines(let lines) = contents(of: file), case .found(let range)? = block(in: lines, markers: markers) else { return nil }
         return lines[range].dropFirst().dropLast().compactMap { text($0).flatMap(unit(fromLine:)) }
     }
 
@@ -161,8 +173,8 @@ public enum LocalOnly {
 
     /// Where AKit's block is (from its start marker to its end marker); nil when there is none.
     /// A marker line may end in "\r".
-    static func block(in lines: [Data]) -> Block? {
-        let start = Data(startMarker.utf8), end = Data(endMarker.utf8)
+    static func block(in lines: [Data], markers: Markers = .localOnly) -> Block? {
+        let start = Data(markers.start.utf8), end = Data(markers.end.utf8)
         func strip(_ line: Data) -> Data { line.last == 0x0D ? line.dropLast() : line }
         let starts = lines.indices.filter { strip(lines[$0]) == start }
         let ends = lines.indices.filter { strip(lines[$0]) == end }
@@ -174,10 +186,10 @@ public enum LocalOnly {
     /// The file's bytes with AKit's block holding `units` (appended when missing), or without
     /// the block when `units` is empty; every other line stays byte for byte. nil when the
     /// markers are broken.
-    static func updated(_ data: Data, units: [String]) -> Data? {
+    static func updated(_ data: Data, units: [String], markers: Markers = .localOnly) -> Data? {
         var lines = data.isEmpty ? [] : data.split(separator: 0x0A, omittingEmptySubsequences: false)
-        let block = ([startMarker] + units.filter(isSafe).map(line(for:)) + [endMarker]).map { Data($0.utf8) }
-        switch self.block(in: lines) {
+        let block = ([markers.start] + units.filter(isSafe).map(line(for:)) + [markers.end]).map { Data($0.utf8) }
+        switch self.block(in: lines, markers: markers) {
         case .broken?:
             return nil
         case .found(let range)?:
@@ -196,13 +208,15 @@ public enum LocalOnly {
     /// Puts `units` into AKit's block of the exclude file (takes the block out when empty).
     /// A link is written through to the file it points to; the file keeps its permissions.
     /// Returns a problem to report, nil when done.
-    static func write(units: [String], to file: URL) -> String? {
+    static func write(units: [String], to file: URL, markers: Markers = .localOnly) -> String? {
         let old: Data
         switch contents(of: file) {
         case .unreadable(let problem): return problem
         case .lines(let lines): old = Data(lines.joined(separator: [0x0A]))
         }
-        guard let new = updated(old, units: units) else { return problem(in: file) }
+        guard let new = updated(old, units: units, markers: markers) else {
+            return markers.start == Markers.localOnly.start ? problem(in: file) : "\(file.path) has a broken AKit MCP block; AKit left it alone. Delete the lines from \(markers.start) to \(markers.end) by hand."
+        }
         guard new != old else { return nil }
         var target = file
         var info = stat()

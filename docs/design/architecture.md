@@ -28,6 +28,16 @@ and the app to map a project id to its main checkout. New module `AKitDoctor` (1
 targets now): `Doctor.report`, the text of `akit doctor` and the app's Help → Copy Diagnostics
 (`machine-setup.md`); it sits above ProjectSetup and below CommandLine.
 
+2026-10-10 (skill switches, `harness-support.md`): `AKitSkills/SkillSwitches.swift` turns a skill
+on or off per harness in the harness's own settings (Claude Code's `skillOverrides`, Pi's `skills`
+entries); `AKitFoundation/JSONTextEdit.swift` changes one member of a JSON file's text and keeps
+every other byte. No new dependency. The same day, MCP switches (`AKitMCP/MCPSwitches.swift`) and
+`AKitFoundation/SettingsFile.swift`, the checked read, edit and write both use;
+`ProjectWorktrees.family` (ProjectSetup) lists a project's worktrees for them, and
+`AKitCommandLine → AKitMCP` is new (`akit mcp`). Second review round: `AKitProjectSetup → AKitMCP`
+(and `AKitModel`), for `MCPProjectSwitch`, which keeps a Pi `.pi/mcp.json` out of git with its own
+block in `info/exclude` (LocalOnly's block code, other markers) and expands projects to worktrees.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -124,7 +134,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitBrain` | Foundation, Model, Skills, Yams |
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
-| `AKitProjectSetup` | Foundation, Brain, Render, Insights |
+| `AKitProjectSetup` | Foundation, Model, Brain, Render, Insights, MCP (MCP switches' project files) |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |

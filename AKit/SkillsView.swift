@@ -5,8 +5,8 @@ import AKitSkills
 import AppKit
 import SwiftUI
 
-/// Skills screen: every skill the installed harnesses can see, grouped by where it lives.
-/// Read-only for now; editing arrives with safe writes (step 3).
+/// Skills screen: every skill the installed harnesses can see, grouped by where it lives, with
+/// a switch per harness (the harness's own setting; the skill's files stay as they are).
 struct SkillsView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: Skill.ID?
@@ -16,6 +16,8 @@ struct SkillsView: View {
     @State private var brainFilter = BrainFilter.any
     /// A skill to import into the brain (sheet).
     @State private var importing: Skill?
+    /// Snapshots: `--add` opens the selected skill's switch sheet once its states are read.
+    @State private var snapshotSwitch = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .skills
 
     enum BrainFilter: Hashable { case any, fromBrain, notInBrain }
 
@@ -130,6 +132,16 @@ struct SkillsView: View {
             if !reveal() { selection = selection ?? filtered.first?.id }
         }
         .onChange(of: model.revealSkill) { reveal() }
+        .task(id: model.lastScan) {
+            guard snapshotSwitch, let skill = model.skills.first(where: { $0.id == selection }) else { return }
+            snapshotSwitch = false
+            for harness in SkillSwitches.harnesses {
+                guard let options = SkillSwitches.options(for: skill, harness: harness, in: .current), options.unavailable == nil,
+                      let next = options.states.first(where: { $0 != model.skillStates[skill.id]?[harness]?.state }) else { continue }
+                model.requestSkillSwitch(skill, harness: harness, to: next)
+                return
+            }
+        }
         .onChange(of: model.skillsHarness) {
             if selection.flatMap({ id in filtered.first { $0.id == id } }) == nil { selection = filtered.first?.id }
         }
@@ -172,6 +184,8 @@ struct SkillsView: View {
         if case .rendered(let name, _, _) = link {
             BrainSkillButtons(name: name)
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
+            Divider()
+            SkillSwitchMenu(skill: skill)
         } else {
             if ExternalEditor.appURL != nil {
                 Button("Open in \(ExternalEditor.name)") { ExternalEditor.open(skill.folder) }
@@ -180,6 +194,8 @@ struct SkillsView: View {
             if link == .notInBrain && !skill.isSingleFile {
                 Button("Import to Brain…") { importing = skill }
             }
+            Divider()
+            SkillSwitchMenu(skill: skill)
             Divider()
             Button("Move to Trash…", role: .destructive) { pendingDelete = skill }
                 .disabled(skill.isReadOnly)
@@ -360,6 +376,7 @@ private struct SkillRow: View {
                 if let link { BrainLinkTag(link: link) }
                 ForEach(skill.visibleTo, id: \.self) { HarnessBadge(harness: $0) }
             }
+            SkillSwitchMarks(skill: skill)
             if !skill.description.isEmpty {
                 Text(skill.description)
                     .font(.caption)
@@ -458,6 +475,7 @@ private struct SkillDetailView: View {
                     ForEach(skill.visibleTo, id: \.self) { HarnessBadge(harness: $0) }
                 }
             }
+            SkillSwitchControls(skill: skill)
             if let origin = skill.origin {
                 GridRow {
                     label("Source")

@@ -272,6 +272,12 @@ public enum JSONValue: Hashable, Sendable {
         self = .object(members)
     }
 
+    /// The members of an object; nil for any other value.
+    public var objectMembers: [String: JSONValue]? {
+        if case .object(let members) = self { return members }
+        return nil
+    }
+
     private var isObject: Bool {
         if case .object = self { return true }
         return false

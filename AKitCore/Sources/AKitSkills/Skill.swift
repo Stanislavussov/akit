@@ -24,6 +24,33 @@ public struct Skill: Identifiable, Hashable, Sendable {
     public internal(set) var warnings: [String]
     /// The skill folder this skill was found in (symlinks resolved), e.g. `~/.agents/skills`.
     public let root: URL
+    /// `disable-model-invocation: true` in its frontmatter: only `/name` runs it.
+    public internal(set) var disablesModelInvocation = false
+    /// Per harness: where that harness's first root reached the skill, as it sees the path.
+    public internal(set) var places: [HarnessID: Place] = [:]
+
+    /// A skill file as one harness reaches it: `base` is the parent of the skill root
+    /// (`~/.agents` for `~/.agents/skills`), `file` lies under it (links not resolved), `scope`
+    /// is the scope of that root (a link from a personal folder into a project is still personal).
+    public struct Place: Hashable, Sendable {
+        public let file: URL
+        public let base: URL
+        public let scope: SkillScope
+
+        public init(file: URL, base: URL, scope: SkillScope) {
+            self.file = file
+            self.base = base
+            self.scope = scope
+        }
+
+        /// The folder name the harness sees (`~/.claude/skills/<this>/SKILL.md`), links not resolved.
+        public var folderName: String { file.deletingLastPathComponent().lastPathComponent }
+        /// `skills/tdd/SKILL.md`: the file relative to `base`.
+        public var relativePath: String {
+            let prefix = base.path.hasSuffix("/") ? base.path : base.path + "/"
+            return file.path.hasPrefix(prefix) ? String(file.path.dropFirst(prefix.count)) : file.lastPathComponent
+        }
+    }
 
     /// The skill folder (or the file itself for a single-file skill).
     public var folder: URL { isSingleFile ? file : file.deletingLastPathComponent() }

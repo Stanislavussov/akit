@@ -95,6 +95,22 @@ struct MCPTests {
         #expect(servers.first { $0.name == "x" } == nil) // Claude isn't installed, Pi doesn't read it
     }
 
+    @Test func piWithBuiltInMCPReadsItsOwnFiles() throws {
+        // Pi 1.0.4 last ran here (its settings say so): mcp.json files are read without the adapter.
+        try write(".pi/agent/settings.json", #"{"lastChangelogVersion": "1.0.4"}"#)
+        try write(".pi/agent/mcp.json", #"{"mcpServers": {"figma": {"url": "https://mcp.figma.com/mcp"}}}"#)
+        try write("Projects/app/.pi/mcp.json", #"{"mcpServers": {"lint": {"command": "lint"}}}"#)
+        try write(".config/mcp/mcp.json", #"{"mcpServers": {"shared": {"command": "s"}}}"#)
+        let servers = scan().servers
+        #expect(servers.first { $0.name == "figma" }?.uses.first?.state == .active)
+        #expect(servers.first { $0.name == "lint" }?.uses.first?.state == .active)
+        // The adapter's own shared files are still not read without it.
+        #expect(servers.first { $0.name == "shared" } == nil)
+        // An older Pi: still needs the adapter.
+        try write(".pi/agent/settings.json", #"{"lastChangelogVersion": "0.87.1"}"#)
+        #expect(scan().servers.first { $0.name == "figma" }?.uses.first?.state == .inactive("Needs the pi-mcp-adapter package"))
+    }
+
     @Test func codexTomlServersAndTrust() throws {
         let key = project.standardizedFileURL.path
         try write(".codex/config.toml", """
