@@ -13,6 +13,7 @@ import SwiftUI
 /// `--own-copy` opens the skills.sh install form in "My own copy" mode; `--project <folder name>`
 /// picks that project as the install place; `--add` opens the MCP screen's Add Server sheet
 /// (`--query <json>` fills its form, `--tab preview` shows the plan; `--tab catalog` opens its catalog search, `--query` is the search text, `--select <server name>` picks a result and `--capture` fills the form from it);
+/// MCP Servers: `--tab switch` opens Off in Project… of the first server with a switch.
 /// Skills: `--add` opens the selected skill's switch sheet (the first harness with a switch, its first other state);
 /// `--settings` shows the Settings view in the main window; `--guide <section id>` the guide window's
 /// view, opened at that section (`--query` fills its search field);

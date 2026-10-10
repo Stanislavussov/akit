@@ -77,6 +77,17 @@ struct MCPView: View {
                     .disabled(model.isScanning)
                     .help("Rescan config files (⌘R)")
             }
+            if model.installations.contains(where: { $0.id == .claudeCode }) {
+                ToolbarItem {
+                    let off = model.connectorsOff
+                    Button(off == true ? "claude.ai Connectors: Off" : off == false ? "claude.ai Connectors: On" : "claude.ai Connectors: Unknown",
+                           systemImage: off == true ? "cloud.slash" : "cloud") {
+                        model.mcpSwitchRequest = MCPSwitchRequest(server: nil, harness: .claudeCode, off: off != true, kind: .connectors)
+                    }
+                    .disabled(off == nil)
+                    .help("All claude.ai connectors in Claude Code: disableClaudeAiConnectors in ~/.claude/settings.json. Click to turn them \(off == true ? "on" : "off") (a diff first, then Apply).")
+                }
+            }
             ToolbarItem {
                 Button("Catalog…", systemImage: "books.vertical") {
                     editor = EditorRequest(mode: .add(project: chosenProject, catalog: true))
@@ -106,6 +117,13 @@ struct MCPView: View {
             if let tab = DebugSnapshot.options?.tab, editor == nil, let server = filtered.first {
                 if tab == "edit" { editor = EditorRequest(mode: .edit(server)) }
                 if tab == "delete" { editor = EditorRequest(mode: .remove(server)) }
+                // `--tab switch`: Off in Project… of the first server with a switch.
+                if tab == "switch", model.mcpSwitchRequest == nil,
+                   let (target, harness) = filtered.lazy.compactMap({ server in
+                       MCPSwitches.harnesses.first { MCPSwitches.options(for: server, harness: $0, in: .current)?.unavailable == nil }.map { (server, $0) }
+                   }).first {
+                    model.mcpSwitchRequest = MCPSwitchRequest(server: target, harness: harness, off: true, kind: .chooseProjects)
+                }
             }
         }
     }
@@ -138,6 +156,8 @@ struct MCPView: View {
                                     .disabled(!model.canEdit(server))
                                 Button("Delete…", role: .destructive) { editor = EditorRequest(mode: .remove(server)) }
                                     .disabled(!model.canEdit(server))
+                                Divider()
+                                MCPSwitchMenu(server: server)
                             }
                     }
                 } header: {
@@ -273,6 +293,17 @@ private struct MCPServerRow: View {
                         .help("\(use.harness.displayName): \(use.state.title)")
                 }
             }
+            let off = server.usedBy.compactMap { harness -> String? in
+                guard let status = model.mcpStates[server.id]?[harness], !status.isOn else { return nil }
+                return "\(harness.displayName) · \(status.title.lowercased())"
+            }
+            if !off.isEmpty {
+                Text(off.joined(separator: "   "))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .help("Turned off by a switch; see Switches in the details")
+            }
             Text(server.summary)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
@@ -303,6 +334,7 @@ private struct MCPServerDetailView: View {
                 info
                 if !model.warnings(of: server).isEmpty { warnings }
                 harnesses
+                MCPSwitchControls(server: server)
                 if !server.environment.isEmpty { settings("Environment", server.environment) }
                 if !server.headers.isEmpty { settings("Headers", server.headers) }
                 if !server.variables.isEmpty { variables }

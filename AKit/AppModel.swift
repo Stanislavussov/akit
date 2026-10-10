@@ -49,6 +49,12 @@ final class AppModel {
     private(set) var mcpProblems: [String] = []
     /// Places a new MCP server can be written to (from the last scan).
     private(set) var mcpWriteTargets: [MCPWriteTarget] = []
+    /// Each server's switch per harness: off everywhere, the folders it is off in.
+    private(set) var mcpStates: [MCPServer.ID: [HarnessID: MCPSwitches.Status]] = [:]
+    /// claude.ai connectors all off (`disableClaudeAiConnectors`); nil when the settings can't be read.
+    private(set) var connectorsOff: Bool? = false
+    /// An MCP switch change shown in its sheet (with a project choice first for Off in Project…).
+    var mcpSwitchRequest: MCPSwitchRequest?
 
     /// Sidebar section shown in the window.
     var section: SidebarSection? = DebugSnapshot.options?.section ?? .overview
@@ -391,6 +397,7 @@ final class AppModel {
         repeat {
             worktreesSyncAgain.remove(id)
             let outcome = await Task.detached { ProjectWorktrees.sync(folder, env: .current) }.value
+            await syncMCPWorktrees(only: folder)
             // The same result again changes nothing on screen, so the page doesn't reload.
             if let last = worktreeSyncs[id]?.outcome, !outcome.changed, outcome.problems == last.problems,
                outcome.conflicts == last.conflicts, outcome.worktrees == last.worktrees { continue }
@@ -539,6 +546,43 @@ final class AppModel {
         let sorted = skills.sorted { $0.scope.sortRank < $1.scope.sortRank }
         return sorted.first { names($0).first == name } ?? sorted.first { names($0).contains(name) }
     }
+
+    /// The installed MCP server a name from session records stands for (the name as written, or
+    /// its tool-name spelling): the user-level one first.
+    func installedMCPServer(named name: String) -> MCPServer? {
+        let matches = mcpServers.filter { $0.name == name || MCPSwitches.denyRule($0.name) == "mcp__" + name }
+        return matches.first { $0.scope == .global } ?? matches.first
+    }
+
+    /// Writes a planned MCP switch change, then rescans.
+    func applyMCPSwitch(_ plan: MCPSwitches.Plan) async throws {
+        let home = HarnessEnvironment.current.homeDirectory
+        _ = try await Task.detached { try MCPSwitches.apply(plan, home: home) }.value
+        await refresh()
+    }
+
+    /// Gives worktrees of projects with a server turned off there the entry they lack
+    /// (`~/.akit/mcp-off.json`). `only`: one project's main checkout, else all remembered ones.
+    func syncMCPWorktrees(only: URL? = nil) async {
+        guard DebugSnapshot.options == nil else { return }
+        let env = HarnessEnvironment.current
+        let result = await Task.detached {
+            let mains = Set(MCPSwitches.intents(home: env.homeDirectory).map(\.project))
+                .filter { only == nil || $0 == only!.standardizedFileURL.path }
+            let families = mains.map { path in
+                let family = ProjectWorktrees.family(of: URL(filePath: path, directoryHint: .isDirectory), env: env)
+                return MCPSwitches.Family(main: family.main, worktrees: family.worktrees)
+            }
+            return MCPSwitches.syncWorktrees(families, in: env)
+        }.value
+        if !result.added.isEmpty {
+            mcpStates = await Task.detached { [mcpServers, projects] in MCPSwitches.statuses(of: mcpServers, projects: projects, in: env) }.value
+        }
+        mcpSyncProblems = result.problems
+    }
+
+    /// What the last worktree sync of MCP switches couldn't write.
+    private(set) var mcpSyncProblems: [String] = []
 
     /// The scanned skill that lives in this folder, if any.
     func skill(inFolder folder: URL) -> Skill? {
@@ -756,9 +800,11 @@ final class AppModel {
             let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, projects: projects,
                                            piPackages: pi.listing.packages, piHidden: pi.hidden, in: env)
             let states = SkillSwitches.states(of: skills, in: env)
-            return (found, (skills, states), projects, await sessions, await mcp, await targets, await brain, pi)
+            let mcpResult = await mcp
+            let switches = (MCPSwitches.statuses(of: mcpResult.servers, projects: projects, in: env), MCPSwitches.connectorsOff(in: env))
+            return (found, (skills, states, switches), projects, await sessions, mcpResult, await targets, await brain, pi)
         }.value
-        let (skills, states) = scanned
+        let (skills, states, switches) = scanned
         // Before anything is shown: the session list and its projects change together.
         let folders = Array(Set(sessions.compactMap { $0.project?.path }))
         let projectsRoot = projectsRoot
@@ -792,7 +838,10 @@ final class AppModel {
         mcpServers = mcp.servers
         mcpProblems = mcp.problems
         mcpWriteTargets = targets
+        mcpStates = switches.0
+        connectorsOff = switches.1
         lastScan = .now
+        Task { await syncMCPWorktrees() }
 
         var newVersions: [HarnessID: String] = [:]
         await withTaskGroup(of: (HarnessID, String?).self) { group in

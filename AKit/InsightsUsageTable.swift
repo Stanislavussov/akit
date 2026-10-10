@@ -1,4 +1,5 @@
 import AKitInsights
+import AKitMCP
 import SwiftUI
 
 /// The Insights screen's table over the window: skills, MCP servers or tools, with Unused Only and a
@@ -185,6 +186,13 @@ struct InsightsUsageTable: View {
                         case .server(let server):
                             GridRow {
                                 serverName(server)
+                                    .contextMenu {
+                                        if let installed = model.installedMCPServer(named: server.name) {
+                                            MCPSwitchMenu(server: installed)
+                                        } else {
+                                            Button("Not configured on this Mac") {}.disabled(true)
+                                        }
+                                    }
                                 Text("\(server.toolsCalled) / \(server.tools)")
                                     .help("Its tools with a call in the window, of the tools it had available or called")
                                 calls(server.calls, unused: server.unused)
