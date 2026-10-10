@@ -44,6 +44,8 @@ struct PiAdapter: HarnessAdapter {
         let root = configRoot(in: env)
         let home = env.homeDirectory
         let globalAdapter = Self.hasMCPAdapter(settings: root.appending(path: "settings.json"))
+        // Pi 0.99+ reads its own mcp.json files (built-in MCP); the adapter's other files still need it.
+        let builtIn = Self.hasBuiltInMCP(configRoot: root, in: env)
         func source(_ file: URL, _ scope: SkillScope, _ layer: String, _ precedence: Int, installed: Bool) -> MCPSource {
             var source = MCPSource(file: file, keyPath: ["mcpServers"], harness: id, scope: scope,
                                    layer: layer, precedence: precedence)
@@ -58,16 +60,46 @@ struct PiAdapter: HarnessAdapter {
                 source(home.appending(path: ".agents/mcp/mcp.json"), .global, "Shared", 2, installed: true),
             ]
         }
-        sources.append(source(root.appending(path: "mcp.json"), .global, "Pi global", 3, installed: globalAdapter))
+        sources.append(source(root.appending(path: "mcp.json"), .global, "Pi global", 3, installed: globalAdapter || builtIn))
         for project in projects {
             let installed = globalAdapter || Self.hasMCPAdapter(settings: project.appending(path: ".pi/settings.json"))
             if installed {
                 sources.append(source(project.appending(path: ".mcp.json"), .project(project), "Project", 4, installed: true))
             }
             sources.append(source(project.appending(path: ".pi/mcp.json"), .project(project), "Pi project", 5,
-                                  installed: installed))
+                                  installed: installed || builtIn))
         }
         return sources
+    }
+
+    /// The first Pi version that reads `mcp.json` itself (CHANGELOG 0.99.0: "Added codemode, tool
+    /// search, and MCP support as built-in extensions"; project overrides came in 1.0.1).
+    static let builtInMCPVersion = [0, 99, 0]
+
+    /// Whether this Mac's Pi has built-in MCP: the version of the package the `pi` command
+    /// resolves to (an npm link), else the version Pi last ran with (`lastChangelogVersion` in its
+    /// settings; a mise shim doesn't lead to the package).
+    static func hasBuiltInMCP(configRoot: URL, in env: HarnessEnvironment) -> Bool {
+        let version = packageVersion(of: env.findExecutable("pi"))
+            ?? (FileWalk.jsonObject(configRoot.appending(path: "settings.json"))?["lastChangelogVersion"] as? String)
+        guard let version else { return false }
+        let parts = version.split(separator: "-").first.map { $0.split(separator: ".").map { Int($0) ?? 0 } } ?? []
+        let padded = parts + Array(repeating: 0, count: max(0, 3 - parts.count))
+        return padded.prefix(3).lexicographicallyPrecedes(builtInMCPVersion) == false
+    }
+
+    /// `version` of the pi-coding-agent package.json above the resolved `pi` command (at most 6 folders up).
+    static func packageVersion(of executable: URL?) -> String? {
+        guard let executable, let real = FileWalk.realPath(executable) else { return nil }
+        var folder = URL(filePath: real).deletingLastPathComponent()
+        for _ in 0..<6 {
+            if let package = FileWalk.jsonObject(folder.appending(path: "package.json")),
+               (package["name"] as? String)?.hasSuffix("pi-coding-agent") == true {
+                return package["version"] as? String
+            }
+            folder = folder.deletingLastPathComponent()
+        }
+        return nil
     }
 
     /// Whether Pi settings list the pi-mcp-adapter package (`packages`, plain or `{source}` entries).

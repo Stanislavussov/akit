@@ -18,7 +18,7 @@ built. The last column says whether the gap is a decision (with its doc) or open
 | Skills: delete (Trash), install from skills.sh | yes | yes | skills.sh installs into the shared `.agents/skills` |
 | Skills: on / off without editing the skill | yes: On, Name Only, Manual, Off (`skillOverrides`); none for plugin skills | yes: On, Off (`skills` entries); none for package skills | see "Skill switches" below |
 | Plugins / packages | Claude plugins listed | Pi packages on the Overview card: extensions, skills, prompt templates, themes | read-only; package code never runs. Limits per settings file and per refresh; a cut list or a too-large package gets a note |
-| MCP: read, add, edit, remove | yes (`claude mcp` CLI) | yes (JSON files of `pi-mcp-adapter`) | Pi servers show as inactive without the `pi-mcp-adapter` package |
+| MCP: read, add, edit, remove | yes (`claude mcp` CLI) | yes (Pi's own `mcp.json` files and those of `pi-mcp-adapter`) | Pi 0.99+ reads `~/.pi/agent/mcp.json` and `.pi/mcp.json` itself (CHANGELOG 0.99.0, "MCP support as built-in extensions"); AKit takes the version from the package the `pi` command resolves to, else `lastChangelogVersion` in Pi's settings. The adapter's shared files and a project's `.mcp.json` still need `pi-mcp-adapter` |
 | MCP: off without deleting (everywhere, in a project) | yes: user servers both; local and `.mcp.json` servers in their project; none for plugin servers; all claude.ai connectors at once | yes: servers of `~/.pi/agent/mcp.json` both; a project's `.pi/mcp.json` servers in their project | see "MCP switches" below |
 | MCP secrets from Keychain | yes (`headersHelper`) | yes (`!` lookups) | each harness's own mechanism |
 | MCP catalog | yes | yes | harness-neutral form |
@@ -90,8 +90,8 @@ and the rename are the last two steps. When only other bytes changed meanwhile i
 times). Afterwards it reads the file and reports when an edited value isn't there. Backups in
 `~/.akit/backups` are 0600, and only the newest 20 per file are kept (they may hold tokens).
 
-Pi 1.0.4 reads `mcp.json` itself (`dist/extensions/mcp`); AKit still marks Pi's servers inactive
-without the `pi-mcp-adapter` package (open: the adapter check predates Pi's own MCP support).
+Pi's own MCP (0.99+): fixed 2026-10-10, see the "MCP: read" row; servers in `~/.pi/agent/mcp.json`
+and `.pi/mcp.json` are no longer marked "Needs the pi-mcp-adapter package" on such a Pi.
 
 ## Layers (`layers.md`)
 
@@ -101,7 +101,7 @@ without the `pi-mcp-adapter` package (open: the adapter check predates Pi's own 
 | `AGENTS.md` in a project | yes (via the `CLAUDE.md` shim) | yes | |
 | JSON merge, key by key | `.mcp.json`, `.claude/settings.json` | `.pi/mcp.json`, `.pi/settings.json` | projects only, not the home folder; a value starting with `!` under env/headers is refused; keys a harness runs get a preview warning |
 | Core layer's instructions in the home folder | block in `~/.claude/CLAUDE.md` | block in the file Pi reads in its agent folder (`AGENTS.override.md`, `AGENTS.md` or `CLAUDE.md`) | AKit owns only the marked block; see `layers.md`, "Home folder: instructions block" |
-| `pi-mcp-adapter` fields beyond env and headers | — | not checked | open: the adapter isn't installed here to verify |
+| `pi-mcp-adapter` fields beyond env and headers | — | not checked | open: the adapter isn't installed here to verify (Pi's own MCP since 0.99 uses the same `mcpServers` shape) |
 
 ## Sessions, usage and insights (`session-insights.md`)
 
