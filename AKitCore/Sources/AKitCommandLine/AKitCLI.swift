@@ -24,6 +24,18 @@ public enum AKitCLI {
           akit check                      Read every layer and skill; list problems (exit 1 if any)
           akit layers [--json]            Layers with their fields, skills and files
           akit skills                     Skills in the brain
+
+        Installed skills, on or off per harness (the harness's own setting; the skill's files stay):
+          akit skills state [NAME]        Each skill Claude Code or Pi sees, with its state in each
+          akit skills set NAME --harness claude|pi --state on|name-only|manual|off [--project PATH] [--yes]
+                                          Claude Code: skillOverrides in ~/.claude/settings.json, by
+                                          name (manual = user-invocable-only: only /NAME runs it;
+                                          plugin skills have no switch). Pi: an entry in the skills
+                                          list of ~/.pi/agent/settings.json (a project skill: the
+                                          project's .pi/settings.json), on or off only. Shows the
+                                          change; --yes writes it after a backup, only that entry,
+                                          and refuses if the file changed meanwhile. --project picks
+                                          a project's copy of the skill
           akit sync                       Import sessions, publish this Mac's usage summaries, pull the
                                           other Macs' brain commits, push this one's
 
@@ -258,6 +270,12 @@ public enum AKitCLI {
                 let folder = resolve((sync ? args.positional() : first) ?? ".", cwd: cwd, env: env)
                 try args.finish()
                 return try worktrees(sync: sync, folder: folder, env: env, out: out, err: err)
+            }
+            // Installed skills, switched per harness: no brain needed.
+            if command == "skills", let subcommand = args.peek, subcommand == "state" || subcommand == "set" {
+                try refuseProjectOptions(options, command: "skills \(subcommand)")
+                _ = args.positional()
+                return try skillSwitches(subcommand, &args, yes: options.yes, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
