@@ -68,13 +68,24 @@ public enum AKitCLI {
                                           Read new Claude Code and Pi session lines into the index:
                                           counts, sizes and skill use, never message text; then bind
                                           sessions to projects (hook, folder, git worktrees, siblings)
-          akit stats [--project ID|PATH | --all] [--days N] [--top N] [--details] [--bindings LIST] [--json]
+          akit stats [--project ID|PATH | --all] [--days N] [--top N] [--details] [--unused] [--bindings LIST] [--json]
                                           Every listed skill: its owner (layer, plugin, hand-installed,
                                           built-in), ≈ tokens and ≈ context space (tokens × requests),
-                                          sessions and days listed, calls by the model and the user.
-                                          Default: all sessions on this Mac, last 30 days, top 10 (all
-                                          with --details). --project: the sessions bound to it at LIST
-                                          (default exact,high,medium). Imports new lines first
+                                          sessions and days listed, calls by the model and the user,
+                                          the last call. Default: all sessions on this Mac, last 30
+                                          days, top 10 (all with --details). --unused: only skills
+                                          with no call made in the window (by the model or the user,
+                                          in any session of the scope). --project: the sessions bound
+                                          to it at LIST (default exact,high,medium). Imports new lines first
+          akit stats tools [--project ID|PATH | --all] [--days N] [--top N] [--details] [--unused] [--bindings LIST] [--json]
+                                          MCP servers and tools (built-in, extension, MCP) the sessions
+                                          had available, with the calls made in the window and the last
+                                          call; unused ones (no call made in the window) first.
+                                          Availability comes from the tool lists Claude Code and Pi 1.0+
+                                          record; built-in tools count only in sessions with the full
+                                          list. Default: last 30 days, top 10 tools (all with --details,
+                                          which also names each server's unused tools). --unused: only
+                                          unused ones
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
@@ -625,13 +636,14 @@ public enum AKitCLI {
         let debug = args.flag("--debug")
         let all = args.flag("--all")
         let details = args.flag("--details")
+        let unused = args.flag("--unused")
         let atText = args.value("--at")
         let subcommand = args.positional()
         let note = subcommand == "mark" ? args.positional() : nil
         try args.finish()
-        if let subcommand, !["bindings", "changes", "mark"].contains(subcommand) {
-            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats bindings, "
-                          + "akit stats changes, akit stats mark \"<note>\" [--at DATE], or akit stats --debug.")
+        if let subcommand, !["bindings", "changes", "mark", "tools"].contains(subcommand) {
+            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats tools, "
+                          + "akit stats bindings, akit stats changes, akit stats mark \"<note>\" [--at DATE], or akit stats --debug.")
         }
         let days = try positiveNumber(daysText, "--days"), top = try positiveNumber(topText, "--top")
         if projectArgument != nil, all { throw Failure(message: "--project and --all don't go together.") }
@@ -639,21 +651,23 @@ public enum AKitCLI {
         if subcommand == "mark" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"),
                         (projectArgument != nil, "--project"), (all, "--all"), (days != nil, "--days"), (top != nil, "--top"),
-                        (details, "--details"), (options.json, "--json")], command: "stats mark")
+                        (details, "--details"), (unused, "--unused"), (options.json, "--json")], command: "stats mark")
             return try mark(note, at: atText, env: env, out: out)
         }
         if subcommand == "changes" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"), (days != nil, "--days"),
-                        (top != nil, "--top"), (details, "--details")], command: "stats changes")
+                        (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats changes")
         } else if subcommand == "bindings" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
-                        (top != nil, "--top"), (details, "--details")], command: "stats bindings")
+                        (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats bindings")
         } else if debug {
             try refuse([(bindingList != nil, "--bindings"), (projectArgument != nil, "--project"), (all, "--all"),
-                        (days != nil, "--days"), (top != nil, "--top"), (details, "--details")], command: "stats --debug")
+                        (days != nil, "--days"), (top != nil, "--top"), (details, "--details"), (unused, "--unused")],
+                       command: "stats --debug")
         } else if session != nil {
             throw Failure(message: "--session goes with akit stats --debug.")
         }
+        if subcommand == "tools", debug { throw Failure(message: "--debug doesn't go with akit stats tools.") }
         let bindingSet = try BindingSet.parse(bindingList)
         if let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
         let database = try IndexSchema.open(InsightsPaths(env: env).database)
@@ -673,6 +687,14 @@ public enum AKitCLI {
         }
         var project: String?
         if let projectArgument { project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env) }
+        if subcommand == "tools" {
+            let full = try ToolStats.report(database, days: days ?? InsightsStats.defaultDays, project: project, bindings: bindingSet,
+                                            importNotes: imported.notes)
+            let report = unused ? full.unusedOnly() : full
+            out(options.json ? encode(report) : toolsText(report, top: top ?? (details ? nil : InsightsStats.defaultTop),
+                                                          details: details, unusedOnly: unused))
+            return 0
+        }
         let brainRoot = brainRoot(options, cwd: cwd, env: env)
         var inputs = try await InsightsStats.inputs(env: env, database: database, brain: Brain.load(from: brainRoot),
                                                     projectsRoot: projectsRoot, hostName: hostName, hardware: hardwareHash(),
@@ -692,9 +714,10 @@ public enum AKitCLI {
         inputs.importRunning = imported.running
         let report = try InsightsStats.report(database, options: .init(days: days ?? InsightsStats.defaultDays, project: project,
                                                                        bindings: bindingSet,
-                                                                       top: top ?? (details ? nil : InsightsStats.defaultTop)),
+                                                                       top: top ?? (details ? nil : InsightsStats.defaultTop),
+                                                                       unusedOnly: unused),
                                               inputs: inputs)
-        out(options.json ? encode(report) : statsText(report, details: details))
+        out(options.json ? encode(report) : statsText(report, details: details, unusedOnly: unused))
         return 0
     }
 
@@ -720,6 +743,58 @@ public enum AKitCLI {
         out("Marked \(localMinute(date)): \(text). akit stats changes compares first-request context "
             + "before and after it.")
         return 0
+    }
+
+    /// `akit stats tools`: MCP servers, then tools, unused ones first.
+    static func toolsText(_ report: ToolsReport, top: Int?, details: Bool, unusedOnly: Bool) -> String {
+        let summary = report.summary
+        let scope = report.scope.project.map { "project \($0) (sessions bound at \(report.scope.bindings.joined(separator: ", ")))" }
+            ?? "all sessions on this Mac"
+        func last(_ iso: String?) -> String { iso.map { "last call \(localDay($0))" } ?? "no call recorded" }
+        var lines = ["Last \(report.window.days) days, \(scope): \(count(summary.sessions, "session")), "
+                     + "\(summary.sessionsWithToolList) with a full tool list; \(count(summary.calls, "tool call"))."]
+        lines.append("")
+        if report.servers.isEmpty {
+            lines.append(unusedOnly ? "No unused MCP servers in this window." : "No MCP server tools in this window.")
+        } else {
+            lines.append(unusedOnly ? "Unused MCP servers (no call in the window):" : "MCP servers, unused first:")
+            for server in report.servers {
+                let use = server.unused ? "unused" : "\(count(server.calls, "call"))"
+                lines.append("  \(server.name): \(use); \(server.toolsCalled) of \(count(server.tools, "tool")) called; "
+                             + "available in \(count(server.availableSessions, "session")); \(last(server.lastCall))")
+                if details, !server.unused, !server.unusedTools.isEmpty {
+                    lines.append("    unused tools: " + server.unusedTools.joined(separator: ", "))
+                }
+            }
+        }
+        lines.append("")
+        let shown = top.map { Array(report.tools.prefix(max(0, $0))) } ?? report.tools
+        if shown.isEmpty {
+            lines.append(unusedOnly ? "No unused tools in this window." : "No tools in this window.")
+        } else {
+            let all = shown.count == report.tools.count
+            lines.append(unusedOnly ? "\(all ? "Unused tools" : "Top \(shown.count) unused tools") (no call in the window), most available first:"
+                         : "\(all ? "Tools" : "Top \(shown.count) tools"), unused first (most available first), then by calls:")
+            for tool in shown {
+                let use = tool.unused ? "unused" : "\(count(tool.calls, "call")) in \(count(tool.calledSessions, "session"))"
+                lines.append("  \(tool.name): \(use); available in \(count(tool.availableSessions, "session")) on "
+                             + "\(count(tool.availableDays, "day")); \(last(tool.lastCall))")
+            }
+            if shown.count < report.tools.count {
+                lines.append("\(count(report.tools.count - shown.count, "more tool")): --top N, or --details for all.")
+            }
+        }
+        lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The local day of an ISO 8601 time: `2026-09-26`.
+    static func localDay(_ iso: String) -> String {
+        guard let date = try? Date(iso, strategy: .iso8601) else { return iso }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
 
     static func changesText(_ report: ChangesReport, project: String?) -> String {
@@ -766,7 +841,7 @@ public enum AKitCLI {
         return lines.joined(separator: "\n")
     }
 
-    static func statsText(_ report: StatsReport, details: Bool) -> String {
+    static func statsText(_ report: StatsReport, details: Bool, unusedOnly: Bool = false) -> String {
         let short = ContextSize.short
         let summary = report.summary
         let scope = report.scope.project.map { "project \($0) (sessions bound at \(report.scope.bindings.joined(separator: ", ")))" }
@@ -785,9 +860,12 @@ public enum AKitCLI {
         }
         lines.append("")
         if report.skills.isEmpty {
-            lines.append("No skill listings in this window.")
+            lines.append(unusedOnly ? "No unused skills in this window." : "No skill listings in this window.")
         } else {
-            lines.append("\(details && report.omitted.skills == 0 ? "Skills" : "Top \(report.skills.count)") by ≈ context space (tokens × requests):")
+            let all = details && report.omitted.skills == 0
+            lines.append(unusedOnly
+                ? "\(all ? "Unused skills" : "Top \(report.skills.count) unused skills") (no call in the window) by ≈ context space:"
+                : "\(all ? "Skills" : "Top \(report.skills.count)") by ≈ context space (tokens × requests):")
             for skill in report.skills {
                 let owner = [ownerLabel(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " ")
                 var line = "  \(skill.name) (\(owner)): ≈ \(short(skill.approxContextSpace)) context space, "
@@ -795,6 +873,7 @@ public enum AKitCLI {
                     + "listed with its description in \(count(skill.listedSessions, "session")) on \(count(skill.listedDays, "day")); "
                     + "model calls \(skill.modelCalls) (\(Int((skill.callRate * 100).rounded()))% of those sessions), user calls \(skill.userCalls)"
                 if skill.piModelCalls > 0 { line += ", in Pi \(skill.piModelCalls)" }
+                line += skill.lastCall.map { "; last call \(localDay($0))" } ?? "; no call recorded"
                 lines.append(line)
                 if details {
                     let versions = skill.descriptionVersions > 1 ? ", \(skill.descriptionVersions) description texts seen" : ""

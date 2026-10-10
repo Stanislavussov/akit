@@ -21,6 +21,8 @@ extension Recommender {
         public let report: RecommendReport
         /// `akit stats --details` of the scope over the last `days`: every listed skill.
         public let stats: StatsReport
+        /// `akit stats tools` of the scope over the same days: tools and MCP servers, used or not.
+        public let tools: ToolsReport
         /// `akit stats changes` of the scope: before/after of the applies and marks.
         public let changes: ChangesReport
         /// Projects the scope picker offers.
@@ -41,6 +43,7 @@ extension Recommender {
         let changes = try BeforeAfter.report(database, env: env, descriptions: inputs.stats.descriptions, project: project)
         return Loaded(report: try recommend(database, options: options, inputs: inputs),
                       stats: try InsightsStats.report(database, options: .init(days: days, project: project, top: nil), inputs: inputs.stats),
+                      tools: try ToolStats.report(database, days: days, project: project, bindings: options.bindings),
                       changes: changes,
                       projects: try knownProjects(database, brain: brain, home: env.homeDirectory, bindings: options.bindings),
                       lastImport: inputs.lastImport)

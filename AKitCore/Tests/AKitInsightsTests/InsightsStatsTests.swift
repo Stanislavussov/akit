@@ -458,6 +458,7 @@ extension InsightsStatsTests {
                     "name" : "mkt"
                   },
                   "piModelCalls" : 0,
+                  "unused" : true,
                   "userCalls" : 0,
                   "windowStart" : "2026-09-21T14:03:20Z"
                 },
@@ -465,6 +466,7 @@ extension InsightsStatsTests {
                   "approxContextSpace" : 20,
                   "approxTokens" : 10,
                   "callRate" : 1,
+                  "lastCall" : "2026-09-21T14:05:20Z",
                   "listedDays" : 1,
                   "listedSessions" : 1,
                   "modelCalls" : 1,
@@ -474,6 +476,7 @@ extension InsightsStatsTests {
                     "name" : "core"
                   },
                   "piModelCalls" : 1,
+                  "unused" : false,
                   "userCalls" : 0,
                   "windowStart" : "2026-09-21T14:03:20Z"
                 }

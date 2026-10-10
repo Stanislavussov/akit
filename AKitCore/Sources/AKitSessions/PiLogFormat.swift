@@ -40,6 +40,19 @@ public enum PiLogFormat {
         return String(rest[..<quote])
     }
 
+    /// The tool a line of the system prompt's `tools` section declares: `- name: description`. Only
+    /// tool-like names (letters, digits, `_`, `.`, `-`), so a bullet like `- Note: …` is no tool.
+    public static func toolName(ofLine line: String) -> String? {
+        guard line.hasPrefix("- "), let colon = line.firstIndex(of: ":") else { return nil }
+        let name = String(line[line.index(line.startIndex, offsetBy: 2)..<colon]).trimmingCharacters(in: .whitespaces)
+        return name.wholeMatch(of: /[A-Za-z0-9_.\-]+/) != nil ? name : nil
+    }
+
+    /// Every tool the `tools` section of a Pi ≥ 1.0 `system` message declares, one per line.
+    public static func toolNames(inToolsSection text: String) -> [String] {
+        text.split(separator: "\n").compactMap { toolName(ofLine: String($0)) }
+    }
+
     /// Pi's `message.usage`: input, output, cacheRead, cacheWrite.
     public static func tokens(fromPiUsage usage: Object) -> TokenCounts {
         func count(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }

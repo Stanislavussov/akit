@@ -10,10 +10,10 @@ struct InsightsView: View {
     @Environment(AppModel.self) private var model
     /// nil: every session on this Mac, with the other Macs' summaries. Snapshots: `--select <project id>`.
     @State private var project: String? = DebugSnapshot.options?.select
-    /// The skills table's window; recommendations keep the rule's own.
+    /// The window of the Skills / MCP Servers / Tools table; recommendations keep the rule's own.
     @State private var days = InsightsStats.defaultDays
-    /// The skills table shows the first `shortTable` rows until Show All.
-    @State private var allSkills = false
+    /// The Window picker's Custom… popover.
+    @State private var choosingDays = false
     /// The Changes list shows the newest `shortChanges` until Show All.
     @State private var allChanges = false
     @State private var loaded: Recommender.Loaded?
@@ -69,11 +69,20 @@ struct InsightsView: View {
                 .help("All sessions on this Mac with the other Macs' summaries, or only the sessions bound to one project")
             }
             ToolbarItem(placement: .navigation) {
-                Picker("Window", selection: $days) {
-                    ForEach([7, 30, 90], id: \.self) { Text("\($0) Days").tag($0) }
+                Picker("Window", selection: windowChoice) {
+                    ForEach(Self.windowPresets, id: \.self) { Text("\($0) Days").tag($0) }
+                    if !Self.windowPresets.contains(days) { Text("\(days) Days").tag(days) }
+                    Divider()
+                    Text("Custom…").tag(Self.customWindow)
                 }
                 .fixedSize()
-                .help("The days the Skills table counts; recommendations always use their rule's own window")
+                .help("The days the Skills, MCP Servers and Tools table counts; recommendations always use their rule's own window")
+                .popover(isPresented: $choosingDays, arrowEdge: .bottom) {
+                    CustomWindowPopover(days: days) { chosen in
+                        if let chosen { days = chosen }
+                        choosingDays = false
+                    }
+                }
             }
             ToolbarItem {
                 if isLoading {
@@ -125,6 +134,17 @@ struct InsightsView: View {
         }
     }
 
+    static let windowPresets = [7, 30, 90]
+    /// The Window picker's tag for Custom…: never a real number of days.
+    static let customWindow = 0
+
+    /// The window, or Custom…, which opens the popover and keeps the window until a number is applied.
+    private var windowChoice: Binding<Int> {
+        Binding(get: { days }, set: { choice in
+            if choice == Self.customWindow { choosingDays = true } else { days = choice }
+        })
+    }
+
     /// The loaded projects, plus the chosen one while its report is still loading.
     private var scopes: [String] {
         var ids = loaded?.projects ?? []
@@ -141,43 +161,54 @@ struct InsightsView: View {
 
     private func content(_ loaded: Recommender.Loaded) -> some View {
         let report = loaded.report
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if let notice {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Label(notice, systemImage: "checkmark.circle").foregroundStyle(.green)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                            Spacer()
-                            Button("Close", systemImage: "xmark") {
-                                self.notice = nil
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let notice {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Label(notice, systemImage: "checkmark.circle").foregroundStyle(.green)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                                Spacer()
+                                Button("Close", systemImage: "xmark") {
+                                    self.notice = nil
+                                }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
                             }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
+                            if !toPlan.isEmpty { planButtons }
                         }
-                        if !toPlan.isEmpty { planButtons }
                     }
+                    if let problem {
+                        Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let trouble = model.machine.problem {
+                        Label(trouble, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let capture { captureLine(capture) }
+                    owners(report)
+                    recommendations(report)
+                    InsightsUsageTable(stats: loaded.stats, tools: loaded.tools)
+                        .id(Self.usageTableID)
+                    changes(loaded.changes)
+                    footer(report)
                 }
-                if let problem {
-                    Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let trouble = model.machine.problem {
-                    Label(trouble, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let capture { captureLine(capture) }
-                owners(report)
-                recommendations(report)
-                skills(loaded.stats)
-                changes(loaded.changes)
-                footer(report)
+                .padding(20)
+                .frame(maxWidth: 900, alignment: .leading)
             }
-            .padding(20)
-            .frame(maxWidth: 900, alignment: .leading)
+            // Snapshots: `--tab skills|servers|tools` shows the table at the top.
+            .task {
+                guard DebugSnapshot.options?.tab.flatMap(InsightsUsageTable.Kind.init(rawValue:)) != nil else { return }
+                try? await Task.sleep(for: .milliseconds(300))
+                proxy.scrollTo(Self.usageTableID, anchor: .top)
+            }
         }
     }
+
+    private static let usageTableID = "usage"
 
     /// After a layer patch: the projects that pick it up only when they are set up again. Plan… opens
     /// Set Up Project with the project's saved answers, where the change is shown as a diff before
@@ -338,73 +369,10 @@ struct InsightsView: View {
         }
     }
 
-    /// Rows the Skills table shows before Show All.
+    /// Rows the Skills, MCP Servers and Tools table shows before Show All.
     static let shortTable = 15
     /// Changes shown before Show All.
     static let shortChanges = 8
-
-    /// `akit stats --details`: every skill listed in the window, by ≈ context space.
-    private func skills(_ stats: StatsReport) -> some View {
-        let summary = stats.summary
-        let rows = allSkills ? stats.skills : Array(stats.skills.prefix(Self.shortTable))
-        return GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(Self.statsLine(stats)).font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let dropped = stats.droppedDescriptions.text {
-                    Label(dropped, systemImage: "text.badge.minus").font(.callout)
-                        .foregroundStyle(stats.droppedDescriptions.withNameOnly > 0 ? .primary : .secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .help("Some skills were listed by name only, usually because Claude Code's skill listing was over its budget (1% of the context window by default), or because of a user override (name-only). Such a skill can't be picked by its description, so the session doesn't count in Listed. Making unused skills manual gives the others their descriptions back.")
-                }
-                if stats.skills.isEmpty {
-                    Text("No skill listings in this window.").foregroundStyle(.secondary)
-                } else {
-                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 5) {
-                        GridRow {
-                            Text("Skill")
-                            Text("Owner")
-                            Text("Listed").gridColumnAlignment(.trailing)
-                            Text("Model calls").gridColumnAlignment(.trailing)
-                            Text("User calls").gridColumnAlignment(.trailing)
-                            Text("≈ Tokens").gridColumnAlignment(.trailing)
-                            Text("≈ Context space").gridColumnAlignment(.trailing)
-                        }
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                        Divider().gridCellUnsizedAxes(.horizontal)
-                        ForEach(rows, id: \.name) { skill in
-                            GridRow {
-                                Text(skill.name).lineLimit(1).truncationMode(.middle)
-                                    .help("Counted since \(Self.day(skill.windowStart)), the start of its current description or of the window")
-                                Text([Self.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))
-                                    .lineLimit(1).foregroundStyle(.secondary)
-                                Text("\(skill.listedSessions) · \(Self.count(skill.listedDays, "day"))")
-                                    .help("Sessions where it was listed with its description, on how many days")
-                                Text(Self.modelCalls(skill))
-                                    .help("Model calls in every session that listed it, by name only too: they protect it. The % is the share of the sessions in Listed with a model call.")
-                                Text("\(skill.userCalls)")
-                                Text("≈ \(ContextSize.short(skill.approxTokens))")
-                                    .help("Its description in every request where it is listed")
-                                Text("≈ \(ContextSize.short(skill.approxContextSpace))")
-                                    .help("≈ description tokens × requests, summed over the sessions where it was listed")
-                            }
-                            .font(.callout.monospacedDigit())
-                        }
-                    }
-                    if stats.skills.count > Self.shortTable {
-                        Button(allSkills ? "Show Fewer" : "Show All \(stats.skills.count) Skills") { allSkills.toggle() }
-                            .buttonStyle(.link)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(6)
-        } label: {
-            Text("Skills, Last \(stats.window.days) Days").font(.headline)
-        }
-        .help(summary.sessions == 0 ? "" : "The same numbers as akit stats --details")
-    }
 
     /// `akit stats changes`: what each apply or mark did to the recorded first-request context.
     private func changes(_ report: ChangesReport) -> some View {
@@ -947,4 +915,55 @@ struct AddMarkSheet: View {
 extension ChangesReport.Change {
     /// One change in the list: its time, kind and project or note.
     var key: String { "\(date.timeIntervalSince1970)|\(anchor)|\(project ?? note ?? "")" }
+}
+
+/// The Window picker's Custom…: any number of days from 1 to 365.
+struct CustomWindowPopover: View {
+    /// The field's text, read when Apply or Return is pressed, so a value typed just before is never lost.
+    @State private var text: String
+    /// The chosen days, or nil for Cancel.
+    let done: (Int?) -> Void
+
+    init(days: Int, done: @escaping (Int?) -> Void) {
+        // A one-time seed: the popover edits its own copy until Apply.
+        _text = State(initialValue: String(days))
+        self.done = done
+    }
+
+    /// The typed number when it is a whole number from 1 to 365.
+    private var days: Int? {
+        Int(text.trimmingCharacters(in: .whitespaces)).flatMap { (1...365).contains($0) ? $0 : nil }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Custom Window").font(.headline)
+            HStack {
+                TextField("Days", text: $text)
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                    .onSubmit { if let days { done(days) } }
+                Stepper("Days", onIncrement: { step(1) }, onDecrement: { step(-1) })
+                    .labelsHidden()
+                Text("days")
+            }
+            Text("The last 1 to 365 days, up to now.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { done(nil) }
+                    .keyboardShortcut(.cancelAction)
+                Button("Apply") { if let days { done(days) } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(days == nil)
+            }
+        }
+        .padding()
+        .frame(width: 240)
+    }
+
+    /// The stepper moves from the typed number, kept within 1–365.
+    private func step(_ by: Int) {
+        let current = Int(text.trimmingCharacters(in: .whitespaces)) ?? 30
+        text = String(min(max(current + by, 1), 365))
+    }
 }

@@ -61,6 +61,12 @@ Checked against the code on 2026-10-03:
   in `AKitSessions` (step 7 of the design map).
 - The opt-in store for eval examples (`manual_call_examples`) is in the index; the export
   to skill-creator (step 12) is not built.
+- Unused over time (2026-10-10): the index records the tools each session had available
+  (`tool_listings`, schema v10, parser versions 3), and `akit stats tools` reports tools and MCP
+  servers with no call in a window; `akit stats` gained the last call and `--unused`. The
+  Insights screen's table switches between **Skills**, **MCP Servers** and **Tools**, with
+  **Unused Only**, a sort, and a **Custom…** window of 1–365 days. See "Tools and MCP servers
+  over time".
 
 ## Goal
 
@@ -281,6 +287,54 @@ nothing there and must not recommend for it.
 Subagents: their transcripts (`<session>/subagents/*.jsonl`) carry their own
 `skill_listing` (19 of the last 20 checked). A subagent run is not a session in
 the denominator; its model calls do count as calls (they protect the skill).
+
+### Tools and MCP servers over time
+
+Sessions → Overview shows what one session never used. Over a window (built 2026-10-10) the same
+question goes to every tool and MCP server: which ones were available and never called.
+Subagents are left out, as decided with the user.
+
+- **Index.** `tool_listings` (schema v10): one row per session, run kind (main or subagent) and
+  tool, with `ts` the first time it was seen there, `server` for an MCP tool
+  (`mcp__<server>__<tool>`; the name is split at the first `__`, so a server whose own name holds
+  `__` shows as a shorter server and longer tool names), and `via`: `snapshot` (a prompt snapshot
+  with tools, the full list), `deferred` (deferred tools only) or `pi`; a snapshot wins when a
+  tool came both ways. It is a fact table like the others (`source_id`, parser version,
+  deleted and re-read on a parser bump). Claude Code: the tools of a `prompt_snapshot` (the first
+  snapshots often have none), the `addedNames` of `deferred_tools_delta` (deferred tools, reachable
+  through ToolSearch, count as available) and the entries of `deferred_tools_record`; a removed
+  name stays available, it was there for part of the session. Some sessions have deferred tools
+  but no snapshot with tools (24 of 184 transcripts of Claude Code 2.1.221–2.1.296 checked on
+  2026-10-10): they say which MCP tools were there, not which built-in ones. Pi ≥ 1.0: the `tools`
+  section of its `system` message, one `- name: description` line per tool; only tool-like names
+  (letters, digits, `_`, `.`, `-`) count, so a description bullet like `- Use with care: …` is no
+  tool (a one-word bullet such as `- Note: …` still reads as one). Older sessions (Claude Code
+  before prompt snapshots, Pi before 1.0) have no rows; they add only calls. Both parsers went
+  to version 3, so files still on disk are read again.
+- **Report.** `ToolStats.report` (`akit stats tools`, the Insights screen), with the window and
+  scope rules of `akit stats` for availability (sessions started in the window). Per tool: main
+  sessions where it was available (a built-in tool only in sessions with a full list, `snapshot`
+  or `pi`; an MCP tool in every session that listed it; `sessionsWithToolList` counts the full
+  lists), days, calls, sessions with a call, the last call, and `unused`. Calls are those made in
+  the window (call time ≥ window start) in any of the scope's sessions, also one started earlier
+  and resumed, subagent runs included. The last call looks at all the scope's calls, also before
+  the window ("unused for 30 days, last called 52 days ago"). So a row is unused exactly when its
+  last call is before the window or there is none. Per MCP server, summed from its tools:
+  tools seen, tools called, calls, sessions with one of its tools, the last call, and its unused
+  tools. A tool only a subagent run listed is never available; it is a row only when a subagent
+  called it. While files read by an older parser wait to be read again, the report says how many. The JSON is version 1. Only recorded data:
+  no sizes for tools, since Pi doesn't record their schemas.
+- **Screen.** The Insights table (`InsightsUsageTable`) switches between **Skills**, **MCP
+  Servers** and **Tools**; **Unused Only** keeps the rows without a call in the window; **Sort**
+  offers Context Space (skills only), Fewest Calls, Most Calls, Least Recently Used and Name. A
+  server row opens to the tools it never called. The Window picker has 7 / 30 / 90 Days and
+  **Custom…**, any number of days from 1 to 365. Every number has a tooltip saying what it counts.
+- **Skills.** `akit stats` gives each skill `lastCall` (the latest counted model or user call in
+  the scope's sessions, also before the window) and `unused` (no such call made in the window);
+  new fields, the JSON keeps version 1. `--unused` keeps only unused skills. `unused` follows the
+  rule of tools and ignores the description window, so a skill called 10 days ago whose
+  description changed 3 days ago is in use, while its call columns (counted from the description
+  window) show 0.
 
 ### Rule: auto → manual
 
@@ -554,7 +608,8 @@ A sidebar section **Insights** next to Usage and Lab. It shows the same reports 
 CLI, from the same core calls, so the screen and `--json` never disagree.
 
 - **Header.** Scope picker: this Mac (all sessions) or one project (from the project
-  list; bindings as in `akit stats`). Window picker: 7 / 30 / 90 days, for stats only;
+  list; bindings as in `akit stats`). Window picker: 7 / 30 / 90 days or Custom… (1–365, built
+  2026-10-10), for stats only;
   recommendations always use the rule's own window (N sessions, D days). Last import time
   and an **Import now** button (`QuickImport.run`). Capture status from
   `CaptureInstaller.status`; **Install capture…** shows `CaptureInstaller.installPlan`

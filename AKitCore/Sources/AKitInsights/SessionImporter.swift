@@ -452,6 +452,12 @@ struct FactWriter {
                                  listing.ts?.timeIntervalSince1970, listing.isSubagent, listing.isInitial, skill.descHash,
                                  skill.descChars, c.sourceID, c.parserVersion)
             }
+        case .toolListing(let listing):
+            for tool in listing.tools {
+                try database.run(Self.toolListingSQL, c.harness, c.sessionKey, listing.isSubagent, tool,
+                                 MCPServers.server(ofTool: tool), listing.via.rawValue, listing.ts?.timeIntervalSince1970,
+                                 c.sourceID, c.parserVersion)
+            }
         case .skillCall(let call), .command(let call):
             // A user call says whether it was a skill or a built-in command like `/model`.
             var kind: String?
@@ -505,6 +511,20 @@ struct FactWriter {
                                    identity: ["session_key", "ts", "is_subagent"], values: ["is_initial", "desc_hash", "desc_chars"])
     static let skillCallSQL = upsert("skill_calls", key: ["harness", "event_key"], identity: ["session_key", "ts", "is_subagent"],
                                      values: ["skill", "by", "has_args", "extra"])
+
+    /// A tool listed again keeps the first time it was seen, and `snapshot` wins over `deferred` (the session
+    /// then has its full list); the row moves to a newer generation of its file.
+    static let toolListingSQL = """
+        INSERT INTO tool_listings(harness, session_key, is_subagent, tool, server, via, ts, source_id, parser_version)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(harness, session_key, is_subagent, tool) DO UPDATE SET server = excluded.server,
+          via = CASE WHEN excluded.via = 'snapshot' THEN 'snapshot' ELSE tool_listings.via END,
+          ts = MIN(COALESCE(tool_listings.ts, excluded.ts), COALESCE(excluded.ts, tool_listings.ts)),
+          source_id = CASE WHEN EXISTS(SELECT 1 FROM sources old, sources new WHERE old.id = tool_listings.source_id
+            AND new.id = excluded.source_id AND new.path = old.path AND new.generation > old.generation)
+            THEN excluded.source_id ELSE tool_listings.source_id END,
+          parser_version = MAX(tool_listings.parser_version, excluded.parser_version)
+        """
 
     /// An example is written once; copies of its line (resumed sessions, forks) keep the first.
     static let exampleSQL = """
