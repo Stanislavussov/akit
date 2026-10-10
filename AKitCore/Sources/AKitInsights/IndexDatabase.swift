@@ -60,8 +60,20 @@ public final class IndexDatabase {
     /// Prepared statements by SQL text; the importer runs the same few thousands of times.
     private var statements: [String: OpaquePointer] = [:]
 
-    init(url: URL) throws {
+    /// `readOnly`: opens an index that exists, never creates, migrates or changes it.
+    init(url: URL, readOnly: Bool = false) throws {
         self.url = url
+        if readOnly {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK, let db else {
+                let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "out of memory"
+                sqlite3_close(db)
+                throw Failure(message: "Can't open \(url.path): \(message)")
+            }
+            handle = db
+            sqlite3_busy_timeout(db, 5000)
+            return
+        }
         // Owner-only folder, so the -wal and -shm files SQLite creates next to the index are private too.
         let folder = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,

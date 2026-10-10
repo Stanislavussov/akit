@@ -240,8 +240,8 @@ struct MoveSkillSheet: View {
                     .padding(.leading, 24)
                 }
             }
-        case .skipped(let reason):
-            Label("\(part.id): skipped, \(reason)", systemImage: "minus.circle").foregroundStyle(.secondary)
+        case .answersOnly:
+            Label("\(part.id) is not on this Mac: only its answers get \(name).", systemImage: "info.circle").foregroundStyle(.secondary)
         case .keepOwn:
             Label("\(part.id) keeps its own \(name); nothing is written there.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
         case .add:
@@ -285,9 +285,12 @@ struct MoveSkillSheet: View {
         } else {
             sections.append(("Brain", [Item(id: "brain", title: "skills/\(name)", detail: "already in the brain", tint: .secondary)]))
         }
-        for part in plan.parts where part.state == .add || part.state == .keepOwn {
+        for part in plan.parts where part.state == .add || part.state == .keepOwn || part.state == .answersOnly {
             var items: [Item] = []
-            if part.state == .keepOwn {
+            if part.state == .answersOnly {
+                items.append(Item(id: "\(part.id):answers", title: "answers only", detail: "not on this Mac: Set Up Project on its Mac renders \(name)",
+                                  tint: .secondary))
+            } else if part.state == .keepOwn {
                 items.append(Item(id: "\(part.id):own", title: "keeps its own \(name)", detail: "nothing is written", tint: .secondary))
             } else {
                 for change in part.changes where change.kind != .same {
@@ -365,7 +368,9 @@ struct MoveSkillSheet: View {
             HStack {
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3) }
                 Spacer()
-                Button("Back") { page = .check }.keyboardShortcut(.cancelAction)
+                Button("Back") { page = .check }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isWorking)
                 Button(isWorking ? "Moving…" : "Move", action: apply)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!(plan?.canApply ?? false) || isWorking)
@@ -409,6 +414,9 @@ struct MoveSkillSheet: View {
                     ForEach(outcome.projects, id: \.id) { project in
                         Label("\(project.id): \(project.outcome.written.count) written" + (project.outcome.notes.isEmpty ? "" : ". " + project.outcome.notes.joined(separator: " ")),
                               systemImage: "folder")
+                    }
+                    if !outcome.answersSaved.isEmpty {
+                        Label("Answers only (other Macs): \(outcome.answersSaved.joined(separator: ", "))", systemImage: "doc.text")
                     }
                     if outcome.coreChanged { Label("Core layer: \(name) taken out", systemImage: "square.stack.3d.up") }
                     if let home = outcome.home { Label("Home folder: \(home.removed.count) file\(home.removed.count == 1 ? "" : "s") to the Trash", systemImage: "house") }

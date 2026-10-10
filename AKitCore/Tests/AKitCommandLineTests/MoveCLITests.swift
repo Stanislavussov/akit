@@ -97,6 +97,21 @@ struct MoveCLITests {
         let missing = await akit("move", "skill", "nothing", "--to", ".")
         #expect(missing.code == 1 && missing.out.contains("blocked: nothing is not a global skill on this Mac"), "\(missing.out)")
         let away = await akit("move", "skill", "deploy", "--to", "github.com/me/away")
-        #expect(away.code == 1 && away.out.contains("Project github.com/me/away: skipped: not on this Mac"), "\(away.out)")
+        #expect(away.code == 2 && away.err.contains("--to github.com/me/away: no such folder, and no project with that id"), "\(away)")
+    }
+
+    @Test func keepOwnLeavesTheProjectsCopy() async throws {
+        try await setUp()
+        try write("Projects/task/.agents/skills/deploy/SKILL.md", "---\nname: deploy\ndescription: Ours\n---\n")
+        try await git("add", "-A")
+        try await git("commit", "-qm", "Our deploy")
+        let blocked = await akit("move", "skill", "deploy", "--to", ".")
+        #expect(blocked.code == 1 && blocked.out.contains("has its own deploy in .agents/skills (in git)") && blocked.out.contains("--keep-own"),
+                "\(blocked.out)")
+        let kept = await akit("move", "skill", "deploy", "--to", ".", "--keep-own", "--yes")
+        #expect(kept.code == 0 && kept.out.contains("Project local/task (~/Projects/task): keeps its own deploy; nothing is written there."), "\(kept)")
+        #expect(!fm.fileExists(atPath: home.appending(path: ".agents/skills/deploy").path))
+        #expect(try String(contentsOf: project.appending(path: ".agents/skills/deploy/SKILL.md"), encoding: .utf8).contains("Ours"))
+        #expect(try await git("status", "--porcelain").isEmpty)
     }
 }

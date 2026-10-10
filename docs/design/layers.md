@@ -335,9 +335,19 @@ The order keeps the skill present at every step:
 
 - **Projects.** Each project's answers get `{name: X, mode}`; a project without answers gets
   its first Set Up with no layers and the installed harnesses as targets. Its Apply writes
-  only X's files and, when new, the `.claude/skills` link; every other change of its plan
-  (a layer that changed since) is left for Set Up Project, and the lock keeps their old
-  entries. The worktree sync of the project is held during its Apply (the app's gate).
+  only X's files and the `.claude/skills` link when it is new, AKit's own, or replaces an empty
+  folder; every other change of its plan (a layer that changed since) is deferred to Set Up
+  Project: the lock keeps their old entries and their last offer (a pending "layers changed"
+  suggestion is offered again), and, while one of them is a real change, the previous brain
+  commit and Pi folder (`ProjectSetup.apply(deferring:)`). When Claude is a target and
+  `.claude/skills` would not lead to `.agents/skills` (a link elsewhere, a folder with files),
+  that project is blocked: Claude Code wouldn't see X. The app holds the worktree sync of every
+  project the move writes; the command line has no cross-process gate (the app's is in memory),
+  so a sync the app runs at the same time may make a link a moment early or late; it only
+  creates links where nothing is, and the next sync fixes the rest.
+- **Not on this Mac.** A project with a record (answers in the brain or the local store) gets
+  only its answers, committed ("Add skill X to <id>'s answers"); Set Up Project on its Mac
+  renders X. One without a record blocks the move.
 - **Project files.** A project's saved choice (Commit / Local only) stays and is shown; a
   project set up by the move is local only unless the user picks Commit.
 - **Mode.** The caller picks it: `auto` when the skill's calls show model calls, else its
@@ -347,10 +357,19 @@ The order keeps the skill present at every step:
   named; their projects keep it.
 - **The home folder.** Its plan renders core without X; Apply takes only X's files (the rest
   of a pending Update Home Folder waits). A copy edited by hand since AKit wrote it (`keepEdited`)
-  stops the move: Show Edits, bring the edits into the brain first.
+  stops the move: Show Edits, bring the edits into the brain first. When core has no skills
+  left, a home render keeps AKit's `~/.claude/skills` link while `~/.agents/skills` still holds a
+  skill folder (the user's own), so Claude Code keeps seeing them.
+- **Other copies.** Only copies with the same folder name in other skill folders go to the Trash,
+  and only when their files are the brain's (or those the brain is about to get); one that
+  differs blocks the move, with Show Edits for every differing file. A folder of another name
+  whose header says X is a different skill: a warning, never trashed. What goes to the Trash is
+  hashed in the preview and checked again before anything is written. A source that is a link
+  (into a development folder) is imported from that folder alone, and only the link goes.
 - **Blocked.** A project with its own X (a folder AKit didn't write, in git or not) until the
   user compares and keeps the project's (then nothing is written there and X only leaves
-  core); a global copy that differs from the brain's `skills/X`; a project whose plan can't
+  core; an own copy not in git gets a warning that its worktrees won't have X, and Apply checks
+  that the copy is still there); a global copy that differs from the brain's `skills/X`; a project whose plan can't
   apply; claude.ai, plugin and Pi package skills (AKit can't move them: the skill switches
   turn them off per harness).
 - **Warnings.** Other brain skills, layer templates (strong for the core layer: every session
@@ -361,6 +380,11 @@ The order keeps the skill present at every step:
   `~/.akit/local/projects`.
 - **Keep global** (`--keep-global`): only the brain import and the projects; core and the home
   folder keep X.
+- **Failures** say where X is: a failed import commit may leave `skills/X` uncommitted in the
+  brain; a home Apply that fails after the core commit leaves `~/.agents/skills/X`, which
+  Update Home Folder takes out.
+- The calls that preselect projects are read from the index opened read-only (`IndexSchema.openReadOnly`):
+  the sheet and `akit move` never import or migrate it; `akit stats skill` imports first, like every `akit stats`.
 - Not built: "make it the project's own" (copy the folder into the project to commit it), which
   would reach worktrees only once committed and has no lock entry or preview of its own.
 
@@ -663,7 +687,8 @@ as `${VAR}` references; the real values come from Keychain.
    (`BrainImport.apply(listInLayer: false)`, 2026-10-11; commit "Import skill X"), for a skill
    that a project's answers list instead (Move to Project). Every import commit names where
    each new skill was installed from ("Source of X: owner/repo", from the skills.sh or AKit
-   lock), so the brain's copy keeps its origin; the brain has no other record of it.
+   lock, reduced to `owner/repo` or a host and path: no credentials, query or line breaks), so the
+   brain's copy keeps its origin; the brain has no other record of it.
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end. (Done.)
 4. MCP in layers. (Possible since 2026-10-08 through JSON merge: `.mcp.json` templates,

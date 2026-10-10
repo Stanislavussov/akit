@@ -68,20 +68,65 @@ public enum BrainImport {
         let items = (try? fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
 
         let candidates = items.compactMap { item -> Candidate? in
-            let name = item.lastPathComponent
-            let folder = item.resolvingSymlinksInPath()
             // claude.ai skills live in `synced/` and are managed by Claude.
-            guard name != "synced", Condition.isIdentifier(name),
-                  fm.fileExists(atPath: folder.appending(path: "SKILL.md").path) else { return nil }
-            let contents = copyable(folder)
-            let existing = brainRoot.appending(path: "skills/\(name)")
-            let state: Candidate.State = !fm.fileExists(atPath: existing.path) ? .new
-                : sameFiles(contents.files, copyable(existing).files) ? .same : .different
-            return Candidate(name: name, folder: folder, state: state, source: lock.source(forSkillFolder: folder),
-                             inLayer: inLayer.contains(name), skipped: contents.skipped)
+            guard item.lastPathComponent != "synced" else { return nil }
+            return candidate(item.lastPathComponent, folder: item.resolvingSymlinksInPath(), brainRoot: brainRoot, lock: lock,
+                             inLayer: inLayer)
         }
         .sorted { $0.name < $1.name }
         return Plan(source: source, brainRoot: brainRoot, candidates: candidates, layer: layer, mode: mode, layerBefore: before)
+    }
+
+    /// An import of one skill folder under `name`, into the library only (no layer is read or
+    /// changed with `apply(listInLayer: false)`). Only that folder is read, never its parent: a
+    /// skill linked from a development folder doesn't drag the folder's other items in.
+    public static func plan(skill folder: URL, name: String, into brainRoot: URL, env: HarnessEnvironment) -> Plan {
+        let real = folder.resolvingSymlinksInPath()
+        let found = candidate(name, folder: real, brainRoot: brainRoot, lock: SkillLock.read(in: env), inLayer: [], lockFolder: folder)
+        return Plan(source: folder.deletingLastPathComponent(), brainRoot: brainRoot, candidates: found.map { [$0] } ?? [], layer: "core",
+                    mode: .manual, layerBefore: (try? String(contentsOf: layerFile("core", in: brainRoot), encoding: .utf8)) ?? "")
+    }
+
+    /// A skill folder as an import candidate; nil when the name is not a skill name or it has no SKILL.md.
+    static func candidate(_ name: String, folder: URL, brainRoot: URL, lock: SkillLock, inLayer: Set<String>,
+                          lockFolder: URL? = nil) -> Candidate? {
+        let fm = FileManager.default
+        guard Condition.isIdentifier(name), fm.fileExists(atPath: folder.appending(path: "SKILL.md").path) else { return nil }
+        let contents = copyable(folder)
+        let existing = brainRoot.appending(path: "skills/\(name)")
+        let state: Candidate.State = !fm.fileExists(atPath: existing.path) ? .new
+            : sameFiles(contents.files, copyable(existing).files) ? .same : .different
+        let source = lock.source(forSkillFolder: folder) ?? lockFolder.flatMap { lock.source(forSkillFolder: $0) }
+        return Candidate(name: name, folder: folder, state: state, source: source, inLayer: inLayer.contains(name), skipped: contents.skipped)
+    }
+
+    /// Where a skill came from, fit for a commit message: `owner/repo`, or a URL's host and path,
+    /// without credentials, query, fragment or line breaks; nil when nothing is left.
+    static func sourceNote(_ origin: String) -> String? {
+        var text = origin.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        for prefix in ["skills.sh · ", "Your copy of "] where text.hasPrefix(prefix) { text.removeFirst(prefix.count) }
+        if text.hasSuffix(" (renamed)") { text.removeLast(" (renamed)".count) }
+        text = text.trimmingCharacters(in: .whitespaces)
+        if let scheme = text.range(of: "://") {
+            var rest = String(text[scheme.upperBound...])
+            if let end = rest.firstIndex(where: { "?#".contains($0) }) { rest = String(rest[..<end]) }
+            if let slash = rest.firstIndex(of: "/"), let at = rest[..<slash].lastIndex(of: "@") {
+                rest = String(rest[rest.index(after: at)...])
+            } else if !rest.contains("/"), let at = rest.lastIndex(of: "@") {
+                rest = String(rest[rest.index(after: at)...])
+            }
+            text = rest
+        } else {
+            if let end = text.firstIndex(where: { "?#".contains($0) }) { text = String(text[..<end]) }
+            // git@github.com:owner/repo
+            if let at = text.firstIndex(of: "@"), let colon = text[at...].firstIndex(of: ":") {
+                text = String(text[text.index(after: at)..<colon]) + "/" + String(text[text.index(after: colon)...])
+            }
+        }
+        if text.hasSuffix(".git") { text.removeLast(4) }
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/:")
+        text = String(text.filter { allowed.contains($0) }.prefix(200)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return text.isEmpty ? nil : text
     }
 
     /// The layer after listing these skills in the plan's mode.
@@ -147,7 +192,7 @@ public enum BrainImport {
         guard isRepo, !paths.isEmpty else { return copied }
         let message = listInLayer ? "Import \(chosen.count) skill\(chosen.count == 1 ? "" : "s") into the \(plan.layer) layer"
             : toCopy.count == 1 ? "Import skill \(toCopy[0].name)" : "Import \(toCopy.count) skills"
-        let sources = toCopy.compactMap { candidate in candidate.source.map { "Source of \(candidate.name): \($0)" } }
+        let sources = toCopy.compactMap { candidate in candidate.source.flatMap(sourceNote).map { "Source of \(candidate.name): \($0)" } }
         _ = try await git(["add", "--"] + paths, in: root, env: env)
         // Only these paths: whatever else is staged in the brain stays staged.
         _ = try await git(["commit", "--quiet", "-m", message] + (sources.isEmpty ? [] : ["-m", sources.joined(separator: "\n")])

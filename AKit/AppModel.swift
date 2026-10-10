@@ -362,11 +362,11 @@ final class AppModel {
     // MARK: Move to Project
 
     /// One skill's calls per project over the last 30 days (`akit stats skill`), from the index as
-    /// it is (no import); nil without one. Only reads.
+    /// it is: opened read-only, never imported or migrated; nil without one. Only reads.
     func skillCalls(_ name: String) async -> SkillCallsReport? {
         let env = HarnessEnvironment.current, brain = brain
         return await Task.detached {
-            guard let database = try? IndexSchema.open(InsightsPaths(env: env).database) else { return nil }
+            guard let database = IndexSchema.openReadOnly(InsightsPaths(env: env).database) else { return nil }
             return try? SkillCalls.report(database, skill: name, brain: brain, env: env, hardware: MachineProfile.currentHardwareHash())
         }.value
     }

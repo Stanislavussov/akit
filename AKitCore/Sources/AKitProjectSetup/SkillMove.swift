@@ -24,7 +24,7 @@ public enum SkillMove {
         /// The brain's project id.
         public let id: String
         /// The project's folder on this Mac (a worktree stands for its main checkout); nil when
-        /// it is not here: skipped.
+        /// it is not here: only its saved answers get the skill.
         public let folder: URL?
         /// Keep AKit's files out of git; nil: the project's saved choice, and local only for a
         /// project that is not set up yet.
@@ -84,8 +84,9 @@ public enum SkillMove {
             case add
             /// The project keeps its own copy; nothing is written.
             case keepOwn
-            /// Not on this Mac.
-            case skipped(String)
+            /// Not on this Mac, but it has a record: only its answers get the skill, so Set Up
+            /// Project on the Mac that has it renders the skill there.
+            case answersOnly
             /// Something stops it; the whole move waits.
             case blocked(String)
         }
@@ -111,6 +112,8 @@ public enum SkillMove {
         /// The project's own copy of the skill (for Compare), and whether git tracks it.
         public let ownFolder: URL?
         public let ownTracked: Bool
+        /// The answers saved for `.answersOnly`.
+        public var answers: ProjectAnswers? = nil
 
         /// The changes Apply makes for the skill.
         public var changes: [ProjectSetup.Change] { plan?.changes.filter { paths.contains($0.path) } ?? [] }
@@ -148,9 +151,15 @@ public enum SkillMove {
         public let homeExcluded: Set<String>
         /// A global copy that is not AKit's render (a folder, or a link: only the link goes): to the Trash.
         public let trashSource: [URL]
-        /// Other global copies the harnesses see (`~/.pi/agent/skills/<name>`, a separate
-        /// `~/.claude/skills/<name>`): each to the Trash.
+        /// Other global copies with the same folder name in other skill folders
+        /// (`~/.pi/agent/skills/<name>`, a separate `~/.claude/skills/<name>`), each the same as the
+        /// brain's: each to the Trash.
         public let extraCopies: [Skill]
+        /// What each item that goes to the Trash held when planned (path → digest), checked again
+        /// before anything is written.
+        let trashDigests: [String: String]
+        /// Where project answers and locks are kept (the brain, or a work Mac's local store).
+        let store: ProjectStore
         /// Files that differ from the brain's: the move waits until they are the same.
         public let edits: [Edit]
         public let blockers: [String]
@@ -159,16 +168,20 @@ public enum SkillMove {
 
         public var canApply: Bool {
             blockers.isEmpty && !parts.contains { if case .blocked = $0.state { true } else { false } }
-                && parts.contains { $0.state == .add || $0.state == .keepOwn }
+                && parts.contains { $0.state == .add || $0.state == .keepOwn || $0.state == .answersOnly }
         }
         /// Projects the skill is written into.
         public var adding: [Part] { parts.filter { $0.state == .add } }
+        /// Projects on other Macs whose answers get the skill.
+        public var answersOnly: [Part] { parts.filter { $0.state == .answersOnly } }
     }
 
     public struct Outcome: Sendable {
         public var imported = false
         /// Each project's Apply, in order.
         public var projects: [(id: String, outcome: ProjectSetup.Outcome)] = []
+        /// Projects on other Macs whose answers got the skill.
+        public var answersSaved: [String] = []
         public var coreChanged = false
         public var home: ProjectSetup.Outcome?
         /// Copies moved to the Trash.
@@ -210,8 +223,10 @@ public enum SkillMove {
         let skillPrefix = { (name: String) in "\(ProjectBundle.skillsFolder)/\(name)/" }
         var blockers: [String] = [], warnings: [String] = [], notes: [String] = [], edits: [Edit] = []
 
-        // Where the skill is: a global copy the harnesses read, and the brain.
-        let copies = globalCopies(requested, installed: context.installed)
+        // Where the skill is: a global copy the harnesses read, and the brain. A copy found by its
+        // header's name in a folder of another name is a different skill: never moved or trashed.
+        let found = globalCopies(requested, installed: context.installed)
+        let copies = found.contains { folderName($0) == requested } ? found.filter { folderName($0) == requested } : found
         let homeLock = ProjectRecords.savedLock(id: context.homeID, in: context.store)
         let rendered = { (name: String) in homeLock?.files.keys.contains { $0.hasPrefix(skillPrefix(name)) } ?? false }
         let agentsFolder = home.appending(path: ProjectBundle.skillsFolder).resolvingSymlinksInPath().standardizedFileURL.path
@@ -219,6 +234,9 @@ public enum SkillMove {
         let shared = copies.filter { $0.realFolder.deletingLastPathComponent().standardizedFileURL.path == agentsFolder }
         let source = shared.first { rendered(folderName($0)) } ?? shared.first ?? copies.first
         let name = source.map(folderName) ?? requested
+        for other in found where folderName(other) != name {
+            warnings.append("\(shown(other.folder, home: home)) also says \(requested) in its header, but it is a different folder; it stays where it is.")
+        }
         let readOnly = context.installed.filter { ($0.name == name || folderName($0) == name) && $0.isReadOnly }
         let core = brain.layers.first { $0.name == "core" }
         let inCore = core?.skills.contains { $0.name == name } ?? false
@@ -239,17 +257,17 @@ public enum SkillMove {
         var digest: String?
         var planning = brain
         if let source {
-            let importPlan = BrainImport.plan(from: source.realFolder.deletingLastPathComponent(), into: brain.root, env: env)
-            switch importPlan.candidates.first(where: { $0.name == name })?.state {
+            // Only the skill's own folder is read, also when it is a link into a development folder.
+            let importPlan = BrainImport.plan(skill: source.folder, name: name, into: brain.root, env: env)
+            switch importPlan.candidates.first?.state {
             case .new?:
                 brainImport = importPlan
                 planning = brain.addingSkill(name, from: source.realFolder)
                 digest = Self.digest(source.realFolder)
             case .different? where !sourceRendered:
                 blockers.append("The brain's skills/\(name) differs from \(shown(source.folder, home: home)). Compare them (Show Edits), bring what you want to keep into one of them, then move again.")
-                edits.append(Edit(path: shown(source.file, home: home),
-                                  brainText: try? String(contentsOf: brain.root.appending(path: "skills/\(name)/SKILL.md"), encoding: .utf8),
-                                  copyText: try? String(contentsOf: source.realFile, encoding: .utf8)))
+                edits += differences(brain: brain.root.appending(path: "skills/\(name)"), copy: source.realFolder,
+                                     shownCopy: shown(source.folder, home: home))
             case nil where !inBrain:
                 blockers.append("\(shown(source.folder, home: home)) can't be copied into the brain (its folder name is not a valid skill name).")
             default:
@@ -277,7 +295,12 @@ public enum SkillMove {
             part(target, name: name, mode: mode, brain: planning, context: context)
         }
         for part in parts {
-            if case .skipped(let reason) = part.state { warnings.append("\(part.id): \(reason)") }
+            if part.state == .answersOnly {
+                notes.append("\(part.id) is not on this Mac: its answers get \(name), and Set Up Project on the Mac that has it renders it there.")
+            }
+            if part.state == .keepOwn, !part.ownTracked, !keepGlobal {
+                warnings.append("\(part.id)'s own \(name) is not in git: its git worktrees won't have \(name) once core drops it. Commit it, or move it the usual way instead.")
+            }
         }
         if parts.filter({ $0.state == .add }).count >= 3 {
             notes.append("\(name) goes to \(parts.filter { $0.state == .add }.count) projects: a layer may suit it better (Brain → New Layer…, with \(name) in its skills).")
@@ -290,6 +313,7 @@ public enum SkillMove {
         var homePaths: Set<String> = [], homeExcluded: Set<String> = []
         var trashSource: [URL] = []
         var extra: [Skill] = []
+        var trashItems: [URL] = []
         if !keepGlobal {
             if rendered(name) {
                 let saved = ProjectRecords.savedAnswers(id: context.homeID, in: context.store)
@@ -327,15 +351,36 @@ public enum SkillMove {
                     blockers.append(error.localizedDescription)
                 }
             }
-            extra = copies.filter { $0.id != source?.id }
+            // Other copies with the same folder name. One that holds something else than the
+            // brain's skill (or the copy the brain is about to get) would lose that: it stops the move.
+            let canonical = FileWalk.isDirectory(brain.root.appending(path: "skills/\(name)")) ? brain.root.appending(path: "skills/\(name)")
+                : source?.realFolder
+            for copy in copies where copy.id != source?.id && folderName(copy) == name {
+                if !SkillRemover.removesOnlyLink(copy), let canonical {
+                    let differing = differences(brain: canonical, copy: copy.realFolder, shownCopy: shown(copy.folder, home: home))
+                    if !differing.isEmpty {
+                        blockers.append("\(shown(copy.folder, home: home)) differs from the brain's \(name). Show Edits, bring what you want to keep into the brain's skills/\(name) (or delete that copy), then move again.")
+                        edits += differing
+                        continue
+                    }
+                }
+                do {
+                    trashItems += try SkillRemover.items(for: copy)
+                    extra.append(copy)
+                } catch {
+                    blockers.append(error.localizedDescription)
+                }
+            }
             notes.append("Other Macs: Brain → Sync there offers Update Home Folder, which takes \(name) out of their home folder; each project there needs its own Apply (Set Up Project).")
         }
 
         warnings += mentions(of: name, brain: brain, targets: Set(targets.map(\.id)), projectFolders: context.projectFolders)
 
+        let trashDigests = Dictionary((trashSource + trashItems).map { ($0.path, treeDigest($0)) }, uniquingKeysWith: { first, _ in first })
         return Plan(name: name, mode: mode, keepGlobal: keepGlobal, source: source, sourceRendered: sourceRendered, brainImport: brainImport,
                     sourceDigest: digest, parts: parts, coreEdit: coreEdit, home: homePlan, homePaths: homePaths, homeExcluded: homeExcluded,
-                    trashSource: trashSource, extraCopies: extra, edits: edits, blockers: blockers, warnings: warnings, notes: notes)
+                    trashSource: trashSource, extraCopies: extra, trashDigests: trashDigests, store: context.store, edits: edits, blockers: blockers,
+                    warnings: warnings, notes: notes)
     }
 
     /// `~/…` for a path under the home folder, also when links were resolved in it (`/private/var/…`).
@@ -362,11 +407,23 @@ public enum SkillMove {
             Part(target: target, state: state, folder: folder, plan: nil, paths: [], excluded: [], isNew: false, localOnly: false,
                  savedLocalOnly: nil, worktrees: [], ownFolder: own, ownTracked: tracked)
         }
-        guard let given = target.folder else { return done(.skipped("not on this Mac; set it up on a Mac that has it")) }
-        guard FileWalk.isDirectory(given) else { return done(.skipped("its folder \(given.path) is gone")) }
+        let saved = ProjectRecords.savedAnswers(id: target.id, in: context.store)
+        guard let given = target.folder, FileWalk.isDirectory(given) else {
+            // Not here: its record gets the skill, so the Mac that has it renders it on its next Set Up.
+            guard var answers = saved else {
+                return done(.blocked(target.folder == nil
+                    ? "is not on this Mac and AKit has no record of it. Set it up on a Mac that has it, or untick it."
+                    : "its folder \(target.folder!.path) is gone and AKit has no record of it."))
+            }
+            if let localOnly = target.localOnly { answers.localOnly = localOnly }
+            answers.skills.removeAll { $0.name == name }
+            answers.skills.append(.init(name: name, mode: mode))
+            var part = done(.answersOnly)
+            part.answers = answers
+            return part
+        }
         // A worktree stands for its main checkout, which AKit sets up.
         let folder = GitCheckout.at(given).flatMap { $0.isLinkedWorktree ? $0.mainFolder : nil } ?? given
-        let saved = ProjectRecords.savedAnswers(id: target.id, in: context.store)
         let lock = ProjectRecords.savedLock(id: target.id, in: context.store)
         let prefix = "\(ProjectBundle.skillsFolder)/\(name)/"
 
@@ -390,15 +447,73 @@ public enum SkillMove {
         answers.skills.removeAll { $0.name == name }
         answers.skills.append(.init(name: name, mode: mode))
         let plan = ProjectSetup.plan(project: folder, id: target.id, answers: answers, brain: brain, store: context.store, env: env)
-        let paths = Set(plan.changes.filter { change in
-            change.path.hasPrefix(prefix) || (change.path == ".claude/skills" && change.kind == .create)
-        }.map(\.path))
+        // The Claude link goes with the skill when it is new, AKit's own, or an empty folder.
+        let link = plan.changes.first { $0.path == ".claude/skills" }
+        let takesLink = link.map { change in
+            change.kind == .create || (change.kind == .update && (!change.replacesUnmanaged || change.oldText == "(empty folder)"))
+        } ?? false
+        var paths = Set(plan.changes.filter { $0.path.hasPrefix(prefix) }.map(\.path))
+        if takesLink { paths.insert(".claude/skills") }
         let excluded = Set(plan.changes.map(\.path)).subtracting(paths)
         let worktrees = plan.localOnly ? ProjectWorktrees.family(of: folder, env: env).worktrees : []
         var state = Part.State.add
-        if !plan.canApply { state = .blocked((plan.render.errors + plan.blockers).joined(separator: " ")) }
+        if !plan.canApply {
+            state = .blocked((plan.render.errors + plan.blockers).joined(separator: " "))
+        } else if plan.answers.targets.contains("claude"), !takesLink, !claudeSeesSkills(in: folder) {
+            let now = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder.appending(path: ".claude/skills").path))
+                .map { "links to \($0)" } ?? "is a folder of its own"
+            state = .blocked(".claude/skills \(now), so Claude Code wouldn't see \(name) there. Point it at ../.agents/skills (Set Up Project), or take Claude out of the project's harnesses.")
+        }
         return Part(target: target, state: state, folder: folder, plan: plan, paths: paths, excluded: excluded, isNew: saved == nil,
                     localOnly: plan.localOnly, savedLocalOnly: saved?.localOnly, worktrees: worktrees, ownFolder: nil, ownTracked: false)
+    }
+
+    /// `.claude/skills` leads to the project's `.agents/skills` (a link, also an absolute one).
+    static func claudeSeesSkills(in project: URL) -> Bool {
+        let link = project.appending(path: ".claude/skills").resolvingSymlinksInPath().standardizedFileURL.path
+        return link == ProjectSkills.folder(of: project).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    // MARK: - Comparing copies
+
+    /// The files that differ between the brain's skill and another copy (missing on one side,
+    /// or other bytes), each for Show Edits; binary files are named, not shown.
+    static func differences(brain: URL, copy: URL, shownCopy: String) -> [Edit] {
+        let left = BrainImport.copyableFiles(in: brain), right = BrainImport.copyableFiles(in: copy)
+        func text(_ url: URL?) -> String? {
+            guard let url else { return nil }
+            return (try? String(contentsOf: url, encoding: .utf8)) ?? "(a binary file)"
+        }
+        return Set(left.keys).union(right.keys).sorted().compactMap { path in
+            if let a = left[path], let b = right[path], FileManager.default.contentsEqual(atPath: a.path, andPath: b.path) { return nil }
+            return Edit(path: "\(shownCopy)/\(path)", brainText: text(left[path]), copyText: text(right[path]))
+        }
+    }
+
+    /// What is at a path, as one hash: a link's destination, a file's bytes, or every entry of a
+    /// folder (names, links, bytes), at most 10,000 entries.
+    static func treeDigest(_ url: URL) -> String {
+        let fm = FileManager.default
+        if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) { return "link:" + destination }
+        var isFolder: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isFolder) else { return "missing" }
+        guard isFolder.boolValue else { return Checksum.sha256((try? Data(contentsOf: url)) ?? Data()) }
+        var data = Data()
+        let base = url.standardizedFileURL.path
+        guard let walker = fm.enumerator(atPath: base) else { return "unreadable" }
+        var count = 0
+        while let relative = walker.nextObject() as? String, count < 10_000 {
+            count += 1
+            let path = base + "/" + relative
+            data.append(Data(relative.utf8))
+            if let destination = try? fm.destinationOfSymbolicLink(atPath: path) {
+                data.append(Data(("→" + destination).utf8))
+            } else if fm.fileExists(atPath: path, isDirectory: &isFolder), !isFolder.boolValue {
+                data.append(Data(Checksum.sha256((try? Data(contentsOf: URL(filePath: path))) ?? Data()).utf8))
+            }
+            data.append(0)
+        }
+        return Checksum.sha256(data)
     }
 
     // MARK: - Mentions
@@ -500,6 +615,18 @@ public enum SkillMove {
             return (try? String(contentsOf: coreFile, encoding: .utf8)) != edit.before
         }
         if coreChanged() { throw fail("layers/core/layer.yaml changed since the preview. Look at the preview again.") }
+        // What goes to the Trash must be what the preview compared.
+        let home = env.homeDirectory
+        for (path, digest) in plan.trashDigests.sorted(by: { $0.key < $1.key }) where treeDigest(URL(filePath: path)) != digest {
+            throw fail("\(shown(URL(filePath: path), home: home)) changed since the preview. Look at the preview again.")
+        }
+        // A project that keeps its own copy must still have it.
+        for part in plan.parts where part.state == .keepOwn {
+            var info = stat()
+            if let own = part.ownFolder, lstat(own.path, &info) != 0 {
+                throw fail("\(part.id)'s own \(plan.name) is gone since the preview. Look at the preview again.")
+            }
+        }
 
         // 1. The brain's library.
         var current = brain
@@ -507,7 +634,10 @@ public enum SkillMove {
             do {
                 try await BrainImport.apply(importPlan, importing: [plan.name], listInLayer: false, env: env)
             } catch {
-                throw fail("Copying \(plan.name) into the brain stopped: \(error.message) Nothing else changed.")
+                let copied = FileManager.default.fileExists(atPath: brain.root.appending(path: "skills/\(plan.name)").path)
+                throw fail("Copying \(plan.name) into the brain stopped: \(error.message) "
+                           + (copied ? "skills/\(plan.name) may be in the brain, uncommitted: commit or remove it, then move again. " : "")
+                           + "Nothing else changed.")
             }
             outcome.imported = true
             current = Brain.load(from: brain.root) ?? brain
@@ -518,8 +648,8 @@ public enum SkillMove {
             guard let projectPlan = part.plan else { continue }
             do {
                 let result = try await hold(part.id) {
-                    try await ProjectSetup.apply(projectPlan, excluding: part.excluded, brain: current, home: env.homeDirectory, env: env,
-                                                 trash: trash)
+                    try await ProjectSetup.apply(projectPlan, excluding: part.excluded, deferring: part.excluded, brain: current,
+                                                 home: env.homeDirectory, env: env, trash: trash)
                 }
                 outcome.projects.append((part.id, result))
             } catch {
@@ -527,6 +657,16 @@ public enum SkillMove {
                 throw fail("Moving stopped at \(part.id): \(error.localizedDescription) \(plan.name) is still in the core layer and the home folder"
                            + (done.isEmpty ? "." : "; it is already in \(done.joined(separator: ", ")).")
                            + (outcome.imported ? " The brain's library has it now." : ""))
+            }
+        }
+        // Projects on other Macs: only their answers, so their Mac renders the skill on its next Set Up.
+        for part in plan.answersOnly {
+            guard let answers = part.answers else { continue }
+            do {
+                try await ProjectRecords.saveAnswers(answers, id: part.id, in: plan.store, message: "Add skill \(plan.name) to \(part.id)'s answers", env: env)
+                outcome.answersSaved.append(part.id)
+            } catch {
+                throw fail("Moving stopped at \(part.id)'s answers: \(error.message) \(plan.name) is still in the core layer and the home folder.")
             }
         }
         guard !plan.keepGlobal else { return outcome }
@@ -546,19 +686,18 @@ public enum SkillMove {
         }
 
         // 4. The home folder: AKit's rendered copy goes to the Trash.
-        if let home = plan.home, !plan.homePaths.isEmpty {
+        if let homePlan = plan.home, !plan.homePaths.isEmpty {
             do {
-                outcome.home = try await hold(home.id) {
-                    try await ProjectSetup.apply(home, excluding: plan.homeExcluded, brain: current, home: env.homeDirectory, env: env,
-                                                 trash: trash)
+                outcome.home = try await hold(homePlan.id) {
+                    try await ProjectSetup.apply(homePlan, excluding: plan.homeExcluded, deferring: plan.homeExcluded, brain: current,
+                                                 home: env.homeDirectory, env: env, trash: trash)
                 }
             } catch {
-                throw fail("\(plan.name) is in the projects and out of core, but the home folder's copy stayed: \(error.localizedDescription) Update Home Folder takes it out.")
+                throw fail("\(plan.name) is in the projects and out of the core layer, but the home folder's copy stayed in ~/\(ProjectBundle.skillsFolder)/\(plan.name): \(error.localizedDescription) Brain → core → Update Home Folder… (akit apply --home) takes it out.")
             }
         }
 
         // 5. Copies AKit didn't write.
-        let home = env.homeDirectory
         for url in plan.trashSource {
             do {
                 _ = try trash(url)

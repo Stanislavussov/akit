@@ -193,6 +193,23 @@ public enum ProjectRecords {
         return lock
     }
 
+    /// Writes only answers.json of a project that has a record (its lock stays as it is) and, when
+    /// the store is the brain, commits that file alone. For a project on another Mac: its next
+    /// Set Up Project there renders what the answers now say.
+    public static func saveAnswers(_ answers: ProjectAnswers, id: String, in store: ProjectStore, message: String,
+                                   env: HarnessEnvironment) async throws(BrainRemove.Failure) {
+        let folder = store.folder(id: id)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try encoder.encode(answers).write(to: folder.appending(path: "answers.json"), options: .atomic)
+        } catch {
+            throw BrainRemove.Failure(message: "Couldn't save \(store.describe(id: id))/answers.json: \(error.localizedDescription)")
+        }
+        if let brainRoot = store.brain { try await BrainRemove.commit(["projects/\(id)/answers.json"], message, in: brainRoot, env: env) }
+    }
+
     /// Writes lock.json (and answers.json, when given) under `<store>/<id>`.
     public static func save(_ lock: Lock, answers: ProjectAnswers?, id: String, in store: ProjectStore) throws {
         let folder = store.folder(id: id)

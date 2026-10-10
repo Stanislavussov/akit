@@ -115,6 +115,15 @@ struct BrainImportTests {
         #expect(try await git("log", "-1", "--format=%s") == "Import skill fresh\n")
     }
 
+    @Test func sourceNotesKeepOnlyTheRepository() {
+        #expect(BrainImport.sourceNote("skills.sh · mattpocock/skills") == "mattpocock/skills")
+        #expect(BrainImport.sourceNote("https://user:token@host.example/o/r?x=1#y") == "host.example/o/r")
+        #expect(BrainImport.sourceNote("git@github.com:o/r.git") == "github.com/o/r")
+        #expect(BrainImport.sourceNote("Your copy of o/r (renamed)") == "o/r")
+        #expect(BrainImport.sourceNote("o/r\nSigned-off-by: someone") == "o/r")
+        #expect(BrainImport.sourceNote("  ") == nil)
+    }
+
     @Test func importsIntoAnotherLayer() async throws {
         _ = try await setUp()
         try write(".akit/registry/layers/web/layer.yaml", "description: Web apps\n")

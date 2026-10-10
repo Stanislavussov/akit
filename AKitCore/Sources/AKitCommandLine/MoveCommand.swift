@@ -47,9 +47,13 @@ extension AKitCLI {
         var found: [String: [URL]] = [:]
         for folder in known { found[await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env), default: []].append(folder) }
         let folders = found.compactMapValues { GitCheckout.preferred($0) }
+        let recorded = Set(BrainRemove.savedAnswers(brain: brain, home: home).map(\.id))
         var targets: [SkillMove.Target] = []
         for argument in to.flatMap({ $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }) where !argument.isEmpty {
             let path = resolve(argument, cwd: cwd, env: env)
+            guard FileWalk.isDirectory(path) || folders[argument] != nil || recorded.contains(argument) else {
+                throw Failure(message: "--to \(argument): no such folder, and no project with that id on this Mac or in the brain.")
+            }
             let target: SkillMove.Target = FileWalk.isDirectory(path)
                 ? .init(id: await ProjectRecords.projectID(for: path, projectsRoot: projectsRoot, env: env), folder: path,
                         localOnly: localOnly, keepOwn: keepOwn)
@@ -59,7 +63,8 @@ extension AKitCLI {
 
         // The mode: auto when the model called it (D4), else its mode now.
         var calls: SkillCallsReport?
-        if let database = try? IndexSchema.open(InsightsPaths(env: env).database) {
+        // Read-only: the move never imports or migrates the index (akit stats skill imports first).
+        if let database = IndexSchema.openReadOnly(InsightsPaths(env: env).database) {
             calls = try? SkillCalls.report(database, skill: name, brain: brain, env: env, hardware: hardware)
         }
         let modelCalls = (calls?.projects.reduce(0) { $0 + $1.modelCalls } ?? 0) + (calls?.otherMacs.modelCalls ?? 0)
@@ -105,8 +110,8 @@ extension AKitCLI {
         for part in plan.parts {
             let place = "Project \(part.id)" + (part.folder.map { " (\(SkillMove.shown($0, home: home)))" } ?? "")
             switch part.state {
-            case .skipped(let reason):
-                lines.append("\(place): skipped: \(reason).")
+            case .answersOnly:
+                lines.append("\(place): not on this Mac; \(plan.name) is added to its answers only, and Set Up Project on the Mac that has it renders it.")
             case .blocked(let reason):
                 lines.append("\(place): blocked: \(reason)" + (part.ownFolder != nil ? " (--keep-own keeps the project's copy)" : ""))
             case .keepOwn:
@@ -148,6 +153,9 @@ extension AKitCLI {
         if outcome.imported { lines.append("Copied \(plan.name) into the brain's library.") }
         for (id, result) in outcome.projects {
             lines.append("\(id): written \(result.written.count)" + (result.notes.isEmpty ? "." : "; " + result.notes.joined(separator: " ")))
+        }
+        if !outcome.answersSaved.isEmpty {
+            lines.append("Added \(plan.name) to the answers of \(outcome.answersSaved.joined(separator: ", ")) (set them up on their Mac).")
         }
         if outcome.coreChanged { lines.append("Took \(plan.name) out of the core layer.") }
         if let home = outcome.home { lines.append("Home folder: removed \(home.removed.count) file\(home.removed.count == 1 ? "" : "s").") }

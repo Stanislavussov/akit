@@ -174,6 +174,14 @@ public enum ProjectSetup {
                 warnings.append(".claude/skills is a folder, so Claude Code doesn't see the project's own skills in \(ProjectBundle.skillsFolder).")
             }
         }
+        // The home folder: core without skills renders no `.claude/skills` link, but other skills
+        // may still be in ~/.agents/skills (the user's own, or a folder a move left): keep the link
+        // AKit made, so Claude Code keeps seeing them.
+        if forHome, answers.targets.contains("claude"), previous?.files[".claude/skills"]?.link != nil,
+           !outputs.contains(where: { $0.path == ".claude/skills" }),
+           FileWalk.children(of: project.appending(path: ProjectBundle.skillsFolder)).contains(where: { fm.fileExists(atPath: $0.appending(path: "SKILL.md").path) }) {
+            outputs.append(RenderedFile(path: ".claude/skills", content: .link("../\(ProjectBundle.skillsFolder)"), layers: []))
+        }
         outputs.sort { $0.path < $1.path }
         let rendered = Set(outputs.map(\.path))
 
@@ -377,7 +385,12 @@ public enum ProjectSetup {
     /// its path is in `accepting`), backs up what it replaces, trashes files an earlier
     /// render wrote and this one doesn't, then stores answers and lock in the plan's store
     /// and commits them when that store is the brain.
-    public static func apply(_ plan: Plan, excluding excluded: Set<String> = [], accepting: Set<String> = [], brain: Brain, home: URL,
+    /// `deferring`: excluded paths that are left for a later Apply rather than declined (Move to
+    /// Project applies only its skill): the lock keeps their previous offer, so a pending
+    /// suggestion is offered again, and when one of them is a real change, the lock keeps the
+    /// previous brain commit and Pi folder, since the project is not fully up to date.
+    public static func apply(_ plan: Plan, excluding excluded: Set<String> = [], accepting: Set<String> = [], deferring: Set<String> = [],
+                             brain: Brain, home: URL,
                              env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move) async throws(Failure) -> Outcome {
         guard plan.canApply else {
             throw Failure(message: (plan.render.errors + plan.blockers).joined(separator: "\n"))
@@ -488,10 +501,16 @@ public enum ProjectSetup {
             throw Failure(message: "Writing the project stopped: \(reason) Written: \(written.count), removed: \(removed.count).\(backup.map { " Backup: \($0.path)" } ?? "")\(blockProblem.map { " \($0)" } ?? "")")
         }
 
-        var lock = Self.lock(after: plan, excluding: excluded, accepting: accepting)
+        var lock = Self.lock(after: plan, excluding: excluded, accepting: accepting, deferring: deferring)
+        // Something left for later: the files are not all from this commit.
+        let behind = plan.changes.contains { deferring.contains($0.path) && [.create, .update, .remove, .suggest].contains($0.kind) }
 
         let isRepo = fm.fileExists(atPath: brain.root.appending(path: ".git").path)
-        if isRepo {
+        if behind {
+            lock.brainCommit = plan.previous?.brainCommit
+            lock.brainDirty = plan.previous?.brainDirty ?? false
+            lock.piAgentDir = plan.previous?.piAgentDir
+        } else if isRepo {
             lock.brainCommit = try? await git(["rev-parse", "--short", "HEAD"], in: brain.root, env: env)
             let dirty = (try? await git(["status", "--porcelain", "--", "skills", "layers"], in: brain.root, env: env)) ?? ""
             lock.brainDirty = !dirty.isEmpty
@@ -533,7 +552,8 @@ public enum ProjectSetup {
 
     /// The lock after applying `plan` (without the brain commit): what AKit then owns in the
     /// project. Excluded paths keep their old entry, if any.
-    static func lock(after plan: Plan, excluding excluded: Set<String>, accepting: Set<String>) -> ProjectRecords.Lock {
+    static func lock(after plan: Plan, excluding excluded: Set<String>, accepting: Set<String>,
+                     deferring: Set<String> = []) -> ProjectRecords.Lock {
         // A file that was already there with the same content stays the user's: AKit never
         // wrote it, so a later render or removal must not trash it.
         let kinds = Dictionary(plan.changes.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
@@ -541,7 +561,12 @@ public enum ProjectSetup {
         for output in plan.render.outputs where !output.mergesJSON {
             // Skeleton files: which layers' version the project has seen, so it is offered once.
             // A declined first version isn't "seen": it is offered again next time.
-            if isProjectOwned(output.path, forHome: plan.forHome), case .data(let data) = output.content,
+            if deferring.contains(output.path) {
+                // Left for later: the previous offer stays, so it is offered again.
+                if let offered = plan.previous?.templates?[output.path] {
+                    lock.templates = (lock.templates ?? [:]).merging([output.path: offered]) { $1 }
+                }
+            } else if isProjectOwned(output.path, forHome: plan.forHome), case .data(let data) = output.content,
                !(kinds[output.path]?.kind == .create && excluded.contains(output.path)) {
                 lock.templates = (lock.templates ?? [:]).merging([output.path: Checksum.sha256(data)]) { $1 }
             }
@@ -574,6 +599,10 @@ public enum ProjectSetup {
         }
         lock.blocks = blocks.isEmpty ? nil : blocks
         lock.piAgentDir = plan.piAgentDir
+        // A template the render no longer brings but that is left for later keeps its offer too.
+        for path in deferring where lock.templates?[path] == nil {
+            if let offered = plan.previous?.templates?[path] { lock.templates = (lock.templates ?? [:]).merging([path: offered]) { $1 } }
+        }
         return lock
     }
 

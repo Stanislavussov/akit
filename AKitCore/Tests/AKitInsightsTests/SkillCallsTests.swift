@@ -79,6 +79,19 @@ extension InsightsStatsTests {
         #expect(report.calls(in: "github.com/me/app") == 4)
     }
 
+    @Test func theIndexOpensReadOnlyWithoutCreatingOrMigrating() throws {
+        let url = InsightsPaths(home: home).database
+        #expect(IndexSchema.openReadOnly(url) == nil && !fm.fileExists(atPath: url.path))
+        let db = try database()
+        try session("a1", started: at(1), in: db)
+        try call("a1", "deploy", at: at(1), in: db)
+        let reader = try #require(IndexSchema.openReadOnly(url))
+        #expect(try SkillCalls.report(reader, skill: "deploy", days: 30, bindings: .default, others: .init(), notes: [], now: now).unbound?.calls == 1)
+        #expect(throws: (any Error).self) { try reader.run("DELETE FROM skill_calls") }
+        try db.execute("PRAGMA user_version = 1")
+        #expect(IndexSchema.openReadOnly(url) == nil, "an older schema is left for the next import")
+    }
+
     @Test func skillCallsTextAndJSON() throws {
         let db = try database()
         try session("a1", started: at(3), in: db)
