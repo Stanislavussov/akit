@@ -61,6 +61,10 @@ Checked against the code on 2026-10-03:
   in `AKitSessions` (step 7 of the design map).
 - The opt-in store for eval examples (`manual_call_examples`) is in the index; the export
   to skill-creator (step 12) is not built.
+- Unused over time (2026-10-10): the index records the tools each session had available
+  (`tool_listings`, schema v10, parser versions 3), and `akit stats tools` reports tools and MCP
+  servers with no call in a window; `akit stats` gained the last call and `--unused`. See
+  "Tools and MCP servers over time".
 
 ## Goal
 
@@ -281,6 +285,34 @@ nothing there and must not recommend for it.
 Subagents: their transcripts (`<session>/subagents/*.jsonl`) carry their own
 `skill_listing` (19 of the last 20 checked). A subagent run is not a session in
 the denominator; its model calls do count as calls (they protect the skill).
+
+### Tools and MCP servers over time
+
+Sessions → Overview shows what one session never used. Over a window (built 2026-10-10) the same
+question goes to every tool and MCP server: which ones were available and never called.
+Subagents are left out, as decided with the user.
+
+- **Index.** `tool_listings` (schema v10): one row per session, run kind (main or subagent) and
+  tool, with `ts` the first time it was seen there and `server` for an MCP tool
+  (`mcp__<server>__<tool>`). It is a fact table like the others (`source_id`, parser version,
+  deleted and re-read on a parser bump). Claude Code: the tools of a `prompt_snapshot` (the first
+  snapshots often have none), the `addedNames` of `deferred_tools_delta` (deferred tools, reachable
+  through ToolSearch, count as available) and the entries of `deferred_tools_record`; a removed
+  name stays available, it was there for part of the session. Pi ≥ 1.0: the `tools` section of
+  its `system` message, one `- name: description` line per tool. Older sessions (Claude Code
+  before prompt snapshots, Pi before 1.0) have no rows; they add only calls. Both parsers went
+  to version 3, so files still on disk are read again.
+- **Report.** `ToolStats.report` (`akit stats tools`, the Insights screen), with the window and
+  scope rules of `akit stats`. Per tool: main sessions where it was available, days, calls
+  (subagent runs included: they used the session's tool), sessions with a call, the last call in
+  the scope's sessions (also before the window, so "unused for 30 days, last called 52 days ago"
+  shows), and `unused` when it has no call in the window. Per MCP server, summed from its tools:
+  tools seen, tools called, calls, sessions with one of its tools, the last call, and its unused
+  tools. A tool only a subagent run had is not a row. The JSON is version 1. Only recorded data:
+  no sizes for tools, since Pi doesn't record their schemas.
+- **Skills.** `akit stats` gives each skill `lastCall` (the latest counted model or user call in
+  the scope's sessions, also before the window; a new field, the JSON keeps version 1), and
+  `--unused` keeps only skills without a call in the window.
 
 ### Rule: auto → manual
 

@@ -472,6 +472,48 @@ struct AKitCLITests {
         #expect(await akit("stats", "--session", "s1").code == 2, "--session goes with --debug")
     }
 
+    @Test func statsToolsListsUnusedToolsAndServers() async throws {
+        let yesterday = Date().addingTimeInterval(-86_400)
+        func entry(_ type: String, _ uuid: String, _ seconds: Double, _ fields: [String: Any]) -> [String: Any] {
+            fields.merging(["type": type, "uuid": uuid, "sessionId": "t1", "version": "2.1.290",
+                            "timestamp": yesterday.addingTimeInterval(seconds).formatted(.iso8601)]) { $1 }
+        }
+        let lines: [[String: Any]] = [
+            entry("attachment", "P1", 0, ["attachment": ["type": "prompt_snapshot", "systemPrompt": ["You are Claude Code."],
+                                                         "tools": [["name": "Read"], ["name": "Bash"]]]]),
+            entry("attachment", "D1", 1, ["attachment": ["type": "deferred_tools_delta",
+                                                         "addedNames": ["mcp__docs__search", "mcp__docs__fetch"]]]),
+            entry("assistant", "A1", 2, ["message": ["id": "m1", "model": "claude-opus-5-5", "content": [
+                ["type": "tool_use", "id": "t1", "name": "Read", "input": ["file_path": "/a"]],
+                ["type": "tool_use", "id": "t2", "name": "mcp__docs__search", "input": ["q": "x"]],
+            ], "usage": ["input_tokens": 1, "output_tokens": 1]]]),
+        ]
+        let text = try lines.map { String(decoding: try JSONSerialization.data(withJSONObject: $0, options: .sortedKeys), as: UTF8.self) }
+        try write(".claude/projects/-work-app/t1.jsonl", text.joined(separator: "\n") + "\n")
+
+        let plain = await akit("stats", "tools")
+        #expect(plain.code == 0, "\(plain)")
+        #expect(plain.out.contains("1 session, 1 with a recorded tool list; 2 tool calls."), "\(plain.out)")
+        #expect(plain.out.contains("  docs: 1 call; 1 of 2 tools called; available in 1 session; last call "), "\(plain.out)")
+        #expect(plain.out.contains("  Bash: unused; available in 1 session on 1 day; no call recorded"), "\(plain.out)")
+        #expect(plain.out.contains("  Read: 1 call in 1 session; available in 1 session on 1 day; last call "), "\(plain.out)")
+        #expect(!plain.out.contains("unused tools:"))
+        #expect(await akit("stats", "tools", "--details").out.contains("    unused tools: mcp__docs__fetch"))
+
+        let unused = await akit("stats", "tools", "--unused", "--json")
+        let json = try #require(try JSONSerialization.jsonObject(with: Data(unused.out.utf8)) as? [String: Any], "\(unused)")
+        #expect((json["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } == ["Bash", "mcp__docs__fetch"])
+        #expect((json["servers"] as? [Any])?.isEmpty == true && json["version"] as? Int == 1)
+        #expect((json["summary"] as? [String: Any])?["calls"] as? Int == 2)
+        let top = await akit("stats", "tools", "--top", "1")
+        #expect(top.out.contains("Top 1 tools, unused first") && top.out.contains("3 more tools: --top N, or --details for all."), "\(top.out)")
+
+        #expect(await akit("stats", "tools", "--debug").code == 2)
+        #expect(await akit("stats", "changes", "--unused").code == 2)
+        let skills = await akit("stats", "--unused")
+        #expect(skills.code == 0 && skills.out.contains("No unused skills in this window."), "\(skills)")
+    }
+
     @Test func statsBindingsWorksWithoutBrain() async throws {
         // Two recent sessions: one in the project folder (a plain folder under the projects root), one gone.
         try fm.createDirectory(at: project, withIntermediateDirectories: true)
