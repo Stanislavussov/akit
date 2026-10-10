@@ -1,6 +1,6 @@
 # Harness support: Claude Code and Pi
 
-Status: 2026-10-10, checked against the code. One table of what AKit does for each
+Status: 2026-10-11, checked against the code. One table of what AKit does for each
 harness, so a gap is either a decision written down somewhere or a known gap listed here.
 Each row names the design that owns it; details stay there. OpenCode and Codex are read
 for skills and MCP only (`AKitHarnesses`) and are not covered here.
@@ -16,6 +16,7 @@ built. The last column says whether the gap is a decision (with its doc) or open
 | Projects from the harness's history | yes (`~/.claude.json`) | yes (cwd in the header of session files; a custom flat session folder too) | Pi: a project's own `sessionDir` and `--session-dir` are not followed |
 | Skills: list, collisions, name rules | yes, plugin and synced skills read-only | yes, package skills read-only | Pi package skills from `packages` in global and project settings |
 | Skills: delete (Trash), install from skills.sh | yes | yes | skills.sh installs into the shared `.agents/skills` |
+| Skills: move a global skill into some projects | yes | yes: the only per-project control (Pi can't hide a global skill in one project) | through the brain into each project's answers, worktrees included; see `layers.md`, "Move a skill to a project" |
 | Skills: on / off without editing the skill | yes: On, Name Only, Manual, Off (`skillOverrides`); none for plugin skills | yes: On, Off (`skills` entries); none for package skills | see "Skill switches" below |
 | Plugins / packages | Claude plugins listed | Pi packages on the Overview card: extensions, skills, prompt templates, themes | read-only; package code never runs. Limits per settings file and per refresh; a cut list or a too-large package gets a note |
 | MCP: read, add, edit, remove | yes (`claude mcp` CLI) | yes (Pi's own `mcp.json` files and those of `pi-mcp-adapter`) | Pi 0.99+ reads `~/.pi/agent/mcp.json` and `.pi/mcp.json` itself (CHANGELOG 0.99.0, "MCP support as built-in extensions"); AKit takes the version from the package the `pi` command resolves to, else `lastChangelogVersion` in Pi's settings. The adapter's shared files and a project's `.mcp.json` still need `pi-mcp-adapter` |

@@ -219,6 +219,9 @@ public enum BrainImport {
         return (files, skipped.sorted())
     }
 
+    /// The files an import copies from a skill folder, by relative path (see `copyable`).
+    public static func copyableFiles(in folder: URL) -> [String: URL] { copyable(folder).files }
+
     private static func copy(_ folder: URL, to target: URL) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
