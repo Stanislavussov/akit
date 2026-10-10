@@ -16,6 +16,8 @@ struct SkillsView: View {
     @State private var brainFilter = BrainFilter.any
     /// A skill to import into the brain (sheet).
     @State private var importing: Skill?
+    /// A global skill to move into projects (sheet).
+    @State private var moving: Skill?
     /// Snapshots: `--add` opens the selected skill's switch sheet once its states are read.
     @State private var snapshotSwitch = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .skills
 
@@ -29,7 +31,8 @@ struct SkillsView: View {
             Group {
                 if let skill = model.skills.first(where: { $0.id == selection }) {
                     SkillDetailView(skill: skill, link: model.brainLinks[skill.id],
-                                    onDelete: { pendingDelete = skill }, onImport: { importing = skill })
+                                    onDelete: { pendingDelete = skill }, onImport: { importing = skill },
+                                    onMove: canMove(skill) ? { moving = skill } : nil)
                 } else {
                     ContentUnavailableView("Select a skill", systemImage: "book.closed")
                 }
@@ -107,6 +110,7 @@ struct SkillsView: View {
             BrainImportSheet(source: skill.folder.deletingLastPathComponent(), preselect: [skill.folder.lastPathComponent],
                              layer: layer, mode: layer == "core" ? .manual : .auto)
         }
+        .sheet(item: $moving) { skill in MoveSkillSheet(name: Self.moveName(skill, link: model.brainLinks[skill.id])) }
         .confirmationDialog(
             "Delete “\(pendingDelete?.name ?? "")”?",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
@@ -133,6 +137,15 @@ struct SkillsView: View {
         }
         .onChange(of: model.revealSkill) { reveal() }
         .task(id: model.lastScan) {
+            // Snapshots: `--tab move` (or move-check, move-preview) opens Move to Project… for the
+            // global skill `--select <folder name>`, else the selected one.
+            if let options = DebugSnapshot.options, options.tab?.hasPrefix("move") == true, moving == nil, model.brain != nil,
+               let skill = model.skills.first(where: { skill in options.select.map { canMove(skill) && skill.folder.lastPathComponent == $0 } ?? (skill.id == selection) }),
+               canMove(skill) {
+                selection = skill.id
+                moving = skill
+                return
+            }
             guard snapshotSwitch, let skill = model.skills.first(where: { $0.id == selection }) else { return }
             snapshotSwitch = false
             for harness in SkillSwitches.harnesses {
@@ -184,6 +197,7 @@ struct SkillsView: View {
         if case .rendered(let name, _, _) = link {
             BrainSkillButtons(name: name)
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
+            if canMove(skill) { Button("Move to Project…") { moving = skill } }
             Divider()
             SkillSwitchMenu(skill: skill)
         } else {
@@ -194,12 +208,25 @@ struct SkillsView: View {
             if link == .notInBrain && !skill.isSingleFile {
                 Button("Import to Brain…") { importing = skill }
             }
+            if canMove(skill) { Button("Move to Project…") { moving = skill } }
             Divider()
             SkillSwitchMenu(skill: skill)
             Divider()
             Button("Move to Trash…", role: .destructive) { pendingDelete = skill }
                 .disabled(skill.isReadOnly)
         }
+    }
+
+    /// A global skill AKit can move into projects (Move to Project…): the brain needed, not a
+    /// claude.ai, plugin or package skill, not a lone `.md` file.
+    private func canMove(_ skill: Skill) -> Bool {
+        model.brain != nil && skill.scope == .global && !skill.isReadOnly && !skill.isSingleFile
+    }
+
+    /// The name the brain knows the skill by: the brain skill a copy was rendered from, else its folder.
+    static func moveName(_ skill: Skill, link: BrainLink?) -> String {
+        if case .rendered(let name, _, _) = link { return name }
+        return skill.folder.lastPathComponent
     }
 
     /// Where an imported skill is listed: core for a global skill; for a project skill,
@@ -394,6 +421,8 @@ private struct SkillDetailView: View {
     let link: BrainLink?
     let onDelete: () -> Void
     let onImport: () -> Void
+    /// Move to Project…; nil when the skill can't move (not global, read-only).
+    let onMove: (() -> Void)?
     @State private var files: [String] = []
     @State private var text: String?
 
@@ -430,6 +459,10 @@ private struct SkillDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if let onMove {
+                    Button("Move to Project…", systemImage: "arrow.down.forward.square", action: onMove)
+                        .help("Move this global skill into the projects that use it, so other sessions stop paying for its description")
+                }
                 if case .rendered(let name, _, _) = link {
                     BrainSkillButtons(name: name)
                 } else if ExternalEditor.appURL != nil {

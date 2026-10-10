@@ -41,7 +41,7 @@ public enum SkillMove {
     }
 
     /// What a plan reads besides the brain.
-    public struct Context {
+    public struct Context: Sendable {
         public var env: HarnessEnvironment
         public var store: ProjectStore
         /// This Mac's home record (`ProjectRecords.homeID`).

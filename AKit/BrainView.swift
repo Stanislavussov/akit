@@ -57,6 +57,13 @@ struct BrainView: View {
     }
     @State private var creating = false
     @State private var createError: String?
+    /// Move to Project… is open for this skill.
+    @State private var moving: MoveRequest?
+
+    struct MoveRequest: Identifiable {
+        let name: String
+        var id: String { name }
+    }
 
     /// A layer sheet: Edit… (description, requires, AGENTS.md) or Add Skills….
     enum LayerEdit: Identifiable {
@@ -119,6 +126,7 @@ struct BrainView: View {
         .sheet(isPresented: $importing) { BrainImportSheet() }
         .sheet(item: $setup) { ProjectSetupSheet(initialProject: $0.project, initialLayers: $0.layers, forHome: $0.home) }
         .sheet(isPresented: $creatingLayer) { NewLayerSheet() }
+        .sheet(item: $moving) { MoveSkillSheet(name: $0.name) }
         .sheet(item: $evaluating) { request in
             EvaluateLayerSheet(layer: request.layer) { text in message = ("Evaluate \(request.layer)", text) }
                 // Its Guide button needs the navigator; sheets inherit it, said here so it never depends on that.
@@ -461,7 +469,8 @@ struct BrainView: View {
                         BrainSkillDetailView(skill: skill, usedBy: usage(of: name, in: brain),
                                              otherLayers: brain.layers.map(\.name).filter { layer in !usage(of: name, in: brain).contains { $0.layer == layer } },
                                              onAddToLayer: { layer, mode in change { try await model.addSkills([skill.name], mode: mode, toLayer: layer) } },
-                                             onRemove: { pendingRemoval = .skill(skill.name) })
+                                             onRemove: { pendingRemoval = .skill(skill.name) },
+                                             onMove: usage(of: name, in: brain).contains { $0.layer == "core" } ? { moving = MoveRequest(name: skill.name) } : nil)
                     }
                 case nil:
                     ContentUnavailableView("Select a layer, project or skill", systemImage: "square.stack.3d.up")
@@ -1269,6 +1278,8 @@ private struct BrainSkillDetailView: View {
     let otherLayers: [String]
     let onAddToLayer: (String, LayerSkill.Mode) -> Void
     let onRemove: () -> Void
+    /// Move to Project…, for a skill the core layer lists.
+    let onMove: (() -> Void)?
     @State private var text: String?
 
     var body: some View {
@@ -1304,6 +1315,16 @@ private struct BrainSkillDetailView: View {
                                 }
                                 .fixedSize()
                                 .help("List \(skill.name) in another layer")
+                            }
+                        }
+                    }
+                    if let onMove {
+                        GridRow {
+                            GridLabel("Global")
+                            HStack(spacing: 8) {
+                                Text("Every session gets it through the core layer.").foregroundStyle(.secondary)
+                                Button("Move to Project…", action: onMove)
+                                    .help("Move \(skill.name) out of core into the projects that use it")
                             }
                         }
                     }
