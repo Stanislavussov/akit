@@ -9,12 +9,12 @@ import AKitSessions
 /// straight into a temporary index in a temporary fake home (see `InsightsStatsTests`).
 extension InsightsStatsTests {
     func toolListing(_ id: String, _ tools: [String], at ts: Double, subagent: Bool = false, harness: String = "claude",
-                     in db: IndexDatabase) throws {
+                     via: String = "snapshot", in db: IndexDatabase) throws {
         for tool in tools {
             try db.run("""
-                INSERT INTO tool_listings(harness, session_key, is_subagent, tool, server, ts, source_id, parser_version)
-                VALUES(?, ?, ?, ?, ?, ?, 0, 3)
-                """, harness, "\(harness):\(id)", subagent, tool, MCPServers.server(ofTool: tool), ts)
+                INSERT INTO tool_listings(harness, session_key, is_subagent, tool, server, via, ts, source_id, parser_version)
+                VALUES(?, ?, ?, ?, ?, ?, ?, 0, 3)
+                """, harness, "\(harness):\(id)", subagent, tool, MCPServers.server(ofTool: tool), via, ts)
         }
     }
 
@@ -103,6 +103,58 @@ extension InsightsStatsTests {
         #expect(try tool("Read", in: twoMonths).availableDays == 2)
     }
 
+    @Test func aResumedOlderSessionsCallTodayIsAUse() throws {
+        let db = try database()
+        // Started 40 days ago, out of the window; resumed today and called a tool.
+        try session("old", started: at(40), in: db)
+        try toolListing("old", ["Read", "mcp__docs__search"], at: at(40), in: db)
+        try toolCall("old", "mcp__docs__search", at: at(0, 13), in: db)
+        try session("new", started: at(2), in: db)
+        try toolListing("new", ["Read", "mcp__docs__search"], at: at(2), in: db)
+
+        let report = try tools(db)
+        let search = try tool("mcp__docs__search", in: report)
+        #expect(!search.unused && search.calls == 1 && search.lastCall == iso(at(0, 13)) && search.availableSessions == 1)
+        #expect(try #require(report.servers.first).unused == false)
+        // An unused row's last call is always before the window.
+        for row in report.tools where row.unused {
+            #expect(row.lastCall.map { $0 < iso(now.timeIntervalSince1970 - 30 * 86_400) } ?? true, "\(row)")
+        }
+        #expect(try tool("Read", in: report).unused)
+    }
+
+    @Test func builtInToolsCountOnlyInSessionsWithAFullList() throws {
+        let db = try database()
+        // Claude Code wrote only its deferred tools here: the built-in ones are unknown.
+        try session("d", started: at(2), in: db)
+        try toolListing("d", ["mcp__docs__search", "WebFetch"], at: at(2), via: "deferred", in: db)
+        try session("s", started: at(1), in: db)
+        try toolListing("s", ["Read", "Bash"], at: at(1), in: db)
+        try toolListing("s", ["mcp__docs__search", "CronCreate"], at: at(1), via: "deferred", in: db)
+
+        let report = try tools(db)
+        #expect(report.summary.sessions == 2 && report.summary.sessionsWithToolList == 1)
+        #expect(try tool("mcp__docs__search", in: report).availableSessions == 2, "MCP tools count in every listing")
+        #expect(try tool("Read", in: report).availableSessions == 1)
+        #expect(try tool("CronCreate", in: report).availableSessions == 1, "a deferred built-in counts where the full list is known")
+        #expect(!report.tools.contains { $0.name == "WebFetch" }, "a session without its full list says nothing about built-in tools")
+        #expect(report.notes.contains(ToolStats.noListNote))
+    }
+
+    @Test func filesStillToBeReReadGetANote() throws {
+        let db = try database()
+        try session("s", started: at(1), in: db)
+        try toolListing("s", ["Read"], at: at(1), in: db)
+        #expect(!(try tools(db)).notes.contains { $0.contains("read again") })
+        for (path, version) in [("/a.jsonl", 2), ("/b.jsonl", 2), ("/c.jsonl", 3)] {
+            try db.run("""
+                INSERT INTO sources(path, generation, harness, kind, parser_version, state) VALUES(?, 1, 'claude', 'session', ?, 'active')
+                """, path, version)
+        }
+        try db.run("INSERT INTO sources(path, generation, harness, kind, parser_version, state) VALUES('/gone.jsonl', 1, 'claude', 'session', 1, 'gone')")
+        #expect(try tools(db).notes.contains(ToolStats.rereadNote(2)))
+    }
+
     @Test func toolStatsFollowTheProjectScope() throws {
         let db = try database()
         for id in ["a", "b"] {
@@ -116,6 +168,23 @@ extension InsightsStatsTests {
         #expect(try tool("Bash", in: project).unused, "the call was in another project's session")
         #expect(try tool("Bash", in: project).lastCall == nil)
         #expect(try !tool("Bash", in: tools(db)).unused)
+    }
+
+    @Test func skillCalledBeforeItsDescriptionChangedIsNotUnused() throws {
+        let db = try database()
+        try session("s1", started: at(20), in: db)
+        try listing("s1", "tdd", at: at(20), hash: "A", in: db)
+        try session("s2", started: at(10), in: db)
+        try listing("s2", "tdd", at: at(10), hash: "A", in: db)
+        try call("s2", "tdd", at: at(10, 13), in: db)
+        // The description changed 3 days ago: the call columns count from then on.
+        try session("s3", started: at(3), in: db)
+        try listing("s3", "tdd", at: at(3), hash: "B", in: db)
+
+        let tdd = try skill("tdd", in: try report(db))
+        #expect(tdd.modelCalls == 0 && tdd.windowStart == iso(at(3)), "\(tdd)")
+        #expect(!tdd.unused && tdd.lastCall == iso(at(10, 13)))
+        #expect(try report(db, .init(top: nil, unusedOnly: true)).skills.isEmpty)
     }
 
     @Test func skillsKnowTheirLastCallAndUnusedFilter() throws {

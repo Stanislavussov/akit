@@ -54,8 +54,12 @@ enum Fact {
 
     /// Tools the harness made available to a session (or its subagent run), by name.
     struct ToolListing {
+        /// `snapshot` (Claude Code's full list), `deferred` (Claude Code's deferred tools) or `pi`.
+        enum Via: String { case snapshot, deferred, pi }
+
         let ts: Date?
         let isSubagent: Bool
+        let via: Via
         let tools: [String]
     }
 

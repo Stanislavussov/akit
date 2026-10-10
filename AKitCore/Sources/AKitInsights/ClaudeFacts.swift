@@ -28,7 +28,7 @@ struct ClaudeFacts {
     private(set) var session: Fact.Session?
     /// The user's last typed prompt in this read, for manual-call examples.
     private var lastPrompt: String?
-    /// Tools already listed in this read, as `<is subagent>|<name>`: snapshots repeat the whole list.
+    /// Tools already listed in this read, as `<is subagent>|<via>|<name>`: snapshots repeat the whole list.
     private var listedTools = Set<String>()
 
     init(file: URL) {
@@ -63,8 +63,9 @@ struct ClaudeFacts {
             return facts
         case "attachment":
             guard let attachment = entry["attachment"] as? JSONLines.Object else { return [] }
-            let tools = ClaudeLogFormat.listedTools(attachment).filter { listedTools.insert("\(isSubagent)|\($0)").inserted }
-            if !tools.isEmpty { return [.toolListing(.init(ts: ts, isSubagent: isSubagent, tools: tools))] }
+            let via: Fact.ToolListing.Via = attachment["type"] as? String == "prompt_snapshot" ? .snapshot : .deferred
+            let tools = ClaudeLogFormat.listedTools(attachment).filter { listedTools.insert("\(isSubagent)|\(via)|\($0)").inserted }
+            if !tools.isEmpty { return [.toolListing(.init(ts: ts, isSubagent: isSubagent, via: via, tools: tools))] }
             guard attachment["type"] as? String == "skill_listing", let key = entry["uuid"] as? String else { return [] }
             return [.skillListing(.init(key: key, ts: ts, isInitial: attachment["isInitial"] as? Bool == true,
                                         isSubagent: isSubagent, skills: Self.listedSkills(attachment)))]

@@ -919,39 +919,51 @@ extension ChangesReport.Change {
 
 /// The Window picker's Custom…: any number of days from 1 to 365.
 struct CustomWindowPopover: View {
-    @State private var days: Int
+    /// The field's text, read when Apply or Return is pressed, so a value typed just before is never lost.
+    @State private var text: String
     /// The chosen days, or nil for Cancel.
     let done: (Int?) -> Void
 
     init(days: Int, done: @escaping (Int?) -> Void) {
         // A one-time seed: the popover edits its own copy until Apply.
-        _days = State(initialValue: days)
+        _text = State(initialValue: String(days))
         self.done = done
     }
 
-    private var isValid: Bool { (1...365).contains(days) }
+    /// The typed number when it is a whole number from 1 to 365.
+    private var days: Int? {
+        Int(text.trimmingCharacters(in: .whitespaces)).flatMap { (1...365).contains($0) ? $0 : nil }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Custom Window").font(.headline)
             HStack {
-                TextField("Days", value: $days, format: .number)
+                TextField("Days", text: $text)
                     .frame(width: 60)
                     .multilineTextAlignment(.trailing)
-                    .onSubmit { if isValid { done(days) } }
-                Stepper("Days", value: $days, in: 1...365)
+                    .onSubmit { if let days { done(days) } }
+                Stepper("Days", onIncrement: { step(1) }, onDecrement: { step(-1) })
+                    .labelsHidden()
+                Text("days")
             }
             Text("The last 1 to 365 days, up to now.").font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()
                 Button("Cancel") { done(nil) }
                     .keyboardShortcut(.cancelAction)
-                Button("Apply") { done(days) }
+                Button("Apply") { if let days { done(days) } }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!isValid)
+                    .disabled(days == nil)
             }
         }
         .padding()
         .frame(width: 240)
+    }
+
+    /// The stepper moves from the typed number, kept within 1–365.
+    private func step(_ by: Int) {
+        let current = Int(text.trimmingCharacters(in: .whitespaces)) ?? 30
+        text = String(min(max(current + by, 1), 365))
     }
 }

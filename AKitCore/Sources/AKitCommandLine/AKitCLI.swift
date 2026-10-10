@@ -74,15 +74,18 @@ public enum AKitCLI {
                                           sessions and days listed, calls by the model and the user,
                                           the last call. Default: all sessions on this Mac, last 30
                                           days, top 10 (all with --details). --unused: only skills
-                                          without a call in the window. --project: the sessions bound
+                                          with no call made in the window (by the model or the user,
+                                          in any session of the scope). --project: the sessions bound
                                           to it at LIST (default exact,high,medium). Imports new lines first
           akit stats tools [--project ID|PATH | --all] [--days N] [--top N] [--details] [--unused] [--bindings LIST] [--json]
                                           MCP servers and tools (built-in, extension, MCP) the sessions
-                                          had available, with their calls and last call; unused ones
-                                          (no call in the window) first. Availability comes from the
-                                          tool lists Claude Code and Pi 1.0+ record. Default: last 30
-                                          days, top 10 tools (all with --details, which also names
-                                          each server's unused tools). --unused: only unused ones
+                                          had available, with the calls made in the window and the last
+                                          call; unused ones (no call made in the window) first.
+                                          Availability comes from the tool lists Claude Code and Pi 1.0+
+                                          record; built-in tools count only in sessions with the full
+                                          list. Default: last 30 days, top 10 tools (all with --details,
+                                          which also names each server's unused tools). --unused: only
+                                          unused ones
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
@@ -688,7 +691,7 @@ public enum AKitCLI {
             let full = try ToolStats.report(database, days: days ?? InsightsStats.defaultDays, project: project, bindings: bindingSet,
                                             importNotes: imported.notes)
             let report = unused ? full.unusedOnly() : full
-            out(options.json ? encode(report) : toolsText(report, top: details ? nil : top ?? InsightsStats.defaultTop,
+            out(options.json ? encode(report) : toolsText(report, top: top ?? (details ? nil : InsightsStats.defaultTop),
                                                           details: details, unusedOnly: unused))
             return 0
         }
@@ -749,7 +752,7 @@ public enum AKitCLI {
             ?? "all sessions on this Mac"
         func last(_ iso: String?) -> String { iso.map { "last call \(localDay($0))" } ?? "no call recorded" }
         var lines = ["Last \(report.window.days) days, \(scope): \(count(summary.sessions, "session")), "
-                     + "\(summary.sessionsWithToolList) with a recorded tool list; \(count(summary.calls, "tool call"))."]
+                     + "\(summary.sessionsWithToolList) with a full tool list; \(count(summary.calls, "tool call"))."]
         lines.append("")
         if report.servers.isEmpty {
             lines.append(unusedOnly ? "No unused MCP servers in this window." : "No MCP server tools in this window.")

@@ -493,7 +493,7 @@ struct AKitCLITests {
 
         let plain = await akit("stats", "tools")
         #expect(plain.code == 0, "\(plain)")
-        #expect(plain.out.contains("1 session, 1 with a recorded tool list; 2 tool calls."), "\(plain.out)")
+        #expect(plain.out.contains("1 session, 1 with a full tool list; 2 tool calls."), "\(plain.out)")
         #expect(plain.out.contains("  docs: 1 call; 1 of 2 tools called; available in 1 session; last call "), "\(plain.out)")
         #expect(plain.out.contains("  Bash: unused; available in 1 session on 1 day; no call recorded"), "\(plain.out)")
         #expect(plain.out.contains("  Read: 1 call in 1 session; available in 1 session on 1 day; last call "), "\(plain.out)")
@@ -507,6 +507,8 @@ struct AKitCLITests {
         #expect((json["summary"] as? [String: Any])?["calls"] as? Int == 2)
         let top = await akit("stats", "tools", "--top", "1")
         #expect(top.out.contains("Top 1 tools, unused first") && top.out.contains("3 more tools: --top N, or --details for all."), "\(top.out)")
+        let detailsTop = await akit("stats", "tools", "--details", "--top", "1")
+        #expect(detailsTop.out.contains("Top 1 tools") && detailsTop.out.contains("unused tools: mcp__docs__fetch"), "\(detailsTop.out)")
 
         #expect(await akit("stats", "tools", "--debug").code == 2)
         #expect(await akit("stats", "changes", "--unused").code == 2)

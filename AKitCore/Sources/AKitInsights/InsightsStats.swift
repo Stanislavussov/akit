@@ -116,12 +116,14 @@ public struct StatsReport: Encodable, Equatable, Sendable {
         /// The latest model or user call in the scope's sessions, also before the window; nil: never called there.
         public let lastCall: String?
 
-        /// No call by the model or the user in the window, in any harness.
-        public var unused: Bool { modelCalls + userCalls + piModelCalls == 0 }
+        /// No model or user call made in the window (any harness, in the scope's sessions), so `lastCall` is
+        /// before the window or nil. Unlike the call columns, it ignores the description window: a skill
+        /// called before its description changed is still in use.
+        public let unused: Bool
 
         private enum CodingKeys: String, CodingKey {
             case name, owner, listedSessions, listedDays, modelCalls, userCalls, piModelCalls, approxTokens,
-                 approxContextSpace, callRate, windowStart, lastCall
+                 approxContextSpace, callRate, windowStart, lastCall, unused
         }
     }
 
@@ -425,7 +427,8 @@ public enum InsightsStats {
                 callRate: listed > 0 ? (Double(called) / Double(listed) * 1000).rounded() / 1000 : 0,
                 windowStart: (windowStarts[name] ?? from).formatted(.iso8601),
                 descriptionVersions: hashStarts[name]?.versions ?? 0,
-                lastCall: lastCalls[name].map { Date(timeIntervalSince1970: $0).formatted(.iso8601) })
+                lastCall: lastCalls[name].map { Date(timeIntervalSince1970: $0).formatted(.iso8601) },
+                unused: (lastCalls[name] ?? -.infinity) < from.timeIntervalSince1970)
         }
         skills.sort { ($0.approxContextSpace, $1.name) > ($1.approxContextSpace, $0.name) }
 

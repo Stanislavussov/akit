@@ -53,7 +53,7 @@ struct PiFacts {
         switch message["role"] as? String {
         case "system":
             let tools = ((message["sections"] as? JSONLines.Object)?["tools"] as? String).map(PiLogFormat.toolNames) ?? []
-            return tools.isEmpty ? [] : [.toolListing(.init(ts: time, isSubagent: false, tools: tools))]
+            return tools.isEmpty ? [] : [.toolListing(.init(ts: time, isSubagent: false, via: .pi, tools: tools))]
         case "user":
             let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
             guard let skill = PiLogFormat.skillPrefixName(text) else {

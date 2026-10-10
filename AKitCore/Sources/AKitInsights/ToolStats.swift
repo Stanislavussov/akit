@@ -3,17 +3,19 @@ import AKitSessions
 import Foundation
 
 /// `akit stats tools`: which tools and MCP servers the sessions of a window had available, and which
-/// of them were never called there. Same window and scope rules as `akit stats` (sessions started in
-/// the last N days; for a project, bound to it at a confidence of the set). Only recorded data:
+/// of them were never called there. Availability uses the scope rules of `akit stats` (sessions started in
+/// the last N days; for a project, bound to it at a confidence of the set). Calls are those made in the
+/// window, in any of the scope's sessions (one started earlier and resumed counts too), so a row is
+/// unused exactly when its last call is before the window or there is none. Only recorded data:
 /// availability from the tool lists the harness wrote into the session (`tool_listings`), calls from
 /// `tool_calls`. The JSON (`version` 1) is the contract for `/akit` and the Insights screen.
 public struct ToolsReport: Encodable, Equatable, Sendable {
     public struct Summary: Encodable, Equatable, Sendable {
         /// Sessions in scope (main sessions; subagent runs belong to their parent).
         public let sessions: Int
-        /// Of those, sessions whose tool list was recorded (Claude Code with prompt snapshots, Pi ≥ 1.0).
+        /// Of those, sessions whose full tool list was recorded (a Claude Code prompt snapshot with tools, Pi ≥ 1.0).
         public let sessionsWithToolList: Int
-        /// Tool calls in those sessions, subagent runs included.
+        /// Tool calls made in the window in the scope's sessions, subagent runs included.
         public let calls: Int
     }
 
@@ -25,17 +27,18 @@ public struct ToolsReport: Encodable, Equatable, Sendable {
         public let server: String?
         /// Harnesses that listed or called it (`claude`, `pi`).
         public let harnesses: [String]
-        /// Main sessions where it was available (subagent runs are no sessions).
+        /// Main sessions where it was available (subagent runs are no sessions). A built-in tool counts only in
+        /// sessions with a full tool list; an MCP tool in every session that listed it.
         public let availableSessions: Int
         /// Distinct local calendar days it was first available in a main session.
         public let availableDays: Int
-        /// Calls in the window's sessions, subagent runs included.
+        /// Calls made in the window, subagent runs included.
         public let calls: Int
         /// Sessions with at least one call.
         public let calledSessions: Int
         /// The latest call in the scope's sessions, also before the window; nil: never called there.
         public let lastCall: String?
-        /// No call in the window.
+        /// No call in the window: its last call is before the window, or there is none.
         public let unused: Bool
     }
 
@@ -78,8 +81,17 @@ public struct ToolsReport: Encodable, Equatable, Sendable {
 }
 
 public enum ToolStats {
-    static let noListNote = "Sessions without a recorded tool list (Claude Code before prompt snapshots, Pi before 1.0) add only calls"
-    static let subagentNote = "Calls in subagent runs count for the session's tools; a tool only a subagent run had is not listed"
+    static let noListNote = "Built-in tools count as available only in sessions with a full tool list (a Claude Code prompt snapshot "
+        + "with tools, Pi 1.0+); MCP and deferred tools count in every session that listed them; other sessions add only calls"
+    static let subagentNote = "Calls in subagent runs count for the session's tools; a tool only a subagent run listed is never "
+        + "available, and it is a row only when a subagent called it"
+    /// Sessions with a full tool list: a Claude Code prompt snapshot with tools, or Pi's `tools` section.
+    static let fullListVia = "('snapshot', 'pi')"
+
+    /// While files read by an older parser are still waiting to be read again, their sessions have no tool list yet.
+    static func rereadNote(_ files: Int) -> String {
+        "\(files) session file\(files == 1 ? " is" : "s are") still to be read again for tool lists; Import Now goes on"
+    }
 
     /// The report of `days` up to `now`, for `project` (nil: every session on this Mac). `importNotes`
     /// (what the import before it said) come first in its notes.
@@ -92,6 +104,10 @@ public enum ToolStats {
         let (ever, everValues) = InsightsStats.Scope(project: project, bindings: bindings, from: .distantPast, to: now)
             .cte(as: "ever")
 
+        let fullList = """
+            EXISTS(SELECT 1 FROM tool_listings f WHERE f.harness = l.harness AND f.session_key = l.session_key \
+            AND f.is_subagent = 0 AND f.via IN \(fullListVia))
+            """
         struct Row {
             var server: String?
             var harnesses = Set<String>()
@@ -103,15 +119,17 @@ public enum ToolStats {
         for row in try database.rows("""
             WITH \(scoped) SELECT l.tool, MAX(l.server), GROUP_CONCAT(DISTINCT l.harness), COUNT(DISTINCT l.session_key),
               COUNT(DISTINCT date(l.ts, 'unixepoch', 'localtime'))
-            FROM tool_listings l JOIN scoped s ON s.key = l.session_key WHERE l.is_subagent = 0 GROUP BY l.tool
+            FROM tool_listings l JOIN scoped s ON s.key = l.session_key
+            WHERE l.is_subagent = 0 AND (l.server IS NOT NULL OR \(fullList)) GROUP BY l.tool
             """, values) {
             guard let tool = row[0].text else { continue }
             rows[tool] = Row(server: row[1].text, harnesses: Set(split(row[2])), sessions: row[3].int ?? 0, days: row[4].int ?? 0)
         }
+        // Calls made in the window, in any of the scope's sessions: a resumed older session's call today is a use.
         for row in try database.rows("""
-            WITH \(scoped) SELECT c.name, GROUP_CONCAT(DISTINCT c.harness), COUNT(*), COUNT(DISTINCT c.session_key)
-            FROM tool_calls c JOIN scoped s ON s.key = c.session_key WHERE c.name IS NOT NULL GROUP BY c.name
-            """, values) {
+            WITH \(ever) SELECT c.name, GROUP_CONCAT(DISTINCT c.harness), COUNT(*), COUNT(DISTINCT c.session_key)
+            FROM tool_calls c JOIN ever s ON s.key = c.session_key WHERE c.name IS NOT NULL AND c.ts >= ? GROUP BY c.name
+            """, everValues + [from.timeIntervalSince1970]) {
             guard let tool = row[0].text else { continue }
             var entry = rows[tool] ?? Row(server: MCPServers.server(ofTool: tool))
             entry.harnesses.formUnion(split(row[1]))
@@ -153,9 +171,14 @@ public enum ToolStats {
         let sessions = try database.rows("WITH \(scoped) SELECT COUNT(*) FROM scoped", values).first?[0].int ?? 0
         let listed = try database.rows("""
             WITH \(scoped) SELECT COUNT(DISTINCT l.session_key) FROM tool_listings l JOIN scoped s ON s.key = l.session_key
-            WHERE l.is_subagent = 0
+            WHERE l.is_subagent = 0 AND l.via IN \(fullListVia)
             """, values).first?[0].int ?? 0
+        let stale = try database.value("""
+            SELECT COUNT(*) FROM sources WHERE state = 'active' AND kind IN ('session', 'subagent')
+            AND ((harness = 'claude' AND parser_version < ?) OR (harness = 'pi' AND parser_version < ?))
+            """, ClaudeFacts.parserVersion, PiFacts.parserVersion)?.int ?? 0
         var notes = importNotes
+        if stale > 0 { notes.append(rereadNote(stale)) }
         if listed < sessions { notes.append(noListNote) }
         notes.append(subagentNote)
         return ToolsReport(

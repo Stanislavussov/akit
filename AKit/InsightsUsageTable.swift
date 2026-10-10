@@ -77,7 +77,7 @@ struct InsightsUsageTable: View {
             Spacer()
             Toggle("Unused Only", isOn: $unusedOnly)
                 .toggleStyle(.checkbox)
-                .help("Only rows without a call in the window")
+                .help("Only rows with no call made in the window, in any session of the scope: their last call is before the window, or there is none")
             Picker("Sort", selection: Binding(get: { effectiveSort }, set: { sort = $0 })) {
                 ForEach(Sort.allCases.filter { kind == .skills || $0 != .contextSpace }) { Text($0.title).tag($0) }
             }
@@ -124,7 +124,7 @@ struct InsightsUsageTable: View {
                             Text(skill.name).lineLimit(1).truncationMode(.middle)
                                 .foregroundStyle(skill.unused ? Color.orange : Color.primary)
                                 .help("Counted since \(InsightsView.day(skill.windowStart)), the start of its current description or of the window"
-                                      + (skill.unused ? ". No call by the model or you in the window." : ""))
+                                      + (skill.unused ? ". Unused: no call by the model or you made in the window." : ""))
                             Text([InsightsView.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))
                                 .lineLimit(1).foregroundStyle(.secondary)
                             Text("\(skill.listedSessions) · \(InsightsView.count(skill.listedDays, "day"))")
@@ -169,18 +169,33 @@ struct InsightsUsageTable: View {
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
                     Divider().gridCellUnsizedAxes(.horizontal)
-                    ForEach(rows(all)) { server in
-                        GridRow(alignment: .firstTextBaseline) {
-                            serverName(server)
-                            Text("\(server.toolsCalled) / \(server.tools)")
-                                .help("Its tools with a call in the window, of the tools it had available or called")
-                            calls(server.calls, unused: server.unused)
-                                .help("Calls of all its tools in the window, subagent runs included")
-                            Text("\(server.availableSessions)")
-                                .help("Sessions where at least one of its tools was available")
-                            lastCall(server.lastCall)
+                    // One grid row per item: a server, or the open list of its tools without a call, across all columns.
+                    ForEach(serverLines(rows(all))) { line in
+                        switch line {
+                        case .server(let server):
+                            GridRow {
+                                serverName(server)
+                                Text("\(server.toolsCalled) / \(server.tools)")
+                                    .help("Its tools with a call in the window, of the tools it had available or called")
+                                calls(server.calls, unused: server.unused)
+                                    .help("Calls of all its tools made in the window, subagent runs included")
+                                Text("\(server.availableSessions)")
+                                    .help("Sessions where at least one of its tools was available")
+                                lastCall(server.lastCall)
+                            }
+                            .font(.callout.monospacedDigit())
+                        case .notCalled(let server):
+                            GridRow {
+                                Text("Not called: " + server.unusedTools.map { Self.shortTool($0, server: server.name) }.joined(separator: ", "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                                    .padding(.leading, 20)
+                                    .gridCellColumns(5)
+                                    .gridCellUnsizedAxes(.horizontal)
+                                    .help("Its tools without a call made in the window")
+                            }
                         }
-                        .font(.callout.monospacedDigit())
                     }
                 }
                 showAllButton(all.count, noun: "MCP Servers")
@@ -192,31 +207,51 @@ struct InsightsUsageTable: View {
         }
     }
 
-    /// The name, with a disclosure for the tools it never called in the window.
-    private func serverName(_ server: ToolsReport.Server) -> some View {
-        let open = expanded.contains(server.name)
-        return VStack(alignment: .leading, spacing: 3) {
-            if server.unusedTools.isEmpty {
-                Text(server.name).lineLimit(1).truncationMode(.middle)
-            } else {
-                Button {
-                    if open { expanded.remove(server.name) } else { expanded.insert(server.name) }
-                } label: {
-                    Label(server.name, systemImage: open ? "chevron.down" : "chevron.right")
-                        .lineLimit(1).truncationMode(.middle)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(server.unused ? Color.orange : Color.primary)
-                .help(open ? "Hide its tools without a call" : "Show its \(InsightsView.count(server.unusedTools.count, "tool")) without a call in the window")
-                if open {
-                    Text("Not called: " + server.unusedTools.map { Self.shortTool($0, server: server.name) }.joined(separator: ", "))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .padding(.leading, 20)
-                }
+    /// A line of the MCP Servers table.
+    enum ServerLine: Identifiable {
+        case server(ToolsReport.Server)
+        case notCalled(ToolsReport.Server)
+
+        var id: String {
+            switch self {
+            case .server(let server): "server:" + server.name
+            case .notCalled(let server): "notCalled:" + server.name
             }
         }
+    }
+
+    /// Each server, followed by its tools without a call while it is open.
+    private func serverLines(_ servers: [ToolsReport.Server]) -> [ServerLine] {
+        servers.flatMap { server in
+            expanded.contains(server.name) && !server.unusedTools.isEmpty ? [.server(server), .notCalled(server)] : [.server(server)]
+        }
+    }
+
+    /// The name, with a disclosure for the tools it never called in the window.
+    @ViewBuilder
+    private func serverName(_ server: ToolsReport.Server) -> some View {
+        if server.unusedTools.isEmpty {
+            Text(Self.cut(server.name)).lineLimit(1)
+                .help(server.name)
+        } else {
+            let open = expanded.contains(server.name)
+            Button {
+                if open { expanded.remove(server.name) } else { expanded.insert(server.name) }
+            } label: {
+                Label(Self.cut(server.name), systemImage: open ? "chevron.down" : "chevron.right")
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(server.unused ? Color.orange : Color.primary)
+            .help(open ? "Hide the tools of \(server.name) without a call" : "Show the \(InsightsView.count(server.unusedTools.count, "tool")) of \(server.name) without a call in the window")
+        }
+    }
+
+    /// Long names (MCP tools, servers) cut in the middle, so the numbers stay in view; the tooltip has the whole name.
+    static func cut(_ name: String, to limit: Int = 48) -> String {
+        guard name.count > limit else { return name }
+        let half = (limit - 1) / 2
+        return name.prefix(half) + "…" + name.suffix(limit - 1 - half)
     }
 
     // MARK: Tools
@@ -243,14 +278,16 @@ struct InsightsUsageTable: View {
                     Divider().gridCellUnsizedAxes(.horizontal)
                     ForEach(rows(all)) { tool in
                         GridRow {
-                            Text(tool.name).lineLimit(1).truncationMode(.middle)
+                            Text(Self.cut(tool.name)).lineLimit(1)
                                 .foregroundStyle(tool.unused ? Color.orange : Color.primary)
-                                .help(tool.server.map { "A tool of the MCP server \($0)" } ?? "A built-in or extension tool")
+                                .help(tool.name + (tool.server.map { ": a tool of the MCP server \($0)" } ?? ": a built-in or extension tool"))
                             Text(tool.harnesses.map(Self.harnessTitle).joined(separator: ", ")).lineLimit(1).foregroundStyle(.secondary)
                             calls(tool.calls, unused: tool.unused)
-                                .help("Calls in the window, subagent runs included, in \(InsightsView.count(tool.calledSessions, "session"))")
+                                .help("Calls made in the window, subagent runs included, in \(InsightsView.count(tool.calledSessions, "session"))")
                             Text("\(tool.availableSessions) · \(InsightsView.count(tool.availableDays, "day"))")
-                                .help("Sessions where it was available (from the tool list the harness recorded), on how many days")
+                                .help(tool.server == nil
+                                      ? "Sessions with a full tool list (a Claude Code prompt snapshot, Pi 1.0+) where it was available, on how many days"
+                                      : "Sessions where it was listed, on how many days")
                             lastCall(tool.lastCall)
                         }
                         .font(.callout.monospacedDigit())
@@ -264,10 +301,10 @@ struct InsightsUsageTable: View {
 
     private var toolsSummary: some View {
         let summary = tools.summary
-        return Text("\(InsightsView.count(summary.sessions, "session")), \(summary.sessionsWithToolList) with a recorded tool list · "
+        return Text("\(InsightsView.count(summary.sessions, "session")), \(summary.sessionsWithToolList) with a full tool list · "
                     + "\(InsightsView.count(summary.calls, "tool call"))")
             .font(.callout).foregroundStyle(.secondary)
-            .help("Sessions in the window; only those whose tool list Claude Code or Pi 1.0+ recorded say what was available. Tool calls include subagent runs.")
+            .help("Sessions started in the window, and of them those with a full tool list (a Claude Code prompt snapshot with tools, Pi 1.0+); only those say which built-in tools were available. Tool calls: made in the window in the scope's sessions, subagent runs included.")
     }
 
     private var notes: some View {

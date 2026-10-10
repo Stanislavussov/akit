@@ -40,11 +40,12 @@ public enum PiLogFormat {
         return String(rest[..<quote])
     }
 
-    /// The tool a line of the system prompt's `tools` section declares: `- name: description`.
+    /// The tool a line of the system prompt's `tools` section declares: `- name: description`. Only
+    /// tool-like names (letters, digits, `_`, `.`, `-`), so a bullet like `- Note: …` is no tool.
     public static func toolName(ofLine line: String) -> String? {
         guard line.hasPrefix("- "), let colon = line.firstIndex(of: ":") else { return nil }
         let name = String(line[line.index(line.startIndex, offsetBy: 2)..<colon]).trimmingCharacters(in: .whitespaces)
-        return name.isEmpty ? nil : name
+        return name.wholeMatch(of: /[A-Za-z0-9_.\-]+/) != nil ? name : nil
     }
 
     /// Every tool the `tools` section of a Pi ≥ 1.0 `system` message declares, one per line.

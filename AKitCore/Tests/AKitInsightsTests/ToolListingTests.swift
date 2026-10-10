@@ -27,6 +27,8 @@ extension InsightsImportTests {
         try write(claudeFile, lines: [
             // The first snapshots often carry no tools; a later one has them.
             Self.snapshot("P1", "00", tools: nil),
+            // Read comes deferred first; the snapshot then says the session has its full list.
+            Self.attachment("D0", "00", ["type": "deferred_tools_delta", "addedNames": ["Read"], "removedNames": []]),
             Self.attachment("D1", "01", ["type": "deferred_tools_delta",
                                          "addedNames": ["mcp__docs__search", "mcp__docs__fetch", "WebFetch"],
                                          "addedLines": ["mcp__docs__search", "mcp__docs__fetch", "WebFetch"], "removedNames": []]),
@@ -44,8 +46,12 @@ extension InsightsImportTests {
             "mcp__docs__fetch/0/docs/claude:s1", "mcp__docs__search/0/docs/claude:s1",
             "Grep/1/-/claude:s1", "Read/1/-/claude:s1",
         ])
-        let first = try #require(JSONLines.date("2026-09-20T10:00:02.000Z")).timeIntervalSince1970
+        let first = try #require(JSONLines.date("2026-09-20T10:00:00.000Z")).timeIntervalSince1970
         #expect(try database().value("SELECT ts FROM tool_listings WHERE tool = 'Read' AND is_subagent = 0")?.double == first)
+        let via = try database().rows("SELECT tool, via FROM tool_listings WHERE is_subagent = 0 ORDER BY tool")
+            .map { "\($0[0].text ?? "")=\($0[1].text ?? "")" }
+        #expect(via == ["Bash=snapshot", "Read=snapshot", "Skill=snapshot", "WebFetch=deferred",
+                        "mcp__docs__fetch=deferred", "mcp__docs__search=deferred"])
 
         // An appended snapshot with a new tool adds it; the others keep their first time.
         try append(claudeFile, lines: [Self.snapshot("P4", "20", tools: ["Read", "Bash", "Skill", "Agent"])])
@@ -80,6 +86,10 @@ extension InsightsImportTests {
 
         #expect(try toolRows() == ["bash/0/-/pi:sa", "mcp__docs__search/0/docs/pi:sa", "read/0/-/pi:sa"])
         #expect(try count("SELECT COUNT(*) FROM tool_listings WHERE harness = 'pi'") == 3)
+        #expect(try count("SELECT COUNT(*) FROM tool_listings WHERE via = 'pi'") == 3)
         #expect(PiLogFormat.toolNames(inToolsSection: "<tools>\n- read: Read\n-: nameless\nplain text\n</tools>") == ["read"])
+        // Bullets inside a description are no tools.
+        #expect(PiLogFormat.toolNames(inToolsSection: "- web_fetch: Fetch a page\n- Use with care: it may be slow\n- a/b: path\n- mcp.x-y_z: ok")
+                == ["web_fetch", "mcp.x-y_z"])
     }
 }

@@ -120,12 +120,14 @@ public enum IndexSchema {
         """,
         // v10: the tools a session had available (Claude Code's prompt snapshot and deferred tools,
         // Pi ≥ 1.0's `tools` section), one row per session, run kind and tool, `ts` the first time it
-        // was seen there. `server` for an MCP tool (`mcp__<server>__<tool>`). With the calls in
+        // was seen there. `server` for an MCP tool (`mcp__<server>__<tool>`); `via` where it came from:
+        // `snapshot` (a Claude Code prompt snapshot: the full list), `deferred` (Claude Code's deferred
+        // tools, MCP ones among them, which come without the built-in tools) or `pi`. With the calls in
         // `tool_calls`, it shows the tools and MCP servers a period never used. The parser bump that
         // comes with it re-reads the files still on disk; older sessions have no rows.
         """
         CREATE TABLE tool_listings(harness TEXT NOT NULL, session_key TEXT NOT NULL, is_subagent INTEGER NOT NULL,
-          tool TEXT NOT NULL, server TEXT, ts REAL, source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL,
+          tool TEXT NOT NULL, server TEXT, via TEXT NOT NULL, ts REAL, source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL,
           PRIMARY KEY(harness, session_key, is_subagent, tool));
         CREATE INDEX tool_listings_source ON tool_listings(source_id);
         CREATE INDEX tool_listings_tool ON tool_listings(tool, session_key);
