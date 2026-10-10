@@ -93,6 +93,17 @@ public enum ProjectWorktrees {
         return Status(main: main, units: units, worktrees: worktrees)
     }
 
+    /// The main checkout of the repository `folder` belongs to and its other worktrees (any
+    /// project, local-only or not), for settings that must reach every worktree's path (MCP
+    /// servers off in a project). A folder outside git is its own main and has no worktrees.
+    /// One `git worktree list`, none when the repository has no other worktree.
+    public static func family(of folder: URL, env: HarnessEnvironment) -> (main: URL, worktrees: [URL]) {
+        guard let checkout = GitCheckout.at(folder), let mainFolder = checkout.mainFolder,
+              let main = GitCheckout.at(mainFolder) else { return (folder.standardizedFileURL, []) }
+        let spellings = Set([realPath(mainFolder.standardizedFileURL.path), mainFolder.standardizedFileURL.path])
+        return (mainFolder.standardizedFileURL, linkedWorktrees(of: main, main: spellings, env: env).map(\.folder.standardizedFileURL))
+    }
+
     // MARK: - Sync
 
     /// Creates the missing links in every worktree (and removes those of `dropped` units).

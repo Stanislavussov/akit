@@ -62,6 +62,82 @@ public enum SettingsFile {
         return TextDiff.lines(from: excerpt(old), to: excerpt(new))
     }
 
+    // MARK: - Edits checked again at Apply
+
+    /// One change to a JSON file: a value set at a key path, or a key path removed.
+    public enum Edit: Hashable, Sendable {
+        case set([String], JSONValue)
+        case remove([String])
+
+        public var path: [String] {
+            switch self {
+            case .set(let path, _), .remove(let path): path
+            }
+        }
+    }
+
+    /// A planned change of one file, for a file its harness rewrites all the time
+    /// (`~/.claude.json`): Apply reads the file again, refuses when a value the edits touch
+    /// changed since the plan, then makes the same edits on the fresh text and checks them.
+    public struct Change: Sendable {
+        public let file: URL
+        public let edits: [Edit]
+        /// Only the changed part, secrets hidden.
+        public let diff: [TextDiff.Line]
+        /// The file doesn't exist yet.
+        public let creates: Bool
+        /// The value at each edited key path when the plan was made (nil = absent).
+        let snapshot: [[String]: JSONValue?]
+        let limit: Int
+    }
+
+    /// The edits made on the text (each one checked as a tree edit) and the tree they give.
+    static func edited(_ text: String, value: JSONValue, edits: [Edit], file: URL, home: URL) throws(Failure) -> (data: Data, value: JSONValue) {
+        var text = text
+        var expected = value
+        do {
+            for edit in edits {
+                switch edit {
+                case .set(let path, let new):
+                    text = try JSONTextEdit.setting(new, at: path, in: text)
+                    expected.set(new, at: path)
+                case .remove(let path):
+                    text = try JSONTextEdit.removing(at: path, in: text)
+                    expected.remove(at: path)
+                }
+            }
+        } catch {
+            throw Failure("\(FileWalk.tilde(file, home: home)): \(error.message)")
+        }
+        return (try checked(text, expected: expected, file: file, home: home), expected)
+    }
+
+    /// A change of `file` by `edits`; the preview shows the values under `preview` (key paths).
+    public static func change(_ file: URL, edits: [Edit], preview: [[String]], home: URL, limit: Int = 4 << 20) throws(Failure) -> Change {
+        let current = try read(file, home: home, limit: limit)
+        let value = current?.value ?? .object([:])
+        let text = current.map { String(decoding: $0.data, as: UTF8.self) } ?? "{}\n"
+        let result = try edited(text, value: value, edits: edits, file: file, home: home)
+        var snapshot: [[String]: JSONValue?] = [:]
+        for edit in edits { snapshot.updateValue(value.value(at: edit.path), forKey: edit.path) }
+        let diff = preview.flatMap { path in self.preview(old: current?.value, new: result.value, at: path) }
+        return Change(file: file, edits: edits, diff: diff, creates: current == nil, snapshot: snapshot, limit: limit)
+    }
+
+    /// Applies a change on the file as it is now (see `Change`). Returns the backup, if any.
+    @discardableResult
+    public static func apply(_ change: Change, home: URL) throws(Failure) -> URL? {
+        let current = try read(change.file, home: home, limit: change.limit)
+        let value = current?.value ?? .object([:])
+        for (path, old) in change.snapshot where value.value(at: path) != old {
+            throw Failure("\(FileWalk.tilde(change.file, home: home)) changed after the preview (\(JSONValue.display(path))). Check the change again.")
+        }
+        let text = current.map { String(decoding: $0.data, as: UTF8.self) } ?? "{}\n"
+        var result = try edited(text, value: value, edits: change.edits, file: change.file, home: home)
+        if current == nil, result.data.last != UInt8(ascii: "\n") { result.data.append(UInt8(ascii: "\n")) }
+        return try write(result.data, to: change.file, expecting: current?.data, home: home)
+    }
+
     /// Writes `data` to `file` (through a link, to the real file). Refuses when the file's bytes
     /// are no longer `before` (nil = the file must still be missing). Backs an existing file up into
     /// `~/.akit/backups` first. Returns the backup, nil for a new file.

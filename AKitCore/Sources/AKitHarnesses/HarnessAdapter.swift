@@ -70,6 +70,12 @@ public enum HarnessCatalog {
         adapters.first { $0.id == harness }
     }
 
+    /// Claude Code's state file (`~/.claude.json`, or inside CLAUDE_CONFIG_DIR): its user and
+    /// local MCP servers and the per-folder `projects` entries.
+    public static func claudeStateFile(in env: HarnessEnvironment) -> URL {
+        ClaudeCodeAdapter().stateFile(in: env)
+    }
+
     /// Main config folder of a built-in harness (`~/.claude`, `~/.pi/agent`, or the folder
     /// its environment variable names), also when it isn't installed. nil for custom harnesses.
     public static func configRoot(of harness: HarnessID, in env: HarnessEnvironment) -> URL? {

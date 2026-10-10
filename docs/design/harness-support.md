@@ -19,6 +19,7 @@ built. The last column says whether the gap is a decision (with its doc) or open
 | Skills: on / off without editing the skill | yes: On, Name Only, Manual, Off (`skillOverrides`); none for plugin skills | yes: On, Off (`skills` entries); none for package skills | see "Skill switches" below |
 | Plugins / packages | Claude plugins listed | Pi packages on the Overview card: extensions, skills, prompt templates, themes | read-only; package code never runs. Limits per settings file and per refresh; a cut list or a too-large package gets a note |
 | MCP: read, add, edit, remove | yes (`claude mcp` CLI) | yes (JSON files of `pi-mcp-adapter`) | Pi servers show as inactive without the `pi-mcp-adapter` package |
+| MCP: off without deleting (everywhere, in a project) | yes: user servers both; local and `.mcp.json` servers in their project; none for plugin servers; all claude.ai connectors at once | yes: servers of `~/.pi/agent/mcp.json` both; a project's `.pi/mcp.json` servers in their project | see "MCP switches" below |
 | MCP secrets from Keychain | yes (`headersHelper`) | yes (`!` lookups) | each harness's own mechanism |
 | MCP catalog | yes | yes | harness-neutral form |
 
@@ -55,6 +56,31 @@ Facts, checked 2026-10-10:
 | What AKit writes | Off/Name Only/Manual: sets the entry; On: removes it (and `skillOverrides` when it becomes empty) | takes out every `!`/`+`/`-` entry naming exactly this skill, then adds `-skills/…/SKILL.md` (off) or `+…` (on, only when a glob still turns it off); an empty list is removed |
 | Not offered | plugin skills: Claude Code ignores `skillOverrides` for them (docs; code returns "on" for `source === "plugin"`, `/skills` says "managed with the plugin") | Pi package skills: they are filtered in the package's own entry |
 | Not read | `settings.local.json` (Claude Code's own `/skills` menu writes there; AKit never reads it) | — |
+
+## MCP switches
+
+Built 2026-10-10. A server is turned off in the harness's own setting, never by deleting its
+entry; On removes exactly the entry AKit adds. Core: `AKitMCP/MCPSwitches.swift`, written through
+`SettingsFile` (see "Skill switches"). For `~/.claude.json`, which Claude Code rewrites all the
+time, Apply reads the file again and refuses only when a value the change touches differs from
+the preview; the same edits are then made on the fresh text and checked as a tree edit. MCP
+Servers screen, Insights → MCP Servers (context menu), `akit mcp state`, `akit mcp set`,
+`akit mcp connectors`.
+
+Facts, checked 2026-10-10 (Claude Code 2.1.296: the installed binary, code.claude.com/docs/en/mcp
+and /permissions; Pi 1.0.4: `docs/mcp.md` and `dist/extensions/mcp/config.js`):
+
+| | Claude Code | Pi |
+|---|---|---|
+| Off Everywhere | `"mcp__<server>"` in `permissions.deny` of `~/.claude/settings.json`: the server's tools leave the context, the server still starts. The rule uses the tool-name spelling (every character other than letters, digits, `_`, `-` as `_`). Only for user servers (`~/.claude.json` `mcpServers`) | `"enabled": false` on the entry in `~/.pi/agent/mcp.json`: Pi keeps the entry and doesn't connect it |
+| Off in Project | the name in `disabledMcpServers` of `projects["<folder>"]` in `~/.claude.json` (what `/mcp` → Disable writes; the binary's `Ao(name)` checks it for every server, whatever its scope). Claude Code keys the entry by the exact folder, so AKit writes it for the main checkout and every git worktree. A folder Claude Code hasn't seen gets Claude Code's own default entry plus the list. For `.mcp.json` servers AKit uses the same list rather than `disabledMcpjsonServers`, so the project's approval answer stays the user's | the folder's `.pi/mcp.json` (read from the folder Pi starts in, only in a trusted project): `"enabled": false` on the project's own entry, or a `{ "enabled": false }` override of a user-level server (an override may set only `enabled`, `exposure`, `toolExposure`). Each worktree gets its own; a worktree with no such server and no user-level one to override is skipped |
+| Later worktrees | "Off in Project" is remembered in `~/.akit/mcp-off.json`; a refresh of the app, a worktree sync (also the watcher of local-only projects) and `akit worktrees sync` give new worktrees the missing entries, through the same checks | the same |
+| claude.ai connectors | `disableClaudeAiConnectors: true` in `~/.claude/settings.json` turns all of them off (the binary names them `claude.ai <display name>`; AKit doesn't list them one by one) | — |
+| On | removes the rule, the name from the list (an empty list stays, as Claude Code's own toggle leaves it), the entries AKit made | removes the override AKit wrote, else `enabled: false` (Pi's default is on) |
+| Not offered | plugin servers: their name is `plugin:<plugin or its marketplace alias>:<server>`, so AKit doesn't switch them alone; turn the plugin off with `/plugin` | servers in the shared files of `pi-mcp-adapter` (`~/.config/mcp/mcp.json`, `~/.agents/mcp.json`) and a project's `.mcp.json` |
+
+Pi 1.0.4 reads `mcp.json` itself (`dist/extensions/mcp`); AKit still marks Pi's servers inactive
+without the `pi-mcp-adapter` package (open: the adapter check predates Pi's own MCP support).
 
 ## Layers (`layers.md`)
 

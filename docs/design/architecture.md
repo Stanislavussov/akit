@@ -31,7 +31,10 @@ targets now): `Doctor.report`, the text of `akit doctor` and the app's Help → 
 2026-10-10 (skill switches, `harness-support.md`): `AKitSkills/SkillSwitches.swift` turns a skill
 on or off per harness in the harness's own settings (Claude Code's `skillOverrides`, Pi's `skills`
 entries); `AKitFoundation/JSONTextEdit.swift` changes one member of a JSON file's text and keeps
-every other byte. No new dependency.
+every other byte. No new dependency. The same day, MCP switches (`AKitMCP/MCPSwitches.swift`) and
+`AKitFoundation/SettingsFile.swift`, the checked read, edit and write both use;
+`ProjectWorktrees.family` (ProjectSetup) lists a project's worktrees for them, and
+`AKitCommandLine → AKitMCP` is new (`akit mcp`).
 
 ## Goal
 
