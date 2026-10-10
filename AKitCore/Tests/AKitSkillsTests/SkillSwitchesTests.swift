@@ -81,6 +81,12 @@ struct SkillSwitchesTests {
         #expect(SkillSwitches.options(for: quiet, harness: .claudeCode, in: env)?.states == [.manual, .off])
         try write(".claude/settings.json", #"{"skillOverrides": {"quiet": "off"}}"#)
         #expect(state(quiet, .claudeCode) == .off)
+        // Back to Manual: the file already says so, so the entry goes.
+        try SkillSwitches.apply(try SkillSwitches.plan(quiet, harness: .claudeCode, to: .manual, in: env), home: home)
+        #expect(try text(claudeSettings) == "{}")
+        #expect(state(quiet, .claudeCode) == .manual)
+        #expect(SkillSwitches.defaultState(of: quiet, harness: .claudeCode) == .manual)
+        #expect(SkillSwitches.defaultState(of: quiet, harness: .pi) == .on)
         #expect(throws: SkillSwitches.Failure.self) { try SkillSwitches.plan(quiet, harness: .claudeCode, to: .nameOnly, in: env) }
     }
 

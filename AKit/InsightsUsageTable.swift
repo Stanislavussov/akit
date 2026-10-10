@@ -4,6 +4,7 @@ import SwiftUI
 /// The Insights screen's table over the window: skills, MCP servers or tools, with Unused Only and a
 /// sort. The same numbers as `akit stats --details` and `akit stats tools --details`.
 struct InsightsUsageTable: View {
+    @Environment(AppModel.self) private var model
     let stats: StatsReport
     let tools: ToolsReport
 
@@ -63,6 +64,7 @@ struct InsightsUsageTable: View {
             Text("\(kind.title), Last \(stats.window.days) Days").font(.headline)
         }
         .help(kind == .skills ? "The same numbers as akit stats --details" : "The same numbers as akit stats tools --details")
+        .skillSwitchSheet(model)
     }
 
     private var controls: some View {
@@ -124,7 +126,16 @@ struct InsightsUsageTable: View {
                             Text(skill.name).lineLimit(1).truncationMode(.middle)
                                 .foregroundStyle(skill.unused ? Color.orange : Color.primary)
                                 .help("Counted since \(InsightsView.day(skill.windowStart)), the start of its current description or of the window"
-                                      + (skill.unused ? ". Unused: no call by the model or you made in the window." : ""))
+                                      + (skill.unused ? ". Unused: no call by the model or you made in the window." : "")
+                                      + ". Right-click to switch it per harness.")
+                                .contextMenu {
+                                    if let installed = model.installedSkill(named: skill.name) {
+                                        SkillSwitchMenu(skill: installed)
+                                        Button("Show in Skills") { model.showSkill(inFolder: installed.folder) }
+                                    } else {
+                                        Button("Not installed on this Mac") {}.disabled(true)
+                                    }
+                                }
                             Text([InsightsView.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))
                                 .lineLimit(1).foregroundStyle(.secondary)
                             Text("\(skill.listedSessions) · \(InsightsView.count(skill.listedDays, "day"))")

@@ -143,6 +143,12 @@ public enum SkillSwitches {
         return result
     }
 
+    /// The state without an entry in the settings: Manual for a Claude Code skill whose SKILL.md
+    /// sets `disable-model-invocation`, else On.
+    public static func defaultState(of skill: Skill, harness: HarnessID) -> SkillSwitchState {
+        harness == .claudeCode && skill.disablesModelInvocation ? .manual : .on
+    }
+
     /// One skill's state in one harness's settings.
     static func state(of skill: Skill, harness: HarnessID, settings: JSONValue) -> SkillSwitchState {
         switch harness {
@@ -225,7 +231,7 @@ public enum SkillSwitches {
         do {
             switch harness {
             case .claudeCode:
-                if state == .on {
+                if state == defaultState(of: skill, harness: harness) {
                     after = try JSONTextEdit.removing(at: ["skillOverrides", skill.name], in: text)
                     // An entry list left empty goes too, like a key that was never set.
                     if case .object(let left)? = try? JSONValue.parse(Data(after.utf8)).value(at: ["skillOverrides"]), left.isEmpty {
@@ -264,7 +270,7 @@ public enum SkillSwitches {
         let newValue = (try? JSONValue.parse(Data(after.utf8))) ?? .object([:])
         let diff = TextDiff.lines(from: current.map { shown($0.value) } ?? "", to: shown(newValue))
         var notes: [String] = []
-        if current == nil { notes.append("Creates \(file.path).") }
+        if current == nil { notes.append("Creates \(FileWalk.tilde(file, home: env.homeDirectory)).") }
         notes.append("Only this entry changes; the rest of the file stays as it is. The preview shows the file with sorted keys and env/headers values hidden.")
         if harness == .claudeCode { notes.append("Claude Code picks the change up in new sessions.") }
         if harness == .pi { notes.append("Pi picks the change up in new sessions (or after /reload).") }
@@ -300,6 +306,6 @@ public enum SkillSwitches {
 
     /// A settings file as the preview shows it: sorted keys, secrets masked.
     static func shown(_ value: JSONValue) -> String {
-        value.masked.mappingStrings(SecretFilter.masked).pretty
+        String(value.masked.mappingStrings(SecretFilter.masked).pretty.dropLast())
     }
 }

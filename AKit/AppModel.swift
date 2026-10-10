@@ -28,6 +28,12 @@ final class AppModel {
     private(set) var piPackageNotes: [String] = []
     /// Per project path: ids of global Pi package skills a session there doesn't load.
     private(set) var piHiddenSkills: [String: Set<String>] = [:]
+    /// Each skill's switch per harness (Claude Code's skillOverrides, Pi's skills entries).
+    private(set) var skillStates: [Skill.ID: [HarnessID: SkillSwitchState]] = [:]
+    /// A skill switch change shown in its sheet until Apply or Cancel.
+    var skillSwitchRequest: SkillSwitchRequest?
+    /// Why a skill switch change couldn't be planned (shown in an alert).
+    var skillSwitchError: String?
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
     /// The person's ratings of runs (`akit rate`, Pi's ⌥G / ⌥X / ⌥R), by session log path.
@@ -503,6 +509,34 @@ final class AppModel {
         await refresh()
     }
 
+    /// Plans a skill switch change and opens its sheet (or the alert, when it can't be done).
+    func requestSkillSwitch(_ skill: Skill, harness: HarnessID, to state: SkillSwitchState) {
+        do {
+            let plan = try SkillSwitches.plan(skill, harness: harness, to: state, in: .current)
+            guard !plan.changesNothing else { return }
+            skillSwitchRequest = SkillSwitchRequest(plan: plan)
+        } catch {
+            skillSwitchError = error.message
+        }
+    }
+
+    /// Writes a planned switch change (backup first; refused if the file changed), then rescans.
+    func applySkillSwitch(_ plan: SkillSwitches.Plan) async throws -> URL? {
+        let home = HarnessEnvironment.current.homeDirectory
+        let backup = try await Task.detached { try SkillSwitches.apply(plan, home: home) }.value
+        await refresh()
+        return backup
+    }
+
+    /// The installed skill a name stands for (Insights lists plugin skills as `plugin:name`):
+    /// the personal one first, then a project's.
+    func installedSkill(named name: String) -> Skill? {
+        skills.filter { skill in
+            if case .plugin(let plugin) = skill.scope { return "\(plugin):\(skill.name)" == name }
+            return skill.name == name
+        }.min { $0.scope.sortRank < $1.scope.sortRank }
+    }
+
     /// The scanned skill that lives in this folder, if any.
     func skill(inFolder folder: URL) -> Skill? {
         let real = folder.resolvingSymlinksInPath().path
@@ -702,7 +736,7 @@ final class AppModel {
             customHarnessError = error.localizedDescription
         }
         let adapters = HarnessCatalog.allAdapters(custom: customHarnesses)
-        let (found, skills, projects, sessions, mcp, targets, brain, pi) = await Task.detached {
+        let (found, scanned, projects, sessions, mcp, targets, brain, pi) = await Task.detached {
             let found = HarnessCatalog.detectAll(in: env, adapters: adapters)
             let extra = ProjectFinder.projects(inRoots: roots)
             let projects = SkillScanner.projects(installations: found, extraProjects: extra, adapters: adapters, in: env)
@@ -718,8 +752,10 @@ final class AppModel {
                       hidden: PiPackages.skillsHidden(projects: projects, packages: listing?.packages ?? []))
             let skills = SkillScanner.scan(installations: found, extraProjects: extra, adapters: adapters, projects: projects,
                                            piPackages: pi.listing.packages, piHidden: pi.hidden, in: env)
-            return (found, skills, projects, await sessions, await mcp, await targets, await brain, pi)
+            let states = SkillSwitches.states(of: skills, in: env)
+            return (found, (skills, states), projects, await sessions, await mcp, await targets, await brain, pi)
         }.value
+        let (skills, states) = scanned
         // Before anything is shown: the session list and its projects change together.
         let folders = Array(Set(sessions.compactMap { $0.project?.path }))
         let projectsRoot = projectsRoot
@@ -731,6 +767,7 @@ final class AppModel {
         brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
         installations = found
         self.skills = skills
+        skillStates = states
         piPackages = pi.listing.packages
         piPackageNotes = pi.listing.notes
         piHiddenSkills = pi.hidden
