@@ -541,6 +541,14 @@ public enum ProjectSetup {
         return Outcome(backup: backup, written: written, removed: removed, notes: notes)
     }
 
+    /// The first of these paths of the plan that changed since the preview; nil when none did.
+    static func changedSincePreview(_ plan: Plan, paths: Set<String>) -> String? {
+        paths.sorted().first { path in
+            let url = plan.blockURLs[path] ?? plan.project.appending(path: path)
+            return state(url) != (plan.snapshot[path] ?? nil)
+        }
+    }
+
     /// The changes Apply carries out: everything but the excluded paths, and a suggestion or the
     /// project's own version only when taken.
     static func todo(_ plan: Plan, excluding excluded: Set<String>, accepting: Set<String>) -> [Change] {

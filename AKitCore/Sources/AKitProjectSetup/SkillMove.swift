@@ -347,6 +347,7 @@ public enum SkillMove {
             if let source, !sourceRendered {
                 do {
                     trashSource = try SkillRemover.items(for: source)
+                    blockers += leftOut(source, home: home, &warnings)
                 } catch {
                     blockers.append(error.localizedDescription)
                 }
@@ -367,6 +368,7 @@ public enum SkillMove {
                 do {
                     trashItems += try SkillRemover.items(for: copy)
                     extra.append(copy)
+                    blockers += leftOut(copy, home: home, &warnings)
                 } catch {
                     blockers.append(error.localizedDescription)
                 }
@@ -377,6 +379,14 @@ public enum SkillMove {
         warnings += mentions(of: name, brain: brain, targets: Set(targets.map(\.id)), projectFolders: context.projectFolders)
 
         let trashDigests = Dictionary((trashSource + trashItems).map { ($0.path, treeDigest($0)) }, uniquingKeysWith: { first, _ in first })
+        for (path, digest) in trashDigests.sorted(by: { $0.key < $1.key }) {
+            let shownPath = shown(URL(filePath: path), home: home)
+            if digest == digestTooLarge {
+                blockers.append("\(shownPath) holds more than 10,000 files, too many to check again before it goes to the Trash. Move or remove it by hand.")
+            } else if digest == digestUnreadable {
+                blockers.append("\(shownPath) has parts AKit can't read, so it can't check them again before they go to the Trash. Move or remove it by hand.")
+            }
+        }
         return Plan(name: name, mode: mode, keepGlobal: keepGlobal, source: source, sourceRendered: sourceRendered, brainImport: brainImport,
                     sourceDigest: digest, parts: parts, coreEdit: coreEdit, home: homePlan, homePaths: homePaths, homeExcluded: homeExcluded,
                     trashSource: trashSource, extraCopies: extra, trashDigests: trashDigests, store: context.store, edits: edits, blockers: blockers,
@@ -414,6 +424,11 @@ public enum SkillMove {
                 return done(.blocked(target.folder == nil
                     ? "is not on this Mac and AKit has no record of it. Set it up on a Mac that has it, or untick it."
                     : "its folder \(target.folder!.path) is gone and AKit has no record of it."))
+            }
+            // A work Mac's answers stay on it (~/.akit/local/projects), so no other Mac would ever
+            // read the skill there, while core's change reaches every Mac.
+            guard !context.store.isLocal else {
+                return done(.blocked("is not on this Mac, and on a work Mac a project's answers live on the Mac that set it up; move it there, or keep the skill global."))
             }
             if let localOnly = target.localOnly { answers.localOnly = localOnly }
             answers.skills.removeAll { $0.name == name }
@@ -468,6 +483,25 @@ public enum SkillMove {
                     localOnly: plan.localOnly, savedLocalOnly: saved?.localOnly, worktrees: worktrees, ownFolder: nil, ownTracked: false)
     }
 
+    /// What the brain import leaves out of a copy that goes to the Trash: a warning naming it, and
+    /// a blocker for git history or links out of the skill, which the Trash would take along.
+    /// Nothing for a copy that is only a link (only the link goes).
+    static func leftOut(_ copy: Skill, home: URL, _ warnings: inout [String]) -> [String] {
+        guard !SkillRemover.removesOnlyLink(copy) else { return [] }
+        let skipped = BrainImport.skippedFiles(in: copy.realFolder)
+        guard !skipped.isEmpty else { return [] }
+        let place = shown(copy.realFolder, home: home)
+        warnings.append("Not in the brain's copy, and in the Trash with \(place): \(skipped.joined(separator: ", ")).")
+        var blockers: [String] = []
+        if skipped.contains(where: { $0.hasSuffix("(git data)") }) {
+            blockers.append("\(place) has its own git history; move or remove it by hand, then move again.")
+        }
+        if skipped.contains(where: { $0.hasSuffix("(link outside the skill)") }) {
+            blockers.append("\(place) links outside the skill; move or remove it by hand, then move again.")
+        }
+        return blockers
+    }
+
     /// `.claude/skills` leads to the project's `.agents/skills` (a link, also an absolute one).
     static func claudeSeesSkills(in project: URL) -> Bool {
         let link = project.appending(path: ".claude/skills").resolvingSymlinksInPath().standardizedFileURL.path
@@ -490,30 +524,38 @@ public enum SkillMove {
         }
     }
 
+    /// `treeDigest` couldn't hash the item: the move can't tell later whether it changed.
+    static let digestTooLarge = "too large", digestUnreadable = "unreadable"
+
     /// What is at a path, as one hash: a link's destination, a file's bytes, or every entry of a
-    /// folder (names, links, bytes), at most 10,000 entries.
-    static func treeDigest(_ url: URL) -> String {
+    /// folder (names, links, bytes). A folder of more than `limit` entries is `digestTooLarge`, and
+    /// one with a part that can't be read is `digestUnreadable`: neither is a hash.
+    static func treeDigest(_ url: URL, limit: Int = 10_000) -> String {
         let fm = FileManager.default
         if let destination = try? fm.destinationOfSymbolicLink(atPath: url.path) { return "link:" + destination }
         var isFolder: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isFolder) else { return "missing" }
-        guard isFolder.boolValue else { return Checksum.sha256((try? Data(contentsOf: url)) ?? Data()) }
-        var data = Data()
+        guard isFolder.boolValue else { return (try? Data(contentsOf: url)).map(Checksum.sha256) ?? digestUnreadable }
+        var unreadable = false
+        guard let walker = fm.enumerator(at: url, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey], options: [],
+                                         errorHandler: { _, _ in unreadable = true; return true }) else { return digestUnreadable }
         let base = url.standardizedFileURL.path
-        guard let walker = fm.enumerator(atPath: base) else { return "unreadable" }
+        var data = Data()
         var count = 0
-        while let relative = walker.nextObject() as? String, count < 10_000 {
+        for case let item as URL in walker {
             count += 1
-            let path = base + "/" + relative
-            data.append(Data(relative.utf8))
+            if count > limit { return digestTooLarge }
+            let path = item.standardizedFileURL.path
+            data.append(Data(String(path.dropFirst(base.count)).utf8))
             if let destination = try? fm.destinationOfSymbolicLink(atPath: path) {
                 data.append(Data(("→" + destination).utf8))
-            } else if fm.fileExists(atPath: path, isDirectory: &isFolder), !isFolder.boolValue {
-                data.append(Data(Checksum.sha256((try? Data(contentsOf: URL(filePath: path))) ?? Data()).utf8))
+            } else if (try? item.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                guard let bytes = try? Data(contentsOf: item) else { return digestUnreadable }
+                data.append(Data(Checksum.sha256(bytes).utf8))
             }
             data.append(0)
         }
-        return Checksum.sha256(data)
+        return unreadable ? digestUnreadable : Checksum.sha256(data)
     }
 
     // MARK: - Mentions
@@ -619,6 +661,11 @@ public enum SkillMove {
         let home = env.homeDirectory
         for (path, digest) in plan.trashDigests.sorted(by: { $0.key < $1.key }) where treeDigest(URL(filePath: path)) != digest {
             throw fail("\(shown(URL(filePath: path), home: home)) changed since the preview. Look at the preview again.")
+        }
+        // The home folder's files the move removes: an edit since the preview stops it here,
+        // before any project or core changes.
+        if let homePlan = plan.home, let path = ProjectSetup.changedSincePreview(homePlan, paths: plan.homePaths) {
+            throw fail("~/\(path) changed since the preview. Look at the preview again.")
         }
         // A project that keeps its own copy must still have it.
         for part in plan.parts where part.state == .keepOwn {

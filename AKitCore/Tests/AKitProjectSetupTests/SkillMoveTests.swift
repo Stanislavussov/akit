@@ -20,9 +20,9 @@ struct SkillMoveTests {
     var other: URL { f.home.appending(path: "Projects/other") }
     let skill = "---\nname: deploy\ndescription: Deploys the app\n---\n\n# Deploy\n"
 
-    func context(projectFolders: [String: URL] = [:]) -> SkillMove.Context {
+    func context(projectFolders: [String: URL] = [:], store: ProjectStore? = nil) -> SkillMove.Context {
         let installed = SkillScanner.scan(installations: HarnessCatalog.detectAll(in: f.env), in: f.env)
-        return SkillMove.Context(env: f.env, store: f.store, homeID: homeID, installed: installed, targets: ["claude", "pi"],
+        return SkillMove.Context(env: f.env, store: store ?? f.store, homeID: homeID, installed: installed, targets: ["claude", "pi"],
                                  projectFolders: projectFolders)
     }
 
@@ -411,17 +411,121 @@ struct SkillMoveTests {
         try await f.initRepo()
         let plan = plan([target], brain: brain)
         #expect(plan.canApply)
-        // The home copy changes after the preview: its Apply stops, after core.
-        try f.write(".agents/skills/deploy/SKILL.md", skill + "late edit\n")
+        // The Trash refuses the home copy: its Apply stops, after core.
         do {
-            try await SkillMove.apply(plan, brain: brain, env: f.env, trash: f.trash)
+            try await SkillMove.apply(plan, brain: brain, env: f.env, trash: { _ in throw CocoaError(.fileWriteNoPermission) })
             Issue.record("the move went on")
         } catch {
             #expect(error.message.hasPrefix("deploy is in the projects and out of the core layer, but the home folder's copy stayed in ~/.agents/skills/deploy:"))
             #expect(error.message.hasSuffix("Brain → core → Update Home Folder… (akit apply --home) takes it out."))
             #expect(error.outcome.coreChanged && error.outcome.projects.map(\.id) == [f.id])
         }
-        #expect(!coreSkills().contains("deploy") && f.read(".agents/skills/deploy/SKILL.md", in: f.home)?.hasSuffix("late edit\n") == true)
+        #expect(!coreSkills().contains("deploy") && fm.fileExists(atPath: f.home.appending(path: ".agents/skills/deploy/SKILL.md").path))
+    }
+
+    @Test func aHomeCopyEditedAfterThePreviewStopsBeforeAnything() async throws {
+        try harnesses()
+        let brain = try await renderedInCore()
+        try await f.initRepo()
+        let plan = plan([target], brain: brain)
+        try f.write(".agents/skills/deploy/SKILL.md", skill + "late edit\n")
+        do {
+            try await SkillMove.apply(plan, brain: brain, env: f.env, trash: f.trash)
+            Issue.record("the move went on")
+        } catch {
+            #expect(error.message == "~/.agents/skills/deploy/SKILL.md changed since the preview. Look at the preview again.")
+            #expect(error.outcome.projects.isEmpty && !error.outcome.coreChanged && !error.outcome.imported)
+        }
+        #expect(coreSkills().contains("deploy") && f.read(".agents/skills/deploy/SKILL.md") == nil)
+    }
+
+    @Test func aDeferredHomeApplyKeepsTheLastFullRendersRecord() async throws {
+        try harnesses()
+        _ = try await renderedInCore()
+        try await f.initRepo()
+        // Core gains a skill after the home render: a pending change the move leaves for later.
+        try f.write(".akit/registry/skills/later/SKILL.md", "---\nname: later\ndescription: Later\n---\n")
+        let core = try #require(f.read(".akit/registry/layers/core/layer.yaml", in: f.home))
+        try f.write(".akit/registry/layers/core/layer.yaml", core + "  - later\n")
+        try await f.git("add", "-A", in: f.brainRoot)
+        try await f.git("commit", "-qm", "Add later", in: f.brainRoot)
+        var lock = try #require(ProjectRecords.savedLock(id: homeID, in: f.store))
+        lock.brainCommit = "abc1234"
+        lock.brainDirty = true
+        lock.piAgentDir = "/remembered/pi"
+        try ProjectRecords.save(lock, answers: nil, id: homeID, in: f.store)
+        let brain = try #require(Brain.load(from: f.brainRoot))
+        let plan = plan([target], brain: brain)
+        #expect(plan.homeExcluded.contains(".agents/skills/later/SKILL.md"))
+        try await SkillMove.apply(plan, brain: brain, env: f.env, trash: f.trash)
+        let after = try #require(ProjectRecords.savedLock(id: homeID, in: f.store))
+        #expect(after.brainCommit == "abc1234" && after.brainDirty && after.piAgentDir == "/remembered/pi")
+        #expect(!after.files.keys.contains { $0.hasPrefix(".agents/skills/deploy/") } && after.files[".agents/skills/later/SKILL.md"] == nil)
+    }
+
+    @Test func onAWorkMacAProjectOnAnotherMacIsBlocked() async throws {
+        let brain = try await f.setUpBrain()
+        try harnesses()
+        try f.write(".agents/skills/deploy/SKILL.md", skill)
+        try await f.initRepo()
+        let work = ProjectStore.local(home: f.home, readingBrain: f.brainRoot)
+        // A record in the local store, and one only in the brain (read as a fallback).
+        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: ProjectAnswers(targets: ["pi"]), id: "github.com/me/local", in: work)
+        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: ProjectAnswers(targets: ["pi"]), id: "github.com/me/old", in: f.store)
+        let plan = SkillMove.plan(name: "deploy", targets: [target, .init(id: "github.com/me/local", folder: nil), .init(id: "github.com/me/old", folder: nil)],
+                                  mode: .auto, brain: brain, context: context(store: work))
+        #expect(!plan.canApply && plan.answersOnly.isEmpty)
+        for part in plan.parts.dropFirst() {
+            #expect(part.state == .blocked("is not on this Mac, and on a work Mac a project's answers live on the Mac that set it up; move it there, or keep the skill global."))
+        }
+    }
+
+    @Test func copiesTheTrashCantCheckOrWouldTakeHistoryAlongBlock() async throws {
+        let brain = try await f.setUpBrain()
+        try harnesses()
+        try await f.initRepo()
+        try f.write(".agents/skills/deploy/SKILL.md", skill)
+        // A clone: its git history isn't copied into the brain and would go to the Trash.
+        try f.write(".agents/skills/deploy/.git/HEAD", "ref: refs/heads/main\n")
+        let clone = plan([target], brain: brain)
+        #expect(!clone.canApply && clone.blockers.contains("~/.agents/skills/deploy has its own git history; move or remove it by hand, then move again."))
+        #expect(clone.warnings.contains { $0.hasPrefix("Not in the brain's copy, and in the Trash with ~/.agents/skills/deploy: .git (git data)") })
+        try fm.removeItem(at: f.home.appending(path: ".agents/skills/deploy/.git"))
+
+        // A part AKit can't read.
+        let locked = f.home.appending(path: ".agents/skills/deploy/private")
+        try fm.createDirectory(at: locked, withIntermediateDirectories: true)
+        try f.write(".agents/skills/deploy/private/notes.md", "x\n")
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        let unreadable = plan([target], brain: brain)
+        #expect(unreadable.blockers.contains { $0.hasPrefix("~/.agents/skills/deploy has parts AKit can't read") }, "\(unreadable.blockers)")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path)
+        try fm.removeItem(at: locked)
+
+        // Too many files to check again.
+        let many = f.home.appending(path: ".agents/skills/deploy/many")
+        try fm.createDirectory(at: many, withIntermediateDirectories: true)
+        for index in 0..<10_001 { _ = fm.createFile(atPath: many.appending(path: "\(index)").path, contents: nil) }
+        let large = plan([target], brain: brain)
+        #expect(large.blockers.contains { $0.hasPrefix("~/.agents/skills/deploy holds more than 10,000 files") })
+        #expect(SkillMove.treeDigest(many, limit: 10_001) != SkillMove.digestTooLarge && SkillMove.treeDigest(many, limit: 10) == SkillMove.digestTooLarge)
+    }
+
+    @Test func aLinkOnlyExtraCopyLosesOnlyTheLink() async throws {
+        let brain = try await f.setUpBrain()
+        try harnesses()
+        try await f.initRepo()
+        try f.write(".agents/skills/deploy/SKILL.md", skill)
+        try f.write("dev/deploy-pi/SKILL.md", skill + "different, but only linked\n")
+        try fm.createDirectory(at: f.home.appending(path: ".pi/agent/skills"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: f.home.appending(path: ".pi/agent/skills/deploy").path,
+                                  withDestinationPath: f.home.appending(path: "dev/deploy-pi").path)
+        let plan = plan([target], brain: brain)
+        #expect(plan.canApply && plan.extraCopies.count == 1, "\(plan.blockers)")
+        try await SkillMove.apply(plan, brain: brain, env: f.env, trash: f.trash)
+        #expect((try? fm.destinationOfSymbolicLink(atPath: f.home.appending(path: ".pi/agent/skills/deploy").path)) == nil)
+        #expect(f.read("dev/deploy-pi/SKILL.md", in: f.home)?.hasSuffix("only linked\n") == true)
     }
 
     @Test func aFailedImportCommitSaysTheCopyMayBeUncommitted() async throws {

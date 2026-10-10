@@ -122,6 +122,11 @@ struct BrainImportTests {
         #expect(BrainImport.sourceNote("Your copy of o/r (renamed)") == "o/r")
         #expect(BrainImport.sourceNote("o/r\nSigned-off-by: someone") == "o/r")
         #expect(BrainImport.sourceNote("  ") == nil)
+        #expect(BrainImport.sourceNote("ghp_tok@github.com/o/r") == "github.com/o/r")
+        #expect(BrainImport.sourceNote("token:abc@host/o/r") == "host/o/r")
+        #expect(BrainImport.sourceNote("https://user:pa/ss@host/o/r") == "host/o/r")
+        #expect(BrainImport.sourceNote("file:///Users/me/x") == nil)
+        #expect(BrainImport.sourceNote("/Users/me/x") == nil)
     }
 
     @Test func importsIntoAnotherLayer() async throws {

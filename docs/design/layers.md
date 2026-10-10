@@ -347,7 +347,9 @@ The order keeps the skill present at every step:
   creates links where nothing is, and the next sync fixes the rest.
 - **Not on this Mac.** A project with a record (answers in the brain or the local store) gets
   only its answers, committed ("Add skill X to <id>'s answers"); Set Up Project on its Mac
-  renders X. One without a record blocks the move.
+  renders X. One without a record blocks the move, and so does any such project on a work Mac:
+  its answers stay in `~/.akit/local/projects`, which no other Mac reads, while core's change
+  reaches every Mac (move it on the Mac that has it, or keep the skill global).
 - **Project files.** A project's saved choice (Commit / Local only) stays and is shown; a
   project set up by the move is local only unless the user picks Commit.
 - **Mode.** The caller picks it: `auto` when the skill's calls show model calls, else its
@@ -364,7 +366,11 @@ The order keeps the skill present at every step:
   and only when their files are the brain's (or those the brain is about to get); one that
   differs blocks the move, with Show Edits for every differing file. A folder of another name
   whose header says X is a different skill: a warning, never trashed. What goes to the Trash is
-  hashed in the preview and checked again before anything is written. A source that is a link
+  hashed in the preview and checked again before anything is written, and so are the home
+  folder's files the move removes; a folder of more than 10,000 entries, or with a part AKit
+  can't read, can't be checked and blocks the move. What the brain import leaves out of a copy
+  that goes to the Trash (files that may hold secrets, a broken link) is named in a warning;
+  git history (`.git`) or a link out of the skill blocks it: move or remove it by hand. A source that is a link
   (into a development folder) is imported from that folder alone, and only the link goes.
 - **Blocked.** A project with its own X (a folder AKit didn't write, in git or not) until the
   user compares and keeps the project's (then nothing is written there and X only leaves
@@ -687,7 +693,8 @@ as `${VAR}` references; the real values come from Keychain.
    (`BrainImport.apply(listInLayer: false)`, 2026-10-11; commit "Import skill X"), for a skill
    that a project's answers list instead (Move to Project). Every import commit names where
    each new skill was installed from ("Source of X: owner/repo", from the skills.sh or AKit
-   lock, reduced to `owner/repo` or a host and path: no credentials, query or line breaks), so the
+   lock, reduced to `owner/repo` or a host and path: no credentials, query or line breaks, and
+   never a local path or `file://` source), so the
    brain's copy keeps its origin; the brain has no other record of it.
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end. (Done.)

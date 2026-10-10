@@ -107,21 +107,20 @@ public enum BrainImport {
         for prefix in ["skills.sh · ", "Your copy of "] where text.hasPrefix(prefix) { text.removeFirst(prefix.count) }
         if text.hasSuffix(" (renamed)") { text.removeLast(" (renamed)".count) }
         text = text.trimmingCharacters(in: .whitespaces)
+        // A local path never goes into a commit.
+        if text.lowercased().hasPrefix("file:") || text.hasPrefix("/") || text.hasPrefix("~") { return nil }
+        if let end = text.firstIndex(where: { "?#".contains($0) }) { text = String(text[..<end]) }
         if let scheme = text.range(of: "://") {
-            var rest = String(text[scheme.upperBound...])
-            if let end = rest.firstIndex(where: { "?#".contains($0) }) { rest = String(rest[..<end]) }
-            if let slash = rest.firstIndex(of: "/"), let at = rest[..<slash].lastIndex(of: "@") {
-                rest = String(rest[rest.index(after: at)...])
-            } else if !rest.contains("/"), let at = rest.lastIndex(of: "@") {
-                rest = String(rest[rest.index(after: at)...])
-            }
-            text = rest
+            text = String(text[scheme.upperBound...])
+            // Credentials end at the last `@` (a password may hold a `/`).
+            if let at = text.lastIndex(of: "@") { text = String(text[text.index(after: at)...]) }
         } else {
-            if let end = text.firstIndex(where: { "?#".contains($0) }) { text = String(text[..<end]) }
-            // git@github.com:owner/repo
-            if let at = text.firstIndex(of: "@"), let colon = text[at...].firstIndex(of: ":") {
-                text = String(text[text.index(after: at)..<colon]) + "/" + String(text[text.index(after: colon)...])
-            }
+            // `token@host/o/r`, `user:pass@host/o/r`, `git@host:o/r`: up to the last `@` before the first `/`.
+            let firstSlash = text.firstIndex(of: "/") ?? text.endIndex
+            if let at = text[..<firstSlash].lastIndex(of: "@") { text = String(text[text.index(after: at)...]) }
+            // `host:o/r` (scp-like) → `host/o/r`.
+            let slash = text.firstIndex(of: "/") ?? text.endIndex
+            if let colon = text[..<slash].firstIndex(of: ":") { text.replaceSubrange(colon...colon, with: "/") }
         }
         if text.hasSuffix(".git") { text.removeLast(4) }
         let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/:")
@@ -266,6 +265,9 @@ public enum BrainImport {
 
     /// The files an import copies from a skill folder, by relative path (see `copyable`).
     public static func copyableFiles(in folder: URL) -> [String: URL] { copyable(folder).files }
+
+    /// What an import leaves out of a skill folder, with the reason (`.git (git data)`).
+    public static func skippedFiles(in folder: URL) -> [String] { copyable(folder).skipped }
 
     private static func copy(_ folder: URL, to target: URL) throws {
         let fm = FileManager.default
