@@ -598,6 +598,11 @@ as `${VAR}` references; the real values come from Keychain.
    `~/.agents/skills` into the brain (done: Import Skills…); core layer with `manual`
    skills (done; it is rendered into the home folder with `akit apply --home` or
    **Update Home Folder…**).
+   An import can also copy a skill into the library without listing it in any layer
+   (`BrainImport.apply(listInLayer: false)`, 2026-10-11; commit "Import skill X"), for a skill
+   that a project's answers list instead (Move to Project). Every import commit names where
+   each new skill was installed from ("Source of X: owner/repo", from the skills.sh or AKit
+   lock), so the brain's copy keeps its origin; the brain has no other record of it.
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end. (Done.)
 4. MCP in layers. (Possible since 2026-10-08 through JSON merge: `.mcp.json` templates,
