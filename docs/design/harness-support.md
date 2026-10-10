@@ -1,6 +1,6 @@
 # Harness support: Claude Code and Pi
 
-Status: 2026-10-09, checked against the code. One table of what AKit does for each
+Status: 2026-10-10, checked against the code. One table of what AKit does for each
 harness, so a gap is either a decision written down somewhere or a known gap listed here.
 Each row names the design that owns it; details stay there. OpenCode and Codex are read
 for skills and MCP only (`AKitHarnesses`) and are not covered here.
@@ -16,11 +16,33 @@ built. The last column says whether the gap is a decision (with its doc) or open
 | Projects from the harness's history | yes (`~/.claude.json`) | yes (cwd in the header of session files; a custom flat session folder too) | Pi: a project's own `sessionDir` and `--session-dir` are not followed |
 | Skills: list, collisions, name rules | yes, plugin and synced skills read-only | yes, package skills read-only | Pi package skills from `packages` in global and project settings |
 | Skills: delete (Trash), install from skills.sh | yes | yes | skills.sh installs into the shared `.agents/skills` |
-| Skills: enable / disable | no | no | not built for any harness |
+| Skills: on / off without editing the skill | yes: On, Name Only, Manual, Off (`skillOverrides`); none for plugin skills | yes: On, Off (`skills` entries); none for package skills | see "Skill switches" below |
 | Plugins / packages | Claude plugins listed | Pi packages on the Overview card: extensions, skills, prompt templates, themes | read-only; package code never runs. Limits per settings file and per refresh; a cut list or a too-large package gets a note |
 | MCP: read, add, edit, remove | yes (`claude mcp` CLI) | yes (JSON files of `pi-mcp-adapter`) | Pi servers show as inactive without the `pi-mcp-adapter` package |
 | MCP secrets from Keychain | yes (`headersHelper`) | yes (`!` lookups) | each harness's own mechanism |
 | MCP catalog | yes | yes | harness-neutral form |
+
+## Skill switches
+
+Built 2026-10-10. A switch changes one entry in the harness's own settings file; the skill's
+files stay as they are. AKit plans the change, shows it (keys sorted, `env`/`headers` values
+hidden), backs the file up into `~/.akit/backups`, re-reads it before writing and refuses
+when it changed since the preview, then edits the text in place (`JSONTextEdit`): other keys,
+their order and spacing stay byte for byte. Core: `AKitSkills/SkillSwitches.swift`; Skills
+screen, `akit skills state`, `akit skills set`.
+
+Facts, checked 2026-10-10:
+
+| | Claude Code (2.1.296) | Pi (1.0.4) |
+|---|---|---|
+| Source | settings schema (json.schemastore.org/claude-code-settings.json), code.claude.com/docs/en/skills ("Override skill visibility from settings"), the installed binary | `dist/core/package-manager.js` (`isEnabledByOverrides`, `addAutoDiscoveredResources`), `dist/modes/interactive/components/config-selector.js` (`pi config`) |
+| File AKit writes | `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` honoured) | personal skills: `~/.pi/agent/settings.json` (`PI_CODING_AGENT_DIR` honoured); a project's own skills: `<project>/.pi/settings.json` (Pi applies only the project's entries to them) |
+| Key | `skillOverrides: {"<name>": "on" \| "name-only" \| "user-invocable-only" \| "off"}`; absent = on | `skills: ["…"]`: `!glob` turns matching skills off, `+path` back on, `-path` off (exact, wins); plain entries are extra skill paths, not filters; absent or empty = every found skill on |
+| Name | the skill's name (frontmatter `name`, else the folder); also matched by the folder name; the entry applies to every skill with that name, in every project; a project's `.claude/settings.json` entry wins over the user's | the path relative to the skill folder's parent: `skills/<folder>/SKILL.md` (what `pi config` writes); `!` globs also match the folder name and absolute paths |
+| States AKit offers | On, Name Only, Manual (= `user-invocable-only`: only `/name` runs it, the description isn't sent), Off; a SKILL.md with `disable-model-invocation: true` is Manual at most, so only Manual and Off | On, Off (Pi has no name-only state; `disable-model-invocation` in SKILL.md is a file edit, not a switch) |
+| What AKit writes | Off/Name Only/Manual: sets the entry; On: removes it (and `skillOverrides` when it becomes empty) | takes out every `!`/`+`/`-` entry naming exactly this skill, then adds `-skills/…/SKILL.md` (off) or `+…` (on, only when a glob still turns it off); an empty list is removed |
+| Not offered | plugin skills: Claude Code ignores `skillOverrides` for them (docs; code returns "on" for `source === "plugin"`, `/skills` says "managed with the plugin") | Pi package skills: they are filtered in the package's own entry |
+| Not read | `settings.local.json` (Claude Code's own `/skills` menu writes there; AKit never reads it) | — |
 
 ## Layers (`layers.md`)
 

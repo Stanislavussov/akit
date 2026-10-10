@@ -126,8 +126,10 @@ public enum SkillScanner {
         for hit in hits {
             let real = hit.file.resolvingSymlinksInPath()
             let id = real.path
+            let place = Skill.Place(file: hit.file, base: hit.root.url.deletingLastPathComponent())
             if var existing = byID[id] {
                 if !existing.visibleTo.contains(hit.root.harness) { existing.visibleTo.append(hit.root.harness) }
+                if existing.places[hit.root.harness] == nil { existing.places[hit.root.harness] = place }
                 byID[id] = existing
                 continue
             }
@@ -148,7 +150,9 @@ public enum SkillScanner {
             byID[id] = Skill(name: name, description: description, file: hit.file, realFile: real,
                              isSingleFile: hit.isSingleFile, scope: scope, visibleTo: [hit.root.harness],
                              isReadOnly: hit.root.isReadOnly || isSynced, origin: origin, warnings: [],
-                             root: hit.root.url.resolvingSymlinksInPath())
+                             root: hit.root.url.resolvingSymlinksInPath(),
+                             disablesModelInvocation: meta["disable-model-invocation"]?.lowercased() == "true",
+                             places: [hit.root.harness: place])
             order.append(id)
         }
 

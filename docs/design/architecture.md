@@ -28,6 +28,11 @@ and the app to map a project id to its main checkout. New module `AKitDoctor` (1
 targets now): `Doctor.report`, the text of `akit doctor` and the app's Help → Copy Diagnostics
 (`machine-setup.md`); it sits above ProjectSetup and below CommandLine.
 
+2026-10-10 (skill switches, `harness-support.md`): `AKitSkills/SkillSwitches.swift` turns a skill
+on or off per harness in the harness's own settings (Claude Code's `skillOverrides`, Pi's `skills`
+entries); `AKitFoundation/JSONTextEdit.swift` changes one member of a JSON file's text and keeps
+every other byte. No new dependency.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
