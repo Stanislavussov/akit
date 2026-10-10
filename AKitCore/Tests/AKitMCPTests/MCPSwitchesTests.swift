@@ -24,6 +24,8 @@ struct MCPSwitchesTests {
     var worktree: URL { home.appending(path: "trees/app-feature", directoryHint: .isDirectory) }
     var family: MCPSwitches.Family { .init(main: project, worktrees: [worktree]) }
     var state: URL { home.appending(path: ".claude.json") }
+    /// The project's key in `~/.claude.json`: its physical path.
+    var key: String { FileWalk.realPath(project) ?? project.path }
     var settings: URL { home.appending(path: ".claude/settings.json") }
 
     func write(_ path: String, _ text: String) throws {
@@ -49,7 +51,6 @@ struct MCPSwitchesTests {
 
     /// Several projects, one worktree path already known, history Claude Code keeps.
     func claudeState() throws {
-        let key = project.standardizedFileURL.path
         try write(".claude.json", """
         {
           "numStartups": 42,
@@ -64,37 +65,118 @@ struct MCPSwitchesTests {
 
     // MARK: - Claude Code
 
-    @Test func claudeOffInProjectReachesEveryWorktreeAndOnRemovesIt() throws {
+    /// A git checkout made of files (no git run): `project` is the main checkout, `worktree` a
+    /// linked worktree of it, as `git worktree add` leaves them.
+    func makeRepository() throws {
+        try fm.createDirectory(at: project.appending(path: ".git/worktrees/app-feature"), withIntermediateDirectories: true)
+        try write("Projects/app/.git/worktrees/app-feature/commondir", "../..\n")
+        try write("Projects/app/.git/worktrees/app-feature/gitdir", worktree.appending(path: ".git").path + "\n")
+        try write("trees/app-feature/.git", "gitdir: \(project.appending(path: ".git/worktrees/app-feature").path)\n")
+        try fm.createDirectory(at: project.appending(path: "Sources/Deep"), withIntermediateDirectories: true)
+    }
+
+    @Test func claudeKeysByTheCanonicalGitRoot() throws {
+        try makeRepository()
+        let main = key
+        #expect(MCPSwitches.claudeProjectKey(project) == main)
+        #expect(MCPSwitches.claudeProjectKey(worktree) == main)
+        #expect(MCPSwitches.claudeProjectKey(project.appending(path: "Sources/Deep")) == main)
+        let outside = home.appending(path: "Notes", directoryHint: .isDirectory)
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        #expect(MCPSwitches.claudeProjectKey(outside) == FileWalk.realPath(outside))
+    }
+
+    @Test func claudeOffInProjectWritesOneEntryForTheRootAndOnRemovesIt() throws {
         try claudeState()
+        try makeRepository()
         let original = try text(state)
         let github = try server("github")
         let options = try #require(MCPSwitches.options(for: github, harness: .claudeCode, in: env))
         #expect(options.modes == [.everywhere, .project])
+        #expect(options.projectHelp.contains("git root"))
 
-        let plan = try MCPSwitches.plan(github, harness: .claudeCode, off: true, target: .projects([family]), in: env)
+        // A subfolder AKit knows as a project stands for its repository's root.
+        let sub = MCPSwitches.Family(main: project.appending(path: "Sources/Deep"), worktrees: [worktree])
+        let plan = try MCPSwitches.plan(github, harness: .claudeCode, off: true, target: .projects([sub]), in: env)
         #expect(plan.changes.count == 1)
-        // The preview shows only the changed lists, never the other projects' servers or history.
+        // The preview shows only the changed list, never the other projects' servers or history.
         let shown = plan.changes.flatMap(\.diff).map { "\($0)" }.joined(separator: "\n")
         #expect(!shown.contains("hunter2") && !shown.contains("history") && !shown.contains("local-db"))
         try MCPSwitches.apply(plan, home: home)
 
         let after = try json(state)
-        let key = project.standardizedFileURL.path, tree = worktree.standardizedFileURL.path
         #expect(after.value(at: ["projects", key, "disabledMcpServers"]) == .array([.string("other"), .string("github")]))
-        #expect(after.value(at: ["projects", tree, "disabledMcpServers"]) == .array([.string("github")]))
-        #expect(after.value(at: ["projects", tree, "allowedTools"]) == .array([]))
+        #expect(after.value(at: ["projects"])?.objectMembers?.count == 2)
         #expect(after.value(at: ["projects", "/somewhere/else"]) == (try JSONValue.parse(Data(original.utf8))).value(at: ["projects", "/somewhere/else"]))
         #expect(after.value(at: ["numStartups"]) == .number("42"))
-        #expect(status(github, .claudeCode)?.offIn == [key, tree].sorted())
-        #expect(MCPSwitches.intents(home: home) == [.init(harness: "claude-code", server: "github", project: key)])
+        #expect(status(github, .claudeCode)?.offIn == [key])
+        #expect(status(github, .claudeCode)?.outsideAKit.isEmpty == true)
+        // Nothing remembered for Claude Code: its entry already covers later worktrees.
+        #expect(MCPSwitches.intents(home: home).isEmpty)
+        #expect(!fm.fileExists(atPath: home.appending(path: ".claude.json.lock").path))
 
         let on = try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .projects([family]), in: env)
         try MCPSwitches.apply(on, home: home)
-        let back = try json(state)
-        #expect(back.value(at: ["projects", key, "disabledMcpServers"]) == .array([.string("other")]))
-        #expect(back.value(at: ["projects", tree, "disabledMcpServers"]) == .array([]))
-        #expect(MCPSwitches.intents(home: home).isEmpty)
+        #expect(try json(state).value(at: ["projects", key, "disabledMcpServers"]) == .array([.string("other")]))
         #expect(status(github, .claudeCode)?.isOn == true)
+    }
+
+    @Test func aWorktreeKeyClaudeCodeNeverUsesIsNotCounted() throws {
+        try makeRepository()
+        try write(".claude.json", """
+        {"mcpServers": {"github": {"type": "http", "url": "https://x"}},
+         "projects": {"\(FileWalk.realPath(worktree)!)": {"disabledMcpServers": ["github"]}}}
+        """)
+        #expect(status(try server("github"), .claudeCode)?.offIn == [])
+    }
+
+    @Test func newClaudeEntryIsShownWhole() throws {
+        try claudeState()
+        let github = try server("github")
+        let fresh = MCPSwitches.Family(main: home.appending(path: "Projects/new"), worktrees: [])
+        try fm.createDirectory(at: fresh.main, withIntermediateDirectories: true)
+        let plan = try MCPSwitches.plan(github, harness: .claudeCode, off: true, target: .projects([fresh]), in: env)
+        let shown = plan.changes.flatMap(\.diff).map { "\($0)" }.joined(separator: "\n")
+        #expect(shown.contains("hasTrustDialogAccepted") && shown.contains("disabledMcpServers"))
+        #expect(plan.notes.contains { $0.contains("creates Claude Code's default entry") })
+    }
+
+    @Test func entriesMadeOutsideAKitStayUnlessAsked() throws {
+        try claudeState()
+        let github = try server("github")
+        // Turned off with /mcp: Off is a no-op and records nothing; On leaves it and says why.
+        var value = try json(state)
+        value.set(.array([.string("other"), .string("github")]), at: ["projects", key, "disabledMcpServers"])
+        try Data(value.pretty.utf8).write(to: state)
+        #expect(status(github, .claudeCode)?.outsideAKit.count == 1)
+        let off = try MCPSwitches.plan(github, harness: .claudeCode, off: true, target: .projects([family]), in: env)
+        #expect(off.changesNothing)
+        let on = try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .all(extra: []), in: env)
+        #expect(on.changes.isEmpty && on.unmanaged.count == 1)
+        #expect(on.notes.contains { $0.contains("outside AKit") })
+        let forced = try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .all(extra: []), includeUnmanaged: true, in: env)
+        try MCPSwitches.apply(forced, home: home)
+        #expect(try json(state).value(at: ["projects", key, "disabledMcpServers"]) == .array([.string("other")]))
+    }
+
+    @Test func toolDenyRulesShowAsPartlyDenied() throws {
+        try claudeState()
+        try write(".claude/settings.json", #"{"permissions": {"deny": ["mcp__github__create_issue"]}}"#)
+        let status = try #require(status(try server("github"), .claudeCode))
+        #expect(status.partlyDenied == ["mcp__github__create_issue"] && status.isOn && status.title == "On, Partly Denied")
+    }
+
+    @Test func aProjectsOwnServerCountsOnlyItsProject() throws {
+        try claudeState()
+        try write("Projects/app/.mcp.json", #"{"mcpServers": {"docs": {"command": "docs-mcp"}}}"#)
+        // Another project turned a server of the same name off: not this one's state, and On leaves it.
+        var value = try json(state)
+        value.set(.array([.string("docs")]), at: ["projects", "/somewhere/else", "disabledMcpServers"])
+        try Data(value.pretty.utf8).write(to: state)
+        let docs = try server("docs", file: ".mcp.json")
+        #expect(status(docs, .claudeCode)?.offIn == [])
+        let on = try MCPSwitches.plan(docs, harness: .claudeCode, off: false, target: .all(extra: []), includeUnmanaged: true, in: env)
+        #expect(on.changes.isEmpty)
     }
 
     @Test func claudeStateFileRewrittenMeanwhileIsFineUnlessTheEntryChanged() throws {
@@ -111,7 +193,7 @@ struct MCPSwitchesTests {
         // The touched list changed after the preview: refused, nothing written.
         let again = try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .projects([family]), in: env)
         var changed = try json(state)
-        changed.set(.array([.string("x")]), at: ["projects", project.standardizedFileURL.path, "disabledMcpServers"])
+        changed.set(.array([.string("x")]), at: ["projects", key, "disabledMcpServers"])
         try Data(changed.pretty.utf8).write(to: state)
         let before = try text(state)
         #expect(throws: MCPSwitches.Failure.self) { try MCPSwitches.apply(again, home: home) }
@@ -128,7 +210,7 @@ struct MCPSwitchesTests {
         try MCPSwitches.apply(plan, home: home)
         #expect(try json(settings).value(at: ["permissions", "deny"]) == .array([.string("mcp__github")]))
         #expect(status(github, .claudeCode)?.offEverywhere == true)
-        try MCPSwitches.apply(try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .all, in: env), home: home)
+        try MCPSwitches.apply(try MCPSwitches.plan(github, harness: .claudeCode, off: false, target: .all(extra: []), in: env), home: home)
         #expect(try text(settings) == original)
         #expect(MCPSwitches.denyRule("my.server/x") == "mcp__my_server_x")
     }
@@ -199,20 +281,4 @@ struct MCPSwitchesTests {
         #expect(try text(project.appending(path: ".pi/mcp.json")) == #"{"mcpServers": {"lint": {"command": "lint-mcp", "enabled": false}}}"#)
     }
 
-    // MARK: - Later worktrees
-
-    @Test func newWorktreesGetTheRememberedEntries() throws {
-        try claudeState()
-        let github = try server("github")
-        try MCPSwitches.apply(try MCPSwitches.plan(github, harness: .claudeCode, off: true,
-                                                   target: .projects([.init(main: project, worktrees: [])]), in: env), home: home)
-        let later = home.appending(path: "trees/app-later", directoryHint: .isDirectory)
-        let result = MCPSwitches.syncWorktrees([.init(main: project, worktrees: [later])], in: env)
-        #expect(result.problems.isEmpty && result.added.count == 1)
-        #expect(try json(state).value(at: ["projects", later.standardizedFileURL.path, "disabledMcpServers"]) == .array([.string("github")]))
-        // Nothing left to add: a second sync writes nothing.
-        let backups = (try? fm.contentsOfDirectory(atPath: home.appending(path: ".akit/backups").path).count) ?? 0
-        #expect(MCPSwitches.syncWorktrees([.init(main: project, worktrees: [later])], in: env).added.isEmpty)
-        #expect(((try? fm.contentsOfDirectory(atPath: home.appending(path: ".akit/backups").path).count) ?? 0) == backups)
-    }
 }

@@ -34,7 +34,9 @@ entries); `AKitFoundation/JSONTextEdit.swift` changes one member of a JSON file'
 every other byte. No new dependency. The same day, MCP switches (`AKitMCP/MCPSwitches.swift`) and
 `AKitFoundation/SettingsFile.swift`, the checked read, edit and write both use;
 `ProjectWorktrees.family` (ProjectSetup) lists a project's worktrees for them, and
-`AKitCommandLine → AKitMCP` is new (`akit mcp`).
+`AKitCommandLine → AKitMCP` is new (`akit mcp`). Second review round: `AKitProjectSetup → AKitMCP`
+(and `AKitModel`), for `MCPProjectSwitch`, which keeps a Pi `.pi/mcp.json` out of git with its own
+block in `info/exclude` (LocalOnly's block code, other markers) and expands projects to worktrees.
 
 ## Goal
 
@@ -132,7 +134,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitBrain` | Foundation, Model, Skills, Yams |
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
-| `AKitProjectSetup` | Foundation, Brain, Render, Insights |
+| `AKitProjectSetup` | Foundation, Model, Brain, Render, Insights, MCP (MCP switches' project files) |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |

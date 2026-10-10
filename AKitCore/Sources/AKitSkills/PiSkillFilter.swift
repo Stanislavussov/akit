@@ -122,35 +122,41 @@ enum Glob {
 
     private static func expand(_ chars: [Character], into result: inout [String]) -> Bool {
         guard result.count < maxAlternatives else { return false }
-        guard let open = chars.firstIndex(of: "{") else {
+        guard let group = firstGroup(in: chars) else {
             result.append(String(chars))
             return true
         }
-        var depth = 0
-        var close: Int?
-        var commas: [Int] = []
-        for index in open..<chars.count {
-            switch chars[index] {
-            case "{": depth += 1
-            case "}":
-                depth -= 1
-                if depth == 0 { close = index }
-            case "," where depth == 1: commas.append(index)
-            default: break
-            }
-            if close != nil { break }
-        }
-        guard let close, !commas.isEmpty else {
-            // Not a group (no comma, or never closed): taken as it is.
-            result.append(String(chars))
-            return true
-        }
-        let bounds = [open] + commas + [close]
+        let bounds = [group.open] + group.commas + [group.close]
         for index in 0..<(bounds.count - 1) {
             let part = Array(chars[(bounds[index] + 1)..<bounds[index + 1]])
-            guard expand(Array(chars[..<open]) + part + Array(chars[(close + 1)...]), into: &result) else { return false }
+            guard expand(Array(chars[..<group.open]) + part + Array(chars[(group.close + 1)...]), into: &result) else { return false }
         }
         return true
+    }
+
+    /// The first `{…}` with a comma at its top level; a `{` that never closes or holds no comma
+    /// is a literal character, and the scan goes on after it (`{x}/{a,b}` has the group `{a,b}`).
+    private static func firstGroup(in chars: [Character]) -> (open: Int, commas: [Int], close: Int)? {
+        var start = 0
+        while let open = chars[start...].firstIndex(of: "{") {
+            var depth = 0
+            var commas: [Int] = []
+            var close: Int?
+            for index in open..<chars.count {
+                switch chars[index] {
+                case "{": depth += 1
+                case "}":
+                    depth -= 1
+                    if depth == 0 { close = index }
+                case "," where depth == 1: commas.append(index)
+                default: break
+                }
+                if close != nil { break }
+            }
+            if let close, !commas.isEmpty { return (open, commas, close) }
+            start = open + 1
+        }
+        return nil
     }
 
     /// Segments by dynamic programming: `**` takes zero or more segments (one or more at the

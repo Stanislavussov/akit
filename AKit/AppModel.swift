@@ -554,35 +554,51 @@ final class AppModel {
         return matches.first { $0.scope == .global } ?? matches.first
     }
 
-    /// Writes a planned MCP switch change, then rescans.
+    /// Writes a planned MCP switch change (exclude lines first), then rescans.
     func applyMCPSwitch(_ plan: MCPSwitches.Plan) async throws {
         let home = HarnessEnvironment.current.homeDirectory
-        _ = try await Task.detached { try MCPSwitches.apply(plan, home: home) }.value
+        _ = try await Task.detached { try MCPProjectSwitch.apply(plan, home: home) }.value
         await refresh()
     }
 
-    /// Gives worktrees of projects with a server turned off there the entry they lack
+    /// Gives worktrees of projects with a Pi server turned off there the entry they lack
     /// (`~/.akit/mcp-off.json`). `only`: one project's main checkout, else all remembered ones.
+    /// One sync at a time; one asked for meanwhile runs once after (for all projects).
     func syncMCPWorktrees(only: URL? = nil) async {
         guard DebugSnapshot.options == nil else { return }
-        let env = HarnessEnvironment.current
-        let result = await Task.detached {
-            let mains = Set(MCPSwitches.intents(home: env.homeDirectory).map(\.project))
-                .filter { only == nil || $0 == only!.standardizedFileURL.path }
-            let families = mains.map { path in
-                let family = ProjectWorktrees.family(of: URL(filePath: path, directoryHint: .isDirectory), env: env)
-                return MCPSwitches.Family(main: family.main, worktrees: family.worktrees)
-            }
-            return MCPSwitches.syncWorktrees(families, in: env)
-        }.value
-        if !result.added.isEmpty {
-            mcpStates = await Task.detached { [mcpServers, projects] in MCPSwitches.statuses(of: mcpServers, projects: projects, in: env) }.value
+        guard !mcpSyncRunning else {
+            mcpSyncAgain = true
+            return
         }
-        mcpSyncProblems = result.problems
+        mcpSyncRunning = true
+        defer { mcpSyncRunning = false }
+        var scope = only
+        repeat {
+            mcpSyncAgain = false
+            let env = HarnessEnvironment.current
+            let result = await Task.detached { [scope] in MCPProjectSwitch.syncWorktrees(only: scope, env: env) }.value
+            if !result.added.isEmpty {
+                mcpStates = await Task.detached { [mcpServers, projects] in MCPSwitches.statuses(of: mcpServers, projects: projects, in: env) }.value
+            }
+            if !result.added.isEmpty || !result.problems.isEmpty || mcpSyncNotice?.problems != result.problems {
+                mcpSyncNotice = result.added.isEmpty && result.problems.isEmpty ? nil : MCPSyncNotice(added: result.added, problems: result.problems, date: .now)
+            }
+            scope = nil
+        } while mcpSyncAgain
     }
 
-    /// What the last worktree sync of MCP switches couldn't write.
-    private(set) var mcpSyncProblems: [String] = []
+    /// What the last worktree sync of MCP switches added and couldn't write (MCP Servers screen).
+    private(set) var mcpSyncNotice: MCPSyncNotice?
+    private var mcpSyncRunning = false
+    private var mcpSyncAgain = false
+
+    struct MCPSyncNotice: Equatable {
+        let added: [String]
+        let problems: [String]
+        let date: Date
+    }
+
+    func dismissMCPSyncNotice() { mcpSyncNotice = nil }
 
     /// The scanned skill that lives in this folder, if any.
     func skill(inFolder folder: URL) -> Skill? {

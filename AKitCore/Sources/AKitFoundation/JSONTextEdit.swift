@@ -26,11 +26,13 @@ public enum JSONTextEdit {
         let scanner = try Scanner(text)
         var open = scanner.root
         for key in path.dropLast() {
+            try Self.refuseOtherSpelling(of: key, in: scanner.members(ofObjectAt: open).members)
             guard let member = scanner.members(ofObjectAt: open).members.first(where: { Self.same($0.key, key) }),
                   scanner.bytes[member.valueStart] == UInt8(ascii: "{") else { return text }
             open = member.valueStart
         }
         let (members, close) = scanner.members(ofObjectAt: open)
+        try Self.refuseOtherSpelling(of: path.last!, in: members)
         guard let index = members.firstIndex(where: { Self.same($0.key, path.last!) }) else { return text }
         var bytes = scanner.bytes
         let range: Range<Int>
@@ -51,6 +53,7 @@ public enum JSONTextEdit {
                             into bytes: inout [UInt8]) throws(Failure) {
         let key = path.first!
         let (members, close) = scanner.members(ofObjectAt: open)
+        try refuseOtherSpelling(of: key, in: members)
         if let member = members.first(where: { Self.same($0.key, key) }) {
             if path.count > 1 {
                 guard scanner.bytes[member.valueStart] == UInt8(ascii: "{") else {
@@ -90,6 +93,14 @@ public enum JSONTextEdit {
     /// Keys are compared by their Unicode scalars, as harnesses compare them (Swift's `==` treats
     /// precomposed and decomposed letters as equal).
     static func same(_ a: String, _ b: String) -> Bool { a.unicodeScalars.elementsEqual(b.unicodeScalars) }
+
+    /// A member that is the key in other Unicode code points (precomposed `é` against `e` + accent):
+    /// a harness sees two different keys, AKit's tree one. Refused rather than guessed.
+    static func refuseOtherSpelling(of key: String, in members: [Member]) throws(Failure) {
+        if !members.contains(where: { same($0.key, key) }), members.contains(where: { $0.key == key }) {
+            throw Failure(message: "“\(key)” is in the file spelled with other Unicode code points; AKit won't add or remove a second spelling. Change it by hand.")
+        }
+    }
 
     /// The value as AKit writes it at this indentation; `inline`: on one line (`["a", "b"]`).
     private static func render(_ value: JSONValue, indent: String, inline: Bool, newline: String = "\n") -> String {

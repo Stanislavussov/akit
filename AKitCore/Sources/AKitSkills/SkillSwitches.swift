@@ -95,6 +95,14 @@ public enum SkillSwitches {
         return skill.scope == .synced ? "anthropic-skills:" + folder : folder
     }
 
+    /// The names an entry for the skill can be under, the one AKit writes first: a claude.ai
+    /// skill also answers to its bare folder name (unless that name is reserved).
+    static func claudeNames(of skill: Skill) -> [String] {
+        guard let name = claudeName(of: skill) else { return [] }
+        guard skill.scope == .synced, name.hasPrefix("anthropic-skills:") else { return [name] }
+        return [name, String(name.dropFirst("anthropic-skills:".count))]
+    }
+
     /// nil when the harness doesn't see the skill or has no switch.
     public static func options(for skill: Skill, harness: HarnessID, in env: HarnessEnvironment) -> Options? {
         guard skill.visibleTo.contains(harness), let file = settingsFile(for: skill, harness: harness, in: env) else { return nil }
@@ -192,12 +200,15 @@ public enum SkillSwitches {
     static func reading(of skill: Skill, harness: HarnessID, settings: JSONValue) -> SkillSwitchReading {
         switch harness {
         case .claudeCode:
-            guard let name = claudeName(of: skill) else { return .state(.on) }
+            let names = claudeNames(of: skill)
+            guard !names.isEmpty else { return .state(.on) }
             var written = SkillSwitchState.on
             switch settings.value(at: ["skillOverrides"]) {
             case nil: break
             case .object(let entries)?:
-                switch entries.first(where: { $0.key.unicodeScalars.elementsEqual(name.unicodeScalars) })?.value {
+                let found = names.lazy.compactMap { name in entries.first(where: { $0.key.unicodeScalars.elementsEqual(name.unicodeScalars) }) }.first
+                let name = found?.key ?? names[0]
+                switch found?.value {
                 case nil: break
                 case .string(let text)? where SkillSwitchState(rawValue: text) != nil: written = SkillSwitchState(rawValue: text)!
                 case let other?: return .unknown("skillOverrides.\(name) is \(other.compact), not one of on, name-only, user-invocable-only, off.")
@@ -280,16 +291,23 @@ public enum SkillSwitches {
                 if let overrides = settings.value(at: ["skillOverrides"]), overrides.objectMembers == nil {
                     throw Failure(message: "skillOverrides in \(FileWalk.tilde(file, home: home)) is not an object. AKit won't replace it.")
                 }
+                // Other names of the same skill (a claude.ai skill's bare name) go, so one entry decides.
+                let others = claudeNames(of: skill).dropFirst().filter { settings.value(at: ["skillOverrides", $0]) != nil }
+                for other in others {
+                    after = try JSONTextEdit.removing(at: ["skillOverrides", other], in: after)
+                    expected.remove(at: ["skillOverrides", other])
+                }
                 if state == defaultState(of: skill, harness: harness) {
-                    after = try JSONTextEdit.removing(at: ["skillOverrides", name], in: text)
+                    let had = settings.value(at: ["skillOverrides", name]) != nil || !others.isEmpty
+                    after = try JSONTextEdit.removing(at: ["skillOverrides", name], in: after)
                     expected.remove(at: ["skillOverrides", name])
                     // An entry list left empty goes too, like a key that was never set.
-                    if expected.value(at: ["skillOverrides"]) == .object([:]), settings.value(at: ["skillOverrides", name]) != nil {
+                    if expected.value(at: ["skillOverrides"]) == .object([:]), had {
                         after = try JSONTextEdit.removing(at: ["skillOverrides"], in: after)
                         expected.remove(at: ["skillOverrides"])
                     }
                 } else {
-                    after = try JSONTextEdit.setting(.string(state.rawValue), at: ["skillOverrides", name], in: text)
+                    after = try JSONTextEdit.setting(.string(state.rawValue), at: ["skillOverrides", name], in: after)
                     expected.set(.string(state.rawValue), at: ["skillOverrides", name])
                 }
             case .pi:

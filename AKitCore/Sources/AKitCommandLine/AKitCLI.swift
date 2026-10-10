@@ -63,12 +63,16 @@ public enum AKitCLI {
                                           ~/.claude/settings.json (its tools leave the context; the
                                           server still starts). Pi: enabled: false in ~/.pi/agent/mcp.json
           akit mcp set NAME --harness claude|pi --off project --project PATH... [--yes]
-                                          Claude Code: NAME in disabledMcpServers of the folder's entry in
-                                          ~/.claude.json; Pi: enabled: false in the folder's .pi/mcp.json.
-                                          For the project and each of its git worktrees; later worktrees
-                                          get it too (akit worktrees sync, the app's refresh)
-          akit mcp set NAME --harness claude|pi --on [--project PATH...] [--yes]
-                                          Back on: in those projects, or everywhere and in every folder
+                                          Claude Code: NAME in disabledMcpServers of the project's entry in
+                                          ~/.claude.json, keyed by its git root (one entry covers every
+                                          worktree). Pi: enabled: false in .pi/mcp.json of the project and
+                                          each git worktree, kept out of git by AKit's MCP block in
+                                          .git/info/exclude; later worktrees get it too (akit worktrees
+                                          sync, the app's refresh), except where git tracks the file
+          akit mcp set NAME --harness claude|pi --on [--project PATH...] [--include-unmanaged] [--yes]
+                                          Back on: in those projects, or everywhere and in every folder.
+                                          Removes only what AKit added; --include-unmanaged also removes
+                                          entries made outside AKit (by /mcp or by hand)
           akit mcp connectors on|off [--yes]
                                           All claude.ai connectors: disableClaudeAiConnectors in
                                           ~/.claude/settings.json
@@ -300,8 +304,11 @@ public enum AKitCLI {
                 return try skillSwitches(subcommand, &args, yes: options.yes, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
             }
             if command == "mcp" {
-                try refuseProjectOptions(options, command: "mcp")
-                return try mcp(&args, yes: options.yes, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, err: err)
+                var checked = options
+                checked.includeUnmanaged = false
+                try refuseProjectOptions(checked, command: "mcp")
+                return try mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
+                               projectsRoot: projectsRoot, out: out, err: err)
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -453,9 +460,8 @@ public enum AKitCLI {
             out(worktreesText(status))
             return 0
         }
-        // MCP servers turned off in this project reach new worktrees too (any project, local-only or not).
-        let family = ProjectWorktrees.family(of: main, env: env)
-        let mcp = MCPSwitches.syncWorktrees([.init(main: family.main, worktrees: family.worktrees)], in: env)
+        // Pi MCP servers turned off in this project reach new worktrees too (any project, local-only or not).
+        let mcp = MCPProjectSwitch.syncWorktrees(only: main, env: env)
         let mcpLines = mcp.added.map { "MCP: \($0)" }
         for problem in mcp.problems { err("akit: MCP: \(problem)") }
         // Without AKit's block there are no units, and no link AKit could know as its own.

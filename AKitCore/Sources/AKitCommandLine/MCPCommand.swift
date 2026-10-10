@@ -12,7 +12,7 @@ extension AKitCLI {
     static let mcpUsage = "Use: akit mcp state [NAME] | akit mcp set NAME --harness claude|pi (--off everywhere | --off project --project PATH... | --on [--project PATH...]) [--yes]"
         + " | akit mcp connectors on|off [--yes]"
 
-    static func mcp(_ args: inout Arguments, yes: Bool, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
+    static func mcp(_ args: inout Arguments, yes: Bool, includeUnmanaged: Bool, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
                     out: (String) -> Void, err: (String) -> Void) throws -> Int32 {
         let subcommand = args.positional()
         let harnessName = args.value("--harness"), offMode = args.value("--off"), turnOn = args.flag("--on")
@@ -27,13 +27,13 @@ extension AKitCLI {
 
         switch subcommand {
         case "state":
-            if harnessName != nil || offMode != nil || turnOn || !projectPaths.isEmpty || yes { throw Failure(message: mcpUsage) }
+            if harnessName != nil || offMode != nil || turnOn || !projectPaths.isEmpty || yes || includeUnmanaged { throw Failure(message: mcpUsage) }
             let shown = name.map { name in servers.filter { $0.name == name } } ?? servers
             if let name, shown.isEmpty { throw Failure(message: "No MCP server named \(name) that Claude Code or Pi uses.") }
             out(mcpStatesText(shown, projects: projects, details: name != nil, env: env))
             return 0
         case "connectors":
-            guard harnessName == nil, offMode == nil, !turnOn, projectPaths.isEmpty, let name, name == "on" || name == "off" else {
+            guard harnessName == nil, offMode == nil, !turnOn, projectPaths.isEmpty, !includeUnmanaged, let name, name == "on" || name == "off" else {
                 throw Failure(message: mcpUsage)
             }
             let plan: MCPSwitches.Plan
@@ -52,23 +52,22 @@ extension AKitCLI {
         case "pi": harness = .pi
         default: throw Failure(message: "--harness is claude or pi.")
         }
-        let families = projectPaths.map { path -> MCPSwitches.Family in
-            let family = ProjectWorktrees.family(of: resolve(path, cwd: cwd, env: env), env: env)
-            return MCPSwitches.Family(main: family.main, worktrees: family.worktrees)
-        }
-        let target: MCPSwitches.Target
+        let folders = projectPaths.map { resolve($0, cwd: cwd, env: env) }
+        if includeUnmanaged, !turnOn { throw Failure(message: "--include-unmanaged goes with --on.") }
+        let target: MCPProjectSwitch.Target
         switch (offMode, turnOn) {
         case ("everywhere"?, false):
-            if !families.isEmpty { throw Failure(message: "--off everywhere takes no --project.") }
+            if !folders.isEmpty { throw Failure(message: "--off everywhere takes no --project.") }
             target = .everywhere
         case ("project"?, false):
-            if families.isEmpty { throw Failure(message: "--off project needs --project PATH (one or more).") }
-            target = .projects(families)
+            if folders.isEmpty { throw Failure(message: "--off project needs --project PATH (one or more).") }
+            target = .projects(folders)
         case (nil, true):
-            target = families.isEmpty ? .all : .projects(families)
+            target = folders.isEmpty ? .all : .projects(folders)
         default:
             throw Failure(message: "--off is everywhere or project.")
         }
+        let families = folders.map { MCPProjectSwitch.family(of: $0, env: env) }
 
         // The entry the change is for: a project's own server when the project is named, else the user-level one.
         let candidates = servers.filter { $0.name == name && MCPSwitches.options(for: $0, harness: harness, in: env) != nil }
@@ -86,7 +85,8 @@ extension AKitCLI {
         }
         let plan: MCPSwitches.Plan
         do {
-            plan = try MCPSwitches.plan(server, harness: harness, off: !turnOn, target: target, known: projects, in: env)
+            plan = try MCPProjectSwitch.plan(server, harness: harness, off: !turnOn, target: target, includeUnmanaged: includeUnmanaged,
+                                             known: projects, in: env)
         } catch {
             throw Failure(message: error.message)
         }
@@ -100,6 +100,9 @@ extension AKitCLI {
             return 0
         }
         var lines = [plan.title + "."]
+        for (file, units) in plan.excludes.sorted(by: { $0.key.path < $1.key.path }) {
+            lines.append("Adds to AKit's MCP block in \(FileWalk.tilde(file, home: env.homeDirectory)): \(units.map { "/" + $0 }.joined(separator: ", "))")
+        }
         for change in plan.changes {
             lines.append("\(change.creates ? "Creates" : "Changes") \(FileWalk.tilde(change.file, home: env.homeDirectory)):")
             lines += TextDiff.unified(change.diff)
@@ -110,7 +113,7 @@ extension AKitCLI {
             return 0
         }
         let backups: [URL]
-        do { backups = try MCPSwitches.apply(plan, home: env.homeDirectory) } catch { throw Failure(message: error.message) }
+        do { backups = try MCPProjectSwitch.apply(plan, home: env.homeDirectory) } catch { throw Failure(message: error.message) }
         lines.append("Done." + (backups.isEmpty ? "" : " Backups: \(backups.map { FileWalk.tilde($0, home: env.homeDirectory) }.joined(separator: ", "))."))
         out(lines.joined(separator: "\n"))
         return 0
@@ -133,13 +136,20 @@ extension AKitCLI {
                 if options.unavailable != nil { return "\(harness.displayName): no switch" }
                 guard let status = statuses[server.id]?[harness] else { return nil }
                 if let unknown = status.unknown { return "\(harness.displayName): unknown (\(unknown))" }
-                return "\(harness.displayName): \(status.title)"
+                let outside = status.outsideAKit.isEmpty ? "" : " (\(status.outsideAKit.count) made outside AKit)"
+                return "\(harness.displayName): \(status.title)\(outside)"
             }
             lines.append("\(server.name)  \(parts.joined(separator: ", "))  \(FileWalk.tilde(server.file, home: home))")
             if details {
                 for harness in MCPSwitches.harnesses {
                     for folder in statuses[server.id]?[harness]?.offIn ?? [] {
                         lines.append("  \(harness.displayName) off in \(FileWalk.tilde(URL(filePath: folder), home: home))")
+                    }
+                    for entry in statuses[server.id]?[harness]?.outsideAKit ?? [] {
+                        lines.append("  \(harness.displayName): made outside AKit: \(entry)")
+                    }
+                    for rule in statuses[server.id]?[harness]?.partlyDenied ?? [] {
+                        lines.append("  \(harness.displayName): denied by a rule AKit didn't write: \(rule)")
                     }
                 }
             }

@@ -44,19 +44,25 @@ struct MCPSwitchControls: View {
                                 Text(status.title)
                                     .foregroundStyle(status.unknown != nil ? .orange : status.isOn ? .primary : .secondary)
                                     .help(MCPSwitchText.statusHelp(status))
-                                HStack(spacing: 6) {
-                                    if options.modes.contains(.everywhere), !status.offEverywhere {
+                                Menu("Change") {
+                                    if options.modes.contains(.everywhere) {
                                         Button("Off Everywhere…") { open(harness, off: true, .everywhere) }
+                                            .disabled(status.offEverywhere)
                                             .help(options.everywhereHelp ?? "")
                                     }
                                     Button("Off in Project…") { open(harness, off: true, .chooseProjects) }
                                         .help(options.projectHelp)
-                                    if !status.isOn, status.unknown == nil {
-                                        Button("Turn On…") { open(harness, off: false, .allOn) }
-                                            .help("Removes the entries that turn \(server.name) off: the deny rule or enabled: false, and the folders' entries")
-                                    }
+                                    Divider()
+                                    Button("Turn On…") { open(harness, off: false, .allOn) }
+                                        .disabled(status.isOn)
+                                        .help("Removes the entries AKit added to turn \(server.name) off, everywhere and in every folder (entries made outside AKit only if you choose so)")
+                                    Button("Turn On in Project…") { open(harness, off: false, .chooseProjects) }
+                                        .disabled(status.offIn.isEmpty)
+                                        .help("Turns \(server.name) on again in the projects you choose (and their worktrees)")
                                 }
+                                .fixedSize()
                                 .disabled(status.unknown != nil)
+                                .help("\(options.everywhereHelp.map { "Off Everywhere: " + $0 + " " } ?? "")Off in Project: \(options.projectHelp)")
                             }
                         }
                     }
@@ -91,6 +97,7 @@ struct MCPSwitchMenu: View {
                         }
                         Button("Off in Project…") { open(harness, off: true, .chooseProjects) }
                         Button("Turn On…") { open(harness, off: false, .allOn) }.disabled(status.isOn)
+                        Button("Turn On in Project…") { open(harness, off: false, .chooseProjects) }.disabled(status.offIn.isEmpty)
                     }
                     .disabled(status.unknown != nil)
                 }
@@ -110,8 +117,10 @@ enum MCPSwitchText {
         if status.offEverywhere { lines.append("Off everywhere.") }
         if !status.offIn.isEmpty {
             let home = HarnessEnvironment.current.homeDirectory
-            lines.append("Off in: " + status.offIn.map { FileWalk.tilde(URL(filePath: $0), home: home) }.joined(separator: ", "))
+            lines.append("Off in: " + status.offIn.map { FileWalk.tilde(URL(filePath: $0), home: home) }.joined(separator: ", ") + ".")
         }
+        if !status.outsideAKit.isEmpty { lines.append("Made outside AKit (by /mcp or by hand): " + status.outsideAKit.joined(separator: "; ") + ".") }
+        if !status.partlyDenied.isEmpty { lines.append("Some tools are denied by rules AKit didn't write: " + status.partlyDenied.joined(separator: ", ") + ".") }
         return lines.isEmpty ? "On" : lines.joined(separator: " ")
     }
 }
@@ -126,6 +135,8 @@ struct MCPSwitchSheet: View {
     @State private var plan: MCPSwitches.Plan?
     @State private var busy = false
     @State private var error: String?
+    /// Turn On also removes entries made outside AKit.
+    @State private var includeUnmanaged = false
 
     private var options: MCPSwitches.Options? {
         request.server.flatMap { MCPSwitches.options(for: $0, harness: request.harness, in: .current) }
@@ -186,7 +197,7 @@ struct MCPSwitchSheet: View {
         let name = request.server?.name ?? "claude.ai Connectors"
         return switch request.kind {
         case .everywhere: "Turn \(name) Off Everywhere in \(request.harness.displayName)"
-        case .chooseProjects: "Turn \(name) Off in Projects in \(request.harness.displayName)"
+        case .chooseProjects: "Turn \(name) \(request.off ? "Off" : "On") in Projects in \(request.harness.displayName)"
         case .allOn: "Turn \(name) On in \(request.harness.displayName)"
         case .connectors: "Turn claude.ai Connectors \(request.off ? "Off" : "On")"
         }
@@ -243,30 +254,40 @@ struct MCPSwitchSheet: View {
             ForEach(plan.notes, id: \.self) { note in
                 Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            if !plan.unmanaged.isEmpty || includeUnmanaged {
+                Toggle("Also Remove Entries Made Outside AKit", isOn: Binding(get: { includeUnmanaged }, set: {
+                    includeUnmanaged = $0
+                    makePlan()
+                }))
+                .toggleStyle(.checkbox)
+                .help("Entries made by /mcp or by hand: \(plan.unmanaged.joined(separator: "; "))")
+            }
+            if !plan.excludes.isEmpty {
+                Text("Adds to AKit's MCP block of " + plan.excludes.keys.map(\.tildePath).sorted().joined(separator: ", ") + ": "
+                     + Array(plan.excludes.values).flatMap { $0 }.map { "/" + $0 }.joined(separator: ", "))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     private func makePlan() {
         busy = true
         error = nil
-        let request = request, chosen = chosen, known = model.projects
+        let request = request, chosen = chosen, known = model.projects, includeUnmanaged = includeUnmanaged
         Task {
             let env = HarnessEnvironment.current
             let result: Result<MCPSwitches.Plan, MCPSwitches.Failure> = await Task.detached {
                 do {
                     if request.kind == .connectors { return .success(try MCPSwitches.connectorsPlan(off: request.off, in: env)) }
                     guard let server = request.server else { throw MCPSwitches.Failure("No server.") }
-                    let target: MCPSwitches.Target
+                    let target: MCPProjectSwitch.Target
                     switch request.kind {
                     case .everywhere: target = .everywhere
                     case .allOn: target = .all
-                    default:
-                        target = .projects(chosen.sorted().map { path in
-                            let family = ProjectWorktrees.family(of: URL(filePath: path, directoryHint: .isDirectory), env: env)
-                            return MCPSwitches.Family(main: family.main, worktrees: family.worktrees)
-                        })
+                    default: target = .projects(chosen.sorted().map { URL(filePath: $0, directoryHint: .isDirectory) })
                     }
-                    return .success(try MCPSwitches.plan(server, harness: request.harness, off: request.off, target: target, known: known, in: env))
+                    return .success(try MCPProjectSwitch.plan(server, harness: request.harness, off: request.off, target: target,
+                                                              includeUnmanaged: includeUnmanaged, known: known, in: env))
                 } catch let error as MCPSwitches.Failure {
                     return .failure(error)
                 } catch {

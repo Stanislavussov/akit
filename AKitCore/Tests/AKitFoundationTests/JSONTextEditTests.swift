@@ -73,8 +73,10 @@ struct JSONTextEditTests {
 
     @Test func keysAreComparedByUnicodeScalars() throws {
         let decomposed = "{\"cafe\u{301}\": 1}"
-        // The precomposed key is a different key to a harness: nothing to remove.
-        #expect(try JSONTextEdit.removing(at: ["caf\u{e9}"], in: decomposed) == decomposed)
+        // The precomposed key is a different key to a harness, but AKit's tree can't hold both:
+        // refused, never a second spelling or a silent no-op.
+        #expect(throws: JSONTextEdit.Failure.self) { try JSONTextEdit.removing(at: ["caf\u{e9}"], in: decomposed) }
+        #expect(throws: JSONTextEdit.Failure.self) { try JSONTextEdit.setting(.number("2"), at: ["caf\u{e9}"], in: decomposed) }
         #expect(try JSONTextEdit.removing(at: ["cafe\u{301}"], in: decomposed) == "{}")
     }
 

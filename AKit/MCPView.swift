@@ -165,6 +165,20 @@ struct MCPView: View {
                         .help(projectPath(group.scope) ?? "")
                 }
             }
+            if let notice = model.mcpSyncNotice {
+                Section {
+                    ForEach(notice.added, id: \.self) { line in
+                        Label(line, systemImage: "checkmark.circle").font(.caption)
+                    }
+                    ForEach(notice.problems, id: \.self) { problem in
+                        Label(problem, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                    }
+                    Button("Dismiss") { model.dismissMCPSyncNotice() }.buttonStyle(.link).font(.caption)
+                } header: {
+                    Text("Worktree Sync, \(notice.date.formatted(date: .omitted, time: .shortened))")
+                        .help("New git worktrees of projects with a Pi server turned off there get the same entry when AKit refreshes")
+                }
+            }
             if !model.mcpProblems.isEmpty {
                 Section("Couldn't read") {
                     ForEach(model.mcpProblems, id: \.self) { problem in

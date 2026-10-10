@@ -271,6 +271,9 @@ struct SkillSwitchesTests {
         #expect(Glob.matches("a/*", "a/") == false)
         #expect(Glob.matches("skills//tdd", "skills/tdd") == true)
         #expect(Glob.matches("/x/*", "x/a") == false)
+        // A brace that is no group is a literal; the scan goes on to the next one.
+        #expect(Glob.matches("{x}/{a,b}", "{x}/a") == true)
+        #expect(Glob.matches("{x/{a,b}", "{x/b") == true)
         // Syntax AKit doesn't read: unknown, never a guess.
         for pattern in ["@(tdd|lint)", "+(a)", "!(tdd)", "?(a)", "*(a)", "[[:alpha:]]dd", "skill{1..3}"] {
             #expect(Glob.matches(pattern, "tdd") == nil, "\(pattern)")
@@ -308,6 +311,18 @@ struct SkillSwitchesTests {
         let pdf = try #require(scan().first { $0.name == "pdf" })
         #expect(pdf.scope == .synced)
         #expect(SkillSwitches.claudeName(of: pdf) == "anthropic-skills:pdf")
+    }
+
+    @Test func syncedSkillsAlsoAnswerToTheirBareName() throws {
+        try write(".claude/skills/synced/bucket/pdf/SKILL.md", skill("pdf"))
+        let pdf = try #require(scan().first { $0.name == "pdf" })
+        try write(".claude/settings.json", "{\n  \"skillOverrides\": {\n    \"pdf\": \"off\"\n  }\n}\n")
+        #expect(state(pdf, .claudeCode) == .off)
+        // Changing it writes the qualified name and drops the bare one, so one entry decides.
+        try SkillSwitches.apply(try SkillSwitches.plan(pdf, harness: .claudeCode, to: .nameOnly, in: env), home: home)
+        #expect(try text(claudeSettings) == "{\n  \"skillOverrides\": {\n    \"anthropic-skills:pdf\": \"name-only\"\n  }\n}\n")
+        try SkillSwitches.apply(try SkillSwitches.plan(pdf, harness: .claudeCode, to: .on, in: env), home: home)
+        #expect(try text(claudeSettings) == "{}\n")
     }
 
     @Test func piFileFollowsTheRootPiFoundTheSkillIn() throws {

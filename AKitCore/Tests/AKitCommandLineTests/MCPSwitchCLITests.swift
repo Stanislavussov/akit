@@ -43,37 +43,83 @@ struct MCPSwitchCLITests {
 
     func claudeState() throws -> JSONValue { try JSONValue.parse(Data(contentsOf: home.appending(path: ".claude.json"))) }
 
-    @Test func offInProjectReachesWorktreesNowAndLater() async throws {
+    func makeRepository() async throws -> URL {
         try fm.createDirectory(at: project, withIntermediateDirectories: true)
         try await git("init", "-q", "-b", "main", in: project)
         try await git("commit", "-q", "--allow-empty", "-m", "init", in: project)
         let first = home.appending(path: "trees/one")
         try await git("worktree", "add", "-q", first.path, "-b", "one", in: project)
+        return first
+    }
 
-        let preview = await akit("mcp", "set", "github", "--harness", "claude", "--off", "project", "--project", project.path)
-        #expect(preview.code == 0, "\(preview.err)")
-        #expect(preview.out.contains("Changes ~/.claude.json:") && preview.out.contains("Run again with --yes"))
-        let done = await akit("mcp", "set", "github", "--harness", "claude", "--off", "project", "--project", project.path, "--yes")
+    func gitStatus(_ folder: URL) async throws -> String {
+        let result = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["status", "--porcelain"], directory: folder,
+                                                           environment: env.variables, timeout: 20))
+        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @Test func claudeOffInProjectWritesTheGitRootOnly() async throws {
+        let first = try await makeRepository()
+        // Asked for a worktree: Claude Code's entry is the repository's root.
+        let done = await akit("mcp", "set", "github", "--harness", "claude", "--off", "project", "--project", first.path, "--yes")
         #expect(done.code == 0, "\(done.err)")
-        let main = project.standardizedFileURL.path
         let state = try claudeState()
-        #expect(state.value(at: ["projects", main, "disabledMcpServers"]) == .array([.string("github")]))
-        let worktreeKeys = state.value(at: ["projects"])?.objectMembers?.keys.filter { $0.hasSuffix("/trees/one") } ?? []
-        #expect(worktreeKeys.count == 1)
+        let root = try #require(FileWalk.realPath(project))
+        let keys = state.value(at: ["projects"])?.objectMembers?.keys.sorted() ?? []
+        #expect(keys == [root], "\(keys)")
+        #expect(state.value(at: ["projects", root, "disabledMcpServers"]) == .array([.string("github")]))
+        #expect(await akit("mcp", "state", "github").out.contains("Claude: Off in 1 Folder"))
+        #expect(await akit("mcp", "set", "github", "--harness", "claude", "--on", "--yes").code == 0)
+        #expect(await akit("mcp", "state", "github").out.contains("Claude: On"))
+    }
 
-        // A worktree made later gets it on the next sync.
+    @Test func piOffInProjectStaysOutOfGitNowAndInLaterWorktrees() async throws {
+        try Data(#"{"mcpServers": {"search": {"command": "search-mcp"}}}"#.utf8).write(to: home.appending(path: ".pi/agent/mcp.json"))
+        let first = try await makeRepository()
+        let preview = await akit("mcp", "set", "search", "--harness", "pi", "--off", "project", "--project", project.path)
+        #expect(preview.out.contains("Adds to AKit's MCP block in"), "\(preview.out) \(preview.err)")
+        let done = await akit("mcp", "set", "search", "--harness", "pi", "--off", "project", "--project", project.path, "--yes")
+        #expect(done.code == 0, "\(done.err)")
+        for folder in [project, first] {
+            #expect(fm.fileExists(atPath: folder.appending(path: ".pi/mcp.json").path))
+            #expect(try await gitStatus(folder) == "", "\(folder.path)")
+        }
+        let exclude = try String(contentsOf: project.appending(path: ".git/info/exclude"), encoding: .utf8)
+        #expect(exclude.contains("# >>> akit mcp") && exclude.contains("/.pi/mcp.json"))
+
+        // A worktree made later gets it on the next sync, still out of git.
         let second = home.appending(path: "trees/two")
         try await git("worktree", "add", "-q", second.path, "-b", "two", in: project)
         let sync = await akit("worktrees", "sync", project.path)
-        #expect(sync.out.contains("MCP: github off for Claude"), "\(sync.out) \(sync.err)")
-        #expect(try claudeState().value(at: ["projects"])?.objectMembers?.keys.contains { $0.hasSuffix("/trees/two") } == true)
+        #expect(sync.out.contains("MCP: search off for Pi"), "\(sync.out) \(sync.err)")
+        #expect(try await gitStatus(second) == "")
 
-        let status = await akit("mcp", "state", "github")
-        #expect(status.out.contains("Claude: Off in 3 folders"), "\(status.out)")
-
-        let on = await akit("mcp", "set", "github", "--harness", "claude", "--on", "--yes")
+        // On, without a project: every worktree's override goes too.
+        let on = await akit("mcp", "set", "search", "--harness", "pi", "--on", "--yes")
         #expect(on.code == 0, "\(on.err)")
-        #expect(await akit("mcp", "state", "github").out.contains("Claude: On"))
+        for folder in [project, first, second] {
+            let value = try JSONValue.parse(Data(contentsOf: folder.appending(path: ".pi/mcp.json")))
+            #expect(value.value(at: ["mcpServers", "search"]) == nil, "\(folder.path)")
+        }
+    }
+
+    @Test func piTrackedFileIsNotSyncedOnItsOwn() async throws {
+        try Data(#"{"mcpServers": {"search": {"command": "search-mcp"}}}"#.utf8).write(to: home.appending(path: ".pi/agent/mcp.json"))
+        try fm.createDirectory(at: project.appending(path: ".pi"), withIntermediateDirectories: true)
+        try Data(#"{"mcpServers": {}}"#.utf8).write(to: project.appending(path: ".pi/mcp.json"))
+        try fm.createDirectory(at: project, withIntermediateDirectories: true)
+        try await git("init", "-q", "-b", "main", in: project)
+        try await git("add", ".pi/mcp.json", in: project)
+        try await git("commit", "-q", "-m", "pi", in: project)
+        let preview = await akit("mcp", "set", "search", "--harness", "pi", "--off", "project", "--project", project.path)
+        #expect(preview.out.contains("Modifies a tracked file in 1 worktree"), "\(preview.out)")
+        #expect(await akit("mcp", "set", "search", "--harness", "pi", "--off", "project", "--project", project.path, "--yes").code == 0)
+        let later = home.appending(path: "trees/later")
+        try await git("worktree", "add", "-q", later.path, "-b", "later", in: project)
+        let sync = await akit("worktrees", "sync", project.path)
+        #expect(sync.err.contains("tracked by git"), "\(sync.out) \(sync.err)")
+        let value = try JSONValue.parse(Data(contentsOf: later.appending(path: ".pi/mcp.json")))
+        #expect(value.value(at: ["mcpServers", "search"]) == nil)
     }
 
     @Test func everywhereAndConnectors() async throws {
