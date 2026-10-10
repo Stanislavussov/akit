@@ -33,6 +33,7 @@ akit apply [PROJECT] [ANSWERS] [--include PATH]
 # ANSWERS: --layers a,b  --set field=value (repeat)  --unset field  --targets claude,pi
 #          --local-only yes|no|auto  (keep AKit's files out of git; auto: a work Mac yes)
 akit worktrees [sync] [PROJECT] # a local-only project's files linked into its git worktrees
+akit move skill NAME --to PROJECT  # a global skill into the projects that use it (see below)
 ```
 
 ## layer.yaml
@@ -156,6 +157,24 @@ in ≥ 20 sessions on ≥ 14 days that the model never called anywhere. Each ent
   (the rule skips it from then on); advice stays hidden until its ≈ context space doubles.
 
 Show the user the recommendations and ask before `apply` or `dismiss` with `--yes`.
+
+## Move a global skill into its projects
+
+A global skill (core layer, or a folder in `~/.agents/skills`) that only one or two projects
+use costs its description in every other session. `akit stats skill NAME [--days N] [--json]`
+shows its calls per project (this Mac, unbound sessions, other Macs). Then:
+
+```sh
+akit move skill NAME --to PROJECT[,PROJECT…] [--mode auto|manual] [--local-only yes|no|auto] [--keep-global] [--keep-own]
+```
+
+It prints the plan: the brain import (library only), each project (its files, links into git
+worktrees when local only), the core layer.yaml diff and the home folder's copies to the
+Trash. Show it to the user; after a yes run it again with `--yes`. It stops before touching
+core or the home folder when a project fails. Blocked lines: a project with its own copy
+(`--keep-own` keeps it), a home copy edited by hand (bring the edits into `skills/NAME`
+first), a claude.ai, plugin or Pi package skill (use `akit skills set` instead). For 3+
+projects suggest a layer instead.
 
 ## Rules
 

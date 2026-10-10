@@ -91,7 +91,9 @@ extension InsightsStatsTests {
         let text = AKitCLI.skillCallsText(report)
         #expect(text.contains("github.com/me/app: 2 calls (1 by the model, 1 by the user) in 1 session; last call"))
         #expect(text.contains("not bound to a project: 1 call (1 by the model) in 1 session"))
-        #expect(!text.contains("Other Macs"))
+        #expect(!text.contains("Other Macs") && !text.contains("akit move skill"), "unbound calls: no hint")
+        try db.run("DELETE FROM skill_calls WHERE session_key = 'claude:free'")
+        #expect(AKitCLI.skillCallsText(try callsReport(db)).contains("Only github.com/me/app calls it: akit move skill deploy --to github.com/me/app moves it there."))
 
         let json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
         #expect(Set(json.keys) == ["version", "generated", "skill", "window", "bindings", "projects", "otherMacs", "notes"])

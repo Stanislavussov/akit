@@ -98,6 +98,23 @@ public enum AKitCLI {
                                               .claude/settings.json, then forgets the project in
                                               the brain
 
+        Move a global skill into the projects that use it (its description leaves every other session):
+          akit move skill NAME --to PROJECT[,PROJECT…] [--mode auto|manual] [--local-only yes|no|auto]
+                         [--keep-global] [--keep-own] [--yes]
+                                          Through the brain: copies the skill into skills/NAME (no
+                                          layer), adds it to each project's answers and applies
+                                          only its files there (local only: hidden from git and
+                                          linked into every git worktree, later ones too); then
+                                          takes it out of the core layer and moves the home
+                                          folder's copies to the Trash. Stops before any global
+                                          change when a project fails. PROJECT: a folder or an id.
+                                          --mode: default auto when the model called it (akit
+                                          stats skill), else its mode now. --local-only auto: the
+                                          project's choice, local only for a new project.
+                                          --keep-global: core and the home folder keep it.
+                                          --keep-own: a project with its own copy keeps it.
+                                          Shows the plan; --yes does it
+
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
 
@@ -314,6 +331,18 @@ public enum AKitCLI {
                 try refuseProjectOptions(checked, command: "mcp")
                 return try mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
                                projectsRoot: projectsRoot, out: out, err: err)
+            }
+            if command == "move" {
+                var checked = options
+                checked.localOnly = nil
+                try refuseProjectOptions(checked, command: "move")
+                if options.json { throw Failure(message: "--json doesn't go with akit move.") }
+                let brainRoot = brainRoot(options, cwd: cwd, env: env), hardware = hardwareHash()
+                return try await withoutActuallyEscaping(trash) { trash in
+                    try await move(&args, localOnly: options.localOnly, yes: options.yes, brainRoot: brainRoot, env: env, cwd: cwd,
+                                   projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets, hardware: hardware,
+                                   out: out, err: err, trash: trash)
+                }
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -841,6 +870,11 @@ public enum AKitCLI {
                 lines.append("  \(project.project): \(calls(project.modelCalls, project.userCalls)) on \(count(project.macs, "Mac"))")
             }
             if others.outsideProjects > 0 { lines.append("  outside their project summaries: \(count(others.outsideProjects, "call"))") }
+        }
+        let projects = Set(report.projects.compactMap(\.project) + others.projects.map(\.project))
+        if (1...2).contains(projects.count), (report.unbound?.calls ?? 0) == 0, others.outsideProjects == 0 {
+            lines.append("Only \(projects.sorted().joined(separator: " and ")) call\(projects.count == 1 ? "s" : "") it: "
+                         + "akit move skill \(report.skill) --to \(projects.sorted().joined(separator: ",")) moves it there.")
         }
         lines += report.notes.map { "note: \($0)" }
         return lines.joined(separator: "\n")
