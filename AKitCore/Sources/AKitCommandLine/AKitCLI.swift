@@ -3,6 +3,7 @@ import AKitDoctor
 import AKitErrorAnalysis
 import AKitFoundation
 import AKitInsights
+import AKitMCP
 import AKitProjectSetup
 import Foundation
 
@@ -53,6 +54,27 @@ public enum AKitCLI {
                                           .mcp.json and .claude/settings.json are merged key by
                                           key: the project's keys stay, a key the project removed
                                           isn't added back, env/headers values are shown masked.
+
+        MCP servers, off without deleting them (the harness's own setting; On removes exactly that):
+          akit mcp state [NAME]           Each server Claude Code or Pi uses, with its state in each (with
+                                          NAME: the folders it is off in), and the claude.ai connectors
+          akit mcp set NAME --harness claude|pi --off everywhere [--yes]
+                                          Claude Code: mcp__NAME in permissions.deny of
+                                          ~/.claude/settings.json (its tools leave the context; the
+                                          server still starts). Pi: enabled: false in ~/.pi/agent/mcp.json
+          akit mcp set NAME --harness claude|pi --off project --project PATH... [--yes]
+                                          Claude Code: NAME in disabledMcpServers of the folder's entry in
+                                          ~/.claude.json; Pi: enabled: false in the folder's .pi/mcp.json.
+                                          For the project and each of its git worktrees; later worktrees
+                                          get it too (akit worktrees sync, the app's refresh)
+          akit mcp set NAME --harness claude|pi --on [--project PATH...] [--yes]
+                                          Back on: in those projects, or everywhere and in every folder
+          akit mcp connectors on|off [--yes]
+                                          All claude.ai connectors: disableClaudeAiConnectors in
+                                          ~/.claude/settings.json
+                                          Each shows the change (only the changed entries); --yes writes
+                                          it after a backup and refuses if those entries changed meanwhile.
+                                          Plugin servers have no switch: turn the plugin off with /plugin
 
         Worktrees (a local-only project's AKit files, linked into its other git worktrees):
           akit worktrees [PROJECT]        Each worktree of the repository and the links it lacks
@@ -277,6 +299,10 @@ public enum AKitCLI {
                 _ = args.positional()
                 return try skillSwitches(subcommand, &args, yes: options.yes, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
             }
+            if command == "mcp" {
+                try refuseProjectOptions(options, command: "mcp")
+                return try mcp(&args, yes: options.yes, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, err: err)
+            }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
                 try args.finish()
@@ -427,13 +453,19 @@ public enum AKitCLI {
             out(worktreesText(status))
             return 0
         }
+        // MCP servers turned off in this project reach new worktrees too (any project, local-only or not).
+        let family = ProjectWorktrees.family(of: main, env: env)
+        let mcp = MCPSwitches.syncWorktrees([.init(main: family.main, worktrees: family.worktrees)], in: env)
+        let mcpLines = mcp.added.map { "MCP: \($0)" }
+        for problem in mcp.problems { err("akit: MCP: \(problem)") }
         // Without AKit's block there are no units, and no link AKit could know as its own.
         guard LocalOnly.blockUnits(in: checkout.excludeFile) != nil else {
-            out("Nothing to sync: \(checkout.excludeFile.path) has no AKit block (the project is not local only, or not set up here).")
-            return 0
+            out(([(mcpLines.isEmpty ? "Nothing to sync: " : "No links to sync: ") + "\(checkout.excludeFile.path) has no AKit block (the project is not local only, or not set up here)."] + mcpLines)
+                .joined(separator: "\n"))
+            return mcp.problems.isEmpty ? 0 : 1
         }
         let outcome = ProjectWorktrees.sync(main, env: env)
-        var lines: [String] = []
+        var lines: [String] = mcpLines
         if !outcome.created.isEmpty { lines.append("Linked: \(outcome.created.joined(separator: ", "))") }
         if !outcome.removed.isEmpty { lines.append("Removed stale links: \(outcome.removed.joined(separator: ", "))") }
         if !outcome.conflicts.isEmpty { lines.append("Left alone (something else is there): \(outcome.conflicts.joined(separator: ", "))") }
@@ -442,7 +474,7 @@ public enum AKitCLI {
         }
         out(lines.joined(separator: "\n"))
         for problem in outcome.problems { err("akit: \(problem)") }
-        return outcome.problems.isEmpty ? 0 : 1
+        return outcome.problems.isEmpty && mcp.problems.isEmpty ? 0 : 1
     }
 
     static func worktreesText(_ status: ProjectWorktrees.Status) -> String {

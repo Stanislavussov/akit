@@ -53,7 +53,7 @@ let package = Package(
         .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitBrain", "AKitRender", "AKitInsights"]),
         // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md).
         .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitProjectSetup"]),
-        .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
+        .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitModel", "AKitSkills"]),
