@@ -52,6 +52,13 @@ enum Fact {
         let skills: [ListedSkill]
     }
 
+    /// Tools the harness made available to a session (or its subagent run), by name.
+    struct ToolListing {
+        let ts: Date?
+        let isSubagent: Bool
+        let tools: [String]
+    }
+
     enum By: String { case model, user }
 
     struct SkillCall {
@@ -80,6 +87,7 @@ enum Fact {
     case toolCall(ToolCall)
     case toolResult(callID: String, bytes: Int, isError: Bool)
     case skillListing(Listing)
+    case toolListing(ToolListing)
     case skillCall(SkillCall)
     /// A built-in slash command the user typed (`/model`, `/clear`); stored as a user call of
     /// kind `command`. A `/name` skill the user called is a `skillCall` by the user.

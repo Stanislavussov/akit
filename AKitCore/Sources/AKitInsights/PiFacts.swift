@@ -11,12 +11,14 @@ import Foundation
 /// - a `read` of `<root>/<skill>/SKILL.md` for an installed skill root → model call of that skill;
 /// - a user message starting `<skill name="x"` → user call, and a manual-call example (the text
 ///   after `</skill>` and the user's prompt before it). Pi records no skill listing.
+/// - the `tools` section of a `system` message (Pi ≥ 1.0) → tools available in the session.
 /// Event keys are `<entry id>@<entry timestamp>` (+ `#<block index>`): a fork copies entries
 /// with both, so copies dedupe, while an unrelated session reusing an 8-hex id doesn't collide.
 struct PiFacts {
     /// Bump when the facts read from a line change; files that still exist are re-read.
     /// 2: `started` only from the header, user calls say `extra.kind`, nested SKILL.md reads don't count.
-    static let parserVersion = 2
+    /// 3: the tools available in a session (`tool_listings`).
+    static let parserVersion = 3
 
     private(set) var sessionKey: String
     private(set) var session: Fact.Session?
@@ -49,6 +51,9 @@ struct PiFacts {
         let key = (entry["id"] as? String).map { "\($0)@\(stamp ?? "")" } ?? "\(sessionKey)@\(offset)"
         let time = ts ?? JSONLines.date(message["timestamp"])
         switch message["role"] as? String {
+        case "system":
+            let tools = ((message["sections"] as? JSONLines.Object)?["tools"] as? String).map(PiLogFormat.toolNames) ?? []
+            return tools.isEmpty ? [] : [.toolListing(.init(ts: time, isSubagent: false, tools: tools))]
         case "user":
             let text = JSONLines.text(of: message["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
             guard let skill = PiLogFormat.skillPrefixName(text) else {

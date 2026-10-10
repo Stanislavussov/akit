@@ -57,6 +57,23 @@ public enum ClaudeLogFormat {
         return names.filter { seen.insert($0).inserted }.map { ($0, found[$0] ?? "") }
     }
 
+    /// The tools an attachment makes available: a `prompt_snapshot`'s `tools` (the first snapshots
+    /// often have none), a `deferred_tools_delta`'s `addedNames` (deferred tools: only the name is
+    /// sent until the model loads one with ToolSearch) and a `deferred_tools_record`'s entries.
+    /// Removed names stay available: they were there for part of the session. Empty for other types.
+    public static func listedTools(_ attachment: Object) -> [String] {
+        switch attachment["type"] as? String {
+        case "prompt_snapshot":
+            return (attachment["tools"] as? [Object] ?? []).compactMap { $0["name"] as? String }
+        case "deferred_tools_delta":
+            return attachment["addedNames"] as? [String] ?? []
+        case "deferred_tools_record":
+            return (attachment["entries"] as? [Object] ?? []).compactMap { $0["name"] as? String }
+        default:
+            return []
+        }
+    }
+
     /// Trimmed text between `<name>` and `</name>`.
     public static func tag(_ name: String, in text: String) -> String? {
         guard let open = text.range(of: "<\(name)>"), let close = text.range(of: "</\(name)>", range: open.upperBound..<text.endIndex)

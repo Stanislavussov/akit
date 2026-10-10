@@ -10,7 +10,7 @@ public enum IndexSchema {
 
     /// Fact tables: every row carries `source_id` (a `sources` row, which is never deleted).
     static let factTables = ["sessions", "requests", "tool_calls", "skill_listings", "skill_calls", "manual_call_examples",
-                             "hook_events", "applies", "marks", "ratings"]
+                             "hook_events", "applies", "marks", "ratings", "tool_listings"]
 
     static let migrations: [String] = [
         // v1: facts of Claude Code and Pi sessions. No FOREIGN KEY from facts to sources, so
@@ -117,6 +117,19 @@ public enum IndexSchema {
         // tool_errors. The signals' version changed with it, so every row is recomputed.
         """
         ALTER TABLE signals ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0;
+        """,
+        // v10: the tools a session had available (Claude Code's prompt snapshot and deferred tools,
+        // Pi ≥ 1.0's `tools` section), one row per session, run kind and tool, `ts` the first time it
+        // was seen there. `server` for an MCP tool (`mcp__<server>__<tool>`). With the calls in
+        // `tool_calls`, it shows the tools and MCP servers a period never used. The parser bump that
+        // comes with it re-reads the files still on disk; older sessions have no rows.
+        """
+        CREATE TABLE tool_listings(harness TEXT NOT NULL, session_key TEXT NOT NULL, is_subagent INTEGER NOT NULL,
+          tool TEXT NOT NULL, server TEXT, ts REAL, source_id INTEGER NOT NULL, parser_version INTEGER NOT NULL,
+          PRIMARY KEY(harness, session_key, is_subagent, tool));
+        CREATE INDEX tool_listings_source ON tool_listings(source_id);
+        CREATE INDEX tool_listings_tool ON tool_listings(tool, session_key);
+        CREATE INDEX tool_calls_session ON tool_calls(session_key, name);
         """,
     ]
 

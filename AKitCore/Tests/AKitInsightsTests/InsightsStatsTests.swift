@@ -465,6 +465,7 @@ extension InsightsStatsTests {
                   "approxContextSpace" : 20,
                   "approxTokens" : 10,
                   "callRate" : 1,
+                  "lastCall" : "2026-09-21T14:05:20Z",
                   "listedDays" : 1,
                   "listedSessions" : 1,
                   "modelCalls" : 1,

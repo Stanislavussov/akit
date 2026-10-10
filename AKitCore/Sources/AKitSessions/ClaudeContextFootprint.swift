@@ -326,7 +326,7 @@ struct FootprintReader {
 
 /// MCP servers by a key that matches a server's display name (`claude.ai Claude Docs`) and its
 /// tool prefix (`mcp__claude_ai_Claude_Docs__…`).
-struct MCPServers {
+public struct MCPServers {
     private struct Server {
         var name: String
         var tokens = 0
@@ -338,7 +338,7 @@ struct MCPServers {
     private var order: [String] = []
 
     /// `mcp__server__tool` → `server`.
-    static func server(ofTool name: String) -> String? {
+    public static func server(ofTool name: String) -> String? {
         guard name.hasPrefix("mcp__") else { return nil }
         let rest = name.dropFirst(5)
         guard let end = rest.range(of: "__") else { return nil }

@@ -166,11 +166,10 @@ struct PiFootprintReader {
         var parts: [Part] = []
         var rest: [String] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
-            guard line.hasPrefix("- "), let colon = line.firstIndex(of: ":") else {
+            guard let name = PiLogFormat.toolName(ofLine: line) else {
                 rest.append(line)
                 continue
             }
-            let name = String(line[line.index(line.startIndex, offsetBy: 2)..<colon]).trimmingCharacters(in: .whitespaces)
             if let server = MCPServers.server(ofTool: name) {
                 servers.add(server, tool: name, text: line)
                 continue

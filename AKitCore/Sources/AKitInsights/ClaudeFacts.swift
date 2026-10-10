@@ -10,6 +10,8 @@ import Foundation
 ///   `<command-message>` (then also a manual-call example: its arguments and the prompt before
 ///   it), else a built-in command like `/model` (stored with `extra.kind` `skill` / `command`);
 /// - a `skill_listing` attachment → one listing keyed by the entry's uuid;
+/// - the tools of a `prompt_snapshot` and the names of `deferred_tools_delta` / `deferred_tools_record`
+///   attachments → tools available in the session (each name once per read);
 /// - subagent runs (`<session>/subagents/*.jsonl`, or `isSidechain` lines of older versions)
 ///   belong to the parent session and are marked as subagent facts;
 /// - the session's `started` is the first dated line of its file. Claude Code now resumes by
@@ -18,13 +20,16 @@ import Foundation
 struct ClaudeFacts {
     /// Bump when the facts read from a line change; files that still exist are re-read.
     /// 2: user calls say `extra.kind` (skill or built-in command).
-    static let parserVersion = 2
+    /// 3: the tools available in a session (`tool_listings`).
+    static let parserVersion = 3
 
     let sessionKey: String
     let isSubagentFile: Bool
     private(set) var session: Fact.Session?
     /// The user's last typed prompt in this read, for manual-call examples.
     private var lastPrompt: String?
+    /// Tools already listed in this read, as `<is subagent>|<name>`: snapshots repeat the whole list.
+    private var listedTools = Set<String>()
 
     init(file: URL) {
         isSubagentFile = Self.isSubagentFile(file)
@@ -57,8 +62,10 @@ struct ClaudeFacts {
             if !isSubagent, let prompt = ClaudeLogFormat.promptText(entry) { lastPrompt = prompt }
             return facts
         case "attachment":
-            guard let attachment = entry["attachment"] as? JSONLines.Object,
-                  attachment["type"] as? String == "skill_listing", let key = entry["uuid"] as? String else { return [] }
+            guard let attachment = entry["attachment"] as? JSONLines.Object else { return [] }
+            let tools = ClaudeLogFormat.listedTools(attachment).filter { listedTools.insert("\(isSubagent)|\($0)").inserted }
+            if !tools.isEmpty { return [.toolListing(.init(ts: ts, isSubagent: isSubagent, tools: tools))] }
+            guard attachment["type"] as? String == "skill_listing", let key = entry["uuid"] as? String else { return [] }
             return [.skillListing(.init(key: key, ts: ts, isInitial: attachment["isInitial"] as? Bool == true,
                                         isSubagent: isSubagent, skills: Self.listedSkills(attachment)))]
         default:

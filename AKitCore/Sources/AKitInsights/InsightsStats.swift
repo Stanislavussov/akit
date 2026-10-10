@@ -113,10 +113,15 @@ public struct StatsReport: Encodable, Equatable, Sendable {
         public let windowStart: String
         /// Distinct description texts seen; text output only.
         public let descriptionVersions: Int
+        /// The latest model or user call in the scope's sessions, also before the window; nil: never called there.
+        public let lastCall: String?
+
+        /// No call by the model or the user in the window, in any harness.
+        public var unused: Bool { modelCalls + userCalls + piModelCalls == 0 }
 
         private enum CodingKeys: String, CodingKey {
             case name, owner, listedSessions, listedDays, modelCalls, userCalls, piModelCalls, approxTokens,
-                 approxContextSpace, callRate, windowStart
+                 approxContextSpace, callRate, windowStart, lastCall
         }
     }
 
@@ -186,13 +191,16 @@ public enum InsightsStats {
         var bindings = BindingSet.default
         /// Skills shown, by ≈ context space; nil: all.
         var top: Int? = InsightsStats.defaultTop
+        /// Only skills without a call in the window (`akit stats --unused`); applied before `top`.
+        var unusedOnly = false
 
         public init(days: Int = InsightsStats.defaultDays, project: String? = nil, bindings: BindingSet = .default,
-                    top: Int? = InsightsStats.defaultTop) {
+                    top: Int? = InsightsStats.defaultTop, unusedOnly: Bool = false) {
             self.days = days
             self.project = project
             self.bindings = bindings
             self.top = top
+            self.unusedOnly = unusedOnly
         }
     }
 
@@ -251,8 +259,11 @@ public enum InsightsStats {
         var to: Date
 
         /// `scoped AS (…)` for a `WITH` clause, and its values.
-        var cte: (sql: String, values: [any SQLBindable]) {
-            var sql = "scoped AS (SELECT s.key FROM sessions s"
+        var cte: (sql: String, values: [any SQLBindable]) { cte(as: "scoped") }
+
+        /// The same under another name, for a second scope in one query.
+        func cte(as name: String) -> (sql: String, values: [any SQLBindable]) {
+            var sql = "\(name) AS (SELECT s.key FROM sessions s"
             var values: [any SQLBindable] = []
             if let project {
                 sql += " JOIN bindings b ON b.session_key = s.key AND b.project_id = ? AND b.confidence IN \(bindings.sqlList)"
@@ -393,6 +404,16 @@ public enum InsightsStats {
         let tallies = try tallies(database, scope: scope, starts: windowStarts.mapValues { max($0, from) },
                                   descriptions: inputs.descriptions, calibration: calibration)
 
+        // The last call also looks before the window, in the scope's sessions.
+        let (ever, everValues) = Scope(project: options.project, bindings: options.bindings, from: .distantPast, to: now).cte(as: "ever")
+        var lastCalls: [String: Double] = [:]
+        for row in try database.rows("""
+            WITH \(ever) SELECT c.skill, MAX(c.ts) FROM skill_calls c JOIN ever s ON s.key = c.session_key
+            WHERE \(countedCallsSQL) GROUP BY c.skill
+            """, everValues) {
+            if let skill = row[0].text, let ts = row[1].double { lastCalls[skill] = ts }
+        }
+
         var skills = names.map { name -> StatsReport.SkillStats in
             let tally = tallies[name] ?? Tally()
             let listed = tally.listedSessions.count
@@ -403,7 +424,8 @@ public enum InsightsStats {
                 approxTokens: tally.latest?.tokens ?? 0, approxContextSpace: tally.contextSpace,
                 callRate: listed > 0 ? (Double(called) / Double(listed) * 1000).rounded() / 1000 : 0,
                 windowStart: (windowStarts[name] ?? from).formatted(.iso8601),
-                descriptionVersions: hashStarts[name]?.versions ?? 0)
+                descriptionVersions: hashStarts[name]?.versions ?? 0,
+                lastCall: lastCalls[name].map { Date(timeIntervalSince1970: $0).formatted(.iso8601) })
         }
         skills.sort { ($0.approxContextSpace, $1.name) > ($1.approxContextSpace, $0.name) }
 
@@ -425,7 +447,8 @@ public enum InsightsStats {
               FROM requests r WHERE r.session_key = s.key AND r.is_subagent = 0 ORDER BY r.ts IS NULL, r.ts LIMIT 1) FROM scoped s
             """, scopeValues).compactMap { $0[0].int }.sorted()
         let space = skills.reduce(0) { $0 + $1.approxContextSpace }
-        let shown = options.top.map { Array(skills.prefix(max(0, $0))) } ?? skills
+        let listed = options.unusedOnly ? skills.filter(\.unused) : skills
+        let shown = options.top.map { Array(listed.prefix(max(0, $0))) } ?? listed
         let last = try database.value("SELECT MAX(imported_at) FROM sources")?.double
 
         var notes = inputs.importNotes
@@ -441,7 +464,7 @@ public enum InsightsStats {
                            firstRequestContext: .init(median: rank(firstContexts, 0.5), p90: rank(firstContexts, 0.9)),
                            approxListingTokensPerRequest: listedRequests > 0 ? Int((Double(space) / Double(listedRequests)).rounded()) : 0,
                            byOwner: byOwner),
-            skills: shown, omitted: .init(skills: skills.count - shown.count),
+            skills: shown, omitted: .init(skills: listed.count - shown.count),
             droppedDescriptions: try droppedDescriptions(database, scope: scope), notes: notes)
     }
 
