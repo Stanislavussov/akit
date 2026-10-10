@@ -67,6 +67,15 @@ Checked against the code on 2026-10-03:
   Insights screen's table switches between **Skills**, **MCP Servers** and **Tools**, with
   **Unused Only**, a sort, and a **Custom…** window of 1–365 days. See "Tools and MCP servers
   over time".
+- Calls per project (2026-10-11): `akit stats skill NAME [--days N] [--bindings LIST] [--json]`
+  (`SkillCalls.report`) counts one skill's calls in a window, per project: model calls in any
+  harness (Pi's included, subagents included), the user's skill calls, sessions and the last
+  call, with the same counted-calls rule as `akit stats`. Sessions bound to no project at the
+  binding set's confidences (a `low` sibling by default too) count as unbound. With a brain it
+  adds the other Macs' calls from their usage summaries: per project from their project files,
+  and their total from their machine files (a work Mac's projects never reach the brain, so
+  its calls show only in the total). Calls, not listings: the Move to Project sheet
+  (`layers.md`, "Move a skill to a project") preselects the projects that call the skill.
 
 ## Goal
 
