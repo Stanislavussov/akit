@@ -188,9 +188,14 @@ public enum SkillScanner {
 
     /// The skill folders the installed harnesses load from (links resolved), global ones and those
     /// of these projects; plugin, claude.ai and package folders left out (AKit never removes there).
-    public static func rootFolders(projects: [URL], in env: HarnessEnvironment) -> [URL] {
-        let installed = Set(HarnessCatalog.detectAll(in: env).map(\.id))
-        return HarnessCatalog.adapters.filter { installed.contains($0.id) }
+    /// A root at the home folder or above it (a custom harness with skill folder `~`, or `/`) is left
+    /// out: such a folder holds far more than skills, and nothing in it may become removable.
+    /// `adapters`: nil for the built-in ones and the user's own (`~/.akit/harnesses.json`).
+    public static func rootFolders(projects: [URL], adapters: [any HarnessAdapter]? = nil, in env: HarnessEnvironment) -> [URL] {
+        let all = adapters ?? HarnessCatalog.allAdapters(custom: (try? CustomHarnessStore.load(in: env)) ?? [])
+        let installed = Set(HarnessCatalog.detectAll(in: env, adapters: all).map(\.id))
+        let homes = [env.homeDirectory.standardizedFileURL.path, env.homeDirectory.resolvingSymlinksInPath().standardizedFileURL.path]
+        return all.filter { installed.contains($0.id) }
             .flatMap { $0.skillRoots(in: env, projects: projects) }
             .filter { root in
                 switch root.scope {
@@ -199,6 +204,10 @@ public enum SkillScanner {
                 }
             }
             .map { $0.url.resolvingSymlinksInPath().standardizedFileURL }
+            .filter { root in
+                let path = root.path
+                return path != "/" && !homes.contains { $0 == path || $0.hasPrefix(path.hasSuffix("/") ? path : path + "/") }
+            }
     }
 
     /// Claude Code's default `skillListingMaxDescChars` (2.1.296).

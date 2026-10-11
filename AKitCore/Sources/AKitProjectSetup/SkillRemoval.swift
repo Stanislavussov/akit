@@ -166,8 +166,13 @@ public enum SkillRemoval {
             var id: String, action: Action, title: String, group: String, harnesses: [HarnessID], skill: Skill?
             var byHeader = false, reason: String? = nil, plugin: String? = nil, before: String? = nil, after: String? = nil
             var isLink = false, via: [String] = [], forgetsLock = false
+            /// A link's target place, when it has one.
+            var target: String? = nil
         }
-        let roots = SkillScanner.rootFolders(projects: Array(context.projectFolders.values), in: env)
+        // Every project the scan found skills in, not only those with a record.
+        var scannedProjects = Set(context.projectFolders.values.map(\.standardizedFileURL))
+        for skill in context.installed { if case .project(let url) = skill.scope { scannedProjects.insert(url.standardizedFileURL) } }
+        let roots = SkillScanner.rootFolders(projects: Array(scannedProjects), in: env)
         var notes: [String] = []
         var drafts: [Draft] = []
         var trashItems: [String: [URL]] = [:], claudeOff: [String: SkillSwitches.Plan] = [:]
@@ -231,6 +236,7 @@ public enum SkillRemoval {
                     var entry = Draft(id: "link:" + path, action: .trash, title: "\(shown(link)) → \(shown(real))", group: group(of: link),
                                       harnesses: harnesses, skill: skill, byHeader: header)
                     entry.isLink = true
+                    entry.target = "copy:" + real.path
                     if let tracked = trackedReason(folder: link, env: env) {
                         entry.action = .keep
                         entry.reason = tracked
@@ -239,15 +245,19 @@ public enum SkillRemoval {
                     }
                     drafts.append(entry)
                 }
-                let inRoot = !realHarnesses.isEmpty || roots.contains { real.path.hasPrefix($0.path + "/") }
-                guard inRoot else {
+                // Only a skill folder directly in a folder harnesses load skills from can go.
+                let parent = real.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL.path
+                let inRoot = roots.contains { $0.path == parent }
+                guard inRoot || !realHarnesses.isEmpty else {
                     notes.append("\(shown(real)) stays: the links to it go, and no harness loads it from there.")
                     continue
                 }
                 var entry = Draft(id: "copy:" + real.path, action: .keep, title: shown(real), group: group(of: real), harnesses: realHarnesses,
                                   skill: skill, byHeader: header)
                 entry.via = via.sorted()
-                if case .rendered(_, let layers, _)? = links[skill.id] {
+                if !inRoot {
+                    entry.reason = "Not directly in a skill folder AKit removes from (\(shown(real.deletingLastPathComponent()))); remove it by hand."
+                } else if case .rendered(_, let layers, _)? = links[skill.id] {
                     entry.action = .rendered
                     entry.title = "\(shown(real)) (rendered by \(layers.map { $0 == ProjectBundle.projectSource ? "the project's answers" : "layer \($0)" }.joined(separator: ", ")))"
                 } else if let tracked = trackedReason(folder: real, env: env) {
@@ -409,17 +419,26 @@ public enum SkillRemoval {
         })
         var places: [Place] = []
         var remaining: [String] = []
-        for draft in drafts {
-            var selected = ticked(draft)
+        func isSelected(_ draft: Draft) -> Bool {
             if draft.action == .rendered, let skill = draft.skill {
-                selected = removedFolders.contains(skill.realFolder.resolvingSymlinksInPath().standardizedFileURL.path)
+                return removedFolders.contains(skill.realFolder.resolvingSymlinksInPath().standardizedFileURL.path)
             }
+            return ticked(draft)
+        }
+        let selectedIDs = Set(drafts.filter(isSelected).map(\.id))
+        for draft in drafts {
+            let selected = selectedIDs.contains(draft.id)
             places.append(Place(id: draft.id, action: draft.action, title: draft.title, group: draft.group, harnesses: draft.harnesses,
                                 skill: draft.skill, byHeader: draft.byHeader, selected: selected, reason: draft.reason, plugin: draft.plugin,
                                 before: draft.before, after: draft.after, isLink: draft.isLink, via: draft.via,
                                 forgetsLock: draft.forgetsLock))
             // Only places a harness loads from count as remaining; a brain entry shows through its rendered copies.
             guard draft.skill != nil, !selected, !draft.byHeader else { continue }
+            // A link that stays while its folder goes loads nothing: it dangles.
+            if draft.isLink, let target = draft.target, selectedIDs.contains(target) {
+                notes.append("\(draft.title.components(separatedBy: " → ").first ?? draft.title) stays as a link to a removed folder; remove it in its repository.")
+                continue
+            }
             let harnesses = draft.harnesses.map(\.displayName).joined(separator: ", ")
             let why = draft.reason.map { $0.split(separator: ";").first.map(String.init) ?? $0 }
                 ?? (draft.action == .rendered ? "its brain entry stays" : "not ticked")
@@ -567,6 +586,7 @@ public enum SkillRemoval {
         }
         // 4. Own copies and links, each checked again right before it goes (commits and Applies ran meanwhile).
         for place in selected where place.action == .trash {
+            var moved = 0
             for item in plan.trashItems[place.id] ?? [] {
                 var info = stat()
                 guard lstat(item.path, &info) == 0 else {
@@ -577,14 +597,17 @@ public enum SkillRemoval {
                 guard SkillMove.treeDigest(item) == plan.trashDigests[item.path] else {
                     throw fail("\(SkillMove.shown(item, home: home)) changed since the preview, so it stays. Look at the preview again.")
                 }
+                // Resolved while the folder is still there, as the skills.sh lock recorded it.
+                let lockPath = place.forgetsLock ? item.resolvingSymlinksInPath().path : nil
                 do {
                     _ = try trash(item)
                 } catch {
                     throw fail("Moving \(SkillMove.shown(item, home: home)) to the Trash stopped: \(error.localizedDescription)")
                 }
-                if place.forgetsLock { InstalledSkillLock.forget(folder: item, in: env) }
+                moved += 1
+                if let lockPath { InstalledSkillLock.forget(path: lockPath, in: env) }
             }
-            outcome.done.append("\(place.title) to the Trash")
+            if moved > 0 { outcome.done.append("\(place.title) to the Trash") }
         }
         // 5. claude.ai skills: the Claude switch.
         for place in selected where place.action == .claudeOff {

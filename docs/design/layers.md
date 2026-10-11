@@ -466,16 +466,23 @@ NAME --everywhere`) finds every place and takes the skill out of each. Core: `Sk
   whose header says the name is listed as "maybe the same skill" and is never ticked by default.
   The scanner merges copies with one real path into one skill, so the plan splits it again by
   `Skill.places`: each link of its own (a skills.sh layout, `~/.claude/skills/x → ~/.agents/skills/x`)
-  is a place where only the link goes; the real folder is a place of its own when it sits in a folder
-  some installed harness loads skills from (also when no harness's first place reached it there),
-  else it stays and the plan says so (a development folder the links led to). A folder reached
+  is a place where only the link goes; the real folder is a place of its own when it sits directly in a
+  folder some installed harness loads skills from (also when no harness's first place reached it
+  there), else it stays and the plan says so (a development folder the links led to). Those folders
+  (`SkillScanner.rootFolders`, custom harnesses included) leave out the home folder and anything
+  above it: a harness whose skill folder is `~` never makes `~/Documents/notes` removable; such a
+  copy is listed as "Not directly in a skill folder AKit removes from". A folder reached
   through a folder of skills that is a link (`~/.claude/skills → ~/.agents/skills`) is one place,
   listed under its real folder with "also reached as". Then the brain: every layer that
   lists it, every record whose answers list it (a work Mac adds the personal projects only the
   brain has), and `skills/<name>`.
 - **Actions.** Own copy (global, or a project's, not in git) → the Trash; a skills.sh lock entry
-  is forgotten only when the real folder goes, never for a link. A copy or a link that git tracks
-  stays, also a global one (a home folder may be a dotfiles repository). A copy AKit rendered → it leaves with the Apply of its
+  is forgotten only when the real folder goes, never for a link, by the path resolved before the
+  move. A copy or a link that git tracks stays, also a global one (a home folder may be a dotfiles
+  repository). A tracked link whose folder goes stays as a link to a removed folder: the plan says
+  so in a note (it loads nothing, so it is not in "still loads in"). Known limit: dotfiles kept as a
+  bare repository (`git --git-dir=~/.dotfiles --work-tree=~`) leave no `.git` to find, so AKit can't
+  tell such a copy is tracked; it goes to the Trash like any own copy (recoverable from there). A copy AKit rendered → it leaves with the Apply of its
   brain entry. A layer → its `layer.yaml` without the entry (diff, one commit each). A project's
   answers → without the entry; on this Mac the project's Apply saves them (a local-only project's
   worktree links go with the existing sync); a project on another Mac gets only its answers
@@ -504,7 +511,9 @@ NAME --everywhere`) finds every place and takes the skill out of each. Core: `Sk
   does.
 - **Order.** Layers (commit) → each record's Apply → other Macs' answers → own copies to the
   Trash → claude.ai switches → the library. Each item is hashed again right before its own move to
-  the Trash (commits and Applies ran meanwhile); a worktree link the sync already removed is a note.
+  the Trash (commits and Applies ran meanwhile); an item already gone (a worktree link the sync
+  removed, a copy another tool took) is a note, and a place whose items were all gone gets no
+  "to the Trash" line.
   Before the first write too: what goes to the Trash is hashed again (a folder of more than 10,000 entries or with an unreadable part, git history or a
   link out of the skill blocks that place at plan time), each record's files and each layer file
   must be as previewed. A rendered copy edited by hand blocks, with Show Edits. It stops at the

@@ -242,7 +242,104 @@ struct SkillRemovalTests {
         let plan = SkillRemoval.plan(name: "deploy", brain: brain, context: ctx)
         #expect(plan.canApply, "\(plan.blockers)")
         try await SkillRemoval.apply(plan, brain: brain, env: f.env, trash: f.trash)
-        #expect(try await f.git("log", "-1", "--format=%an <%ae>|%G?|%s", in: f.brainRoot)
-                == "pseudo-mac <pseudo@example.invalid>|N|Remove skill deploy from layer core\n")
+        // The environment's GIT_AUTHOR_* and GIT_COMMITTER_* ("Test") are dropped: the brain's own identity both times.
+        #expect(try await f.git("log", "-1", "--format=%an <%ae>|%cn <%ce>|%G?|%s", in: f.brainRoot)
+                == "pseudo-mac <pseudo@example.invalid>|pseudo-mac <pseudo@example.invalid>|N|Remove skill deploy from layer core\n")
+    }
+
+    // MARK: - Verifier follow-ups
+
+    @Test func aHarnessWithTheHomeFolderAsItsSkillFolderMakesNothingThereRemovable() throws {
+        try move.harnesses()
+        try fm.createDirectory(at: f.home.appending(path: ".notes-agent"), withIntermediateDirectories: true)
+        try f.write("Documents/notes/SKILL.md", "---\nname: notes\ndescription: My notes\n---\n")
+        let custom = CustomHarness(id: "notes-agent", name: "Notes Agent", configRoot: "~/.notes-agent", skillFolders: ["~"])
+        let adapters = HarnessCatalog.allAdapters(custom: [custom])
+        let roots = SkillScanner.rootFolders(projects: [], adapters: adapters, in: f.env).map(\.path)
+        #expect(!roots.contains(f.home.resolvingSymlinksInPath().standardizedFileURL.path) && !roots.contains("/"), "\(roots)")
+        let installed = SkillScanner.scan(installations: HarnessCatalog.detectAll(in: f.env, adapters: adapters), adapters: adapters, in: f.env)
+        #expect(installed.contains { $0.name == "notes" }, "the custom harness does load it")
+        let ctx = SkillMove.Context(env: f.env, store: f.store, homeID: move.homeID, installed: installed, targets: ["claude", "pi"])
+        let plan = SkillRemoval.plan(name: "notes", brain: nil, context: ctx)
+        let place = try #require(plan.places.first)
+        #expect(!place.selected && !place.canSelect && place.reason?.hasPrefix("Not directly in a skill folder AKit removes from") == true,
+                "\(plan.places.map { ($0.title, $0.reason ?? "") })")
+        #expect(!plan.canApply)
+    }
+
+    @Test func aTrackedLinkStaysAsADanglingLinkWhileItsUntrackedFolderGoes() async throws {
+        try move.harnesses(link: false)
+        try f.write(".agents/skills/solo/SKILL.md", "---\nname: solo\ndescription: Solo\n---\n")
+        try fm.createDirectory(at: f.home.appending(path: ".claude/skills"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: f.home.appending(path: ".claude/skills/solo").path, withDestinationPath: "../../.agents/skills/solo")
+        // A dotfiles repository tracks the link, not the folder.
+        try await f.git("init", "-q", "-b", "main", in: f.home)
+        try await f.git("add", ".claude/skills/solo", in: f.home)
+        try await f.git("commit", "-qm", "Dotfiles", in: f.home)
+        let plan = SkillRemoval.plan(name: "solo", brain: nil, context: context([:]))
+        let link = try #require(plan.places.first { $0.isLink })
+        #expect(!link.selected && link.reason?.hasPrefix("Tracked in git in ~;") == true)
+        #expect(plan.places.first { $0.id.hasPrefix("copy:") }?.selected == true)
+        #expect(plan.summary == "After this, solo loads in: nowhere.", "a dangling link loads nothing")
+        #expect(plan.notes.contains("~/.claude/skills/solo stays as a link to a removed folder; remove it in its repository."), "\(plan.notes)")
+        try await SkillRemoval.apply(plan, brain: nil, env: f.env, trash: f.trash)
+        #expect(!exists(".agents/skills/solo") && exists(".claude/skills/solo"))
+    }
+
+    @Test func theSkillsShLockIsForgottenOnlyWhenTheRealFolderGoes() async throws {
+        try move.harnesses(link: false)
+        try fm.createDirectory(at: f.home.appending(path: ".claude/skills"), withIntermediateDirectories: true)
+        // The temporary home is under /var, a link to /private/var: the lock holds the resolved path.
+        try f.write(".agents/skills/solo/SKILL.md", "---\nname: solo\ndescription: Solo\n---\n")
+        try f.write("dev/tool/SKILL.md", "---\nname: tool\ndescription: Tool\n---\n")
+        try fm.createSymbolicLink(atPath: f.home.appending(path: ".claude/skills/tool").path, withDestinationPath: f.home.appending(path: "dev/tool").path)
+        let solo = f.home.appending(path: ".agents/skills/solo").resolvingSymlinksInPath().path
+        let tool = f.home.appending(path: "dev/tool").resolvingSymlinksInPath().path
+        #expect(f.home.path.hasPrefix("/var/") == false || solo.hasPrefix("/private/var/") || solo.hasPrefix("/var/"))
+        var lock = InstalledSkillLock()
+        for path in [solo, tool] {
+            lock.entries.append(.init(path: path, source: "me/skills", skillId: "x", pathInRepo: "skills/x", modified: false, installedAt: "2026-10-11T00:00:00Z"))
+        }
+        try InstalledSkillLock.save(lock, in: f.env)
+
+        // Only a link goes: its folder's entry stays.
+        try await SkillRemoval.apply(SkillRemoval.plan(name: "tool", brain: nil, context: context([:])), brain: nil, env: f.env, trash: f.trash)
+        #expect(try InstalledSkillLock.load(in: f.env).entries.map(\.path) == [solo, tool])
+        // The real folder goes: its entry goes too.
+        try await SkillRemoval.apply(SkillRemoval.plan(name: "solo", brain: nil, context: context([:])), brain: nil, env: f.env, trash: f.trash)
+        #expect(try InstalledSkillLock.load(in: f.env).entries.map(\.path) == [tool])
+    }
+
+    @Test func anItemGoneBeforeItsTurnIsANoteNotADoneLine() async throws {
+        try move.harnesses()
+        try f.write(".agents/skills/solo/SKILL.md", "---\nname: solo\ndescription: Solo\n---\n")
+        try f.write(".pi/agent/skills/solo/SKILL.md", "---\nname: solo\ndescription: Solo\n---\n")
+        let plan = SkillRemoval.plan(name: "solo", brain: nil, context: context([:]))
+        #expect(plan.places.filter(\.selected).count == 2)
+        let paths = [".agents/skills/solo", ".pi/agent/skills/solo"].map { f.home.appending(path: $0) }
+        var first = true
+        // The first move also takes the other copy away (another tool, a sync): it is gone at its turn.
+        let outcome = try await SkillRemoval.apply(plan, brain: nil, env: f.env) { url in
+            let moved = try f.trash(url)
+            if first {
+                first = false
+                for other in paths where fm.fileExists(atPath: other.path) { try fm.removeItem(at: other) }
+            }
+            return moved
+        }
+        #expect(outcome.done.count == 1, "\(outcome.done)")
+        #expect(outcome.notes.contains { $0.hasSuffix(" was already gone.") }, "\(outcome.notes)")
+    }
+
+    @Test func aPersonalMacCommitsAsBeforeWithItsHooks() async throws {
+        try move.harnesses()
+        _ = try await move.renderedInCore()
+        try f.write(".akit/registry/.git/hooks/pre-commit", "#!/bin/sh\ntouch hook-ran\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.brainRoot.appending(path: ".git/hooks/pre-commit").path)
+        let plan = SkillRemoval.plan(name: "deploy", brain: try #require(Brain.load(from: f.brainRoot)), context: context([:]))
+        try await SkillRemoval.apply(plan, brain: try #require(Brain.load(from: f.brainRoot)), env: f.env, trash: f.trash)
+        #expect(fm.fileExists(atPath: f.brainRoot.appending(path: "hook-ran").path), "the hook ran")
+        #expect(try await f.git("log", "-1", "--format=%an <%ae>|%s", "--", "layers", in: f.brainRoot)
+                == "Test <test@example.com>|Remove skill deploy from layer core\n")
     }
 }
