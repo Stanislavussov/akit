@@ -71,6 +71,7 @@ struct GuideDocumentTests {
                                                  .paragraph("Text after.")])
         #expect(document.sections[0].subsections.map(\.id) == ["screen", "other"])
         #expect(document.sections[0].subsections[1].blocks == [.paragraph("![not an image] in a line")])
+        #expect(GuideDocument.image("![x](images/a.png) см. [y](#z)") == nil)
         #expect(document.path(to: "step") == ["group", "screen", "step"])
         #expect(document.path(to: "step-two") == ["group", "screen", "step-two"])
         #expect(document.sections[0].contains("add button"))
@@ -119,6 +120,6 @@ struct GuideDocumentTests {
             #expect(document.path(to: group) == [group], "no section \(group)")
             for id in ids { #expect(document.path(to: id) == [group, id], "no section \(id) in \(group)") }
         }
-        for id in ["start", "map", "settings"] { #expect(document.path(to: id) == [id], "no section \(id)") }
+        for id in ["start", "map", "menus", "settings"] { #expect(document.path(to: id) == [id], "no section \(id)") }
     }
 }

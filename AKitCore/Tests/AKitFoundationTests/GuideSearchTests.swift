@@ -57,6 +57,14 @@ struct GuideSearchTests {
         #expect(!Self.search.hits(for: "installed").contains { $0.kind == .text })
         let linked = GuideSearch(guides: [("g", "G", GuideDocument.parse("## A\nСмотрите [экран Skills](#skills) и **Apply**."))])
         #expect(linked.hits(for: "смотрите").first?.snippet == "Смотрите экран Skills и Apply.")
+        #expect(linked.hits(for: "apply").first?.kind == .button)
+        // A button needs every found word in one bold name; code is literal.
+        #expect(Self.search.hits(for: "remove project").first?.kind == .text)
+        let code = GuideSearch(guides: [("g", "G", GuideDocument.parse("## A\n```\nls **/*.swift **/*.md\n```\nСлово apply, потом **Apply**."))])
+        #expect(code.hits(for: "swift").map(\.kind) == [.text])
+        #expect(code.hits(for: "apply").first?.kind == .button)
+        #expect(Self.search.hits(for: "скилл", limit: 3).count == 3)
+        #expect(GuideSearch.terms("ёлка Ёлки") == ["елка", "елки"])
         // A bold Russian lead-in is text, not a button.
         let lead = GuideSearch(guides: [("g", "G", GuideDocument.parse("## A\n**Что это:** экран.\n**Apply** пишет."))])
         #expect(lead.hits(for: "что это").map(\.kind) == [.text])

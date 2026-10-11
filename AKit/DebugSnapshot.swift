@@ -81,7 +81,8 @@ enum DebugSnapshot {
     static let options: Options? = {
         let args = ProcessInfo.processInfo.arguments
         func value(_ flag: String) -> String? {
-            guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
+            // The last one wins, so a script can give a default first.
+            guard let i = args.lastIndex(of: flag), i + 1 < args.count else { return nil }
             return args[i + 1]
         }
         guard let path = value("--snapshot") else { return nil }

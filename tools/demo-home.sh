@@ -8,7 +8,10 @@ set -euo pipefail
 DEMO="${1:?usage: tools/demo-home.sh DIR}"
 AKIT="$(cd "$(dirname "$0")/.." && pwd)/AKitCore/.build/debug/akit"
 [[ -x "$AKIT" ]] || (cd "$(dirname "$0")/../AKitCore" && swift build --product akit >/dev/null)
-rm -rf "$DEMO" && mkdir -p "$DEMO"
+# The folder is deleted first: only an absolute path that is new or was made by this script.
+[[ "$DEMO" == /* && "$DEMO" != / && ( ! -e "$DEMO" || -e "$DEMO/.akit-demo" ) ]] || {
+    echo "$DEMO: not an absolute path, or a folder this script didn't make. Not deleting it." >&2; exit 1; }
+rm -rf "$DEMO" && mkdir -p "$DEMO" && touch "$DEMO/.akit-demo"
 DEMO="$(cd "$DEMO" && pwd -P)"  # /var is a link to /private/var: paths must match to show as ~
 export HOME="$DEMO" AKIT_PROJECTS_ROOT="$DEMO/Projects"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_AUTHOR_NAME="Demo" GIT_AUTHOR_EMAIL="demo@example.com" \
@@ -185,6 +188,19 @@ EOF
 }
 own_skill commit-message "Write a commit message from the staged diff: an imperative summary line and a short why." "Summary line of 72 characters at most."
 own_skill release-notes "Draft release notes from the commits since the last tag, grouped into features, fixes and chores." "One line per change, newest first."
+
+# A skill that lives only in notes-mac (not from the brain): Skills → Move to Global… takes it.
+# (.claude/skills there is a link to .agents/skills.)
+file "$DEMO/Projects/notes-mac/.agents/skills/note-templates/SKILL.md" <<'EOF'
+---
+name: note-templates
+description: "Add a note template: the file, its preview and its entry in the New Note menu."
+---
+
+One template per file; name it after its menu title.
+EOF
+# Kept out of git, as a private skill is: a skill that git tracks can't leave the project from AKit.
+mkdir -p "$DEMO/Projects/notes-mac/.git/info" && echo ".agents/skills/note-templates/" >> "$DEMO/Projects/notes-mac/.git/info/exclude"
 
 # Stand-ins for the agents' commands, so the demo shows ~/.local/bin paths and made-up versions.
 mkdir -p "$DEMO/.local/bin"
@@ -779,6 +795,8 @@ file "$DEMO/.akit/lab/evals/tasks/$TASK2.json" <<EOF
   "prompt": "Rename the Archive tab to Done and read the settings file to find where tabs are named.", "source": { "reproduction": {} },
   "modeID": "large-file-read-whole", "oracle": { "assertion": { "modeID": "large-file-read-whole" } }, "createdAt": "$(ago 25H)" }
 EOF
+# A layer set, so Brain → backend-node → Evaluate… and Evals → Run Cells… on a layer have tasks.
+"$AKIT" analysis control layer-set backend-node add "$TASK1,$TASK2" >/dev/null
 PATCH='{ "file": "CLAUDE.md", "text": "After editing Swift files or project settings, build the app (make build) before you say the work is done. If the build fails, say so." }'
 AGENT='{ "harness": "claude-code", "model": "sonnet", "effort": "high", "mode": "call" }'
 cell() { # n, task, title, setup, repeat, passed, oracle, changed test files json

@@ -118,12 +118,14 @@ public struct GuideSearch: Sendable {
         let terms = Self.terms(query)
         guard !terms.isEmpty else { return [] }
         let phrase = Self.normalized(query).split(separator: " ").joined(separator: " ")
-        var found: [(score: Int, order: Int, hit: Hit)] = []
+        var found: [(score: Int, order: Int, kind: Kind, title: String, first: Word)] = []
         for (order, entry) in entries.enumerated() {
             var own: [Word] = []
             var missed = false
             for term in terms {
-                if let word = entry.words.first(where: { $0.text.hasPrefix(term) }) {
+                // A bold occurrence first: it may be a button's name.
+                if let word = entry.words.first(where: { $0.bold && $0.text.hasPrefix(term) })
+                    ?? entry.words.first(where: { $0.text.hasPrefix(term) }) {
                     own.append(word)
                 } else if !entry.context.contains(where: { $0.hasPrefix(term) }) {
                     missed = true
@@ -133,11 +135,13 @@ public struct GuideSearch: Sendable {
             guard !missed, let first = own.min(by: { $0.range.lowerBound < $1.range.lowerBound }) else { continue }
             var kind = entry.kind
             var title = entry.title
-            // On-screen names are English; a bold Russian phrase is a lead-in, not a button.
-            if kind == .text, own.allSatisfy(\.bold), let name = Self.boldSpan(around: first, in: entry),
-               !name.unicodeScalars.contains(where: { (0x0400...0x04FF).contains($0.value) }) {
+            // A button: every found word is in one bold name. On-screen names are English; a
+            // bold Russian phrase is a lead-in, not a button.
+            if kind == .text, let span = Self.boldSpan(around: first, in: entry),
+               own.allSatisfy({ span.lowerBound <= $0.range.lowerBound && $0.range.upperBound <= span.upperBound }),
+               !entry.text[span].unicodeScalars.contains(where: { (0x0400...0x04FF).contains($0.value) }) {
                 kind = .button
-                title = name
+                title = String(entry.text[span])
             }
             var score = switch kind {
             case .feature: 100
@@ -148,11 +152,14 @@ public struct GuideSearch: Sendable {
             }
             if own.count == terms.count { score += 10 }
             if terms.count > 1, Self.normalized(entry.text).contains(phrase) { score += 15 }
-            found.append((score, order, Hit(id: order, kind: kind, guide: entry.guide, section: entry.section, breadcrumb: entry.breadcrumb,
-                                            title: title, snippet: entry.summary ?? Self.snippet(entry.text, around: first.range),
-                                            image: entry.image, feature: entry.feature)))
+            found.append((score, order, kind, title, first))
         }
-        return found.sorted { ($0.score, $1.order) > ($1.score, $0.order) }.prefix(limit).map(\.hit)
+        return found.sorted { ($0.score, $1.order) > ($1.score, $0.order) }.prefix(limit).map { match in
+            let entry = entries[match.order]
+            return Hit(id: match.order, kind: match.kind, guide: entry.guide, section: entry.section, breadcrumb: entry.breadcrumb,
+                       title: match.title, snippet: entry.summary ?? Self.snippet(entry.text, around: match.first.range),
+                       image: entry.image, feature: entry.feature)
+        }
     }
 
     /// The places in `text` a query's words are found, for highlighting.
@@ -212,6 +219,8 @@ public struct GuideSearch: Sendable {
 
     /// A block's text without `**` and backticks, and where its bold parts are in that text.
     static func plain(_ block: GuideDocument.Block) -> (String, [Range<String.Index>]) {
+        // Code is literal: `**` and `[…](…)` in it are not marks.
+        if case .code(let text) = block { return (text, []) }
         let source: String = switch block {
         case .paragraph(let text), .callout(let text), .code(let text): text
         case .bullet(_, let text), .numbered(_, let text): text
@@ -237,10 +246,9 @@ public struct GuideSearch: Sendable {
         return (text, ranges)
     }
 
-    /// The whole bold name the word is part of: «Move to Project…» for `project`.
-    private static func boldSpan(around word: Word, in entry: Entry) -> String? {
+    /// The bold name the word is part of: «Move to Project…» for `project`.
+    private static func boldSpan(around word: Word, in entry: Entry) -> Range<String.Index>? {
         entry.bold.first { $0.lowerBound <= word.range.lowerBound && word.range.upperBound <= $0.upperBound }
-            .map { String(entry.text[$0]) }
     }
 
     /// About 200 characters of `text` around `range`, cut at word ends.

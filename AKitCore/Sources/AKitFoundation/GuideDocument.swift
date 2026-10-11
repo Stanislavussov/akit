@@ -186,10 +186,11 @@ public struct GuideDocument: Sendable, Hashable {
 
     /// `![caption](images/name.png)` alone on a line → (caption, path).
     static func image(_ line: String) -> (String, String)? {
-        guard line.hasPrefix("!["), line.hasSuffix(")"), let middle = line.range(of: "](", options: .backwards) else { return nil }
+        guard line.hasPrefix("!["), line.hasSuffix(")"), let middle = line.range(of: "](") else { return nil }
         let caption = String(line[line.index(line.startIndex, offsetBy: 2)..<middle.lowerBound])
         let path = String(line[middle.upperBound...].dropLast())
-        return path.isEmpty ? nil : (caption, path)
+        // Text after the picture makes the line a paragraph.
+        return path.isEmpty || path.contains(")") || path.contains(" ") ? nil : (caption, path)
     }
 
     /// `<!-- section: id -->` → `id`.

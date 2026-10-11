@@ -26,6 +26,16 @@ enum Guide: String, CaseIterable {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    @MainActor private static let images = NSCache<NSString, NSImage>()
+
+    /// The screenshot, read from disk once.
+    @MainActor static func image(_ path: String) -> NSImage? {
+        if let image = images.object(forKey: path as NSString) { return image }
+        guard let url = imageURL(path), let image = NSImage(contentsOf: url) else { return nil }
+        images.setObject(image, forKey: path as NSString)
+        return image
+    }
+
     /// One search over every guide and every screen of the app.
     static func searchIndex(_ documents: [Guide: GuideDocument]) -> GuideSearch {
         GuideSearch(guides: allCases.compactMap { guide in documents[guide].map { (guide.rawValue, guide.title, $0) } },
@@ -45,6 +55,8 @@ final class GuideNavigator {
     private(set) var revision = 0
     /// Counts Help → Search Guides and Screens…: the window puts the cursor in its search field.
     private(set) var searchRequests = 0
+    /// Set until the window has taken the request: the first one comes before the window exists.
+    var wantsSearch = false
 
     /// Snapshots: `--guide <section>` opens the Error Analysis guide, `--guide screens:<section>`
     /// another one.
@@ -63,7 +75,10 @@ final class GuideNavigator {
         revision += 1
     }
 
-    func focusSearch() { searchRequests += 1 }
+    func focusSearch() {
+        wantsSearch = true
+        searchRequests += 1
+    }
 }
 
 /// A toolbar or inline button that opens a guide at a section.
@@ -116,7 +131,11 @@ struct GuideView: View {
     @State private var documents: [Guide: GuideDocument] = [:]
     @State private var index: GuideSearch?
     @State private var loaded = false
-    @State private var expanded: Set<String> = []
+    /// Open sections of each guide: the guides share some section ids.
+    @State private var openSections: [Guide: Set<String>] = [:]
+    @State private var hits: [GuideSearch.Hit] = []
+    /// The navigator's revision a clicked result made; any other request leaves the search.
+    @State private var ownRevision = 0
     /// Snapshots: `--guide <section> --query <text>` searches.
     @State private var search = DebugSnapshot.options?.guide != nil ? DebugSnapshot.options?.query ?? "" : ""
     @State private var searching = false
@@ -125,8 +144,8 @@ struct GuideView: View {
 
     var body: some View {
         Group {
-            if !search.isEmpty, let index {
-                GuideSearchResults(query: search, hits: index.hits(for: search), open: open, showScreen: showScreen)
+            if !search.isEmpty, index != nil {
+                GuideSearchResults(query: search, hits: hits, open: open, showScreen: showScreen)
             } else if let document = documents[navigator.guide] {
                 content(document)
             } else if loaded {
@@ -145,7 +164,7 @@ struct GuideView: View {
                 .help("Which guide to read; the search looks in all of them")
                 Button("Expand All", systemImage: "rectangle.expand.vertical") { expandAll() }
                     .help("Open every section")
-                Button("Collapse All", systemImage: "rectangle.compress.vertical") { expanded = [] }
+                Button("Collapse All", systemImage: "rectangle.compress.vertical") { openSections[navigator.guide] = [] }
                     .help("Close every section")
             }
         }
@@ -153,15 +172,37 @@ struct GuideView: View {
             for guide in Guide.allCases { documents[guide] = guide.load() }
             index = Guide.searchIndex(documents)
             loaded = true
+            hits = index?.hits(for: search) ?? []
+            takeSearchRequest()
         }
-        .onChange(of: navigator.searchRequests) { searching = true }
-        .onChange(of: search) { if !search.isEmpty { opened = nil } }
+        .onChange(of: navigator.searchRequests) { takeSearchRequest() }
+        .onChange(of: search) {
+            if !search.isEmpty { opened = nil }
+            hits = index?.hits(for: search) ?? []
+        }
+        // A Guide button, the Help menu or the picker asks for a place: show it, not the results.
+        .onChange(of: navigator.revision) {
+            guard navigator.revision != ownRevision else { return }
+            search = ""
+            searching = false
+            opened = nil
+        }
         // `[text](#id)` opens a section of this guide, `[text](error-analysis#id)` of another.
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme == nil, let section = url.fragment else { return .systemAction }
             navigator.show(Guide(rawValue: url.path) ?? navigator.guide, section: section)
             return .handled
         })
+    }
+
+    private var expanded: Binding<Set<String>> {
+        Binding(get: { openSections[navigator.guide] ?? [] }, set: { openSections[navigator.guide] = $0 })
+    }
+
+    private func takeSearchRequest() {
+        guard navigator.wantsSearch else { return }
+        navigator.wantsSearch = false
+        searching = true
     }
 
     private func content(_ document: GuideDocument) -> some View {
@@ -176,7 +217,7 @@ struct GuideView: View {
                     Text(document.title).font(.largeTitle.bold())
                     GuideBlocks(blocks: document.intro, highlight: opened)
                     ForEach(document.sections) { section in
-                        GuideSectionView(section: section, level: 0, expanded: $expanded, highlight: opened)
+                        GuideSectionView(section: section, level: 0, expanded: expanded, highlight: opened)
                     }
                 }
                 .frame(maxWidth: 780, alignment: .leading)
@@ -198,6 +239,7 @@ struct GuideView: View {
         searching = false
         opened = query
         navigator.show(Guide(rawValue: hit.guide) ?? navigator.guide, section: hit.section)
+        ownRevision = navigator.revision
     }
 
     /// A screen found by the search: the main window shows it and comes forward.
@@ -205,28 +247,33 @@ struct GuideView: View {
         guard let section = SidebarSection(rawValue: id) else { return }
         model.section = section
         let guide = NSApp.keyWindow
-        NSApp.windows.first { $0.canBecomeMain && $0.isVisible && $0 !== guide && $0.identifier?.rawValue.contains("Settings") != true }?
-            .makeKeyAndOrderFront(nil)
+        guard let window = NSApp.windows.first(where: {
+            $0.canBecomeMain && $0 !== guide && $0.identifier?.rawValue.contains("Settings") != true && ($0.isVisible || $0.isMiniaturized)
+        }) else { return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
     }
 
     /// Opens the section (and its parents) and scrolls to it; without one, opens the first.
     private func open(_ id: String?, in document: GuideDocument, proxy: ScrollViewProxy) async {
         guard let id, let path = document.path(to: id) else {
-            if expanded.isEmpty, let first = document.sections.first { expanded = [first.id] }
+            if expanded.wrappedValue.isEmpty, let first = document.sections.first { expanded.wrappedValue = [first.id] }
             return
         }
-        expanded.formUnion(path)
-        // Let the opened sections lay out before scrolling.
-        try? await Task.sleep(for: .milliseconds(150))
+        expanded.wrappedValue.formUnion(path)
+        // Let the opened sections lay out before scrolling; a newer request cancels this one.
+        guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
         withAnimation { proxy.scrollTo(id, anchor: .top) }
     }
 
     private func expandAll() {
+        var all = Set<String>()
         func add(_ section: GuideDocument.Section) {
-            expanded.insert(section.id)
+            all.insert(section.id)
             section.subsections.forEach(add)
         }
         documents[navigator.guide]?.sections.forEach(add)
+        openSections[navigator.guide] = all
     }
 }
 
@@ -280,7 +327,7 @@ private struct GuideSearchResults: View {
                         Text(hit.breadcrumb.joined(separator: " › ")).font(.caption).foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 0)
-                    if let path = hit.image, let url = Guide.imageURL(path), let image = NSImage(contentsOf: url) {
+                    if let path = hit.image, let image = Guide.image(path) {
                         Image(nsImage: image)
                             .resizable()
                             .scaledToFit()
@@ -436,7 +483,7 @@ private struct GuideImage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            if let url = Guide.imageURL(path), let image = NSImage(contentsOf: url) {
+            if let url = Guide.imageURL(path), let image = Guide.image(path) {
                 Button { NSWorkspace.shared.open(url) } label: {
                     Image(nsImage: image)
                         .resizable()

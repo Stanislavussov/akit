@@ -210,6 +210,61 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - Глобальные MCP-серверы и серверы других агентов правятся прямо в конфигах на экране MCP Servers.
 - Пример: сервер нужен всем проектам на SwiftUI — положите его в `.mcp.json` слоя `swiftui`. Сервер нужен одному агенту на этом Mac — добавьте его на экране MCP Servers.
 
+## Меню: боковое и верхнее
+<!-- section: menus -->
+
+**Что это:** два меню, через которые вы попадаете во всё остальное. Боковое меню слева в окне переключает экраны. Верхнее меню macOS (строка вверху экрана) открывает руководства, настройки и служебные команды.
+
+**Когда пригодится:**
+
+- «Не помню, какой экран за что отвечает» → наведите курсор на пункт бокового меню: появится подсказка в одну строку.
+- «Хочу прочитать про экран подробно» → правый щелчок по пункту → **What Is … For?**.
+- «Не знаю, где нужная кнопка» → Help → **Search Guides and Screens…** (⌥⌘F).
+- «Экран показывает старые данные» → ⌘R (**Refresh**).
+
+### Боковое меню
+<!-- section: menus-sidebar -->
+
+Пункты собраны в четыре группы. Заголовок группы — вопрос, на который отвечают её экраны.
+
+- **On This Mac**: [Overview](#overview), [Skills](#skills), [skills.sh](#skillsSh), [MCP Servers](#mcp). Что у агентов есть сейчас.
+- **Setup**: [Brain](#brain). Что у агентов должно быть.
+- **Activity**: [Sessions](#sessions), [Usage](#usage). Как агенты работали.
+- **Improve**: [Insights](#insights), [Lab](#lab), [Error Analysis](#analysis). Что лишнее, что ломается и помог ли фикс.
+
+Что ещё есть в боковом меню:
+
+- Число справа от **Skills** — сколько скиллов AKit нашёл. Справа от **MCP Servers** — сколько серверов.
+- Число справа от **Lab** — сколько запусков сейчас идёт или ждёт в очереди. Если таких нет, числа нет.
+- Подсказка: наведите курсор на пункт или на заголовок группы.
+- Правый щелчок по пункту → **What Is … For?**: открывает это руководство на разделе экрана.
+- Кнопка над списком сворачивает и разворачивает боковое меню.
+
+### Значок сборки внизу бокового меню
+<!-- section: menus-build -->
+
+Внизу бокового меню написано, какая копия AKit запущена. Это нужно, когда открыто несколько копий.
+
+- **Production** (зелёный) — сборка из основной ветки. **Development** (оранжевый) — сборка из другой ветки или рабочей копии.
+- Ниже стоит версия и имя папки, из которой собрано приложение.
+- Подсказка при наведении показывает папку исходников, ветку и время сборки.
+- Правый щелчок: **Show Source in Finder** и **Copy Source Path**.
+
+### Верхнее меню
+<!-- section: menus-bar -->
+
+- **AKit → About AKit**: версия приложения.
+- **AKit → Settings…** (⌘,): окно настроек. Подробно: [Settings](#settings).
+- **View → Refresh** (⌘R): заново найти агентов, скиллы и серверы на диске. То же делает кнопка с круглой стрелкой на экранах.
+- **Help → AKit Screens Guide**: это руководство.
+- **Help → Error Analysis Guide**: [руководство Error Analysis](error-analysis#overview).
+- **Help → Search Guides and Screens…** (⌥⌘F): окно руководства с курсором в поле поиска. Подробно: [Как искать по руководству](#start-search).
+- **Help → Copy Diagnostics**: копирует отчёт о том, что AKit видит на этом Mac, без секретов. Внизу окна появляется строка «Diagnostics copied…».
+- **Develop → Rebuild and Relaunch** (⇧⌘R): собрать AKit заново из его исходников и перезапустить. Пункт серый, если AKit не знает, где его исходники.
+- Под ним в меню **Develop** написано: **Production** или **Development** с версией, ветка и папка, из которой собрано приложение.
+
+> **Совет:** кнопка **Guide** на экране открывает руководство сразу на нужном разделе. На Overview (**Screens Guide**) и Insights она открывает это руководство, на Lab и Error Analysis — руководство Error Analysis. На остальных экранах есть правый щелчок по пункту бокового меню → **What Is … For?**.
+
 ## On This Mac: что есть сейчас
 <!-- section: installed -->
 
@@ -381,7 +436,7 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - «Скилл `grilling` нужен только в проекте notes-mac, а его описание уходит в каждую сессию всех проектов» → **Move to Project…**.
 - «Хочу убрать скилл совсем, из всех папок и из brain» → **Remove Everywhere…**.
 
-![Экран Skills: вверху фильтры All Skills, All Harnesses, Any Origin, подпись 10 skills и поле поиска Name or description; слева список скиллов по группам Global и Project · notes-mac с метками brain · core, brain · base, not in brain (у commit-message и release-notes), Claude, Codex, OpenCode, Pi; справа карточка скилла akit с кнопками Move to Project…, Edit in Brain, Show in Brain, Show in Finder, Remove Everywhere… и переключателями Claude (Manual) и Pi (On)](images/skills.png)
+![Экран Skills: вверху фильтры All Skills, All Harnesses, Any Origin, подпись 11 skills и поле поиска Name or description; слева список скиллов по группам Global и Project · notes-mac (в ней и скилл проекта note-templates) с метками brain · core, brain · base, not in brain, Claude, Codex, OpenCode, Pi; справа карточка скилла akit с кнопками Move to Project…, Edit in Brain, Show in Brain, Show in Finder, Remove Everywhere… и переключателями Claude (Manual) и Pi (On)](images/skills.png)
 
 #### Что на экране
 <!-- section: skills-screen -->
@@ -628,16 +683,20 @@ Brain — это ваш репозиторий с эталоном настро�
 #### Сложно: сделать скилл проекта глобальным
 <!-- section: skills-global -->
 
-Пример: скилл `changelog` появился в проекте notes-mac, а теперь нужен во всех проектах.
+Пример: скилл `note-templates` появился в проекте notes-mac, а теперь нужен во всех проектах.
 
 Кнопка **Move to Global…** есть в карточке и в контекстном меню скилла проекта: и того, что пришёл из ответов проекта, и собственного скилла проекта. Нужен подключённый brain.
 
-1. Нажмите **Move to Global…**. Откроется окно «Move “changelog” to Global».
+1. Нажмите **Move to Global…**. Откроется окно «Move “note-templates” to Global».
 2. Слева список изменений по местам. Нажмите на строку, и справа появится её diff.
 3. Выберите **Mode**: **auto** или **manual**. По умолчанию стоит тот режим, который записан в ответах проекта.
 4. Прочитайте строки под списком: красные мешают переносу, оранжевые предупреждают.
 5. Нажмите **Move**.
-6. Страница итога пишет «changelog is global» и что сделано в каждом месте. Нажмите **Done**.
+6. Страница итога пишет «note-templates is global» и что сделано в каждом месте. Нажмите **Done**.
+
+![Окно Move “note-templates” to Global: слева список изменений — Brain (skills/note-templates), Core layer (layers/core/layer.yaml, строка выбрана), Home folder (~/.agents/skills/note-templates/SKILL.md, new) и Project github.com/acme/notes-mac; справа diff layer.yaml с новыми строками name: note-templates и mode: auto; внизу переключатель Mode auto / manual и кнопки Cancel и Move](images/skills-global.png)
+
+На снимке в списке выбрана строка **Core layer**. Справа её diff: в `layers/core/layer.yaml` добавляются строки `name: note-templates` и `mode: auto`.
 
 Разделы списка:
 
@@ -1060,6 +1119,9 @@ akit remove skill ИМЯ --everywhere
 5. В блоке **Values** отметьте необязательные значения, которые хотите задать. Обязательные (**required**) отмечены всегда. Значок ключа означает секрет.
 6. В поле имени внизу, слева от кнопки **Fill the Form**, оставьте или поменяйте имя, под которым сервер попадёт в конфиг.
 7. Нажмите **Fill the Form**. Окно перейдёт на вкладку **Form**. Сверху в разделе **From the Catalog** написано, для чего каждое значение.
+
+![Окно Add MCP Server, вкладка Form после Fill the Form: раздел From the Catalog со строкой Dice · Remote · mcp.dice.com (Anthropic directory), поля Name (dice), Transport (Remote (HTTP)) и URL (https://mcp.dice.com/mcp), раздел Headers с кнопкой Add, раздел Where с меню Add to (Claude · User (.claude.json)) и путём ~/.claude.json; кнопки Cancel и активная Preview…](images/mcp-add-filled.png)
+
 8. Впишите значения, выберите место в **Add to** и нажмите **Preview…**. AKit покажет, что именно попадёт в файл.
 9. Нажмите **Apply**. Перезапустите агента или перезагрузите его MCP-серверы, чтобы он увидел сервер.
 
@@ -1082,16 +1144,19 @@ akit remove skill ИМЯ --everywhere
 2. Выберите способ ввода переключателем **Form** / **JSON** / **Catalog**.
 3. Заполните форму (поля описаны ниже) и нажмите **Preview…**.
 4. Проверьте diff и нажмите **Apply**. Кнопка **Back** возвращает к форме.
+
+![Страница предпросмотра окна Add MCP Server: заголовок Add “linear”, строка Claude · User (.claude.json) · ~/.claude.json, пояснение, что Claude пишет запись сам командой claude mcp add-json --scope user, а AKit хранит резервную копию ~/.claude.json, JSON сервера с type http и url https://mcp.linear.app/mcp; кнопки Back и Apply](images/mcp-add-preview.png)
+
 5. В последнем окне видно путь к резервной копии (**Backup: …**), если файл уже существовал. Нажмите **Done**.
 
 ![Окно Add MCP Server, вкладка Form: переключатель Form / JSON / Catalog, поля Name, Transport (Local command (stdio)), Command, Arguments, раздел Environment с кнопкой Add, раздел Where с меню Add to (Claude · User (.claude.json)) и путём ~/.claude.json, кнопки Cancel и Preview…](images/mcp-add.png)
 
 Поля вкладки **Form**:
 
-- **Name**: имя сервера в конфиге, например `grafana`.
+- **Name**: имя сервера в конфиге, например `linear`.
 - **Transport**: как агент связывается с сервером. **Local command (stdio)** — агент сам запускает программу на этом Mac. **Remote (HTTP)** и **Remote (SSE)** — агент обращается по адресу.
 - **Command** и **Arguments** (для локального сервера): программа и её аргументы, например `npx` и `-y @scope/server --flag`.
-- **URL** (для удалённого сервера): адрес, например `https://example.com/mcp`.
+- **URL** (для удалённого сервера): адрес, например `https://mcp.linear.app/mcp`.
 - **Environment** (для локального) или **Headers** (для удалённого): пары «имя — значение». Кнопка **Add** добавляет строку, кнопка с минусом убирает.
 - Флажок **Secret** справа от поля значения: сохранить значение в Keychain, а не в файле.
 - **Add to** в разделе **Where**: в какой файл записать сервер. Сначала идут глобальные места, потом проекты. В названии видно агента, уровень и имя файла. Под меню показан полный путь.
@@ -1552,6 +1617,10 @@ System prompt — это текст, который агент отправля�
 2. Плитка **Calls** показывает число вызовов. Плитки **Succeeded**, **Failed**, **Rejected**, **Interrupted** показывают доли.
 3. Блок **By tool** — полоса на каждый инструмент с долей исходов. Показаны первые 12 инструментов. Если их больше, флажок **All N tools** показывает все.
 4. Таблица **What went wrong** перечисляет неудачи: **Tool**, **Outcome**, **Kind**, **Calls**, **Example** (пример ошибки).
+
+![Вкладка Overview сессии Add a tags filter to the notes list, прокрученная к блоку Tool calls: плитки Calls 9, Succeeded 89%, Failed 11%, Rejected 0%, Interrupted 0%, полоса исходов с легендой; блок By tool с полосами Bash, Edit, Grep, Read, Skill, Write и github: get_issue; таблица What went wrong со столбцами Tool, Outcome, Kind, Calls, Example и строкой Bash — Command failed — Deterministic](images/sessions-tools.png)
+
+На снимке 9 вызовов семи инструментов, один упал. Это `Bash`: исход **Command failed**, вид **Deterministic**. В столбце **Example** стоит текст ошибки: «Exit code 1: … cannot find 'TagFilter' in scope».
 
 Значения столбца **Kind**:
 
@@ -2087,6 +2156,8 @@ AKit не считает стоимость по прайс-листам. Он �
 3. Нажмите **Preview Changes**. Строки сверху называют, что именно скроется от git.
 4. Нажмите **Apply**.
 
+![Окно Set Up a Project для проекта weather-app: флажки Harnesses (claude, pi и codex отмечены, opencode нет), в блоке Project files выбрано Local only (hidden from git) с подписью про .git/info/exclude и git worktrees, список Layers с кнопкой New Layer…, список Skills с переключателями auto / manual и полем Filter; кнопки Other Folder…, Cancel и Preview Changes](images/brain-setup-local.png)
+
 - **По умолчанию** рабочий Mac выбирает Local only, личный — Commit to git. Подпись добавляет «Default on this work Mac.» или «Default on this personal Mac.».
 - **Поменялся только этот выбор.** Предпросмотр пишет «All … files already match the layers», а **Apply** всё равно доступен. Он сохраняет выбор и обновляет блок AKit в `.git/info/exclude`.
 - **Не git-репозиторий.** При Local only подпись добавляет «Not the top of a git repository: nothing to hide.».
@@ -2245,7 +2316,7 @@ Git worktree — вторая рабочая папка того же репоз
 #### Сложно: проверить, помогает ли слой
 <!-- section: brain-evals -->
 
-Когда нужно: вы написали слой `swiftui` и хотите знать, решает ли агент задачи с ним лучше, чем без него.
+Когда нужно: вы написали слой `backend-node` и хотите знать, решает ли агент задачи с ним лучше, чем без него.
 
 Оценка (eval) прогоняет набор задач слоя дважды: без слоя и со слоем. Одна задача в одной настройке — это ячейка (cell). Полное описание — в [руководстве Error Analysis](error-analysis#evaluate-layer).
 
@@ -2277,6 +2348,8 @@ Git worktree — вторая рабочая папка того же репоз
 6. Когда калибровка закончится, снова нажмите **Evaluate…**. Теперь видна оценка стоимости.
 7. Нажмите **Queue N Cells…**, прочитайте вопрос с суммой и нажмите **Queue**.
 8. Следите за строкой «running: n of N cells». Потом в блоке появится вердикт.
+
+![Окно Evaluate backend-node: пояснение, что набор слоя идёт в Lab как одна оценка, без слоя и со слоем; блок Eval; блок Agent со строкой Claude Code, полями Model, Effort и Repeats, переключателем Read-only sanity cells on 3 tasks (must fail), полем The agent may not run, меню Open in и переключателем Keep the clones; внизу кнопки Guide и Cancel и кнопка постановки ячеек](images/brain-evaluate.png)
 
 Что показывает окно:
 
@@ -2470,7 +2543,13 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 1. В списке периода выберите период, например **30 Days**.
 2. В таблице выберите, что смотреть: **Skills**, **MCP Servers** или **Tools**. Заголовок таблицы называет выбор и период, например «Tools, Last 30 Days».
+
+![Таблица Tools, Last 30 Days на экране Insights: переключатель Skills / MCP Servers / Tools на Tools, флажок Unused Only снят, список Sort со значением Fewest Calls, столбцы Tool, Harness, Calls, Available, Last call; у 14 инструментов (Agent, Glob, NotebookEdit, TodoWrite, WebFetch, WebSearch, инструменты mcp__github__ и mcp__playwright__) в столбце Calls оранжевое Unused, ниже Grep с одним вызовом и ссылка Show All 21 Tools](images/insights-tools.png)
+
 3. Включите флажок **Unused Only**. Останутся только строки без единого вызова за период.
+
+![Та же таблица Tools, Last 30 Days с включённым флажком Unused Only: переключатель Skills / MCP Servers / Tools, список Sort и столбцы Tool, Harness, Calls, Available, Last call; в таблице остались только инструменты без вызовов за период](images/insights-unused.png)
+
 4. В списке **Sort** выберите порядок.
 5. Если строк больше 15, нажмите **Show All N …** внизу таблицы. **Show Fewer** снова сворачивает список.
 
@@ -2483,6 +2562,8 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Имена неиспользуемых строк выделены оранжевым. У MCP-серверов и инструментов в столбце **Calls** написано «Unused».
 - Наведите курсор на любое число: подсказка объясняет, что оно считает.
 - У MCP-сервера стрелка перед именем раскрывает строку «Not called: …». Это его инструменты без вызовов за период.
+
+![Таблица MCP Servers, Last 30 Days на экране Insights: переключатель Skills / MCP Servers / Tools на MCP Servers, флажок Unused Only, список Sort со значением Fewest Calls, столбцы MCP server, Tools called, Calls, Available, Last call; серверы playwright (0 / 5, Unused) и github (1 / 4, один вызов), обе строки раскрыты до списка их инструментов](images/insights-servers.png)
 
 Порядок в списке **Sort**:
 
@@ -2843,7 +2924,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Помогают ли мои плагины и хуки или только тратят токены?» → **New Run…** → **Replay a Commit** с настройками **Full** и **Lean**.
 - «Я поставил пакет Error Analysis. Где он?» → он в списке запусков как **Error analysis batch**.
 
-![Экран Lab: вверху переключатель Runs / Sends, подпись 15 runs · $1.05 recorded, кнопка с плюсом (New Run…) и кнопка Guide; слева список запусков со статусом Finished — разбор Review: Add a 5-day forecast screen с ценой $1.05, контрольные ячейки Control …, пакет Error analysis: all projects · 30 sessions; справа страница запуска с полями Kind, Agent, Opens in, Queued, Started, Ended, Cost, Folder и кнопками Re-check with Another Model…, Show in Finder, Remove…](images/lab.png)
+![Экран Lab: вверху переключатель Runs / Sends, подпись 15 runs · $1.05 recorded, кнопка с плюсом (New Run…) и кнопка Guide; в списке запусков слева выбран пакет Error analysis: all projects · 30 sessions с подписью 28/30 done, 2 failed; справа страница пакета: поле Folder, блок Batch со сводкой 28 of 30 done, 2 failed, полосами Notes 30/30, Verifier 28/30, Matching 28/30, Judges 28/30 и строкой Clustering: not yet, кнопки Resume, Retry Errors, Open Report и таблица Sessions с кнопкой Show Notes в каждой строке](images/lab.png)
 
 #### Что на экране
 <!-- section: lab-screen -->
@@ -2977,6 +3058,8 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - **Quote** — дословная цитата из этого шага.
 - **The verifier's case against it** — довод проверяющей модели «проблемы здесь нет» и её вердикт. Строка есть только у принятых заметок с серьёзностью **High**.
 
+![Страница разбора Review: Add a 5-day forecast screen, прокрученная к Problems by Type: режим Explicit user constraint violated · 1 с заметкой n1 step #7, метками Edit, High, Agent и раскрытыми Quote и The verifier's case against it; режим Overclaiming completion · 1 с заметкой n2 step #16 и меткой Type unconfirmed; ниже раскрытый блок Details: what happened, requirements, rejected notes с разделами What Happened, Requirements, Where It Went Off](images/lab-notes.png)
+
 Кнопки рядом со строкой «Reviewed session: …»:
 
 - **Show Session** — открывает экран Sessions.
@@ -2987,6 +3070,8 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 1. Нажмите **Re-check with Another Model…**.
 2. Выберите **Harness**, **Model** и **Effort**.
 3. Нажмите **Queue and Start**. В списке появится новый запуск.
+
+![Окно Re-check with Another Model: пояснение, что заметки нового разбора заменят заметки этого, строка This review: Claude Code · opus · high · one model call, поля Harness (Claude Code), Model (opus) с меню Models и Effort (high); кнопки Cancel и Queue and Start](images/lab-recheck.png)
 
 Новый разбор — это заметки и проверка, по одному вызову модели на каждое. Его заметки заменяют заметки старого разбора. Старый запуск сохраняет свой абзац и свои улучшения. На его странице появляется строка «A later review of this session replaced its notes» и кнопка **Show Review**: она открывает новый разбор.
 
@@ -3036,6 +3121,8 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 2. Задайте **Project** (или **All projects**), **Period**, **Sessions from**, число сессий **Sessions**, **Notes by**, **Matching model** и **Language**.
 3. Нажмите **Sample and Queue**.
 
+![Окно New Lab Run с выбранным Error Analysis Batch: поля Project (All projects), Period с флажками From и To, Sessions from (All harnesses), Sessions: 20, Notes by (Automatic), Matching model (same as the notes), Language (English), строка оценки 20 sessions, ≈ $21.07, меню Open in (Automatic (Background)); кнопки Cancel и Sample and Queue](images/lab-new-batch.png)
+
 В списке запусков пакет подписан **Error analysis batch**. На его странице:
 
 - **Pause** — остановить после текущих вызовов. **Resume** — продолжить с того же места.
@@ -3043,7 +3130,13 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - **Open Report** — открыть отчёт пакета в Error Analysis → **Reports**.
 - **Show Notes** в строке сессии — её исход, заметки и советы.
 
+![Страница пакета Error analysis: all projects · 30 sessions в Lab: поля Kind (Error analysis batch), Opens in, Queued, Started, Ended, Folder, кнопки Show in Finder и Remove…; блок Batch со сводкой 30 of 30 done, полосами Notes, Verifier, Matching, Judges по 30/30, строкой Clustering и кнопками Resume и Open Report; таблица Sessions со столбцами Status, Session, π, Sampled, Last step и кнопкой Show Notes](images/lab-batch.png)
+
 **Control cell** — контрольная ячейка: один прогон контрольной задачи при одной настройке. Ячейки ставит в очередь Error Analysis → **Evals** кнопкой **Run Cells…**. На странице ячейки есть разделы **Control task** (задача) и **Oracle** (вердикт и проверки на подглядывание).
+
+![Страница контрольной ячейки Control Show pinned notes at the top · variant · 3/3 в Lab: поля Kind (Control cell), Agent, Opens in, Folder, кнопки Show in Finder и Remove…; раздел Control task со строками Repository, Oracle (tests: make test), Source, Setup и Repeat 3 of 3; раздел Oracle с вердиктом Passed и оранжевыми строками Flagged: comparisons count this cell as failed и Test files changed: Tests/NotesListTests.swift](images/lab-control.png)
+
+На снимке оракул сказал **Passed**, но агент поменял файл тестов. Поэтому ячейка помечена флажком, и сравнения считают её проваленной.
 
 > **Важно:** цена пакета — это сумма всех его вызовов модели.
 
@@ -3127,6 +3220,10 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 ![Вкладка Bootstrap экрана Error Analysis: слева счётчик 1 of 4 labeled, кнопки Pick Sessions… и Queue Model Notes…, пункт Metrics and Mapping и список Reserved sessions с метками labeled, draft, to label; справа разделы Agreement with the model с таблицей Recall и Precision, Your notes → modes с кнопкой First Modes…, Similar cases с кнопкой Find Similar Cases…, Finds с кнопками Accept и Reject](images/analysis-bootstrap.png)
 
+Нажмите на сессию в списке **Reserved sessions**, и откроется её разметка: шаги транскрипта и форма заметки.
+
+![Разметка сессии Sort pinned notes first на вкладке Bootstrap: слева список Reserved sessions с метками labeled, draft, to label, в середине шаги транскрипта #0–#11 с выбранным шагом #7 Bash, справа блок New note с полем What went wrong и кнопками Clear и Add Note, блок Your notes (1), блок The session с полем Outcome и кнопки Save Draft и Finish…](images/analysis-labeling.png)
+
 **Reports** отвечает на вопрос «как часто это случается?». Отчёт пакета показывает частоты режимов с интервалами, насыщение (появляются ли ещё новые режимы) и матрицу переходов. Подробно: [Reports](error-analysis#reports).
 
 ![Вкладка Reports экрана Error Analysis: списки Batch и Compare with, карточки Coverage 28/30, Notes recall 50%, Verifier rejected 0%, Spot checks, Routes accepted; раздел Mode frequencies со столбцами Mode, Share (95% interval), Plain, Goal reached / not, Check и метками validated, exact, provisional; ниже раздел Saturation](images/analysis-reports.png)
@@ -3138,7 +3235,11 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 Саму оценку слоя запускают из Brain → слой → **Evaluate…**. Страница набора показывает все его оценки и сравнение выбранной. Подробно: [Evals](error-analysis#evals).
 
-![Вкладка Evals экрана Error Analysis: слева заголовок 2 control tasks, кнопки From Session…, Reproduction…, From Commit…, Run Cells… и список из двух контрольных задач проекта notes-mac, у первой метка green; справа подсказка Select Tasks](images/analysis-evals.png)
+![Вкладка Evals экрана Error Analysis: слева заголовок 2 control tasks, кнопки From Session…, Reproduction…, From Commit…, Run Cells…, раздел Layer Sets с набором слоя backend-node (2 tasks) и раздел Tasks с двумя контрольными задачами проекта notes-mac, у первой метка green; справа подсказка Select Tasks](images/analysis-evals.png)
+
+Кнопка **Run Cells…** открывает окно, где вы выбираете задачи, настройки и агента. Внизу окна стоит число ячеек и оценка времени.
+
+![Окно Run Cells: список Tasks с флажками, блок Setups с переключателями Baseline: the task as is, Variant: one difference from the baseline и Read-only sanity setup (must fail), блок Agent с полями Harness, Model, Effort, Repeats: 3 per task and setup, Open in и Keep the clones; внизу строка 3 cells to run и кнопки Cancel и Queue 3 Cells…](images/analysis-run-cells.png)
 
 #### Просто: первый путь в пять шагов
 <!-- section: analysis-first -->
