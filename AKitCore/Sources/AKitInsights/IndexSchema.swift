@@ -152,6 +152,14 @@ public enum IndexSchema {
         }
     }
 
+    /// Opens the index only to read it: nil when it is missing or not at this akit's schema
+    /// version (an older one is migrated by the next import, a newer one is left alone).
+    public static func openReadOnly(_ url: URL) -> IndexDatabase? {
+        guard FileManager.default.fileExists(atPath: url.path), let database = try? IndexDatabase(url: url, readOnly: true),
+              (try? database.userVersion) == migrations.count else { return nil }
+        return database
+    }
+
     /// Opens the index and migrates it.
     public static func open(_ url: URL) throws -> IndexDatabase {
         let database = try IndexDatabase(url: url)

@@ -96,6 +96,39 @@ struct BrainImportTests {
         #expect(try await git("status", "--porcelain") == "A  machines/work.yaml\n")
     }
 
+    @Test func copiesIntoTheLibraryWithoutALayerAndKeepsTheSource() async throws {
+        let plan = try await setUp()
+        // The layer may change meanwhile: a library-only import doesn't touch it.
+        try write(".akit/registry/layers/core/layer.yaml", "name: core\nskills: []\n")
+        _ = try await git("commit", "-qam", "Edit core")
+        let copied = try await BrainImport.apply(plan, importing: ["fresh"], listInLayer: false, env: env)
+        #expect(copied == ["fresh"])
+        let brain = try #require(Brain.load(from: brainRoot))
+        #expect(brain.skills.contains { $0.name == "fresh" })
+        #expect(brain.layers.first { $0.name == "core" }?.skills.isEmpty == true)
+        #expect(try await git("log", "-1", "--format=%s%n%b") == "Import skill fresh\nSource of fresh: someone/skills\n\n")
+        #expect(try await git("show", "--name-only", "--format=", "HEAD").split(separator: "\n").sorted()
+                == ["skills/fresh/SKILL.md", "skills/fresh/references/notes.md"])
+        // Nothing new to copy: nothing to commit, and no layer edit either.
+        let again = BrainImport.plan(from: source, into: brainRoot, env: env)
+        #expect(try await BrainImport.apply(again, importing: ["fresh"], listInLayer: false, env: env).isEmpty)
+        #expect(try await git("log", "-1", "--format=%s") == "Import skill fresh\n")
+    }
+
+    @Test func sourceNotesKeepOnlyTheRepository() {
+        #expect(BrainImport.sourceNote("skills.sh · mattpocock/skills") == "mattpocock/skills")
+        #expect(BrainImport.sourceNote("https://user:token@host.example/o/r?x=1#y") == "host.example/o/r")
+        #expect(BrainImport.sourceNote("git@github.com:o/r.git") == "github.com/o/r")
+        #expect(BrainImport.sourceNote("Your copy of o/r (renamed)") == "o/r")
+        #expect(BrainImport.sourceNote("o/r\nSigned-off-by: someone") == "o/r")
+        #expect(BrainImport.sourceNote("  ") == nil)
+        #expect(BrainImport.sourceNote("ghp_tok@github.com/o/r") == "github.com/o/r")
+        #expect(BrainImport.sourceNote("token:abc@host/o/r") == "host/o/r")
+        #expect(BrainImport.sourceNote("https://user:pa/ss@host/o/r") == "host/o/r")
+        #expect(BrainImport.sourceNote("file:///Users/me/x") == nil)
+        #expect(BrainImport.sourceNote("/Users/me/x") == nil)
+    }
+
     @Test func importsIntoAnotherLayer() async throws {
         _ = try await setUp()
         try write(".akit/registry/layers/web/layer.yaml", "description: Web apps\n")

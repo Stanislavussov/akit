@@ -15,6 +15,7 @@ import SwiftUI
 /// (`--query <json>` fills its form, `--tab preview` shows the plan; `--tab catalog` opens its catalog search, `--query` is the search text, `--select <server name>` picks a result and `--capture` fills the form from it);
 /// MCP Servers: `--tab switch` opens Off in Project… of the first server with a switch.
 /// Skills: `--add` opens the selected skill's switch sheet (the first harness with a switch, its first other state);
+/// `--tab move` opens Move to Project… for the global skill `--select <folder name>` (`move-check`, `move-preview` go on to those pages);
 /// `--settings` shows the Settings view in the main window; `--guide <section id>` the guide window's
 /// view, opened at that section (`--query` fills its search field);
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;

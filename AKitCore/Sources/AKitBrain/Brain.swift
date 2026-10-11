@@ -71,6 +71,29 @@ public struct Brain: Sendable {
         return brain
     }
 
+    /// This brain as a planned edit leaves it, for a preview before the edit is written: the
+    /// layer's `layer.yaml` read from `text`. nil when the text can't be read as a layer.
+    public func replacingLayer(_ name: String, text: String) -> Brain? {
+        guard let index = layers.firstIndex(where: { $0.name == name }),
+              let parsed = try? LayerManifest.parse(text, folder: layers[index].folder) else { return nil }
+        var changed = layers
+        changed[index] = parsed.layer
+        var brain = Brain(root: root, skills: skills, layers: changed, problems: problems)
+        brain.projects = projects
+        return brain
+    }
+
+    /// This brain with a skill its library doesn't have yet, read from `folder` (where an import
+    /// will copy it from), for a preview before the import.
+    public func addingSkill(_ name: String, from folder: URL) -> Brain {
+        guard !skills.contains(where: { $0.name == name }) else { return self }
+        let text = (try? String(contentsOf: folder.appending(path: "SKILL.md"), encoding: .utf8)) ?? ""
+        let skill = Skill(name: name, description: Frontmatter.parse(text)["description"] ?? "", folder: folder)
+        var brain = Brain(root: root, skills: (skills + [skill]).sorted { $0.name < $1.name }, layers: layers, problems: problems)
+        brain.projects = projects
+        return brain
+    }
+
     /// Projects that get this layer: picked, or required by a picked layer.
     public func projects(using layer: String) -> [Project] {
         projects.filter { layers(of: $0).contains(layer) }

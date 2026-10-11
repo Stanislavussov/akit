@@ -38,6 +38,11 @@ every other byte. No new dependency. The same day, MCP switches (`AKitMCP/MCPSwi
 (and `AKitModel`), for `MCPProjectSwitch`, which keeps a Pi `.pi/mcp.json` out of git with its own
 block in `info/exclude` (LocalOnly's block code, other markers) and expands projects to worktrees.
 
+2026-10-11 (Move to Project, `layers.md`): `AKitProjectSetup → AKitSkills`, for `SkillMove`, which
+takes the scanned skills and trashes global copies with `SkillRemover`. Skills sits below Brain, so
+the arrows still point down. `Brain.replacingLayer` and `Brain.addingSkill` give a preview the
+brain as a planned edit leaves it.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -134,7 +139,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitBrain` | Foundation, Model, Skills, Yams |
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
-| `AKitProjectSetup` | Foundation, Model, Brain, Render, Insights, MCP (MCP switches' project files) |
+| `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Brain, Render, Insights, MCP (MCP switches' project files) |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |

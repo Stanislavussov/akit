@@ -359,6 +359,44 @@ final class AppModel {
         }
     }
 
+    // MARK: Move to Project
+
+    /// One skill's calls per project over the last 30 days (`akit stats skill`), from the index as
+    /// it is: opened read-only, never imported or migrated; nil without one. Only reads.
+    func skillCalls(_ name: String) async -> SkillCallsReport? {
+        let env = HarnessEnvironment.current, brain = brain
+        return await Task.detached {
+            guard let database = IndexSchema.openReadOnly(InsightsPaths(env: env).database) else { return nil }
+            return try? SkillCalls.report(database, skill: name, brain: brain, env: env, hardware: MachineProfile.currentHardwareHash())
+        }.value
+    }
+
+    /// What moving the skill into these projects would do (`SkillMove.plan`). Only reads.
+    func moveSkillPlan(name: String, targets: [SkillMove.Target], mode: LayerSkill.Mode, keepGlobal: Bool) async -> SkillMove.Plan? {
+        guard let brain else { return nil }
+        let env = HarnessEnvironment.current
+        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+        return await Task.detached {
+            SkillMove.plan(name: name, targets: targets, mode: mode, keepGlobal: keepGlobal, brain: brain, context: context)
+        }.value
+    }
+
+    /// Moves the skill (brain, projects, core, home folder), holding the worktree sync of every
+    /// project it writes, then rescans. A `SkillMove.Failure` carries what was done before it stopped.
+    func moveSkill(_ plan: SkillMove.Plan) async throws -> SkillMove.Outcome {
+        guard let brain else {
+            throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
+        }
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current
+        let ids = Set(plan.adding.map(\.id) + (plan.home.map { [$0.id] } ?? []))
+        return try await holdingWorktrees(all: ids) {
+            try await SkillMove.apply(plan, brain: brain, env: env)
+        }
+    }
+
     // MARK: Worktrees
 
     /// What a worktree sync of a local-only project did, and when.
@@ -409,11 +447,16 @@ final class AppModel {
     /// held in the same gate as `syncWorktrees`: a running sync ends first, and syncs asked for
     /// meanwhile wait and run once after.
     private func holdingWorktrees<T>(_ id: String, _ work: () async throws -> T) async throws -> T {
-        while worktreesSyncing.contains(id) { try? await Task.sleep(for: .milliseconds(100)) }
-        worktreesSyncing.insert(id)
+        try await holdingWorktrees(all: [id], work)
+    }
+
+    /// The same for several projects at once (Move to Project applies to each of them).
+    private func holdingWorktrees<T>(all ids: Set<String>, _ work: () async throws -> T) async throws -> T {
+        while !worktreesSyncing.isDisjoint(with: ids) { try? await Task.sleep(for: .milliseconds(100)) }
+        worktreesSyncing.formUnion(ids)
         defer {
-            worktreesSyncing.remove(id)
-            if worktreesSyncAgain.remove(id) != nil { worktreesChanged(id) }
+            worktreesSyncing.subtract(ids)
+            for id in ids where worktreesSyncAgain.remove(id) != nil { worktreesChanged(id) }
         }
         return try await work()
     }

@@ -98,6 +98,23 @@ public enum AKitCLI {
                                               .claude/settings.json, then forgets the project in
                                               the brain
 
+        Move a global skill into the projects that use it (its description leaves every other session):
+          akit move skill NAME --to PROJECT[,PROJECT…] [--mode auto|manual] [--local-only yes|no|auto]
+                         [--keep-global] [--keep-own] [--yes]
+                                          Through the brain: copies the skill into skills/NAME (no
+                                          layer), adds it to each project's answers and applies
+                                          only its files there (local only: hidden from git and
+                                          linked into every git worktree, later ones too); then
+                                          takes it out of the core layer and moves the home
+                                          folder's copies to the Trash. Stops before any global
+                                          change when a project fails. PROJECT: a folder or an id.
+                                          --mode: default auto when the model called it (akit
+                                          stats skill), else its mode now. --local-only auto: the
+                                          project's choice, local only for a new project.
+                                          --keep-global: core and the home folder keep it.
+                                          --keep-own: a project with its own copy keeps it.
+                                          Shows the plan; --yes does it
+
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
 
@@ -124,6 +141,11 @@ public enum AKitCLI {
                                           list. Default: last 30 days, top 10 tools (all with --details,
                                           which also names each server's unused tools). --unused: only
                                           unused ones
+          akit stats skill NAME [--days N] [--bindings LIST] [--json]
+                                          Where one skill is called: per project on this Mac (calls by
+                                          the model, Pi's included, and by the user; sessions; the last
+                                          call), sessions bound to no project, and the other Macs'
+                                          project summaries in the brain. Default: last 30 days
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
@@ -309,6 +331,18 @@ public enum AKitCLI {
                 try refuseProjectOptions(checked, command: "mcp")
                 return try mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
                                projectsRoot: projectsRoot, out: out, err: err)
+            }
+            if command == "move" {
+                var checked = options
+                checked.localOnly = nil
+                try refuseProjectOptions(checked, command: "move")
+                if options.json { throw Failure(message: "--json doesn't go with akit move.") }
+                let brainRoot = brainRoot(options, cwd: cwd, env: env), hardware = hardwareHash()
+                return try await withoutActuallyEscaping(trash) { trash in
+                    try await move(&args, localOnly: options.localOnly, yes: options.yes, brainRoot: brainRoot, env: env, cwd: cwd,
+                                   projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets, hardware: hardware,
+                                   out: out, err: err, trash: trash)
+                }
             }
             if command == "remove" {
                 let kind = args.positional(), name = args.positional()
@@ -695,11 +729,12 @@ public enum AKitCLI {
         let unused = args.flag("--unused")
         let atText = args.value("--at")
         let subcommand = args.positional()
-        let note = subcommand == "mark" ? args.positional() : nil
+        let note = subcommand == "mark" || subcommand == "skill" ? args.positional() : nil
         try args.finish()
-        if let subcommand, !["bindings", "changes", "mark", "tools"].contains(subcommand) {
+        if let subcommand, !["bindings", "changes", "mark", "skill", "tools"].contains(subcommand) {
             throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats tools, "
-                          + "akit stats bindings, akit stats changes, akit stats mark \"<note>\" [--at DATE], or akit stats --debug.")
+                          + "akit stats skill NAME, akit stats bindings, akit stats changes, akit stats mark \"<note>\" [--at DATE], "
+                          + "or akit stats --debug.")
         }
         let days = try positiveNumber(daysText, "--days"), top = try positiveNumber(topText, "--top")
         if projectArgument != nil, all { throw Failure(message: "--project and --all don't go together.") }
@@ -710,7 +745,11 @@ public enum AKitCLI {
                         (details, "--details"), (unused, "--unused"), (options.json, "--json")], command: "stats mark")
             return try mark(note, at: atText, env: env, out: out)
         }
-        if subcommand == "changes" {
+        if subcommand == "skill" {
+            try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
+                        (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats skill")
+            guard let note, !note.isEmpty else { throw Failure(message: "Use: akit stats skill NAME [--days N] [--bindings LIST] [--json].") }
+        } else if subcommand == "changes" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"), (days != nil, "--days"),
                         (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats changes")
         } else if subcommand == "bindings" {
@@ -739,6 +778,13 @@ public enum AKitCLI {
             if let session, sessions.isEmpty { throw Failure(message: "No session “\(session)” in the index.") }
             let report = DebugStats(sessions: sessions, notes: imported.notes + (try IndexQueries.debugNotes(database, sessions: sessions)))
             out(options.json ? encode(report) : debugStatsText(report))
+            return 0
+        }
+        if subcommand == "skill", let name = note {
+            let report = try SkillCalls.report(database, skill: name, days: days ?? InsightsStats.defaultDays, bindings: bindingSet,
+                                               brain: Brain.load(from: brainRoot(options, cwd: cwd, env: env)), env: env,
+                                               hardware: hardwareHash(), notes: imported.notes)
+            out(options.json ? encode(report) : skillCallsText(report))
             return 0
         }
         var project: String?
@@ -799,6 +845,39 @@ public enum AKitCLI {
         out("Marked \(localMinute(date)): \(text). akit stats changes compares first-request context "
             + "before and after it.")
         return 0
+    }
+
+    /// `akit stats skill NAME`: the skill's calls per project, on this Mac and on the others.
+    static func skillCallsText(_ report: SkillCallsReport) -> String {
+        func calls(_ model: Int, _ user: Int, pi: Int = 0) -> String {
+            var parts: [String] = []
+            if model > 0 { parts.append("\(model) by the model" + (pi > 0 ? " (\(pi) in Pi)" : "")) }
+            if user > 0 { parts.append("\(user) by the user") }
+            return "\(count(model + user, "call"))" + (parts.isEmpty ? "" : " (\(parts.joined(separator: ", ")))")
+        }
+        var lines = ["\(report.skill): calls in the last \(report.window.days) days, by project (sessions bound at "
+                     + "\(report.bindings.joined(separator: ", ")))."]
+        lines.append("This Mac:")
+        if report.projects.isEmpty { lines.append("  no calls") }
+        for place in report.projects {
+            lines.append("  \(place.project ?? "not bound to a project"): \(calls(place.modelCalls, place.userCalls, pi: place.piModelCalls)) "
+                         + "in \(count(place.sessions, "session")); last call \(place.lastCall.map(localDay) ?? "none")")
+        }
+        let others = report.otherMacs
+        if others.macs > 0 || !others.projects.isEmpty {
+            lines.append("Other Macs (their usage summaries in the brain):")
+            for project in others.projects {
+                lines.append("  \(project.project): \(calls(project.modelCalls, project.userCalls)) on \(count(project.macs, "Mac"))")
+            }
+            if others.outsideProjects > 0 { lines.append("  outside their project summaries: \(count(others.outsideProjects, "call"))") }
+        }
+        let projects = Set(report.projects.compactMap(\.project) + others.projects.map(\.project))
+        if (1...2).contains(projects.count), (report.unbound?.calls ?? 0) == 0, others.outsideProjects == 0 {
+            lines.append("Only \(projects.sorted().joined(separator: " and ")) call\(projects.count == 1 ? "s" : "") it: "
+                         + "akit move skill \(report.skill) --to \(projects.sorted().joined(separator: ",")) moves it there.")
+        }
+        lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
     }
 
     /// `akit stats tools`: MCP servers, then tools, unused ones first.

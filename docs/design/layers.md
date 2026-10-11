@@ -5,6 +5,7 @@ Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 Local-only files and git worktrees built 2026-10-09 in the core and the `akit` command, and
 2026-10-10 in the app (see
 [Local-only files and git worktrees](#local-only-files-and-git-worktrees-built-2026-10-09)).
+Move to Project built 2026-10-11 (see [Move a skill to a project](#move-a-skill-to-a-project-built-2026-10-11)).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
 `.pi/mcp.json` and `.pi/settings.json`. The home render writes the core layer's AGENTS.md
@@ -93,7 +94,8 @@ project ids, paths, answers and locks name the employer's repos.
   its files, and lists the records the brain already has; removing work ones from the
   brain (and its remote's history) is left to the user.
 - Skills and layers still come from the brain; the only things a work machine
-  commits to it are skill and layer edits the user makes on purpose, and its usage
+  commits to it are skill and layer edits the user makes on purpose, one narrow Move to
+  Project exception (below), and its usage
   summary `insights/machines/<pseudonym>.json` (counts of brain skills per day, under a
   random pseudonym). `WorkFilter` checks that commit's paths, message and bytes and refuses
   without a brain `user.email` and `user.name` of its own; per-project summaries stay in the
@@ -107,6 +109,12 @@ project ids, paths, answers and locks name the employer's repos.
 - Skill and layer commits still happen on a work Mac; switching warns when the brain
   has no git identity of its own (the global one may be the work email).
 - Masking is not enough: it hides tokens, not repo names, paths or field text.
+- One exception (2026-10-11, Move to Project): a work Mac may add a skill name to a personal
+  project's answers in the brain, when that project is not on this Mac and only the brain has
+  its record. The commit holds only `projects/<id>/answers.json` of a record already committed,
+  with one skill entry added and nothing else (`WorkFilter`'s `answers` kind checks the staged
+  bytes), made with the brain's own identity, without hooks or signing. Work projects' data
+  (records in `~/.akit/local/projects`) still never reaches the brain.
 
 ## layer.yaml
 
@@ -302,6 +310,98 @@ in the main checkout instead.
 Set Up Project in a linked worktree is blocked: it names the main checkout, which is the
 one to set up. The Brain screen maps a project id to its main checkout, never to one of
 its worktrees.
+
+## Move a skill to a project (built 2026-10-11)
+
+A global skill that only one or two projects need costs its description in every other
+session. **Move to Project…** (Skills screen, Brain → a core skill; `akit move skill`) moves it
+into those projects. Core: `SkillMove` (AKitProjectSetup).
+
+The skill reaches a project through the brain, never as a plain folder: only files of the
+project's lock become lines of the local-only exclude block and links in its git worktrees
+(`LocalOnly`, `ProjectWorktrees`). A folder copied into `.agents/skills` by hand is the
+project's own skill: committed with the project or missing from every worktree. Pi has no way
+to hide a global skill in one project (Pi 1.0.4 `package-manager.js` applies only a project's
+own entries to its own folders), so for Pi this is the only per-project control.
+
+The order keeps the skill present at every step:
+
+```
+ skill not in the brain → copy it into skills/<name>, no layer   commit "Import skill X"
+    ▼
+ each project: answers.skills + X (source "this project") → plan → Apply
+    the skill's files (and .claude/skills when new) only; other pending changes wait
+    local only: the exclude block grows, the worktrees get the link (now and later)
+    ▼ a failure stops here: core and the home folder are untouched
+ layers/core/layer.yaml without X                                 commit "Remove skill X from layer core"
+    ▼
+ home folder: plan with core without X → Apply removes AKit's copy (Trash)
+    a copy AKit didn't write (a folder, or a link: only the link) → Trash
+    other copies the harnesses see (~/.pi/agent/skills/X, a separate ~/.claude/skills/X) → Trash
+```
+
+- **Projects.** Each project's answers get `{name: X, mode}`; a project without answers gets
+  its first Set Up with no layers and the installed harnesses as targets. Its Apply writes
+  only X's files and the `.claude/skills` link when it is new, AKit's own, or replaces an empty
+  folder; every other change of its plan (a layer that changed since) is deferred to Set Up
+  Project: the lock keeps their old entries and their last offer (a pending "layers changed"
+  suggestion is offered again), and, while one of them is a real change, the previous brain
+  commit and Pi folder (`ProjectSetup.apply(deferring:)`). When Claude is a target and
+  `.claude/skills` would not lead to `.agents/skills` (a link elsewhere, a folder with files),
+  that project is blocked: Claude Code wouldn't see X. The app holds the worktree sync of every
+  project the move writes; the command line has no cross-process gate (the app's is in memory),
+  so a sync the app runs at the same time may make a link a moment early or late; it only
+  creates links where nothing is, and the next sync fixes the rest.
+- **Not on this Mac.** A project with a record (answers in the brain or the local store) gets
+  only its answers, committed ("Add skill X to <id>'s answers"); Set Up Project on its Mac
+  renders X. One without a record blocks the move. On a work Mac, a record only the brain has
+  (a personal project) gets the skill entry in the brain's answers, as the one work-Mac
+  exception (see "Work machines"); a record in `~/.akit/local/projects` (a work project set up
+  on another Mac, which this Mac's store never reaches) blocks the move: move it on the Mac
+  that has it, or keep the skill global. The plan says which store gets the answers.
+- **Project files.** A project's saved choice (Commit / Local only) stays and is shown; a
+  project set up by the move is local only unless the user picks Commit.
+- **Mode.** The caller picks it: `auto` when the skill's calls show model calls, else its
+  current mode (its core entry, else the global copy's header).
+- **The core layer.** The preview shows the `layer.yaml` diff (`BrainRemove.layerWithoutSkill`);
+  it is written and committed only after every project's Apply. Other layers that list X are
+  named; their projects keep it.
+- **The home folder.** Its plan renders core without X; Apply takes only X's files (the rest
+  of a pending Update Home Folder waits). A copy edited by hand since AKit wrote it (`keepEdited`)
+  stops the move: Show Edits, bring the edits into the brain first. When core has no skills
+  left, a home render keeps AKit's `~/.claude/skills` link while `~/.agents/skills` still holds a
+  skill folder (the user's own), so Claude Code keeps seeing them.
+- **Other copies.** Only copies with the same folder name in other skill folders go to the Trash,
+  and only when their files are the brain's (or those the brain is about to get); one that
+  differs blocks the move, with Show Edits for every differing file. A folder of another name
+  whose header says X is a different skill: a warning, never trashed. What goes to the Trash is
+  hashed in the preview and checked again before anything is written, and so are the home
+  folder's files the move removes; a folder of more than 10,000 entries, or with a part AKit
+  can't read, can't be checked and blocks the move. What the brain import leaves out of a copy
+  that goes to the Trash (files that may hold secrets, a broken link) is named in a warning;
+  git history (`.git`) or a link out of the skill blocks it: move or remove it by hand. A source that is a link
+  (into a development folder) is imported from that folder alone, and only the link goes.
+- **Blocked.** A project with its own X (a folder AKit didn't write, in git or not) until the
+  user compares and keeps the project's (then nothing is written there and X only leaves
+  core; an own copy not in git gets a warning that its worktrees won't have X, and Apply checks
+  that the copy is still there); a global copy that differs from the brain's `skills/X`; a project whose plan can't
+  apply; claude.ai, plugin and Pi package skills (AKit can't move them: the skill switches
+  turn them off per harness).
+- **Warnings.** Other brain skills, layer templates (strong for the core layer: every session
+  gets that text) and the AGENTS.md or CLAUDE.md of known projects not moved to that name X; a
+  project not on this Mac (skipped); 3 or more projects ("a layer may suit it better").
+- **Other Macs.** Brain Sync there offers Update Home Folder, which takes X out of their home
+  folder; each project there needs its own Apply. A work Mac keeps answers and locks in
+  `~/.akit/local/projects`.
+- **Keep global** (`--keep-global`): only the brain import and the projects; core and the home
+  folder keep X.
+- **Failures** say where X is: a failed import commit may leave `skills/X` uncommitted in the
+  brain; a home Apply that fails after the core commit leaves `~/.agents/skills/X`, which
+  Update Home Folder takes out.
+- The calls that preselect projects are read from the index opened read-only (`IndexSchema.openReadOnly`):
+  the sheet and `akit move` never import or migrate it; `akit stats skill` imports first, like every `akit stats`.
+- Not built: "make it the project's own" (copy the folder into the project to commit it), which
+  would reach worktrees only once committed and has no lock entry or preview of its own.
 
 ## Several layers, one file
 
@@ -598,6 +698,13 @@ as `${VAR}` references; the real values come from Keychain.
    `~/.agents/skills` into the brain (done: Import Skills…); core layer with `manual`
    skills (done; it is rendered into the home folder with `akit apply --home` or
    **Update Home Folder…**).
+   An import can also copy a skill into the library without listing it in any layer
+   (`BrainImport.apply(listInLayer: false)`, 2026-10-11; commit "Import skill X"), for a skill
+   that a project's answers list instead (Move to Project). Every import commit names where
+   each new skill was installed from ("Source of X: owner/repo", from the skills.sh or AKit
+   lock, reduced to `owner/repo` or a host and path: no credentials, query or line breaks, and
+   never a local path or `file://` source), so the
+   brain's copy keeps its origin; the brain has no other record of it.
 3. Project form + render of skills and `AGENTS.md` (+ Claude shims), answers and
    lock in the brain. The take-home flow works end to end. (Done.)
 4. MCP in layers. (Possible since 2026-10-08 through JSON merge: `.mcp.json` templates,
