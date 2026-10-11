@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Sidebar groups, by the question their screens answer. The screens guide follows the
-/// same order (`docs/guides/screens.ru.md`, one section per group and per screen).
+/// Sidebar groups, by the question their screens answer. The screens guide has one section
+/// per group and per screen (`docs/guides/screens.ru.md`), ordered from simple to complex:
+/// On This Mac, Activity, Setup, Improve.
 enum SidebarGroup: String, CaseIterable, Identifiable {
     case installed
     case setup

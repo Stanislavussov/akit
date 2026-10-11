@@ -2,9 +2,10 @@ import Foundation
 
 /// An in-app guide (`docs/guides/<name>.<language>.md`) read into collapsible sections.
 /// The Markdown is kept to a small subset so the same file reads well on GitHub and in the
-/// app: `#` title, `##` sections, `###` subsections, paragraphs, `- ` bullets (two levels),
-/// `1. ` numbered items, `> ` callouts, fenced code blocks, and inline Markdown. A line
-/// `<!-- section: id -->` right after a heading gives the section an id a screen can open.
+/// app: `#` title, `##` sections, `###` and `####` subsections, paragraphs, `- ` bullets (two
+/// levels), `1. ` numbered items, `> ` callouts, fenced code blocks, `![caption](images/x.png)`
+/// screenshots on their own line, and inline Markdown; a link `[text](#id)` opens that section.
+/// A line `<!-- section: id -->` right after a heading gives the section an id a screen can open.
 public struct GuideDocument: Sendable, Hashable {
     public enum Block: Sendable, Hashable {
         /// Inline Markdown text.
@@ -15,6 +16,9 @@ public struct GuideDocument: Sendable, Hashable {
         /// A tip or warning: the lines of a `> ` quote, joined.
         case callout(String)
         case code(String)
+        /// A screenshot: a path next to the guide file and the caption under it, which says
+        /// what the picture shows (search reads it).
+        case image(path: String, caption: String)
     }
 
     public struct Section: Sendable, Hashable, Identifiable {
@@ -37,13 +41,16 @@ public struct GuideDocument: Sendable, Hashable {
     public var intro: [Block]
     public var sections: [Section]
 
-    /// The section with this id, or the subsection's parent and the subsection.
+    /// The ids from a top section down to the section with this id.
     public func path(to id: String) -> [String]? {
-        for section in sections {
-            if section.id == id { return [section.id] }
-            if let sub = section.subsections.first(where: { $0.id == id }) { return [section.id, sub.id] }
+        func find(_ sections: [Section]) -> [String]? {
+            for section in sections {
+                if section.id == id { return [section.id] }
+                if let rest = find(section.subsections) { return [section.id] + rest }
+            }
+            return nil
         }
-        return nil
+        return find(sections)
     }
 
     public static func parse(_ text: String) -> GuideDocument {
@@ -52,16 +59,14 @@ public struct GuideDocument: Sendable, Hashable {
         var callout: [String] = []
         var code: [String]?
         var taken = Set<String>()
+        // Indexes from `document.sections` down to the section being read; empty in the intro.
+        var current: [Int] = []
 
-        // Where blocks go now: the intro, a section, or a section's last subsection.
         func append(_ block: Block) {
-            if document.sections.isEmpty {
+            if current.isEmpty {
                 document.intro.append(block)
-            } else if document.sections[document.sections.count - 1].subsections.isEmpty {
-                document.sections[document.sections.count - 1].blocks.append(block)
             } else {
-                let last = document.sections.count - 1
-                document.sections[last].subsections[document.sections[last].subsections.count - 1].blocks.append(block)
+                edit(&document.sections, current[...]) { $0.blocks.append(block) }
             }
         }
         func flush() {
@@ -84,6 +89,23 @@ public struct GuideDocument: Sendable, Hashable {
             taken.insert(id)
             return id
         }
+        // A heading of `depth` 0 (`##`), 1 (`###`) or 2 (`####`); one without a parent moves up.
+        func open(_ title: String, depth: Int) {
+            flush()
+            let section = Section(id: uniqueID(slug(title)), title: title, blocks: [], subsections: [])
+            let parent = Array(current.prefix(depth))
+            if parent.isEmpty {
+                document.sections.append(section)
+                current = [document.sections.count - 1]
+            } else {
+                var index = 0
+                edit(&document.sections, parent[...]) {
+                    $0.subsections.append(section)
+                    index = $0.subsections.count - 1
+                }
+                current = parent + [index]
+            }
+        }
 
         for raw in text.components(separatedBy: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
@@ -104,14 +126,11 @@ public struct GuideDocument: Sendable, Hashable {
             }
             if let id = sectionID(line) {
                 // Gives the heading just read its id.
-                guard !document.sections.isEmpty else { continue }
-                let last = document.sections.count - 1
-                if document.sections[last].subsections.isEmpty, document.sections[last].blocks.isEmpty {
-                    taken.remove(document.sections[last].id)
-                    document.sections[last].id = uniqueID(id)
-                } else if let sub = document.sections[last].subsections.indices.last, document.sections[last].subsections[sub].blocks.isEmpty {
-                    taken.remove(document.sections[last].subsections[sub].id)
-                    document.sections[last].subsections[sub].id = uniqueID(id)
+                guard !current.isEmpty else { continue }
+                edit(&document.sections, current[...]) { section in
+                    guard section.blocks.isEmpty, section.subsections.isEmpty else { return }
+                    taken.remove(section.id)
+                    section.id = uniqueID(id)
                 }
                 continue
             }
@@ -119,22 +138,18 @@ public struct GuideDocument: Sendable, Hashable {
                 flush()
                 continue
             }
-            if line.hasPrefix("### ") {
-                flush()
-                let title = String(line.dropFirst(4))
-                let section = Section(id: uniqueID(slug(title)), title: title, blocks: [], subsections: [])
-                if document.sections.isEmpty {
-                    document.sections.append(section)
-                } else {
-                    document.sections[document.sections.count - 1].subsections.append(section)
-                }
+            if line.hasPrefix("#### ") {
+                open(String(line.dropFirst(5)), depth: 2)
+            } else if line.hasPrefix("### ") {
+                open(String(line.dropFirst(4)), depth: 1)
             } else if line.hasPrefix("## ") {
-                flush()
-                let title = String(line.dropFirst(3))
-                document.sections.append(Section(id: uniqueID(slug(title)), title: title, blocks: [], subsections: []))
+                open(String(line.dropFirst(3)), depth: 0)
             } else if line.hasPrefix("# ") {
                 flush()
                 document.title = String(line.dropFirst(2))
+            } else if let (caption, path) = image(line) {
+                flush()
+                append(.image(path: path, caption: caption))
             } else if line.hasPrefix(">") {
                 if !paragraph.isEmpty {
                     append(.paragraph(paragraph.joined(separator: " ")))
@@ -157,6 +172,24 @@ public struct GuideDocument: Sendable, Hashable {
         if let lines = code { append(.code(lines.joined(separator: "\n"))) }
         flush()
         return document
+    }
+
+    /// Changes the section at `path` (indexes from `sections` down).
+    private static func edit(_ sections: inout [Section], _ path: ArraySlice<Int>, _ change: (inout Section) -> Void) {
+        guard let first = path.first else { return }
+        if path.count == 1 {
+            change(&sections[first])
+        } else {
+            edit(&sections[first].subsections, path.dropFirst(), change)
+        }
+    }
+
+    /// `![caption](images/name.png)` alone on a line → (caption, path).
+    static func image(_ line: String) -> (String, String)? {
+        guard line.hasPrefix("!["), line.hasSuffix(")"), let middle = line.range(of: "](", options: .backwards) else { return nil }
+        let caption = String(line[line.index(line.startIndex, offsetBy: 2)..<middle.lowerBound])
+        let path = String(line[middle.upperBound...].dropLast())
+        return path.isEmpty ? nil : (caption, path)
     }
 
     /// `<!-- section: id -->` → `id`.
@@ -185,6 +218,7 @@ extension GuideDocument.Block {
         let text: String = switch self {
         case .paragraph(let text), .callout(let text), .code(let text): text
         case .bullet(_, let text), .numbered(_, let text): text
+        case .image(_, let caption): caption
         }
         return text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
     }

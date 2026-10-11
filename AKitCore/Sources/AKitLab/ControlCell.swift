@@ -99,7 +99,7 @@ public struct ControlSetup: Codable, Sendable, Hashable {
     /// and `swift test` stay allowed). Every Makefile target that does so is listed (a test
     /// reads the Makefile).
     public static let akitDenied = ["make snapshot", "make run", "make restart", "make install", "make install-cli",
-                                    "make screenshots", "make open", "open", "swift run"]
+                                    "make screenshots", "make guide-screenshots", "make open", "open", "swift run"]
 
     /// The denied commands of a cell whose setup names none: `akitDenied` in AKit's own
     /// repository (it has `AKitCore/Package.swift`), else none.

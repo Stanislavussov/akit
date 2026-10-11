@@ -479,10 +479,10 @@ extension ControlRunsTests {
         }
         #expect(recipes.count > 5, "\(recipes.keys)")
         let launches = recipes.filter { name, recipe in
-            name.firstMatch(of: /^(run|restart|snapshot|install.*|screenshots|open)$/) != nil
+            name.firstMatch(of: /^(run|restart|snapshot|install.*|(guide-)?screenshots|open)$/) != nil
                 || ["open ", "MacOS/AKit", "/Applications", ".local/bin", "screenshots.sh", "pkill"].contains { recipe.contains($0) }
         }.keys.sorted()
-        #expect(Set(launches) == ["install", "install-cli", "open", "restart", "run", "screenshots", "snapshot"], "\(launches)")
+        #expect(Set(launches) == ["guide-screenshots", "install", "install-cli", "open", "restart", "run", "screenshots", "snapshot"], "\(launches)")
         for name in launches { #expect(ControlSetup.akitDenied.contains("make \(name)"), "make \(name)") }
     }
 }

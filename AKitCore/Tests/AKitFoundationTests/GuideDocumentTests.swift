@@ -49,6 +49,35 @@ struct GuideDocumentTests {
         #expect(document.path(to: "missing") == nil)
     }
 
+    @Test func thirdLevelImagesAndPaths() {
+        let document = GuideDocument.parse("""
+        ## Group
+        <!-- section: group -->
+        ### Screen
+        <!-- section: screen -->
+        Intro.
+        #### Step one
+        <!-- section: step -->
+        ![The **Add** button in the toolbar](images/add.png)
+        Text after.
+        #### Step two
+        ### Other
+        ![not an image] in a line
+        """)
+        let screen = document.sections[0].subsections[0]
+        #expect(screen.blocks == [.paragraph("Intro.")])
+        #expect(screen.subsections.map(\.id) == ["step", "step-two"])
+        #expect(screen.subsections[0].blocks == [.image(path: "images/add.png", caption: "The **Add** button in the toolbar"),
+                                                 .paragraph("Text after.")])
+        #expect(document.sections[0].subsections.map(\.id) == ["screen", "other"])
+        #expect(document.sections[0].subsections[1].blocks == [.paragraph("![not an image] in a line")])
+        #expect(document.path(to: "step") == ["group", "screen", "step"])
+        #expect(document.path(to: "step-two") == ["group", "screen", "step-two"])
+        #expect(document.sections[0].contains("add button"))
+        // A deeper heading without a parent moves up.
+        #expect(GuideDocument.parse("#### Alone\n## Next").sections.map(\.id) == ["alone", "next"])
+    }
+
     @Test func slugsAreUniqueAndKeepCyrillic() {
         let document = GuideDocument.parse("## Что такое режим?\n## Что такое режим?\n## 1. Шаг")
         #expect(document.sections.map(\.id) == ["что-такое-режим", "что-такое-режим-2", "1-шаг"])
@@ -90,6 +119,6 @@ struct GuideDocumentTests {
             #expect(document.path(to: group) == [group], "no section \(group)")
             for id in ids { #expect(document.path(to: id) == [group, id], "no section \(id) in \(group)") }
         }
-        #expect(document.path(to: "map") == ["map"])
+        for id in ["map", "settings"] { #expect(document.path(to: id) == [id], "no section \(id)") }
     }
 }
