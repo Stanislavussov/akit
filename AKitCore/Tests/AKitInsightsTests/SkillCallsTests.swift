@@ -115,3 +115,29 @@ extension InsightsStatsTests {
         #expect(places[1]["project"] is NSNull)
     }
 }
+
+/// The work Mac's one project-data commit (Move to Project into a personal project): only the skill entry.
+struct WorkAnswersFilterTests {
+    @Test func onlyTheSkillEntryMayChange() throws {
+        let kind = WorkFilter.Kind.answers(project: "github.com/me/old", skill: "deploy", mode: .auto)
+        let path = "projects/github.com/me/old/answers.json"
+        #expect(kind.paths == [path] && kind.message == "Add skill deploy to github.com/me/old's answers" && kind.needsHead)
+        let head = Data(#"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"}]}"#.utf8)
+        let good = Data(#"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"},{"name":"deploy","mode":"auto"}]}"#.utf8)
+        try kind.check(path: path, data: good, head: head)
+        let bad = [
+            #"{"layers":["task","work"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"},{"name":"deploy","mode":"auto"}]}"#,
+            #"{"layers":["task"],"values":{"company":"Acme"},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"},{"name":"deploy","mode":"auto"}]}"#,
+            #"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"deploy","mode":"auto"}]}"#,
+            #"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"},{"name":"deploy","mode":"auto"}],"note":"acme"}"#,
+        ]
+        for text in bad {
+            #expect(throws: WorkFilter.Failure.self) { try kind.check(path: path, data: Data(text.utf8), head: head) }
+        }
+        #expect(throws: WorkFilter.Failure.self) { try kind.check(path: path, data: good, head: nil) }
+        #expect(throws: WorkFilter.Failure.self) { try kind.check(path: "projects/x/answers.json", data: good, head: head) }
+        #expect(throws: WorkFilter.Failure.self) {
+            try WorkFilter.Kind.answers(project: "../x", skill: "deploy", mode: .auto).check(path: "projects/../x/answers.json", data: good, head: head)
+        }
+    }
+}

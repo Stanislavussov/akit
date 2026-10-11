@@ -1,5 +1,6 @@
 import AKitBrain
 import AKitFoundation
+import AKitInsights
 import AKitSkills
 import Foundation
 
@@ -114,6 +115,9 @@ public enum SkillMove {
         public let ownTracked: Bool
         /// The answers saved for `.answersOnly`.
         public var answers: ProjectAnswers? = nil
+        /// `.answersOnly`: the answers go to the brain (always on a personal Mac; on a work Mac only
+        /// for a personal project the brain has a record of), not this Mac's local store.
+        public var answersInBrain = false
 
         /// The changes Apply makes for the skill.
         public var changes: [ProjectSetup.Change] { plan?.changes.filter { paths.contains($0.path) } ?? [] }
@@ -296,7 +300,9 @@ public enum SkillMove {
         }
         for part in parts {
             if part.state == .answersOnly {
-                notes.append("\(part.id) is not on this Mac: its answers get \(name), and Set Up Project on the Mac that has it renders it there.")
+                let store = context.store.isLocal ? "brain: personal project's answers (the one thing a work Mac adds to a project in the brain)"
+                    : "brain: the project's answers"
+                notes.append("\(part.id) is not on this Mac: its answers get \(name) (\(store)), and Set Up Project on the Mac that has it renders it there.")
             }
             if part.state == .keepOwn, !part.ownTracked, !keepGlobal {
                 warnings.append("\(part.id)'s own \(name) is not in git: its git worktrees won't have \(name) once core drops it. Commit it, or move it the usual way instead.")
@@ -425,16 +431,24 @@ public enum SkillMove {
                     ? "is not on this Mac and AKit has no record of it. Set it up on a Mac that has it, or untick it."
                     : "its folder \(target.folder!.path) is gone and AKit has no record of it."))
             }
-            // A work Mac's answers stay on it (~/.akit/local/projects), so no other Mac would ever
-            // read the skill there, while core's change reaches every Mac.
-            guard !context.store.isLocal else {
-                return done(.blocked("is not on this Mac, and on a work Mac a project's answers live on the Mac that set it up; move it there, or keep the skill global."))
+            // On a work Mac a record of its own local store is a work project, set up on another
+            // Mac whose answers this Mac never sees: blocked. A record only the brain has is a
+            // personal project: its brain answers get the skill entry (the one exception to work
+            // Macs committing no project data).
+            var inBrain = !context.store.isLocal
+            if context.store.isLocal {
+                let local = context.store.folder(id: target.id).appending(path: "answers.json")
+                guard !FileManager.default.fileExists(atPath: local.path), context.store.readFallback != nil else {
+                    return done(.blocked("is not on this Mac, and on a work Mac a project's answers live on the Mac that set it up; move it there, or keep the skill global."))
+                }
+                inBrain = true
             }
             if let localOnly = target.localOnly { answers.localOnly = localOnly }
             answers.skills.removeAll { $0.name == name }
             answers.skills.append(.init(name: name, mode: mode))
             var part = done(.answersOnly)
             part.answers = answers
+            part.answersInBrain = inBrain
             return part
         }
         // A worktree stands for its main checkout, which AKit sets up.
@@ -710,10 +724,16 @@ public enum SkillMove {
         for part in plan.answersOnly {
             guard let answers = part.answers else { continue }
             do {
-                try await ProjectRecords.saveAnswers(answers, id: part.id, in: plan.store, message: "Add skill \(plan.name) to \(part.id)'s answers", env: env)
+                if plan.store.isLocal {
+                    // A personal project from a work Mac: only the skill entry, checked, with the brain's own identity.
+                    try await WorkAnswers.addSkill(plan.name, mode: plan.mode, to: part.id, brain: brain.root, env: env)
+                } else {
+                    try await ProjectRecords.saveAnswers(answers, id: part.id, in: plan.store, message: "Add skill \(plan.name) to \(part.id)'s answers",
+                                                         env: env)
+                }
                 outcome.answersSaved.append(part.id)
             } catch {
-                throw fail("Moving stopped at \(part.id)'s answers: \(error.message) \(plan.name) is still in the core layer and the home folder.")
+                throw fail("Moving stopped at \(part.id)'s answers: \(error.localizedDescription) \(plan.name) is still in the core layer and the home folder.")
             }
         }
         guard !plan.keepGlobal else { return outcome }

@@ -463,21 +463,45 @@ struct SkillMoveTests {
         #expect(!after.files.keys.contains { $0.hasPrefix(".agents/skills/deploy/") } && after.files[".agents/skills/later/SKILL.md"] == nil)
     }
 
-    @Test func onAWorkMacAProjectOnAnotherMacIsBlocked() async throws {
+    @Test func onAWorkMacOnlyAPersonalProjectsBrainAnswersGetTheSkill() async throws {
         let brain = try await f.setUpBrain()
         try harnesses()
         try f.write(".agents/skills/deploy/SKILL.md", skill)
         try await f.initRepo()
+        try MachineProfile(kind: .work, name: "work").save(home: f.home)
         let work = ProjectStore.local(home: f.home, readingBrain: f.brainRoot)
-        // A record in the local store, and one only in the brain (read as a fallback).
-        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: ProjectAnswers(targets: ["pi"]), id: "github.com/me/local", in: work)
-        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: ProjectAnswers(targets: ["pi"]), id: "github.com/me/old", in: f.store)
-        let plan = SkillMove.plan(name: "deploy", targets: [target, .init(id: "github.com/me/local", folder: nil), .init(id: "github.com/me/old", folder: nil)],
-                                  mode: .auto, brain: brain, context: context(store: work))
-        #expect(!plan.canApply && plan.answersOnly.isEmpty)
-        for part in plan.parts.dropFirst() {
-            #expect(part.state == .blocked("is not on this Mac, and on a work Mac a project's answers live on the Mac that set it up; move it there, or keep the skill global."))
-        }
+        // The brain's own identity, as work-Mac commits use it (the environment's is the work one).
+        try await f.git("config", "user.name", "pseudo-mac", in: f.brainRoot)
+        try await f.git("config", "user.email", "pseudo@example.invalid", in: f.brainRoot)
+        // A personal project only the brain knows, and a work project of this Mac's local store; neither is here.
+        let personal = ProjectAnswers(layers: ["task"], values: ["review": .bool(false)], targets: ["pi"], skills: [.init(name: "tdd", mode: .manual)])
+        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: personal, id: "github.com/me/old", in: f.store)
+        try await f.git("add", "-A", in: f.brainRoot)
+        try await f.git("commit", "-qm", "Old", in: f.brainRoot)
+        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: ProjectAnswers(targets: ["pi"]),
+                                id: "github.com/work/app", in: work)
+
+        let blocked = SkillMove.plan(name: "deploy", targets: [.init(id: "github.com/work/app", folder: nil)], mode: .auto, brain: brain,
+                                     context: context(store: work))
+        #expect(blocked.parts.first?.state == .blocked("is not on this Mac, and on a work Mac a project's answers live on the Mac that set it up; move it there, or keep the skill global."))
+
+        let plan = SkillMove.plan(name: "deploy", targets: [target, .init(id: "github.com/me/old", folder: nil)], mode: .auto, brain: brain,
+                                  context: context(store: work))
+        #expect(plan.canApply && plan.answersOnly.first?.answersInBrain == true, "\(plan.blockers) \(plan.parts.map(\.state))")
+        #expect(plan.notes.contains { $0.contains("(brain: personal project's answers") })
+        let outcome = try await SkillMove.apply(plan, brain: brain, env: f.env, trash: f.trash)
+        #expect(outcome.answersSaved == ["github.com/me/old"])
+
+        // The brain's answers: only the skill entry added, committed by the brain's own identity.
+        var expected = personal
+        expected.skills.append(.init(name: "deploy", mode: .auto))
+        #expect(ProjectRecords.savedAnswers(id: "github.com/me/old", in: f.store) == expected)
+        #expect(try await f.git("log", "-1", "--format=%an <%ae>|%s", "--", "projects/github.com/me/old/answers.json", in: f.brainRoot)
+                == "pseudo-mac <pseudo@example.invalid>|Add skill deploy to github.com/me/old's answers\n")
+        #expect(!fm.fileExists(atPath: work.folder(id: "github.com/me/old").path), "nothing in ~/.akit/local for it")
+        // The project on this Mac stays in the local store, as for any work project.
+        #expect(ProjectRecords.savedAnswers(id: f.id, in: .local(home: f.home))?.skills.map(\.name) == ["deploy"])
+        #expect(!fm.fileExists(atPath: f.brainRoot.appending(path: "projects/\(f.id)").path))
     }
 
     @Test func copiesTheTrashCantCheckOrWouldTakeHistoryAlongBlock() async throws {

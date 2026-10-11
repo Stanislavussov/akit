@@ -94,7 +94,8 @@ project ids, paths, answers and locks name the employer's repos.
   its files, and lists the records the brain already has; removing work ones from the
   brain (and its remote's history) is left to the user.
 - Skills and layers still come from the brain; the only things a work machine
-  commits to it are skill and layer edits the user makes on purpose, and its usage
+  commits to it are skill and layer edits the user makes on purpose, one narrow Move to
+  Project exception (below), and its usage
   summary `insights/machines/<pseudonym>.json` (counts of brain skills per day, under a
   random pseudonym). `WorkFilter` checks that commit's paths, message and bytes and refuses
   without a brain `user.email` and `user.name` of its own; per-project summaries stay in the
@@ -108,6 +109,12 @@ project ids, paths, answers and locks name the employer's repos.
 - Skill and layer commits still happen on a work Mac; switching warns when the brain
   has no git identity of its own (the global one may be the work email).
 - Masking is not enough: it hides tokens, not repo names, paths or field text.
+- One exception (2026-10-11, Move to Project): a work Mac may add a skill name to a personal
+  project's answers in the brain, when that project is not on this Mac and only the brain has
+  its record. The commit holds only `projects/<id>/answers.json` of a record already committed,
+  with one skill entry added and nothing else (`WorkFilter`'s `answers` kind checks the staged
+  bytes), made with the brain's own identity, without hooks or signing. Work projects' data
+  (records in `~/.akit/local/projects`) still never reaches the brain.
 
 ## layer.yaml
 
@@ -347,9 +354,11 @@ The order keeps the skill present at every step:
   creates links where nothing is, and the next sync fixes the rest.
 - **Not on this Mac.** A project with a record (answers in the brain or the local store) gets
   only its answers, committed ("Add skill X to <id>'s answers"); Set Up Project on its Mac
-  renders X. One without a record blocks the move, and so does any such project on a work Mac:
-  its answers stay in `~/.akit/local/projects`, which no other Mac reads, while core's change
-  reaches every Mac (move it on the Mac that has it, or keep the skill global).
+  renders X. One without a record blocks the move. On a work Mac, a record only the brain has
+  (a personal project) gets the skill entry in the brain's answers, as the one work-Mac
+  exception (see "Work machines"); a record in `~/.akit/local/projects` (a work project set up
+  on another Mac, which this Mac's store never reaches) blocks the move: move it on the Mac
+  that has it, or keep the skill global. The plan says which store gets the answers.
 - **Project files.** A project's saved choice (Commit / Local only) stays and is shown; a
   project set up by the move is local only unless the user picks Commit.
 - **Mode.** The caller picks it: `auto` when the skill's calls show model calls, else its

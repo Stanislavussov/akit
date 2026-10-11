@@ -20,11 +20,15 @@ enum WorkFilter {
         /// `akit recommend apply` / `dismiss` of a layer skill: only `layers/<layer>/layer.yaml`, only
         /// that skill's mode or keep_auto line, and a message naming nothing but the skill and the layer.
         case layer(layer: String, skill: String, change: LayerPatch.Change)
+        /// Move to Project into a personal project from a work Mac: only `projects/<id>/answers.json`
+        /// of a project the brain already has, only one skill entry added (or its mode changed).
+        case answers(project: String, skill: String, mode: LayerSkill.Mode)
 
         var name: String {
             switch self {
             case .summary: "usage summary"
             case .layer: "layer"
+            case .answers: "project answers"
             }
         }
 
@@ -32,6 +36,7 @@ enum WorkFilter {
             switch self {
             case .summary(let pseudonym, _): [UsageSummary.machinePath(pseudonym)]
             case .layer(let layer, _, _): [LayerPatch.path(layer: layer)]
+            case .answers(let project, _, _): ["projects/\(project)/answers.json"]
             }
         }
 
@@ -39,6 +44,7 @@ enum WorkFilter {
             switch self {
             case .summary(let pseudonym, _): "Update usage summaries (\(pseudonym))"
             case .layer(let layer, let skill, let change): change.message(skill: skill, layer: layer)
+            case .answers(let project, let skill, _): "Add skill \(skill) to \(project)'s answers"
             }
         }
 
@@ -55,11 +61,31 @@ enum WorkFilter {
                 if let problem = LayerPatch.problem(before: before, after: after, skill: skill, layer: layer, change: change) {
                     throw Failure(message: "Refused a commit from this work Mac: \(path) changes more than \(skill)'s \(change.key) (\(problem)).")
                 }
+            case .answers(let project, let skill, let mode):
+                let decoder = JSONDecoder()
+                guard UsageSummary.isSafeProjectID(project), path == "projects/\(project)/answers.json", let head,
+                      let before = try? decoder.decode(ProjectAnswers.self, from: head),
+                      let after = try? decoder.decode(ProjectAnswers.self, from: data) else {
+                    throw Failure(message: "Refused a commit from this work Mac: \(path) is not the committed answers of \(project).")
+                }
+                var expected = before
+                expected.skills.removeAll { $0.name == skill }
+                expected.skills.append(.init(name: skill, mode: mode))
+                // Nothing but the one skill entry; no field the decoder doesn't know.
+                let keys = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]).map { Set($0.keys) } ?? []
+                guard after == expected, keys.isSubset(of: ["layers", "values", "targets", "skills", "localOnly"]) else {
+                    throw Failure(message: "Refused a commit from this work Mac: \(path) changes more than the \(skill) skill entry.")
+                }
             }
         }
 
         /// Kinds that edit a committed file and are checked against it.
-        var needsHead: Bool { if case .layer = self { true } else { false } }
+        var needsHead: Bool {
+            switch self {
+            case .layer, .answers: true
+            case .summary: false
+            }
+        }
     }
 
     /// Checks that don't need the files: a readable `machine.json`, the brain's own git name and
