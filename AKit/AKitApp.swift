@@ -1,3 +1,4 @@
+import AKitDoctor
 import SwiftUI
 
 /// App entry point.
@@ -60,6 +61,16 @@ struct AKitApp: App {
                     }
                 }
                 .help("Copy a read-only report of AKit, the brain, the harnesses and the projects (the same as akit doctor)")
+                Divider()
+                ForEach(IssueReport.allCases, id: \.self) { kind in
+                    Button(kind.menuTitle) {
+                        // Not operatingSystemVersionString: that one is in the user's language.
+                        let os = ProcessInfo.processInfo.operatingSystemVersion
+                        let system = "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
+                        NSWorkspace.shared.open(kind.url(appVersion: BuildInfo.current.version, system: system))
+                    }
+                    .help("Open a new GitHub issue in the browser, with a template and the AKit version filled in")
+                }
             }
             CommandMenu("Develop") {
                 Button(rebuild.state == .building ? "Rebuilding…" : "Rebuild and Relaunch") {
