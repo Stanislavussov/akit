@@ -24,8 +24,9 @@ shot() {
     # Only the demo's stand-in agent commands, never the ones on this Mac.
     if HOME="$DEMO" PATH="$DEMO/.local/bin:/usr/bin:/bin" perl -e 'alarm 90; exec @ARGV' "$APP" -ApplePersistenceIgnoreState YES \
         --snapshot "$OUT/$name.png" --brain "$DEMO/.akit/registry" --size "$size" --delay 4 --appearance light "$@" --demo >/dev/null 2>&1; then
-        # One pixel per point: sharp enough to read, a quarter of the bytes.
-        sips -Z "${size%x*}" "$OUT/$name.png" >/dev/null
+        # One pixel per point (the capture has two): sharp enough to read, a quarter of the
+        # bytes. A sheet is captured alone and is smaller than the window, so halve, don't fit.
+        sips --resampleWidth "$(( $(sips -g pixelWidth "$OUT/$name.png" | awk '/pixelWidth/ {print $2}') / 2 ))" "$OUT/$name.png" >/dev/null
         echo "$name.png"
     else
         echo "FAILED $name" >&2
@@ -44,12 +45,13 @@ shot skillssh            $MAIN --section skillsSh --query tdd
 shot skillssh-own        $MAIN --section skillsSh --query tdd --own-copy
 shot mcp                 $MAIN --section mcp
 shot mcp-add             $MAIN --section mcp --add
-shot mcp-catalog         $MAIN --section mcp --tab catalog --query github --add
+shot mcp-catalog         $MAIN --section mcp --tab catalog --query github --select github --add
 shot mcp-switch          $MAIN --section mcp --tab switch
 shot sessions            $MAIN --section sessions
 shot sessions-usage      $MAIN --section sessions --tab usage
 shot sessions-analysis   $MAIN --section sessions --tab analysis
-shot sessions-overview   $MAIN --section sessions --tab overview
+# Wider and taller: the Overview tab needs the room for the tiles and the whole context map.
+shot sessions-overview   1720x900 --section sessions --tab overview
 shot sessions-prompt     $MAIN --section sessions --tab prompt
 shot sessions-review     $MAIN --section sessions --add
 shot usage               $MAIN --section usage --query month
@@ -75,6 +77,8 @@ shot analysis-reports    $MAIN --section analysis --tab reports
 shot analysis-evals      $MAIN --section analysis --tab evals
 shot settings            900x760 --settings
 shot settings-lab        900x760 --tab lab --settings
+shot settings-scrub      900x760 --tab scrub --settings
+shot settings-add        900x760 --tab lab --settings --add
 # The guide window itself: a search over every guide, and a section with a screenshot.
-shot guide-search        820x760 --guide screens:start --query "remove everywhere"
-shot guide-section       820x760 --guide screens:skills
+shot guide-search        820x900 --guide screens:start --query "usage"
+shot guide-section       820x900 --guide screens:skills

@@ -56,7 +56,10 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 | [`machine-setup.md`](machine-setup.md) | What does AKit see on this Mac, and how does a new Mac get set up? | `akit doctor`; Help → Copy Diagnostics; Set Up This Mac (proposal) | `akit doctor` (2026-10-09), Help → Copy Diagnostics (2026-10-10) | onboarding (proposal, user review open) |
 | [`definitions.md`](definitions.md) | What does a shared term mean? | — | tiers, sending policy, keys, shared `FailureSignals` (2026-10-08) | fingerprint, `dirty` / `diff_hash` |
 
-The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`).
+The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`). Since
+2026-10-11 `screens.ru.md` is a full guide: every screen from simple tasks to hard ones, with
+examples and screenshots (`docs/guides/images`, taken from a made-up home by
+`make guide-screenshots`); the guide window searches both guides and the screens at once.
 
 ## What can be used today
 

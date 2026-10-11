@@ -28,6 +28,7 @@ struct GuideSearchTests {
         let hits = Self.search.hits(for: "skills")
         #expect(hits.map(\.kind).prefix(2) == [.feature, .heading])
         #expect(hits[0].feature == "skills")
+        #expect(hits[0].snippet == "Every skill the agents see now")
         #expect(hits[1].breadcrumb == ["AKit Screens", "On This Mac"])
 
         let button = Self.search.hits(for: "move trash")
@@ -54,6 +55,12 @@ struct GuideSearchTests {
         // A word of the titles above completes a match, but doesn't make one.
         #expect(Self.search.hits(for: "skills everywhere").first?.title == "Remove Everywhere…")
         #expect(!Self.search.hits(for: "installed").contains { $0.kind == .text })
+        let linked = GuideSearch(guides: [("g", "G", GuideDocument.parse("## A\nСмотрите [экран Skills](#skills) и **Apply**."))])
+        #expect(linked.hits(for: "смотрите").first?.snippet == "Смотрите экран Skills и Apply.")
+        // A bold Russian lead-in is text, not a button.
+        let lead = GuideSearch(guides: [("g", "G", GuideDocument.parse("## A\n**Что это:** экран.\n**Apply** пишет."))])
+        #expect(lead.hits(for: "что это").map(\.kind) == [.text])
+        #expect(lead.hits(for: "apply").map(\.kind) == [.button])
         #expect(GuideSearch.terms("Скиллы, скиллов и серверы servers") == ["скилл", "и", "сервер", "server"])
     }
 

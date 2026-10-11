@@ -28,6 +28,10 @@ EOF
 }
 
 "$AKIT" init >/dev/null
+# A made-up name for this Mac: without it the home folder's project is named after the real host.
+file "$DEMO/.akit/machine.json" <<'EOF2'
+{"kind": "personal", "name": "demo-mac"}
+EOF2
 
 skill tdd "Test-driven development: a failing test first, the smallest change that passes, then refactor." "Red, green, refactor. One behavior per test."
 skill grilling "Interview the user about a plan until every branch of the decision tree is settled." "Ask one question at a time; recommend an answer for each."
@@ -58,7 +62,9 @@ EOF
 file "$BRAIN/layers/base/layer.yaml" <<'EOF'
 name: base
 description: Every code project; tests first and reviewed changes
-skills: [tdd, code-review]
+skills:
+  - tdd
+  - code-review
 files:
   - template: agents.md
     to: AGENTS.md
@@ -146,7 +152,9 @@ file "$BRAIN/layers/take-home/templates/SUBMISSION.md" <<'EOF'
 ## How to run it
 EOF
 
-git -C "$BRAIN" add -A && git -C "$BRAIN" commit -qm "Add demo layers and skills"
+# Dated 40 days back: Insights counts a brain skill's sessions from the commit that wrote its description.
+git -C "$BRAIN" add -A
+GIT_AUTHOR_DATE="$(date -v-40d +%Y-%m-%dT%H:%M:%S)" git -C "$BRAIN" commit -qm "Add demo layers and skills"
 
 # Two projects: one already set up, one waiting for Set Up Project.
 for name in notes-mac weather-app; do
@@ -163,6 +171,20 @@ EOF
 git -C "$BRAIN" add -A && git -C "$BRAIN" commit -qm "Save weather-app answers"
 (cd "$DEMO/Projects/notes-mac" &&"$AKIT" apply --layers swiftui --set platform=macOS --targets claude,pi,codex >/dev/null)
 "$AKIT" apply --home --targets claude,pi,codex,opencode >/dev/null
+
+# Two skills installed by hand (not from the brain): Insights shows them under their own owner.
+own_skill() { # name, description, body
+    file "$DEMO/.agents/skills/$1/SKILL.md" <<EOF
+---
+name: $1
+description: $2
+---
+
+$3
+EOF
+}
+own_skill commit-message "Write a commit message from the staged diff: an imperative summary line and a short why." "Summary line of 72 characters at most."
+own_skill release-notes "Draft release notes from the commits since the last tag, grouped into features, fixes and chores." "One line per change, newest first."
 
 # Stand-ins for the agents' commands, so the demo shows ~/.local/bin paths and made-up versions.
 mkdir -p "$DEMO/.local/bin"
@@ -535,6 +557,148 @@ EOF
 }
 analysis_run "$BATCH_A" "$(ago 40H)" "$(ago 38H)" 30 0
 analysis_run "$BATCH_B" "$(ago 4H)" "$(ago 3H)" 28 2
+
+# Everyday Claude Code sessions of notes-mac with what Insights, Usage and the session Overview
+# read: a skill listing, responses with ids and cache tokens, skill calls, and the cost a run
+# saves when it exits (Insights: owners, recommendations, the skills table; Usage: Cost).
+CC_VERSION=2.1.300
+day_at() { date -u -v-"$1"d -v"$2"H -v"$3"M -v0S +%Y-%m-%dT%H:%M:%S.000Z; }  # days ago, hour, minute (UTC)
+json_text() { sed 's/\\/\\\\/g; s/"/\\"/g' "$1" | awk '{ printf "%s\\n", $0 }'; }  # a file as the inside of a JSON string
+rep() { local k; for ((k = 0; k < $1; k++)); do printf '%s' "$2"; done; }  # count, text
+# The skills Claude Code lists in notes-mac: the auto skills of its layers and the two own ones.
+LISTED=(tdd code-review swiftui-patterns swift-testing commit-message release-notes)
+LISTING=""
+for name in "${LISTED[@]}"; do
+    skill_file="$BRAIN/skills/$name/SKILL.md"; [[ -f $skill_file ]] || skill_file="$DEMO/.agents/skills/$name/SKILL.md"
+    LISTING+="- $name: $(sed -n 's/^description: //p' "$skill_file")\n"
+done
+LISTING="${LISTING%\\n}"
+# Lines of one session; SID, CWD and AT (the time of the next lines) are set by the caller.
+entry() { # type, uuid, the rest of the line's fields
+    printf '{"type":"%s","cwd":"%s","sessionId":"%s","version":"%s","timestamp":"%s","uuid":"%s-%s",%s}\n' "$1" "$CWD" "$SID" "$CC_VERSION" "$AT" "$2" "${SID: -4}" "$3"
+}
+prompt() { entry user "$1" "\"message\":{\"role\":\"user\",\"content\":\"$2\"}"; }  # uuid, text
+skill_listing() {
+    entry attachment L "\"attachment\":{\"type\":\"skill_listing\",\"isInitial\":true,\"names\":[\"$(join "${LISTED[@]}" | sed 's/,/","/g')\"],\"content\":\"$LISTING\",\"skillCount\":${#LISTED[@]}}"
+}
+# A response: n, context tokens it was sent with (mostly read from the cache), output tokens, content blocks.
+answer() {
+    entry assistant "a$1" "\"message\":{\"id\":\"msg_${SID: -4}_$1\",\"role\":\"assistant\",\"model\":\"claude-opus-4-5\",\"content\":[$4],\"usage\":{\"input_tokens\":180,\"cache_read_input_tokens\":$(($2 - 1080)),\"cache_creation_input_tokens\":900,\"output_tokens\":$3}}"
+}
+say() { printf '{"type":"text","text":"%s"}' "$1"; }
+call() { printf '{"type":"tool_use","id":"toolu_%s_%s","name":"%s","input":{%s}}' "${SID: -4}" "$1" "$2" "$3"; }  # n, tool, the fields of its input
+result() { # n, text, "error" for a failed call
+    entry user "r$1" "\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_${SID: -4}_$1\",$( [[ ${3:-} == error ]] && echo '"is_error":true,')\"content\":\"$2\"}]}"
+}
+slash() { entry user "$1" "\"message\":{\"role\":\"user\",\"content\":\"<command-message>$2</command-message>\\n<command-name>/$2</command-name>\"}"; }  # uuid, skill
+# What the process saved when it exited: start (epoch seconds), minutes, dollars.
+cost_state() {
+    printf '{"type":"cost-state","sessionId":"%s","totalCostUSD":%s,"startTime":%d,"totalDuration":%d,"modelUsage":{"claude-opus-4-5":{"costUSD":%s}}}\n' "$SID" "$3" "$(($1 * 1000))" "$(($2 * 60000))" "$3"
+}
+ai_title() { printf '{"type":"ai-title","aiTitle":"%s"}\n' "$1"; }
+
+# 24 sessions, one a day from 3 to 26 days ago. The model calls tdd often, swiftui-patterns,
+# swift-testing and commit-message sometimes, and never code-review (base lists it as auto: a
+# layer patch) or release-notes (installed by hand: an advice); you run both with /name.
+CWD="$NOTESMAC"
+everyday=("Add note pinning" "Fix the empty state of the list" "Add a word count to the editor" "Move settings into a sheet"
+          "Add an export menu" "Fix the window restore bug" "Add tags to notes" "Speed up the search" "Add a trash folder"
+          "Fix the date format" "Add drag and drop for attachments" "Clean up the toolbar")
+for i in $(seq 1 24); do
+    SID=$(printf '8e1a0000-0000-4000-8000-0000000000%02d' "$i"); d=$((i + 2)); title="${everyday[$((i % 12))]}"
+    context=$((14200 + i % 7 * 600)); n=0
+    step() { n=$((n + 1)); context=$((context + 1100)); AT="$(day_at "$d" 10 "$n")"; }
+    {
+        AT="$(day_at "$d" 10 0)"
+        prompt u1 "$title"
+        skill_listing
+        step; answer $n $context 60 "$(say "I'll look at the code first.")"
+        if (( i % 2 == 0 )); then
+            step; answer $n $context 40 "$(call $n Skill '"skill":"tdd"')"; result $n "Launching skill: tdd"
+        fi
+        if (( i % 3 == 0 )); then
+            step; answer $n $context 40 "$(call $n Skill '"skill":"swiftui-patterns"')"; result $n "Launching skill: swiftui-patterns"
+        fi
+        if (( i % 6 == 1 )); then
+            step; answer $n $context 40 "$(call $n Skill '"skill":"swift-testing"')"; result $n "Launching skill: swift-testing"
+        fi
+        step; answer $n $context 50 "$(call $n Read "\"file_path\":\"$CWD/Sources/NotesList.swift\"")"; result $n "struct NotesList: View { }"
+        step; answer $n $context 320 "$(call $n Edit "\"file_path\":\"$CWD/Sources/NotesList.swift\",\"old_string\":\"View { }\",\"new_string\":\"View { List { } }\"")"; result $n "The file has been updated."
+        step; answer $n $context 40 "$(call $n Bash '"command":"make test"')"; result $n "Test run with 14 tests passed."
+        if (( i % 8 == 5 )); then
+            step; answer $n $context 40 "$(call $n Skill '"skill":"commit-message"')"; result $n "Launching skill: commit-message"
+        fi
+        step; answer $n $context 90 "$(say "Done: the change is in and the tests pass.")"
+        if (( i % 6 == 3 )); then step; slash u2 code-review; step; answer $n $context 400 "$(say "The diff looks right; no findings.")"; fi
+        if (( i % 12 == 10 )); then step; slash u3 release-notes; step; answer $n $context 300 "$(say "Release notes drafted.")"; fi
+        cost_state "$(date -u -v-"$d"d -v10H -v0M -v0S +%s)" 25 "0.$((38 + i % 5 * 11))"
+        ai_title "$title"
+    } | file "$CLAUDE_NOTESMAC/$SID.jsonl"
+    # Last changed on its own day, so the sessions list keeps today's on top.
+    touch -t "$(date -v-"$d"d +%Y%m%d%H%M)" "$CLAUDE_NOTESMAC/$SID.jsonl"
+done
+
+# Today's session, written last so it is the first in the sessions list. It also records what
+# Claude Code sent before the first message (prompt_snapshot: system prompt and tools; rules
+# file, skills, subagents, MCP instructions), so its Overview tab draws the context map with
+# used, unused and always-loaded parts, and its System Prompt tab has text. The repeated lines
+# only give the parts the sizes they have in a real session.
+SID=8e1a0000-0000-4000-8000-000000000099
+habits='- Read a file before you change it, and change only what the task needs.\n- Run the tests of the project after a change and say plainly when they fail.\n- Prefer the dedicated tool over a shell command when both can do the job.\n- Never print or copy secrets: tokens, keys and passwords stay where they are.\n- Ask before anything that is hard to undo: deleting files, rewriting history, pushing.\n- Keep answers short; lead with the result and name the files you changed.\n'
+usage_notes='\n\nUsage notes:\n- Paths are absolute; a relative path is refused.\n- The call fails with a clear message when the target is missing, so check before you guess.\n- Output over the size limit is cut; ask for a narrower range in that case.\n- Several independent calls can go in one response and run side by side.'
+tool() { # name, description, properties of its input, how many times the usage notes repeat
+    printf '{"name":"%s","description":"%s%s","input_schema":{"type":"object","properties":{%s},"additionalProperties":false}}' "$1" "$2" "$(rep "$4" "$usage_notes")" "$3"
+}
+text_field() { printf '"%s":{"type":"string","description":"%s"}' "$1" "$2"; }
+TOOLS=$(join \
+    "$(tool Read "Reads a file from the disk, with line numbers." "$(text_field file_path "The file to read")" 3)" \
+    "$(tool Edit "Replaces one exact piece of text in a file." "$(text_field file_path "The file to change"),$(text_field old_string "The text to replace"),$(text_field new_string "The new text")" 3)" \
+    "$(tool Write "Writes a file, replacing what was there." "$(text_field file_path "The file to write"),$(text_field content "Its whole content")" 2)" \
+    "$(tool Bash "Runs a shell command and returns its output." "$(text_field command "The command to run"),$(text_field description "What it does, in a few words")" 5)" \
+    "$(tool Grep "Searches file contents with a regular expression." "$(text_field pattern "The expression"),$(text_field path "Where to search")" 3)" \
+    "$(tool Skill "Runs one of the listed skills by name." "$(text_field skill "The name of the skill"),$(text_field args "Arguments for it")" 1)" \
+    "$(tool Glob "Finds files by a name pattern." "$(text_field pattern "The pattern, like **/*.swift")" 2)" \
+    "$(tool Agent "Starts a subagent for a task with many steps." "$(text_field subagent_type "Which subagent"),$(text_field prompt "The task")" 5)" \
+    "$(tool WebFetch "Fetches a web page and answers a question about it." "$(text_field url "The page"),$(text_field prompt "The question")" 3)" \
+    "$(tool WebSearch "Searches the web." "$(text_field query "The search text")" 2)" \
+    "$(tool TodoWrite "Keeps a list of the steps of the task." "$(text_field todos "The steps and their state")" 4)" \
+    "$(tool NotebookEdit "Replaces one cell of a notebook." "$(text_field notebook_path "The notebook"),$(text_field new_source "The new cell")" 2)" \
+    "$(tool mcp__github__get_issue "Reads one issue of a repository." "$(text_field repo "owner/name"),$(text_field number "The number of the issue")" 2)" \
+    "$(tool mcp__github__list_issues "Lists the issues of a repository." "$(text_field repo "owner/name"),$(text_field state "open or closed")" 2)" \
+    "$(tool mcp__github__create_pull_request "Opens a pull request." "$(text_field repo "owner/name"),$(text_field title "Its title"),$(text_field head "The branch")" 2)" \
+    "$(tool mcp__github__search_code "Searches code across repositories." "$(text_field query "The search text")" 2)" \
+    "$(tool mcp__playwright__browser_navigate "Opens a page in the browser." "$(text_field url "The page")" 2)" \
+    "$(tool mcp__playwright__browser_click "Clicks an element of the page." "$(text_field element "What to click")" 2)" \
+    "$(tool mcp__playwright__browser_type "Types text into a field." "$(text_field element "The field"),$(text_field text "The text")" 2)" \
+    "$(tool mcp__playwright__browser_snapshot "Returns the page as an accessibility tree." "" 2)" \
+    "$(tool mcp__playwright__browser_take_screenshot "Takes a picture of the page." "$(text_field filename "Where to save it")" 2)")
+SYSTEM_PROMPT=$(join \
+    "\"You are Claude Code, a coding agent that works in the terminal of the user.\\n\\nYou help with software work: reading code, changing it, running commands and explaining what you did. You work in the folder the user started you in and use the tools below to look at files and to act. When a request is unclear, ask one short question instead of guessing.\"" \
+    "\"# Doing tasks\\n\\n$(rep 5 "$habits")\"" \
+    "\"# Using your tools\\n\\n$(rep 6 "$habits")\"" \
+    "\"# Tone and style\\n\\n$(rep 4 "$habits")\"" \
+    "\"# Environment\\n\\nWorking directory: $CWD\\nIs a git repository: true\\nPlatform: darwin\"")
+{
+    AT="$(ago 26M)"
+    prompt u1 "Add a tags filter to the notes list. Keep the search field as it is."
+    entry attachment I "\"attachment\":{\"type\":\"instructions\",\"files\":[{\"path\":\"$CWD/AGENTS.md\",\"type\":\"Project\",\"content\":\"$(json_text "$CWD/AGENTS.md")\"}]}"
+    skill_listing
+    entry attachment G "\"attachment\":{\"type\":\"agent_listing_delta\",\"addedTypes\":[\"general-purpose\",\"Explore\",\"Plan\"],\"addedLines\":[\"- general-purpose: Researches a question or carries out a task with many steps, with every tool.\",\"- Explore: Searches a codebase and reports where things are; it reads and never edits.\",\"- Plan: Designs the steps of a change and names the files and the risks before any code is written.\"]}"
+    entry attachment M "\"attachment\":{\"type\":\"mcp_instructions_delta\",\"addedNames\":[\"github\",\"playwright\"],\"addedBlocks\":[\"## github\\nIssues, pull requests and code search of GitHub repositories. Name the repository as owner/name.\",\"## playwright\\nDrives a browser. Take a snapshot of the page before you click or type.\"]}"
+    entry attachment P "\"attachment\":{\"type\":\"prompt_snapshot\",\"systemPrompt\":[$SYSTEM_PROMPT],\"tools\":[$TOOLS]}"
+    AT="$(ago 25M)"; answer 1 9600 80 "$(say "I'll write a failing test for the filter first."),$(call 1 Skill '"skill":"tdd"')"; result 1 "Launching skill: tdd"
+    answer 2 10300 50 "$(call 2 mcp__github__get_issue '"repo":"acme/notes-mac","number":"42"')"; result 2 "#42 Filter notes by tag: a row of tags above the list; picking one keeps only its notes."
+    AT="$(ago 24M)"; answer 3 11100 50 "$(call 3 Read "\"file_path\":\"$CWD/Sources/NotesList.swift\"")"; result 3 "struct NotesList: View {\\n    @Query(sort: \\\\.modified) var notes: [Note]\\n    @State private var search = \\\"\\\"\\n}"
+    answer 4 11800 40 "$(call 4 Grep '"pattern":"tags","path":"Sources"')"; result 4 "Sources/Note.swift:7:    var tags: [String] = []"
+    AT="$(ago 22M)"; answer 5 12500 420 "$(call 5 Write "\"file_path\":\"$CWD/Tests/TagFilterTests.swift\",\"content\":\"@Test func keepsOnlyNotesWithTheTag() { }\"")"; result 5 "File created."
+    answer 6 13500 40 "$(call 6 Bash '"command":"make test"')"; result 6 "Exit code 1\\nTests/TagFilterTests.swift:9: error: cannot find 'TagFilter' in scope" error
+    AT="$(ago 19M)"; answer 7 14300 610 "$(call 7 Edit "\"file_path\":\"$CWD/Sources/NotesList.swift\",\"old_string\":\"@State private var search\",\"new_string\":\"@State private var tag: String?\\n    @State private var search\"")"; result 7 "The file has been updated."
+    answer 8 15400 40 "$(call 8 Bash '"command":"make test"')"; result 8 "Test run with 15 tests passed."
+    AT="$(ago 17M)"; answer 9 16100 40 "$(call 9 Bash '"command":"make build"')"; result 9 "Build succeeded."
+    answer 10 16700 120 "$(say "The notes list has a tags filter above it now, and the search field is unchanged. The new test and the build pass.")"
+    cost_state "$(date -u -v-26M +%s)" 12 0.74
+    ai_title "Add a tags filter to the notes list"
+} | file "$CLAUDE_NOTESMAC/$SID.jsonl"
 
 # The session index (the fix's before/after reads it), then the checks over the sessions.
 "$AKIT" sessions import --quiet >/dev/null 2>&1 || true

@@ -119,6 +119,6 @@ struct GuideDocumentTests {
             #expect(document.path(to: group) == [group], "no section \(group)")
             for id in ids { #expect(document.path(to: id) == [group, id], "no section \(id) in \(group)") }
         }
-        for id in ["map", "settings"] { #expect(document.path(to: id) == [id], "no section \(id)") }
+        for id in ["start", "map", "settings"] { #expect(document.path(to: id) == [id], "no section \(id)") }
     }
 }

@@ -66,6 +66,8 @@ public struct GuideSearch: Sendable {
         var context: [String]
         var image: String?
         var feature: String?
+        /// A screen's one-line summary: shown whole instead of a cut of `text`.
+        var summary: String?
     }
 
     struct Word: Sendable, Hashable {
@@ -82,7 +84,7 @@ public struct GuideSearch: Sendable {
             let text = "\(feature.title). \(feature.summary)"
             entries.append(Entry(kind: .feature, guide: feature.guide, section: feature.section,
                                  breadcrumb: [titles[feature.guide] ?? feature.guide], title: feature.title, text: text,
-                                 words: Self.words(text), context: [], feature: feature.id))
+                                 words: Self.words(text), context: [], feature: feature.id, summary: feature.summary))
         }
         for (id, title, document) in guides {
             add(document.intro, guide: id, section: nil, breadcrumb: [title], title: document.title)
@@ -131,7 +133,9 @@ public struct GuideSearch: Sendable {
             guard !missed, let first = own.min(by: { $0.range.lowerBound < $1.range.lowerBound }) else { continue }
             var kind = entry.kind
             var title = entry.title
-            if kind == .text, own.allSatisfy(\.bold), let name = Self.boldSpan(around: first, in: entry) {
+            // On-screen names are English; a bold Russian phrase is a lead-in, not a button.
+            if kind == .text, own.allSatisfy(\.bold), let name = Self.boldSpan(around: first, in: entry),
+               !name.unicodeScalars.contains(where: { (0x0400...0x04FF).contains($0.value) }) {
                 kind = .button
                 title = name
             }
@@ -145,7 +149,7 @@ public struct GuideSearch: Sendable {
             if own.count == terms.count { score += 10 }
             if terms.count > 1, Self.normalized(entry.text).contains(phrase) { score += 15 }
             found.append((score, order, Hit(id: order, kind: kind, guide: entry.guide, section: entry.section, breadcrumb: entry.breadcrumb,
-                                            title: title, snippet: Self.snippet(entry.text, around: first.range),
+                                            title: title, snippet: entry.summary ?? Self.snippet(entry.text, around: first.range),
                                             image: entry.image, feature: entry.feature)))
         }
         return found.sorted { ($0.score, $1.order) > ($1.score, $0.order) }.prefix(limit).map(\.hit)
@@ -216,7 +220,8 @@ public struct GuideSearch: Sendable {
         var text = ""
         var spans: [(Int, Int)] = []
         var open: Int?
-        var rest = source[...]
+        // `[text](#id)` reads as its text.
+        var rest = source.replacing(/\[([^\]]+)\]\([^)\s]*\)/) { $0.output.1 }[...]
         while let mark = rest.range(of: "**") {
             text += rest[..<mark.lowerBound].replacingOccurrences(of: "`", with: "")
             if let from = open {
