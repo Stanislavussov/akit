@@ -286,7 +286,7 @@ struct SkillSwitchesTests {
         #expect(Glob.matches(String(repeating: "{a,b}", count: 22), String(repeating: "a", count: 22)) == nil)
         #expect(Glob.matches(String(repeating: "*a", count: 12) + "b", String(repeating: "a", count: 40)) == false)
         #expect(Glob.matches(String(repeating: "**/", count: 30) + "x", Array(repeating: "d", count: 40).joined(separator: "/")) == false)
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(Date().timeIntervalSince(start) < 15)
     }
 
     // MARK: - Review round

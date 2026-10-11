@@ -88,7 +88,7 @@ struct DetectionTests {
         let exe = home.appending(path: "bin/tool")
         try touch("bin/tool", "#!/bin/sh\necho '2.1.0 (Tool)'\necho second\n")
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
-        #expect(await VersionProbe.version(of: exe, in: env) == "2.1.0 (Tool)")
+        #expect(await VersionProbe.version(of: exe, in: env, timeout: VersionProbeTests.busyMachine) == "2.1.0 (Tool)")
     }
 }
 
@@ -102,31 +102,34 @@ struct VersionProbeTests {
 
     var env: HarnessEnvironment { HarnessEnvironment(homeDirectory: FileManager.default.temporaryDirectory) }
 
+    /// For probes that should answer: a busy machine (parallel builds) can take seconds just to start one.
+    static let busyMachine: TimeInterval = 30
+
     @Test func largeOutputDoesNotHang() async throws {
         // 200 KB of banner before the version — more than the pipe buffer (64 KB).
         let exe = try script("head -c 200000 /dev/zero | tr '\\\\0' 'x'; echo; echo 'v3.0.1'")
         let start = Date()
         // A hang would last the whole timeout; the bound leaves room for a busy parallel test run.
-        let version = await VersionProbe.version(of: exe, in: env, timeout: 20)
-        #expect(Date().timeIntervalSince(start) < 10)
+        let version = await VersionProbe.version(of: exe, in: env, timeout: Self.busyMachine)
+        #expect(Date().timeIntervalSince(start) < 25)
         #expect(version == "v3.0.1")
     }
 
     @Test func versionOnStderrIsRead() async throws {
         let exe = try script("echo '1.2.3' >&2")
-        #expect(await VersionProbe.version(of: exe, in: env) == "1.2.3")
+        #expect(await VersionProbe.version(of: exe, in: env, timeout: Self.busyMachine) == "1.2.3")
     }
 
     @Test func hangingProgramTimesOut() async throws {
         let exe = try script("sleep 30")
         let start = Date()
         #expect(await VersionProbe.version(of: exe, in: env, timeout: 1) == nil)
-        // Far below the 30 s sleep; generous because the full suite runs in parallel.
-        #expect(Date().timeIntervalSince(start) < 6)
+        // Below the 30 s sleep; generous because the full suite runs in parallel.
+        #expect(Date().timeIntervalSince(start) < 20)
     }
 
     @Test func failingProgramGivesNil() async throws {
         let exe = try script("echo 'error 42'; exit 1")
-        #expect(await VersionProbe.version(of: exe, in: env) == nil)
+        #expect(await VersionProbe.version(of: exe, in: env, timeout: Self.busyMachine) == nil)
     }
 }

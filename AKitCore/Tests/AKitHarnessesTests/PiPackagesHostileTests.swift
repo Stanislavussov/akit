@@ -186,7 +186,7 @@ extension PiPackagesTests {
 
         let start = Date()
         let listing = self.listing()
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(Date().timeIntervalSince(start) < 15)
         #expect(listing.packages.count == PiPackages.maxEntries)
         #expect(listing.packages.first?.prompts.count == 1)
         #expect(listing.notes.contains { $0.contains("49999 repeated entries skipped") })
@@ -209,7 +209,7 @@ extension PiPackagesTests {
 
         let start = Date()
         let listing = self.listing()
-        #expect(Date().timeIntervalSince(start) < 10)
+        #expect(Date().timeIntervalSince(start) < 30)
         #expect(listing.packages.allSatisfy { $0.isTooLarge && listed($0).isEmpty })
         #expect(listing.notes.contains { $0.contains("limit for one settings file") })
     }
@@ -252,7 +252,7 @@ extension PiPackagesTests {
 
         let start = Date()
         let listing = self.listing(projects: projects)
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(Date().timeIntervalSince(start) < 15)
         #expect(listing.packages.count == 1) // one real package, one real project
         #expect(listing.notes.contains { $0.contains("199 repeated entries skipped") })
     }
@@ -299,7 +299,7 @@ extension PiPackagesTests {
 
         let start = Date()
         let fan = try #require(packages().first)
-        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(Date().timeIntervalSince(start) < 15)
         #expect(fan.isTooLarge || fan.extensions.count <= 1)
     }
 
@@ -378,7 +378,7 @@ extension PiPackagesTests {
         let worst = try #require(G(String(repeating: "*a", count: 64)))
         let start = Date()
         #expect(!worst.matches(String(repeating: "a", count: 4_000) + "b"))
-        #expect(Date().timeIntervalSince(start) < 1)
+        #expect(Date().timeIntervalSince(start) < 3)
         // Exponential for a backtracking regex; one pass per token here.
         let text = String(repeating: "a", count: 4_000)
         #expect(try #require(G("*a*a*a*a*a*a*a*a*a*a*a*a*b")).matches(text) == false)

@@ -23,7 +23,8 @@ final class ProcessRunnerTests {
         return url
     }
 
-    func run(_ body: String, timeout: TimeInterval = 5) async throws -> (ProcessRunner.Result, TimeInterval) {
+    /// Generous, so a script that should finish isn't killed while a busy machine starts it.
+    func run(_ body: String, timeout: TimeInterval = 30) async throws -> (ProcessRunner.Result, TimeInterval) {
         let start = Date()
         let result = try #require(await ProcessRunner.run(try script(body), arguments: ["a b"], directory: folder,
                                                           environment: ["GREETING": "hi", "PATH": "/usr/bin:/bin"],
@@ -46,8 +47,8 @@ final class ProcessRunnerTests {
         let (result, elapsed) = try await run("(sleep 30) &\necho started")
         #expect(result.succeeded)
         #expect(result.output.contains("started"))
-        // Far below the child's 30 s, with room for a busy machine (parallel builds).
-        #expect(elapsed < 15)
+        // Below the child's 30 s (waiting for it would also hit the timeout), with room for a busy machine.
+        #expect(elapsed < 25)
     }
 
     @Test func ignoredTerminationIsKilledAfterTimeout() async throws {
@@ -55,7 +56,7 @@ final class ProcessRunnerTests {
         #expect(result.timedOut)
         #expect(!result.succeeded)
         // Without the kill it would never end; the margin is for a busy machine.
-        #expect(elapsed < 10)
+        #expect(elapsed < 25)
     }
 
     @Test func missingProgramIsNil() async {

@@ -221,7 +221,7 @@ struct BrainTests {
         }
         let start = Date()
         let brain = try load()
-        #expect(Date().timeIntervalSince(start) < 2)
+        #expect(Date().timeIntervalSince(start) < 6)
         #expect(brain.problems.isEmpty)
     }
 

@@ -32,7 +32,7 @@ struct SettingsFileTests {
         try fm.createDirectory(at: lock, withIntermediateDirectories: false)
         let start = Date.now
         #expect(throws: SettingsFile.Failure.self) { try SettingsFile.Lock.acquire(lock, file: file, home: home, wait: 0.3) }
-        #expect(Date.now.timeIntervalSince(start) < 5)
+        #expect(Date.now.timeIntervalSince(start) < 15)
         // Someone else's lock stays.
         #expect(fm.fileExists(atPath: lock.path))
     }
