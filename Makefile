@@ -40,7 +40,12 @@ install: generate   ## release build: AKit.app into ~/Applications, the akit com
 	rm -rf $(HOME)/Applications/AKit.app
 	cp -R $(DERIVED)/release/Build/Products/Release/AKit.app $(HOME)/Applications/
 	$(MAKE) install-cli
-	@echo "Installed ~/Applications/AKit.app"
+	@# Which version is installed now: the same text as at the bottom of the app's sidebar.
+	@plist="$(HOME)/Applications/AKit.app/Contents/Resources/BuildInfo.plist"; \
+	  v() { /usr/libexec/PlistBuddy -c "Print :$$1" "$$plist" 2>/dev/null; }; \
+	  tag="$$(v AKitVersionTag)"; n="$$(v AKitCommitsSinceTag)"; \
+	  version="$${tag:-no version tag}"; [ "$${n:-0}" -gt 0 ] && version="$$version + $$n"; [ "$$(v AKitGitDirty)" = yes ] && version="$$version*"; \
+	  echo "Installed ~/Applications/AKit.app: $$version ($$(v AKitGitBranch) @ $$(v AKitGitCommit), built $$(v AKitBuildDate))"
 
 install-cli:   ## only the akit command, into ~/.local/bin
 	cd AKitCore && swift build -c release --product akit
