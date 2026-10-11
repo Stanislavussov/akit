@@ -397,6 +397,32 @@ final class AppModel {
         }
     }
 
+    // MARK: Move to Global
+
+    /// What moving the skill from these projects into the core layer would do
+    /// (`SkillMove.planToGlobal`); `from` nil: every project whose answers list it. Only reads.
+    func moveToGlobalPlan(name: String, from: [String]?, mode: LayerSkill.Mode?) async -> SkillMove.GlobalPlan? {
+        guard let brain else { return nil }
+        let env = HarnessEnvironment.current
+        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+        return await Task.detached { SkillMove.planToGlobal(name: name, from: from, mode: mode, brain: brain, context: context) }.value
+    }
+
+    /// Moves it (brain, core, home folder, then the projects), holding the worktree sync of every
+    /// folder it writes, then rescans. A `SkillMove.GlobalFailure` says where the skill is.
+    func moveToGlobal(_ plan: SkillMove.GlobalPlan) async throws -> SkillMove.GlobalOutcome {
+        guard let brain else {
+            throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
+        }
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current
+        return try await holdingWorktrees(all: Set(plan.holds)) {
+            try await SkillMove.applyToGlobal(plan, brain: brain, env: env)
+        }
+    }
+
     // MARK: Remove Everywhere
 
     /// Every place the harnesses load the skill from and what removing it does

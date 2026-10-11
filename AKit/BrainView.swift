@@ -708,6 +708,8 @@ private struct BrainProjectDetailView: View {
     @State private var ownSkills: [ProjectSkills.Skill] = []
     @State private var creatingSkill = false
     @State private var pendingTrash: ProjectSkills.Skill?
+    /// Move to Global… of one of its skills.
+    @State private var globalizing: GlobalRequest?
     @State private var problem: String?
     /// The project's git worktrees (a local-only project); nil until read or when they can't be.
     @State private var worktrees: ProjectWorktrees.Status?
@@ -741,6 +743,7 @@ private struct BrainProjectDetailView: View {
                 }
             }
         }
+        .sheet(item: $globalizing) { MoveToGlobalSheet(name: $0.name, from: [$0.project]) }
         .confirmationDialog("Move “\(pendingTrash?.name ?? "")” to the Trash?", isPresented: Binding(get: { pendingTrash != nil }, set: { if !$0 { pendingTrash = nil } }),
                             titleVisibility: .visible, presenting: pendingTrash) { skill in
             Button("Move to Trash", role: .destructive) { trash(skill) }
@@ -888,6 +891,9 @@ private struct BrainProjectDetailView: View {
                             Text(skill.name).fontWeight(.medium)
                             ModeTag(mode: skill.mode)
                             Spacer()
+                            Button("Move to Global…") { globalizing = GlobalRequest(name: skill.name, project: project.id) }
+                                .buttonStyle(.borderless)
+                                .help("Into the core layer and this Mac's home folder first, then out of this project")
                         }
                     }
                 }
@@ -907,6 +913,9 @@ private struct BrainProjectDetailView: View {
                                 }
                             }
                             Spacer()
+                            Button("Move to Global…") { globalizing = GlobalRequest(name: skill.name, project: project.id) }
+                                .buttonStyle(.borderless)
+                                .help("Import it into the brain, add it to the core layer and this Mac's home folder, then move the project's copy to the Trash")
                             if ExternalEditor.appURL != nil {
                                 Button("Edit", systemImage: "square.and.pencil") { ExternalEditor.open(skill.file) }
                                     .buttonStyle(.borderless)

@@ -122,6 +122,15 @@ public enum AKitCLI {
                                           --keep-global: core and the home folder keep it.
                                           --keep-own: a project with its own copy keeps it.
                                           Shows the plan; --yes does it
+          akit move skill NAME --to-global [--from PROJECT[,PROJECT…]] [--mode auto|manual] [--yes]
+                                          The reverse: into the core layer (layer.yaml diff,
+                                          committed), then the home folder's Apply, then out of
+                                          each project's answers with its Apply (its copy to the
+                                          Trash, worktree links removed); a project's own copy
+                                          (not in git) is imported into the brain first and goes
+                                          to the Trash last. Default --from: every project whose
+                                          answers list it. Stops at the first failure and says
+                                          where the skill is
 
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
@@ -348,11 +357,12 @@ public enum AKitCLI {
             if command == "move" {
                 var checked = options
                 checked.localOnly = nil
+                checked.from = nil
                 try refuseProjectOptions(checked, command: "move")
                 if options.json { throw Failure(message: "--json doesn't go with akit move.") }
                 let brainRoot = brainRoot(options, cwd: cwd, env: env), hardware = hardwareHash()
                 return try await withoutActuallyEscaping(trash) { trash in
-                    try await move(&args, localOnly: options.localOnly, yes: options.yes, brainRoot: brainRoot, env: env, cwd: cwd,
+                    try await move(&args, localOnly: options.localOnly, from: options.from, yes: options.yes, brainRoot: brainRoot, env: env, cwd: cwd,
                                    projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets, hardware: hardware,
                                    out: out, err: err, trash: trash)
                 }

@@ -20,6 +20,8 @@ struct SkillsView: View {
     @State private var moving: Skill?
     /// Remove Everywhere… of this skill name (sheet).
     @State private var removing: RemovalRequest?
+    /// Move to Global… of a project's skill (sheet).
+    @State private var globalizing: GlobalRequest?
     /// Snapshots: `--add` opens the selected skill's switch sheet once its states are read.
     @State private var snapshotSwitch = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .skills
 
@@ -35,7 +37,8 @@ struct SkillsView: View {
                     SkillDetailView(skill: skill, link: model.brainLinks[skill.id],
                                     onDelete: { pendingDelete = skill }, onImport: { importing = skill },
                                     onMove: canMove(skill) ? { moving = skill } : nil,
-                                    onRemoveEverywhere: { removing = RemovalRequest(name: skill.folder.lastPathComponent) })
+                                    onRemoveEverywhere: { removing = RemovalRequest(name: skill.folder.lastPathComponent) },
+                                    onMoveToGlobal: globalRequest(skill).map { request in { globalizing = request } })
                 } else {
                     ContentUnavailableView("Select a skill", systemImage: "book.closed")
                 }
@@ -115,6 +118,7 @@ struct SkillsView: View {
         }
         .sheet(item: $moving) { skill in MoveSkillSheet(name: Self.moveName(skill, link: model.brainLinks[skill.id])) }
         .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name) }
+        .sheet(item: $globalizing) { MoveToGlobalSheet(name: $0.name, from: [$0.project]) }
         .confirmationDialog(
             "Delete “\(pendingDelete?.name ?? "")”?",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
@@ -148,6 +152,12 @@ struct SkillsView: View {
                canMove(skill) {
                 selection = skill.id
                 moving = skill
+                return
+            }
+            // Snapshots: `--tab global` opens Move to Global… for the project skill `--select <folder name>`.
+            if let options = DebugSnapshot.options, options.tab == "global", globalizing == nil, model.lastScan != nil,
+               let request = model.skills.lazy.filter({ $0.folder.lastPathComponent == options.select }).compactMap(globalRequest).first {
+                globalizing = request
                 return
             }
             // Snapshots: `--tab remove` opens Remove Everywhere… for `--select <folder name>`.
@@ -208,6 +218,7 @@ struct SkillsView: View {
             BrainSkillButtons(name: name)
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
             if canMove(skill) { Button("Move to Project…") { moving = skill } }
+            if let request = globalRequest(skill) { Button("Move to Global…") { globalizing = request } }
             Button("Remove Everywhere…") { removing = RemovalRequest(name: skill.folder.lastPathComponent) }
             Divider()
             SkillSwitchMenu(skill: skill)
@@ -220,6 +231,7 @@ struct SkillsView: View {
                 Button("Import to Brain…") { importing = skill }
             }
             if canMove(skill) { Button("Move to Project…") { moving = skill } }
+            if let request = globalRequest(skill) { Button("Move to Global…") { globalizing = request } }
             Divider()
             SkillSwitchMenu(skill: skill)
             Divider()
@@ -233,6 +245,19 @@ struct SkillsView: View {
     /// claude.ai, plugin or package skill, not a lone `.md` file.
     private func canMove(_ skill: Skill) -> Bool {
         model.brain != nil && skill.scope == .global && !skill.isReadOnly && !skill.isSingleFile
+    }
+
+    /// Move to Global… for a project's skill that came from its answers, or its own copy (imported
+    /// into the brain first): the brain needed, the project known by id; nil otherwise.
+    private func globalRequest(_ skill: Skill) -> GlobalRequest? {
+        guard model.brain != nil, case .project(let url) = skill.scope, !skill.isReadOnly, !skill.isSingleFile,
+              let id = model.brainProjectFolders.first(where: { $0.value.standardizedFileURL.path == url.standardizedFileURL.path })?.key
+        else { return nil }
+        switch model.brainLinks[skill.id] {
+        case .rendered(let name, let layers, _)? where layers == [ProjectBundle.projectSource]: return GlobalRequest(name: name, project: id)
+        case .notInBrain?, .sameName?: return GlobalRequest(name: skill.folder.lastPathComponent, project: id)
+        default: return nil
+        }
     }
 
     /// The name the brain knows the skill by: the brain skill a copy was rendered from, else its folder.
@@ -437,6 +462,8 @@ private struct SkillDetailView: View {
     let onMove: (() -> Void)?
     /// Remove Everywhere…: every place a harness loads a skill of this name from.
     let onRemoveEverywhere: () -> Void
+    /// Move to Global…; nil when the skill isn't a project's own or from its answers.
+    let onMoveToGlobal: (() -> Void)?
     @State private var files: [String] = []
     @State private var text: String?
 
@@ -473,6 +500,10 @@ private struct SkillDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if let onMoveToGlobal {
+                    Button("Move to Global…", systemImage: "arrow.up.backward.square", action: onMoveToGlobal)
+                        .help("Move this project's skill into the core layer, so every session on this Mac gets it, then out of the project")
+                }
                 if let onMove {
                     Button("Move to Project…", systemImage: "arrow.down.forward.square", action: onMove)
                         .help("Move this global skill into the projects that use it, so other sessions stop paying for its description")
@@ -679,4 +710,11 @@ private struct BrainSkillButtons: View {
 struct RemovalRequest: Identifiable {
     let name: String
     var id: String { name }
+}
+
+/// A project's skill for Move to Global… (the Skills and Brain screens).
+struct GlobalRequest: Identifiable {
+    let name: String
+    let project: String
+    var id: String { name + "|" + project }
 }

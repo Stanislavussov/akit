@@ -5,7 +5,7 @@ Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 Local-only files and git worktrees built 2026-10-09 in the core and the `akit` command, and
 2026-10-10 in the app (see
 [Local-only files and git worktrees](#local-only-files-and-git-worktrees-built-2026-10-09)).
-Move to Project built 2026-10-11 (see [Move a skill to a project](#move-a-skill-to-a-project-built-2026-10-11)).
+Move to Project and its reverse, Move to Global, built 2026-10-11 (see [Move a skill to a project](#move-a-skill-to-a-project-built-2026-10-11)).
 Remove Everywhere built 2026-10-11 (see [Remove a skill everywhere](#remove-a-skill-everywhere-built-2026-10-11)).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
@@ -407,6 +407,36 @@ The order keeps the skill present at every step:
   the sheet and `akit move` never import or migrate it; `akit stats skill` imports first, like every `akit stats`.
 - Not built: "make it the project's own" (copy the folder into the project to commit it), which
   would reach worktrees only once committed and has no lock entry or preview of its own.
+
+**Move to Global** (built 2026-10-11) is the reverse: **Move to Global…** on a project's skill
+(Skills screen: context menu and detail; Brain → the project → Skills), `akit move skill NAME
+--to-global [--from PROJECT[,…]] [--mode auto|manual] [--yes]`. Core: `SkillMove.planToGlobal`,
+`applyToGlobal`. The order keeps the skill present at every point:
+
+```
+ a project's own copy only (not in the brain): copy into skills/<name>   commit "Import skill X"
+ layers/core/layer.yaml + X (diff in the preview)                        commit "Add X to layer core"
+ home folder Apply: only X's files (and ~/.claude/skills when new)
+ each project (default: every record whose answers list X):
+   on this Mac: answers − X → Apply of only X's files (its copy to the Trash through the lock;
+     a local-only project's worktree links go with the existing sync)
+   not on this Mac: answers only (a work Mac: a personal project's brain record through
+     WorkFilter's answers kind with mode nil, only that entry taken out)
+   its own copy: to the Trash, last
+```
+
+- The mode: `--mode`, else the first project's answers entry, else auto.
+- A project's own copy is checked like Move's source: git tracks it → blocked ("remove it there
+  with a commit"); its own git history, a link out of the skill, an unreadable part or more than
+  10,000 entries → blocked; a copy that differs from the brain's `skills/X` → blocked with Show
+  Edits. A rendered copy edited by hand blocks too.
+- The home folder: a copy in `~/.agents/skills/X` AKit didn't write blocks (compare, then remove
+  it or import it); another global X (say `~/.pi/agent/skills/X`) is a warning, since harnesses
+  reading both folders see two.
+- Projects not chosen that list it keep their copy; the plan names them.
+- It stops at the first failure and says where the skill is: in its projects only (import or core
+  failed), in core but not the home folder (Update Home Folder puts it there), or in core, the home
+  folder and the projects not yet done.
 
 ## Remove a skill everywhere (built 2026-10-11)
 

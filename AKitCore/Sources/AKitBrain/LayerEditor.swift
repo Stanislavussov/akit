@@ -69,6 +69,12 @@ public enum LayerEditor {
         try await commit(["layers/\(name)/layer.yaml"], "Add \(names.joined(separator: ", ")) to layer \(name)", in: brain, env: env)
     }
 
+    /// The layer.yaml text with this skill added in `mode`, for a preview; nothing else changes.
+    public static func layerWithSkill(_ skill: String, mode: LayerSkill.Mode, in layer: Layer) throws(Failure) -> (before: String, after: String) {
+        let text = try read(layer)
+        return (text, try addingSkills([skill], mode: mode, to: text))
+    }
+
     /// Sets how the layer brings one of its skills, and commits.
     public static func setMode(_ mode: LayerSkill.Mode, ofSkill skill: String, inLayer name: String,
                                in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
