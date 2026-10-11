@@ -113,7 +113,7 @@ struct LabView: View {
         .overlay {
             if model.labRuns.isEmpty {
                 ContentUnavailableView("No runs yet", systemImage: "flask",
-                                       description: Text("Sessions → a Claude Code session → Review in Terminal…, or New Run…"))
+                                       description: Text("Sessions → a Claude Code or Pi session → Review in Terminal…, or New Run…"))
             }
         }
     }

@@ -43,8 +43,11 @@ struct ModePage: View {
                     }
                     // Snapshots: `--select <mode> --query judge|fix|seen` scrolls to that panel.
                     guard let panel = DebugSnapshot.options?.query, ["judge", "fix", "seen"].contains(panel) else { return }
-                    try? await Task.sleep(for: .milliseconds(400))
-                    proxy.scrollTo(panel, anchor: .top)
+                    // Twice: the panels above get their height after the first pass.
+                    for _ in 0..<2 {
+                        try? await Task.sleep(for: .milliseconds(400))
+                        proxy.scrollTo(panel, anchor: .top)
+                    }
                 }
             }
             .sheet(isPresented: $addExemplar) { AddExemplarSheet(mode: mode) }

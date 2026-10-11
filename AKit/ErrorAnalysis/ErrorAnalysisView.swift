@@ -82,7 +82,11 @@ struct ErrorAnalysisView: View {
         .task {
             await analysis.reload()
             // Snapshots: `--tab review --add` opens the clustering confirmation.
-            if DebugSnapshot.options?.add == true, tab == .review { analysis.send = .cluster(analysis.data) }
+            if DebugSnapshot.options?.add == true, tab == .review {
+                // A second reload may have overtaken this one: wait for the data, or the sheet counts 0 notes.
+                while !analysis.loaded { try? await Task.sleep(for: .milliseconds(100)) }
+                analysis.send = .cluster(analysis.data)
+            }
         }
         // Reviews, batches and control cells finish outside AKit, and a running batch adds
         // notes session by session: reload when any of that changes.

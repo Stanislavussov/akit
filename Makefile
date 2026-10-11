@@ -68,4 +68,7 @@ banner:   ## redraw the README banner (docs/assets/banner.png)
 screenshots: build   ## README screenshots (light and dark) from a made-up home: tools/demo-home.sh
 	tools/screenshots.sh
 
-.PHONY: generate open build run restart test snapshot install install-cli icon release screenshots banner
+guide-screenshots: build   ## screenshots of the in-app guides (docs/guides/images) from a made-up home; [SHOTS="skills mcp"] redoes only those
+	tools/guide-screenshots.sh $(SHOTS)
+
+.PHONY: generate open build run restart test snapshot install install-cli icon release screenshots guide-screenshots banner

@@ -97,8 +97,9 @@ struct AKitApp: App {
 
         Window("Guide", id: GuideView.windowID) {
             GuideView()
+                .environment(model)
                 .environment(guides)
         }
-        .defaultSize(width: 760, height: 820)
+        .defaultSize(width: 820, height: 860)
     }
 }

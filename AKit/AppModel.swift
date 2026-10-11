@@ -591,7 +591,9 @@ final class AppModel {
     private var rescanRequested = false
 
     init() {
-        projectRoots = UserDefaults.standard.stringArray(forKey: Self.projectRootsKey) ?? ProjectFinder.defaultRoots
+        // Demo screenshots run in a made-up home: this Mac's saved folders don't belong in them.
+        projectRoots = DebugSnapshot.options?.demo == true ? ProjectFinder.defaultRoots
+            : UserDefaults.standard.stringArray(forKey: Self.projectRootsKey) ?? ProjectFinder.defaultRoots
         brainPath = DebugSnapshot.options?.brain ?? UserDefaults.standard.string(forKey: Self.brainPathKey) ?? Self.defaultBrainPath
     }
 

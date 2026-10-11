@@ -19,7 +19,7 @@ import SwiftUI
 /// `--tab remove` opens Remove Everywhere… for `--select <folder name>` on the Skills screen;
 /// `--tab move` opens Move to Project… for the global skill `--select <folder name>` (`move-check`, `move-preview` go on to those pages);
 /// `--settings` shows the Settings view in the main window; `--guide <section id>` the guide window's
-/// view, opened at that section (`--query` fills its search field);
+/// view, opened at that section (`--query` fills its search field, which searches every guide and screen);
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
 /// `--click 640,400` clicks there (snapshot points from the top left) before the capture;
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
@@ -81,7 +81,8 @@ enum DebugSnapshot {
     static let options: Options? = {
         let args = ProcessInfo.processInfo.arguments
         func value(_ flag: String) -> String? {
-            guard let i = args.firstIndex(of: flag), i + 1 < args.count else { return nil }
+            // The last one wins, so a script can give a default first.
+            guard let i = args.lastIndex(of: flag), i + 1 < args.count else { return nil }
             return args[i + 1]
         }
         guard let path = value("--snapshot") else { return nil }
