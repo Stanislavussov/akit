@@ -17,6 +17,7 @@ public enum SkillScanner {
                             projects knownProjects: [URL]? = nil,
                             piPackages: [PiPackage]? = nil,
                             piHidden: [String: Set<String>]? = nil,
+                            claudeMaxDescChars: Int? = nil,
                             in env: HarnessEnvironment) -> [Skill] {
         let installed = Set(installations.map(\.id))
         let active = adapters.filter { installed.contains($0.id) }
@@ -36,7 +37,8 @@ public enum SkillScanner {
         let syncedFolders = roots.compactMap(\.syncedFolder).map { $0.resolvingSymlinksInPath().path + "/" }
         let hidden = piHidden ?? PiPackages.skillsHidden(projects: projects, packages: packages)
         return merge(roots.flatMap { found(in: $0) }, lock: SkillLock.read(in: env), home: env.homeDirectory,
-                     syncedFolders: syncedFolders, hiddenInProject: hidden)
+                     syncedFolders: syncedFolders, hiddenInProject: hidden,
+                     claudeMaxDescChars: claudeMaxDescChars ?? Self.claudeMaxDescChars(in: env))
     }
 
     /// Project folders the installed harnesses know about plus `extraProjects`, existing ones, no duplicates.
@@ -118,10 +120,12 @@ public enum SkillScanner {
     // MARK: - Merging
 
     static func merge(_ hits: [Hit], lock: SkillLock, home: URL, syncedFolders: [String] = [],
-                      hiddenInProject: [String: Set<String>] = [:]) -> [Skill] {
+                      hiddenInProject: [String: Set<String>] = [:], claudeMaxDescChars: Int = defaultClaudeMaxDescChars) -> [Skill] {
         var byID: [String: Skill] = [:]
         var order: [String] = []
         var piMissingDescription = Set<String>()
+        /// The description's length as each harness sends it (UTF-16 units, as their JavaScript counts).
+        var lengths: [String: (claude: Int, pi: Int)] = [:]
 
         for hit in hits {
             let real = hit.file.resolvingSymlinksInPath()
@@ -139,6 +143,9 @@ public enum SkillScanner {
             let name = meta["name"].flatMap { $0.isEmpty ? nil : $0 } ?? folderName
             let description = meta["description"] ?? ""
             if description.trimmingCharacters(in: .whitespaces).isEmpty { piMissingDescription.insert(id) }
+            // Claude Code lists `description - when_to_use`; Pi only the description.
+            let whenToUse = meta["when_to_use"].flatMap { $0.isEmpty ? nil : $0 }
+            lengths[id] = ((whenToUse.map { "\(description) - \($0)" } ?? description).utf16.count, description.utf16.count)
 
             let isSynced = syncedFolders.contains { id.hasPrefix($0) }
             let scope: SkillScope = isSynced ? .synced : hit.root.scope
@@ -169,8 +176,42 @@ public enum SkillScanner {
                 skills[index].warnings += PiNameRule.problems(skill.name).map { "Pi: \($0)" }
             }
         }
+        for index in skills.indices {
+            guard let length = lengths[skills[index].id] else { continue }
+            skills[index].warnings += descriptionProblems(claude: skills[index].visibleTo.contains(.claudeCode) ? length.claude : nil,
+                                                         pi: skills[index].visibleTo.contains(.pi) ? length.pi : nil,
+                                                         claudeMaxDescChars: claudeMaxDescChars)
+        }
         addCollisionWarnings(&skills, home: home, hiddenInProject: hiddenInProject)
         return skills
+    }
+
+    /// Claude Code's default `skillListingMaxDescChars` (2.1.296).
+    public static let defaultClaudeMaxDescChars = 1536
+    /// Pi warns above this many characters (1.0.4 `MAX_DESCRIPTION_LENGTH`) and still sends the whole text.
+    public static let piDescriptionWarning = 1024
+
+    /// Description lengths a harness cuts or warns about. `claude`: `description - when_to_use`, nil when
+    /// Claude Code doesn't see the skill; `pi`: the description, nil when Pi doesn't.
+    static func descriptionProblems(claude: Int?, pi: Int?, claudeMaxDescChars: Int) -> [String] {
+        var problems: [String] = []
+        if let claude, claude > claudeMaxDescChars {
+            problems.append("Claude Code cuts its description at \(claudeMaxDescChars) characters (it has \(claude), with when_to_use); the rest never reaches the model")
+        }
+        if let pi, pi > piDescriptionWarning {
+            problems.append("Pi warns: description over \(piDescriptionWarning) characters (\(pi)); Pi still sends it all")
+        }
+        return problems
+    }
+
+    /// `skillListingMaxDescChars` from `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` honoured), else
+    /// the default. Read leniently: a file that can't be read gives the default (the skill switches report it).
+    public static func claudeMaxDescChars(in env: HarnessEnvironment) -> Int {
+        guard let file = HarnessCatalog.configRoot(of: .claudeCode, in: env)?.appending(path: "settings.json"),
+              let read = try? SettingsFile.read(file, home: env.homeDirectory),
+              case .number(let text)? = read.value.value(at: ["skillListingMaxDescChars"]), let value = Int(text), value > 0
+        else { return defaultClaudeMaxDescChars }
+        return value
     }
 
     /// The start of a skill file: enough for its frontmatter, never a whole huge file.

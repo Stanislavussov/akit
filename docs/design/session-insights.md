@@ -351,6 +351,12 @@ Insights → Skill Listing):
   through `SettingsFile` (only that key in the diff, backup, refused when it changed since). The cut
   (`skillListingMaxDescChars`) is shown read-only.
 - A user's own `name-only` setting counts as if the budget had dropped the skill (I1: no reasons).
+- Per skill, `SkillScanner` adds a problem when a harness that sees it cuts or warns about its
+  description (lengths in UTF-16 units, as both count): Claude Code, `description - when_to_use`
+  over `skillListingMaxDescChars` from `~/.claude/settings.json` ("Claude Code cuts its description at
+  N characters"); Pi, the description over 1024 ("Pi warns …; Pi still sends it all"). Shown on the
+  Skills screen (the row's mark, the detail) and under the skill in `akit skills state`. A project's
+  own `.claude/settings.json` value is not used there.
 
 ### Tools and MCP servers over time
 
