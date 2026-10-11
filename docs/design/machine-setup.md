@@ -37,6 +37,12 @@ doesn't behave, run `akit doctor` first.
 In the app: **Help → Copy Diagnostics** puts the same report on the clipboard, to paste
 into an agent session.
 
+**Help → Report a Bug…** and **Help → Suggest a Feature…** (2026-10-11, `AKitDoctor/IssueReport.swift`)
+open GitHub's new-issue page for AKit in the browser, with a label and a template in the link:
+the sections to fill in, the AKit version and the macOS version. AKit sends nothing and needs
+no token; the user posts the issue. The diagnostics report is not put into the link: it names
+the user's projects and the issue is public, so the bug template only asks for it.
+
 ## Onboarding (proposal)
 
 A required first-run sheet in the app, **Set Up This Mac**, also reachable from Settings
