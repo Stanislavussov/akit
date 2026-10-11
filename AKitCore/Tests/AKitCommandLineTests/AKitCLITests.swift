@@ -227,7 +227,13 @@ struct AKitCLITests {
         #expect(try await brainGit("status", "--porcelain").isEmpty)
         #expect(!fm.fileExists(atPath: Brain.defaultRoot(home: home).appending(path: "projects/local").path))
 
-        // Removing a layer updates local answers without committing them.
+        // Removing a layer updates local answers without committing them. The layer's own commit
+        // needs the brain's own identity on a work Mac (no hooks, not signed).
+        let refused = await akit("remove", "layer", "task", "--yes")
+        #expect(refused.code != 0 && refused.err.contains("The brain has no git"), "\(refused)")
+        #expect(fm.fileExists(atPath: Brain.defaultRoot(home: home).appending(path: "layers/task/layer.yaml").path), "nothing changed")
+        _ = try await brainGit("config", "user.name", "Me")
+        _ = try await brainGit("config", "user.email", "me@example.com")
         #expect(await akit("remove", "layer", "task", "--yes").code == 0)
         #expect(ProjectRecords.savedAnswers(id: "local/task", in: local)?.layers == [])
         #expect(try await brainGit("status", "--porcelain").isEmpty)

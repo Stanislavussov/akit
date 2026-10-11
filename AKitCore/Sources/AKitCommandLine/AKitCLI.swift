@@ -967,7 +967,9 @@ public enum AKitCLI {
             } else {
                 lines.append("  1. No recommendation takes a skill out of the listing now; make unused skills manual or move them (akit stats --unused, akit move skill).")
             }
-            if let raise = report.raiseTo {
+            if let budget = settings.envBudget, (report.afterFixes ?? report.now).overBudget > 0 {
+                lines.append("  2. SLASH_COMMAND_TOOL_CHAR_BUDGET=\(budget) wins over skillListingBudgetFraction: raise or unset it in the shell instead.")
+            } else if let raise = report.raiseTo {
                 let extra = (report.afterFixes ?? report.now).extraTokensPerRequest
                 lines.append("  2. Then raise skillListingBudgetFraction to \(raise) in \(settings.file) (≈ \(ContextSize.short(extra)) tokens more per request; the app's Raise Budget… writes it).")
             }

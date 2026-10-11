@@ -175,9 +175,7 @@ extension SkillMove {
             blockers.append("~/\(prefix(name)) was edited by hand since AKit wrote it. Bring the edits into the brain's skills/\(name) first.")
         }
         if !homePlan.canApply { blockers += (homePlan.render.errors + homePlan.blockers).map { "Home folder: \($0)" } }
-        if homePlan.answers.targets.contains("claude"), !homePaths.contains(".claude/skills"), !claudeSeesSkills(in: home) {
-            warnings.append("~/.claude/skills doesn't lead to ~/.agents/skills, so Claude Code won't see \(name) from the home folder.")
-        }
+        let claudeMissesHome = homePlan.answers.targets.contains("claude") && !homePaths.contains(".claude/skills") && !claudeSeesSkills(in: home)
         for other in context.installed where other.scope == .global && folderName(other) == name
             && other.realFolder.deletingLastPathComponent().standardizedFileURL.path != home.appending(path: ProjectBundle.skillsFolder).resolvingSymlinksInPath().standardizedFileURL.path {
             warnings.append("\(shown(other.folder, home: home)) is another global \(name): harnesses that read both folders will see two. Remove it with Remove Everywhere… afterwards if it is the same skill.")
@@ -219,7 +217,7 @@ extension SkillMove {
                 parts.append(part(.answers, plan: plan, paths: paths, excluded: Set(plan.changes.map(\.path)).subtracting(paths),
                                   worktrees: plan.localOnly ? ProjectWorktrees.family(of: folder, env: env).worktrees : []))
             } else if let own = item.own, let folder = item.folder {
-                if let reason = SkillRemoval.trackedReason(own, project: folder, env: env) {
+                if let reason = SkillRemoval.trackedReason(folder: own.isSingleFile ? own.file : own.folder, env: env) {
                     parts.append(part(.blocked("its own \(name): \(reason)")))
                     continue
                 }
@@ -246,6 +244,27 @@ extension SkillMove {
                 parts.append(part(.blocked("doesn't list \(name) in its answers and has no copy of its own on this Mac.")))
             }
         }
+        // Claude Code would lose the skill: the home folder's copy can't reach it, and a project's copy it loads goes.
+        if claudeMissesHome {
+            let claudeLoads = parts.filter { part in
+                guard let folder = part.folder else { return false }
+                switch part.state {
+                case .answers where !part.paths.isEmpty, .ownCopy:
+                    return context.installed.contains { skill in
+                        guard case .project(let url) = skill.scope, url.standardizedFileURL.path == folder.standardizedFileURL.path else { return false }
+                        return folderName(skill) == name && skill.visibleTo.contains(.claudeCode)
+                    }
+                default: return false
+                }
+            }.map(\.id)
+            let why = "~/.claude/skills \((try? FileManager.default.destinationOfSymbolicLink(atPath: home.appending(path: ".claude/skills").path)).map { "links to \($0)" } ?? "is a folder of its own"), so Claude Code wouldn't see \(name) from the home folder"
+            if claudeLoads.isEmpty {
+                warnings.append(why + ".")
+            } else {
+                blockers.append(why + ", and the move takes it out of \(claudeLoads.joined(separator: ", ")), where Claude Code loads it now. Point ~/.claude/skills at ~/.agents/skills (Update Home Folder offers the link when the folder is empty), or take Claude out of the home folder's harnesses.")
+            }
+        }
+        notes.append("Projects set up on a work Mac keep their records on that Mac, out of AKit's sight here: they keep their copy of \(name) until it leaves there.")
         // Projects not chosen that still list it keep their own render next to the global one.
         let others = projectsListing(name, brain: brain, store: store).filter { !ids.contains($0) }
         if !others.isEmpty {
@@ -371,17 +390,24 @@ extension SkillMove {
                 } catch {
                     throw stopped(part.id, error.localizedDescription)
                 }
-            case .ownCopy:
-                guard let own = part.own else { continue }
-                do {
-                    let items = try SkillRemover.items(for: own)
-                    try SkillRemover.moveToTrash(own, trash: trash)
-                    outcome.trashed += items.map { shown($0, home: home) }
-                } catch {
-                    throw stopped(part.id, error.localizedDescription)
-                }
-            case .blocked:
+            case .ownCopy, .blocked:
                 continue
+            }
+        }
+        // 5. Own copies last, each checked again right before it goes.
+        for part in plan.parts where part.state == .ownCopy {
+            guard let own = part.own else { continue }
+            do {
+                let items = try SkillRemover.items(for: own)
+                for item in items where treeDigest(item) != plan.trashDigests[item.path] {
+                    throw stopped(part.id, "\(shown(item, home: home)) changed since the preview, so it stays.")
+                }
+                try SkillRemover.moveToTrash(own, trash: trash)
+                outcome.trashed += items.map { shown($0, home: home) }
+            } catch let failure as GlobalFailure {
+                throw failure
+            } catch {
+                throw stopped(part.id, error.localizedDescription)
             }
         }
         return outcome

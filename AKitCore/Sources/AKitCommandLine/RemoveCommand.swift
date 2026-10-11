@@ -49,6 +49,7 @@ extension AKitCLI {
                 var line = "  \(mark) \(place.title)\(harnesses): \(actionText(place))"
                 if place.byHeader { line += " (maybe the same skill: its header says \(plan.name); not ticked)" }
                 lines.append(line)
+                if !place.via.isEmpty { lines.append("      also reached as \(place.via.joined(separator: ", ")) (a folder that is a link)") }
                 if let reason = place.reason { lines.append("      \(reason)") }
                 if place.selected, let before = place.before, let after = place.after {
                     lines += TextDiff.unified(TextDiff.lines(from: before, to: after)).map { "      " + $0 }
@@ -69,7 +70,7 @@ extension AKitCLI {
 
     static func actionText(_ place: SkillRemoval.Place) -> String {
         switch place.action {
-        case .trash: place.skill.map { SkillRemover.removesOnlyLink($0) } == true ? "the link goes to the Trash" : "to the Trash"
+        case .trash: place.isLink ? "a link; only the link goes to the Trash" : "to the Trash"
         case .layer(let layer): "\(place.selected ? "" : "keep: ")out of layer \(layer), committed"
         case .answers(let id): "\(place.selected ? "" : "keep: ")out of \(id)'s answers"
         case .claudeOff: "Claude switch Off (skillOverrides)"

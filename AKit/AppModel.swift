@@ -447,7 +447,9 @@ final class AppModel {
 
     /// Disable Plugin…: what turning the plugin off changes, and which skills go with it. Only reads.
     func pluginPlan(_ plugin: String) throws -> PluginSwitch.Plan {
-        try PluginSwitch.plan(plugin: plugin, installed: skills, in: .current)
+        let servers = mcpServers.filter { if case .plugin(let name) = $0.scope { name == plugin } else { false } }.map(\.name)
+        return try PluginSwitch.plan(plugin: plugin, installed: skills, servers: servers, projects: Array(brainProjectFolders.values),
+                                     in: .current)
     }
 
     /// Turns the plugin off in Claude Code's settings (backup first), then rescans.

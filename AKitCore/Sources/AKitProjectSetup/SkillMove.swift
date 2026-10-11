@@ -402,6 +402,8 @@ public enum SkillMove {
     /// `~/…` for a path under the home folder, also when links were resolved in it (`/private/var/…`).
     public static func shown(_ url: URL, home: URL) -> String {
         let real = home.resolvingSymlinksInPath()
+        // The home folder itself.
+        if [home.standardizedFileURL.path, real.standardizedFileURL.path].contains(url.standardizedFileURL.path) { return "~" }
         let tilde = FileWalk.tilde(url, home: home)
         return tilde.hasPrefix("~") || real.path == home.path ? tilde : FileWalk.tilde(url, home: real)
     }

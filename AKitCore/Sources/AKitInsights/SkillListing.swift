@@ -70,6 +70,8 @@ public struct ListingReport: Encodable, Equatable, Sendable {
 
     /// Raise Budget… is offered only when the fixes alone can't fit every description.
     public var raiseTo: Double? {
+        // The shell's SLASH_COMMAND_TOOL_CHAR_BUDGET wins over the fraction: raising it would change nothing.
+        guard settings.envBudget == nil else { return nil }
         let fit = afterFixes ?? now
         guard fit.overBudget > 0, let needed = fit.neededFraction, needed <= 1 else { return nil }
         return needed
@@ -88,9 +90,14 @@ public enum SkillListing {
     ]
 
     /// Characters per token of the budget: 4 for the older models (and an unknown one), else 3.
+    /// Bedrock and Vertex ids are their base model: `us.anthropic.claude-sonnet-4-5-20250929-v1:0`,
+    /// `claude-sonnet-4-5@20250929`.
     static func charsPerToken(model: String?) -> Int {
         guard var name = model?.lowercased(), !name.isEmpty else { return 4 }
         if let bracket = name.firstIndex(of: "[") { name = String(name[..<bracket]) }
+        if let at = name.firstIndex(of: "@") { name = String(name[..<at]) }
+        if let range = name.range(of: "anthropic.") { name = String(name[range.upperBound...]) }
+        if let version = name.range(of: #"-v\d+(:\d+)?$"#, options: .regularExpression) { name = String(name[..<version.lowerBound]) }
         name = name.replacingOccurrences(of: ".", with: "-").replacingOccurrences(of: "_", with: "-")
         // A dated id (`claude-sonnet-4-5-20250929`) is its family.
         if let dash = name.lastIndex(of: "-"), name[name.index(after: dash)...].count == 8,
@@ -190,13 +197,20 @@ public enum SkillListing {
             sessions[key, default: Session()].skills[skill] = row[2].int
         }
         for row in try database.rows("""
-            WITH \(scoped) SELECT r.session_key, MAX(r.model), MAX(COALESCE(r.input, 0) + COALESCE(r.cache_read, 0) + COALESCE(r.cache_write, 0)), COUNT(*)
+            WITH \(scoped) SELECT r.session_key, MAX(COALESCE(r.input, 0) + COALESCE(r.cache_read, 0) + COALESCE(r.cache_write, 0)), COUNT(*)
             FROM requests r JOIN scoped s ON s.key = r.session_key WHERE r.is_subagent = 0 GROUP BY r.session_key
             """, values) {
             guard let key = row[0].text, sessions[key] != nil else { continue }
+            sessions[key]?.maxContext = row[1].int ?? 0
+            sessions[key]?.requests = row[2].int ?? 0
+        }
+        // The model of most of a session's main requests (ties: the name that sorts first).
+        for row in try database.rows("""
+            WITH \(scoped) SELECT r.session_key, r.model, COUNT(*) AS n FROM requests r JOIN scoped s ON s.key = r.session_key
+            WHERE r.is_subagent = 0 AND r.model IS NOT NULL GROUP BY r.session_key, r.model ORDER BY r.session_key, n DESC, r.model
+            """, values) {
+            guard let key = row[0].text, sessions[key] != nil, sessions[key]?.model == nil else { continue }
             sessions[key]?.model = row[1].text
-            sessions[key]?.maxContext = row[2].int ?? 0
-            sessions[key]?.requests = row[3].int ?? 0
         }
         var full: [String: Int] = [:]
         for row in try database.rows("SELECT skill, MAX(desc_chars) FROM skill_listings WHERE harness = 'claude' AND desc_hash IS NOT NULL GROUP BY skill") {
@@ -205,7 +219,10 @@ public enum SkillListing {
         let calibration = try ContextSize.calibration(database)
 
         struct Measured { let sent: Int; let full: Int; let budget: Int; let context: Int; let model: String? }
-        func entry(_ name: String, _ chars: Int?) -> Int { chars.map { name.count + 4 + min($0, settings.maxDescChars) } ?? name.count + 2 }
+        // JavaScript string lengths: UTF-16 units (the descriptions' characters are recorded the same way).
+        func entry(_ name: String, _ chars: Int?) -> Int {
+            chars.map { name.utf16.count + 4 + min($0, settings.maxDescChars) } ?? name.utf16.count + 2
+        }
         func measure(_ session: Session, without: Set<String>) -> Measured {
             let kept = session.skills.filter { !without.contains($0.key) }
             let joins = max(0, kept.count - 1)
@@ -235,6 +252,7 @@ public enum SkillListing {
         }
         notes.append("A session's context window counts as 1M when a request of it recorded more than 200,000 tokens, else 200k.")
         notes.append("A skill listed by name only because of a user's own name-only setting counts as if the budget had dropped it.")
+        notes.append("Claude Code always keeps the descriptions of its bundled skills; AKit can't tell them apart in the listing, so which skills lose theirs isn't modeled, only the total.")
         return ListingReport(
             version: 1, days: days, project: project, settings: settings,
             sessions: .init(count: all.count, overBudget: now.overBudget,

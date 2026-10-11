@@ -53,6 +53,9 @@ struct InsightsUsageTable: View {
     @State private var moving: InsightsView.MoveRequest?
     /// Remove Everywhere… of a skill name.
     @State private var removing: RemovalRequest?
+    /// Disable Plugin… of a plugin skill's row.
+    @State private var disabling: PluginSwitch.Plan?
+    @State private var problem: String?
     /// Delete… of an MCP server (the MCP Servers screen's editor, with its confirmation and backup).
     @State private var deletingServer: MCPServer?
 
@@ -78,6 +81,12 @@ struct InsightsUsageTable: View {
         .sheet(item: $moving) { MoveSkillSheet(name: $0.name) }
         .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name) }
         .sheet(item: $deletingServer) { MCPServerEditor(mode: .remove($0)) }
+        .modifier(DisablePluginAlert(plan: $disabling, problem: $problem))
+        .alert("Couldn't do it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(problem ?? "")
+        }
     }
 
     /// A global skill AKit can move into projects, as the Skills screen offers it: the brain needed,
@@ -161,9 +170,15 @@ struct InsightsUsageTable: View {
                                         Button("Not installed on this Mac") {}.disabled(true)
                                     }
                                     Divider()
-                                    Button("Remove Everywhere…") {
-                                        removing = RemovalRequest(name: model.installedSkill(named: skill.name)?.folder.lastPathComponent
-                                                                  ?? String(skill.name.split(separator: ":").last ?? Substring(skill.name)))
+                                    // A plugin skill (`plugin:skill`) leaves only with its plugin; any other row is
+                                    // Claude Code's name for it, its folder name.
+                                    if let colon = skill.name.firstIndex(of: ":") {
+                                        let plugin = String(skill.name[..<colon])
+                                        Button("Disable Plugin \(plugin)…") {
+                                            do { disabling = try model.pluginPlan(plugin) } catch { problem = error.localizedDescription }
+                                        }
+                                    } else {
+                                        Button("Remove Everywhere…") { removing = RemovalRequest(name: skill.name) }
                                     }
                                 }
                             Text([InsightsView.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))

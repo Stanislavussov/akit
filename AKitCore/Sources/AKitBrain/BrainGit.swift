@@ -33,6 +33,41 @@ public enum BrainGit {
         }
     }
 
+    /// How a skill, layer or library commit runs in the brain. A personal Mac: as it always did. A
+    /// work Mac (or one whose machine.json can't be read): like the work Mac's other brain commits:
+    /// the brain's own identity (checked first; the environment's dropped), no hooks, never signed.
+    public struct CommitStyle: Sendable {
+        /// Before the git command (`-c` options).
+        public let options: [String]
+        /// After `commit`.
+        public let commitFlags: [String]
+        public let environment: [String: String]
+    }
+
+    public static func commitStyle(brain root: URL, env: HarnessEnvironment) async throws(Failure) -> CommitStyle {
+        let environment = env.variables.merging(["PATH": env.pathForChildProcesses]) { $1 }
+        guard MachineProfile.load(home: env.homeDirectory).isWork else {
+            return CommitStyle(options: [], commitFlags: [], environment: environment)
+        }
+        try await requireOwnIdentity(brain: root, env: env)
+        return CommitStyle(options: ["-c", "core.hooksPath=/dev/null"] + noSigning, commitFlags: ["--no-verify"],
+                           environment: withoutIdentity(environment))
+    }
+
+    /// Before a skill, layer or library edit writes anything: on a work Mac the brain must have its own
+    /// identity, or the commit after the edit would be refused and leave the edit uncommitted.
+    /// Returns the problem, nil when the commit can go ahead (or the brain is not a git repo).
+    public static func commitProblem(brain root: URL, env: HarnessEnvironment) async -> String? {
+        guard FileManager.default.fileExists(atPath: root.appending(path: ".git").path),
+              MachineProfile.load(home: env.homeDirectory).isWork else { return nil }
+        do {
+            try await requireOwnIdentity(brain: root, env: env)
+            return nil
+        } catch {
+            return error.message + " Nothing was changed."
+        }
+    }
+
     /// Runs git in the brain. Output is stdout and stderr combined.
     private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment, failure: String) async throws(Failure) -> String {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git was not found, so nothing was committed.") }

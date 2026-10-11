@@ -76,6 +76,7 @@ public enum LayerWriter {
     @discardableResult
     public static func create(_ draft: Draft, in brain: Brain, env: HarnessEnvironment) async throws(Failure) -> URL {
         if let problem = nameProblem(draft.name, in: brain) { throw Failure(message: problem) }
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let text = try manifest(draft)
         // Read it back the way the brain will, so a bad layer is never written.
         guard let parsed = try? LayerManifest.parse(text, folder: URL(filePath: "/\(draft.name)")), parsed.problems.isEmpty else {
@@ -98,12 +99,19 @@ public enum LayerWriter {
         }
 
         guard fm.fileExists(atPath: brain.root.appending(path: ".git").path), let git = env.findExecutable("git") else { return folder }
-        let environment = env.variables.merging(["PATH": env.pathForChildProcesses]) { $1 }
+        let style: BrainGit.CommitStyle
+        do {
+            style = try await BrainGit.commitStyle(brain: brain.root, env: env)
+        } catch {
+            throw Failure(message: "The layer was created, but not committed: \(error.message)")
+        }
         let path = "layers/\(draft.name)"
-        for arguments in [["add", "--", path], ["commit", "--quiet", "-m", "Add layer \(draft.name)", "--", path]] {
-            let result = await ProcessRunner.run(git, arguments: arguments, directory: brain.root, environment: environment, timeout: 30)
+        var commit: [String] = style.options + ["commit", "--quiet"]
+        commit += style.commitFlags + ["-m", "Add layer \(draft.name)", "--", path]
+        for (name, arguments) in [("add", ["add", "--", path]), ("commit", commit)] {
+            let result = await ProcessRunner.run(git, arguments: arguments, directory: brain.root, environment: style.environment, timeout: 30)
             guard let result, result.succeeded else {
-                throw Failure(message: "The layer was created, but git \(arguments[0]) failed: \(result?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "couldn't start")")
+                throw Failure(message: "The layer was created, but git \(name) failed: \(result?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "couldn't start")")
             }
         }
         return folder

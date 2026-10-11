@@ -104,4 +104,34 @@ extension RecommenderTests {
         #expect(after.contains("\"skillListingBudgetFraction\": 0.014") && after.contains("\"apiKeyHelper\": \"secret-helper\""))
         #expect(SkillListing.settings(env: env, project: nil).fraction == 0.014)
     }
+
+    @Test func reviewRoundModelsNamesAndTheShellsBudget() throws {
+        #expect(SkillListing.charsPerToken(model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0") == 4)
+        #expect(SkillListing.charsPerToken(model: "claude-sonnet-4-5@20250929") == 4)
+        #expect(SkillListing.charsPerToken(model: "anthropic.claude-opus-5-5-v1:0") == 3)
+        let db = try database()
+        // Mostly an older model: the budget follows the model of most requests.
+        let many = Dictionary(uniqueKeysWithValues: (0..<38).map { ("s\($0)", Optional(200)) })
+        try listingSession("mixed", model: "claude-opus-4-6", skills: many, in: db)
+        for _ in 0..<2 {
+            try db.run("""
+                INSERT INTO requests(harness, event_key, session_key, ts, model, input, cache_read, cache_write, is_subagent, source_id, parser_version)
+                VALUES('claude', ?, 'claude:mixed', ?, 'claude-opus-4-6', 1000, 0, 0, 0, 0, 1)
+                """, UUID().uuidString, at(2) + 120)
+        }
+        try db.run("""
+            INSERT INTO requests(harness, event_key, session_key, ts, model, input, cache_read, cache_write, is_subagent, source_id, parser_version)
+            VALUES('claude', ?, 'claude:mixed', ?, 'claude-sonnet-5', 1000, 0, 0, 0, 0, 1)
+            """, UUID().uuidString, at(2) + 180)
+        let report = try SkillListing.report(db, days: 30, settings: defaults(), now: now)
+        #expect(report.sessions.medianBudget == 8_000, "claude-opus-4-6 (3 of 4 requests): 4 characters per token")
+        // Names are counted in UTF-16 units, as JavaScript does.
+        try listingSession("emoji", skills: ["навык-🦊": 10], in: db)
+        let emoji = try SkillListing.report(db, days: 30, settings: defaults(), now: now)
+        #expect(emoji.sessions.count == 2)
+        // With the shell's budget set, raising the fraction changes nothing: no Raise Budget….
+        let shell = try SkillListing.report(db, days: 30, settings: defaults(env: 100), now: now)
+        #expect(shell.now.overBudget > 0 && shell.raiseTo == nil)
+        #expect(AKitCLI.listingText(shell).contains("SLASH_COMMAND_TOOL_CHAR_BUDGET=100 wins over skillListingBudgetFraction"))
+    }
 }

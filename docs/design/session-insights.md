@@ -351,6 +351,13 @@ Insights → Skill Listing):
   through `SettingsFile` (only that key in the diff, backup, refused when it changed since). The cut
   (`skillListingMaxDescChars`) is shown read-only.
 - A user's own `name-only` setting counts as if the budget had dropped the skill (I1: no reasons).
+- Names count in UTF-16 units, as JavaScript does. A session's model is the one most of its main
+  requests recorded; Bedrock and Vertex ids count as their base model
+  (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`, `claude-sonnet-4-5@20250929`). Claude Code always
+  keeps its bundled skills' descriptions; AKit can't tell them apart in the listing, which changes
+  which skills lose theirs, not the total, so only the total is measured (a note says so). With
+  `SLASH_COMMAND_TOOL_CHAR_BUDGET` set the fraction doesn't count, so Raise Budget… is not offered and
+  the command says to change the variable.
 - Per skill, `SkillScanner` adds a problem when a harness that sees it cuts or warns about its
   description (lengths in UTF-16 units, as both count): Claude Code, `description - when_to_use`
   over `skillListingMaxDescChars` from `~/.claude/settings.json` ("Claude Code cuts its description at

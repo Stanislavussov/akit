@@ -186,6 +186,21 @@ public enum SkillScanner {
         return skills
     }
 
+    /// The skill folders the installed harnesses load from (links resolved), global ones and those
+    /// of these projects; plugin, claude.ai and package folders left out (AKit never removes there).
+    public static func rootFolders(projects: [URL], in env: HarnessEnvironment) -> [URL] {
+        let installed = Set(HarnessCatalog.detectAll(in: env).map(\.id))
+        return HarnessCatalog.adapters.filter { installed.contains($0.id) }
+            .flatMap { $0.skillRoots(in: env, projects: projects) }
+            .filter { root in
+                switch root.scope {
+                case .global, .project: !root.isReadOnly
+                case .synced, .plugin, .bundled, .package: false
+                }
+            }
+            .map { $0.url.resolvingSymlinksInPath().standardizedFileURL }
+    }
+
     /// Claude Code's default `skillListingMaxDescChars` (2.1.296).
     public static let defaultClaudeMaxDescChars = 1536
     /// Pi warns above this many characters (1.0.4 `MAX_DESCRIPTION_LENGTH`) and still sends the whole text.

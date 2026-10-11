@@ -112,8 +112,13 @@ struct SkillRemovalTests {
         try move.harnesses()
         try plugin()
         let installed = SkillScanner.scan(installations: HarnessCatalog.detectAll(in: f.env), in: f.env)
-        let plan = try PluginSwitch.plan(plugin: "tools", installed: installed, in: f.env)
-        #expect(plan.keys == ["tools@market"] && plan.skills == ["deploy", "lint"])
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        try f.write("Projects/other/.claude/settings.json", #"{"enabledPlugins": {"tools@market": true}}"#)
+        let plan = try PluginSwitch.plan(plugin: "tools", installed: installed, servers: ["tools-db"], projects: [other, f.project], in: f.env)
+        #expect(plan.keys == ["tools@market"] && plan.skills == ["deploy", "lint"] && plan.servers == ["tools-db"])
+        #expect(plan.keptOnIn == ["~/Projects/other"])
+        #expect(plan.summary.contains("\"tools@market\": true → false") && plan.summary.contains("MCP servers that stop: tools-db.")
+                && plan.summary.contains("It stays on in ~/Projects/other"), "\(plan.summary)")
         #expect(plan.change.diff.contains { if case .added(let text) = $0 { text.contains("false") } else { false } })
         try PluginSwitch.apply(plan, home: f.home)
         #expect(f.read(".claude/settings.json", in: f.home)?.contains("\"tools@market\": false") == true)
@@ -147,5 +152,97 @@ struct SkillRemovalTests {
         let kept = SkillRemoval.plan(name: "deploy", brain: try #require(Brain.load(from: f.brainRoot)), context: context([:]),
                                      leaving: ["layer:core", "library"])
         #expect(kept.blockers.isEmpty && !kept.canApply && kept.summary.contains("its brain entry stays"))
+    }
+
+    // MARK: - Review round
+
+    @Test func aPerSkillLinkAndItsTargetBothGoAndALinkToADevFolderLeavesTheFolder() async throws {
+        try move.harnesses(link: false)
+        // skills.sh layout: ~/.claude/skills/solo is a link to ~/.agents/skills/solo, which Pi loads itself.
+        try f.write(".agents/skills/solo/SKILL.md", "---\nname: solo\ndescription: Solo\n---\n")
+        try fm.createDirectory(at: f.home.appending(path: ".claude/skills"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: f.home.appending(path: ".claude/skills/solo").path,
+                                  withDestinationPath: f.home.appending(path: ".agents/skills/solo").path)
+        let plan = SkillRemoval.plan(name: "solo", brain: nil, context: context([:]))
+        let link = try #require(plan.places.first { $0.isLink })
+        #expect(link.selected && link.title.hasPrefix("~/.claude/skills/solo → ") && link.harnesses == [.claudeCode], "\(plan.places.map(\.title))")
+        let real = try #require(plan.places.first { $0.id.hasPrefix("copy:") })
+        #expect(real.selected && real.title == "~/.agents/skills/solo" && real.harnesses.contains(.pi) && !real.isLink)
+        #expect(plan.summary == "After this, solo loads in: nowhere.")
+        try await SkillRemoval.apply(plan, brain: nil, env: f.env, trash: f.trash)
+        #expect(!exists(".claude/skills/solo") && !exists(".agents/skills/solo") && move.trashed().count == 2)
+
+        // A link into a development folder no harness loads from: only the link goes.
+        try f.write("dev/tool/SKILL.md", "---\nname: tool\ndescription: Tool\n---\n")
+        try fm.createSymbolicLink(atPath: f.home.appending(path: ".claude/skills/tool").path, withDestinationPath: f.home.appending(path: "dev/tool").path)
+        let dev = SkillRemoval.plan(name: "tool", brain: nil, context: context([:]))
+        #expect(dev.places.map(\.isLink) == [true] && dev.notes.contains { $0.hasPrefix("~/dev/tool stays: the links to it go") })
+        try await SkillRemoval.apply(dev, brain: nil, env: f.env, trash: f.trash)
+        #expect(!exists(".claude/skills/tool") && exists("dev/tool/SKILL.md"))
+    }
+
+    @Test func aGlobalCopyAHomeRepositoryTracksStays() async throws {
+        try move.harnesses()
+        try f.write(".agents/skills/kept/SKILL.md", "---\nname: kept\ndescription: Kept\n---\n")
+        try f.write(".agents/skills/loose/SKILL.md", "---\nname: loose\ndescription: Loose\n---\n")
+        // A dotfiles repository in the home folder tracks one of them.
+        try await f.git("init", "-q", "-b", "main", in: f.home)
+        try await f.git("add", ".agents/skills/kept/SKILL.md", in: f.home)
+        try await f.git("commit", "-qm", "Dotfiles", in: f.home)
+        let kept = SkillRemoval.plan(name: "kept", brain: nil, context: context([:]))
+        #expect(!kept.canApply && kept.places.allSatisfy { !$0.selected })
+        #expect(kept.places.first?.reason?.hasPrefix("Tracked in git in ~;") == true, "\(kept.places.map { $0.reason ?? "" })")
+        let loose = SkillRemoval.plan(name: "loose", brain: nil, context: context([:]))
+        #expect(loose.canApply && loose.places.first?.selected == true)
+    }
+
+    @Test func onAWorkMacTheBrainsCopyOfALocalRecordIsNeverRewritten() async throws {
+        try move.harnesses()
+        _ = try await f.setUpBrain()
+        try f.write(".akit/registry/skills/deploy/SKILL.md", move.skill)
+        let answers = ProjectAnswers(layers: ["task"], targets: ["pi"], skills: [.init(name: "deploy", mode: .auto)])
+        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: answers, id: "github.com/me/both", in: f.store)
+        try await f.git("add", "-A", in: f.brainRoot)
+        try await f.git("commit", "-qm", "Both", in: f.brainRoot)
+        let brainFile = f.brainRoot.appending(path: "projects/github.com/me/both/answers.json")
+        let before = try Data(contentsOf: brainFile)
+        try MachineProfile(kind: .work, name: "work").save(home: f.home)
+        let work = ProjectStore.local(home: f.home, readingBrain: f.brainRoot)
+        try ProjectRecords.save(.init(brainCommit: nil, brainDirty: false, files: [:]), answers: answers, id: "github.com/me/both", in: work)
+        try await f.git("config", "user.name", "pseudo-mac", in: f.brainRoot)
+        try await f.git("config", "user.email", "pseudo@example.invalid", in: f.brainRoot)
+
+        let brain = try #require(Brain.load(from: f.brainRoot))
+        var ctx = context([:])
+        ctx.store = work
+        let plan = SkillRemoval.plan(name: "deploy", brain: brain, context: ctx, leaving: [])
+        let library = try #require(plan.places.first { $0.action == .library })
+        #expect(!library.selected && library.reason?.contains("this work Mac keeps its own copy of them") == true, "\(library.reason ?? "")")
+        #expect(plan.notes.contains { $0.hasPrefix("Projects set up on a work Mac keep their records on that Mac") })
+        try await SkillRemoval.apply(plan, brain: brain, env: f.env, trash: f.trash)
+        #expect(try Data(contentsOf: brainFile) == before, "the brain's copy stays as it was")
+        #expect(ProjectRecords.savedAnswers(id: "github.com/me/both", in: work)?.skills.isEmpty == true)
+    }
+
+    @Test func aWorkMacsLayerCommitUsesTheBrainsIdentityWithoutHooksOrSigning() async throws {
+        try move.harnesses()
+        _ = try await move.renderedInCore()
+        try MachineProfile(kind: .work, name: "work").save(home: f.home)
+        try await f.git("config", "user.name", "pseudo-mac", in: f.brainRoot)
+        try await f.git("config", "user.email", "pseudo@example.invalid", in: f.brainRoot)
+        // A hook that would refuse, and a global signing setting: neither may run.
+        try f.write(".akit/registry/.git/hooks/pre-commit", "#!/bin/sh\nexit 1\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.brainRoot.appending(path: ".git/hooks/pre-commit").path)
+        try await f.git("config", "commit.gpgsign", "true", in: f.brainRoot)
+        let brain = try #require(Brain.load(from: f.brainRoot))
+        var ctx = context([:])
+        ctx.store = ProjectStore.local(home: f.home, readingBrain: f.brainRoot)
+        try ProjectRecords.save(try #require(ProjectRecords.savedLock(id: move.homeID, in: f.store)),
+                                answers: ProjectAnswers(layers: ["core"], targets: ["claude", "pi"]), id: move.homeID, in: ctx.store)
+        let plan = SkillRemoval.plan(name: "deploy", brain: brain, context: ctx)
+        #expect(plan.canApply, "\(plan.blockers)")
+        try await SkillRemoval.apply(plan, brain: brain, env: f.env, trash: f.trash)
+        #expect(try await f.git("log", "-1", "--format=%an <%ae>|%G?|%s", in: f.brainRoot)
+                == "pseudo-mac <pseudo@example.invalid>|N|Remove skill deploy from layer core\n")
     }
 }

@@ -149,4 +149,17 @@ struct SkillMoveToGlobalTests {
                 == "pseudo-mac|Remove skill deploy from github.com/me/old's answers\n")
         #expect(!fm.fileExists(atPath: work.folder(id: "github.com/me/old").path), "nothing in ~/.akit/local for it")
     }
+
+    @Test func aClaudeSkillsFolderOfItsOwnBlocksTakingAProjectCopyClaudeLoads() async throws {
+        try move.harnesses(link: false)
+        try fm.createDirectory(at: f.home.appending(path: ".claude/skills/mine"), withIntermediateDirectories: true)
+        try f.write(".claude/skills/mine/SKILL.md", "---\nname: mine\ndescription: Mine\n---\n")
+        let brain = try await brainWithDeploy()
+        try await f.initRepo()
+        try await f.apply(ProjectAnswers(targets: ["claude", "pi"], skills: [.init(name: "deploy", mode: .auto)], localOnly: true), brain: brain)
+        let plan = SkillMove.planToGlobal(name: "deploy", from: nil, mode: nil, brain: brain, context: context([f.id: f.project]))
+        #expect(!plan.canApply)
+        #expect(plan.blockers.contains { $0.hasPrefix("~/.claude/skills is a folder of its own, so Claude Code wouldn't see deploy from the home folder, and the move takes it out of local/task") },
+                "\(plan.blockers)")
+    }
 }

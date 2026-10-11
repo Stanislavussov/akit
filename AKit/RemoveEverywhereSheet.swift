@@ -32,13 +32,7 @@ struct RemoveEverywhereSheet: View {
         .frame(width: 820, height: 640)
         // Again after each rescan (the first one, or a switch or plugin change made here).
         .task(id: model.lastScan) { await replan(leaving: plan?.leaving) }
-        .alert("Disable the Plugin \(pluginPlan?.plugin ?? "")?", isPresented: Binding(get: { pluginPlan != nil }, set: { if !$0 { pluginPlan = nil } }),
-               presenting: pluginPlan) { plan in
-            Button("Disable Plugin", role: .destructive) { disable(plan) }
-            Button("Cancel", role: .cancel) {}
-        } message: { plan in
-            Text("Claude Code turns the whole plugin off (\(plan.keys.joined(separator: ", ")) → false in ~/.claude/settings.json; a backup is made first). These skills go with it: \(plan.skills.joined(separator: ", ")). Its commands, agents, hooks and MCP servers go too.")
-        }
+        .modifier(DisablePluginAlert(plan: $pluginPlan, problem: $error) { Task { await replan(leaving: plan?.leaving) } })
         .alert("Turn \(name) Off in Pi?", isPresented: Binding(get: { piSwitch != nil }, set: { if !$0 { piSwitch = nil } }),
                presenting: piSwitch) { plan in
             Button("Turn Off") { switchOff(plan) }
@@ -107,10 +101,18 @@ struct RemoveEverywhereSheet: View {
                     Image(systemName: place.selected ? "checkmark.circle" : "minus.circle").foregroundStyle(.secondary)
                     Text(place.title).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
                 }
+                if place.isLink {
+                    Text("link").font(.caption2).foregroundStyle(.secondary)
+                        .help("A link of its own to the skill's folder: only the link goes to the Trash")
+                }
                 if place.byHeader {
                     Text("maybe the same skill").font(.caption2).foregroundStyle(.orange)
                         .help("Its folder has another name, but its header says \(name)")
                 }
+            }
+            if !place.via.isEmpty {
+                Text("Also reached as " + place.via.joined(separator: ", ") + " (a folder that is a link)")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             Text(Self.actionText(place)).font(.caption).foregroundStyle(place.reason == nil ? Color.secondary : Color.orange)
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
@@ -245,17 +247,6 @@ struct RemoveEverywhereSheet: View {
         }
     }
 
-    private func disable(_ plan: PluginSwitch.Plan) {
-        Task {
-            do {
-                try await model.disablePlugin(plan)
-                await replan(leaving: self.plan?.leaving)
-            } catch {
-                self.error = error.localizedDescription
-            }
-        }
-    }
-
     private func switchOff(_ plan: SkillSwitches.Plan) {
         Task {
             do {
@@ -289,5 +280,33 @@ struct RemoveEverywhereSheet: View {
             case .same: nil
             }
         }.joined(separator: "\n")
+    }
+}
+
+/// Disable Plugin…: the confirmation naming the exact `enabledPlugins` keys, the skills and MCP
+/// servers that go with the plugin, and the projects whose own settings keep it on.
+struct DisablePluginAlert: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Binding var plan: PluginSwitch.Plan?
+    @Binding var problem: String?
+    var onDone: () -> Void = {}
+
+    func body(content: Content) -> some View {
+        content.alert("Disable the Plugin \(plan?.plugin ?? "")?", isPresented: Binding(get: { plan != nil }, set: { if !$0 { plan = nil } }),
+                      presenting: plan) { plan in
+            Button("Disable Plugin", role: .destructive) {
+                Task {
+                    do {
+                        try await model.disablePlugin(plan)
+                        onDone()
+                    } catch {
+                        problem = error.localizedDescription
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { plan in
+            Text("Claude Code turns the whole plugin off; a backup is made first.\n" + plan.summary)
+        }
     }
 }

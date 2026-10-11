@@ -61,6 +61,7 @@ public enum LayerEditor {
     /// Lists brain skills in the layer with one mode, and commits.
     public static func addSkills(_ names: [String], mode: LayerSkill.Mode, toLayer name: String,
                                  in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let layer = try find(name, in: brain)
         let missing = names.filter { skill in !brain.skills.contains { $0.name == skill } }
         guard missing.isEmpty else { throw Failure(message: "Not in the brain's skills/: \(missing.joined(separator: ", ")).") }
@@ -78,6 +79,7 @@ public enum LayerEditor {
     /// Sets how the layer brings one of its skills, and commits.
     public static func setMode(_ mode: LayerSkill.Mode, ofSkill skill: String, inLayer name: String,
                                in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let layer = try find(name, in: brain)
         let text = try read(layer)
         let after = try settingMode(mode, of: skill, in: text)
@@ -88,6 +90,7 @@ public enum LayerEditor {
 
     /// Writes the description, requires and AGENTS.md section, and commits them together.
     public static func update(_ name: String, to details: Details, in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let layer = try find(name, in: brain)
         let text = try read(layer)
         // Only new names are checked: one already listed must not block other edits.
