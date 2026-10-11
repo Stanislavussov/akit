@@ -17,7 +17,8 @@ public enum IssueReport: String, Sendable, CaseIterable {
         }
     }
 
-    /// One of GitHub's default labels.
+    /// One of GitHub's default labels. GitHub applies it only for people who may label issues
+    /// in the repository; for everyone else it drops the label and keeps the text.
     var label: String {
         switch self {
         case .bug: "bug"
@@ -45,8 +46,8 @@ public enum IssueReport: String, Sendable, CaseIterable {
 
                 ## Steps to reproduce
 
-                1.
-                2.
+                1.\u{20}
+                2.\u{20}
 
                 \(environment)
 

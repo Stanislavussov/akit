@@ -38,6 +38,8 @@ struct IssueReportTests {
             #expect(bug.contains(heading + "\n"), "\(heading)")
         }
         #expect(bug.contains("- AKit: 2026.10.11\n- macOS 15.6.1\n"))
+        // A space after the number: text typed at the end of the line stays a list item.
+        #expect(bug.contains("\n1. \n2. \n"))
 
         let feature = IssueReport.feature.body(appVersion: nil, system: "macOS 15.6.1")
         for heading in ["## Problem", "## Proposed change", "## What you do today instead", "## Environment"] {

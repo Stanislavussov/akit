@@ -4,7 +4,7 @@ Status: designed 2026-10-09 from a day of feedback on a work Mac. `akit doctor` 
 2026-10-09 (`AKitDoctor`, `Doctor.report`), with the worktree links (see `layers.md`,
 "Local-only files and git worktrees"); **Help → Copy Diagnostics** in the app built
 2026-10-10 (the same `Doctor.report`, with the app's settings and its project folders, and a
-short note at the bottom of the window when the report is on the clipboard). Onboarding in the app is a proposal; the user reviews it
+short note at the bottom of the window when the report is on the clipboard); **Help → Report a Bug… / Suggest a Feature…** built 2026-10-11 (`IssueReport`). Onboarding in the app is a proposal; the user reviews it
 before it is built.
 
 ## Problem
@@ -40,7 +40,8 @@ into an agent session.
 **Help → Report a Bug…** and **Help → Suggest a Feature…** (2026-10-11, `AKitDoctor/IssueReport.swift`)
 open GitHub's new-issue page for AKit in the browser, with a label and a template in the link:
 the sections to fill in, the AKit version and the macOS version. AKit sends nothing and needs
-no token; the user posts the issue. The diagnostics report is not put into the link: it names
+no token; the user posts the issue. GitHub applies the label (`bug`, `enhancement`) only for
+people who may label issues in the repository; other issues arrive without one. The diagnostics report is not put into the link: it names
 the user's projects and the issue is public, so the bug template only asks for it.
 
 ## Onboarding (proposal)
