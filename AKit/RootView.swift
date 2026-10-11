@@ -130,7 +130,7 @@ struct RootView: View {
                     }
                 }
             }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 200)
+            .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 280)
             .safeAreaInset(edge: .bottom) {
                 if DebugSnapshot.options?.demo != true { BuildBadge(info: .current) }
             }
