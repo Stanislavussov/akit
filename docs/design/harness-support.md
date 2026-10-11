@@ -118,6 +118,7 @@ and `.pi/mcp.json` are no longer marked "Needs the pi-mcp-adapter package" on su
 | Failure signals | yes | partly: interrupts always 0 | decision: `definitions.md`, Failure signals |
 | Insights: import, before/after, Apply | yes | yes | |
 | Skill denominator, "descriptions dropped" | yes | no | decision: Pi records no skill list (`session-insights.md`) |
+| Skill listing budget, Raise Budget… | yes (`skillListingBudgetFraction`, `skillListingMaxDescChars` read-only, `SLASH_COMMAND_TOOL_CHAR_BUDGET` in the command and `akit doctor`) | — (no budget, every description is sent) | `session-insights.md`, "Skill listing budget" |
 | Recommendations | yes | Pi-only skills shown as "no data" | decision: `session-insights.md` |
 | Quick ratings on Sessions | no | yes | decision: built for Pi first (`error-analysis.md`) |
 

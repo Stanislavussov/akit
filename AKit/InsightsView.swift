@@ -203,8 +203,11 @@ struct InsightsView: View {
                     if let capture { captureLine(capture) }
                     owners(report)
                     recommendations(report)
-                    InsightsUsageTable(stats: loaded.stats, tools: loaded.tools)
-                        .id(Self.usageTableID)
+                        .id(Self.recommendationsID)
+                    InsightsUsageTable(stats: loaded.stats, tools: loaded.tools, listing: loaded.listing) {
+                        withAnimation { proxy.scrollTo(Self.recommendationsID, anchor: .top) }
+                    }
+                    .id(Self.usageTableID)
                     changes(loaded.changes)
                     footer(report)
                 }
@@ -221,6 +224,7 @@ struct InsightsView: View {
     }
 
     private static let usageTableID = "usage"
+    private static let recommendationsID = "recommendations"
 
     /// After a layer patch: the projects that pick it up only when they are set up again. Plan… opens
     /// Set Up Project with the project's saved answers, where the change is shown as a diff before
@@ -492,7 +496,7 @@ struct InsightsView: View {
         isLoading = true
         do {
             let result = try await Recommender.load(env: env, brain: model.brain, project: project, days: days,
-                                                    projectsRoot: model.projectsRoot)
+                                                    projectsRoot: model.projectsRoot, projectFolder: project.flatMap { model.brainProjectFolders[$0] })
             guard mine == generation else { return }
             loaded = result
             problem = nil

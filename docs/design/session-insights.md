@@ -76,6 +76,8 @@ Checked against the code on 2026-10-03:
   and their total from their machine files (a work Mac's projects never reach the brain, so
   its calls show only in the total). Calls, not listings: the Move to Project sheet
   (`layers.md`, "Move a skill to a project") preselects the projects that call the skill.
+- Skill listing budget (2026-10-11): `akit stats listing` and the **Skill Listing** box on the
+  Insights screen (under the "descriptions dropped" line), see "Skill listing budget" below.
 - Only used in one project (2026-10-11): a second rule in `akit recommend` and on the Insights
   screen, `only-used-in-project` (`Recommender.moveRecommendations`), advice of kind
   `moveToProject`. All sessions only (a project scope never shows it). A skill qualifies when it is
@@ -313,6 +315,42 @@ nothing there and must not recommend for it.
 Subagents: their transcripts (`<session>/subagents/*.jsonl`) carry their own
 `skill_listing` (19 of the last 20 checked). A subagent run is not a session in
 the denominator; its model calls do count as calls (they protect the skill).
+
+### Skill listing budget (built 2026-10-11)
+
+Checked 2026-10-11 in Claude Code 2.1.296's binary (`~/.local/share/claude/versions/2.1.296`) and Pi
+1.0.4's `dist/core/skills.js`:
+
+| | Claude Code | Pi |
+|---|---|---|
+| Budget | `SLASH_COMMAND_TOOL_CHAR_BUDGET` (characters) when set; else context window × characters per token × `skillListingBudgetFraction` (`Ttt`: `(e??200000)*n*s`, `tHo=0.01`; schema: a number in (0, 1]). Characters per token is `Ch(mainLoopModel)`: 4 for the models in its list `cF` (claude-3*, Opus and Sonnet 4.0–4.6, Haiku 4.5), 3 for any other; so 8,000 characters at 200k for those and 6,000 for newer models (40,000 / 30,000 at 1M) | none: every skill is sent |
+| An entry | `name + 4 + min(description, cap)`; name only: `name + 2`; one newline between (`p5t`) | — |
+| Description | `description + " - " + when_to_use`, cut at `skillListingMaxDescChars` (default 1536, a positive whole number) to that many characters ending in "…" (`iHo`: `slice(0, cap-1) + "…"`) | the `description` field; over 1024 characters a warning ("description exceeds 1024 characters"), the skill still loads and the whole text is sent |
+| Over budget | the most-used skills (by `skillUsage`) keep their descriptions; the rest are listed by name only; a warning "descriptions will be truncated … raise skillListingBudgetFraction" | — |
+
+What AKit shows (`SkillListing` in AKitInsights, `akit stats listing [--project P] [--days N] [--json]`,
+Insights → Skill Listing):
+
+- The effective values: `~/.claude/settings.json` (`CLAUDE_CONFIG_DIR` honoured) and, in a project
+  scope, the project's `.claude/settings.json`, which wins as in Claude Code; `settings.local.json` is
+  never read; an invalid value is a problem line and Claude Code's default is used. The environment
+  variable only in the command and `akit doctor`: an app started from Finder doesn't have a shell's
+  environment.
+- Per main Claude Code session in the window, from `skill_listings` (only recorded sizes): the
+  listing as sent (name-only entries at name + 2) and as it would be with every description (each
+  skill's longest recorded description), against that session's budget. The context window is 1M
+  when a request of the session recorded more than 200,000 tokens, else 200k; the model is the one
+  its requests recorded.
+- The share of sessions over budget, and the fraction that would have kept every description in
+  every session (rounded up to 3 decimals), with ≈ the tokens per request it adds (the median of the
+  restored characters over k).
+- The fix order: (a) the recommendations of the scope take their skills out of the listing (made
+  manual, moved, a plugin off); the box says whether that alone fits every session, with **Show
+  Recommendations**; (b) **Raise Budget…** only when (a) can't: `skillListingBudgetFraction` set to the
+  fraction needed after (a) in the file the setting is read from (else `~/.claude/settings.json`),
+  through `SettingsFile` (only that key in the diff, backup, refused when it changed since). The cut
+  (`skillListingMaxDescChars`) is shown read-only.
+- A user's own `name-only` setting counts as if the budget had dropped the skill (I1: no reasons).
 
 ### Tools and MCP servers over time
 

@@ -9,6 +9,9 @@ struct InsightsUsageTable: View {
     @Environment(AppModel.self) private var model
     let stats: StatsReport
     let tools: ToolsReport
+    /// The Skill Listing box under the "descriptions dropped" line.
+    let listing: ListingReport
+    let onShowRecommendations: () -> Void
 
     enum Kind: String, CaseIterable, Identifiable {
         case skills, servers, tools
@@ -119,6 +122,7 @@ struct InsightsUsageTable: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .help("Some skills were listed by name only, usually because Claude Code's skill listing was over its budget (1% of the context window by default), or because of a user override (name-only). Such a skill can't be picked by its description, so the session doesn't count in Listed. Making unused skills manual gives the others their descriptions back.")
             }
+            SkillListingBox(listing: listing, onShowRecommendations: onShowRecommendations)
             if all.isEmpty {
                 Text(unusedOnly && !stats.skills.isEmpty ? "No unused skills in this window." : "No skill listings in this window.")
                     .foregroundStyle(.secondary)

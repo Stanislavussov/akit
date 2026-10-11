@@ -163,6 +163,12 @@ public enum AKitCLI {
                                           the model, Pi's included, and by the user; sessions; the last
                                           call), sessions bound to no project, and the other Macs'
                                           project summaries in the brain. Default: last 30 days
+          akit stats listing [--project ID|PATH] [--days N] [--bindings LIST] [--json]
+                                          Claude Code's skill listing per session against its budget
+                                          (context window × 4 or 3 characters per token by model ×
+                                          skillListingBudgetFraction, default 1%; SLASH_COMMAND_TOOL_CHAR_BUDGET
+                                          wins), the share over budget, and the fraction that would keep
+                                          every description, before and after the recommendations
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
@@ -767,8 +773,8 @@ public enum AKitCLI {
         let subcommand = args.positional()
         let note = subcommand == "mark" || subcommand == "skill" ? args.positional() : nil
         try args.finish()
-        if let subcommand, !["bindings", "changes", "mark", "skill", "tools"].contains(subcommand) {
-            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats tools, "
+        if let subcommand, !["bindings", "changes", "listing", "mark", "skill", "tools"].contains(subcommand) {
+            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats tools, akit stats listing, "
                           + "akit stats skill NAME, akit stats bindings, akit stats changes, akit stats mark \"<note>\" [--at DATE], "
                           + "or akit stats --debug.")
         }
@@ -785,6 +791,9 @@ public enum AKitCLI {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
                         (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats skill")
             guard let note, !note.isEmpty else { throw Failure(message: "Use: akit stats skill NAME [--days N] [--bindings LIST] [--json].") }
+        } else if subcommand == "listing" {
+            try refuse([(debug, "--debug"), (session != nil, "--session"), (top != nil, "--top"), (details, "--details"),
+                        (unused, "--unused")], command: "stats listing")
         } else if subcommand == "changes" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"), (days != nil, "--days"),
                         (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats changes")
@@ -825,6 +834,19 @@ public enum AKitCLI {
         }
         var project: String?
         if let projectArgument { project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env) }
+        if subcommand == "listing" {
+            let brain = Brain.load(from: brainRoot(options, cwd: cwd, env: env))
+            let inputs = try await Recommender.inputs(env: env, database: database, brain: brain, project: project, projectsRoot: projectsRoot,
+                                                      hostName: hostName, hardware: hardwareHash(), run: runner)
+            let recommendations = try Recommender.recommend(database, options: .init(project: project, bindings: bindingSet, top: nil), inputs: inputs)
+            let folder = projectArgument.map { resolve($0, cwd: cwd, env: env) }.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            let report = try SkillListing.report(database, days: days ?? InsightsStats.defaultDays, project: project, bindings: bindingSet,
+                                                 settings: SkillListing.settings(env: env, project: folder, environment: env.variables),
+                                                 dropping: SkillListing.fixSkills(recommendations))
+            out(options.json ? encode(report) : listingText(report))
+            for note in imported.notes where options.json { err("note: \(note)") }
+            return 0
+        }
         if subcommand == "tools" {
             let full = try ToolStats.report(database, days: days ?? InsightsStats.defaultDays, project: project, bindings: bindingSet,
                                             importNotes: imported.notes)
@@ -917,6 +939,45 @@ public enum AKitCLI {
     }
 
     /// `akit stats tools`: MCP servers, then tools, unused ones first.
+    /// `akit stats listing`: the settings, the measured listing against its budget, and the fix order.
+    static func listingText(_ report: ListingReport) -> String {
+        let settings = report.settings, sessions = report.sessions
+        func percent(_ value: Double) -> String { String(format: "%g%%", (value * 1000).rounded() / 10) }
+        var lines = ["Claude Code's skill listing, last \(report.days) days (\(report.project.map { "sessions of \($0)" } ?? "all sessions on this Mac")):"]
+        lines.append("Budget: \(percent(settings.fraction)) of the context window (skillListingBudgetFraction \(settings.fraction), \(settings.fractionFrom))"
+                     + "; descriptions cut at \(settings.maxDescChars) characters (skillListingMaxDescChars, \(settings.maxDescCharsFrom)).")
+        if let budget = settings.envBudget {
+            lines.append("SLASH_COMMAND_TOOL_CHAR_BUDGET=\(budget) in this shell: Claude Code started from it uses \(budget) characters instead.")
+        }
+        lines += settings.problems.map { "problem: \($0)" }
+        guard sessions.count > 0 else {
+            lines.append("No Claude Code session with a skill listing in this window.")
+            return (lines + report.notes.map { "note: \($0)" }).joined(separator: "\n")
+        }
+        lines.append("\(count(sessions.count, "session")): listing median \(sessions.medianChars) characters (p90 \(sessions.p90Chars)), "
+                     + "\(sessions.medianFullChars) with every description, against a budget of \(sessions.medianBudget) (median session); "
+                     + "\(sessions.overBudget) over budget (\(percent(sessions.share))).")
+        if let needed = report.now.neededFraction {
+            lines.append(needed > 1 ? "Even the whole context window (fraction 1) can't hold every description."
+                         : "Every description would have fit at skillListingBudgetFraction \(needed) (≈ \(ContextSize.short(report.now.extraTokensPerRequest)) tokens more per request).")
+            lines.append("Fix order:")
+            if let after = report.afterFixes {
+                lines.append("  1. The recommendations (akit recommend): \(count(report.fixSkills.count, "skill")) out of the listing (manual, moved, a plugin off) "
+                             + (after.overBudget == 0 ? "fits every session." : "leaves \(count(after.overBudget, "session")) over budget."))
+            } else {
+                lines.append("  1. No recommendation takes a skill out of the listing now; make unused skills manual or move them (akit stats --unused, akit move skill).")
+            }
+            if let raise = report.raiseTo {
+                let extra = (report.afterFixes ?? report.now).extraTokensPerRequest
+                lines.append("  2. Then raise skillListingBudgetFraction to \(raise) in \(settings.file) (≈ \(ContextSize.short(extra)) tokens more per request; the app's Raise Budget… writes it).")
+            }
+        } else {
+            lines.append("Every description fit its budget.")
+        }
+        lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
+    }
+
     static func toolsText(_ report: ToolsReport, top: Int?, details: Bool, unusedOnly: Bool) -> String {
         let summary = report.summary
         let scope = report.scope.project.map { "project \($0) (sessions bound at \(report.scope.bindings.joined(separator: ", ")))" }

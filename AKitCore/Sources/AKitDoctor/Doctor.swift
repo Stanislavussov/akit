@@ -115,6 +115,10 @@ public enum Doctor {
         if !missing.isEmpty { lines.append("  not found: \(missing.joined(separator: ", "))") }
         let piDir = env.variables["PI_CODING_AGENT_DIR"].flatMap { $0.isEmpty ? nil : $0 }
         lines.append("  PI_CODING_AGENT_DIR: \(piDir ?? "not set")")
+        // Claude Code's skill listing budget in characters; it beats skillListingBudgetFraction (only a shell's sessions see it).
+        if let budget = env.variables["SLASH_COMMAND_TOOL_CHAR_BUDGET"].flatMap({ $0.isEmpty ? nil : $0 }) {
+            lines.append("  SLASH_COMMAND_TOOL_CHAR_BUDGET: \(budget) (Claude Code's skill listing budget in characters, instead of skillListingBudgetFraction; apps started from Finder don't see it)")
+        }
 
         // Project folders
         lines += ["", "Project folders"]
