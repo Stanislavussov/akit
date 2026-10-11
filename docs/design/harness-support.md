@@ -15,8 +15,10 @@ built. The last column says whether the gap is a decision (with its doc) or open
 | Detection, config locations | yes | yes | Pi: the `pi` binary or `~/.pi/agent`; `PI_CODING_AGENT_DIR` honoured |
 | Projects from the harness's history | yes (`~/.claude.json`) | yes (cwd in the header of session files; a custom flat session folder too) | Pi: a project's own `sessionDir` and `--session-dir` are not followed |
 | Skills: list, collisions, name rules | yes, plugin and synced skills read-only | yes, package skills read-only | Pi package skills from `packages` in global and project settings |
+| Skills: description length warnings | yes: `description - when_to_use` over `skillListingMaxDescChars` (read from `~/.claude/settings.json`, default 1536) is cut there | yes: a description over 1024 characters gets Pi's warning; Pi still sends it all | `SkillScanner` problems on the Skills screen and in `akit skills state`; facts in `session-insights.md`, "Skill listing budget" |
 | Skills: delete (Trash), install from skills.sh | yes | yes | skills.sh installs into the shared `.agents/skills` |
-| Skills: move a global skill into some projects | yes | yes: the only per-project control (Pi can't hide a global skill in one project) | through the brain into each project's answers, worktrees included; see `layers.md`, "Move a skill to a project" |
+| Skills: move a global skill into some projects, and back | yes | yes: the only per-project control (Pi can't hide a global skill in one project) | through the brain into each project's answers, worktrees included; Move to Global the other way (core layer and home folder first); see `layers.md`, "Move a skill to a project" |
+| Skills: remove everywhere (every place a harness loads it from) | yes: own copies, brain entries; plugin skills only with their plugin (Disable Plugin…, `enabledPlugins`); claude.ai skills through the switch | yes: own copies, brain entries; package skills not (filtered in the package's own entry, not written by AKit) | `layers.md`, "Remove a skill everywhere" |
 | Skills: on / off without editing the skill | yes: On, Name Only, Manual, Off (`skillOverrides`); none for plugin skills | yes: On, Off (`skills` entries); none for package skills | see "Skill switches" below |
 | Plugins / packages | Claude plugins listed | Pi packages on the Overview card: extensions, skills, prompt templates, themes | read-only; package code never runs. Limits per settings file and per refresh; a cut list or a too-large package gets a note |
 | MCP: read, add, edit, remove | yes (`claude mcp` CLI) | yes (Pi's own `mcp.json` files and those of `pi-mcp-adapter`) | Pi 0.99+ reads `~/.pi/agent/mcp.json` and `.pi/mcp.json` itself (CHANGELOG 0.99.0, "MCP support as built-in extensions"); AKit takes the version from the package the `pi` command resolves to, else `lastChangelogVersion` in Pi's settings. The adapter's shared files and a project's `.mcp.json` still need `pi-mcp-adapter` |
@@ -118,6 +120,7 @@ and `.pi/mcp.json` are no longer marked "Needs the pi-mcp-adapter package" on su
 | Failure signals | yes | partly: interrupts always 0 | decision: `definitions.md`, Failure signals |
 | Insights: import, before/after, Apply | yes | yes | |
 | Skill denominator, "descriptions dropped" | yes | no | decision: Pi records no skill list (`session-insights.md`) |
+| Skill listing budget, Raise Budget… | yes (`skillListingBudgetFraction`, `skillListingMaxDescChars` read-only, `SLASH_COMMAND_TOOL_CHAR_BUDGET` in the command and `akit doctor`) | — (no budget, every description is sent) | `session-insights.md`, "Skill listing budget" |
 | Recommendations | yes | Pi-only skills shown as "no data" | decision: `session-insights.md` |
 | Quick ratings on Sessions | no | yes | decision: built for Pi first (`error-analysis.md`) |
 

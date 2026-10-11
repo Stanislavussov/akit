@@ -35,6 +35,7 @@ public enum BrainRemove {
                                    trash: (URL) throws -> URL? = Trash.move) async throws(Failure) -> [String] {
         guard let layer = brain.layers.first(where: { $0.name == name }) else { throw Failure(message: "No layer named \(name).") }
         guard name != "core" else { throw Failure(message: "The core layer can't be removed; remove skills from it instead.") }
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let impact = layerImpact(name, in: brain, home: env.homeDirectory)
         guard impact.requiredBy.isEmpty else {
             throw Failure(message: "\(name) is required by \(impact.requiredBy.joined(separator: ", ")). Remove it from their requires first.")
@@ -70,6 +71,7 @@ public enum BrainRemove {
     public static func removeSkill(_ name: String, in brain: Brain, env: HarnessEnvironment,
                                    trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
         guard let skill = brain.skills.first(where: { $0.name == name }) else { throw Failure(message: "No skill named \(name) in skills/.") }
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let users = skillUsers(name, in: brain)
         guard users.isEmpty else {
             throw Failure(message: "\(name) is used by \(users.joined(separator: ", ")). Remove it from \(users.count == 1 ? "that layer" : "those layers") first.")
@@ -105,6 +107,7 @@ public enum BrainRemove {
     /// Removes a skill from a layer's `skills:` list and commits.
     public static func removeSkill(_ skill: String, fromLayer name: String, in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
         guard let layer = brain.layers.first(where: { $0.name == name }) else { throw Failure(message: "No layer named \(name).") }
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let edit = try layerWithoutSkill(skill, in: layer)
         do {
             try Data(edit.after.utf8).write(to: layer.manifest, options: .atomic)
@@ -195,11 +198,19 @@ public enum BrainRemove {
     static func commit(_ paths: [String], _ message: String, in root: URL, env: HarnessEnvironment) async throws(Failure) {
         guard FileManager.default.fileExists(atPath: root.appending(path: ".git").path) else { return }
         guard let git = env.findExecutable("git") else { throw Failure(message: "Done, but git was not found, so nothing was committed.") }
-        let environment = env.variables.merging(["PATH": env.pathForChildProcesses]) { $1 }
-        for arguments in [["add", "--all", "--"] + paths, ["commit", "--quiet", "-m", message, "--"] + paths] {
-            let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: environment, timeout: 30)
+        let style: BrainGit.CommitStyle
+        do {
+            style = try await BrainGit.commitStyle(brain: root, env: env)
+        } catch {
+            throw Failure(message: "Done, but not committed: \(error.message)")
+        }
+        let add: [String] = ["add", "--all", "--"] + paths
+        var commit: [String] = style.options + ["commit", "--quiet"]
+        commit += style.commitFlags + ["-m", message, "--"] + paths
+        for (name, arguments) in [("add", add), ("commit", commit)] {
+            let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: style.environment, timeout: 30)
             guard let result, result.succeeded else {
-                throw Failure(message: "Done, but git \(arguments[0]) failed: \(result?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "couldn't start")")
+                throw Failure(message: "Done, but git \(name) failed: \(result?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "couldn't start")")
             }
         }
     }

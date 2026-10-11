@@ -219,6 +219,9 @@ public enum InsightsStats {
         var hasBrain = true
         /// Installed skills only Pi sees: it records no skill list, so there is no data on them.
         var piOnly: Set<String> = []
+        /// Installed global skills AKit can move into projects (not read-only, not a lone file), by
+        /// folder name and by header name: Move to Project recommendations look only at these.
+        var globalSkills: Set<String> = []
         public var importNotes: [String] = []
         public var importRunning = false
 
@@ -259,6 +262,9 @@ public enum InsightsStats {
         var bindings = BindingSet.default
         var from: Date
         var to: Date
+        /// Leaves out the sessions bound to this project at a confidence of the set (Move to Project:
+        /// the sessions that would lose the skill).
+        var outside: String? = nil
 
         /// `scoped AS (…)` for a `WITH` clause, and its values.
         var cte: (sql: String, values: [any SQLBindable]) { cte(as: "scoped") }
@@ -271,8 +277,13 @@ public enum InsightsStats {
                 sql += " JOIN bindings b ON b.session_key = s.key AND b.project_id = ? AND b.confidence IN \(bindings.sqlList)"
                 values.append(project)
             }
-            sql += " WHERE s.started >= ? AND s.started <= ?)"
-            return (sql, values + [from.timeIntervalSince1970, to.timeIntervalSince1970])
+            sql += " WHERE s.started >= ? AND s.started <= ?"
+            values += [from.timeIntervalSince1970, to.timeIntervalSince1970]
+            if let outside {
+                sql += " AND NOT EXISTS(SELECT 1 FROM bindings o WHERE o.session_key = s.key AND o.project_id = ? AND o.confidence IN \(bindings.sqlList))"
+                values.append(outside)
+            }
+            return (sql + ")", values)
         }
 
         /// `cte` plus `starts(skill, start)`: each skill's start, for counting from it.
@@ -503,8 +514,11 @@ public enum InsightsStats {
             otherMacHashes = UsageSummary.load(brain: brain.root, store: nil, ownership: UsageSummary.ownership(database, machine: machine, hardware: hardware))
                 .descHashes
         }
-        return Inputs(owners: owners, descriptions: descriptions, brainStarts: brainStarts, otherMacHashes: otherMacHashes,
-                      hasBrain: brain != nil, piOnly: Set(installed.filter { $0.visibleTo == [.pi] }.map(\.name)))
+        var inputs = Inputs(owners: owners, descriptions: descriptions, brainStarts: brainStarts, otherMacHashes: otherMacHashes,
+                            hasBrain: brain != nil, piOnly: Set(installed.filter { $0.visibleTo == [.pi] }.map(\.name)))
+        inputs.globalSkills = Set(installed.filter { $0.scope == .global && !$0.isReadOnly && !$0.isSingleFile }
+            .flatMap { [$0.folder.lastPathComponent, $0.name] })
+        return inputs
     }
 
     /// Brain project ids → their folders on this Mac, without git: this Mac's home, the main

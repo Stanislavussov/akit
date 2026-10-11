@@ -15,12 +15,23 @@ public enum WorkAnswers {
     /// Adds `skill` (in `mode`) to the brain's answers of `project` and commits only that file.
     public static func addSkill(_ skill: String, mode: LayerSkill.Mode, to project: String, brain root: URL, env: HarnessEnvironment)
         async throws(Failure) {
+        try await change(skill, mode: mode, project: project, brain: root, env: env)
+    }
+
+    /// Move to Global: takes `skill`'s entry out of the brain's answers of `project` and commits only that file.
+    public static func removeSkill(_ skill: String, from project: String, brain root: URL, env: HarnessEnvironment) async throws(Failure) {
+        try await change(skill, mode: nil, project: project, brain: root, env: env)
+    }
+
+    /// `mode` nil: take the entry out.
+    static func change(_ skill: String, mode: LayerSkill.Mode?, project: String, brain root: URL, env: HarnessEnvironment)
+        async throws(Failure) {
         let file = root.appending(path: "projects/\(project)/answers.json")
         guard let data = try? Data(contentsOf: file), var answers = try? JSONDecoder().decode(ProjectAnswers.self, from: data) else {
-            throw Failure(message: "The brain has no answers of \(project) to add \(skill) to.")
+            throw Failure(message: "The brain has no answers of \(project) to \(mode == nil ? "take \(skill) out of" : "add \(skill) to").")
         }
         answers.skills.removeAll { $0.name == skill }
-        answers.skills.append(.init(name: skill, mode: mode))
+        if let mode { answers.skills.append(.init(name: skill, mode: mode)) }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         do {

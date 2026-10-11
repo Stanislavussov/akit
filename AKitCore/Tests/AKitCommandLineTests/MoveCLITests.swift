@@ -114,4 +114,41 @@ struct MoveCLITests {
         #expect(try String(contentsOf: project.appending(path: ".agents/skills/deploy/SKILL.md"), encoding: .utf8).contains("Ours"))
         #expect(try await git("status", "--porcelain").isEmpty)
     }
+
+    @Test func removeEverywherePrintsEveryPlaceAndRemovesOnlyWithYes() async throws {
+        try await setUp()
+        try write(".pi/agent/skills/deploy/SKILL.md", skill)
+        try write(".agents/skills/other/SKILL.md", skill)
+        let shown = await akit("remove", "skill", "deploy", "--everywhere")
+        #expect(shown.code == 0, "\(shown)")
+        #expect(shown.out.contains("[x] ~/.agents/skills/deploy [") && shown.out.contains("[x] ~/.pi/agent/skills/deploy [Pi]: to the Trash"), "\(shown.out)")
+        #expect(shown.out.contains("~/.agents/skills/other") && shown.out.contains("maybe the same skill"))
+        #expect(shown.out.contains("After this, deploy loads in: nowhere.") && shown.out.hasSuffix("Run again with --yes to remove it."))
+        #expect(fm.fileExists(atPath: home.appending(path: ".agents/skills/deploy").path))
+
+        let done = await akit("remove", "skill", "deploy", "--everywhere", "--yes")
+        #expect(done.code == 0 && done.out.contains("Done: ~/.pi/agent/skills/deploy to the Trash."), "\(done)")
+        #expect(!fm.fileExists(atPath: home.appending(path: ".agents/skills/deploy").path))
+        #expect(!fm.fileExists(atPath: home.appending(path: ".pi/agent/skills/deploy").path))
+        #expect(fm.fileExists(atPath: home.appending(path: ".agents/skills/other/SKILL.md").path), "a header-name match stays")
+        #expect(await akit("remove", "layer", "x", "--everywhere").code == 2)
+    }
+
+    @Test func toGlobalImportsAProjectsOwnCopyIntoCoreAndTheHomeFolder() async throws {
+        try await setUp()
+        try write("Projects/task/.agents/skills/ship/SKILL.md", "---\nname: ship\ndescription: Ships\n---\n")
+        let plan = await akit("move", "skill", "ship", "--to-global", "--from", ".")
+        #expect(plan.code == 0, "\(plan)")
+        #expect(plan.out.contains("Move ship (mode auto) into the core layer and this Mac's home folder; then out of 1 project."), "\(plan.out)")
+        #expect(plan.out.contains("Brain: copy ~/Projects/task/.agents/skills/ship into skills/ship (in no layer), committed."))
+        #expect(plan.out.contains("+  - name: ship") || plan.out.contains("+   - name: ship"), "\(plan.out)")
+        #expect(plan.out.contains("Project local/task (~/Projects/task): its own ship goes to the Trash once the home folder has it."))
+        #expect(plan.out.hasSuffix("Run again with --yes to move it."))
+
+        let moved = await akit("move", "skill", "ship", "--to-global", "--from", ".", "--yes")
+        #expect(moved.code == 0 && moved.out.contains("Added ship to the core layer."), "\(moved)")
+        #expect(fm.fileExists(atPath: home.appending(path: ".agents/skills/ship/SKILL.md").path))
+        #expect(!fm.fileExists(atPath: project.appending(path: ".agents/skills/ship").path))
+        #expect(await akit("move", "skill", "ship", "--to-global", "--to", ".").code == 2)
+    }
 }

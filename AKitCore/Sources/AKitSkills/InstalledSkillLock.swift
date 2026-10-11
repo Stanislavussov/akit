@@ -72,7 +72,12 @@ public struct InstalledSkillLock: Codable, Sendable, Equatable {
 
     /// Drops the record of a skill folder that was removed. A missing or broken lock is left alone.
     public static func forget(folder: URL, in env: HarnessEnvironment) {
-        let path = folder.resolvingSymlinksInPath().path
+        forget(path: folder.resolvingSymlinksInPath().path, in: env)
+    }
+
+    /// The same for a path resolved while the folder still existed (a path under a link such as
+    /// `/var` resolves differently once its folder is gone).
+    public static func forget(path: String, in env: HarnessEnvironment) {
         guard var lock = try? load(in: env), lock.entries.contains(where: { $0.path == path }) else { return }
         lock.entries.removeAll { $0.path == path }
         try? save(lock, in: env)

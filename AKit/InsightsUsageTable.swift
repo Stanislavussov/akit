@@ -1,5 +1,6 @@
 import AKitInsights
 import AKitMCP
+import AKitSkills
 import SwiftUI
 
 /// The Insights screen's table over the window: skills, MCP servers or tools, with Unused Only and a
@@ -8,6 +9,9 @@ struct InsightsUsageTable: View {
     @Environment(AppModel.self) private var model
     let stats: StatsReport
     let tools: ToolsReport
+    /// The Skill Listing box under the "descriptions dropped" line.
+    let listing: ListingReport
+    let onShowRecommendations: () -> Void
 
     enum Kind: String, CaseIterable, Identifiable {
         case skills, servers, tools
@@ -45,6 +49,15 @@ struct InsightsUsageTable: View {
     @State private var showAll = false
     /// MCP servers whose tool list is open.
     @State private var expanded: Set<String> = []
+    /// Move to Project… of a global skill (its brain name).
+    @State private var moving: InsightsView.MoveRequest?
+    /// Remove Everywhere… of a skill name.
+    @State private var removing: RemovalRequest?
+    /// Disable Plugin… of a plugin skill's row.
+    @State private var disabling: PluginSwitch.Plan?
+    @State private var problem: String?
+    /// Delete… of an MCP server (the MCP Servers screen's editor, with its confirmation and backup).
+    @State private var deletingServer: MCPServer?
 
     /// Context space exists only for skills; the other tables fall back to Fewest Calls.
     private var effectiveSort: Sort { kind != .skills && sort == .contextSpace ? .fewestCalls : sort }
@@ -65,6 +78,21 @@ struct InsightsUsageTable: View {
             Text("\(kind.title), Last \(stats.window.days) Days").font(.headline)
         }
         .help(kind == .skills ? "The same numbers as akit stats --details" : "The same numbers as akit stats tools --details")
+        .sheet(item: $moving) { MoveSkillSheet(name: $0.name) }
+        .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name) }
+        .sheet(item: $deletingServer) { MCPServerEditor(mode: .remove($0)) }
+        .modifier(DisablePluginAlert(plan: $disabling, problem: $problem))
+        .alert("Couldn't do it", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(problem ?? "")
+        }
+    }
+
+    /// A global skill AKit can move into projects, as the Skills screen offers it: the brain needed,
+    /// not a claude.ai, plugin or package skill, not a lone `.md` file.
+    private func movable(_ skill: Skill) -> Bool {
+        model.brain != nil && skill.scope == .global && !skill.isReadOnly && !skill.isSingleFile
     }
 
     private var controls: some View {
@@ -103,6 +131,7 @@ struct InsightsUsageTable: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .help("Some skills were listed by name only, usually because Claude Code's skill listing was over its budget (1% of the context window by default), or because of a user override (name-only). Such a skill can't be picked by its description, so the session doesn't count in Listed. Making unused skills manual gives the others their descriptions back.")
             }
+            SkillListingBox(listing: listing, onShowRecommendations: onShowRecommendations)
             if all.isEmpty {
                 Text(unusedOnly && !stats.skills.isEmpty ? "No unused skills in this window." : "No skill listings in this window.")
                     .foregroundStyle(.secondary)
@@ -127,13 +156,29 @@ struct InsightsUsageTable: View {
                                 .foregroundStyle(skill.unused ? Color.orange : Color.primary)
                                 .help("Counted since \(InsightsView.day(skill.windowStart)), the start of its current description or of the window"
                                       + (skill.unused ? ". Unused: no call by the model or you made in the window." : "")
-                                      + ". Right-click to switch it per harness.")
+                                      + ". Right-click to switch it per harness, or to move a global skill into projects.")
                                 .contextMenu {
                                     if let installed = model.installedSkill(named: skill.name) {
                                         SkillSwitchMenu(skill: installed)
                                         Button("Show in Skills") { model.showSkill(inFolder: installed.folder) }
+                                        if movable(installed) {
+                                            Button("Move to Project…") {
+                                                moving = .init(name: SkillsView.moveName(installed, link: model.brainLinks[installed.id]))
+                                            }
+                                        }
                                     } else {
                                         Button("Not installed on this Mac") {}.disabled(true)
+                                    }
+                                    Divider()
+                                    // A plugin skill (`plugin:skill`) leaves only with its plugin; any other row is
+                                    // Claude Code's name for it, its folder name.
+                                    if let colon = skill.name.firstIndex(of: ":") {
+                                        let plugin = String(skill.name[..<colon])
+                                        Button("Disable Plugin \(plugin)…") {
+                                            do { disabling = try model.pluginPlan(plugin) } catch { problem = error.localizedDescription }
+                                        }
+                                    } else {
+                                        Button("Remove Everywhere…") { removing = RemovalRequest(name: skill.name) }
                                     }
                                 }
                             Text([InsightsView.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))
@@ -189,6 +234,11 @@ struct InsightsUsageTable: View {
                                     .contextMenu {
                                         if let installed = model.installedMCPServer(named: server.name) {
                                             MCPSwitchMenu(server: installed)
+                                            Divider()
+                                            Button("Delete…", role: .destructive) { deletingServer = installed }
+                                                .disabled(!model.canEdit(installed))
+                                                .help(model.canEdit(installed) ? "Delete \(installed.name) from \(installed.file.lastPathComponent) (a backup is made first)"
+                                                      : "A plugin's or claude.ai server, or a file AKit can't edit: turn it off with the switches above, the plugin with /plugin")
                                         } else {
                                             Button("Not configured on this Mac") {}.disabled(true)
                                         }

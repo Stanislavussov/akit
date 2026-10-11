@@ -96,6 +96,15 @@ struct DoctorTests {
         #expect(report.contains("  no AKit crash reports"))
     }
 
+    @Test func theSkillListingBudgetVariableShowsOnlyWhenSet() async throws {
+        let plain = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")]))
+        #expect(!plain.contains("SLASH_COMMAND_TOOL_CHAR_BUDGET"))
+        var set = env
+        set.variables["SLASH_COMMAND_TOOL_CHAR_BUDGET"] = "12000"
+        let report = await Doctor.report(.init(env: set, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")]))
+        #expect(report.contains("  SLASH_COMMAND_TOOL_CHAR_BUDGET: 12000 (Claude Code's skill listing budget in characters"))
+    }
+
     @Test func aMissingBrainAndAMissingProjectsFolderAreProblems() async throws {
         try write("Projects/task/README.md", "readme\n")
         let report = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Nowhere")]))

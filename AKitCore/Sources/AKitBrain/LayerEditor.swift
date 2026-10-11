@@ -61,6 +61,7 @@ public enum LayerEditor {
     /// Lists brain skills in the layer with one mode, and commits.
     public static func addSkills(_ names: [String], mode: LayerSkill.Mode, toLayer name: String,
                                  in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let layer = try find(name, in: brain)
         let missing = names.filter { skill in !brain.skills.contains { $0.name == skill } }
         guard missing.isEmpty else { throw Failure(message: "Not in the brain's skills/: \(missing.joined(separator: ", ")).") }
@@ -69,9 +70,16 @@ public enum LayerEditor {
         try await commit(["layers/\(name)/layer.yaml"], "Add \(names.joined(separator: ", ")) to layer \(name)", in: brain, env: env)
     }
 
+    /// The layer.yaml text with this skill added in `mode`, for a preview; nothing else changes.
+    public static func layerWithSkill(_ skill: String, mode: LayerSkill.Mode, in layer: Layer) throws(Failure) -> (before: String, after: String) {
+        let text = try read(layer)
+        return (text, try addingSkills([skill], mode: mode, to: text))
+    }
+
     /// Sets how the layer brings one of its skills, and commits.
     public static func setMode(_ mode: LayerSkill.Mode, ofSkill skill: String, inLayer name: String,
                                in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let layer = try find(name, in: brain)
         let text = try read(layer)
         let after = try settingMode(mode, of: skill, in: text)
@@ -82,6 +90,7 @@ public enum LayerEditor {
 
     /// Writes the description, requires and AGENTS.md section, and commits them together.
     public static func update(_ name: String, to details: Details, in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
         let layer = try find(name, in: brain)
         let text = try read(layer)
         // Only new names are checked: one already listed must not block other edits.

@@ -347,4 +347,14 @@ struct MoreHarnessTests {
         e.variables["CODEX_HOME"] = "~/ch"
         #expect(CodexAdapter().detect(in: e)?.configRoot.lastPathComponent == "ch")
     }
+
+    @Test func descriptionLengthsEachHarnessCutsOrWarnsAbout() {
+        #expect(SkillScanner.descriptionProblems(claude: 1536, pi: 1024, claudeMaxDescChars: 1536).isEmpty)
+        let both = SkillScanner.descriptionProblems(claude: 1537, pi: 1025, claudeMaxDescChars: 1536)
+        #expect(both == ["Claude Code cuts its description at 1536 characters (it has 1537, with when_to_use); the rest never reaches the model",
+                         "Pi warns: description over 1024 characters (1025); Pi still sends it all"])
+        // A harness that doesn't see the skill says nothing.
+        #expect(SkillScanner.descriptionProblems(claude: nil, pi: 5000, claudeMaxDescChars: 1536).count == 1)
+        #expect(SkillScanner.descriptionProblems(claude: 1700, pi: nil, claudeMaxDescChars: 2000).isEmpty)
+    }
 }

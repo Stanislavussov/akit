@@ -92,6 +92,14 @@ public enum AKitCLI {
                                               saved project answers (re-apply those projects)
           akit remove skill NAME              refused while a layer lists it
           akit remove skill NAME --from LAYER only from that layer's skills list
+          akit remove skill NAME --everywhere [--library]
+                                              every place a harness on this Mac loads it from:
+                                              own copies to the Trash, brain layers and project
+                                              answers that render it (committed, then only its
+                                              files applied), projects on other Macs (answers).
+                                              Kept, with what to do: copies git tracks, plugin,
+                                              claude.ai and Pi package skills. --library also
+                                              deletes skills/NAME from the brain (history stays)
           akit remove project [PROJECT|--home] [--keep-files]
                                               trashes the files AKit wrote there (not hand-edited
                                               ones), takes AKit's keys out of .mcp.json and
@@ -114,6 +122,15 @@ public enum AKitCLI {
                                           --keep-global: core and the home folder keep it.
                                           --keep-own: a project with its own copy keeps it.
                                           Shows the plan; --yes does it
+          akit move skill NAME --to-global [--from PROJECT[,PROJECT…]] [--mode auto|manual] [--yes]
+                                          The reverse: into the core layer (layer.yaml diff,
+                                          committed), then the home folder's Apply, then out of
+                                          each project's answers with its Apply (its copy to the
+                                          Trash, worktree links removed); a project's own copy
+                                          (not in git) is imported into the brain first and goes
+                                          to the Trash last. Default --from: every project whose
+                                          answers list it. Stops at the first failure and says
+                                          where the skill is
 
         Home (the core layer into ~, for every harness on this Mac):
           akit plan --home  /  akit apply --home [--include-unmanaged]
@@ -146,6 +163,12 @@ public enum AKitCLI {
                                           the model, Pi's included, and by the user; sessions; the last
                                           call), sessions bound to no project, and the other Macs'
                                           project summaries in the brain. Default: last 30 days
+          akit stats listing [--project ID|PATH] [--days N] [--bindings LIST] [--json]
+                                          Claude Code's skill listing per session against its budget
+                                          (context window × 4 or 3 characters per token by model ×
+                                          skillListingBudgetFraction, default 1%; SLASH_COMMAND_TOOL_CHAR_BUDGET
+                                          wins), the share over budget, and the fraction that would keep
+                                          every description, before and after the recommendations
           akit stats bindings [--days N] [--bindings LIST] [--json]
                                           How sessions are bound to projects: per method and
                                           confidence, the last N (30) days' share bound in LIST (default
@@ -191,7 +214,12 @@ public enum AKitCLI {
                                           project, from when their layer arrived there); sorted by ≈ context space. A layer skill gets a patch
                                           (mode: manual), anything else advice. A plugin is judged as a whole:
                                           disable it when the model called none of its skills, else at most
-                                          one note on its unused ones. Imports new lines first
+                                          one note on its unused ones. All sessions only: a global skill
+                                          (core layer or hand-installed) whose every call in the last 30
+                                          days is in one project, none in unbound sessions, and that is
+                                          listed with its description in ≥ N sessions outside it, gets
+                                          "only used in PROJECT" with its akit move skill line.
+                                          Imports new lines first
           akit recommend apply ID [--yes] Show the layer.yaml patch; --yes commits it in the brain. Then run
                                           akit plan/apply in the projects using the layer
           akit recommend dismiss ID [--yes]
@@ -335,18 +363,32 @@ public enum AKitCLI {
             if command == "move" {
                 var checked = options
                 checked.localOnly = nil
+                checked.from = nil
                 try refuseProjectOptions(checked, command: "move")
                 if options.json { throw Failure(message: "--json doesn't go with akit move.") }
                 let brainRoot = brainRoot(options, cwd: cwd, env: env), hardware = hardwareHash()
                 return try await withoutActuallyEscaping(trash) { trash in
-                    try await move(&args, localOnly: options.localOnly, yes: options.yes, brainRoot: brainRoot, env: env, cwd: cwd,
+                    try await move(&args, localOnly: options.localOnly, from: options.from, yes: options.yes, brainRoot: brainRoot, env: env, cwd: cwd,
                                    projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets, hardware: hardware,
                                    out: out, err: err, trash: trash)
                 }
             }
             if command == "remove" {
+                let everywhere = args.flag("--everywhere"), library = args.flag("--library")
                 let kind = args.positional(), name = args.positional()
                 try args.finish()
+                if everywhere || library {
+                    guard kind == "skill", let name, everywhere else {
+                        throw Failure(message: "Use: akit remove skill NAME --everywhere [--library] [--yes]")
+                    }
+                    if options.from != nil || options.json { throw Failure(message: "--everywhere doesn't go with --from or --json.") }
+                    let brainRoot = brainRoot(options, cwd: cwd, env: env)
+                    return try await withoutActuallyEscaping(trash) { trash in
+                        try await removeEverywhere(name, library: library, yes: options.yes, brainRoot: brainRoot, env: env,
+                                                   projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets,
+                                                   out: out, err: err, trash: trash)
+                    }
+                }
                 return try await remove(kind: kind, name: name, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot,
                                         hostName: hostName, installedTargets: installedTargets, out: out, trash: trash)
             }
@@ -731,8 +773,8 @@ public enum AKitCLI {
         let subcommand = args.positional()
         let note = subcommand == "mark" || subcommand == "skill" ? args.positional() : nil
         try args.finish()
-        if let subcommand, !["bindings", "changes", "mark", "skill", "tools"].contains(subcommand) {
-            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats tools, "
+        if let subcommand, !["bindings", "changes", "listing", "mark", "skill", "tools"].contains(subcommand) {
+            throw Failure(message: "Unknown “akit stats \(subcommand)”. Use: akit stats [--project X|--all], akit stats tools, akit stats listing, "
                           + "akit stats skill NAME, akit stats bindings, akit stats changes, akit stats mark \"<note>\" [--at DATE], "
                           + "or akit stats --debug.")
         }
@@ -749,6 +791,9 @@ public enum AKitCLI {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (projectArgument != nil, "--project"), (all, "--all"),
                         (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats skill")
             guard let note, !note.isEmpty else { throw Failure(message: "Use: akit stats skill NAME [--days N] [--bindings LIST] [--json].") }
+        } else if subcommand == "listing" {
+            try refuse([(debug, "--debug"), (session != nil, "--session"), (top != nil, "--top"), (details, "--details"),
+                        (unused, "--unused")], command: "stats listing")
         } else if subcommand == "changes" {
             try refuse([(debug, "--debug"), (session != nil, "--session"), (bindingList != nil, "--bindings"), (days != nil, "--days"),
                         (top != nil, "--top"), (details, "--details"), (unused, "--unused")], command: "stats changes")
@@ -789,6 +834,19 @@ public enum AKitCLI {
         }
         var project: String?
         if let projectArgument { project = await projectID(argument: projectArgument, cwd: cwd, projectsRoot: projectsRoot, env: env) }
+        if subcommand == "listing" {
+            let brain = Brain.load(from: brainRoot(options, cwd: cwd, env: env))
+            let inputs = try await Recommender.inputs(env: env, database: database, brain: brain, project: project, projectsRoot: projectsRoot,
+                                                      hostName: hostName, hardware: hardwareHash(), run: runner)
+            let recommendations = try Recommender.recommend(database, options: .init(project: project, bindings: bindingSet, top: nil), inputs: inputs)
+            let folder = projectArgument.map { resolve($0, cwd: cwd, env: env) }.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            let report = try SkillListing.report(database, days: days ?? InsightsStats.defaultDays, project: project, bindings: bindingSet,
+                                                 settings: SkillListing.settings(env: env, project: folder, environment: env.variables),
+                                                 dropping: SkillListing.fixSkills(recommendations))
+            out(options.json ? encode(report) : listingText(report))
+            for note in imported.notes where options.json { err("note: \(note)") }
+            return 0
+        }
         if subcommand == "tools" {
             let full = try ToolStats.report(database, days: days ?? InsightsStats.defaultDays, project: project, bindings: bindingSet,
                                             importNotes: imported.notes)
@@ -881,6 +939,47 @@ public enum AKitCLI {
     }
 
     /// `akit stats tools`: MCP servers, then tools, unused ones first.
+    /// `akit stats listing`: the settings, the measured listing against its budget, and the fix order.
+    static func listingText(_ report: ListingReport) -> String {
+        let settings = report.settings, sessions = report.sessions
+        func percent(_ value: Double) -> String { String(format: "%g%%", (value * 1000).rounded() / 10) }
+        var lines = ["Claude Code's skill listing, last \(report.days) days (\(report.project.map { "sessions of \($0)" } ?? "all sessions on this Mac")):"]
+        lines.append("Budget: \(percent(settings.fraction)) of the context window (skillListingBudgetFraction \(settings.fraction), \(settings.fractionFrom))"
+                     + "; descriptions cut at \(settings.maxDescChars) characters (skillListingMaxDescChars, \(settings.maxDescCharsFrom)).")
+        if let budget = settings.envBudget {
+            lines.append("SLASH_COMMAND_TOOL_CHAR_BUDGET=\(budget) in this shell: Claude Code started from it uses \(budget) characters instead.")
+        }
+        lines += settings.problems.map { "problem: \($0)" }
+        guard sessions.count > 0 else {
+            lines.append("No Claude Code session with a skill listing in this window.")
+            return (lines + report.notes.map { "note: \($0)" }).joined(separator: "\n")
+        }
+        lines.append("\(count(sessions.count, "session")): listing median \(sessions.medianChars) characters (p90 \(sessions.p90Chars)), "
+                     + "\(sessions.medianFullChars) with every description, against a budget of \(sessions.medianBudget) (median session); "
+                     + "\(sessions.overBudget) over budget (\(percent(sessions.share))).")
+        if let needed = report.now.neededFraction {
+            lines.append(needed > 1 ? "Even the whole context window (fraction 1) can't hold every description."
+                         : "Every description would have fit at skillListingBudgetFraction \(needed) (≈ \(ContextSize.short(report.now.extraTokensPerRequest)) tokens more per request).")
+            lines.append("Fix order:")
+            if let after = report.afterFixes {
+                lines.append("  1. The recommendations (akit recommend): \(count(report.fixSkills.count, "skill")) out of the listing (manual, moved, a plugin off) "
+                             + (after.overBudget == 0 ? "fits every session." : "leaves \(count(after.overBudget, "session")) over budget."))
+            } else {
+                lines.append("  1. No recommendation takes a skill out of the listing now; make unused skills manual or move them (akit stats --unused, akit move skill).")
+            }
+            if let budget = settings.envBudget, (report.afterFixes ?? report.now).overBudget > 0 {
+                lines.append("  2. SLASH_COMMAND_TOOL_CHAR_BUDGET=\(budget) wins over skillListingBudgetFraction: raise or unset it in the shell instead.")
+            } else if let raise = report.raiseTo {
+                let extra = (report.afterFixes ?? report.now).extraTokensPerRequest
+                lines.append("  2. Then raise skillListingBudgetFraction to \(raise) in \(settings.file) (≈ \(ContextSize.short(extra)) tokens more per request; the app's Raise Budget… writes it).")
+            }
+        } else {
+            lines.append("Every description fit its budget.")
+        }
+        lines += report.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
+    }
+
     static func toolsText(_ report: ToolsReport, top: Int?, details: Bool, unusedOnly: Bool) -> String {
         let summary = report.summary
         let scope = report.scope.project.map { "project \($0) (sessions bound at \(report.scope.bindings.joined(separator: ", ")))" }
@@ -1255,6 +1354,10 @@ public enum AKitCLI {
         let scope = report.project.map { "project \($0), sessions bound at \(rule.bindings.joined(separator: ", "))" } ?? "all sessions"
         var lines = ["Auto skills the model never called: listed with their description in ≥ \(count(rule.minSessions, "session")) on ≥ \(count(rule.minDistinctDays, "day")), "
                      + "summed over this Mac and the other Macs' summaries (\(scope))."]
+        if report.project == nil {
+            lines.append("Global skills only one project called in the last \(Recommender.moveWindowDays) days, listed with their description in "
+                         + "≥ \(count(rule.minSessions, "session")) outside it: move them there.")
+        }
         let owners = report.summary.approxContextPerRequestByOwner.filter { $0.skills > 0 }
         if !owners.isEmpty {
             lines.append("≈ Context per request by owner: "
@@ -1270,9 +1373,16 @@ public enum AKitCLI {
             lines.append("\(item.stale ? "[stale] " : "")\(item.id)  \(subject): \(item.type)")
             let period = evidence.from.map { from in " (\(from) … \(evidence.to ?? from))" } ?? ""
             let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
-            lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed with its description in \(count(evidence.sessions, "session")) on "
-                         + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
-                         + "at 95%), user calls \(evidence.userCalls)")
+            let move = item.action.kind == RecommendReport.Action.moveToProject ? item.action.project : nil
+            if let move {
+                lines.append("  only used in \(move) (\(count(item.action.calls ?? 0, "call")) / \(Recommender.moveWindowDays) days); outside it listed "
+                             + "with its description in \(count(evidence.sessions, "session")) on \(count(evidence.distinctDays, "day"))\(period)\(macs), "
+                             + "never called there; ≈ \(short(evidence.approxContextSpace)) context space")
+            } else {
+                lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed with its description in \(count(evidence.sessions, "session")) on "
+                             + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
+                             + "at 95%), user calls \(evidence.userCalls)")
+            }
             if let skills = evidence.skills {
                 let shown = details || skills.count <= 5 ? skills : Array(skills.prefix(5)) + ["… \(skills.count - 5) more"]
                 lines.append("  skills: \(shown.joined(separator: ", "))")
@@ -1284,6 +1394,7 @@ public enum AKitCLI {
                 if details, let diff = item.action.diff { lines += diff.split(separator: "\n", omittingEmptySubsequences: false).map { "    \($0)" } }
             }
             if let text = item.action.text { lines.append("  \(item.isPatch ? "then" : "advice"): \(text)") }
+            if let move { lines.append("  move: \(Recommender.moveCommand(skill: item.skill, project: move))") }
             if details {
                 lines.append("  machines: " + evidence.machines.map { "\($0.name) (\($0.updated ?? "never")\($0.stale ? ", stale" : ""))" }
                     .joined(separator: ", "))

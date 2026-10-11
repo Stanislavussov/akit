@@ -10,21 +10,27 @@ import Foundation
 /// "Move a skill to a project"). Prints the plan; `--yes` carries it out.
 extension AKitCLI {
     static let moveUsage = "Use: akit move skill NAME --to PROJECT[,PROJECT…] [--mode auto|manual] [--local-only yes|no|auto] "
-        + "[--keep-global] [--keep-own] [--yes]"
+        + "[--keep-global] [--keep-own] [--yes], or akit move skill NAME --to-global [--from PROJECT[,PROJECT…]] [--mode auto|manual] [--yes]"
 
-    static func move(_ args: inout Arguments, localOnly localOnlyText: String?, yes: Bool, brainRoot: URL, env: HarnessEnvironment,
+    static func move(_ args: inout Arguments, localOnly localOnlyText: String?, from: String?, yes: Bool, brainRoot: URL, env: HarnessEnvironment,
                      cwd: URL, projectsRoot: URL, hostName: String, installedTargets: [String], hardware: String?,
                      out: (String) -> Void, err: (String) -> Void, trash: @escaping (URL) throws -> URL?) async throws -> Int32 {
         let to = args.values("--to"), modeText = args.value("--mode")
-        let keepGlobal = args.flag("--keep-global"), keepOwn = args.flag("--keep-own")
+        let keepGlobal = args.flag("--keep-global"), keepOwn = args.flag("--keep-own"), toGlobal = args.flag("--to-global")
         let kind = args.positional(), name = args.positional()
         try args.finish()
-        guard kind == "skill", let name, !to.isEmpty else { throw Failure(message: moveUsage) }
         var mode: LayerSkill.Mode?
         if let modeText {
             guard let chosen = LayerSkill.Mode(rawValue: modeText), chosen != .off else { throw Failure(message: "--mode is auto or manual.") }
             mode = chosen
         }
+        if toGlobal {
+            guard kind == "skill", let name, to.isEmpty, !keepGlobal, !keepOwn, localOnlyText == nil else { throw Failure(message: moveUsage) }
+            return try await moveToGlobal(name, from: from, mode: mode, yes: yes, brainRoot: brainRoot, env: env, cwd: cwd,
+                                          projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets,
+                                          out: out, err: err, trash: trash)
+        }
+        guard kind == "skill", let name, !to.isEmpty, from == nil else { throw Failure(message: moveUsage) }
         let localOnly: Bool?
         switch localOnlyText {
         case nil, "auto": localOnly = nil
@@ -38,15 +44,9 @@ extension AKitCLI {
         let home = env.homeDirectory
         let machine = MachineProfile.load(home: home)
         if let problem = machine.problem { err("akit: \(problem)") }
-        let store = ProjectStore.current(brain: brain.root, home: home, machine: machine)
-        let installations = HarnessCatalog.detectAll(in: env)
-        let known = SkillScanner.projects(installations: installations, extraProjects: ProjectFinder.projects(inRoots: [projectsRoot]), in: env)
-        let installed = SkillScanner.scan(installations: installations, projects: known, in: env)
-
-        // Projects on this Mac by id: every project a harness or the projects folder knows, main checkouts first.
-        var found: [String: [URL]] = [:]
-        for folder in known { found[await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env), default: []].append(folder) }
-        let folders = found.compactMapValues { GitCheckout.preferred($0) }
+        let context = await skillContext(brainRoot: brain.root, env: env, projectsRoot: projectsRoot, hostName: hostName,
+                                         installedTargets: installedTargets)
+        let installed = context.installed, folders = context.projectFolders
         let recorded = Set(BrainRemove.savedAnswers(brain: brain, home: home).map(\.id))
         var targets: [SkillMove.Target] = []
         for argument in to.flatMap({ $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }) where !argument.isEmpty {
@@ -70,10 +70,6 @@ extension AKitCLI {
         let modelCalls = (calls?.projects.reduce(0) { $0 + $1.modelCalls } ?? 0) + (calls?.otherMacs.modelCalls ?? 0)
         let chosenMode = mode ?? (modelCalls > 0 ? .auto : SkillMove.currentMode(name, brain: brain, installed: installed))
 
-        let detected = installations.compactMap { ProjectAnswers.target(for: $0.id) }
-        let context = SkillMove.Context(env: env, store: store, homeID: ProjectRecords.homeID(hostName: hostName, machineName: machine.homeName),
-                                        installed: installed, targets: installedTargets.isEmpty ? detected : installedTargets,
-                                        projectFolders: folders, piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
         let plan = SkillMove.plan(name: name, targets: targets, mode: chosenMode, keepGlobal: keepGlobal, brain: brain, context: context)
         out(moveText(plan, calls: calls, modeGiven: mode != nil, home: home))
         guard plan.canApply else { return 1 }
@@ -89,6 +85,119 @@ extension AKitCLI {
             out(moveOutcomeText(error.outcome, plan: plan))
             throw Failure(message: error.message)
         }
+    }
+
+    /// `akit move skill NAME --to-global`: the plan by place; `--yes` carries it out.
+    static func moveToGlobal(_ name: String, from: String?, mode: LayerSkill.Mode?, yes: Bool, brainRoot: URL, env: HarnessEnvironment,
+                             cwd: URL, projectsRoot: URL, hostName: String, installedTargets: [String], out: (String) -> Void,
+                             err: (String) -> Void, trash: @escaping (URL) throws -> URL?) async throws -> Int32 {
+        guard let brain = Brain.load(from: brainRoot) else {
+            throw Failure(message: "No brain repo at \(brainRoot.path). Move to Global goes through the brain; create one with akit init.")
+        }
+        if let problem = MachineProfile.load(home: env.homeDirectory).problem { err("akit: \(problem)") }
+        let context = await skillContext(brainRoot: brain.root, env: env, projectsRoot: projectsRoot, hostName: hostName,
+                                         installedTargets: installedTargets)
+        var ids: [String]?
+        if let from {
+            var chosen: [String] = []
+            let recorded = Set(BrainRemove.savedAnswers(brain: brain, home: env.homeDirectory).map(\.id))
+            for argument in from.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) where !argument.isEmpty {
+                let path = resolve(argument, cwd: cwd, env: env)
+                let id = FileWalk.isDirectory(path) ? await ProjectRecords.projectID(for: path, projectsRoot: projectsRoot, env: env) : argument
+                guard FileWalk.isDirectory(path) || context.projectFolders[id] != nil || recorded.contains(id) else {
+                    throw Failure(message: "--from \(argument): no such folder, and no project with that id on this Mac or in the brain.")
+                }
+                if !chosen.contains(id) { chosen.append(id) }
+            }
+            ids = chosen
+        }
+        let plan = SkillMove.planToGlobal(name: name, from: ids, mode: mode, brain: brain, context: context)
+        out(moveToGlobalText(plan, home: env.homeDirectory))
+        guard plan.canApply else { return 1 }
+        guard yes else {
+            out("Run again with --yes to move it.")
+            return 0
+        }
+        do {
+            let outcome = try await SkillMove.applyToGlobal(plan, brain: brain, env: env, trash: trash)
+            out(moveToGlobalOutcomeText(outcome, plan: plan))
+            return 0
+        } catch {
+            out(moveToGlobalOutcomeText(error.outcome, plan: plan))
+            throw Failure(message: error.message)
+        }
+    }
+
+    static func moveToGlobalText(_ plan: SkillMove.GlobalPlan, home: URL) -> String {
+        var lines = ["Move \(plan.name) (mode \(plan.mode.rawValue)) into the core layer and this Mac's home folder; then out of "
+                     + "\(plan.parts.count) project\(plan.parts.count == 1 ? "" : "s")."]
+        if let source = plan.importSource {
+            lines.append("Brain: copy \(SkillMove.shown(source.folder, home: home)) into skills/\(plan.name) (in no layer), committed.")
+        } else {
+            lines.append("Brain: skills/\(plan.name) is there.")
+        }
+        if let edit = plan.coreEdit {
+            lines.append("Core: \(plan.name) joins layers/core/layer.yaml (committed first):")
+            lines += TextDiff.unified(TextDiff.lines(from: edit.before, to: edit.after)).map { "  " + $0 }
+        }
+        if !plan.homePaths.isEmpty {
+            lines.append("Home folder: + " + plan.homePaths.sorted().map { "~/" + $0 }.joined(separator: ", "))
+        }
+        for part in plan.parts {
+            let place = "Project \(part.id)" + (part.folder.map { " (\(SkillMove.shown($0, home: home)))" } ?? "")
+            switch part.state {
+            case .answers:
+                lines.append("\(place): \(plan.name) leaves its answers; " + (part.paths.isEmpty ? "no copy on disk."
+                    : "to the Trash: \(part.paths.sorted().joined(separator: ", "))."))
+                if !part.worktrees.isEmpty {
+                    lines.append("  links removed from \(part.worktrees.count) worktree\(part.worktrees.count == 1 ? "" : "s"): "
+                                 + part.worktrees.map { SkillMove.shown($0, home: home) }.joined(separator: ", "))
+                }
+            case .answersOnly:
+                lines.append("\(place): not on this Mac; \(plan.name) leaves its answers only (Set Up Project on its Mac takes it out).")
+            case .ownCopy:
+                lines.append("\(place): its own \(plan.name) goes to the Trash once the home folder has it.")
+            case .blocked(let reason):
+                lines.append("\(place): blocked: \(reason)")
+            }
+        }
+        lines += plan.blockers.map { "blocked: \($0)" }
+        lines += plan.warnings.map { "warning: \($0)" }
+        lines += plan.notes.map { "note: \($0)" }
+        return lines.joined(separator: "\n")
+    }
+
+    static func moveToGlobalOutcomeText(_ outcome: SkillMove.GlobalOutcome, plan: SkillMove.GlobalPlan) -> String {
+        var lines: [String] = []
+        if outcome.imported { lines.append("Copied \(plan.name) into the brain's library.") }
+        if outcome.coreChanged { lines.append("Added \(plan.name) to the core layer.") }
+        if let home = outcome.home { lines.append("Home folder: wrote \(home.written.count) file\(home.written.count == 1 ? "" : "s").") }
+        for (id, result) in outcome.projects {
+            lines.append("\(id): removed \(result.removed.count)" + (result.notes.isEmpty ? "." : "; " + result.notes.joined(separator: " ")))
+        }
+        if !outcome.answersSaved.isEmpty { lines.append("Took \(plan.name) out of the answers of \(outcome.answersSaved.joined(separator: ", ")).") }
+        if !outcome.trashed.isEmpty { lines.append("To the Trash: \(outcome.trashed.joined(separator: ", ")).") }
+        return lines.joined(separator: "\n")
+    }
+
+    /// What a skill plan reads besides the brain: every skill the installed harnesses see, and the
+    /// projects on this Mac by id (every project a harness or the projects folder knows, main
+    /// checkouts first).
+    static func skillContext(brainRoot: URL, env: HarnessEnvironment, projectsRoot: URL, hostName: String,
+                             installedTargets: [String]) async -> SkillMove.Context {
+        let home = env.homeDirectory
+        let machine = MachineProfile.load(home: home)
+        let installations = HarnessCatalog.detectAll(in: env)
+        let known = SkillScanner.projects(installations: installations, extraProjects: ProjectFinder.projects(inRoots: [projectsRoot]), in: env)
+        let installed = SkillScanner.scan(installations: installations, projects: known, in: env)
+        var found: [String: [URL]] = [:]
+        for folder in known { found[await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env), default: []].append(folder) }
+        let detected = installations.compactMap { ProjectAnswers.target(for: $0.id) }
+        return SkillMove.Context(env: env, store: ProjectStore.current(brain: brainRoot, home: home, machine: machine),
+                                 homeID: ProjectRecords.homeID(hostName: hostName, machineName: machine.homeName), installed: installed,
+                                 targets: installedTargets.isEmpty ? detected : installedTargets,
+                                 projectFolders: found.compactMapValues { GitCheckout.preferred($0) },
+                                 piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
     }
 
     /// The plan, grouped by place: the brain, each project, the core layer, the home folder.

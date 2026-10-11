@@ -397,6 +397,68 @@ final class AppModel {
         }
     }
 
+    // MARK: Move to Global
+
+    /// What moving the skill from these projects into the core layer would do
+    /// (`SkillMove.planToGlobal`); `from` nil: every project whose answers list it. Only reads.
+    func moveToGlobalPlan(name: String, from: [String]?, mode: LayerSkill.Mode?) async -> SkillMove.GlobalPlan? {
+        guard let brain else { return nil }
+        let env = HarnessEnvironment.current
+        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+        return await Task.detached { SkillMove.planToGlobal(name: name, from: from, mode: mode, brain: brain, context: context) }.value
+    }
+
+    /// Moves it (brain, core, home folder, then the projects), holding the worktree sync of every
+    /// folder it writes, then rescans. A `SkillMove.GlobalFailure` says where the skill is.
+    func moveToGlobal(_ plan: SkillMove.GlobalPlan) async throws -> SkillMove.GlobalOutcome {
+        guard let brain else {
+            throw NSError(domain: "AKit", code: 4, userInfo: [NSLocalizedDescriptionKey: "The brain is not loaded; open the Brain screen again."])
+        }
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current
+        return try await holdingWorktrees(all: Set(plan.holds)) {
+            try await SkillMove.applyToGlobal(plan, brain: brain, env: env)
+        }
+    }
+
+    // MARK: Remove Everywhere
+
+    /// Every place the harnesses load the skill from and what removing it does
+    /// (`SkillRemoval.plan`); `leaving`: unticked places, nil for the defaults. Only reads.
+    func removalPlan(name: String, leaving: Set<String>?) async -> SkillRemoval.Plan {
+        let env = HarnessEnvironment.current, brain = brain
+        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+        return await Task.detached { SkillRemoval.plan(name: name, brain: brain, context: context, leaving: leaving) }.value
+    }
+
+    /// Removes the ticked places, holding the worktree sync of every project it writes, then
+    /// rescans (the Insights tables load again). A `SkillRemoval.Failure` says what was done.
+    func removeEverywhere(_ plan: SkillRemoval.Plan) async throws -> SkillRemoval.Outcome {
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current, brain = brain
+        return try await holdingWorktrees(all: Set(plan.projects)) {
+            try await SkillRemoval.apply(plan, brain: brain, env: env)
+        }
+    }
+
+    /// Disable Plugin…: what turning the plugin off changes, and which skills go with it. Only reads.
+    func pluginPlan(_ plugin: String) throws -> PluginSwitch.Plan {
+        let servers = mcpServers.filter { if case .plugin(let name) = $0.scope { name == plugin } else { false } }.map(\.name)
+        return try PluginSwitch.plan(plugin: plugin, installed: skills, servers: servers, projects: Array(brainProjectFolders.values),
+                                     in: .current)
+    }
+
+    /// Turns the plugin off in Claude Code's settings (backup first), then rescans.
+    func disablePlugin(_ plan: PluginSwitch.Plan) async throws {
+        let home = HarnessEnvironment.current.homeDirectory
+        _ = try await Task.detached { try PluginSwitch.apply(plan, home: home) }.value
+        await refresh()
+    }
+
     // MARK: Worktrees
 
     /// What a worktree sync of a local-only project did, and when.

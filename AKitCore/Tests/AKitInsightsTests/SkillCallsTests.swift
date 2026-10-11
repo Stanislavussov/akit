@@ -140,4 +140,24 @@ struct WorkAnswersFilterTests {
             try WorkFilter.Kind.answers(project: "../x", skill: "deploy", mode: .auto).check(path: "projects/../x/answers.json", data: good, head: head)
         }
     }
+
+    @Test func takingOutAllowsOnlyThatOneEntryAndOnlyWhenItIsThere() throws {
+        let kind = WorkFilter.Kind.answers(project: "github.com/me/old", skill: "deploy", mode: nil)
+        let path = "projects/github.com/me/old/answers.json"
+        #expect(kind.message == "Remove skill deploy from github.com/me/old's answers" && kind.needsHead)
+        let head = Data(#"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"},{"name":"deploy","mode":"auto"}]}"#.utf8)
+        let good = Data(#"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"}]}"#.utf8)
+        try kind.check(path: path, data: good, head: head)
+        let bad = [
+            #"{"layers":["task"],"values":{},"targets":["pi"],"skills":[]}"#,
+            #"{"layers":[],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"}]}"#,
+            #"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"},{"name":"deploy","mode":"auto"}]}"#,
+            #"{"layers":["task"],"values":{},"targets":["pi"],"skills":[{"name":"tdd","mode":"manual"}],"note":"acme"}"#,
+        ]
+        for text in bad {
+            #expect(throws: WorkFilter.Failure.self) { try kind.check(path: path, data: Data(text.utf8), head: head) }
+        }
+        // Nothing to take out: refused, not an empty commit.
+        #expect(throws: WorkFilter.Failure.self) { try kind.check(path: path, data: good, head: good) }
+    }
 }

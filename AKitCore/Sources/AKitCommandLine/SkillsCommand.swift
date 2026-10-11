@@ -107,7 +107,9 @@ extension AKitCLI {
                 return "\(harness.displayName): \(reading.title)\(alias ?? "")"
             }
             let padded = skill.name.padding(toLength: max(width, skill.name.count), withPad: " ", startingAt: 0)
-            return "\(padded)  \(parts.joined(separator: ", "))  \(FileWalk.tilde(skill.file, home: env.homeDirectory))"
+            // The scanner's problems (descriptions a harness cuts or warns about, name collisions), one per line.
+            return (["\(padded)  \(parts.joined(separator: ", "))  \(FileWalk.tilde(skill.file, home: env.homeDirectory))"]
+                    + skill.warnings.map { "  ! \($0)" }).joined(separator: "\n")
         }.joined(separator: "\n")
     }
 }

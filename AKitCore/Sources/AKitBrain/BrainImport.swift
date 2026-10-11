@@ -143,6 +143,7 @@ public enum BrainImport {
     public static func apply(_ plan: Plan, importing names: [String], listInLayer: Bool = true,
                              env: HarnessEnvironment) async throws(Failure) -> [String] {
         let root = plan.brainRoot
+        if let problem = await BrainGit.commitProblem(brain: root, env: env) { throw Failure(message: problem) }
         let chosen = plan.candidates.filter { names.contains($0.name) && $0.state != .different }
         let after = listInLayer ? try layerAfter(plan, importing: names) : plan.layerBefore
         let layerChanges = after != plan.layerBefore
@@ -193,22 +194,38 @@ public enum BrainImport {
             : toCopy.count == 1 ? "Import skill \(toCopy[0].name)" : "Import \(toCopy.count) skills"
         let sources = toCopy.compactMap { candidate in candidate.source.flatMap(sourceNote).map { "Source of \(candidate.name): \($0)" } }
         _ = try await git(["add", "--"] + paths, in: root, env: env)
+        let style: BrainGit.CommitStyle
+        do {
+            style = try await BrainGit.commitStyle(brain: root, env: env)
+        } catch {
+            throw Failure(message: "Copied, but not committed: \(error.message)")
+        }
         // Only these paths: whatever else is staged in the brain stays staged.
-        _ = try await git(["commit", "--quiet", "-m", message] + (sources.isEmpty ? [] : ["-m", sources.joined(separator: "\n")])
-                          + ["--"] + paths, in: root, env: env)
+        var commit: [String] = style.options + ["commit", "--quiet"]
+        commit += style.commitFlags + ["-m", message]
+        if !sources.isEmpty { commit += ["-m", sources.joined(separator: "\n")] }
+        commit += ["--"] + paths
+        _ = try await git(commit, in: root, env: env, environment: style.environment)
         return copied
     }
 
-    private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment) async throws(Failure) -> String {
+    private static func git(_ arguments: [String], in root: URL, env: HarnessEnvironment,
+                            environment given: [String: String]? = nil) async throws(Failure) -> String {
         guard let git = env.findExecutable("git") else {
             throw Failure(message: "git was not found, so the brain can't be checked or committed.")
         }
         var environment = env.variables
         environment["PATH"] = env.pathForChildProcesses
-        let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: environment, timeout: 30)
+        let result = await ProcessRunner.run(git, arguments: arguments, directory: root, environment: given ?? environment, timeout: 30)
         guard let result, result.succeeded else {
             let output = result?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "git couldn't be started."
-            throw Failure(message: "git \(arguments[0]) failed: \(output)")
+            // The command's name, past any `-c` options.
+            var name = "git"
+            for (index, word) in arguments.enumerated() where !word.hasPrefix("-") && (index == 0 || arguments[index - 1] != "-c") {
+                name = word
+                break
+            }
+            throw Failure(message: "git \(name) failed: \(output)")
         }
         return result.output.trimmingCharacters(in: .newlines)
     }

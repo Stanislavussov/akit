@@ -5,7 +5,8 @@ Status: design agreed 2026-09-25. Roadmap steps 1–3 are implemented (see
 Local-only files and git worktrees built 2026-10-09 in the core and the `akit` command, and
 2026-10-10 in the app (see
 [Local-only files and git worktrees](#local-only-files-and-git-worktrees-built-2026-10-09)).
-Move to Project built 2026-10-11 (see [Move a skill to a project](#move-a-skill-to-a-project-built-2026-10-11)).
+Move to Project and its reverse, Move to Global, built 2026-10-11 (see [Move a skill to a project](#move-a-skill-to-a-project-built-2026-10-11)).
+Remove Everywhere built 2026-10-11 (see [Remove a skill everywhere](#remove-a-skill-everywhere-built-2026-10-11)).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
 `.pi/mcp.json` and `.pi/settings.json`. The home render writes the core layer's AGENTS.md
@@ -108,14 +109,19 @@ project ids, paths, answers and locks name the employer's repos.
 - On a work Mac the brain's older records are read (never written) when the local
   store has none, so projects rendered before the switch keep their lock and answers.
 - Skill and layer commits still happen on a work Mac; switching warns when the brain
-  has no git identity of its own (the global one may be the work email).
+  has no git identity of its own (the global one may be the work email). Since 2026-10-11 they are
+  made like the work Mac's other brain commits (`BrainGit.commitStyle`: the brain's own identity,
+  the environment's dropped, no hooks, never signed) by `BrainRemove`, `LayerEditor`, `LayerWriter`
+  and `BrainImport`; without the brain's own identity they refuse before writing anything.
 - Masking is not enough: it hides tokens, not repo names, paths or field text.
 - One exception (2026-10-11, Move to Project): a work Mac may add a skill name to a personal
   project's answers in the brain, when that project is not on this Mac and only the brain has
   its record. The commit holds only `projects/<id>/answers.json` of a record already committed,
   with one skill entry added and nothing else (`WorkFilter`'s `answers` kind checks the staged
   bytes), made with the brain's own identity, without hooks or signing. Work projects' data
-  (records in `~/.akit/local/projects`) still never reaches the brain.
+  (records in `~/.akit/local/projects`) still never reaches the brain. Remove Everywhere (and Move
+  to Global) use the same kind the other way: `mode: nil` allows only that one skill entry taken
+  out of such a record, and refuses when it isn't there.
 
 ## layer.yaml
 
@@ -318,8 +324,10 @@ its worktrees.
 ## Move a skill to a project (built 2026-10-11)
 
 A global skill that only one or two projects need costs its description in every other
-session. **Move to Project…** (Skills screen, Brain → a core skill; `akit move skill`) moves it
-into those projects. Core: `SkillMove` (AKitProjectSetup).
+session. **Move to Project…** (Skills screen, Brain → a core skill, Insights → Skills and the
+"Only used in <project>" recommendation; `akit move skill`) moves it into those projects. Core:
+`SkillMove` (AKitProjectSetup). The recommendation's rule is in `session-insights.md` (status,
+"Only used in one project").
 
 The skill reaches a project through the brain, never as a plain folder: only files of the
 project's lock become lines of the local-only exclude block and links in its git worktrees
@@ -406,6 +414,118 @@ The order keeps the skill present at every step:
   the sheet and `akit move` never import or migrate it; `akit stats skill` imports first, like every `akit stats`.
 - Not built: "make it the project's own" (copy the folder into the project to commit it), which
   would reach worktrees only once committed and has no lock entry or preview of its own.
+
+**Move to Global** (built 2026-10-11) is the reverse: **Move to Global…** on a project's skill
+(Skills screen: context menu and detail; Brain → the project → Skills), `akit move skill NAME
+--to-global [--from PROJECT[,…]] [--mode auto|manual] [--yes]`. Core: `SkillMove.planToGlobal`,
+`applyToGlobal`. The order keeps the skill present at every point:
+
+```
+ a project's own copy only (not in the brain): copy into skills/<name>   commit "Import skill X"
+ layers/core/layer.yaml + X (diff in the preview)                        commit "Add X to layer core"
+ home folder Apply: only X's files (and ~/.claude/skills when new)
+ each project (default: every record whose answers list X):
+   on this Mac: answers − X → Apply of only X's files (its copy to the Trash through the lock;
+     a local-only project's worktree links go with the existing sync)
+   not on this Mac: answers only (a work Mac: a personal project's brain record through
+     WorkFilter's answers kind with mode nil, only that entry taken out)
+   its own copy: to the Trash, last
+```
+
+- The mode: `--mode`, else the first project's answers entry, else auto.
+- A project's own copy is checked like Move's source: git tracks it → blocked ("remove it there
+  with a commit"); its own git history, a link out of the skill, an unreadable part or more than
+  10,000 entries → blocked; a copy that differs from the brain's `skills/X` → blocked with Show
+  Edits. A rendered copy edited by hand blocks too.
+- The home folder: a copy in `~/.agents/skills/X` AKit didn't write blocks (compare, then remove
+  it or import it); another global X (say `~/.pi/agent/skills/X`) is a warning, since harnesses
+  reading both folders see two. When Claude is a home target and `~/.claude/skills` doesn't lead to
+  `~/.agents/skills` (a folder of its own, a link elsewhere), Claude Code wouldn't see the home copy:
+  that blocks the move when it would take a copy Claude Code loads now out of a project, else it is
+  a warning.
+- Own copies go last, after every project's answers, each hashed again right before the Trash.
+- Projects not chosen that list it keep their copy; the plan names them.
+- It stops at the first failure and says where the skill is: in its projects only (import or core
+  failed), in core but not the home folder (Update Home Folder puts it there), or in core, the home
+  folder and the projects not yet done.
+
+## Remove a skill everywhere (built 2026-10-11)
+
+A skill that is never needed costs its description wherever any harness loads it, and it can
+be in many places at once: `~/.agents/skills` (Pi, Codex, OpenCode, and Claude Code through the
+`~/.claude/skills` link), a real `~/.claude/skills` folder, `~/.pi/agent/skills`, OpenCode's
+config folders, each project's `.agents/skills`, `.claude/skills`, `.pi/skills` (and
+OpenCode's), a brain layer or a project's answers that render it, a Claude Code plugin, a
+claude.ai skill, a Pi package. Deleting one copy leaves the others, and deleting a rendered copy
+brings it back on the next Apply. **Remove Everywhere…** (Skills screen: context menu and the
+detail's toolbar; Insights → Skills context menu and the auto → manual cards; `akit remove skill
+NAME --everywhere`) finds every place and takes the skill out of each. Core: `SkillRemoval`
+(AKitProjectSetup), `PluginSwitch` (AKitSkills).
+
+- **Finding.** The places are `SkillScanner`'s: every root of every installed harness, the
+  global ones and those of every project AKit knows (checked 2026-10-11: Claude Code's global,
+  synced, plugin and project folders; Pi's `~/.pi/agent/skills`, `~/.agents/skills`, a project's
+  `.pi/skills` and `.agents/skills` up to its git root, package skills; Codex's and OpenCode's
+  folders). A copy matches by its folder name (what Claude Code keys on); a folder of another name
+  whose header says the name is listed as "maybe the same skill" and is never ticked by default.
+  The scanner merges copies with one real path into one skill, so the plan splits it again by
+  `Skill.places`: each link of its own (a skills.sh layout, `~/.claude/skills/x → ~/.agents/skills/x`)
+  is a place where only the link goes; the real folder is a place of its own when it sits directly in a
+  folder some installed harness loads skills from (also when no harness's first place reached it
+  there), else it stays and the plan says so (a development folder the links led to). Those folders
+  (`SkillScanner.rootFolders`, custom harnesses included) leave out the home folder and anything
+  above it: a harness whose skill folder is `~` never makes `~/Documents/notes` removable; such a
+  copy is listed as "Not directly in a skill folder AKit removes from". A folder reached
+  through a folder of skills that is a link (`~/.claude/skills → ~/.agents/skills`) is one place,
+  listed under its real folder with "also reached as". Then the brain: every layer that
+  lists it, every record whose answers list it (a work Mac adds the personal projects only the
+  brain has), and `skills/<name>`.
+- **Actions.** Own copy (global, or a project's, not in git) → the Trash; a skills.sh lock entry
+  is forgotten only when the real folder goes, never for a link, by the path resolved before the
+  move. A copy or a link that git tracks stays, also a global one (a home folder may be a dotfiles
+  repository). A tracked link whose folder goes stays as a link to a removed folder: the plan says
+  so in a note (it loads nothing, so it is not in "still loads in"). Known limit: dotfiles kept as a
+  bare repository (`git --git-dir=~/.dotfiles --work-tree=~`) leave no `.git` to find, so AKit can't
+  tell such a copy is tracked; it goes to the Trash like any own copy (recoverable from there). A copy AKit rendered → it leaves with the Apply of its
+  brain entry. A layer → its `layer.yaml` without the entry (diff, one commit each). A project's
+  answers → without the entry; on this Mac the project's Apply saves them (a local-only project's
+  worktree links go with the existing sync); a project on another Mac gets only its answers
+  (the brain's, or a work Mac's local record; a personal project's brain answers from a work Mac
+  through `WorkFilter`'s answers kind, whose `mode: nil` allows only that one entry taken out).
+  The brain library's `skills/<name>` stays unless ticked ("Also delete it from the brain
+  library", `--library`), and only when nothing in the brain lists it any more; its git history
+  stays. On a work Mac it also stays while the brain's answers of a project this Mac keeps its own
+  record of still list it: a work Mac never rewrites the brain's copy of such a record (only
+  `WorkFilter` writes project data to the brain), so that is done from a personal Mac. The plan
+  says that projects set up on a work Mac keep their records on that Mac and can't be seen here.
+- **Kept, with the alternative.** A project's own copy that git tracks: "remove it there with a
+  commit", and Pi's per-project switch (**Pi: Off…**). A plugin skill: Claude Code's
+  `skillOverrides` doesn't reach it, so it leaves only with its plugin: **Disable Plugin…** sets
+  `enabledPlugins["<plugin>@<marketplace>"]` to false through `SettingsFile` (backup, refused when
+  the entry changed); the confirmation names the exact keys, every skill and MCP server that goes
+  with the plugin, and the known projects whose own `.claude/settings.json` turns it on again (it
+  stays on there). Never part of Remove. A plugin skill's row (Skills, Insights → Skills) opens
+  Disable Plugin… instead of Remove Everywhere…: its bare folder name may be an unrelated skill's. A claude.ai
+  skill: the Claude switch Off (`skillOverrides`), a place left unticked by default. A Pi package's
+  skill: Pi filters it in the package's own settings entry, which AKit doesn't write. A skill
+  bundled with a harness: nothing.
+- **Records.** Each record on this Mac whose rendered copy or answers change gets one plan with
+  every ticked brain edit at once (the layers as edited, its answers without the entry); Apply
+  takes only the skill's files, and the rest of a pending render waits (`deferring`), as Move
+  does.
+- **Order.** Layers (commit) → each record's Apply → other Macs' answers → own copies to the
+  Trash → claude.ai switches → the library. Each item is hashed again right before its own move to
+  the Trash (commits and Applies ran meanwhile); an item already gone (a worktree link the sync
+  removed, a copy another tool took) is a note, and a place whose items were all gone gets no
+  "to the Trash" line.
+  Before the first write too: what goes to the Trash is hashed again (a folder of more than 10,000 entries or with an unreadable part, git history or a
+  link out of the skill blocks that place at plan time), each record's files and each layer file
+  must be as previewed. A rendered copy edited by hand blocks, with Show Edits. It stops at the
+  first failure and says what was done.
+- **The plan ends** with "After this, NAME loads in: nowhere." or the places left and why. Other
+  Macs: Brain → Sync there, then Update Home Folder and each project's Apply.
+- MCP servers: Insights → MCP Servers' context menu has the MCP Servers screen's **Delete…**
+  (its confirmation and backup); a plugin's or claude.ai server can't be deleted there.
 
 ## Several layers, one file
 

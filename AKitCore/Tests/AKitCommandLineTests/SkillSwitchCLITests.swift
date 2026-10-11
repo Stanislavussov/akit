@@ -72,4 +72,19 @@ struct SkillSwitchCLITests {
         #expect(await akit("skills", "set", "tdd", "--harness", "claude", "--state", "maybe").err.contains("--state is on"))
         #expect(await akit("skills", "state", "--yes").code != 0)
     }
+
+    @Test func stateNamesDescriptionsAHarnessCutsOrWarnsAbout() async throws {
+        let long = String(repeating: "a", count: 1100)
+        try fm.createDirectory(at: home.appending(path: ".agents/skills/wordy"), withIntermediateDirectories: true)
+        try Data("---\nname: wordy\ndescription: \(long)\nwhen_to_use: \(String(repeating: "b", count: 500))\n---\n".utf8)
+            .write(to: home.appending(path: ".agents/skills/wordy/SKILL.md"))
+        let state = await akit("skills", "state", "wordy")
+        #expect(state.out.contains("  ! Claude Code cuts its description at 1536 characters (it has 1603, with when_to_use)"), "\(state.out)")
+        #expect(state.out.contains("  ! Pi warns: description over 1024 characters (1100); Pi still sends it all"))
+        // The cap follows skillListingMaxDescChars in ~/.claude/settings.json.
+        try Data("{\n  \"skillListingMaxDescChars\": 2000\n}\n".utf8).write(to: home.appending(path: ".claude/settings.json"))
+        let raised = await akit("skills", "state", "wordy")
+        #expect(!raised.out.contains("Claude Code cuts") && raised.out.contains("Pi warns"))
+        #expect(!(await akit("skills", "state", "tdd")).out.contains("!"))
+    }
 }

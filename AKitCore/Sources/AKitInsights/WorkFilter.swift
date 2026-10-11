@@ -22,7 +22,8 @@ enum WorkFilter {
         case layer(layer: String, skill: String, change: LayerPatch.Change)
         /// Move to Project into a personal project from a work Mac: only `projects/<id>/answers.json`
         /// of a project the brain already has, only one skill entry added (or its mode changed).
-        case answers(project: String, skill: String, mode: LayerSkill.Mode)
+        /// `mode` nil: Move to Global, only that skill's entry taken out (it must be there).
+        case answers(project: String, skill: String, mode: LayerSkill.Mode?)
 
         var name: String {
             switch self {
@@ -44,7 +45,8 @@ enum WorkFilter {
             switch self {
             case .summary(let pseudonym, _): "Update usage summaries (\(pseudonym))"
             case .layer(let layer, let skill, let change): change.message(skill: skill, layer: layer)
-            case .answers(let project, let skill, _): "Add skill \(skill) to \(project)'s answers"
+            case .answers(let project, let skill, let mode):
+                mode == nil ? "Remove skill \(skill) from \(project)'s answers" : "Add skill \(skill) to \(project)'s answers"
             }
         }
 
@@ -70,7 +72,11 @@ enum WorkFilter {
                 }
                 var expected = before
                 expected.skills.removeAll { $0.name == skill }
-                expected.skills.append(.init(name: skill, mode: mode))
+                if let mode {
+                    expected.skills.append(.init(name: skill, mode: mode))
+                } else if expected.skills.count == before.skills.count {
+                    throw Failure(message: "Refused a commit from this work Mac: \(path) has no \(skill) skill entry to take out.")
+                }
                 // Nothing but the one skill entry; no field the decoder doesn't know.
                 let keys = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]).map { Set($0.keys) } ?? []
                 guard after == expected, keys.isSubset(of: ["layers", "values", "targets", "skills", "localOnly"]) else {
