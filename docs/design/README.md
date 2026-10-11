@@ -1,7 +1,7 @@
 # Design map
 
 Status: 2026-10-11, checked against the code; `model-guidance.md` added the same day as a
-proposal. This is the index of `docs/design/`: what
+proposal; the order after step 9 is in "Next (2026-10-11)". This is the index of `docs/design/`: what
 each design is for, what is built, what to build next and in which order. Each design
 keeps its own details and its own status note; the order across designs and the open
 decisions live only here.
@@ -100,12 +100,25 @@ design doc and this table say so.
 | 1 | Insights screen. Built 2026-10-03: recommendations with Apply… and Dismiss…. `akit setup` installs capture, and the screen says when it is off and has Install Capture…; the app's Sync publishes summaries (2026-10-06); the skills table, Changes with Add Mark… and Plan… after Apply (2026-10-07). Done, apart from a few small items listed in its status note | `session-insights.md`, step 10 | The feature had no button. Almost no new logic: the pieces move from the command line module into `AKitInsights` |
 | 2 | Buttons for "apply the core layer to the home folder" and "forget project". Built 2026-10-07: **Update Home Folder…** and **Forget Project…** on the Brain screen; Insights' Plan… covers the home folder too | `layers.md`, Roadmap | Same rule: every operation needs a button. Small |
 | 3 | Count only exposures with a description. Built 2026-10-08 as I1: stats, recommend and the summaries' `described` day field; the "descriptions dropped by the harness" line in `akit stats` and on Insights | `session-insights.md`, step 8 (simplified, see I1) | Fixes what recommendations count; one condition in the queries |
-| 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks. I2, D2, D3 and D4 decided 2026-10-08. In progress: slice 1 built 2026-10-08 (Run Cells… → A brain layer, `akit analysis control run --layer`); slice 2 built 2026-10-08 (Evals → From Commit…, Layer Sets, Add to Layer Set…; `task new --commit`, `layer-set`); slice 5 built 2026-10-08 (the layer verdict "helps (offline)" in Evals, `akit analysis control compare --eval`); slice 6 built 2026-10-08 (Brain → layer → Evaluate… with the cost estimate and a calibration cell, Continue, the verdict badge, denied commands for AKit's own repository; `akit analysis control evaluate`); after it, paired calibration (one cell of each setup, the estimate per setup) and the isolation check (no skill or text of the layer in the wrong setup, checked before every layer cell's agent and against its skill listing). Next: the pilot | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
+| 4 | Layer evals, minimum: slices 1, 2, 5, 6, then a pilot on 5–8 tasks. I2, D2, D3 and D4 decided 2026-10-08. In progress: slice 1 built 2026-10-08 (Run Cells… → A brain layer, `akit analysis control run --layer`); slice 2 built 2026-10-08 (Evals → From Commit…, Layer Sets, Add to Layer Set…; `task new --commit`, `layer-set`); slice 5 built 2026-10-08 (the layer verdict "helps (offline)" in Evals, `akit analysis control compare --eval`); slice 6 built 2026-10-08 (Brain → layer → Evaluate… with the cost estimate and a calibration cell, Continue, the verdict badge, denied commands for AKit's own repository; `akit analysis control evaluate`); after it, paired calibration (one cell of each setup, the estimate per setup) and the isolation check (no skill or text of the layer in the wrong setup, checked before every layer cell's agent and against its skill listing). Next: the pilot, on the user's JS/TS project (wave 1 below) | `layer-evals.md` (see I2) | Proves the mechanics and the cost on the success number before more is built |
 | 5 | Layer checks: slices 3 and 4 | `layer-evals.md` | Only if the pilot shows that success alone can't see the gain |
 | 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json`. Built 2026-10-08: the two files merge key by key, per-key ownership in the lock, `${VAR}`-only secrets, masked preview; not into the home folder yet. It is the base for hooks in layers, but arrays are leaves: lists from several layers (hooks, permissions) clash until named arrays get a union merge | `layers.md`, JSON merge; Roadmap 4 | One mechanism unblocks MCP in layers and writing `enabledPlugins` from a recommendation, and is the base for hooks in layers (array merge still to do) |
 | 7 | One parser for failure signals. Built 2026-10-08: `FailureSignals` in `AKitSessions` holds the rules of interrupts, rejections, tool errors and repeated calls; Lab and the index scanner both use it (I4, D1) | `definitions.md`; `session-insights.md`, step 11 (see I4) | Two parsers counted the same signals differently |
 | 8 | On demand | see Parked | No user yet |
-| 9 | Proposal, not agreed (2026-10-11): model guidance. Step 0 verifies the harness and provider facts without code; then model notes (steps 1–5) and the guidance review (steps 6–7), then the eval rule (step 8) | `model-guidance.md`, Steps | Asked for by the user; its place among the other steps is open (D10) |
+| 9 | Proposal, not agreed (2026-10-11): model guidance. Step 0 verifies the harness and provider facts without code; then model notes (steps 1–5) and the guidance review (steps 6–7), then the eval rule (step 8) | `model-guidance.md`, Steps | Asked for by the user; its place is wave 3 below, the order inside it is open (D10) |
+
+## Next (2026-10-11)
+
+The user chose wave 1 as the next step on 2026-10-11. Waves 2–4 are proposals in this
+order; each wave is one or more feature branches.
+
+| Wave | Step | Design | Why at this place |
+|---|---|---|---|
+| 1 | Layer evals on the user's JS/TS project. Commit tasks for `package.json` repositories (vitest or jest from its scripts, one process per hidden test file, the same watchdog); side metrics next to success (cost, tokens, turns, tool-output bytes, with the same paired bootstrap); the third setup **Clean** if the wave's plan keeps it. Then the pilot there, not on AKit | `layer-evals.md`, Later (the bold rows) | The pilot is the open part of step 4. The user evaluates layers on JS/TS, and AKit's hidden tests don't judge SwiftUI work, so a pilot on AKit says little. Cost and tokens are recorded already, so each paid cell gives more |
+| 2 | Onboarding: **Set Up This Mac** | `machine-setup.md`, Onboarding | From the work Mac (Pi, herdr): AKit guesses tools and folders. The user reviews the proposal first |
+| 3 | Model guidance: step 0 (facts, no code), the guidance review, then model notes with the model × setup matrix of evals | `model-guidance.md`; `layer-evals.md`, Later | D5–D10 first. The review is useful alone (proposal for D10); model notes need the matrix to prove them |
+| 4 | Layers: a union merge for named arrays (hooks, permissions), then hooks in layers; JSON merge into the home folder; MCP secrets from Keychain | `layers.md` | Each removes a hand edit; the array merge unblocks hooks in layers |
+| — | Small, between waves: marks for configured servers in Catalog…; I5; merge or delete the branch `review-error-analysis` (one guide commit of 2026-10-02, never merged) | `mcp-catalog.md`; this file | No wave needs them |
 
 ## Proposed improvements
 
