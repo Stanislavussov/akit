@@ -57,8 +57,8 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 | [`definitions.md`](definitions.md) | What does a shared term mean? | — | tiers, sending policy, keys, shared `FailureSignals` (2026-10-08) | fingerprint, `dirty` / `diff_hash` |
 
 The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`). Since
-2026-10-11 `screens.ru.md` is a full guide: every screen from simple tasks to hard ones, with
-examples and screenshots (`docs/guides/images`, taken from a made-up home by
+2026-10-11 both are full guides: every screen and every Error Analysis tab from simple tasks
+to hard ones, with examples and screenshots (`docs/guides/images`, taken from a made-up home by
 `make guide-screenshots`); the guide window searches both guides and the screens at once.
 
 ## What can be used today
