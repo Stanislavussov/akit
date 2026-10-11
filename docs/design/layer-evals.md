@@ -995,7 +995,11 @@ Each slice works in the installed AKit, has its UI, and is tested with a fake `c
 | Regression: layer at commit A against commit B | render from `git archive <commit>` instead of a clean working tree |
 | Layer against layer | two layer setups with different `layer` |
 | `lean` for control setups | a flag on `ControlSetup` |
-| Clean home (`--bare` with the user's API key) | an agent option |
+| Clean home (`--bare` with the user's API key) as a third setup **Clean: no skills, no extensions**, next to the as-is baseline and the layer. The as-is pair answers "does the layer add something to what I have?"; the clean pair answers "does the layer help on its own?" (Pi: its flags that disable skills and extensions; not in v1, I2) | an agent option; a third `ControlSetup.Role`; the result shows both pairs |
+| **Side metrics next to success**: tool-output bytes read into the context, tokens (input, cached, output), turns and cost per cell, compared with the same paired bootstrap as success. For rules like "read large files in parts" this is the main result: every setup solves the task, at a different price. Cost and tokens are recorded already (`SendLog`, `RunCost`); tool-output bytes come from the cell's transcript | columns in `ControlComparison` and the Setups compared table; bytes from the transcript's tool results |
+| **Model × setup matrix in one eval**: the Evaluate sheet takes several models; AKit queues one eval per model together and shows the verdict per model in one table. Decision 5 keeps one model per eval id, so pairing doesn't change. The answer goes straight into the `models:` selector of layer fragments (`layers.md`) | a model list in the sheet and `evaluate --model` repeated; a matrix view of `verdicts/<layer>.json` |
+| **Under-specified prompt as a task variant**: the task's prompt cut down to the bare request (as a reproduction's minimal prompt), to see whether the layer or the model fills in what wasn't said. Pairs with the "misunderstood under-specified request" seed and the user simulator row below | a second prompt on `ControlTask`; the result shows full and cut prompts side by side |
+| **Review friendliness of plans**: a second criterion next to "the agent followed the plan efficiently". From post-run feedback (`/rate`): plan accepted as is / with edits / rewritten, plus objections and interruptions after a plan. Belongs to session insights; the eval doc only names it so plan-layer evals report both criteria | a field in the post-run feedback; a column in the plan layer's verdict |
 | Check kinds `command` and `order` | watchdog for commands; event order in the transcript |
 | Candidate tasks by the layer's `paths:` | new `layer.yaml` field |
 | Commit tasks for non-Swift repositories | a test runner per stack |
@@ -1005,6 +1009,15 @@ Each slice works in the installed AKit, has its UI, and is tested with a fake `c
 | Skill trigger evals (prompt → was the skill invoked) | cheap single-turn runs |
 | User simulator for tasks with vague requirements | a second agent with the hidden intent |
 | Publishing tasks of public repositories into the layer | URL + commit instead of a path; scrub check |
+
+The five bold rows came from a 2026-10-11 comparison with a narrower approach seen in a
+public discussion: an A/B of one skill with Pi, two isolated runs per prompt (clean Pi with
+the skill and without), a program as the judge, tasks from closed issues with real tests, at
+least three runs per side. Its result, "the rule helps one model only", confirms the
+`models:` selector of fragments. What it does better than v1 here: a clean baseline, cost
+and bytes as the main signal, and one run over several models. What it lacks and this design
+keeps: intervals, the minimal effect of interest and the `no conclusion` verdict, so that
+"not shown" is never read as "doesn't help".
 
 ## Appendix: layers for other kinds of work
 
