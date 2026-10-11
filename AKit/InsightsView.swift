@@ -41,6 +41,8 @@ struct InsightsView: View {
     @State private var addingMark = false
     /// Move to Project… of an "Only used in …" card, with its project ticked.
     @State private var moving: MoveRequest?
+    /// Remove Everywhere… of a recommended skill.
+    @State private var removing: RemovalRequest?
 
     struct MoveRequest: Identifiable {
         let name: String
@@ -121,6 +123,7 @@ struct InsightsView: View {
         }
         .sheet(item: $planning) { ProjectSetupSheet(initialProject: $0.home ? nil : $0.folder, forHome: $0.home) }
         .sheet(item: $moving) { MoveSkillSheet(name: $0.name, preselected: $0.project) }
+        .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name) }
         .sheet(isPresented: $addingMark) {
             AddMarkSheet { message in
                 notice = message
@@ -375,6 +378,10 @@ struct InsightsView: View {
                         Button("Apply…") { open(item, change: .manual) }
                             .disabled(model.brain == nil)
                             .help("Show the layer.yaml change that makes the skill manual, then commit it in the brain")
+                    }
+                    if item.skill != Recommender.wholePlugin, item.action.kind != RecommendReport.Action.moveToProject {
+                        Button("Remove Everywhere…") { removing = RemovalRequest(name: item.skill) }
+                            .help("Never needed? Remove \(item.skill) from every place a harness loads it from, with the brain entries that render it")
                     }
                     Button("Dismiss…") {
                         if item.patch != nil { open(item, change: .keepAuto) } else { dismissing = item }

@@ -38,15 +38,9 @@ extension AKitCLI {
         let home = env.homeDirectory
         let machine = MachineProfile.load(home: home)
         if let problem = machine.problem { err("akit: \(problem)") }
-        let store = ProjectStore.current(brain: brain.root, home: home, machine: machine)
-        let installations = HarnessCatalog.detectAll(in: env)
-        let known = SkillScanner.projects(installations: installations, extraProjects: ProjectFinder.projects(inRoots: [projectsRoot]), in: env)
-        let installed = SkillScanner.scan(installations: installations, projects: known, in: env)
-
-        // Projects on this Mac by id: every project a harness or the projects folder knows, main checkouts first.
-        var found: [String: [URL]] = [:]
-        for folder in known { found[await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env), default: []].append(folder) }
-        let folders = found.compactMapValues { GitCheckout.preferred($0) }
+        let context = await skillContext(brainRoot: brain.root, env: env, projectsRoot: projectsRoot, hostName: hostName,
+                                         installedTargets: installedTargets)
+        let installed = context.installed, folders = context.projectFolders
         let recorded = Set(BrainRemove.savedAnswers(brain: brain, home: home).map(\.id))
         var targets: [SkillMove.Target] = []
         for argument in to.flatMap({ $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }) where !argument.isEmpty {
@@ -70,10 +64,6 @@ extension AKitCLI {
         let modelCalls = (calls?.projects.reduce(0) { $0 + $1.modelCalls } ?? 0) + (calls?.otherMacs.modelCalls ?? 0)
         let chosenMode = mode ?? (modelCalls > 0 ? .auto : SkillMove.currentMode(name, brain: brain, installed: installed))
 
-        let detected = installations.compactMap { ProjectAnswers.target(for: $0.id) }
-        let context = SkillMove.Context(env: env, store: store, homeID: ProjectRecords.homeID(hostName: hostName, machineName: machine.homeName),
-                                        installed: installed, targets: installedTargets.isEmpty ? detected : installedTargets,
-                                        projectFolders: folders, piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
         let plan = SkillMove.plan(name: name, targets: targets, mode: chosenMode, keepGlobal: keepGlobal, brain: brain, context: context)
         out(moveText(plan, calls: calls, modeGiven: mode != nil, home: home))
         guard plan.canApply else { return 1 }
@@ -89,6 +79,26 @@ extension AKitCLI {
             out(moveOutcomeText(error.outcome, plan: plan))
             throw Failure(message: error.message)
         }
+    }
+
+    /// What a skill plan reads besides the brain: every skill the installed harnesses see, and the
+    /// projects on this Mac by id (every project a harness or the projects folder knows, main
+    /// checkouts first).
+    static func skillContext(brainRoot: URL, env: HarnessEnvironment, projectsRoot: URL, hostName: String,
+                             installedTargets: [String]) async -> SkillMove.Context {
+        let home = env.homeDirectory
+        let machine = MachineProfile.load(home: home)
+        let installations = HarnessCatalog.detectAll(in: env)
+        let known = SkillScanner.projects(installations: installations, extraProjects: ProjectFinder.projects(inRoots: [projectsRoot]), in: env)
+        let installed = SkillScanner.scan(installations: installations, projects: known, in: env)
+        var found: [String: [URL]] = [:]
+        for folder in known { found[await ProjectRecords.projectID(for: folder, projectsRoot: projectsRoot, env: env), default: []].append(folder) }
+        let detected = installations.compactMap { ProjectAnswers.target(for: $0.id) }
+        return SkillMove.Context(env: env, store: ProjectStore.current(brain: brainRoot, home: home, machine: machine),
+                                 homeID: ProjectRecords.homeID(hostName: hostName, machineName: machine.homeName), installed: installed,
+                                 targets: installedTargets.isEmpty ? detected : installedTargets,
+                                 projectFolders: found.compactMapValues { GitCheckout.preferred($0) },
+                                 piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"])
     }
 
     /// The plan, grouped by place: the brain, each project, the core layer, the home folder.

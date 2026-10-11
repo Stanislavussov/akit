@@ -6,6 +6,7 @@ Local-only files and git worktrees built 2026-10-09 in the core and the `akit` c
 2026-10-10 in the app (see
 [Local-only files and git worktrees](#local-only-files-and-git-worktrees-built-2026-10-09)).
 Move to Project built 2026-10-11 (see [Move a skill to a project](#move-a-skill-to-a-project-built-2026-10-11)).
+Remove Everywhere built 2026-10-11 (see [Remove a skill everywhere](#remove-a-skill-everywhere-built-2026-10-11)).
 JSON merge built 2026-10-08 (see [JSON merge](#json-merge-built-2026-10-08)): layers can
 bring MCP servers in `.mcp.json` and settings in `.claude/settings.json`, and for Pi in
 `.pi/mcp.json` and `.pi/settings.json`. The home render writes the core layer's AGENTS.md
@@ -114,7 +115,9 @@ project ids, paths, answers and locks name the employer's repos.
   its record. The commit holds only `projects/<id>/answers.json` of a record already committed,
   with one skill entry added and nothing else (`WorkFilter`'s `answers` kind checks the staged
   bytes), made with the brain's own identity, without hooks or signing. Work projects' data
-  (records in `~/.akit/local/projects`) still never reaches the brain.
+  (records in `~/.akit/local/projects`) still never reaches the brain. Remove Everywhere (and Move
+  to Global) use the same kind the other way: `mode: nil` allows only that one skill entry taken
+  out of such a record, and refuses when it isn't there.
 
 ## layer.yaml
 
@@ -404,6 +407,61 @@ The order keeps the skill present at every step:
   the sheet and `akit move` never import or migrate it; `akit stats skill` imports first, like every `akit stats`.
 - Not built: "make it the project's own" (copy the folder into the project to commit it), which
   would reach worktrees only once committed and has no lock entry or preview of its own.
+
+## Remove a skill everywhere (built 2026-10-11)
+
+A skill that is never needed costs its description wherever any harness loads it, and it can
+be in many places at once: `~/.agents/skills` (Pi, Codex, OpenCode, and Claude Code through the
+`~/.claude/skills` link), a real `~/.claude/skills` folder, `~/.pi/agent/skills`, OpenCode's
+config folders, each project's `.agents/skills`, `.claude/skills`, `.pi/skills` (and
+OpenCode's), a brain layer or a project's answers that render it, a Claude Code plugin, a
+claude.ai skill, a Pi package. Deleting one copy leaves the others, and deleting a rendered copy
+brings it back on the next Apply. **Remove Everywhere…** (Skills screen: context menu and the
+detail's toolbar; Insights → Skills context menu and the auto → manual cards; `akit remove skill
+NAME --everywhere`) finds every place and takes the skill out of each. Core: `SkillRemoval`
+(AKitProjectSetup), `PluginSwitch` (AKitSkills).
+
+- **Finding.** The places are `SkillScanner`'s: every root of every installed harness, the
+  global ones and those of every project AKit knows (checked 2026-10-11: Claude Code's global,
+  synced, plugin and project folders; Pi's `~/.pi/agent/skills`, `~/.agents/skills`, a project's
+  `.pi/skills` and `.agents/skills` up to its git root, package skills; Codex's and OpenCode's
+  folders). A copy matches by its folder name (what Claude Code keys on); a folder of another name
+  whose header says the name is listed as "maybe the same skill" and is never ticked by default.
+  One place per real path: a link and its target are one skill. Then the brain: every layer that
+  lists it, every record whose answers list it (a work Mac adds the personal projects only the
+  brain has), and `skills/<name>`.
+- **Actions.** Own copy (global, or a project's not in git) → the Trash (a link: only the link),
+  and a skills.sh lock entry is forgotten. A copy AKit rendered → it leaves with the Apply of its
+  brain entry. A layer → its `layer.yaml` without the entry (diff, one commit each). A project's
+  answers → without the entry; on this Mac the project's Apply saves them (a local-only project's
+  worktree links go with the existing sync); a project on another Mac gets only its answers
+  (the brain's, or a work Mac's local record; a personal project's brain answers from a work Mac
+  through `WorkFilter`'s answers kind, whose `mode: nil` allows only that one entry taken out).
+  The brain library's `skills/<name>` stays unless ticked ("Also delete it from the brain
+  library", `--library`), and only when nothing in the brain lists it any more; its git history
+  stays.
+- **Kept, with the alternative.** A project's own copy that git tracks: "remove it there with a
+  commit", and Pi's per-project switch (**Pi: Off…**). A plugin skill: Claude Code's
+  `skillOverrides` doesn't reach it, so it leaves only with its plugin: **Disable Plugin…** sets
+  `enabledPlugins["<plugin>@<marketplace>"]` to false through `SettingsFile` (backup, refused when
+  the entry changed), naming every skill that goes with it; never part of Remove. A claude.ai
+  skill: the Claude switch Off (`skillOverrides`), a place left unticked by default. A Pi package's
+  skill: Pi filters it in the package's own settings entry, which AKit doesn't write. A skill
+  bundled with a harness: nothing.
+- **Records.** Each record on this Mac whose rendered copy or answers change gets one plan with
+  every ticked brain edit at once (the layers as edited, its answers without the entry); Apply
+  takes only the skill's files, and the rest of a pending render waits (`deferring`), as Move
+  does.
+- **Order.** Layers (commit) → each record's Apply → other Macs' answers → own copies to the
+  Trash → claude.ai switches → the library. Before the first write: what goes to the Trash is
+  hashed again (a folder of more than 10,000 entries or with an unreadable part, git history or a
+  link out of the skill blocks that place at plan time), each record's files and each layer file
+  must be as previewed. A rendered copy edited by hand blocks, with Show Edits. It stops at the
+  first failure and says what was done.
+- **The plan ends** with "After this, NAME loads in: nowhere." or the places left and why. Other
+  Macs: Brain → Sync there, then Update Home Folder and each project's Apply.
+- MCP servers: Insights → MCP Servers' context menu has the MCP Servers screen's **Delete…**
+  (its confirmation and backup); a plugin's or claude.ai server can't be deleted there.
 
 ## Several layers, one file
 

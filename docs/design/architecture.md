@@ -43,6 +43,12 @@ takes the scanned skills and trashes global copies with `SkillRemover`. Skills s
 the arrows still point down. `Brain.replacingLayer` and `Brain.addingSkill` give a preview the
 brain as a planned edit leaves it.
 
+2026-10-11 (Remove Everywhere, `layers.md`): `AKitProjectSetup/SkillRemoval.swift` (every place a
+harness loads a skill from, and the brain edits and Applies that take it out) and
+`AKitSkills/PluginSwitch.swift` (`enabledPlugins` through `SettingsFile`). No new dependency:
+`SkillRemoval` uses Insights' `WorkAnswers` for a work Mac's one brain answers edit, which
+ProjectSetup already sees.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).

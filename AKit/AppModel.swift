@@ -397,6 +397,40 @@ final class AppModel {
         }
     }
 
+    // MARK: Remove Everywhere
+
+    /// Every place the harnesses load the skill from and what removing it does
+    /// (`SkillRemoval.plan`); `leaving`: unticked places, nil for the defaults. Only reads.
+    func removalPlan(name: String, leaving: Set<String>?) async -> SkillRemoval.Plan {
+        let env = HarnessEnvironment.current, brain = brain
+        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+        return await Task.detached { SkillRemoval.plan(name: name, brain: brain, context: context, leaving: leaving) }.value
+    }
+
+    /// Removes the ticked places, holding the worktree sync of every project it writes, then
+    /// rescans (the Insights tables load again). A `SkillRemoval.Failure` says what was done.
+    func removeEverywhere(_ plan: SkillRemoval.Plan) async throws -> SkillRemoval.Outcome {
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current, brain = brain
+        return try await holdingWorktrees(all: Set(plan.projects)) {
+            try await SkillRemoval.apply(plan, brain: brain, env: env)
+        }
+    }
+
+    /// Disable Plugin…: what turning the plugin off changes, and which skills go with it. Only reads.
+    func pluginPlan(_ plugin: String) throws -> PluginSwitch.Plan {
+        try PluginSwitch.plan(plugin: plugin, installed: skills, in: .current)
+    }
+
+    /// Turns the plugin off in Claude Code's settings (backup first), then rescans.
+    func disablePlugin(_ plan: PluginSwitch.Plan) async throws {
+        let home = HarnessEnvironment.current.homeDirectory
+        _ = try await Task.detached { try PluginSwitch.apply(plan, home: home) }.value
+        await refresh()
+    }
+
     // MARK: Worktrees
 
     /// What a worktree sync of a local-only project did, and when.

@@ -18,6 +18,8 @@ struct SkillsView: View {
     @State private var importing: Skill?
     /// A global skill to move into projects (sheet).
     @State private var moving: Skill?
+    /// Remove Everywhere… of this skill name (sheet).
+    @State private var removing: RemovalRequest?
     /// Snapshots: `--add` opens the selected skill's switch sheet once its states are read.
     @State private var snapshotSwitch = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .skills
 
@@ -32,7 +34,8 @@ struct SkillsView: View {
                 if let skill = model.skills.first(where: { $0.id == selection }) {
                     SkillDetailView(skill: skill, link: model.brainLinks[skill.id],
                                     onDelete: { pendingDelete = skill }, onImport: { importing = skill },
-                                    onMove: canMove(skill) ? { moving = skill } : nil)
+                                    onMove: canMove(skill) ? { moving = skill } : nil,
+                                    onRemoveEverywhere: { removing = RemovalRequest(name: skill.folder.lastPathComponent) })
                 } else {
                     ContentUnavailableView("Select a skill", systemImage: "book.closed")
                 }
@@ -111,6 +114,7 @@ struct SkillsView: View {
                              layer: layer, mode: layer == "core" ? .manual : .auto)
         }
         .sheet(item: $moving) { skill in MoveSkillSheet(name: Self.moveName(skill, link: model.brainLinks[skill.id])) }
+        .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name) }
         .confirmationDialog(
             "Delete “\(pendingDelete?.name ?? "")”?",
             isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
@@ -144,6 +148,12 @@ struct SkillsView: View {
                canMove(skill) {
                 selection = skill.id
                 moving = skill
+                return
+            }
+            // Snapshots: `--tab remove` opens Remove Everywhere… for `--select <folder name>`.
+            if let options = DebugSnapshot.options, options.tab == "remove", removing == nil, model.lastScan != nil,
+               let name = options.select {
+                removing = RemovalRequest(name: name)
                 return
             }
             guard snapshotSwitch, let skill = model.skills.first(where: { $0.id == selection }) else { return }
@@ -198,6 +208,7 @@ struct SkillsView: View {
             BrainSkillButtons(name: name)
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([skill.file]) }
             if canMove(skill) { Button("Move to Project…") { moving = skill } }
+            Button("Remove Everywhere…") { removing = RemovalRequest(name: skill.folder.lastPathComponent) }
             Divider()
             SkillSwitchMenu(skill: skill)
         } else {
@@ -214,6 +225,7 @@ struct SkillsView: View {
             Divider()
             Button("Move to Trash…", role: .destructive) { pendingDelete = skill }
                 .disabled(skill.isReadOnly)
+            Button("Remove Everywhere…") { removing = RemovalRequest(name: skill.folder.lastPathComponent) }
         }
     }
 
@@ -423,6 +435,8 @@ private struct SkillDetailView: View {
     let onImport: () -> Void
     /// Move to Project…; nil when the skill can't move (not global, read-only).
     let onMove: (() -> Void)?
+    /// Remove Everywhere…: every place a harness loads a skill of this name from.
+    let onRemoveEverywhere: () -> Void
     @State private var files: [String] = []
     @State private var text: String?
 
@@ -480,6 +494,9 @@ private struct SkillDetailView: View {
                         .labelStyle(.iconOnly)
                         .help("Move this skill to the Trash")
                 }
+                Button("Remove Everywhere…", systemImage: "trash.slash", action: onRemoveEverywhere)
+                    .labelStyle(.iconOnly)
+                    .help("Remove Everywhere…: every place Claude Code, Pi and the other harnesses load \(skill.folder.lastPathComponent) from, with the brain entries that render it")
             }
             if !skill.description.isEmpty {
                 Text(skill.description).foregroundStyle(.secondary).textSelection(.enabled)
@@ -656,4 +673,10 @@ private struct BrainSkillButtons: View {
         Button("Show in Brain", systemImage: "brain") { model.showBrainSkill(name) }
             .help("Show the skill on the Brain screen")
     }
+}
+
+/// A skill name for Remove Everywhere… (the Skills and Insights screens).
+struct RemovalRequest: Identifiable {
+    let name: String
+    var id: String { name }
 }

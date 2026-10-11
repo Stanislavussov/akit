@@ -92,6 +92,14 @@ public enum AKitCLI {
                                               saved project answers (re-apply those projects)
           akit remove skill NAME              refused while a layer lists it
           akit remove skill NAME --from LAYER only from that layer's skills list
+          akit remove skill NAME --everywhere [--library]
+                                              every place a harness on this Mac loads it from:
+                                              own copies to the Trash, brain layers and project
+                                              answers that render it (committed, then only its
+                                              files applied), projects on other Macs (answers).
+                                              Kept, with what to do: copies git tracks, plugin,
+                                              claude.ai and Pi package skills. --library also
+                                              deletes skills/NAME from the brain (history stays)
           akit remove project [PROJECT|--home] [--keep-files]
                                               trashes the files AKit wrote there (not hand-edited
                                               ones), takes AKit's keys out of .mcp.json and
@@ -350,8 +358,21 @@ public enum AKitCLI {
                 }
             }
             if command == "remove" {
+                let everywhere = args.flag("--everywhere"), library = args.flag("--library")
                 let kind = args.positional(), name = args.positional()
                 try args.finish()
+                if everywhere || library {
+                    guard kind == "skill", let name, everywhere else {
+                        throw Failure(message: "Use: akit remove skill NAME --everywhere [--library] [--yes]")
+                    }
+                    if options.from != nil || options.json { throw Failure(message: "--everywhere doesn't go with --from or --json.") }
+                    let brainRoot = brainRoot(options, cwd: cwd, env: env)
+                    return try await withoutActuallyEscaping(trash) { trash in
+                        try await removeEverywhere(name, library: library, yes: options.yes, brainRoot: brainRoot, env: env,
+                                                   projectsRoot: projectsRoot, hostName: hostName, installedTargets: installedTargets,
+                                                   out: out, err: err, trash: trash)
+                    }
+                }
                 return try await remove(kind: kind, name: name, options: options, env: env, cwd: cwd, projectsRoot: projectsRoot,
                                         hostName: hostName, installedTargets: installedTargets, out: out, trash: trash)
             }

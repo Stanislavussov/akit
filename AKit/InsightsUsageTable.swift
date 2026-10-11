@@ -48,6 +48,10 @@ struct InsightsUsageTable: View {
     @State private var expanded: Set<String> = []
     /// Move to Project… of a global skill (its brain name).
     @State private var moving: InsightsView.MoveRequest?
+    /// Remove Everywhere… of a skill name.
+    @State private var removing: RemovalRequest?
+    /// Delete… of an MCP server (the MCP Servers screen's editor, with its confirmation and backup).
+    @State private var deletingServer: MCPServer?
 
     /// Context space exists only for skills; the other tables fall back to Fewest Calls.
     private var effectiveSort: Sort { kind != .skills && sort == .contextSpace ? .fewestCalls : sort }
@@ -69,6 +73,8 @@ struct InsightsUsageTable: View {
         }
         .help(kind == .skills ? "The same numbers as akit stats --details" : "The same numbers as akit stats tools --details")
         .sheet(item: $moving) { MoveSkillSheet(name: $0.name) }
+        .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name) }
+        .sheet(item: $deletingServer) { MCPServerEditor(mode: .remove($0)) }
     }
 
     /// A global skill AKit can move into projects, as the Skills screen offers it: the brain needed,
@@ -150,6 +156,11 @@ struct InsightsUsageTable: View {
                                     } else {
                                         Button("Not installed on this Mac") {}.disabled(true)
                                     }
+                                    Divider()
+                                    Button("Remove Everywhere…") {
+                                        removing = RemovalRequest(name: model.installedSkill(named: skill.name)?.folder.lastPathComponent
+                                                                  ?? String(skill.name.split(separator: ":").last ?? Substring(skill.name)))
+                                    }
                                 }
                             Text([InsightsView.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))
                                 .lineLimit(1).foregroundStyle(.secondary)
@@ -204,6 +215,11 @@ struct InsightsUsageTable: View {
                                     .contextMenu {
                                         if let installed = model.installedMCPServer(named: server.name) {
                                             MCPSwitchMenu(server: installed)
+                                            Divider()
+                                            Button("Delete…", role: .destructive) { deletingServer = installed }
+                                                .disabled(!model.canEdit(installed))
+                                                .help(model.canEdit(installed) ? "Delete \(installed.name) from \(installed.file.lastPathComponent) (a backup is made first)"
+                                                      : "A plugin's or claude.ai server, or a file AKit can't edit: turn it off with the switches above, the plugin with /plugin")
                                         } else {
                                             Button("Not configured on this Mac") {}.disabled(true)
                                         }
