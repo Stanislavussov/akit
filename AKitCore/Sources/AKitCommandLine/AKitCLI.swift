@@ -191,7 +191,12 @@ public enum AKitCLI {
                                           project, from when their layer arrived there); sorted by ≈ context space. A layer skill gets a patch
                                           (mode: manual), anything else advice. A plugin is judged as a whole:
                                           disable it when the model called none of its skills, else at most
-                                          one note on its unused ones. Imports new lines first
+                                          one note on its unused ones. All sessions only: a global skill
+                                          (core layer or hand-installed) whose every call in the last 30
+                                          days is in one project, none in unbound sessions, and that is
+                                          listed with its description in ≥ N sessions outside it, gets
+                                          "only used in PROJECT" with its akit move skill line.
+                                          Imports new lines first
           akit recommend apply ID [--yes] Show the layer.yaml patch; --yes commits it in the brain. Then run
                                           akit plan/apply in the projects using the layer
           akit recommend dismiss ID [--yes]
@@ -1255,6 +1260,10 @@ public enum AKitCLI {
         let scope = report.project.map { "project \($0), sessions bound at \(rule.bindings.joined(separator: ", "))" } ?? "all sessions"
         var lines = ["Auto skills the model never called: listed with their description in ≥ \(count(rule.minSessions, "session")) on ≥ \(count(rule.minDistinctDays, "day")), "
                      + "summed over this Mac and the other Macs' summaries (\(scope))."]
+        if report.project == nil {
+            lines.append("Global skills only one project called in the last \(Recommender.moveWindowDays) days, listed with their description in "
+                         + "≥ \(count(rule.minSessions, "session")) outside it: move them there.")
+        }
         let owners = report.summary.approxContextPerRequestByOwner.filter { $0.skills > 0 }
         if !owners.isEmpty {
             lines.append("≈ Context per request by owner: "
@@ -1270,9 +1279,16 @@ public enum AKitCLI {
             lines.append("\(item.stale ? "[stale] " : "")\(item.id)  \(subject): \(item.type)")
             let period = evidence.from.map { from in " (\(from) … \(evidence.to ?? from))" } ?? ""
             let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
-            lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed with its description in \(count(evidence.sessions, "session")) on "
-                         + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
-                         + "at 95%), user calls \(evidence.userCalls)")
+            let move = item.action.kind == RecommendReport.Action.moveToProject ? item.action.project : nil
+            if let move {
+                lines.append("  only used in \(move) (\(count(item.action.calls ?? 0, "call")) / \(Recommender.moveWindowDays) days); outside it listed "
+                             + "with its description in \(count(evidence.sessions, "session")) on \(count(evidence.distinctDays, "day"))\(period)\(macs), "
+                             + "never called there; ≈ \(short(evidence.approxContextSpace)) context space")
+            } else {
+                lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed with its description in \(count(evidence.sessions, "session")) on "
+                             + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
+                             + "at 95%), user calls \(evidence.userCalls)")
+            }
             if let skills = evidence.skills {
                 let shown = details || skills.count <= 5 ? skills : Array(skills.prefix(5)) + ["… \(skills.count - 5) more"]
                 lines.append("  skills: \(shown.joined(separator: ", "))")
@@ -1284,6 +1300,7 @@ public enum AKitCLI {
                 if details, let diff = item.action.diff { lines += diff.split(separator: "\n", omittingEmptySubsequences: false).map { "    \($0)" } }
             }
             if let text = item.action.text { lines.append("  \(item.isPatch ? "then" : "advice"): \(text)") }
+            if let move { lines.append("  move: \(Recommender.moveCommand(skill: item.skill, project: move))") }
             if details {
                 lines.append("  machines: " + evidence.machines.map { "\($0.name) (\($0.updated ?? "never")\($0.stale ? ", stale" : ""))" }
                     .joined(separator: ", "))

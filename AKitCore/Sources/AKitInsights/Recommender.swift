@@ -46,13 +46,19 @@ public struct RecommendReport: Encodable, Equatable, Sendable {
     public struct Action: Encodable, Equatable, Sendable {
         /// `layerPatch`, or the advice: `disablePluginInProject`, `disablePluginGlobally`, `unusedPluginSkills`
         /// (information: some of a plugin's skills are used), `importManual`, `applyUnmanaged`, `reapply`,
-        /// `listInLayer`, `editByHand`.
-        let kind: String
+        /// `listInLayer`, `editByHand`, `moveToProject` (rule `only-used-in-project`).
+        public let kind: String
         /// Patches: the layer and the diff of its layer.yaml.
         public var layer: String?
         public var diff: String?
         /// What to do, in words (advice; for a patch, what else it needs).
         public var text: String?
+        /// `moveToProject`: the one project that calls the skill, and its counted calls in the rule's window
+        /// (this Mac's and the other Macs' summaries).
+        public var project: String?
+        public var calls: Int?
+
+        public static let moveToProject = "moveToProject"
     }
 
     public struct Machine: Encodable, Equatable, Sendable {
@@ -439,6 +445,14 @@ public enum Recommender {
                 try add(unused, owner: owner, skill: wholePlugin, idSkill: wholePlugin + "unused",
                         action: .init(kind: "unusedPluginSkills", text: text), patch: nil, skills: unused.map(\.name))
             }
+        }
+        // Global skills only one project calls: move them there (rule `only-used-in-project`). About
+        // every session, so only in the global scope.
+        if options.project == nil {
+            let moves = try moveRecommendations(database, names: names, owners: owners, options: options, inputs: inputs,
+                                                calibration: calibration, now: now, calendar: calendar)
+            recommendations += moves.shown
+            hidden += moves.hidden
         }
         recommendations.sort {
             ($0.stale ? 1 : 0, -$0.evidence.approxContextSpace, $0.skill, $0.owner.name ?? "")

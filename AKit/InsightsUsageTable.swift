@@ -1,5 +1,6 @@
 import AKitInsights
 import AKitMCP
+import AKitSkills
 import SwiftUI
 
 /// The Insights screen's table over the window: skills, MCP servers or tools, with Unused Only and a
@@ -45,6 +46,8 @@ struct InsightsUsageTable: View {
     @State private var showAll = false
     /// MCP servers whose tool list is open.
     @State private var expanded: Set<String> = []
+    /// Move to Project… of a global skill (its brain name).
+    @State private var moving: InsightsView.MoveRequest?
 
     /// Context space exists only for skills; the other tables fall back to Fewest Calls.
     private var effectiveSort: Sort { kind != .skills && sort == .contextSpace ? .fewestCalls : sort }
@@ -65,6 +68,13 @@ struct InsightsUsageTable: View {
             Text("\(kind.title), Last \(stats.window.days) Days").font(.headline)
         }
         .help(kind == .skills ? "The same numbers as akit stats --details" : "The same numbers as akit stats tools --details")
+        .sheet(item: $moving) { MoveSkillSheet(name: $0.name) }
+    }
+
+    /// A global skill AKit can move into projects, as the Skills screen offers it: the brain needed,
+    /// not a claude.ai, plugin or package skill, not a lone `.md` file.
+    private func movable(_ skill: Skill) -> Bool {
+        model.brain != nil && skill.scope == .global && !skill.isReadOnly && !skill.isSingleFile
     }
 
     private var controls: some View {
@@ -127,11 +137,16 @@ struct InsightsUsageTable: View {
                                 .foregroundStyle(skill.unused ? Color.orange : Color.primary)
                                 .help("Counted since \(InsightsView.day(skill.windowStart)), the start of its current description or of the window"
                                       + (skill.unused ? ". Unused: no call by the model or you made in the window." : "")
-                                      + ". Right-click to switch it per harness.")
+                                      + ". Right-click to switch it per harness, or to move a global skill into projects.")
                                 .contextMenu {
                                     if let installed = model.installedSkill(named: skill.name) {
                                         SkillSwitchMenu(skill: installed)
                                         Button("Show in Skills") { model.showSkill(inFolder: installed.folder) }
+                                        if movable(installed) {
+                                            Button("Move to Project…") {
+                                                moving = .init(name: SkillsView.moveName(installed, link: model.brainLinks[installed.id]))
+                                            }
+                                        }
                                     } else {
                                         Button("Not installed on this Mac") {}.disabled(true)
                                     }

@@ -314,8 +314,10 @@ its worktrees.
 ## Move a skill to a project (built 2026-10-11)
 
 A global skill that only one or two projects need costs its description in every other
-session. **Move to Project…** (Skills screen, Brain → a core skill; `akit move skill`) moves it
-into those projects. Core: `SkillMove` (AKitProjectSetup).
+session. **Move to Project…** (Skills screen, Brain → a core skill, Insights → Skills and the
+"Only used in <project>" recommendation; `akit move skill`) moves it into those projects. Core:
+`SkillMove` (AKitProjectSetup). The recommendation's rule is in `session-insights.md` (status,
+"Only used in one project").
 
 The skill reaches a project through the brain, never as a plain folder: only files of the
 project's lock become lines of the local-only exclude block and links in its git worktrees

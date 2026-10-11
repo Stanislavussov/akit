@@ -13,6 +13,8 @@ struct MoveSkillSheet: View {
     @Environment(\.dismiss) private var dismiss
     /// The skill's folder name, as the brain and layers call it.
     let name: String
+    /// Tick only this project (Insights' "Only used in …"); nil: every project that called the skill.
+    var preselected: String? = nil
 
     private enum Page { case choose, check, preview, done }
 
@@ -449,6 +451,7 @@ struct MoveSkillSheet: View {
         ids.formUnion((model.brain?.projects ?? []).filter { !$0.isHome }.map(\.id))
         ids.formUnion(report?.projects.compactMap(\.project) ?? [])
         ids.formUnion(report?.otherMacs.projects.map(\.project) ?? [])
+        if let preselected { ids.insert(preselected) }
         var made: [Row] = []
         for id in ids {
             let saved = ProjectRecords.savedAnswers(id: id, in: store)
@@ -456,7 +459,7 @@ struct MoveSkillSheet: View {
             let count = report?.calls(in: id) ?? 0
             let current = saved.map { $0.isLocalOnly(store: store) }
             made.append(Row(id: id, folder: folders[id], isSetUp: saved != nil, currentLocalOnly: current, calls: count,
-                            lastCall: here?.lastCall, ticked: count > 0, localOnly: current ?? true))
+                            lastCall: here?.lastCall, ticked: preselected.map { $0 == id } ?? (count > 0), localOnly: current ?? true))
         }
         rows = made.sorted { ($1.calls, $0.title.lowercased()) < ($0.calls, $1.title.lowercased()) }
         calls = report

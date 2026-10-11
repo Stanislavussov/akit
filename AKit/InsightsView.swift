@@ -39,6 +39,14 @@ struct InsightsView: View {
     /// Snapshots: `--capture` opens Install Capture….
     @State private var installingCapture = DebugSnapshot.options?.capture == true
     @State private var addingMark = false
+    /// Move to Project… of an "Only used in …" card, with its project ticked.
+    @State private var moving: MoveRequest?
+
+    struct MoveRequest: Identifiable {
+        let name: String
+        var project: String?
+        var id: String { name + "|" + (project ?? "") }
+    }
 
     var body: some View {
         Group {
@@ -112,6 +120,7 @@ struct InsightsView: View {
             }
         }
         .sheet(item: $planning) { ProjectSetupSheet(initialProject: $0.home ? nil : $0.folder, forHome: $0.home) }
+        .sheet(item: $moving) { MoveSkillSheet(name: $0.name, preselected: $0.project) }
         .sheet(isPresented: $addingMark) {
             AddMarkSheet { message in
                 notice = message
@@ -301,7 +310,7 @@ struct InsightsView: View {
     private func recommendations(_ report: RecommendReport) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Recommendations").font(.headline)
-            Text("Auto skills the model never called: listed with their description in ≥ \(Self.count(report.rule.minSessions, "session")) on ≥ \(Self.count(report.rule.minDistinctDays, "day")), summed over this Mac and the other Macs' summaries. Making one manual takes its description out of every request; /name still runs it.")
+            Text("Auto skills the model never called: listed with their description in ≥ \(Self.count(report.rule.minSessions, "session")) on ≥ \(Self.count(report.rule.minDistinctDays, "day")), summed over this Mac and the other Macs' summaries. Making one manual takes its description out of every request; /name still runs it. A global skill only one project called in \(Recommender.moveWindowDays) days, and listed in ≥ \(Self.count(report.rule.minSessions, "session")) outside it, is better moved there (All Sessions only).")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -329,7 +338,12 @@ struct InsightsView: View {
                     Text(item.id).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
                         .help("The id akit recommend apply and dismiss take")
                 }
-                Text(Self.evidenceText(item.evidence)).font(.callout).foregroundStyle(.secondary)
+                if item.action.kind == RecommendReport.Action.moveToProject, let project = item.action.project {
+                    Text("Only used in \(project) (\(Self.count(item.action.calls ?? 0, "call")) / \(Recommender.moveWindowDays) days)")
+                        .font(.callout.bold())
+                        .textSelection(.enabled)
+                }
+                Text(Self.evidenceText(item)).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let skills = item.evidence.skills {
                     DisclosureGroup(Self.count(skills.count, "skill")) {
@@ -341,7 +355,7 @@ struct InsightsView: View {
                 if item.isPatch, let layer = item.action.layer {
                     Text("\(LayerPatch.path(layer: layer)): mode auto → manual").font(.callout.monospaced())
                 }
-                if let text = item.action.text {
+                if let text = item.action.text, item.action.kind != RecommendReport.Action.moveToProject {
                     Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                 }
                 if item.stale {
@@ -352,6 +366,11 @@ struct InsightsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
+                    if item.action.kind == RecommendReport.Action.moveToProject, let project = item.action.project {
+                        Button("Move to Project…") { moving = MoveRequest(name: item.skill, project: project) }
+                            .disabled(model.brain == nil)
+                            .help("Move \(item.skill) out of the global setup into \(project), so other sessions stop paying for its description")
+                    }
                     if item.isPatch {
                         Button("Apply…") { open(item, change: .manual) }
                             .disabled(model.brain == nil)
@@ -583,10 +602,16 @@ struct InsightsView: View {
         [ownerTitle(owner.kind), owner.name].compactMap { $0 }.joined(separator: " ")
     }
 
-    static func evidenceText(_ evidence: RecommendReport.Evidence) -> String {
+    static func evidenceText(_ item: RecommendReport.Recommendation) -> String {
+        let evidence = item.evidence
         let period = evidence.from.map { " (\($0) … \(evidence.to ?? $0))" } ?? ""
         let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
         let rate = Int((evidence.callRateUpperBound95 * 100).rounded(.up))
+        if item.action.kind == RecommendReport.Action.moveToProject, let project = item.action.project {
+            return "Listed with its description in \(count(evidence.sessions, "session")) outside \(project) on \(count(evidence.distinctDays, "day"))"
+                + "\(period)\(macs), never called there · ≈ \(ContextSize.short(evidence.approxContextSpace)) context space · moving it takes "
+                + "its description out of those sessions"
+        }
         return "≈ \(ContextSize.short(evidence.approxContextSpace)) context space · listed with its description in \(count(evidence.sessions, "session")) on "
             + "\(count(evidence.distinctDays, "day"))\(period)\(macs) · model calls 0 (rate < \(rate)% at 95%) · user calls \(evidence.userCalls)"
     }

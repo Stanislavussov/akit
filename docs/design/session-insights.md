@@ -76,6 +76,23 @@ Checked against the code on 2026-10-03:
   and their total from their machine files (a work Mac's projects never reach the brain, so
   its calls show only in the total). Calls, not listings: the Move to Project sheet
   (`layers.md`, "Move a skill to a project") preselects the projects that call the skill.
+- Only used in one project (2026-10-11): a second rule in `akit recommend` and on the Insights
+  screen, `only-used-in-project` (`Recommender.moveRecommendations`), advice of kind
+  `moveToProject`. All sessions only (a project scope never shows it). A skill qualifies when it is
+  global (the core layer's, or a hand-installed copy in a global skill folder that AKit can move;
+  plugin, built-in and unknown skills never), a brain exists, and in the last 30 days: at least one
+  counted call (`SkillCalls`, the other Macs' summaries included); every call in sessions bound to
+  one project, not a `home/…` record; none in a session bound to no project, and no other Mac's call
+  outside its project files (its unbound sessions, a work Mac's projects); and it was listed with its
+  description in at least N (20, `--min-sessions`) sessions outside that project (this Mac's
+  sessions not bound to it, plus the other Macs' described sessions minus their files of the
+  project). The evidence is about those sessions (0 calls there, their ≈ context space); the action
+  carries `project` and `calls` (new JSON fields, `version` stays 1). Its id hashes
+  `only-used-in-project|owner|skill|project`, and Dismiss hides it until its ≈ context space
+  doubles, like other advice. The card says "Only used in <project> (N calls / 30 days)" and has
+  **Move to Project…** (the sheet with that project ticked); `akit recommend` prints the
+  `akit move skill NAME --to PROJECT` line. Insights → Skills has **Move to Project…** in the
+  context menu of a global skill AKit can move.
 
 ## Goal
 
