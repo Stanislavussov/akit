@@ -105,6 +105,7 @@ and `.pi/mcp.json` are no longer marked "Needs the pi-mcp-adapter package" on su
 | `AGENTS.md` in a project | yes (via the `CLAUDE.md` shim) | yes | |
 | JSON merge, key by key | `.mcp.json`, `.claude/settings.json` | `.pi/mcp.json`, `.pi/settings.json` | projects only, not the home folder; a value starting with `!` under env/headers is refused; keys a harness runs get a preview warning |
 | Core layer's instructions in the home folder | block in `~/.claude/CLAUDE.md` | block in the file Pi reads in its agent folder (`AGENTS.override.md`, `AGENTS.md` or `CLAUDE.md`) | AKit owns only the marked block; see `layers.md`, "Home folder: instructions block" |
+| Model notes (text for one model only) | proposal: SessionStart hook | proposal: extension, `before_agent_start` | not built: `model-guidance.md` |
 | `pi-mcp-adapter` fields beyond env and headers | — | not checked | open: the adapter isn't installed here to verify (Pi's own MCP since 0.99 uses the same `mcpServers` shape) |
 
 ## Sessions, usage and insights (`session-insights.md`)

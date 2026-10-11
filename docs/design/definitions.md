@@ -97,6 +97,8 @@ run and records the Claude Code version per cell instead (`layer-evals.md`, "Bas
 - The settings components are stored next to it as filters: two sessions must match on
   one only when both have it. A session imported without a hook line lacks them, and the
   fingerprint stays comparable.
+- Proposed with model notes (`model-guidance.md`): a `model_notes` component, the names
+  and hashes of the notes added at that start event.
 - One per session start event: SessionStart fires on `startup`, `resume`, `clear`,
   `compact` and `fork`, so the fingerprint can change inside one session. The importer keeps each
   one with its time.

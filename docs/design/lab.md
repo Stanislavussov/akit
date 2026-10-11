@@ -90,6 +90,10 @@ AKit UI ◀──(3) watches ~/.akit/lab/ and shows state and result
 | **Error analysis** | model calls | terminal | a batch of sessions: notes, verifier, matching, checks, clustering (`error-analysis.md`) |
 | **Control cell** | yes | terminal, repeats × setups | a control task's oracle (tests or a mode's check) and the guard (`error-analysis.md`) |
 
+Proposed, not built: a sixth kind, **Guidance review**: an agent in the terminal compares a
+provider's guide for one model with the brain's layers and writes a proposal the user
+accepts as a diff (`model-guidance.md`, "Guidance review").
+
 Session analysis is plain computation over the transcript and git; it needs no
 terminal, no run folder and should be the first thing built.
 

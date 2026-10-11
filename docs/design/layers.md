@@ -17,7 +17,8 @@ rules, `keep_auto`, `override`, the home folder render (`akit apply --home`, and
 **Update Home Folder…**), brain sync,
 import of skills into the brain, the layer editor, and removing layers, skills and
 projects. Not built: JSON merge into the home folder, MCP secrets from Keychain, the
-`/akit-setup` draft, `machines/<name>.yaml`, `checks:`.
+`/akit-setup` draft, `machines/<name>.yaml`, `checks:`, `model_notes:` (a proposal,
+`model-guidance.md`).
 
 ## Goal
 
@@ -150,6 +151,9 @@ files:
     to: REVIEW.md
     when: reviewer_readme == true
 ```
+
+Proposed, not built: `model_notes:`, short texts that reach the agent only for a matching
+model, delivered by AKit's hook and Pi extension (`model-guidance.md`, "Model notes").
 
 Designed, not built: `checks:`, patterns that measure what the layer promises to improve,
 used by layer evals (`layer-evals.md`, "Oracle and checks").

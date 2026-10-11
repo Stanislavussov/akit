@@ -1,6 +1,7 @@
 # Design map
 
-Status: 2026-10-11, checked against the code. This is the index of `docs/design/`: what
+Status: 2026-10-11, checked against the code; `model-guidance.md` added the same day as a
+proposal. This is the index of `docs/design/`: what
 each design is for, what is built, what to build next and in which order. Each design
 keeps its own details and its own status note; the order across designs and the open
 decisions live only here.
@@ -32,6 +33,7 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
         │  lab.md: one session's numbers, review, replay tasks, runs   │
         │  error-analysis.md: notes → modes → checks → fixes           │
         │  layer-evals.md: does a layer help? (control cells + layer)  │
+        │  model-guidance.md: a new model's guide → layer edits        │
         └──────────────────────────────────────────────────────────────┘
 
   definitions.md: terms shared by the three lower designs
@@ -48,6 +50,7 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 | [`lab.md`](lab.md) | Was this session efficient? Is setup A better than B? | Sessions → Analysis; Lab screen; `akit lab` | v1, steps 1–4; failure signals by the shared rules, with repeated calls (2026-10-08) | index as a source, Pi replays |
 | [`error-analysis.md`](error-analysis.md) | What goes wrong again and again, and did the fix help? | Error Analysis screen; `akit analysis`; Pi ratings on Sessions | slices 1–8; quick ratings after a Pi run, with change, comment and remove; shown after their run and given to Lab reviews (2026-10-07) | manual calibration of cells, merge/split proposals |
 | [`layer-evals.md`](layer-evals.md) | Does layer X make the agent's work better? | Brain → layer → Evaluate… and the verdict badge; Error Analysis → Evals → Run Cells… (A brain layer), From Commit…, Layer Sets (with their evals), the comparison's verdict; `akit analysis control evaluate`, `run --layer`, `task new --commit`, `layer-set`, `compare --eval` | slice 1: overlay and layer setup, eval folder, pairing within one eval; slice 2: tasks from commits judged by their hidden tests, layer sets with answers, Add to Layer Set…; slice 5: the "helps (offline)" verdict, `verdicts/<layer>.json`; slice 6: Evaluate… with the cost estimate, the calibration cell, Continue, denied commands, the badge (2026-10-08); then calibration with one cell of each setup, the estimate per setup, and the isolation check of every layer cell (before the agent and of its skill listing) | the pilot (step 4); 3–4 (step 5, if needed); 7 and 9 wait (I2) |
+| [`model-guidance.md`](model-guidance.md) | What should change in the setup for a new model, and how does one model get its own text? | (proposal) Lab → New Run… → Model Guidance; Insights finding "New model"; `model_notes:` in a layer; `akit lab guidance` | — (proposal 2026-10-11, user review open) | everything: step 0 (facts to verify), model notes with delivery by the Claude Code hook and the Pi extension, the guidance review, the eval rule |
 | [`mcp-catalog.md`](mcp-catalog.md) | How to add an MCP server without looking up its config? | MCP Servers → Catalog… | search in two public catalogs, filling the Add Server form (2026-10-04) | marks for configured servers, arguments as values, version checks |
 | [`harness-support.md`](harness-support.md) | What does AKit do for Claude Code and for Pi? | Skills and MCP Servers (switches); `akit skills state`, `akit skills set`, `akit mcp` | the table per feature, with each gap marked as a decision or open (2026-10-09); skill switches per harness, MCP servers off everywhere or in a project, with the verified setting formats (2026-10-10); moving a global skill into projects, Pi's only per-project control (2026-10-11) | Pi: replays, layer evals, hidden-test tasks, Analysis tab (decisions); `pi-mcp-adapter` fields beyond env and headers (open) |
 | [`machine-setup.md`](machine-setup.md) | What does AKit see on this Mac, and how does a new Mac get set up? | `akit doctor`; Help → Copy Diagnostics; Set Up This Mac (proposal) | `akit doctor` (2026-10-09), Help → Copy Diagnostics (2026-10-10) | onboarding (proposal, user review open) |
@@ -98,6 +101,7 @@ design doc and this table say so.
 | 6 | JSON merge in layers: `.mcp.json` and `.claude/settings.json`. Built 2026-10-08: the two files merge key by key, per-key ownership in the lock, `${VAR}`-only secrets, masked preview; not into the home folder yet. It is the base for hooks in layers, but arrays are leaves: lists from several layers (hooks, permissions) clash until named arrays get a union merge | `layers.md`, JSON merge; Roadmap 4 | One mechanism unblocks MCP in layers and writing `enabledPlugins` from a recommendation, and is the base for hooks in layers (array merge still to do) |
 | 7 | One parser for failure signals. Built 2026-10-08: `FailureSignals` in `AKitSessions` holds the rules of interrupts, rejections, tool errors and repeated calls; Lab and the index scanner both use it (I4, D1) | `definitions.md`; `session-insights.md`, step 11 (see I4) | Two parsers counted the same signals differently |
 | 8 | On demand | see Parked | No user yet |
+| 9 | Proposal, not agreed (2026-10-11): model guidance. Step 0 verifies the harness and provider facts without code; then model notes (steps 1–5) and the guidance review (steps 6–7), then the eval rule (step 8) | `model-guidance.md`, Steps | Asked for by the user; its place among the other steps is open (D10) |
 
 ## Proposed improvements
 
@@ -120,6 +124,13 @@ Each one removes work or removes a conflict. None adds a feature.
 | D2 | Is the session fingerprint needed at all? Two are designed (session, home) and none is built; before/after already compares within one harness version and model. Decided 2026-10-08 for layer evals: no fingerprint in v1; the eval id is in the cell key, cells pair only within one eval and one agent, each cell records its Claude Code version and the result warns on mixed versions. The session fingerprint stays parked | `definitions.md`; `layer-evals.md`, Baseline |
 | D3 | Layer evals append the layer's text to a project's own `CLAUDE.md`; Apply only offers it. Should Apply get an "append the layer's section" choice, or does the verdict stay offline only? Decided 2026-10-08: Apply is not changed; the verdict stays offline only | `layer-evals.md`, Decisions (2026-10-08) |
 | D4 | Accept I3 (one verdict ladder)? It changes a decided rule of error analysis. Decided 2026-10-08: not now; only layer setups get "helps (offline)", fix verdicts keep the production guard | `error-analysis.md`, Fixes |
+
+| D5 | Model notes: may the akit plugin's SessionStart hook print? Today its rule is "prints nothing". Proposal: it prints only the matching model notes, and nothing when none matches | `model-guidance.md`, Delivery |
+| D6 | Limits of model notes: 1,500 characters per note and 4,000 per model in one project, over the limit is an error. Are the numbers right, and error or warning? | `model-guidance.md`, layer.yaml |
+| D7 | Where the core layer's model notes live: `~/.akit/model-notes/` (proposal) or a folder in each harness's home | `model-guidance.md`, What lands in the project |
+| D8 | A model note whose layer has no "helps (offline)" verdict for that model: a warning in the plan (proposal) or a block | `model-guidance.md`, Proof |
+| D9 | Which agent runs a guidance review by default: the reviewed model itself (proposal) or the model the user works with | `model-guidance.md`, The run |
+| D10 | Order inside model guidance and against the other steps: the review first (useful alone, mostly removals) or model notes first; before or after the layer-eval pilot | `model-guidance.md`, Steps |
 
 ## Parked
 
