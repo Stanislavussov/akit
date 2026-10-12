@@ -81,8 +81,8 @@ extension MachineProfile {
         if !hasOwnGitIdentity(brainRoot) {
             notes.append("""
                 Skill and layer commits made on this Mac carry your global git name and email, which may be your work \
-                ones. Give the brain its own: git -C \(brainRoot.path) config user.email <personal email> \
-                (and user.name).
+                ones. Give the brain its own in Settings > Brain repo, or run: git -C \(brainRoot.path) config user.email \
+                <personal email> (and user.name).
                 """)
         }
         return notes

@@ -11,6 +11,9 @@ struct SettingsView: View {
     @State private var machineError: String?
     @State private var machineNotes: [String] = []
     @State private var confirmPersonal = false
+    @State private var brainName = ""
+    @State private var brainEmail = ""
+    @State private var brainIdentityError: String?
     @State private var lab = LabSettings.load(env: .current)
     @State private var labError: String?
 
@@ -20,7 +23,13 @@ struct SettingsView: View {
                 .task {
                     // Snapshots: `--tab lab` scrolls to the Lab and sending policy sections,
                     // `--tab scrub` to the scrub patterns and the monthly limit.
-                    guard let tab = DebugSnapshot.options?.tab, ["lab", "scrub"].contains(tab) else { return }
+                    guard let tab = DebugSnapshot.options?.tab, ["lab", "scrub"].contains(tab) else {
+                        // The first text field takes the focus when the window opens and the form
+                        // scrolls down to it: start at the top instead.
+                        try? await Task.sleep(for: .milliseconds(100))
+                        proxy.scrollTo("top", anchor: .top)
+                        return
+                    }
                     try? await Task.sleep(for: .milliseconds(300))
                     proxy.scrollTo(tab, anchor: .top)
                 }
@@ -47,7 +56,7 @@ struct SettingsView: View {
                         .disabled(model.projectRoots == ProjectFinder.defaultRoots)
                 }
             } header: {
-                Text("Project folders")
+                Text("Project folders").id("top")
             } footer: {
                 Text("AKit looks for projects two levels deep inside these folders. Folders Claude Code was started in are added automatically. This list is kept on this Mac only.")
                     .foregroundStyle(.secondary)
@@ -97,12 +106,39 @@ struct SettingsView: View {
                     Button("Reset to Default") { applyBrain(AppModel.defaultBrainPath) }
                         .disabled(model.brainPath == AppModel.defaultBrainPath)
                 }
+                if let identity = model.brainIdentity {
+                    TextField("Commit name", text: $brainName, prompt: Text("Your name"))
+                        .onSubmit(saveBrainIdentity)
+                        .onChange(of: brainName) { brainIdentityError = nil }
+                    TextField("Commit email", text: $brainEmail, prompt: Text("your personal email"))
+                        .onSubmit(saveBrainIdentity)
+                        .onChange(of: brainEmail) { brainIdentityError = nil }
+                    HStack {
+                        if let brainIdentityError {
+                            Label(brainIdentityError, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                        } else if model.brainIdentityMissing {
+                            Label("This work Mac can't commit in the brain until both are set.", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        } else if identity.isComplete {
+                            Label("Saved in the brain's git settings.", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Save", action: saveBrainIdentity)
+                            .disabled(typedIdentity.name == nil || typedIdentity.email == nil || typedIdentity == identity)
+                    }
+                }
             } header: {
                 Text("Brain repo")
             } footer: {
-                Text("Your git repo with the skill library and layers. No harness reads this folder; AKit renders from it.")
+                Text("Your git repo with the skill library and layers. No harness reads this folder; AKit renders from it."
+                     + (model.brainIdentity == nil ? "" : " Commit name and email go into the commits AKit makes in the brain. They are kept in the brain's own git settings on this Mac. "
+                        + (model.machine.isWork
+                           ? "A work Mac needs them, so the work name and email of your global git settings never reach the brain's remote."
+                           : "Without them a personal Mac uses your global git name and email.")))
                     .foregroundStyle(.secondary)
             }
+            // Not .task: it would run again when the section scrolls back into view and drop typed text.
+            .onChange(of: model.brainIdentity, initial: true) { showBrainIdentity() }
             Section {
                 Picker("Review language", selection: $lab.reportLanguage) {
                     ForEach(LabLanguage.allCases, id: \.self) { Text($0.name).tag($0) }
@@ -166,6 +202,30 @@ struct SettingsView: View {
         panel.prompt = "Use as Brain"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         applyBrain(url.tildePath)
+    }
+
+    /// What the fields hold, trimmed as it would be saved; nil for an empty one.
+    private var typedIdentity: BrainGit.Identity {
+        let name = brainName.trimmingCharacters(in: .whitespacesAndNewlines), email = brainEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        return BrainGit.Identity(name: name.isEmpty ? nil : name, email: email.isEmpty ? nil : email)
+    }
+
+    private func showBrainIdentity() {
+        brainName = model.brainIdentity?.name ?? ""
+        brainEmail = model.brainIdentity?.email ?? ""
+        brainIdentityError = nil
+    }
+
+    private func saveBrainIdentity() {
+        guard typedIdentity.isComplete else { return }
+        Task {
+            do {
+                try await model.setBrainIdentity(name: brainName, email: brainEmail)
+                showBrainIdentity()
+            } catch {
+                brainIdentityError = error.localizedDescription
+            }
+        }
     }
 
     private func applyBrain(_ path: String) {

@@ -314,7 +314,7 @@ akit sessions import
 2. Найдите раздел **This Mac**.
 3. В поле **This Mac is** выберите **Personal** или **Work**.
 
-![Окно Settings: разделы Project folders с кнопками Add Folder… и Reset to Default, This Mac с переключателем This Mac is: Personal или Work, Brain repo с кнопками Choose… и Reset to Default, Lab с полем Review language, начало раздела Sending policy с кнопкой How It Works](images/settings.png)
+![Окно Settings: разделы Project folders с кнопками Add Folder… и Reset to Default, This Mac с переключателем This Mac is: Personal или Work, Brain repo с кнопками Choose… и Reset to Default, полями Commit name и Commit email и кнопкой Save, Lab с полем Review language](images/settings.png)
 
 **Правило «тот же источник» (same origin).** Оно действует на обоих Mac. Ничего вводить не нужно.
 

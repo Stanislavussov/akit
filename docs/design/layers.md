@@ -102,7 +102,10 @@ project ids, paths, answers and locks name the employer's repos.
   random pseudonym). `WorkFilter` checks that commit's paths, message and bytes and refuses
   without a brain `user.email` and `user.name` of its own; per-project summaries stay in the
   local store. `akit sync` rebases a work machine's commits with that identity too (never the
-  environment's or a global signing key), and refuses to rebase without it.
+  environment's or a global signing key), and refuses to rebase without it. The identity is set
+  in Settings > Brain repo (Commit name, Commit email; `BrainGit.setOwnIdentity` writes the
+  brain's `.git/config`, never offering the global values); a work Mac without it shows a
+  banner on the Brain screen.
 - Fails closed: a `machine.json` that can't be read counts as work (with a warning);
   install.sh stops if `AKIT_MACHINE` can't be applied; Apply refuses a preview made
   before the role changed. The app asks before going from work back to personal.

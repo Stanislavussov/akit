@@ -102,10 +102,30 @@ struct BrainView: View {
             .navigationTitle("Brain")
     }
 
+    /// A work Mac whose brain has no git name or email of its own: every commit there is refused.
+    private var identityBanner: some View {
+        HStack {
+            Label("This work Mac can't commit in the brain yet: the brain has no git name and email of its own. Set Commit name and Commit email in Settings > Brain repo.",
+                  systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Spacer()
+            SettingsLink { Text("Open Settings…") }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
     private var screen: some View {
         Group {
             if let brain = model.brain {
-                content(brain)
+                VStack(spacing: 0) {
+                    if model.brainIdentityMissing {
+                        identityBanner
+                        Divider()
+                    }
+                    content(brain)
+                }
             } else {
                 ContentUnavailableView {
                     Label("No brain repo", systemImage: "brain")
