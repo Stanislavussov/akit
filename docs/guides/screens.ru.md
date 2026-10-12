@@ -3285,13 +3285,14 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «AKit не видит мой проект» → добавьте папку, где он лежит, в **Project folders**.
 - «Это рабочий компьютер, данные о проектах не должны уйти в мой личный репозиторий» → выберите **Work** в **This Mac**.
 - «Мой brain лежит в другой папке» → укажите её в **Brain repo**.
+- «AKit пишет: The brain has no git email of its own» → заполните **Commit name** и **Commit email** в **Brain repo**.
 - «Хочу разборы сессий на русском» → выберите **Russian** в **Review language**.
 - «Боюсь потратить на разборы слишком много» → задайте **Monthly limit (US dollars)** в части **Cost**.
 - «Lab пишет, что отправка не разрешена» → добавьте адресата в **Sending policy**.
 
-![Окно Settings, верхняя часть: Project folders с папкой ~/Projects и кнопками Add Folder… и Reset to Default, This Mac с выбором Personal или Work, Brain repo с кнопками Choose… и Reset to Default, Lab со списком Review language, начало Sending policy со ссылкой How It Works](images/settings.png)
+![Окно Settings, верхняя часть: Project folders с папкой ~/Projects и кнопками Add Folder… и Reset to Default, This Mac с выбором Personal или Work, Brain repo с кнопками Choose… и Reset to Default, полями Commit name и Commit email и кнопкой Save, Lab со списком Review language](images/settings.png)
 
-Каждое изменение сохраняется сразу. Кнопки «Сохранить» в окне нет.
+Каждое изменение сохраняется сразу. Исключение одно: поля **Commit name** и **Commit email** сохраняет кнопка **Save**.
 
 ### Что в окне
 <!-- section: settings-window -->
@@ -3300,7 +3301,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 - **Project folders**: список папок, в которых AKit ищет проекты. У каждой папки справа кнопка с минусом в кружке: она убирает папку из списка. Кнопки **Add Folder…** и **Reset to Default**.
 - **This Mac**: переключатель **This Mac is** с двумя значениями, **Personal** и **Work**. На рабочем Mac появляется поле **Name of this Mac**. Под переключателем написано, что значит текущий выбор.
-- **Brain repo**: путь к вашему brain. Кнопки **Choose…** и **Reset to Default**.
+- **Brain repo**: путь к вашему brain. Кнопки **Choose…** и **Reset to Default**. Если brain — git-репозиторий, ниже стоят поля **Commit name** и **Commit email** и кнопка **Save**.
 - **Lab**: список **Review language**, язык новых разборов сессий.
 - **Sending policy**: строка режима (Personal Mac или Work Mac), список разрешённых адресатов, кнопки **Add Destination…** и **Check Accounts**.
 - **How It Works**: ссылка справа от заголовка **Sending policy**. Она открывает руководство Error Analysis на разделе о настройках.
@@ -3367,6 +3368,28 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Brain — ваш git-репозиторий с библиотекой скиллов и слоями. Ни один агент эту папку не читает: AKit собирает из неё файлы.
 - **Reset to Default** возвращает путь `~/.akit/registry`. Кнопка серая, когда путь уже такой.
 
+### Средне: задать имя и почту для коммитов в brain
+<!-- section: settings-brain-identity -->
+
+Нужно на рабочем Mac. Без этого AKit отказывается менять brain и пишет: «The brain has no git email of its own, so a commit would carry the global one (maybe the work email)». Пример: вы меняете режим скилла в слое, а AKit показывает эту ошибку.
+
+1. Откройте Settings (⌘,) и найдите часть **Brain repo**.
+2. В поле **Commit name** введите ваше имя.
+3. В поле **Commit email** введите вашу личную почту. Пример: `anna@example.com`.
+4. Нажмите **Save**. Под полями появится строка «Saved in the brain's git settings.».
+5. Повторите действие, которое AKit отклонил.
+
+- Имя и почта попадают в коммиты, которые AKit делает в brain. Эти коммиты уходят в удалённый репозиторий brain при синхронизации.
+- Почему AKit требует их на рабочем Mac: общие настройки git на таком компьютере обычно содержат рабочие имя и почту. Без своих значений они попали бы в ваш личный brain.
+- AKit не подставляет имя и почту из общих настроек git. Введите личные.
+- Значения хранятся в настройках git самого brain (`.git/config`) на этом Mac. Они не синхронизируются: на каждом Mac их задают отдельно.
+- Пока сохранены не оба значения, на рабочем Mac под полями стоит оранжевая строка «This work Mac can't commit in the brain until both are set.». На экране [Brain](#brain) сверху стоит похожее предупреждение с кнопкой **Open Settings…**.
+- На личном Mac поля можно оставить пустыми. Тогда AKit берёт имя и почту из общих настроек git. Убрать уже сохранённые значения в окне нельзя: выполните в терминале `git -C ~/.akit/registry config --unset user.email` и то же для `user.name`.
+- Полей нет, если папка brain не git-репозиторий.
+- **Save** серая, пока одно из полей пустое или значения не изменились.
+- Если почта введена без `@`, под полями появляется красная строка «Enter the email the brain's commits carry, like me@example.com.».
+- То же из терминала: `git -C ~/.akit/registry config user.email <почта>` и `git -C ~/.akit/registry config user.name <имя>`.
+
 ### Средне: отметить рабочий Mac
 <!-- section: settings-machine -->
 
@@ -3375,6 +3398,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 1. В части **This Mac** выберите **Work**. Выбор сохраняется сразу.
 2. В поле **Name of this Mac** введите имя, например `acme-laptop`, и нажмите Return. Если оставить поле пустым, имя будет `work`.
 3. Прочитайте строки под переключателем: там написано, что изменилось.
+4. Заполните **Commit name** и **Commit email** в части **Brain repo** и нажмите **Save**. Без них рабочий Mac не может менять brain. Подробно: [задать имя и почту для коммитов в brain](#settings-brain-identity).
 
 **Что меняет выбор:**
 

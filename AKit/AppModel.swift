@@ -137,6 +137,24 @@ final class AppModel {
         return notes
     }
 
+    /// The brain's own git name and email (its `.git/config`); nil when the brain is not a git repo.
+    private(set) var brainIdentity: BrainGit.Identity?
+
+    /// A work Mac whose brain has no name or email of its own: AKit refuses to commit there.
+    var brainIdentityMissing: Bool { machine.isWork && brainIdentity?.isComplete == false }
+
+    /// Saves the name and email the brain's commits carry, in the brain's own git settings on this Mac.
+    func setBrainIdentity(name: String, email: String) async throws {
+        let root = brainRoot
+        do {
+            brainIdentity = try await BrainGit.setOwnIdentity(name: name, email: email, brain: root, env: .current)
+        } catch {
+            // The name may be saved and the email not: show what is there now.
+            brainIdentity = await BrainGit.ownIdentity(brain: root, env: .current)
+            throw error
+        }
+    }
+
     /// Where project answers and locks are kept on this Mac: the brain, or a local folder on a work Mac.
     /// Apply checks the file again, so a role changed by `akit machine` meanwhile can't slip through.
     var projectStore: ProjectStore {
@@ -937,6 +955,7 @@ final class AppModel {
         // A work Mac keeps its project records outside the brain; list them too.
         self.brain = brain?.addingProjects(from: projectStore)
         brainSync = brain == nil ? nil : await BrainSync.status(of: brainRoot, env: env, fetch: false)
+        brainIdentity = brain == nil ? nil : await BrainGit.ownIdentity(brain: brainRoot, env: env)
         installations = found
         self.skills = skills
         skillStates = states
