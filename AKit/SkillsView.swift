@@ -6,7 +6,8 @@ import AppKit
 import SwiftUI
 
 /// Skills screen: every skill the installed harnesses can see, grouped by where it lives, with
-/// a switch per harness (the harness's own setting; the skill's files stay as they are).
+/// a switch per harness (the harness's own setting; the skill's files stay as they are) and
+/// Model invocation (Auto / Manual: the skill's own SKILL.md, or its layer's mode).
 struct SkillsView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: Skill.ID?
@@ -26,6 +27,8 @@ struct SkillsView: View {
     @State private var disabling: PluginSwitch.Plan?
     /// Snapshots: `--add` opens the selected skill's switch sheet once its states are read.
     @State private var snapshotSwitch = DebugSnapshot.options?.add == true && DebugSnapshot.options?.section == .skills
+    /// Snapshots: `--tab invocation` opens the model invocation sheet once.
+    @State private var snapshotInvocation = true
 
     enum BrainFilter: Hashable { case any, fromBrain, notInBrain }
 
@@ -169,6 +172,14 @@ struct SkillsView: View {
                 removing = RemovalRequest(name: name)
                 return
             }
+            // Snapshots: `--tab invocation` opens Make Manual… / Make Auto… for the skill `--select <folder name>`.
+            if let options = DebugSnapshot.options, options.tab == "invocation", snapshotInvocation, model.lastScan != nil,
+               let skill = model.skills.sorted(by: { $0.scope.sortRank < $1.scope.sortRank }).first(where: { $0.folder.lastPathComponent == options.select }) {
+                snapshotInvocation = false
+                selection = skill.id
+                model.requestSkillInvocation(skill, manual: !skill.disablesModelInvocation)
+                return
+            }
             guard snapshotSwitch, let skill = model.skills.first(where: { $0.id == selection }) else { return }
             snapshotSwitch = false
             for harness in SkillSwitches.harnesses {
@@ -225,6 +236,7 @@ struct SkillsView: View {
             Button("Remove Everywhere…") { removeEverywhere(skill) }
             Divider()
             SkillSwitchMenu(skill: skill)
+            SkillInvocationMenu(skill: skill)
         } else {
             if ExternalEditor.appURL != nil {
                 Button("Open in \(ExternalEditor.name)") { ExternalEditor.open(skill.folder) }
@@ -237,6 +249,7 @@ struct SkillsView: View {
             if let request = globalRequest(skill) { Button("Move to Global…") { globalizing = request } }
             Divider()
             SkillSwitchMenu(skill: skill)
+            SkillInvocationMenu(skill: skill)
             Divider()
             Button("Move to Trash…", role: .destructive) { pendingDelete = skill }
                 .disabled(skill.isReadOnly)
@@ -570,6 +583,7 @@ private struct SkillDetailView: View {
                 }
             }
             SkillSwitchControls(skill: skill)
+            SkillInvocationControl(skill: skill)
             if let origin = skill.origin {
                 GridRow {
                     label("Source")

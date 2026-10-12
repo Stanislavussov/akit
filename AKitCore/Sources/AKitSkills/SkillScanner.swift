@@ -158,7 +158,7 @@ public enum SkillScanner {
                              isSingleFile: hit.isSingleFile, scope: scope, visibleTo: [hit.root.harness],
                              isReadOnly: hit.root.isReadOnly || isSynced, origin: origin, warnings: [],
                              root: hit.root.url.resolvingSymlinksInPath(),
-                             disablesModelInvocation: meta["disable-model-invocation"]?.lowercased() == "true",
+                             disablesModelInvocation: Frontmatter.disablesModelInvocation(text),
                              places: [hit.root.harness: place])
             order.append(id)
         }

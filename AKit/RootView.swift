@@ -151,6 +151,7 @@ struct RootView: View {
         .environment(analysis)
         // Skill switch changes (Skills, Insights): one sheet for the whole window.
         .skillSwitchSheet(model)
+        .skillInvocationSheet(model)
         // MCP switch changes (MCP Servers, Insights).
         .mcpSwitchSheet(model)
         // Lab runs start and end outside AKit: keep the badge and the queue current.

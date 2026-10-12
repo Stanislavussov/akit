@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AKitFoundation
 @testable import AKitBrain
 @testable import AKitRender
 
@@ -194,5 +195,29 @@ struct RenderTests {
         #expect(ProjectBundle.matches([Condition(parsing: "target == pi")!], ["target": .list(["claude", "pi"])]))
         #expect(!ProjectBundle.matches([Condition(parsing: "flag")!], ["flag": .bool(false)]))
         #expect(ProjectBundle.matches([Condition(parsing: "flag != false")!], ["flag": .bool(true)]))
+    }
+
+    @Test func modelInvocableTakesOnlyTheTrueFlagOut() {
+        // Bare or quoted key, any spacing, quoted value, a comment; BOM and line endings stay.
+        #expect(Render.modelInvocable("---\nname: x\ndisable-model-invocation: true\ndescription: d\n---\nbody\n") == "---\nname: x\ndescription: d\n---\nbody\n")
+        #expect(Render.modelInvocable("\u{FEFF}---\r\n\"disable-model-invocation\" :  \"True\"  # only /x\r\nname: x\r\n---\r\nbody\r\n") == "\u{FEFF}---\r\nname: x\r\n---\r\nbody\r\n")
+        #expect(Render.modelInvocable("---\n'disable-model-invocation':true\n---\n") == "---\n---\n")
+        // Left as they are: false, no flag, no header, the words in the body or under another key.
+        for text in ["---\nname: x\ndisable-model-invocation: false\n---\n", "---\nname: x\n---\n", "no header\ndisable-model-invocation: true\n",
+                     "---\nname: x\n---\ndisable-model-invocation: true\n", "---\nmetadata:\n  disable-model-invocation: true\n---\n"] {
+            #expect(Render.modelInvocable(text) == text)
+        }
+        // An indented --- inside a block value doesn't end the header; mixed line ends stay as they are.
+        let block = "---\nname: x\ndescription: |\n  one\n  ---\n  two\n---\nbody\r\nmore\n"
+        #expect(Render.manualOnly(block) == "---\nname: x\ndescription: |\n  one\n  ---\n  two\ndisable-model-invocation: true\n---\nbody\r\nmore\n")
+        #expect(Render.manualOnly(block).map(Render.modelInvocable) == block)
+        #expect(Render.manualOnly("---\nname: x\n  ---\n") == nil)
+        #expect(Frontmatter.disablesModelInvocation("---\n\"disable-model-invocation\": True # note\n---\n"))
+        #expect(!Frontmatter.disablesModelInvocation("---\ndisable-model-invocation: false\n---\ndisable-model-invocation: true\n"))
+        // The round trip gives the file back; other keys stay byte for byte.
+        let skill = "---\r\nname:   x\r\ndescription: >\r\n  two\r\n  lines\r\nallowed-tools: [Read]\r\n---\r\n\r\n# X\r\n"
+        let manual = Render.manualOnly(skill)
+        #expect(manual == skill.replacingOccurrences(of: "---\r\n\r\n# X", with: "disable-model-invocation: true\r\n---\r\n\r\n# X"))
+        #expect(manual.map(Render.modelInvocable) == skill)
     }
 }

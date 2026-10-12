@@ -34,6 +34,9 @@ final class AppModel {
     var skillSwitchRequest: SkillSwitchRequest?
     /// Why a skill switch change couldn't be planned (shown in an alert).
     var skillSwitchError: String?
+    /// A model invocation change (Auto / Manual) waiting in its sheet, and why one couldn't be planned.
+    var skillInvocationRequest: SkillInvocationRequest?
+    var skillInvocationError: String?
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
     /// The person's ratings of runs (`akit rate`, Pi's ⌥G / ⌥X / ⌥R), by session log path.
@@ -658,6 +661,46 @@ final class AppModel {
         let backup = try await Task.detached { try SkillSwitches.apply(plan, home: home) }.value
         await refresh()
         return backup
+    }
+
+    /// Plans making the skill Manual or Auto (`SkillInvocation.plan`, only reads) and opens its
+    /// sheet, or the alert when it can't be done.
+    func requestSkillInvocation(_ skill: Skill, manual: Bool) {
+        let env = HarnessEnvironment.current, brain = brain, link = brainLinks[skill.id]
+        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+        Task {
+            let result = await Task.detached {
+                Result { try SkillInvocation.plan(skill, link: link, manual: manual, brain: brain, context: context) }
+            }.value
+            switch result {
+            case .success(let plan):
+                if plan.changesNothing {
+                    skillInvocationError = "\(plan.skill) is already \(manual ? "Manual" : "Auto"); there is nothing to change."
+                } else {
+                    skillInvocationRequest = SkillInvocationRequest(plan: plan)
+                }
+            case .failure(let error): skillInvocationError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Carries out a planned model invocation change (backup first; refused if a file changed),
+    /// then rescans. A rendered copy: one layer edit at a time, holding the home folder's worktree sync.
+    func applySkillInvocation(_ plan: SkillInvocation.Plan) async throws {
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current
+        guard plan.layer != nil else {
+            _ = try await SkillInvocation.apply(plan, brain: brain, env: env)
+            return
+        }
+        // A layer's mode changes: in line with the Brain screen's layer edits.
+        try await oneLayerEditAtATime { [self] brain in
+            _ = try await holdingWorktrees(all: Set(plan.holds)) {
+                try await SkillInvocation.apply(plan, brain: brain, env: env)
+            }
+        }
     }
 
     /// The installed skill a name from session records stands for: Claude Code's command name

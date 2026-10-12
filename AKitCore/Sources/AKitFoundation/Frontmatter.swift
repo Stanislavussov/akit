@@ -5,6 +5,36 @@ import Foundation
 /// block scalars (`|`, `>`) and plain values continued on indented lines.
 /// Nested maps and lists are skipped.
 public enum Frontmatter {
+    /// The header's lines among `lines` (a text split at its line ends; a BOM may lead the first):
+    /// between the opening `---` and the next line that is `---` with nothing before it, so an
+    /// indented `---` inside a block value doesn't end the header. nil without a header.
+    public static func header(in lines: [String]) -> Range<Int>? {
+        guard let first = lines.first,
+              (first.hasPrefix("\u{FEFF}") ? String(first.dropFirst()) : first).trimmingCharacters(in: .whitespaces) == "---",
+              let end = lines.dropFirst().firstIndex(where: { $0.hasPrefix("---") && $0.trimmingCharacters(in: .whitespaces) == "---" })
+        else { return nil }
+        return 1..<end
+    }
+
+    /// A header line that sets `disable-model-invocation`: whether to true. The key bare or quoted,
+    /// any spacing, the value bare or quoted, a trailing ` # comment` ignored. nil for any other line.
+    public static func modelInvocationFlag(in line: String) -> Bool? {
+        let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        let quotes = CharacterSet(charactersIn: "\"'")
+        guard parts.count == 2, let first = line.first, first != " ", first != "\t",
+              parts[0].trimmingCharacters(in: .whitespaces).trimmingCharacters(in: quotes) == "disable-model-invocation" else { return nil }
+        let value = (parts[1].components(separatedBy: " #").first ?? "").trimmingCharacters(in: .whitespaces)
+        return value.trimmingCharacters(in: quotes).lowercased() == "true"
+    }
+
+    /// The text's header sets `disable-model-invocation: true` (only `/name` runs the skill). The
+    /// one reading of the flag, for the skill scanner and for what changes it.
+    public static func disablesModelInvocation(_ text: String) -> Bool {
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
+        guard let header = header(in: lines) else { return false }
+        return lines[header].contains { modelInvocationFlag(in: $0) == true }
+    }
+
     public static func parse(_ text: String) -> [String: String] {
         var lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
         if lines.first?.hasPrefix("\u{FEFF}") == true { lines[0].removeFirst() }
