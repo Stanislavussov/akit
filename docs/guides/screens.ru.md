@@ -436,10 +436,11 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - «Агент не видит мой скилл» → выберите проект в фильтре и посмотрите, есть ли скилл в списке и стоит ли у него метка агента.
 - «Откуда у меня этот скилл?» → откройте карточку: там путь, источник и связь с brain.
 - «Скилл `tdd` мешает Pi, но нужен в Claude Code» → переведите переключатель **Pi** в **Off**.
+- «Скилл `release` должен запускаться только по `/release` в любом агенте» → строка **Model invocation** → **Manual**.
 - «Скилл `grilling` нужен только в проекте notes-mac, а его описание уходит в каждую сессию всех проектов» → **Move to Project…**.
 - «Хочу убрать скилл совсем, из всех папок и из brain» → **Remove Everywhere…**.
 
-![Экран Skills: вверху фильтры All Skills, All Harnesses, Any Origin, подпись 11 skills и поле поиска Name or description; слева список скиллов по группам Global и Project · notes-mac (в ней и скилл проекта note-templates) с метками brain · core, brain · base, not in brain, Claude, Codex, OpenCode, Pi; справа карточка скилла akit с кнопками Move to Project…, Edit in Brain, Show in Brain, Show in Finder, Remove Everywhere… и переключателями Claude (Manual) и Pi (On)](images/skills.png)
+![Экран Skills: вверху фильтры All Skills, All Harnesses, Any Origin, подпись 11 skills и поле поиска Name or description; слева список скиллов по группам Global и Project · notes-mac (в ней и скилл проекта note-templates) с метками brain · core, brain · base, not in brain, Claude, Codex, OpenCode, Pi; справа карточка скилла akit с кнопками Move to Project…, Edit in Brain, Show in Brain, Show in Finder, Remove Everywhere… и переключателями Claude (Manual) и Pi (On), ниже строка Model invocation (Manual)](images/skills.png)
 
 #### Что на экране
 <!-- section: skills-screen -->
@@ -589,6 +590,59 @@ Brain — это ваш репозиторий с эталоном настро�
 - То же можно сделать из списка: правый щелчок по скиллу → **Claude: …** или **Pi: …** → состояние.
 
 > **Почему так:** описание каждого включённого скилла занимает место в контексте каждой сессии. **Name Only**, **Manual** и **Off** убирают его оттуда, а файлы остаются на месте.
+
+#### Средне: запретить модели вызывать скилл самой (Manual) или разрешить (Auto)
+<!-- section: skills-invocation -->
+
+Пример: глобальный скилл `release` должны запускать только вы, командой `/release`, в любом агенте. Или наоборот: скилл `grilling` стоит в ручном режиме, а вы хотите, чтобы агент вызывал его сам.
+
+Строка **Model invocation** меняет сам скилл: строку `disable-model-invocation: true` в его `SKILL.md`. Руками файл править не нужно.
+
+1. Откройте карточку скилла.
+2. В строке **Model invocation** выберите **Manual** или **Auto**.
+3. Откроется окно «Make release Manual» или «Make grilling Auto». Под заголовком написано, что значит новое значение и какой файл AKit изменит.
+4. Посмотрите изменения: красным то, что уйдёт, зелёным то, что появится.
+5. Нажмите **Apply**. AKit сначала копирует файл в `~/.akit/backups`, потом меняет его.
+6. Строка **Model invocation** показывает новое значение.
+
+![Окно Make grilling Auto: пояснение The agent sees its description and may invoke it и что меняется режим слоя core в brain, затем копия в домашней папке; два diff: layers/core/layer.yaml (brain) с mode: manual красным и mode: auto зелёным и ~/.agents/skills/grilling/SKILL.md с красной строкой disable-model-invocation: true; кнопки Cancel и Apply](images/skills-invocation.png)
+
+На снимке скилл `grilling` — копия из brain, поэтому в окне два файла: слой и копия в домашней папке.
+
+Значения:
+
+- **Auto**: агент видит описание скилла и может вызвать его сам.
+- **Manual**: агент скилл не видит, работает только `/имя`.
+
+Что AKit меняет, зависит от того, откуда скилл:
+
+- **Ваш собственный скилл** (метка **not in brain** или **in brain**): AKit добавляет или убирает строку в `SKILL.md`. Остальные строки файла остаются как были.
+- **Глобальная копия из brain** (метка **brain · core**): AKit меняет режим скилла в слое, делает коммит в brain и обновляет копию в домашней папке. Править копию руками бесполезно: следующий рендер вернул бы прежнее.
+
+Чем это отличается от переключателя агента:
+
+| | **Model invocation** | Переключатель **Claude** / **Pi** |
+|---|---|---|
+| Что меняется | сам скилл: `SKILL.md` или режим в слое brain | одна запись в настройках агента |
+| На кого действует | на всех агентов, которые читают скилл | только на этого агента |
+| Значения | **Auto**, **Manual** | **On**, **Name Only**, **Manual**, **Off** (у Pi только **On** и **Off**) |
+
+- **Cancel** ничего не меняет.
+- То же можно сделать из списка: правый щелчок по скиллу → **Make Manual…** или **Make Auto…**.
+- Если переключатель **Claude** стоит в **Manual** или **Off**, значение **Auto** в файле не вернёт скилл модели в Claude Code. Окно об этом предупреждает: переведите и переключатель в **On**.
+- Если скилл установлен из каталога, окно предупреждает: обновление из каталога может стереть правку.
+- У `SKILL.md` без шапки `---` значение **Manual** поставить нельзя: AKit пишет «has no --- header» и ничего не меняет. Сначала добавьте шапку с `name` и `description`.
+- Копию из brain, которую правили руками, AKit не трогает: окно ошибки «Can't change model invocation» пишет «was edited by hand since AKit wrote it». Сначала перенесите правки в brain.
+- У копии из brain в проекте строка серая. Режим такого скилла меняйте на экране [Brain](#brain): в слое или в скиллах проекта.
+- У скиллов плагинов, пакетов Pi, claude.ai и встроенных строка серая: подсказка называет причину.
+- Если папка скилла — ссылка внутрь brain, строка тоже серая: меняйте скилл на экране [Brain](#brain).
+- Когда строка серая, пунктов **Make Manual…** и **Make Auto…** в меню списка нет.
+- Если скилл уже в выбранном состоянии, окно «Can't change model invocation» пишет «is already Manual; there is nothing to change.» (или «is already Auto»).
+- Если AKit изменил слой, но коммит в brain не прошёл, ошибка пишет «has the new mode …, but it is not committed in the brain, and the home folder's copy was not updated». Сделайте коммит в brain, потом **Update Home Folder…** на экране Brain.
+- Если коммит прошёл, а копия в домашней папке не обновилась, ошибка пишет «The brain has the new mode …, but the home folder's copy was not updated». Нажмите **Update Home Folder…** на экране Brain.
+- Если скилл в brain сам содержит `disable-model-invocation: true`, режим слоя не сделает его **Auto**. AKit пишет об этом и ничего не меняет: уберите строку в brain (**Edit in Brain**).
+
+> **Почему так:** в ручном режиме описание скилла не уходит в контекст ни одного агента. Переключатель агента делает то же только для одного агента.
 
 #### Средне: убрать скилл в Корзину
 <!-- section: skills-trash -->

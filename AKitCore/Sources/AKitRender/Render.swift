@@ -105,20 +105,45 @@ public enum Render {
     // MARK: - Pieces
 
     /// SKILL.md with `disable-model-invocation: true` in its header; nil without a header.
-    static func manualOnly(_ text: String) -> String? {
-        let newline = text.contains("\r\n") ? "\r\n" : "\n"
-        let bom = text.hasPrefix("\u{FEFF}")
-        var lines = String(text.dropFirst(bom ? 1 : 0)).components(separatedBy: newline)
-        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---",
-              let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) else { return nil }
+    public static func manualOnly(_ text: String) -> String? {
+        var lines = pieces(text)
+        guard let header = Frontmatter.header(in: lines.map(\.text)) else { return nil }
         let line = "disable-model-invocation: true"
         // The key as written: bare or quoted, with or without a space before the colon.
-        let existing = lines[1..<end].firstIndex { raw in
-            let key = raw.split(separator: ":", maxSplits: 1).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-            return !raw.hasPrefix(" ") && key.trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) == "disable-model-invocation"
+        if let existing = header.first(where: { Frontmatter.modelInvocationFlag(in: lines[$0].text) != nil }) {
+            lines[existing].text = line
+        } else {
+            lines.insert((line, lines[0].end), at: header.upperBound)
         }
-        if let existing { lines[existing] = line } else { lines.insert(line, at: end) }
-        return (bom ? "\u{FEFF}" : "") + lines.joined(separator: newline)
+        return lines.map { $0.text + $0.end }.joined()
+    }
+
+    /// SKILL.md without `disable-model-invocation: true` in its header: the line goes however its
+    /// key is written, every other byte stays. A header without it (or with `false`) is returned as is.
+    public static func modelInvocable(_ text: String) -> String {
+        var lines = pieces(text)
+        guard let header = Frontmatter.header(in: lines.map(\.text)) else { return text }
+        let flags = header.filter { Frontmatter.modelInvocationFlag(in: lines[$0].text) == true }
+        guard !flags.isEmpty else { return text }
+        for index in flags.reversed() { lines.remove(at: index) }
+        return lines.map { $0.text + $0.end }.joined()
+    }
+
+    /// The text's lines, each with the line end it has (`\n`, `\r\n`, `\r`; none after the last),
+    /// so a file with mixed line ends is put together again byte for byte.
+    private static func pieces(_ text: String) -> [(text: String, end: String)] {
+        var lines: [(text: String, end: String)] = []
+        var current = ""
+        for character in text {
+            if character == "\n" || character == "\r\n" || character == "\r" {
+                lines.append((current, String(character)))
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        lines.append((current, ""))
+        return lines
     }
 
     /// The layers' JSON for one file, merged key by key in layer order. Objects merge; arrays

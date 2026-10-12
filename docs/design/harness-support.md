@@ -20,6 +20,7 @@ built. The last column says whether the gap is a decision (with its doc) or open
 | Skills: move a global skill into some projects, and back | yes | yes: the only per-project control (Pi can't hide a global skill in one project) | through the brain into each project's answers, worktrees included; Move to Global the other way (core layer and home folder first); see `layers.md`, "Move a skill to a project" |
 | Skills: remove everywhere (every place a harness loads it from) | yes: own copies, brain entries; plugin skills only with their plugin (Disable Plugin…, `enabledPlugins`); claude.ai skills through the switch | yes: own copies, brain entries; package skills not (filtered in the package's own entry, not written by AKit) | `layers.md`, "Remove a skill everywhere" |
 | Skills: on / off without editing the skill | yes: On, Name Only, Manual, Off (`skillOverrides`); none for plugin skills | yes: On, Off (`skills` entries); none for package skills | see "Skill switches" below |
+| Skills: Manual / Auto in the skill itself (`disable-model-invocation`) | yes | yes | one edit for every harness: the SKILL.md of your own copy, or the layer's mode for a global copy from the brain; see "Model invocation" below |
 | Plugins / packages | Claude plugins listed | Pi packages on the Overview card: extensions, skills, prompt templates, themes | read-only; package code never runs. Limits per settings file and per refresh; a cut list or a too-large package gets a note |
 | MCP: read, add, edit, remove | yes (`claude mcp` CLI) | yes (Pi's own `mcp.json` files and those of `pi-mcp-adapter`) | Pi 0.99+ reads `~/.pi/agent/mcp.json` and `.pi/mcp.json` itself (CHANGELOG 0.99.0, "MCP support as built-in extensions"); AKit takes the version from the package the `pi` command resolves to, else `lastChangelogVersion` in Pi's settings. The adapter's shared files and a project's `.mcp.json` still need `pi-mcp-adapter` |
 | MCP: off without deleting (everywhere, in a project) | yes: user servers both; local and `.mcp.json` servers in their project; none for plugin servers; all claude.ai connectors at once | yes: servers of `~/.pi/agent/mcp.json` both; a project's `.pi/mcp.json` servers in their project | see "MCP switches" below |
@@ -59,6 +60,39 @@ Facts, checked 2026-10-10:
 | What AKit writes | Off/Name Only/Manual: sets the entry; On: removes it (and `skillOverrides` when it becomes empty) | takes out every `!`/`+`/`-` entry naming exactly this skill, then adds `-skills/…/SKILL.md` (off) or `+…` (on, only when a glob still turns it off); an empty list is removed |
 | Not offered | plugin skills: Claude Code ignores `skillOverrides` for them (docs; code returns "on" for `source === "plugin"`, `/skills` says "managed with the plugin") | Pi package skills: they are filtered in the package's own entry |
 | Not read | `settings.local.json` (Claude Code's own `/skills` menu writes there; AKit never reads it) | — |
+
+### Model invocation
+
+Built 2026-10-12. The Skills screen's **Model invocation** row (Auto / Manual; in the list's menu
+Make Manual… / Make Auto…) is not a switch: it changes the skill itself, `disable-model-invocation:
+true` in its SKILL.md, so every harness that reads the key follows it (Pi has no Manual switch).
+Core: `AKitProjectSetup/SkillInvocation.swift` (`unavailable`, `plan`, `apply`); a diff first,
+then Apply. Two paths:
+
+- **Your own copy** (global or a project's; not rendered by AKit): the line is added
+  (`Render.manualOnly`) or taken out (`Render.modelInvocable`: bare or quoted key, any spacing,
+  value true; `false` counts as Auto and stays); BOM, line endings and every other byte stay. A
+  file without a `---` header can't be made Manual. Apply is `SettingsFile.write`: refused when
+  the bytes changed since the preview, backup in `~/.akit/backups`, rename over the real file.
+- **A global copy AKit rendered**: a hand edit would come back at the next render, so the mode
+  changes in the layer whose entry wins in the home folder's render (`LayerEditor.setMode`, a
+  commit in the brain; with two layers listing the skill that is the `override: true` one, the
+  only one whose mode counts), then the home folder's Apply rewrites only that skill's files, as
+  Move to Global does. Refused, with nothing changed: the copy was edited by hand, the home plan
+  has blockers, the home folder's own answers set the mode, or the brain's SKILL.md holds the
+  flag itself (a layer's `auto` can't take it out).
+
+`Frontmatter.disablesModelInvocation` is the one reading of the flag (key bare or quoted, a
+trailing ` # comment` ignored, the header ends at a `---` with nothing before it): the skill
+scanner and the writer both use it. A rendered copy's Apply runs in line with the Brain screen's
+layer edits. When the layer file is written but the commit fails, or the commit is made but the
+home folder's Apply fails, the error says which half is done and that Update Home Folder finishes it.
+
+Not offered: a rendered copy in a project (its mode is the layer's or the project's, on the Brain
+screen), a skill whose file lies inside the brain's folder (a link into it), plugin, claude.ai,
+bundled and Pi package skills; the list's menu then has no item. The sheet notes when Claude Code's own
+`skillOverrides` entry is Manual or Off (Auto in the file doesn't list it there), and when the
+skill has a recorded source (an update from there may write over the edit). No CLI command yet.
 
 ## MCP switches
 

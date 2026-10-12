@@ -76,6 +76,12 @@ public enum LayerEditor {
         return (text, try addingSkills([skill], mode: mode, to: text))
     }
 
+    /// The layer.yaml text with this skill's mode set, for a preview; nothing else changes.
+    public static func layerWithMode(_ mode: LayerSkill.Mode, ofSkill skill: String, in layer: Layer) throws(Failure) -> (before: String, after: String) {
+        let text = try read(layer)
+        return (text, try settingMode(mode, of: skill, in: text))
+    }
+
     /// Sets how the layer brings one of its skills, and commits.
     public static func setMode(_ mode: LayerSkill.Mode, ofSkill skill: String, inLayer name: String,
                                in brain: Brain, env: HarnessEnvironment) async throws(Failure) {

@@ -196,6 +196,16 @@ public enum SkillSwitches {
         harness == .claudeCode && skill.disablesModelInvocation ? .manual : .on
     }
 
+    /// The state Claude Code's `skillOverrides` entry gives the skill, whatever its SKILL.md says;
+    /// nil without an entry, or when the settings can't be read.
+    public static func claudeEntry(for skill: Skill, in env: HarnessEnvironment) -> SkillSwitchState? {
+        guard let file = settingsFile(for: skill, harness: .claudeCode, in: env),
+              case .object(let entries)? = (try? SettingsFile.read(file, home: env.homeDirectory))?.value.value(at: ["skillOverrides"]) else { return nil }
+        let found = claudeNames(of: skill).lazy.compactMap { name in entries.first(where: { $0.key.unicodeScalars.elementsEqual(name.unicodeScalars) }) }.first
+        guard case .string(let text)? = found?.value else { return nil }
+        return SkillSwitchState(rawValue: text)
+    }
+
     /// One skill's switch in one harness's settings.
     static func reading(of skill: Skill, harness: HarnessID, settings: JSONValue) -> SkillSwitchReading {
         switch harness {

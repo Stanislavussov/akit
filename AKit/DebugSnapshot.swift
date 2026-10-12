@@ -15,6 +15,7 @@ import SwiftUI
 /// (`--query <json>` fills its form, `--tab preview` shows the plan; `--tab catalog` opens its catalog search, `--query` is the search text, `--select <server name>` picks a result and `--capture` fills the form from it);
 /// MCP Servers: `--tab switch` opens Off in Project… of the first server with a switch.
 /// Skills: `--add` opens the selected skill's switch sheet (the first harness with a switch, its first other state);
+/// `--tab invocation` opens Make Manual… / Make Auto… (model invocation) for the skill `--select <folder name>`;
 /// `--tab global` opens Move to Global… for the project skill `--select <folder name>` on the Skills screen;
 /// `--tab remove` opens Remove Everywhere… for `--select <folder name>` on the Skills screen;
 /// `--tab move` opens Move to Project… for the global skill `--select <folder name>` (`move-check`, `move-preview` go on to those pages);
