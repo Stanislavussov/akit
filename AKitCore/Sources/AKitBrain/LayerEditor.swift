@@ -122,6 +122,44 @@ public enum LayerEditor {
                          in: brain, env: env)
     }
 
+    /// Adds `piece` at the end of the layer's AGENTS.md section and commits, read from disk now
+    /// (not from `brain`'s scan): nothing else in the layer changes. The template's own bytes
+    /// stay; only blank lines at its end give way to one blank line before the piece, which takes
+    /// the template's line ending. Refused when the section's text is no longer `expected` (the
+    /// trimmed text a preview showed), or when the layer's only AGENTS.md entry has a `when:`.
+    /// A layer without an AGENTS.md entry gets `templates/AGENTS.md` and its `files:` entry.
+    public static func appendToAgentsSection(_ piece: String, inLayer name: String, expected: String,
+                                             in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
+        guard let fresh = Brain.load(from: brain.root) else { throw Failure(message: "The brain at \(brain.root.path) can't be read.") }
+        let layer = try find(name, in: fresh)
+        guard details(of: layer).agentsSection == expected else {
+            throw Failure(message: "The \(name) layer's AGENTS.md text changed since the preview. Look at the preview again.")
+        }
+        let piece = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let file = agentsFile(of: layer) else {
+            if layer.files.contains(where: { $0.to == "AGENTS.md" }) {
+                throw Failure(message: "The \(name) layer sends its AGENTS.md text only under a when: condition. Edit the layer by hand.")
+            }
+            var created = details(of: layer)
+            created.agentsSection = piece
+            try await update(name, to: created, in: fresh, env: env)
+            return
+        }
+        let url = layer.templates.appending(path: file.template)
+        let raw = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let newline = raw.contains("\r\n") ? "\r\n" : "\n"
+        var lines = raw.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).map { String(String.UnicodeScalarView($0)) }
+        while let last = lines.last, last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { lines.removeLast() }
+        // The last line's own \r goes: `newline` below ends it again.
+        if let last = lines.last, last.hasSuffix("\r") { lines[lines.count - 1] = String(last.dropLast()) }
+        let kept = lines.joined(separator: "\n")
+        let added = piece.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\n", with: newline)
+        let text = (kept.isEmpty ? "" : kept + newline + newline) + added + newline
+        try write(text, to: url, name)
+        try await commit(["layers/\(name)/templates/\(file.template)"], "Add a section to layer \(name)'s AGENTS.md", in: fresh, env: env)
+    }
+
     /// Writes the description, requires and AGENTS.md section, and commits them together.
     public static func update(_ name: String, to details: Details, in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
         if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }

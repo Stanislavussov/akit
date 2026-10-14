@@ -1542,6 +1542,28 @@ akit remove skill ИМЯ --everywhere
   - раздел — часть блока AKit (`brain · core`). Его меняют в brain: **Brain** → слой core → **Edit Layer…**, потом **Update Home Folder…**;
   - файл AKit записал в проект из слоёв brain. Следующий **Set Up Project…** вернул бы раздел, поэтому меняйте слой на экране [Brain](#brain).
 
+#### Средне: перенести раздел в brain
+<!-- section: instructions-import -->
+
+Пример: правило про коммиты лежит только в `CLAUDE.local.md` проекта `notes-mac`, а нужно во всех проектах на SwiftUI. Слой `swiftui` в brain раздаёт такие правила.
+
+1. Выберите файл и найдите раздел в **Sections**.
+2. Нажмите **Import to Brain…** под разделом.
+3. Откроется окно «Import “Commits” to the Brain». В меню **Layer** уже выбран слой: `core` для общего файла, для файла проекта — первый слой этого проекта.
+4. Diff показывает текст AGENTS.md слоя: зелёным то, что добавится. Это тот же текст, что меняет **Edit Layer…** на экране [Brain](#brain).
+5. Нажмите **Apply**. AKit делает коммит в brain.
+
+![Окно Import “Commits” to the Brain: меню Layer со слоем swiftui, флажок Also remove it from CLAUDE.local.md (выключен), diff layers/swiftui · AGENTS.md text (brain) с зелёными строками ## Commits и Imperative summary line, 72 characters at most.; ниже строки It reaches github.com/acme/notes-mac, github.com/acme/weather-app when Set Up Project… runs there again и …/CLAUDE.local.md keeps its copy; кнопки Cancel и Apply](images/instructions-import.png)
+
+- Раздел попадёт в файлы при следующей отрисовке слоя: для `core` — **Brain** → core → **Update Home Folder…**, для слоя проекта — **Set Up Project…**. Окно пишет, каких проектов это коснётся.
+- Флажок **Also remove it from …** выключен: файл пока хранит свою копию. После отрисовки экран покажет повтор, и **Remove This Copy…** уберёт старую копию.
+- Если включить флажок, раздел уйдёт из файла сразу (с резервной копией). До отрисовки сессии его не получат.
+- Если в тексте слоя этот раздел уже есть, AKit пишет «has this section already» и ничего не меняет.
+- Кнопки нет у блока AKit, у текста до первого заголовка `##` и у файлов, которые AKit сам записал из brain.
+- AKit меняет только текст AGENTS.md слоя. Описание и `requires` слоя остаются как есть.
+- Если в слое уже есть раздел с тем же заголовком и другим текстом, окно предупреждает: модель получит оба.
+- Если в разделе есть `{{…}}` или `@…`, окно предупреждает: в файлах слоя этот текст может измениться или указывать в другое место.
+
 #### Как агенты выбирают файлы
 <!-- section: instructions-rules -->
 

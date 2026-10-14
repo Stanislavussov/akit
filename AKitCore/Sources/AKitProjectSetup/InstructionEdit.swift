@@ -145,7 +145,7 @@ public enum InstructionEdit {
         return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino
     }
 
-    static func realPath(_ url: URL) -> String {
+    public static func realPath(_ url: URL) -> String {
         guard let resolved = realpath(url.path, nil) else { return url.standardizedFileURL.path }
         defer { free(resolved) }
         return String(cString: resolved)
