@@ -109,6 +109,10 @@ public struct RecommendReport: Encodable, Equatable, Sendable {
         let callRate: Double
         /// With 0 model calls in n sessions the true rate is below 3/n (95 %).
         public let callRateUpperBound95: Double
+
+        /// The bound as the screens and `akit recommend` print it, a whole percent rounded up:
+        /// "4%", and "1%" for a bound under one percent (never "0%": the rate isn't known to be 0).
+        public var callRateBoundText: String { "\(max(1, Int((callRateUpperBound95 * 100).rounded(.up))))%" }
         /// Plugin advice (`skill` is `*`): the plugin's skills it is about; not encoded otherwise.
         public var skills: [String]?
 
@@ -191,6 +195,12 @@ public struct RecommendReport: Encodable, Equatable, Sendable {
 /// anywhere (other Macs, subagents, Pi), is better off manual. What to do depends on who owns it:
 /// a layer gets a `layer.yaml` patch, anything else advice. See docs/design/session-insights.md.
 public enum Recommender {
+    /// The 95 % upper bound of the call rate after 0 calls in `sessions` (the rule of three,
+    /// 3/n), to 0.1 %; never below 0.1 %, which more than 6,000 sessions would round down to.
+    public static func zeroCallBound(sessions: Int) -> Double {
+        min(1, max(0.001, (3 / Double(max(sessions, 1)) * 1000).rounded() / 1000))
+    }
+
     static let rule = "auto-to-manual"
     public static let defaultMinSessions = 20
     public static let defaultMinDays = 14
@@ -393,7 +403,7 @@ public enum Recommender {
                 binding: options.project == nil ? nil : try binding(database, sessions: here),
                 approxContextSpace: contextSpace, modelCalls: 0,
                 userCalls: covered.reduce(0) { $0 + $1.tally.userCalls + $1.other.user }, callRate: 0,
-                callRateUpperBound95: min(1, (3 / Double(max(sessions, 1)) * 1000).rounded() / 1000), skills: skills)
+                callRateUpperBound95: Recommender.zeroCallBound(sessions: sessions), skills: skills)
             recommendations.append(.init(
                 id: id, type: patch == nil ? "advice" : "patch", stale: !staleKeys.isEmpty, owner: owner, skill: skill,
                 scope: .init(project: options.project), action: action, evidence: evidence, patch: patch,

@@ -642,14 +642,13 @@ struct InsightsView: View {
         let evidence = item.evidence
         let period = evidence.from.map { " (\($0) … \(evidence.to ?? $0))" } ?? ""
         let macs = evidence.machines.count > 1 ? " on \(evidence.machines.count) Macs" : ""
-        let rate = Int((evidence.callRateUpperBound95 * 100).rounded(.up))
         if item.action.kind == RecommendReport.Action.moveToProject, let project = item.action.project {
             return "Listed with its description in \(count(evidence.sessions, "session")) outside \(project) on \(count(evidence.distinctDays, "day"))"
                 + "\(period)\(macs), never called there · ≈ \(ContextSize.short(evidence.approxContextSpace)) context space · moving it takes "
                 + "its description out of those sessions"
         }
         return "≈ \(ContextSize.short(evidence.approxContextSpace)) context space · listed with its description in \(count(evidence.sessions, "session")) on "
-            + "\(count(evidence.distinctDays, "day"))\(period)\(macs) · model calls 0 (rate < \(rate)% at 95%) · user calls \(evidence.userCalls)"
+            + "\(count(evidence.distinctDays, "day"))\(period)\(macs) · model calls 0 (rate < \(evidence.callRateBoundText) at 95%) · user calls \(evidence.userCalls)"
     }
 }
 
