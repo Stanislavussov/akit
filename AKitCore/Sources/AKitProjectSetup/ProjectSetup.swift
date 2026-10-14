@@ -603,6 +603,12 @@ public enum ProjectSetup {
         let done = Set(todo(plan, excluding: excluded, accepting: accepting).map(\.path))
         var blocks: [String: ProjectRecords.Lock.Block] = [:]
         for path in Set(plan.blockRecords.keys).union(plan.blockKept.keys) {
+            // Left for later (a partial Apply): the previous record stays, so a later Update
+            // Home Folder still offers the new core text instead of taking it as declined.
+            if !done.contains(path), deferring.contains(path) {
+                blocks[path] = plan.previous?.blocks?[path]
+                continue
+            }
             blocks[path] = done.contains(path) ? plan.blockRecords[path] : plan.blockKept[path]
         }
         lock.blocks = blocks.isEmpty ? nil : blocks
