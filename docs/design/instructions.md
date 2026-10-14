@@ -35,7 +35,12 @@ other layer edits); the layer is core for a global or above-project file, else t
 the project's record. "Also remove it from …" (off by default) takes the section out of the file
 after the commit (`InstructionEdit`). Refused when the layer already has the section, the file or
 the layer's text changed since the preview. The text reaches files at the layer's next render;
-step 5 adds that render to the move. Step 0 (the facts below) is done: checked the same day in
+step 5 adds that render to the move. Review round the same day: the layer is written by
+`LayerEditor.appendToAgentsSection`, which reads the layer from disk at Apply and changes only
+its AGENTS.md template (own bytes and line ending kept), so a hand edit of layer.yaml after the
+scan is never reverted; the file is checked before the commit when it should lose the section;
+leads, open fences and a layer whose AGENTS.md entry is only under `when:` are refused; notes for
+a same-heading section in the layer, `{{…}}` and `@…` words. Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem

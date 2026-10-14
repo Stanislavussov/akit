@@ -379,7 +379,8 @@ private struct InstructionDetailView: View {
                                             .disabled(reason != nil)
                                             .help(reason ?? "Take this section out of \(entry.file.lastPathComponent): a diff first, then a backup. The model keeps the other places.")
                                     }
-                                    if canImport, !section.isAKitBlock, !rendered.contains(InstructionEdit.realPath(entry.file)) {
+                                    if canImport, entry.status.isLoaded, !section.isAKitBlock, section.heading != nil,
+                                       !rendered.contains(InstructionEdit.realPath(entry.file)) {
                                         Button("Import to Brain…") { onImport(section) }
                                             .help("Add this section to a brain layer's AGENTS.md text (a commit), so the layer brings it to every place it renders")
                                     }
@@ -598,10 +599,13 @@ private struct SectionImportSheet: View {
                 layer = InstructionImport.suggestedLayer(for: request.level, project: request.project, brain: brain, projects: model.brainProjectFolders)
             }
         }
-        .task(id: "\(layer)|\(removeHere)") { await replan() }
+        .task(id: "\(layer)|\(removeHere)|\(model.lastScan?.timeIntervalSince1970 ?? 0)") { await replan() }
     }
 
     private func replan() async {
+        // The old plan never stays applicable while a new one is made.
+        plan = nil
+        failed = false
         guard !layer.isEmpty, let brain = model.brain else { return }
         let request = request, layer = layer, removeHere = removeHere, rendered = rendered, env = HarnessEnvironment.current
         let result = await Task.detached {
