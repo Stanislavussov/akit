@@ -1,10 +1,15 @@
 # Instructions: AGENTS.md and CLAUDE.md like skills
 
 Status: agreed 2026-10-14, from a chat request ("work with AGENTS.md on the same principle
-as skills"). Nothing is built. Decided the same day (D11–D13, D15 in [`README.md`](README.md)):
+as skills"). Step 1 is built (below). Decided the same day (D11–D13, D15 in [`README.md`](README.md)):
 a section is one `##` heading, AKit may edit a project's tracked files (diff + backup, no
 commit), duplicates are the same text after normalizing, and step 1 comes first and alone. D14
-(where Move to Global puts a section) is open until step 5. Step 0 (the facts below) is done: checked the same day in
+(where Move to Global puts a section) is open until step 5.
+
+Step 1 built 2026-10-14: `AKitInstructions` (`InstructionScanner`, `InstructionText`), the
+Instructions screen (On This Mac) and `akit instructions [FOLDER] [--harness …] [--global]`.
+Not in step 1: files in subfolders that load later, and Codex's budget for the global file
+(only project files count against the 32 KiB). Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem

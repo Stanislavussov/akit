@@ -57,6 +57,14 @@ shot overview            $MAIN --section overview
 shot skills              $MAIN --section skills
 shot skills-switch       $MAIN --section skills --query tdd --add
 shot skills-invocation   $MAIN --section skills --tab invocation --select grilling
+# Only for this shot: a global CLAUDE.md with AKit's core block, and an AGENTS.md above the
+# projects that Claude Code skips (notes-mac has a CLAUDE.md). Removed again afterwards.
+GLOBAL_MD="$DEMO/.claude/CLAUDE.md" ABOVE_MD="$DEMO/Projects/AGENTS.md"
+[[ -e "$GLOBAL_MD" ]] && cp "$GLOBAL_MD" "$GLOBAL_MD.keep"
+printf -- '# My rules\n\nAnswer in short sentences.\n\n## Commits\nImperative summary line, 72 characters at most.\n\n<!-- akit:core:start -->\n## Core\nRun the tests before you say a change is done.\n<!-- akit:core:end -->\n' > "$GLOBAL_MD"
+printf -- '# Projects\n\nEvery project here uses git.\n' > "$ABOVE_MD"
+shot instructions        $MAIN --section instructions --project notes-mac --select CLAUDE.md
+rm -f "$ABOVE_MD"; if [[ -e "$GLOBAL_MD.keep" ]]; then mv "$GLOBAL_MD.keep" "$GLOBAL_MD"; else rm -f "$GLOBAL_MD"; fi
 shot skills-invocation-all $MAIN --section skills --tab invocation-all --delay 3
 # Only for these two: an older copy of commit-message in weather-app, so Claude Code and the
 # others load two copies of it there. Removed again, so the other shots stay as they are.
