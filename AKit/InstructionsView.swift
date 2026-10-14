@@ -25,6 +25,9 @@ struct InstructionsView: View {
     @State private var removalError: String?
     /// Read the files again after a change made here.
     @State private var reload = 0
+    /// Files AKit rendered from the brain into a project (their sections change in the brain);
+    /// read from the brain projects' locks with each scan.
+    @State private var rendered: Set<String> = []
 
     /// Snapshots: `--project <folder name>` under ~/Projects.
     static var initialProject: URL? {
@@ -104,13 +107,15 @@ struct InstructionsView: View {
         .task(id: "\(project?.path ?? "-")|\(harness?.rawValue ?? "-")|\(model.lastScan?.timeIntervalSince1970 ?? 0)|\(reload)") {
             guard let harness else { return }
             let project = project, env = HarnessEnvironment.current
-            let (made, groups) = await Task.detached {
+            let folders = model.brainProjectFolders, store = model.projectStore
+            let (made, groups, written) = await Task.detached {
                 let view = InstructionScanner.view(harness: harness, project: project, env: env)
-                return (view, view.duplicates)
+                return (view, view.duplicates, InstructionEdit.renderedFiles(projects: folders, store: store))
             }.value
             guard !Task.isCancelled else { return }
             view = made
             duplicates = groups
+            rendered = written
             // Snapshots: `--tab remove-copy` opens Remove This Copy… for the selected file's first repeated section.
             if DebugSnapshot.options?.tab == "remove-copy", removal == nil, reload == 0,
                let entry = made.entries.first(where: { $0.id == selection }),
@@ -184,21 +189,26 @@ struct InstructionsView: View {
         }
     }
 
-    /// Files AKit rendered from the brain into a project: their sections change in the brain.
-    private var rendered: Set<String> {
-        InstructionEdit.renderedFiles(projects: model.brainProjectFolders, store: model.projectStore)
-    }
-
     private func planRemoval(of section: InstructionSection, in entry: InstructionEntry) {
         let rendered = rendered, env = HarnessEnvironment.current, file = entry.file
-        let others = duplicates.first { $0.places.contains { $0.file == file && $0.section.line == section.line } }?
-            .places.filter { !($0.file == file && $0.section.line == section.line) } ?? []
+        let group = duplicates.first { $0.places.contains { $0.file == file && $0.section.line == section.line } }
+        let others = group?.places.filter { !($0.file == file && $0.section.line == section.line) } ?? []
+        let shown = harness, project = project, level = entry.level
         Task {
-            let result = await Task.detached {
-                Result { () throws(InstructionEdit.Failure) in try InstructionEdit.removing(section, from: file, rendered: rendered, env: env) }
+            let result = await Task.detached { () -> Result<(InstructionEdit.Plan, [HarnessID]), InstructionEdit.Failure> in
+                Result { () throws(InstructionEdit.Failure) in
+                    let plan = try InstructionEdit.removing(section, from: file, others: others.map(\.file), rendered: rendered, env: env)
+                    // The other harnesses that read this same file in this session lose the section too.
+                    let readers = InstructionScanner.harnesses.filter { $0 != shown }.filter { harness in
+                        InstructionScanner.view(harness: harness, project: project, env: env).loaded
+                            .contains { InstructionEdit.isSameFile($0.file, file) }
+                    }
+                    return (plan, readers)
+                }
             }.value
             switch result {
-            case .success(let plan): removal = SectionRemoval(plan: plan, others: others)
+            case .success(let (plan, readers)):
+                removal = SectionRemoval(plan: plan, others: others, differs: group?.kind == .differs, level: level, readers: readers)
             case .failure(let error): removalError = error.message
             }
         }
@@ -410,6 +420,11 @@ struct SectionRemoval: Identifiable {
     let id = UUID()
     let plan: InstructionEdit.Plan
     let others: [InstructionDuplicate.Place]
+    /// The other places hold other versions (same heading, other text).
+    let differs: Bool
+    let level: InstructionLevel
+    /// Other harnesses that read this same file in the session.
+    let readers: [HarnessID]
 }
 
 /// The removal as a diff, with Apply and Cancel.
@@ -468,7 +483,18 @@ private struct SectionRemovalSheet: View {
 
     private var summary: String {
         let kept = request.others.map { "\($0.file.tildePath):\($0.section.line)" }.joined(separator: ", ")
-        return kept.isEmpty ? "The section leaves this file." : "The section leaves this file; the model still gets it from \(kept)."
+        var parts = [kept.isEmpty ? "The section leaves this file."
+                     : request.differs ? "This version leaves the file; no other place has this text. Other versions stay in \(kept)."
+                     : "The section leaves this file; in this session the model still gets it from \(kept)."]
+        switch request.level {
+        case .global: parts.append("This is a global file: every session of this harness, in every project, loses it here.")
+        case .above(let folder): parts.append("Every session in a folder under \(folder.tildePath) loses it here.")
+        case .project: break
+        }
+        if !request.readers.isEmpty {
+            parts.append("\(request.readers.map(\.displayName).joined(separator: ", ")) also read\(request.readers.count == 1 ? "s" : "") this file here and lose\(request.readers.count == 1 ? "s" : "") it too, unless they get it from another file.")
+        }
+        return parts.joined(separator: " ")
     }
 }
 

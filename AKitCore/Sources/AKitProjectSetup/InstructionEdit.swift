@@ -49,14 +49,30 @@ public enum InstructionEdit {
     }
 
     /// What removing the section would change. Only reads (and `git ls-files` for the note).
-    public static func removing(_ section: InstructionSection, from file: URL, rendered: Set<String>, env: HarnessEnvironment) throws(Failure) -> Plan {
-        if let reason = unavailable(section, in: file, rendered: rendered) { throw Failure(message: reason) }
+    /// `others`: the files of the other places that hold the section; one that is this file
+    /// (a link to it, a hard link) is refused, since the write would take it from there too.
+    public static func removing(_ section: InstructionSection, from file: URL, others: [URL] = [], rendered: Set<String>,
+                                env: HarnessEnvironment) throws(Failure) -> Plan {
         let shown = FileWalk.tilde(file, home: env.homeDirectory)
+        if let same = others.first(where: { isSameFile($0, file) }) {
+            throw Failure(message: "\(FileWalk.tilde(same, home: env.homeDirectory)) and \(shown) are one file (a link), read twice. Removing the section would take it from both. Remove the link instead, so the file is read once.")
+        }
         guard let before = try? Data(contentsOf: file), let text = String(data: before, encoding: .utf8) else {
             throw Failure(message: "\(shown) can't be read as text.")
         }
-        guard let after = removed(section, from: text) else {
-            throw Failure(message: "\(shown) changed: its line \(section.line) is no longer \(section.heading.map { "## \($0)" } ?? "that section"). Look at the screen again.")
+        // The section as the file has it now: the same text at the same line, or the screen is stale.
+        guard let fresh = InstructionText.units(text).first(where: { $0.line == section.line }), fresh.text == section.text else {
+            throw Failure(message: "\(shown) changed since the screen read it: line \(section.line) no longer holds \(section.heading.map { "## \($0)" } ?? "that section") as it was. Look at the screen again.")
+        }
+        if let reason = unavailable(fresh, in: file, rendered: rendered) { throw Failure(message: reason) }
+        if fresh.heading == nil, fresh.text.split(separator: "\n").contains(where: { $0.hasPrefix("---") || $0.hasPrefix("# ") }) {
+            throw Failure(message: "The text before the first ## heading of \(shown) holds its header or title. AKit doesn't remove it; edit the file by hand.")
+        }
+        if hasOpenFence(fresh.text) {
+            throw Failure(message: "This section of \(shown) opens a code fence that never closes, so AKit can't tell where the section ends. Edit the file by hand.")
+        }
+        guard let after = removed(fresh, from: text) else {
+            throw Failure(message: "\(shown) changed since the screen read it. Look at the screen again.")
         }
         var notes: [String] = []
         let folder = file.deletingLastPathComponent()
@@ -81,26 +97,52 @@ public enum InstructionEdit {
     }
 
     /// The text without the section's lines, or nil when the file no longer has them at its
-    /// line. One blank line stays between the parts around it; every other byte is kept.
+    /// line. One blank line stays between the parts around it, a removed last section leaves
+    /// the file ending in one newline, and every other byte is kept.
     static func removed(_ section: InstructionSection, from text: String) -> String? {
         var lines = InstructionText.lines(text)
         let own = InstructionText.lines(section.text)
         let start = section.line - 1
         guard start >= 0, start + own.count <= lines.count, Array(lines[start..<(start + own.count)]) == own else { return nil }
-        // The section's text may end with the file's final newline (an empty last line): keep it.
+        let isBlank: (String) -> Bool = { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let endsFile = start + own.count == lines.count
-        let count = endsFile && own.last?.isEmpty == true ? own.count - 1 : own.count
-        lines.removeSubrange(start..<(start + count))
-        // No two blank lines where the section was, and none left at the top.
-        let isBlank: (String) -> Bool = { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: "").isEmpty }
-        if start > 0, start < lines.count, isBlank(lines[start - 1]), isBlank(lines[start]), !(start == lines.count - 1 && lines[start].isEmpty) {
-            lines.remove(at: start)
+        lines.removeSubrange(start..<(start + own.count))
+        if endsFile {
+            // The last section: the blank lines before it go too, and the file ends in a newline
+            // (after a CRLF line that is its \r\n) unless nothing is left.
+            while let last = lines.last, isBlank(last) { lines.removeLast() }
+            if !lines.isEmpty { lines.append("") }
         } else if start == 0 {
             while lines.count > 1, isBlank(lines[0]) { lines.removeFirst() }
+        } else if isBlank(lines[start - 1]), isBlank(lines[start]) {
+            lines.remove(at: start)
         }
-        // A trailing blank line before the final newline, left by removing the last section.
-        while lines.count >= 2, lines[lines.count - 1].isEmpty, isBlank(lines[lines.count - 2]) { lines.remove(at: lines.count - 2) }
         return lines.joined(separator: "\n")
+    }
+
+    /// A fenced code block opens in the text and never closes.
+    static func hasOpenFence(_ text: String) -> Bool {
+        var open: (mark: Character, length: Int)?
+        for line in InstructionText.lines(text) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let first = trimmed.first, first == "`" || first == "~" else { continue }
+            let run = trimmed.prefix { $0 == first }.count
+            guard run >= 3 else { continue }
+            if let fence = open {
+                if first == fence.mark, run >= fence.length, trimmed.dropFirst(run).allSatisfy({ $0 == " " || $0 == "\t" }) { open = nil }
+            } else if !(first == "`" && trimmed.dropFirst(run).contains("`")) {
+                open = (first, run)
+            }
+        }
+        return open != nil
+    }
+
+    /// One file on disk: the same real path, or the same device and inode (a hard link).
+    public static func isSameFile(_ a: URL, _ b: URL) -> Bool {
+        if realPath(a) == realPath(b) { return true }
+        var sa = stat(), sb = stat()
+        guard stat(a.path, &sa) == 0, stat(b.path, &sb) == 0 else { return false }
+        return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino
     }
 
     static func realPath(_ url: URL) -> String {

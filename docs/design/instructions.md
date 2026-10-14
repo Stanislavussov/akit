@@ -22,7 +22,12 @@ the section's lines leave one file (one blank line kept between the parts around
 byte unchanged, CRLF too), diff first, `SettingsFile.write` with backup, refused when the file
 changed or the section moved. Not offered for AKit's block or a file in a brain project's lock
 (`InstructionEdit.renderedFiles`). A git-tracked file gets a note (D12); an emptied file stays.
-No CLI command yet. Step 0 (the facts below) is done: checked the same day in
+No CLI command yet. Review round the same day: refused when another place of the section is the
+same file (a link or hard link, read twice by Pi or Codex), when the section changed since the
+screen read it (re-split and compared), for a lead with a header or `#` title and for a section
+with an unclosed fence. The sheet names the other harnesses that read the same file and says
+when the file is global or above the project. Not handled: a rendered file checked out in a
+worktree of a brain project (only the main checkout's paths are in the lock). Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem

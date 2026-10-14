@@ -32,6 +32,9 @@ struct InstructionEditTests {
         ("## A\na\n\n## B\nb\n", "A", "## B\nb\n"),
         ("## A\r\na\r\n\r\n## B\r\nb\r\n", "A", "## B\r\nb\r\n"),
         ("# T\n\n## A\na", "A", "# T\n"),
+        // Review round: trailing blank lines of the next section stay; a CRLF file without a final newline.
+        ("## A\na\n\n## B\nb\n\n\n", "A", "## B\nb\n\n\n"),
+        ("## A\r\na\r\n\r\n## B\r\nb", "B", "## A\r\na\r\n"),
     ])
     func removesTheLinesAndKeepsEveryOtherByte(text: String, heading: String, expected: String) throws {
         // A folder per case: the cases run at the same time.
@@ -68,5 +71,44 @@ struct InstructionEditTests {
         #expect(plan.notes.first?.hasPrefix("git tracks AGENTS.md") == true)
         try InstructionEdit.apply(plan, env: env)
         #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    // MARK: - Review round (2026-10-14)
+
+    @Test func aFileReadTwiceThroughALinkIsRefused() throws {
+        let real = try file("w/AGENTS.md", "## Commits\nShort lines.\n\n## Style\nTabs.\n")
+        let link = home.appending(path: "w/p/AGENTS.md")
+        try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "../AGENTS.md")
+        #expect { try InstructionEdit.removing(try section("Commits", in: link), from: link, others: [real], rendered: [], env: env) } throws: { error in
+            (error as? InstructionEdit.Failure)?.message.contains("are one file (a link), read twice") == true
+        }
+        // A hard link is one file too.
+        let hard = home.appending(path: "w/hard.md")
+        try FileManager.default.linkItem(at: real, to: hard)
+        let other = try file("w/other.md", "x")
+        #expect(InstructionEdit.isSameFile(hard, real) && !InstructionEdit.isSameFile(hard, other))
+    }
+
+    @Test func aSectionThatGrewSinceTheScreenIsRefused() throws {
+        let url = try file("AGENTS.md", "## A\na\n## B\nb\n")
+        let old = try section("A", in: url)
+        try Data("## A\na\nNEW RULE\n## B\nb\n".utf8).write(to: url)
+        #expect { try InstructionEdit.removing(old, from: url, rendered: [], env: env) } throws: { error in
+            (error as? InstructionEdit.Failure)?.message.contains("changed since the screen read it") == true
+        }
+    }
+
+    @Test func anOpenFenceAndATitledLeadAreLeftToTheUser() throws {
+        let fenced = try file("fenced/AGENTS.md", "## A\n```sh\nmake\n\n## B\nb\n")
+        #expect { try InstructionEdit.removing(try section("A", in: fenced), from: fenced, rendered: [], env: env) } throws: { error in
+            (error as? InstructionEdit.Failure)?.message.contains("never closes") == true
+        }
+        let titled = try file("titled/AGENTS.md", "# Title\n\nIntro text.\n\n## A\na\n")
+        let lead = try #require(InstructionText.units(String(decoding: try Data(contentsOf: titled), as: UTF8.self)).first)
+        #expect(lead.heading == nil)
+        #expect { try InstructionEdit.removing(lead, from: titled, rendered: [], env: env) } throws: { error in
+            (error as? InstructionEdit.Failure)?.message.contains("holds its header or title") == true
+        }
     }
 }

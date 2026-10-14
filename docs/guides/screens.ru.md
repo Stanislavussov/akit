@@ -1523,17 +1523,21 @@ akit remove skill ИМЯ --everywhere
 
 1. Выберите файл, из которого раздел должен уйти.
 2. В **Sections** под повторённым разделом нажмите **Remove This Copy…**.
-3. Откроется окно «Remove “Commits” from CLAUDE.local.md». Под заголовком написано, откуда модель всё ещё получит этот раздел.
+3. Откроется окно «Remove “Commits” from CLAUDE.local.md». Под заголовком написано, откуда модель в этой сессии всё ещё получит этот раздел.
 4. Посмотрите изменения: красным то, что уйдёт.
 5. Нажмите **Apply**. AKit сначала копирует файл в `~/.akit/backups`, потом записывает его без раздела.
 
-![Окно Remove “Commits” from CLAUDE.local.md: строка The section leaves this file; the model still gets it from ~/.claude/CLAUDE.md:5; diff файла …/notes-mac/CLAUDE.local.md, где строки ## Commits и Imperative summary line, 72 characters at most. красные, а раздел ## Style остаётся; кнопки Cancel и Apply](images/instructions-remove.png)
+![Окно Remove “Commits” from CLAUDE.local.md: строка The section leaves this file; in this session the model still gets it from ~/.claude/CLAUDE.md:5; diff файла …/notes-mac/CLAUDE.local.md, где строки ## Commits и Imperative summary line, 72 characters at most. красные, а раздел ## Style остаётся; кнопки Cancel и Apply](images/instructions-remove.png)
 
 - **Cancel** ничего не меняет.
 - Убрать можно и одну из версий раздела с тем же заголовком (строка «Same heading, other text in …»).
 - Если файл изменился после открытия окна, AKit его не тронет и покажет ошибку. Откройте окно снова.
 - Файл, который git хранит в репозитории, AKit тоже меняет. Окно предупреждает: изменение будет видно в `git status`. Коммит AKit не делает.
 - Если в файле больше ничего не осталось, файл остаётся пустым. Удалите его сами, если он не нужен.
+- Окно говорит, кто ещё потеряет раздел: другие агенты, которые читают этот же файл, и все проекты, если файл общий или лежит выше проекта.
+- Если два места — один файл (ссылка), AKit ничего не меняет и предлагает убрать ссылку. Иначе раздел ушёл бы из обоих мест.
+- Если файл изменился после того, как экран его прочитал, AKit откажет. Нажмите **Refresh** (⌘R) и попробуйте снова.
+- Текст до первого заголовка `##` с шапкой (`---`) или заголовком `#`, и раздел с незакрытым блоком кода AKit не убирает. Поправьте файл сами.
 - Кнопка серая, если:
   - раздел — часть блока AKit (`brain · core`). Его меняют в brain: **Brain** → слой core → **Edit Layer…**, потом **Update Home Folder…**;
   - файл AKit записал в проект из слоёв brain. Следующий **Set Up Project…** вернул бы раздел, поэтому меняйте слой на экране [Brain](#brain).
