@@ -102,6 +102,44 @@ struct SkillInvocationBulkTests {
         #expect(one.homeFiles() == before)
     }
 
+    /// `deploy` and `ship` Manual in core, rendered into the home folder, and an own Manual copy `mine`.
+    func twoInCore() async throws -> Brain {
+        try move.harnesses()
+        _ = try await move.renderedInCore(only: true)
+        try f.write(".akit/registry/skills/ship/SKILL.md", skill("ship"))
+        try f.write(".akit/registry/layers/core/layer.yaml", "name: core\nskills:\n  - name: deploy\n    mode: manual\n  - name: ship\n    mode: manual\n")
+        try await f.git("add", "-A", in: f.brainRoot)
+        try await f.git("commit", "-qm", "Add ship", in: f.brainRoot)
+        let brain = try #require(Brain.load(from: f.brainRoot))
+        let home = ProjectSetup.plan(project: f.home, id: move.homeID, answers: ProjectAnswers(layers: ["core"], targets: ["claude", "pi"]),
+                                     brain: brain, store: f.store, forHome: true, env: f.env)
+        _ = try await ProjectSetup.apply(home, brain: brain, home: f.home, env: f.env, trash: f.trash)
+        try f.write(".agents/skills/mine/SKILL.md", skill("mine", manual: true))
+        return try #require(Brain.load(from: f.brainRoot))
+    }
+
+    @Test func aBadLayerEntryDropsOnlyItsSkill() async throws {
+        let brain = try await twoInCore()
+        // ship left layer.yaml after the brain was read: only ship can't change.
+        try f.write(".akit/registry/layers/core/layer.yaml", "name: core\nskills:\n  - name: deploy\n    mode: manual\n")
+        let plan = bulk(manual: false, brain: brain)
+        #expect(plan.skills == ["mine", "deploy"], "\(plan.skipped)")
+        #expect(plan.skipped.map(\.skill) == ["ship"])
+        #expect(plan.skipped.first?.reason == "layers/core/layer.yaml: ship is not in the layer's skills list.")
+    }
+
+    @Test func aStaleLayerChangesNoOwnCopy() async throws {
+        let brain = try await twoInCore()
+        let plan = bulk(manual: false, brain: brain)
+        let core = ".akit/registry/layers/core/layer.yaml"
+        try f.write(core, (f.read(core, in: f.home) ?? "") + "# note\n")
+        let before = one.homeFiles()
+        await #expect { try await SkillInvocation.applyAll(plan, brain: brain, env: f.env, trash: f.trash) } throws: { error in
+            (error as? SkillInvocation.Failure)?.message == "layers/core/layer.yaml changed since the preview. Look at the preview again."
+        }
+        #expect(one.homeFiles() == before)
+    }
+
     @Test func anEditedRenderedCopyIsSkippedAndTheRestChange() async throws {
         try move.harnesses()
         _ = try await move.renderedInCore()

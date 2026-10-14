@@ -167,6 +167,8 @@ struct GlobalInvocationSheet: View {
     @State private var busy = false
     @State private var error: String?
     @State private var showDiffs = false
+    /// Apply ran and failed part way: the preview no longer matches the files.
+    @State private var stale = false
 
     private var plan: SkillInvocation.BulkPlan { request.plan }
     private var title: String { SkillInvocationText.title(manual: plan.manual) }
@@ -200,7 +202,7 @@ struct GlobalInvocationSheet: View {
                     if !plan.skipped.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Stays as it is (\(plan.skipped.count))").fontWeight(.medium)
-                            ForEach(plan.skipped, id: \.self) { skip in
+                            ForEach(Array(plan.skipped.enumerated()), id: \.offset) { _, skip in
                                 (Text(skip.skill).fontWeight(.medium) + Text(": \(skip.reason)").foregroundColor(.secondary))
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -239,7 +241,7 @@ struct GlobalInvocationSheet: View {
                 if !plan.changesNothing {
                     Button("Apply", action: apply)
                         .keyboardShortcut(.defaultAction)
-                        .disabled(busy)
+                        .disabled(busy || stale)
                         .help("Back up and write each own copy, then commit the layers' modes in the brain and rewrite the home folder's copies. A file changed since this preview is refused.")
                 }
             }
@@ -256,7 +258,8 @@ struct GlobalInvocationSheet: View {
                 try await model.applyGlobalInvocation(plan)
                 dismiss()
             } catch {
-                self.error = error.localizedDescription
+                self.error = error.localizedDescription + "\nClose this window and open it again for a new preview."
+                stale = true
             }
             busy = false
         }

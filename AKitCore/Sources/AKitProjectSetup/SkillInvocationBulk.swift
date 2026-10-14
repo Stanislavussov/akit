@@ -90,18 +90,20 @@ extension SkillInvocation {
         if !sourced.isEmpty {
             notes.append("\(sourced.map(\.name).joined(separator: ", ")) came from a recorded source: updating or reinstalling from there may write over this edit.")
         }
+        var layered = renderedPart(rendered, manual: manual, brain: brain, context: context)
+        skipped += layered.skipped
         if !manual {
+            let changing = Set(layered.modes.values.flatMap { $0 })
             let switched = skills.filter { skill in
-                guard let entry = SkillSwitches.claudeEntry(for: skill, in: env) else { return false }
+                let changes = own.contains { $0.file == skill.realFile }
+                    || { if case .rendered(let name, _, _)? = links[skill.id] { changing.contains(name) } else { false } }()
+                guard changes, let entry = SkillSwitches.claudeEntry(for: skill, in: env) else { return false }
                 return entry == .manual || entry == .off
             }
             if !switched.isEmpty {
                 notes.append("Claude Code's own switch is Manual or Off for \(switched.map(\.name).joined(separator: ", ")), so Claude Code still won't offer them to the model. Set the Claude switch to On as well.")
             }
         }
-
-        var layered = renderedPart(rendered, manual: manual, brain: brain, context: context)
-        skipped += layered.skipped
         var diffs = own.flatMap(\.diffs)
         diffs += layered.diffs
         if !layered.layerEdits.isEmpty, let brain {
@@ -169,18 +171,22 @@ extension SkillInvocation {
             var dropped = false
             for (source, skills) in modes.sorted(by: { $0.key < $1.key }) {
                 guard let layer = brain.layers.first(where: { $0.name == source }) else { continue }
-                do {
-                    let edit = try LayerEditor.layerWithMode(mode, ofSkills: skills.sorted(), in: layer)
-                    if edit.before != edit.after {
-                        edits[source] = SkillMove.LayerEdit(before: edit.before, after: edit.after)
-                        planning = planning.replacingLayer(source, text: edit.after) ?? planning
-                    }
-                } catch {
-                    for skill in skills {
+                // One skill at a time, so a bad entry drops only its own skill.
+                var accepted: [String] = []
+                var edit: (before: String, after: String)?
+                for skill in skills.sorted() {
+                    do {
+                        edit = try LayerEditor.layerWithMode(mode, ofSkills: accepted + [skill], in: layer)
+                        accepted.append(skill)
+                    } catch {
                         result.skipped.append(Skip(skill: skill, reason: "layers/\(source)/layer.yaml: \(error.message)"))
                         remaining[skill] = nil
+                        dropped = true
                     }
-                    dropped = true
+                }
+                if let edit, edit.before != edit.after {
+                    edits[source] = SkillMove.LayerEdit(before: edit.before, after: edit.after)
+                    planning = planning.replacingLayer(source, text: edit.after) ?? planning
                 }
             }
             if dropped { continue }
@@ -241,6 +247,20 @@ extension SkillInvocation {
     public static func applyAll(_ plan: BulkPlan, brain: Brain?, env: HarnessEnvironment, trash: @escaping (URL) throws -> URL? = Trash.move,
                                 hold: SkillMove.Hold = { _, work in try await work() }) async throws(Failure) -> [URL] {
         let home = env.homeDirectory
+        let layered = !plan.layerEdits.isEmpty || !plan.homePaths.isEmpty
+        // The brain part's checks before any write, so a stale preview changes nothing.
+        if layered {
+            guard let brain else { throw Failure(message: "The brain is not loaded; open the Brain screen again.") }
+            for (layer, edit) in plan.layerEdits {
+                let manifest = brain.root.appending(path: "layers/\(layer)/layer.yaml")
+                if (try? String(contentsOf: manifest, encoding: .utf8)) != edit.before {
+                    throw Failure(message: "layers/\(layer)/layer.yaml changed since the preview. Look at the preview again.")
+                }
+            }
+            if let homePlan = plan.home, let path = ProjectSetup.changedSincePreview(homePlan, paths: plan.homePaths) {
+                throw Failure(message: "~/\(path) changed since the preview. Look at the preview again.")
+            }
+        }
         var backups: [URL] = []
         var failed: [String] = []
         for item in plan.own {
@@ -256,28 +276,18 @@ extension SkillInvocation {
             return Failure(message: ownPart + (failed + [message]).filter { !$0.isEmpty }.joined(separator: "\n"))
         }
 
-        if !plan.modes.isEmpty {
-            guard let brain else { throw failure("The brain is not loaded; open the Brain screen again.") }
-            for (layer, edit) in plan.layerEdits {
-                let manifest = brain.root.appending(path: "layers/\(layer)/layer.yaml")
-                if (try? String(contentsOf: manifest, encoding: .utf8)) != edit.before {
-                    throw failure("layers/\(layer)/layer.yaml changed since the preview. Look at the preview again.")
-                }
-            }
-            if let homePlan = plan.home, let path = ProjectSetup.changedSincePreview(homePlan, paths: plan.homePaths) {
-                throw failure("~/\(path) changed since the preview. Look at the preview again.")
-            }
+        if layered, let brain {
             let mode: LayerSkill.Mode = plan.manual ? .manual : .auto
             var current = brain
             if !plan.layerEdits.isEmpty {
                 do {
                     try await LayerEditor.setModes(mode, ofSkills: plan.modes.filter { plan.layerEdits[$0.key] != nil }, in: brain, env: env)
                 } catch {
-                    let written = plan.layerEdits.allSatisfy { layer, edit in
+                    let written = plan.layerEdits.filter { layer, edit in
                         (try? String(contentsOf: brain.root.appending(path: "layers/\(layer)/layer.yaml"), encoding: .utf8)) == edit.after
-                    }
-                    guard written else { throw failure(error.message) }
-                    throw failure("The layer files have the new modes, but they are not committed in the brain, and the home folder's copies were not updated: \(error.message) Commit the files in the brain (Brain → Sync shows them), then Brain → core → Update Home Folder… (akit apply --home) updates the home copies.")
+                    }.keys.sorted()
+                    guard !written.isEmpty else { throw failure(error.message) }
+                    throw failure("\(written.map { "layers/\($0)/layer.yaml" }.joined(separator: ", ")) \(written.count == 1 ? "has" : "have") the new modes, but they are not committed in the brain, and the home folder's copies were not updated: \(error.message) Commit the files in the brain (Brain → Sync shows them), then Brain → core → Update Home Folder… (akit apply --home) updates the home copies.")
                 }
                 current = Brain.load(from: brain.root) ?? brain
             }
@@ -294,7 +304,9 @@ extension SkillInvocation {
                 }
             }
         }
-        if !failed.isEmpty { throw failure("") }
+        if !failed.isEmpty {
+            throw failure(layered ? "The \(plan.rendered.count) cop\(plan.rendered.count == 1 ? "y" : "ies") from the brain changed: \(plan.layerEdits.isEmpty ? "" : "layers committed, ")home folder updated." : "")
+        }
         return backups
     }
 }
