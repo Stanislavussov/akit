@@ -415,8 +415,8 @@ private struct GuideSectionView: View {
     }
 }
 
-/// Paragraphs, lists, callouts and code of one section.
-private struct GuideBlocks: View {
+/// Paragraphs, lists, callouts and code of one section (and of an Ask AKit answer).
+struct GuideBlocks: View {
     let blocks: [GuideDocument.Block]
     let highlight: String?
 

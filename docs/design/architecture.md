@@ -49,7 +49,7 @@ harness loads a skill from, and the brain edits and Applies that take it out) an
 `SkillRemoval` uses Insights' `WorkAnswers` for a work Mac's one brain answers edit, which
 ProjectSetup already sees.
 
-2026-10-14 (Ask AKit, `ask-akit.md`): new module `AKitHelp` (18 library targets now), on
+2026-10-14 (Ask AKit, `ask-akit.md`): new module `AKitHelp` (19 library targets now), on
 `AKitFoundation` only. It picks guide sections for a question about a screen (`GuideDocument`,
 `GuideSearch`), builds the text of the call and reads the answer. The app opens the send gate and
 calls `ModelCall` itself, as for Rewrite with Skill, so `AKitHelp` needs neither Lab nor any harness

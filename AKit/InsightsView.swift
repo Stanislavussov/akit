@@ -211,6 +211,11 @@ struct InsightsView: View {
                     changes(loaded.changes)
                     footer(report)
                 }
+                .askAKitScreen(.insights, facts: [
+                    "Scope: \(project ?? "All Sessions")", "Window: \(days) days", subtitle,
+                    "Recommendations: \(report.recommendations.count)",
+                    "≈ Tokens of skill descriptions in every request: \(ContextSize.short(report.summary.approxContextPerRequestByOwner.map(\.approxTokens).reduce(0, +)))",
+                ])
                 .padding(20)
                 .frame(maxWidth: 900, alignment: .leading)
             }
@@ -291,6 +296,10 @@ struct InsightsView: View {
                         ForEach(owners, id: \.owner) { owner in
                             GridRow {
                                 Text(Self.ownerTitle(owner.owner))
+                                    .askAKit("≈ Context per request of \(Self.ownerTitle(owner.owner))", facts: [
+                                        "≈ tokens of skill descriptions in every request: \(ContextSize.short(owner.approxTokens))",
+                                        "Skills: \(owner.skills)",
+                                    ])
                                 ZStack(alignment: .leading) {
                                     Capsule().fill(.quaternary).frame(width: 260, height: 8)
                                     Capsule().fill(.tint)
@@ -312,6 +321,9 @@ struct InsightsView: View {
         } label: {
             Text("≈ Context per Request, by Owner").font(.headline)
         }
+        .askAKit("≈ Context per Request, by Owner", facts: owners.map {
+            "\(Self.ownerTitle($0.owner)): ≈ \(ContextSize.short($0.approxTokens)) tokens, \(Self.count($0.skills, "skill"))"
+        })
     }
 
     private func recommendations(_ report: RecommendReport) -> some View {
@@ -397,6 +409,14 @@ struct InsightsView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(6)
         }
+        .askAKit("Recommendation: \(item.subject)", facts: [
+            "Kind: \(item.isPatch ? "Layer patch" : "Advice")",
+            item.skill != Recommender.wholePlugin ? "Owner: \(Self.ownerText(item.owner))" : "",
+            "Evidence: \(Self.evidenceText(item))",
+            item.action.project.map { "Only used in: \($0)" } ?? "",
+            item.action.text.map { "Suggested: \($0)" } ?? "",
+            item.stale ? "Other Macs' summaries are old: \(item.staleMachines.joined(separator: ", "))" : "",
+        ])
     }
 
     /// Rows the Skills, MCP Servers and Tools table shows before Show All.
@@ -451,6 +471,11 @@ struct InsightsView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
+        .askAKit("Change: \(change.anchor == "mark" ? "Mark “\(change.note ?? "")”" : "Apply \(change.project ?? "")")", facts: [
+            "Date: \(change.date.formatted(date: .abbreviated, time: .shortened))",
+            "Scope: \(change.scope.project.map { "sessions of \($0)" } ?? "all sessions on this Mac")",
+            "Before/after: \(Self.changeText(change))",
+        ])
     }
 
     private func footer(_ report: RecommendReport) -> some View {

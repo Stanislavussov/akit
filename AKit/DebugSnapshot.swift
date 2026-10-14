@@ -42,8 +42,10 @@ import SwiftUI
 /// scrolls to that table, `--query unused` turns on Unused Only and `--query open` opens every MCP server's tool list; it
 /// imports first, so give it `--delay 8`.
 ///
+/// `--ask` opens the Ask AKit panel with a made-up chat about the Listing budget (no model call).
+///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
-/// a value (`--add`, `--capture`, `--own-copy`, `--settings`, `--local-only`) last: Cocoa pairs arguments as "-key value", and a
+/// a value (`--add`, `--capture`, `--own-copy`, `--settings`, `--local-only`, `--ask`) last: Cocoa pairs arguments as "-key value", and a
 /// word left over is opened as a document, whose error alert keeps the window from appearing.
 enum DebugSnapshot {
     struct Options {
@@ -80,6 +82,8 @@ enum DebugSnapshot {
         var click: CGPoint?
         /// Set Up Project: pick Local only (hidden from git).
         var localOnly: Bool
+        /// Open the Ask AKit panel with a made-up chat (no model call).
+        var ask: Bool
     }
 
     static let options: Options? = {
@@ -115,7 +119,8 @@ enum DebugSnapshot {
                 let parts = text.split(separator: ",").compactMap { Double($0) }
                 return parts.count == 2 ? CGPoint(x: parts[0], y: parts[1]) : nil
             },
-            localOnly: args.contains("--local-only")
+            localOnly: args.contains("--local-only"),
+            ask: args.contains("--ask")
         )
     }()
 
