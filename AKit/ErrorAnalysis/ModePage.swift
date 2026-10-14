@@ -62,7 +62,7 @@ struct ModePage: View {
                 ModeStatusBadge(mode: mode)
                 Spacer()
             }
-            .askAKit("Mode \(mode.name) (mode page)", facts: [
+            .askAKit("Mode \(mode.id) (mode page)", facts: [
                 "Status: \(mode.mergedInto != nil ? "merged" : mode.status.title)",
                 "Id: \(mode.id) · \(mode.kind.rawValue) · \(mode.origin.title) · \(mode.scope.description) · v\(mode.version)",
                 "Seen in \(analysis.data.seenByMode[mode.id]?.count ?? 0) notes",
@@ -127,7 +127,7 @@ struct ModePage: View {
     @ViewBuilder private func check(_ mode: Mode) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Code check").font(.title3.bold())
-                .askAKit("Code check of \(mode.name) (mode page)", facts: [
+                .askAKit("Code check of mode \(mode.id) (mode page)", facts: [
                     CodeChecks.check(for: mode.id).map { "Check: \($0.summary)" } ?? "No code check",
                     CodeChecks.check(for: mode.id).map {
                         AnalysisText.checkTrust($0, trust: analysis.data.codeCheckTrust(mode), seen: analysis.data.seenByMode[mode.id]?.count ?? 0,
@@ -203,7 +203,7 @@ struct ModePage: View {
         let exemplars = analysis.data.exemplars[mode.id] ?? []
         return VStack(alignment: .leading, spacing: 12) {
             Text("Seen in \(refs.count) \(refs.count == 1 ? "note" : "notes")").font(.title3.bold())
-                .askAKit("Notes routed to \(mode.name) (mode page)", facts: ["Seen in \(refs.count) notes", "Exemplars: \(exemplars.count)"])
+                .askAKit("Notes routed to mode \(mode.id) (mode page)", facts: ["Seen in \(refs.count) notes", "Exemplars: \(exemplars.count)"])
             if refs.isEmpty {
                 Text("No accepted note is routed here yet.").foregroundStyle(.secondary)
             }

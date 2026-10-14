@@ -75,7 +75,7 @@ struct ReportFrequencies: View {
                     .help("Sessions of the batch the check has a verdict on, of the done sessions it counts over (its project's only, for a mode of one project)")
             }
         }
-        .askAKit("Frequency of \(mode.name) (Reports)", facts: [
+        .askAKit("Frequency of mode \(mode.modeID) (Reports)", facts: [
             !mode.hasFrequency ? "No frequency: seen in \(AnalysisText.notes(mode.seenInNotes))"
                 : mode.belowDetectionThreshold ? "Below detection threshold"
                 : "Share: \(AnalysisText.percent(mode.corrected ?? mode.weighted))\(mode.corrected != nil ? " (corrected for the check)" : "")"

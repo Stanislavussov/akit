@@ -50,6 +50,20 @@ struct AskAKitTests {
         #expect(full.text == "Screen: Skills\nWhat the screen shows now:\n12 skills\nThe question is about: tdd\nScope: global\nHarnesses: Claude Code")
     }
 
+    @Test func sessionTextNeverLeavesAsScreenData() {
+        let title = "Fix the login bug in the iOS app"
+        let context = AskContext(screen: "sessions", screenTitle: "Sessions", summary: "Open session: fix THE LOGIN bug in the iOS app\nSaved sessions: 12",
+                                 element: .init(title: "Session “\(title)”", facts: "Harness: Claude Code\nMode: Edits without a build\nok"))
+        let clean = context.redacting([title, "Edits without a build", "ok", "  "])
+        #expect(!clean.text.localizedCaseInsensitiveContains(title))
+        #expect(!clean.text.contains("Edits without a build"))
+        #expect(clean.summary == "Open session: \(AskContext.redacted)\nSaved sessions: 12")
+        #expect(clean.element?.title == "Session “\(AskContext.redacted)”")
+        // Short texts would match everywhere: left alone.
+        #expect(clean.element?.facts == "Harness: Claude Code\nMode: \(AskContext.redacted)\nok")
+        #expect(context.redacting([]) == context)
+    }
+
     @Test func alwaysSendsTheScreensOwnSections() {
         let context = AskContext(screen: "skills", screenTitle: "Skills", summary: "")
         let prepared = AskAKit.prepare(question: "привет", context: context, history: [], guides: Self.guides)
@@ -88,6 +102,33 @@ struct AskAKitTests {
         // Whole sections: every piece is one section's full text.
         let all = AskAKit.pieces(guides)
         #expect(pieces.allSatisfy { all.contains($0) })
+    }
+
+    @Test func aScreenSectionLongerThanTheBudgetIsCutNotDropped() {
+        let text = "# Big\n## Screen\n<!-- section: big -->\n" + (0..<200).map { "Строка \($0) про экран." }.joined(separator: "\n\n")
+        let guides: [AskAKit.Guide] = [("screens", "Big", GuideDocument.parse(text))]
+        let context = AskContext(screen: "big", screenTitle: "Big", summary: "")
+        let pieces = AskAKit.select(question: "что", context: context, guides: guides, search: GuideSearch(guides: guides), budget: 1_000)
+        #expect(pieces.first?.id == "big")
+        #expect(pieces.first?.text.hasSuffix("… (cut to fit)") == true)
+        #expect(pieces.reduce(0) { $0 + $1.text.count } <= 1_000)
+        #expect(pieces.first?.text.contains("Строка 0 про экран.") == true)
+    }
+
+    @Test func aLongQuestionIsCut() {
+        let prepared = AskAKit.prepare(question: String(repeating: "я", count: 10_000), context: AskContext(screen: "x", screenTitle: "X", summary: ""),
+                                       history: [], guides: Self.guides)
+        #expect(prepared.input.hasSuffix("Question: " + String(repeating: "я", count: AskAKit.questionLimit)))
+    }
+
+    @Test func linksOpenOnlyKnownGuideSectionsAndHttpsPages() {
+        func target(_ text: String) -> AskAKit.LinkTarget { AskAKit.linkTarget(URL(string: text)!, guides: Self.guides) }
+        #expect(target("screens#skills-trash") == .guide(.init(guide: "screens", section: "skills-trash", title: "Убрать скилл в Корзину")))
+        #expect(target("#modes") == .guide(.init(guide: "error-analysis", section: "modes", title: "Режимы")))
+        #expect(target("https://example.com/page") == .web(URL(string: "https://example.com/page")!))
+        for bad in ["screens#nope", "nope#skills", "file:///etc/passwd", "http://example.com", "x-apple.systempreferences:com.apple", "akit://run", "screens"] {
+            #expect(target(bad) == .discard, "\(bad)")
+        }
     }
 
     @Test func glossaryEntriesGoFirst() {

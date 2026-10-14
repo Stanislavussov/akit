@@ -42,6 +42,33 @@ public struct AskContext: Sendable, Hashable {
     }
 }
 
+extension AskContext {
+    /// Stands for a text that must not leave as screen data.
+    public static let redacted = "‹session text›"
+
+    /// The context with every occurrence of `texts` replaced by `redacted`, in the summary, the
+    /// element's title and its facts. Ask AKit sends setup data (names, counts, ids, statuses),
+    /// never text from sessions: this is the backstop for session titles (first prompts), mode
+    /// names and definitions, and notes that a fact line might still quote. Texts shorter than
+    /// 4 characters are left alone (they would match everywhere); longer ones go first.
+    public func redacting(_ texts: [String]) -> AskContext {
+        let needles = Set(texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { $0.count >= 4 })
+            .sorted { $0.count > $1.count }
+        guard !needles.isEmpty else { return self }
+        func clean(_ text: String) -> String {
+            var text = text
+            for needle in needles where text.localizedCaseInsensitiveContains(needle) {
+                text = text.replacingOccurrences(of: needle, with: Self.redacted, options: .caseInsensitive)
+            }
+            return text
+        }
+        var copy = self
+        copy.summary = clean(summary)
+        copy.element = element.map { Element(title: clean($0.title), facts: clean($0.facts)) }
+        return copy
+    }
+}
+
 /// One message of an Ask AKit chat.
 public struct AskTurn: Sendable, Hashable {
     public enum Role: Sendable, Hashable {
@@ -78,6 +105,8 @@ public enum AskAKit {
     public static let historyTurns = 8
     /// One earlier turn longer than this is cut.
     public static let turnLimit = 4_000
+    /// A question longer than this is cut (the panel says so).
+    public static let questionLimit = turnLimit
 
     /// The JSON answer Claude Code checks (Pi gets it in the prompt).
     public static let schema = #"{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}"#
@@ -132,7 +161,7 @@ public enum AskAKit {
             input.append("Earlier in this chat:\n" + earlier.map { "\($0.role == .user ? "User" : "Ask AKit"): \($0.text)" }
                 .joined(separator: "\n\n"))
         }
-        input.append("Question: \(question.trimmingCharacters(in: .whitespacesAndNewlines))")
+        input.append("Question: \(String(question.trimmingCharacters(in: .whitespacesAndNewlines).prefix(questionLimit)))")
         return Prepared(system: system, input: input.joined(separator: "\n\n"),
                         sources: pieces.map { Source(guide: $0.guide, section: $0.id, title: $0.title) })
     }
@@ -218,9 +247,21 @@ public enum AskAKit {
             return true
         }
 
-        // The screen: its own section, then its first subsection (what's on the screen).
+        // The screen: its own section, then its first subsection (what's on the screen). Its own
+        // section always goes, cut at a line to fit when it is longer than the budget.
         let screen = pieces.filter { $0.guide == screensGuide && $0.path.contains(context.screen) }
-        if let own = screen.first(where: { $0.id == context.screen }) { take(own) }
+        if let own = screen.first(where: { $0.id == context.screen }), !take(own) {
+            var cut = own
+            let note = "\n… (cut to fit)"
+            let room = max(0, budget - used - note.count)
+            var text = String(own.text.prefix(room))
+            if let line = text.lastIndex(of: "\n") { text = String(text[..<line]) }
+            cut.text = text + note
+            if cut.text.count <= budget - used {
+                chosen.append(cut)
+                used += cut.text.count
+            }
+        }
         if let first = screen.first(where: { $0.path.count == (screen.first?.path.count ?? 0) + 1 }) { take(first, limit: budget / 2) }
 
         // Ranked: the whole question and the element's title weigh more than one of their words.
@@ -309,16 +350,35 @@ public enum AskAKit {
         return text.replacing(/\]\(#/) { _ in "](\(guide)#" }
     }
 
-    /// The "answer" of the first JSON object in the text that has one. Bounded tries.
+    /// The "answer" of the JSON object in the text: the whole text, or from one of the first 64
+    /// `{` to the last `}` (prose or a fence around it). At most 65 parses, not one per pair.
     static func answerField(in text: String) -> String? {
-        let starts = text.indices.filter { text[$0] == "{" }.prefix(64)
-        let ends = text.indices.filter { text[$0] == "}" }.reversed().prefix(64)
-        for start in starts {
-            for end in ends where start < end {
-                guard let object = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [String: Any] else { continue }
-                if let answer = object["answer"] as? String { return answer }
-            }
+        func parse(_ part: Substring) -> String? {
+            (try? JSONSerialization.jsonObject(with: Data(part.utf8)) as? [String: Any])?["answer"] as? String
+        }
+        if let whole = parse(text[...]) { return whole }
+        guard let end = text.lastIndex(of: "}") else { return nil }
+        for start in text.indices.lazy.filter({ text[$0] == "{" }).prefix(64) where start < end {
+            if let found = parse(text[start...end]) { return found }
         }
         return nil
+    }
+
+    // MARK: - Links in an answer
+
+    /// What a link in an answer may open.
+    public enum LinkTarget: Equatable, Sendable {
+        /// A guide section a guide has: the Guide window opens it.
+        case guide(Source)
+        /// An `https` page: the browser opens it.
+        case web(URL)
+        /// Anything else (a file, an app's own scheme, a section no guide has): nothing opens.
+        case discard
+    }
+
+    public static func linkTarget(_ url: URL, guides: [Guide]) -> LinkTarget {
+        if url.scheme?.lowercased() == "https", url.host() != nil { return .web(url) }
+        guard url.scheme == nil, url.relativeString.contains("#") else { return .discard }
+        return sources(in: "[link](\(url.relativeString))", guides: guides).first.map { .guide($0) } ?? .discard
     }
 }

@@ -39,6 +39,9 @@ final class AskAKitModel {
     }
     /// What a screen's own view shows now (`.askAKitScreen`), per screen.
     var screenFacts: [SidebarSection: String] = [:]
+    /// Texts from sessions that must never go out as screen data, beyond the session titles
+    /// AppModel has: RootView adds the error analysis modes' names and definitions.
+    var sessionTexts: () -> [String] = { [] }
     private let app: AppModel
     /// True from a send until its task has really ended (its harness process is gone): New Chat
     /// or Stop during a call never lets a second call start beside it.
@@ -151,6 +154,9 @@ final class AskAKitModel {
         guard !isRunning else { return }
         var context = screen
         context.element = focus
+        // Screen data is setup data only: no session titles (first prompts), no mode names or
+        // definitions. The views send ids and numbers; this catches what a fact still quotes.
+        context = context.redacting(app.sessions.map(\.title) + sessionTexts())
         let history = messages.filter { !$0.failed }.map { AskTurn(role: $0.role, text: $0.text) }
         messages.append(Message(role: .user, text: question, about: about))
         let agent = self.agent
@@ -184,8 +190,12 @@ final class AskAKitModel {
                         gate: gate, folder: folder, env: env)
                 }
                 if scope.isCancelled { throw CancellationError() }
-                let text = AskAKit.answer(from: answer.text)
-                reply = Message(role: .assistant, text: text, sources: AskAKit.sources(in: text, guides: guides))
+                // Reading the answer parses JSON: off the main actor.
+                let raw = answer.text
+                reply = await Task.detached {
+                    let text = AskAKit.answer(from: raw)
+                    return Message(role: .assistant, text: text, sources: AskAKit.sources(in: text, guides: guides))
+                }.value
             } catch is CancellationError {
                 reply = Message(role: .assistant, text: "Stopped.", failed: true)
             } catch {
@@ -198,6 +208,11 @@ final class AskAKitModel {
             guard chat == self.chat else { return }
             messages.append(reply)
         }
+    }
+
+    /// What a link in an answer may open: a section a guide has, or an https page.
+    func linkTarget(_ url: URL) -> AskAKit.LinkTarget {
+        AskAKit.linkTarget(url, guides: guides ?? [])
     }
 
     /// Every guide in the bundle and one search over them, read once.
@@ -322,10 +337,18 @@ struct AskAKitPanel: View {
         .onAppear { ask.refreshAgent() }
         .onChange(of: "\(harnessRaw)|\(modelName)|\(effort)") { ask.refreshAgent() }
         // `[title](screens#id)` in an answer opens the Guide window at that section.
+        // Only a guide section the guides have (in the Guide window) or an https page (in the
+        // browser) opens; a file, an app's scheme or an unknown section does nothing.
         .environment(\.openURL, OpenURLAction { url in
-            guard url.scheme == nil, let section = url.fragment else { return .systemAction }
-            open(Guide(rawValue: url.path) ?? .screens, section)
-            return .handled
+            switch ask.linkTarget(url) {
+            case .guide(let source):
+                open(Guide(rawValue: source.guide) ?? .screens, source.section)
+                return .handled
+            case .web(let page):
+                return .systemAction(page)
+            case .discard:
+                return .discarded
+            }
         })
     }
 
@@ -400,6 +423,11 @@ struct AskAKitPanel: View {
             }
             .labelStyle(.iconOnly)
             .controlSize(.large)
+            if ask.draft.count > AskAKit.questionLimit {
+                Label("Only the first \(AskAKit.questionLimit.formatted()) characters are sent.", systemImage: "scissors")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
             // Data leaves this Mac: say what and where, every time.
             Text("Sends your question, this screen's data and the chat so far to \(agentName), with the account signed in there. Logged in Lab → Sends.")
                 .font(.caption)

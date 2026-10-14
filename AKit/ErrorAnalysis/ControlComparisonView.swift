@@ -194,7 +194,7 @@ struct ControlComparisonView: View {
         .askAKit("Setup \(row.setup.label) in the comparison (Evals)", facts: [
             "pass@1: \(AnalysisText.percent(row.passAt1))", "pass^k: \(AnalysisText.percent(row.passHatK)) (k = \(row.k))",
             "Cells: \(row.cells)", row.flagged > 0 ? "\(row.flagged) flagged, counted as failed" : "",
-        ] + row.tasks.map { "\(title($0.task)): \($0.passed)/\($0.total)" })
+        ] + row.tasks.map { "Task \($0.task): \($0.passed)/\($0.total)" })
     }
 
     private func rate(_ value: Double?, _ interval: Stats.Interval) -> some View {

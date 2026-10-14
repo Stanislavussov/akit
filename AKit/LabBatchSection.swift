@@ -147,9 +147,7 @@ struct LabBatchSection: View {
                 ForEach(batch.sessions, id: \.pick.sessionKey) { session in
                     GridRow {
                         BatchStatusBadge(status: session.status)
-                            .askAKit("Batch session status \(session.status) (Lab)", facts: [
-                                "Session: \(title(session))", session.message.map { "Message: \($0)" } ?? "",
-                            ])
+                            .askAKit("Batch session status \(session.status) (Lab)", facts: ["Session: \(session.pick.sessionKey)"])
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title(session)).lineLimit(1)
                             if let message = session.message {
@@ -167,8 +165,8 @@ struct LabBatchSection: View {
                             .help(session.pick.stratum)
                         Text(session.steps.last ?? "—").foregroundStyle(.secondary).lineLimit(1)
                             .help(session.steps.joined(separator: " → "))
-                            .askAKit("Batch session \(title(session)) (Lab)", facts: [
-                                "Status: \(session.status)", session.message.map { "Message: \($0)" } ?? "",
+                            .askAKit("Batch session \(session.pick.sessionKey) (Lab)", facts: [
+                                "Status: \(session.status)",
                                 String(format: "Inclusion probability π: %.2f", session.pick.inclusion), "Sampled: \(session.pick.sampling)",
                                 "Steps: \(session.steps.joined(separator: " → "))",
                             ])

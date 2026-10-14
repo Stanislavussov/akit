@@ -163,7 +163,7 @@ private struct LabRunRow: View {
             .lineLimit(1)
         }
         .padding(.vertical, 2)
-        .askAKit("Lab run “\(run.spec.title)”", facts: [
+        .askAKit("Lab run \(run.id) (\(run.spec.kind.title))", facts: [
             "Status: \(run.status.rawValue)", "Runs in: \(run.spec.environment.title)",
             run.spec.agent.map { "Agent: \($0.label)" } ?? "",
             run.result?.tests.map { "Tests: \($0.status)" } ?? "",
@@ -544,7 +544,7 @@ private struct LabRunDetail: View {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).monospaced(monospaced).lineLimit(2).truncationMode(.middle)
         }
-        .askAKit("Lab run detail: \(label)", facts: ["\(label): \(value)", "Run: \(run.spec.title)"])
+        .askAKit("Lab run detail: \(label)", facts: ["\(label): \(value)", "Run: \(run.id)"])
     }
 
     private func act(_ work: @escaping () async throws -> Void) {

@@ -151,7 +151,7 @@ struct BootstrapOverview: View {
                     Button("Find Similar Cases…") { analysis.send = .similar(mode, data: data) }
                         .controlSize(.small)
                 }
-                .askAKit("Similar cases for \(mode.name) (Bootstrap)", facts: ["Your notes mapped to it: \(count)"])
+                .askAKit("Similar cases for mode \(mode.id) (Bootstrap)", facts: ["Your notes mapped to it: \(count)"])
             }
         }
     }
@@ -176,7 +176,7 @@ struct BootstrapOverview: View {
                         .controlSize(.small)
                     }
                     .card()
-                    .askAKit("Find for \(data.mode(find.modeID)?.name ?? find.modeID) (Bootstrap)", facts: [
+                    .askAKit("Find for mode \(find.modeID) (Bootstrap)", facts: [
                         "Found from your note \(find.from.noteID)",
                         find.accepted.map { $0 ? "Accepted" : "Rejected" } ?? "Not decided",
                     ])

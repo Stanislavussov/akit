@@ -14,7 +14,7 @@ struct LabControlSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Control task").font(.title3.bold())
                 .askAKit("Control task of this Lab run", facts: [
-                    task.map { "Task: \($0.title)" } ?? "The task is gone", task.map { "Oracle: \($0.oracle.label)" } ?? "",
+                    task.map { "Task: \($0.id)" } ?? "The task is gone", task.map { "Oracle: \($0.oracle.label)" } ?? "",
                     task.map { "Source: \($0.sourceTitle)" } ?? "", run.spec.controlSetup.map { "Setup: \($0.label)" } ?? "",
                 ])
             if let task {

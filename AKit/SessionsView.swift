@@ -91,7 +91,7 @@ struct SessionsView: View {
                         Button("Show Project in Finder") { NSWorkspace.shared.activateFileViewerSelecting([project]) }
                     }
                     Divider()
-                    AskAKitMenuItem(title: "Session “\(session.title)”", facts: [
+                    AskAKitMenuItem(title: "A \(session.harness.displayName) session", facts: [
                         "Harness: \(session.harness.displayName)",
                         session.project.map { "Project: \($0.lastPathComponent)" } ?? "",
                         "Last change: \(session.modified.formatted(date: .abbreviated, time: .shortened))",
@@ -371,7 +371,8 @@ private struct SessionDetailView: View {
             }
             .pickerStyle(.segmented)
             .askAKitScreen(.sessions, facts: [
-                "Open session: \(session.title)", "Harness: \(session.harness.displayName)",
+                // Never the title: it is the session's first prompt.
+                "Open session: one \(session.harness.displayName) session", "Last change: \(session.modified.formatted(date: .abbreviated, time: .shortened))",
                 session.project.map { "Project: \($0.lastPathComponent)" } ?? "", "Tab: \(tab.title)",
             ])
             .labelsHidden()
