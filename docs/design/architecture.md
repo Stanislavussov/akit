@@ -83,6 +83,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitModel` | Shared vocabulary that several modules use. Only value types: no file access, no logic. | `Model/Harness.swift` (HarnessID, HarnessInstallation, ConfigLocation); from `Model/Skill.swift`: SkillScope, SkillRoot; `MCPSource` and `MCPApproval` (from `MCP/MCPServer.swift`); `InstallScope` (from `SkillsSh/SkillInstaller.swift`); `TokenCounts` (from `Sessions/SessionUsage.swift`) |
 | `AKitHarnesses` | Detects which harnesses are installed and where each one keeps things: config folders, skill folders (also those of Pi packages, `PiPackages`), MCP files, known projects (Claude Code from `~/.claude.json`, Pi from its session headers). | `Adapters/*` (HarnessAdapter, the four adapters, HarnessCatalog; without `SystemPromptAccess`); `Custom/CustomHarness.swift`; `Support/FileProbe.swift`; `Skills/ProjectFinder.swift`; new `HarnessCatalog.configRoot(of:in:)` and `HarnessCatalog.adapter(for:)` |
 | `AKitSkills` | Finds, lists, reads and trashes skills on disk, and knows where each skill came from. | `Model/Skill.swift` (`Skill`); `Skills/SkillScanner.swift` (+ PiNameRule, SkillLock); `SkillFiles.swift`; `SkillRemover.swift`; `SkillsSh/InstalledSkillLock.swift` |
+| `AKitInstructions` | Which instruction files (AGENTS.md, CLAUDE.md, …) each harness loads for a session in a project, in order, with the skipped ones and why; files split into `##` sections (added 2026-10-14, `instructions.md`). Reads only. | new |
 | `AKitSkillsSh` | Searches skills.sh, downloads skills and installs them into harness folders. | `SkillsSh/SkillsShClient.swift`, `RemoteSkillFetcher.swift`, `SkillInstaller.swift` |
 | `AKitSessions` | Lists saved sessions, reads transcripts, reads or captures system prompts, and reads the line format of Claude and Pi session files. | `Sessions/*` except JSONLines; `SystemPromptAccess` (from `Adapters/HarnessAdapter.swift`); per-harness dispatch taken out of the adapters (see 1.2); new `ClaudeLogFormat` and `PiLogFormat` (line readers shared with Usage and Insights, fix 24) |
 | `AKitUsage` | Token usage and subscription limits for each harness. | `Usage/*`; `extension ClaudeSessions` / `extension PiSessions` in `HarnessUsage.swift` become `enum ClaudeUsage` / `enum PiUsage` |
@@ -137,6 +138,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitModel` | nothing (no Model type uses the toolbox today) |
 | `AKitHarnesses` | Foundation, Model |
 | `AKitSkills` | Foundation, Model, Harnesses |
+| `AKitInstructions` | Foundation, Model, Harnesses |
 | `AKitSkillsSh` | Foundation, Model, Harnesses, Skills |
 | `AKitSessions` | Foundation, Model |
 | `AKitUsage` | Foundation, Model, Sessions |
@@ -145,11 +147,11 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitBrain` | Foundation, Model, Skills, Yams |
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
-| `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Brain, Render, Insights, MCP (MCP switches' project files) |
+| `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |
-| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor |
+| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
 Rules:

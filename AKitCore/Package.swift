@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "AKitModel", targets: ["AKitModel"]),
         .library(name: "AKitHarnesses", targets: ["AKitHarnesses"]),
         .library(name: "AKitSkills", targets: ["AKitSkills"]),
+        .library(name: "AKitInstructions", targets: ["AKitInstructions"]),
         .library(name: "AKitSkillsSh", targets: ["AKitSkillsSh"]),
         .library(name: "AKitSessions", targets: ["AKitSessions"]),
         .library(name: "AKitUsage", targets: ["AKitUsage"]),
@@ -34,6 +35,7 @@ let package = Package(
         .target(name: "AKitModel"),
         .target(name: "AKitHarnesses", dependencies: ["AKitFoundation", "AKitModel"]),
         .target(name: "AKitSkills", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
+        .target(name: "AKitInstructions", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .target(name: "AKitSkillsSh", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills"]),
         .target(name: "AKitSessions", dependencies: ["AKitFoundation", "AKitModel"]),
         .target(name: "AKitUsage", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions"]),
@@ -51,14 +53,15 @@ let package = Package(
         // → Render: layer evals render a brain layer into a control cell (docs/design/layer-evals.md).
         .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain", "AKitRender"]),
         // → MCP: Pi project files of MCP switches stay out of git (MCPProjectSwitch).
-        .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "AKitBrain", "AKitRender", "AKitInsights", "AKitMCP"]),
+        .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "AKitInstructions", "AKitBrain", "AKitRender", "AKitInsights", "AKitMCP"]),
         // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md).
         .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitProjectSetup"]),
-        .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
+        .target(name: "AKitCommandLine", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),
         .testTarget(name: "AKitHarnessesTests", dependencies: ["AKitHarnesses", "AKitFoundation", "AKitModel", "AKitSkills"]),
         .testTarget(name: "AKitSkillsTests", dependencies: ["AKitSkills", "AKitFoundation", "AKitHarnesses"]),
+        .testTarget(name: "AKitInstructionsTests", dependencies: ["AKitInstructions", "AKitFoundation", "AKitHarnesses", "AKitModel"]),
         .testTarget(name: "AKitSkillsShTests", dependencies: ["AKitSkillsSh", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills"]),
         .testTarget(name: "AKitSessionsTests", dependencies: ["AKitSessions", "AKitFoundation", "AKitModel", "AKitHarnesses"]),
         .testTarget(name: "AKitUsageTests", dependencies: ["AKitUsage", "AKitFoundation", "AKitModel", "AKitHarnesses"]),

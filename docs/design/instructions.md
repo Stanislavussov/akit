@@ -1,10 +1,15 @@
 # Instructions: AGENTS.md and CLAUDE.md like skills
 
 Status: agreed 2026-10-14, from a chat request ("work with AGENTS.md on the same principle
-as skills"). Nothing is built. Decided the same day (D11–D13, D15 in [`README.md`](README.md)):
+as skills"). Step 1 is built (below). Decided the same day (D11–D13, D15 in [`README.md`](README.md)):
 a section is one `##` heading, AKit may edit a project's tracked files (diff + backup, no
 commit), duplicates are the same text after normalizing, and step 1 comes first and alone. D14
-(where Move to Global puts a section) is open until step 5. Step 0 (the facts below) is done: checked the same day in
+(where Move to Global puts a section) is open until step 5.
+
+Step 1 built 2026-10-14: `AKitInstructions` (`InstructionScanner`, `InstructionText`), the
+Instructions screen (On This Mac) and `akit instructions [FOLDER] [--harness …] [--global]`.
+Not in step 1: files in subfolders that load later, and Codex's budget for the global file
+(only project files count against the 32 KiB). Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem
@@ -34,6 +39,19 @@ AGENTS.md guide and `core/src/agents_md.rs` strings in its binary; OpenCode's ru
 | Joined or first wins | joined: managed → user → root … cwd | joined: global → root … cwd | joined: root … cwd, 32 KiB in all, the last file cut | joined: global → cwd … root (closest first) |
 | Reads the other's name | AGENTS.md only through its built-in plugin, and only when no CLAUDE.md exists in cwd or above | `CLAUDE.md` when the folder has no `AGENTS.*` | no (unless configured) | `CLAUDE.md` when no `AGENTS.md` is found; `~/.claude/CLAUDE.md` when no global AGENTS.md |
 | Imports | `@path`, 4 hops | no | no | no (`instructions` in config) |
+
+More rules found in the review of step 1 (2026-10-14, Pi's code read again):
+
+- Pi, in a linked worktree inside the main checkout (`repo/.claude/worktrees/x`, Claude Code's
+  own layout), skips the main checkout's file when the worktree has its own file of that name
+  (`findShadowedContextFile`, `resource-loader.js:136-163`).
+- Pi and Codex keep a list of paths as written: a link to a file above is read a second time.
+  Claude Code and OpenCode are taken to list a file once (by its real path).
+- Claude Code rules with `paths:` in their front matter load only when the agent works on a
+  matching file; they are listed apart ("Loads Later") and not counted in the size.
+- Claude Code imports any `@word` that is an existing path (`@README`, `@package.json`).
+- Not verified: whether Codex lets an empty project `AGENTS.override.md` hide `AGENTS.md`
+  (AKit follows the docs: empty files are skipped).
 
 Consequences for AKit:
 

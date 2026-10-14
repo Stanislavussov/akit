@@ -28,6 +28,8 @@ targets:
       - package: AKitCore
         product: AKitSkills
       - package: AKitCore
+        product: AKitInstructions
+      - package: AKitCore
         product: AKitSkillsSh
       - package: AKitCore
         product: AKitSessions

@@ -232,6 +232,12 @@ public enum AKitCLI {
           akit analysis notes [SESSION]   Error analysis: a reviewed session's outcome, verified notes
                                           and advice. akit analysis --help lists the rest
 
+        Instructions (AGENTS.md, CLAUDE.md; only reads):
+          akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
+                                          The instruction files each harness loads for a session in
+                                          FOLDER (default: here), in the order the model gets them,
+                                          with sizes, and the files it skips with the reason
+
         This Mac (~/.akit/machine.json, never in the brain):
           akit doctor                     What AKit sees on this Mac and what is wrong (lines with !,
                                           each with what to do). Only reads, never shows a secret.
@@ -338,6 +344,10 @@ public enum AKitCLI {
                 try args.finish()
                 out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot])))
                 return 0
+            }
+            if command == "instructions" {
+                try refuseProjectOptions(options, command: "instructions")
+                return try instructions(&args, env: env, cwd: cwd, out: out)
             }
             if command == "worktrees" {
                 try refuseProjectOptions(options, command: "worktrees")

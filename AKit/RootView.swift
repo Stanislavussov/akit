@@ -30,7 +30,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
 
     var sections: [SidebarSection] {
         switch self {
-        case .installed: [.overview, .skills, .skillsSh, .mcp]
+        case .installed: [.overview, .skills, .skillsSh, .mcp, .instructions]
         case .setup: [.brain]
         case .activity: [.sessions, .usage]
         case .improve: [.insights, .lab, .analysis]
@@ -44,6 +44,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case skills
     case skillsSh
     case mcp
+    case instructions
     case sessions
     case usage
     case insights
@@ -58,6 +59,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .skills: "Skills"
         case .skillsSh: "skills.sh"
         case .mcp: "MCP Servers"
+        case .instructions: "Instructions"
         case .sessions: "Sessions"
         case .usage: "Usage"
         case .insights: "Insights"
@@ -74,6 +76,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .skills: "Every skill the agents see now, by where it lives. Brain skills are edited in Brain"
         case .skillsSh: "Find a public skill on skills.sh and install it into a folder; Import Skills… in Brain adds it to your library"
         case .mcp: "MCP servers per harness and project; edited in the harness configs, secrets in the Keychain"
+        case .instructions: "The AGENTS.md and CLAUDE.md files each harness loads for a session in a project, in order, with their size"
         case .sessions: "Saved conversations, newest first; open one for its tokens and Analysis. Review in Terminal… starts a Lab run"
         case .usage: "Tokens and cost per day, summed from the same session files"
         case .insights: "What the skill list costs in every request and which skills the model never calls; Apply… makes one manual in its layer"
@@ -89,6 +92,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .skills: "book.closed"
         case .skillsSh: "sparkle.magnifyingglass"
         case .mcp: "server.rack"
+        case .instructions: "doc.text"
         case .sessions: "bubble.left.and.bubble.right"
         case .usage: "chart.bar.xaxis"
         case .insights: "lightbulb"
@@ -140,6 +144,7 @@ struct RootView: View {
             case .skills: SkillsView()
             case .skillsSh: SkillsShView()
             case .mcp: MCPView()
+            case .instructions: InstructionsView()
             case .sessions: SessionsView()
             case .usage: UsageView()
             case .insights: InsightsView()
