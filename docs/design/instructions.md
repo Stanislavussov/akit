@@ -1,8 +1,10 @@
 # Instructions: AGENTS.md and CLAUDE.md like skills
 
-Status: proposal 2026-10-14, from a chat request ("work with AGENTS.md on the same principle
-as skills"). Nothing is built. Not agreed: the user's review is open, and the questions are
-D11–D15 in [`README.md`](README.md). Step 0 (the facts below) is done: checked the same day in
+Status: agreed 2026-10-14, from a chat request ("work with AGENTS.md on the same principle
+as skills"). Nothing is built. Decided the same day (D11–D13, D15 in [`README.md`](README.md)):
+a section is one `##` heading, AKit may edit a project's tracked files (diff + backup, no
+commit), duplicates are the same text after normalizing, and step 1 comes first and alone. D14
+(where Move to Global puts a section) is open until step 5. Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem
