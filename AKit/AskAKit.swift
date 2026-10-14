@@ -19,12 +19,33 @@ final class AskAKitModel {
         var sources: [AskAKit.Source] = []
         /// An error in place of an answer: not sent as an earlier turn.
         var failed = false
+        /// A question: what went out for it (What Was Sent), once the call has started.
+        var sent: Sent?
+    }
+
+    /// What one question sent, as it left the Mac: the scrubbed input, the guide sections in
+    /// the system prompt and its size, and where it went.
+    struct Sent: Hashable {
+        var destination: String
+        var input: String
+        var sections: [AskAKit.Source]
+        var systemCharacters: Int
+    }
+
+    /// A question waiting for the first-send confirmation.
+    struct Pending {
+        var question: String
+        var element: AskContext.Element?
+        var screen: SidebarSection
+        var inSettingsLanguage: Bool
     }
 
     /// The agent's settings, shared with the panel's fields (`@AppStorage`).
     static let harnessKey = "ask.harness"
     static let modelKey = "ask.model"
     static let effortKey = "ask.effort"
+    /// Set by "Don't ask again" in the first-send confirmation.
+    static let consentKey = "ask.dontConfirm"
     /// What Ask AKit About This asks.
     static let aboutQuestion = "What does this mean, why does it matter, and what can I do about it?"
 
@@ -46,6 +67,10 @@ final class AskAKitModel {
     /// True from a send until its task has really ended (its harness process is gone): New Chat
     /// or Stop during a call never lets a second call start beside it.
     private(set) var isRunning = false
+    /// The question the first-send confirmation asks about; nil when none is shown.
+    var pending: Pending?
+    /// Confirmed once in this launch (or "Don't ask again"): later sends go straight out.
+    private var confirmed = UserDefaults.standard.bool(forKey: consentKey)
     private var call: Task<Void, Never>?
     /// The running call's processes: Stop and New Chat cancel it, which ends the harness's
     /// process (ChildProcess follows this scope, not Task cancellation).
@@ -66,9 +91,12 @@ final class AskAKitModel {
         }
     }
 
-    /// The screen as a question sees it: what it is for, what AKit found for it, and what its
+    /// The screen in view as a question sees it.
+    var screen: AskContext { context(for: section) }
+
+    /// A screen as a question sees it: what it is for, what AKit found for it, and what its
     /// view shows now.
-    var screen: AskContext {
+    func context(for section: SidebarSection) -> AskContext {
         let facts = [section.summary, appFacts(section), screenFacts[section] ?? ""].filter { !$0.isEmpty }
         return AskContext(screen: section.rawValue, screenTitle: section.title, summary: facts.joined(separator: "\n"))
     }
@@ -101,11 +129,12 @@ final class AskAKitModel {
 
     func toggle() { isOpen.toggle() }
 
-    /// Opens the panel and asks about `element` on the current screen.
-    func ask(about element: AskContext.Element) {
+    /// Opens the panel and asks about `element` on `screen` (the current one by default; a
+    /// sidebar item names its own). Ignored while a call runs: the menu item is off then too.
+    func ask(about element: AskContext.Element, screen: SidebarSection? = nil) {
+        guard !isRunning, pending == nil else { return }
         isOpen = true
-        focus = element
-        send(Self.aboutQuestion, about: element.title, inSettingsLanguage: true)
+        request(Pending(question: Self.aboutQuestion, element: element, screen: screen ?? section, inSettingsLanguage: true))
     }
 
     func newChat() {
@@ -147,18 +176,49 @@ final class AskAKitModel {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isRunning else { return }
         draft = ""
-        send(question, about: focus?.title, inSettingsLanguage: false)
+        request(Pending(question: question, element: focus, screen: section, inSettingsLanguage: false))
     }
 
-    private func send(_ question: String, about: String?, inSettingsLanguage: Bool) {
+    /// Sends at once once confirmed; else shows the first-send confirmation.
+    private func request(_ question: Pending) {
+        guard !isRunning, pending == nil else { return }
+        if confirmed {
+            send(question)
+        } else {
+            pending = question
+        }
+    }
+
+    /// The confirmation's Send. `dontAskAgain`: its suppression toggle.
+    func confirmPending(dontAskAgain: Bool) {
+        guard let question = pending else { return }
+        pending = nil
+        confirmed = true
+        if dontAskAgain { UserDefaults.standard.set(true, forKey: Self.consentKey) }
+        send(question)
+    }
+
+    func cancelPending() {
+        // A typed question goes back into the field; About This just isn't asked.
+        if let question = pending, !question.inSettingsLanguage { draft = question.question }
+        pending = nil
+    }
+
+    private func send(_ question: Pending) {
         guard !isRunning else { return }
-        var context = screen
-        context.element = focus
+        // The element becomes the focus only now that the question is really sent.
+        if let element = question.element { focus = element }
+        let about = question.element?.title
+        let inSettingsLanguage = question.inSettingsLanguage
+        var context = context(for: question.screen)
+        context.element = question.element
+        let question = question.question
         // Screen data is setup data only: no session titles (first prompts), no mode names or
         // definitions. The views send ids and numbers; this catches what a fact still quotes.
         context = context.redacting(app.sessions.map(\.title) + sessionTexts())
         let history = messages.filter { !$0.failed }.map { AskTurn(role: $0.role, text: $0.text) }
-        messages.append(Message(role: .user, text: question, about: about))
+        let asked = Message(role: .user, text: question, about: about)
+        messages.append(asked)
         let agent = self.agent
         let chat = self.chat
         let scope = Cancellation.Scope()
@@ -182,6 +242,11 @@ final class AskAKitModel {
                 let answer = try await Cancellation.$scope.withValue(scope) {
                     let gate = try await SendGate.open(agent: agent, env: env)
                     if scope.isCancelled { throw CancellationError() }
+                    // What Was Sent: the input as the scrub leaves it, before the call starts.
+                    let sent = Sent(destination: "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model) · \(gate.destination.label)",
+                                    input: gate.scrub(prepared.input).text, sections: prepared.sources,
+                                    systemCharacters: prepared.system.count)
+                    if chat == self.chat, let index = messages.firstIndex(where: { $0.id == asked.id }) { messages[index].sent = sent }
                     // The screen's data is the user's harness setup: the chosen harness's own
                     // account is its origin, so a work Mac sends it only to an allowed destination.
                     return try await ModelCall.run(
@@ -230,7 +295,12 @@ final class AskAKitModel {
 
     /// `make snapshot ASK=1`: a chat as it looks after one Ask AKit About This; no model call.
     private static let cannedChat: [Message] = [
-        Message(role: .user, text: aboutQuestion, about: "Skill Listing (Claude Code's skill descriptions in every request)"),
+        Message(role: .user, text: aboutQuestion, about: "Skill Listing (Claude Code's skill descriptions in every request)",
+                sent: Sent(destination: "Claude Code · opus · Anthropic · me@example.com",
+                           input: "Screen: Insights\nWhat the screen shows now:\nScope: All Sessions\nWindow: 30 days\nRecommendations: 2\nThe question is about: Skill Listing\nSessions measured: 25\n\nQuestion: \(aboutQuestion)",
+                           sections: [AskAKit.Source(guide: "screens", section: "insights", title: "Insights"),
+                                      AskAKit.Source(guide: "screens", section: "skills", title: "Skills")],
+                           systemCharacters: 31_480)),
         Message(role: .assistant, text: """
             **Skill Listing** — это список скиллов с описаниями, который Claude Code кладёт в каждый запрос к модели. По нему модель решает, какой скилл вызвать.
 
@@ -267,9 +337,10 @@ private struct AskScreenFacts: ViewModifier {
 
 extension View {
     /// Adds Ask AKit About This to the view's context menu. For a view that already has a
-    /// context menu, put `AskAKitMenuItem` in that menu instead.
-    func askAKit(_ title: String, facts: [String] = []) -> some View {
-        contextMenu { AskAKitMenuItem(title: title, facts: facts) }
+    /// context menu, put `AskAKitMenuItem` in that menu instead. The facts are built only when
+    /// the item is chosen.
+    func askAKit(_ title: String, facts: @autoclosure @escaping () -> [String] = []) -> some View {
+        contextMenu { AskAKitMenuItem(title: title, facts: facts()) }
     }
 
     /// What the screen shows now (`label: value` lines), for Ask AKit's questions on it.
@@ -279,15 +350,25 @@ extension View {
 }
 
 /// The context menu item: opens Ask AKit and asks about the element, with its visible values.
+/// Off while Ask AKit is answering.
 struct AskAKitMenuItem: View {
     @Environment(AskAKitModel.self) private var ask
     let title: String
-    var facts: [String] = []
+    let facts: () -> [String]
+    /// The screen the element belongs to, when it isn't the one in view (a sidebar item).
+    var screen: SidebarSection?
+
+    init(title: String, facts: @autoclosure @escaping () -> [String] = [], screen: SidebarSection? = nil) {
+        self.title = title
+        self.facts = facts
+        self.screen = screen
+    }
 
     var body: some View {
         Button("Ask AKit About This", systemImage: "questionmark.bubble") {
-            ask.ask(about: AskContext.Element(title: title, facts: facts.filter { !$0.isEmpty }.joined(separator: "\n")))
+            ask.ask(about: AskContext.Element(title: title, facts: facts().filter { !$0.isEmpty }.joined(separator: "\n")), screen: screen)
         }
+        .disabled(ask.isRunning || ask.pending != nil)
     }
 }
 
@@ -301,6 +382,7 @@ struct AskAKitPanel: View {
     @AppStorage(AskAKitModel.modelKey) private var modelName = ""
     @AppStorage(AskAKitModel.effortKey) private var effort = ""
     @State private var choosingAgent = false
+    @State private var dontAskAgain = false
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -333,6 +415,22 @@ struct AskAKitPanel: View {
             footer
         }
         .frame(minWidth: 280)
+        // The first send (of this launch, until Don't ask again): what leaves the Mac and where.
+        .confirmationDialog("Send to \(ask.agent.harness.title)?", isPresented: Binding(get: { ask.pending != nil }, set: { if !$0 { ask.cancelPending() } }),
+                            titleVisibility: .visible) {
+            Button("Send") { ask.confirmPending(dontAskAgain: dontAskAgain) }
+            Button("Cancel", role: .cancel) { ask.cancelPending() }
+        } message: {
+            Text("""
+                Ask AKit sends one request to \(agentName), with the account signed in there:
+                • your question and the chat so far;
+                • this screen's data: names, counts, ids, statuses and numbers (never text from sessions);
+                • the values of the element you asked about;
+                • the AKit guide sections that fit the question.
+                The sending policy, the scrub and the monthly limit apply, and Lab → Sends logs it. What Was Sent under each question shows it.
+                """)
+        }
+        .dialogSuppressionToggle("Don't ask again", isSuppressed: $dontAskAgain)
         // The agent is worked out here, not on every redraw.
         .onAppear { ask.refreshAgent() }
         .onChange(of: "\(harnessRaw)|\(modelName)|\(effort)") { ask.refreshAgent() }
@@ -471,6 +569,9 @@ private struct AskMessageView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                     .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+                if let sent = message.sent {
+                    SentDisclosure(sent: sent, open: open)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         case .assistant:
@@ -510,5 +611,35 @@ private struct AskMessageView: View {
         }
         document.sections.forEach(add)
         return blocks
+    }
+}
+
+/// What Was Sent under a question: where it went, the input as the scrub left it, and the
+/// guide sections the system prompt carried.
+private struct SentDisclosure: View {
+    let sent: AskAKitModel.Sent
+    let open: (Guide, String) -> Void
+
+    var body: some View {
+        DisclosureGroup("What Was Sent") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("To \(sent.destination)").font(.caption)
+                Text("System prompt: Ask AKit's rules and \(sent.sections.count) guide sections, \(sent.systemCharacters.formatted()) characters")
+                    .font(.caption)
+                ForEach(sent.sections) { source in
+                    Button(source.title) { open(Guide(rawValue: source.guide) ?? .screens, source.section) }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+                Text("Input, after the scrub:").font(.caption.bold())
+                LongText(text: sent.input, monospaced: true, limit: 2_000)
+                    .font(.caption)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
 }

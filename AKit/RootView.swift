@@ -130,7 +130,8 @@ struct RootView: View {
                                     }
                                     AskAKitMenuItem(title: "The \(section.title) screen (sidebar item)",
                                                     facts: ["Sidebar group: \(group.title)", "Tooltip: \(section.summary)",
-                                                            badge(for: section) > 0 ? "Number next to it: \(badge(for: section))" : ""])
+                                                            badge(for: section) > 0 ? "Number next to it: \(badge(for: section))" : ""],
+                                                    screen: section)
                                 }
                                 .tag(section)
                         }

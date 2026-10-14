@@ -16,7 +16,9 @@ struct AKitApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("AKit") {
+        // One main window: the screen in view (AppModel.section) and Ask AKit's chat belong to
+        // the app, so a second window would only mirror the first.
+        Window("AKit", id: "main") {
             Group {
                 // The Settings and Guide windows can't be captured; `--settings` and `--guide <section>`
                 // show their views in the main one.
