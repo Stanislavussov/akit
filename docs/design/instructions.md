@@ -4,7 +4,7 @@ Status: agreed 2026-10-14, from a chat request ("work with AGENTS.md on the same
 as skills"). Step 1 is built (below). Decided the same day (D11–D13, D15 in [`README.md`](README.md)):
 a section is one `##` heading, AKit may edit a project's tracked files (diff + backup, no
 commit), duplicates are the same text after normalizing, and step 1 comes first and alone. D14
-(where Move to Global puts a section) is open until step 5.
+(decided the same day): Move to Global puts a section into the core layer.
 
 Step 1 built 2026-10-14: `AKitInstructions` (`InstructionScanner`, `InstructionText`), the
 Instructions screen (On This Mac) and `akit instructions [FOLDER] [--harness …] [--global]`.
