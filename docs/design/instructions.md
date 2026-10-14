@@ -40,6 +40,19 @@ AGENTS.md guide and `core/src/agents_md.rs` strings in its binary; OpenCode's ru
 | Reads the other's name | AGENTS.md only through its built-in plugin, and only when no CLAUDE.md exists in cwd or above | `CLAUDE.md` when the folder has no `AGENTS.*` | no (unless configured) | `CLAUDE.md` when no `AGENTS.md` is found; `~/.claude/CLAUDE.md` when no global AGENTS.md |
 | Imports | `@path`, 4 hops | no | no | no (`instructions` in config) |
 
+More rules found in the review of step 1 (2026-10-14, Pi's code read again):
+
+- Pi, in a linked worktree inside the main checkout (`repo/.claude/worktrees/x`, Claude Code's
+  own layout), skips the main checkout's file when the worktree has its own file of that name
+  (`findShadowedContextFile`, `resource-loader.js:136-163`).
+- Pi and Codex keep a list of paths as written: a link to a file above is read a second time.
+  Claude Code and OpenCode are taken to list a file once (by its real path).
+- Claude Code rules with `paths:` in their front matter load only when the agent works on a
+  matching file; they are listed apart ("Loads Later") and not counted in the size.
+- Claude Code imports any `@word` that is an existing path (`@README`, `@package.json`).
+- Not verified: whether Codex lets an empty project `AGENTS.override.md` hide `AGENTS.md`
+  (AKit follows the docs: empty files are skipped).
+
 Consequences for AKit:
 
 - A file "above" a project (`~/AGENTS.md`, `~/Projects/CLAUDE.md`) reaches every session below

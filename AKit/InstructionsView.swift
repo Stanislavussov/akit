@@ -63,8 +63,11 @@ struct InstructionsView: View {
                 .help("Each harness has its own rules for which files it reads")
             }
         }
+        // The picker shows installed harnesses; the choice follows when the list changes.
+        .onChange(of: harnesses, initial: true) {
+            if harness.map({ !harnesses.contains($0) }) ?? true { harness = harnesses.first }
+        }
         .task(id: "\(project?.path ?? "-")|\(harness?.rawValue ?? "-")|\(model.lastScan?.timeIntervalSince1970 ?? 0)") {
-            if harness == nil { harness = harnesses.first }
             guard let harness else { return }
             let project = project, env = HarnessEnvironment.current
             let made = await Task.detached { InstructionScanner.view(harness: harness, project: project, env: env) }.value
@@ -148,7 +151,11 @@ struct InstructionsView: View {
                 result.append(FileGroup(title: title, help: help, entries: [entry]))
             }
         }
-        let skipped = view.entries.filter { !$0.status.isLoaded }
+        let later = view.entries.filter { if case .onDemand = $0.status { true } else { false } }
+        if !later.isEmpty {
+            result.append(FileGroup(title: "Loads Later", help: "Read only in some sessions: when the agent works on a matching file", entries: later))
+        }
+        let skipped = view.entries.filter { if case .skipped = $0.status { true } else { false } }
         if !skipped.isEmpty {
             result.append(FileGroup(title: "Not Loaded", help: "Found, but \(view.harness.displayName) doesn't read it here; each says why", entries: skipped))
         }
@@ -180,14 +187,16 @@ private struct InstructionRow: View {
                     Image(systemName: "scissors").font(.caption).foregroundStyle(.orange).help(entry.note ?? "")
                 }
                 Spacer()
-                if entry.status.isLoaded {
-                    Text(InstructionsView.size(entry.bytes)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                if case .skipped = entry.status {} else {
+                    Text(InstructionsView.size(entry.sentBytes)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
             }
             Text(FileWalk.tilde(entry.file.deletingLastPathComponent(), home: home)).font(.caption).foregroundStyle(.secondary)
                 .lineLimit(1).truncationMode(.middle)
             if case .skipped(let reason) = entry.status {
                 Text(reason).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            } else if case .onDemand(let when) = entry.status {
+                Text(when).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 2)
@@ -225,7 +234,8 @@ private struct InstructionDetailView: View {
                     }
                     GridRow {
                         label("Size")
-                        Text(InstructionsView.size(entry.bytes))
+                        Text(entry.limit == nil ? InstructionsView.size(entry.bytes)
+                             : "\(InstructionsView.size(entry.sentBytes)) of \(InstructionsView.size(entry.bytes))")
                     }
                     if let note = entry.note {
                         GridRow {
@@ -270,6 +280,7 @@ private struct InstructionDetailView: View {
         switch entry.status {
         case .loaded: "Loaded in every request"
         case .imported(let by): "Loaded: \(by.tildePath) imports it (@\(entry.file.lastPathComponent))"
+        case .onDemand(let when): "Loaded in some sessions only. " + when
         case .skipped(let reason): "Not loaded. " + reason
         }
     }

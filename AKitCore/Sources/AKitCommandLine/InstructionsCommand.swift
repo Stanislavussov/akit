@@ -50,6 +50,8 @@ extension AKitCLI {
                 let sections = entry.sections.count
                 lines.append("  \(level)  \(path)\(by)  \(byteText(entry.bytes)), \(sections) section\(sections == 1 ? "" : "s")")
                 if let note = entry.note { lines.append("           ! \(note)") }
+            case .onDemand(let when):
+                lines.append("  later    \(path)  \(byteText(entry.bytes)): \(when)")
             case .skipped(let reason):
                 lines.append("  skipped  \(path): \(reason)")
             }
