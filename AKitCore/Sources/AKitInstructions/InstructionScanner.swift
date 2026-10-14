@@ -379,6 +379,12 @@ public struct InstructionView: Sendable {
     /// Loaded files in the order the model gets them, skipped ones where they were found.
     public let entries: [InstructionEntry]
 
+    public init(harness: HarnessID, project: URL?, entries: [InstructionEntry]) {
+        self.harness = harness
+        self.project = project
+        self.entries = entries
+    }
+
     public var loaded: [InstructionEntry] { entries.filter(\.status.isLoaded) }
     /// The bytes of every loaded file that reach the model (a file Codex cuts counts its first part).
     public var loadedBytes: Int { loaded.reduce(0) { $0 + $1.sentBytes } }

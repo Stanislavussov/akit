@@ -669,7 +669,9 @@ private struct SectionImportSheet: View {
     }
 }
 
-/// Move to Global…: the core layer's text and the file's removal as diffs, with Apply.
+/// Move to Global… in two steps: the core layer's text and the file's removal as diffs →
+/// Commit to Core; then the global files' core blocks as diffs → Apply (and, when every harness
+/// that reads the section gets it there, the file's removal).
 private struct MoveToGlobalSectionSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -677,28 +679,43 @@ private struct MoveToGlobalSectionSheet: View {
     let rendered: Set<String>
     let onDone: () -> Void
     @State private var plan: InstructionMove.GlobalPlan?
+    @State private var blocks: InstructionMove.Blocks?
+    @State private var removeSource = true
     @State private var problem: String?
     @State private var busy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Move \(request.section.heading.map { "“\($0)”" } ?? "the section") to Global").font(.title2.bold())
-            Text("The section goes into the core layer, so every harness's global instruction file gets it as AKit's core block; then it leaves \(request.file.lastPathComponent).")
+            Text(blocks == nil
+                 ? "Step 1 of 2: the section goes into the core layer (a commit in the brain). Nothing else changes yet."
+                 : "Step 2 of 2: the core block in this Mac's global instruction files gets the section; then \(request.file.lastPathComponent) can lose it.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    if let plan {
+                    if let blocks {
+                        ForEach(blocks.diffs) { diff in
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(diff.path + " (AKit's block)").fontWeight(.medium).padding(.bottom, 2)
+                                DiffPreview(diff: diff.lines)
+                            }
+                        }
+                        if removeSource, let plan, blocks.canRemove {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(plan.removal.file.tildePath).fontWeight(.medium).padding(.bottom, 2)
+                                DiffPreview(diff: plan.removal.diff)
+                            }
+                        }
+                    } else if let plan {
                         VStack(alignment: .leading, spacing: 0) {
                             Text("layers/core · AGENTS.md text (brain)").fontWeight(.medium).padding(.bottom, 2)
                             DiffPreview(diff: plan.core.diff)
                         }
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(plan.removal.file.tildePath).fontWeight(.medium).padding(.bottom, 2)
+                            Text(plan.removal.file.tildePath + " (in step 2)").fontWeight(.medium).padding(.bottom, 2)
                             DiffPreview(diff: plan.removal.diff)
                         }
-                    } else if let problem {
-                        Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-                    } else {
+                    } else if problem == nil {
                         ProgressView()
                     }
                 }
@@ -708,20 +725,43 @@ private struct MoveToGlobalSectionSheet: View {
             }
             .frame(height: 280)
             .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
-            ForEach(plan?.notes ?? [], id: \.self) { note in
-                Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if let blocks {
+                if !blocks.uncovered.isEmpty {
+                    Label("\(blocks.uncovered.map(\.displayName).joined(separator: ", ")) read\(blocks.uncovered.count == 1 ? "s" : "") the section here but get\(blocks.uncovered.count == 1 ? "s" : "") no core block on this Mac, so \(request.file.lastPathComponent) keeps it.",
+                          systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout).fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(blocks.warnings, id: \.self) { Text($0).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                Toggle("Then take it out of \(request.file.lastPathComponent)", isOn: $removeSource).disabled(!blocks.canRemove)
+            } else {
+                ForEach(plan?.notes ?? [], id: \.self) { note in
+                    Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Apply", action: apply)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(plan == nil || busy)
-                    .help("Commit the section in core, update the home folder's core blocks, then back up and rewrite this file. Each step runs only when the one before it worked.")
+                Button(blocks == nil ? "Cancel" : "Close") {
+                    if blocks != nil { onDone() }
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                if blocks == nil {
+                    Button("Commit to Core", action: commit)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(plan == nil || busy)
+                        .help("Commit the section in the core layer. The global files and this file change only in step 2, after you see their diffs.")
+                } else {
+                    Button("Apply", action: finish)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(busy || blocks?.diffs.isEmpty != false)
+                        .help("Back up and write the global files' core blocks, then (when ticked) this file without the section. Refused if a file changed since this preview.")
+                }
             }
         }
         .padding(20)
-        .frame(width: 640)
+        .frame(width: 660)
         .task {
             guard let brain = model.brain else { problem = "The brain is not loaded."; return }
             let request = request, rendered = rendered, env = HarnessEnvironment.current
@@ -737,17 +777,39 @@ private struct MoveToGlobalSectionSheet: View {
         }
     }
 
-    private func apply() {
+    private func commit() {
         guard let plan else { return }
         busy = true
+        problem = nil
         Task {
             do {
-                try await model.applyInstructionMoveToGlobal(plan)
+                let made = try await model.commitInstructionMoveToGlobal(plan, project: request.project)
+                blocks = made
+                removeSource = made.canRemove
+                if made.diffs.isEmpty {
+                    problem = "Core has the section (committed), but no global instruction file on this Mac takes the core block now. Brain → core → Update Home Folder… shows why; \(request.file.lastPathComponent) keeps the section."
+                }
+            } catch {
+                problem = error.localizedDescription
+                self.plan = nil
+            }
+            busy = false
+        }
+    }
+
+    private func finish() {
+        guard let plan, let blocks else { return }
+        busy = true
+        problem = nil
+        Task {
+            do {
+                try await model.finishInstructionMoveToGlobal(plan, blocks: blocks, removeSource: removeSource && blocks.canRemove,
+                                                              project: request.project)
                 onDone()
                 dismiss()
             } catch {
                 problem = error.localizedDescription
-                self.plan = nil
+                self.blocks = InstructionMove.Blocks.done
             }
             busy = false
         }
@@ -764,13 +826,9 @@ private struct MoveToProjectSectionSheet: View {
     @State private var chosen: Set<URL> = []
     @State private var plan: InstructionMove.ProjectPlan?
     @State private var problem: String?
-
-    private var targets: [InstructionMove.Target] {
-        var seen: Set<String> = []
-        return model.projects.filter { seen.insert($0.standardizedFileURL.path).inserted }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-            .map { InstructionMove.target($0, rendered: rendered) }
-    }
+    @State private var busy = false
+    /// Each project's file for the section, read off the main thread when the sheet opens.
+    @State private var targets: [InstructionMove.Target] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -828,23 +886,33 @@ private struct MoveToProjectSectionSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Apply") {
                     guard let plan else { return }
-                    do {
-                        try InstructionMove.apply(plan, env: .current)
-                        onDone()
-                        dismiss()
-                    } catch {
-                        problem = error.localizedDescription
-                        self.plan = nil
+                    busy = true
+                    Task {
+                        let result = await Task.detached { Result { () throws(InstructionMove.Failure) in try InstructionMove.apply(plan, env: .current) } }.value
+                        busy = false
+                        switch result {
+                        case .success:
+                            onDone()
+                            dismiss()
+                        case .failure(let error):
+                            problem = error.message
+                            self.plan = nil
+                        }
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(plan == nil)
+                .disabled(plan == nil || busy)
                 .help("Back up and write each project's file, then the global file without the section. Nothing is written when a file changed since this preview.")
             }
         }
         .padding(20)
         .frame(width: 760)
-        .onAppear {
+        .task {
+            var seen: Set<String> = []
+            let projects = model.projects.filter { seen.insert($0.standardizedFileURL.path).inserted }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            let source = request.file, rendered = rendered, env = HarnessEnvironment.current
+            targets = await Task.detached { projects.map { InstructionMove.target($0, source: source, rendered: rendered, env: env) } }.value
             // Snapshots: `--query <folder name>` ticks that project.
             if let name = DebugSnapshot.options?.query, let target = targets.first(where: { $0.project.lastPathComponent == name && $0.file != nil }) {
                 chosen = [target.project]

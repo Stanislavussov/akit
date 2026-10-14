@@ -242,18 +242,35 @@ final class AppModel {
         try await oneLayerEditAtATime { brain in try await InstructionImport.apply(plan, brain: brain, env: .current) }
     }
 
-    /// Move to Global… of an instruction section: core (committed), the home folder's core blocks,
-    /// then the project file; in line with the other layer edits, holding the home worktree sync.
-    func applyInstructionMoveToGlobal(_ plan: InstructionMove.GlobalPlan) async throws {
-        defer { Task { await refresh() } }
+    /// The home record's context for a partial home render (Move to Global…).
+    private func homeContext() -> SkillMove.Context {
         let env = HarnessEnvironment.current
-        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
-                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
-                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
-        try await oneLayerEditAtATime { [self] brain in
-            try await holdingWorktrees(all: [context.homeID]) {
-                try await InstructionMove.apply(plan, brain: brain, context: context)
-            }
+        return SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                 installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                 piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+    }
+
+    /// Move to Global…, step 1: the section joins core (committed, in line with the other layer
+    /// edits); returns step 2's preview of the global files' core blocks.
+    func commitInstructionMoveToGlobal(_ plan: InstructionMove.GlobalPlan, project: URL?) async throws -> InstructionMove.Blocks {
+        let context = homeContext()
+        var root: URL?
+        try await oneLayerEditAtATime { brain in
+            try await InstructionMove.commit(plan, brain: brain, env: context.env)
+            root = brain.root
+        }
+        guard let root else { throw Self.noBrain }
+        return await Task.detached { InstructionMove.blocks(for: plan, project: project, context: context, brainRoot: root) }.value
+    }
+
+    /// Move to Global…, step 2: the core blocks, then (when asked and safe) the file's removal;
+    /// holding the home folder's worktree sync.
+    func finishInstructionMoveToGlobal(_ plan: InstructionMove.GlobalPlan, blocks: InstructionMove.Blocks, removeSource: Bool,
+                                       project: URL?) async throws {
+        defer { Task { await refresh() } }
+        let context = homeContext()
+        try await holdingWorktrees(all: [context.homeID]) {
+            try await InstructionMove.finish(plan, blocks: blocks, removeSource: removeSource, project: project, context: context)
         }
     }
 

@@ -50,7 +50,16 @@ step runs when the one before worked, and a failure says what is done and how to
 Project… of a global section (decided 2026-10-14: the project's own file): each ticked project's
 AGENTS.md, else CLAUDE.md, else a new AGENTS.md gets the section (backup), then the global file
 loses it; nothing is written when any file changed. A project whose file AKit renders from the
-brain is not a target (Import to Brain… into its layer instead).
+brain is not a target (Import to Brain… into its layer instead). Review round the same day: Move to Global is two steps in
+the sheet: Commit to Core, then the home blocks that carry the section (only added or updated
+blocks, never a take-out or other pending home changes) as diffs, applied on a second click;
+the file loses the section only when every installed harness that reads it there gets it from a
+global file afterwards (checked on disk with the scanner). Codex and OpenCode have no core block,
+so they keep the project copy. Move to Project picks the project file that every installed
+harness reading the global file reads there (else a new CLAUDE.md or AGENTS.md that each of them
+would read, `InstructionMove.wouldRead`); links to one shared file are written once. A partial
+home Apply now keeps the previous lock record of a deferred block, so a later Update Home
+Folder still offers the new core text (this also fixes Make Manual's partial Apply).
 
 Asked next (2026-10-14): edit an instruction file in AKit, and run an agent with a skill (for
 example a writing skill) that changes the file, then show the diff of its change. Step 0 (the facts below) is done: checked the same day in
