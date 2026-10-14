@@ -1,5 +1,6 @@
 import AKitBrain
 import AKitFoundation
+import AKitInstructions
 import AKitRender
 import Foundation
 
@@ -9,8 +10,8 @@ import Foundation
 /// the bytes around them stay as they are. Works on bytes, so CRLF files, a BOM or a file
 /// without a final newline come back unchanged when the block goes again.
 public enum InstructionsBlock {
-    public static let start = "<!-- akit:core:start -->"
-    public static let end = "<!-- akit:core:end -->"
+    public static let start = InstructionText.akitStart
+    public static let end = InstructionText.akitEnd
     /// The files Pi reads as its global instructions, in its order: the first that exists
     /// wins (Pi's `loadContextFileFromDir`). On macOS `AGENTS.MD` is `AGENTS.md`.
     static let piCandidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]
