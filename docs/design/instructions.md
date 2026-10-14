@@ -76,7 +76,9 @@ are compared as written (a 4-space indent is refused); the answer's JSON is foun
 prose without trapping; Cancel stops the call. The send origin is the harness the screen shows
 (`.code(.claudeCode)` or `.code(.pi)`; Codex and OpenCode files are not sent), so a destination
 other than that reader needs the send policy's allow list. A file the scrub would mask (an e-mail
-address counts) is refused with the rules that matched. Not handled: the editor's smart quotes. Step 0 (the facts below) is done: checked the same day in
+address counts) is refused with the rules that matched. Not handled: the editor's smart quotes.
+The sheet picks the skill and the agent (harness, model with the models it offers, effort: Lab's
+`ReviewAgentFields`) and remembers them on this Mac (2026-10-14, asked by the user). Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem
