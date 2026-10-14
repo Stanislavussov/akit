@@ -21,7 +21,7 @@ public enum InstructionEdit {
         public let line: Int
         public let diff: [TextDiff.Line]
         public let notes: [String]
-        let before: Data
+        let before: Data?
         let after: Data
     }
 
@@ -87,19 +87,32 @@ public enum InstructionEdit {
     }
 
     /// Edit… and Rewrite with Skill…: the file with a whole new text, as a plan with its diff.
-    /// Refused for a file AKit renders, and when AKit's core block would change (it changes in
-    /// the brain). Only reads.
-    public static func editing(_ file: URL, to text: String, rendered: Set<String>, env: HarnessEnvironment) throws(Failure) -> Plan {
+    /// `original`: the bytes the text was made from (when the editor opened, or what the model
+    /// got); the plan is refused when the file is no longer that, so Apply never undoes a change
+    /// made meanwhile. Refused for a file AKit renders, and when AKit's core block would change
+    /// (it changes in the brain), its marker lines included. Only reads.
+    public static func editing(_ file: URL, original: Data?, to text: String, rendered: Set<String>, env: HarnessEnvironment) throws(Failure) -> Plan {
         let shown = FileWalk.tilde(file, home: env.homeDirectory)
         if rendered.contains(realPath(file)) {
             throw Failure(message: "AKit renders \(shown) from the brain's layers; the next Apply would undo the edit. Change the layer on the Brain screen.")
         }
-        let before = try? Data(contentsOf: file)
-        guard let old = before.map({ String(data: $0, encoding: .utf8) }) ?? "" else {
+        let current = try? Data(contentsOf: file)
+        guard current == original else {
+            throw Failure(message: "\(shown) changed since its text was read here. Look at it again; nothing was written.")
+        }
+        guard let old = original.map({ String(data: $0, encoding: .utf8) }) ?? "" else {
             throw Failure(message: "\(shown) can't be read as text.")
         }
+        if InstructionRewrite.hidesBlock(old) || InstructionRewrite.hidesBlock(text) {
+            throw Failure(message: "A code fence before AKit's core block never closes, so AKit can't tell the block from the text. Close the fence first.")
+        }
+        // The blocks as written, line for line (indentation included: a marker indented 4 spaces
+        // is no longer found by Update Home Folder); only line ends and the final newline don't count.
         let blocks: (String) -> [String] = { text in
-            InstructionText.sections(text).filter(\.isAKitBlock).map { $0.text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
+            InstructionText.sections(text).filter(\.isAKitBlock).map { section in
+                InstructionText.lines(section.text).map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+                    .joined(separator: "\n").trimmingCharacters(in: .newlines)
+            }
         }
         guard blocks(old) == blocks(text) else {
             throw Failure(message: "The new text changes AKit's core block. Change it in the brain (Brain → core → Edit Layer…), then Update Home Folder.")
@@ -110,7 +123,7 @@ public enum InstructionEdit {
             notes.append("git tracks \(file.lastPathComponent): the change shows in git status there. AKit doesn't commit it.")
         }
         return Plan(file: file, heading: nil, line: 0, diff: TextDiff.lines(from: old, to: text), notes: notes,
-                    before: before ?? Data(), after: Data(text.utf8))
+                    before: original, after: Data(text.utf8))
     }
 
     /// Backs the file up and writes it; refused when it changed since the plan. The backup, if made.

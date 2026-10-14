@@ -114,15 +114,42 @@ struct InstructionEditTests {
 
     // MARK: - Edit… (whole text)
 
+    func bytes(_ url: URL) -> Data? { try? Data(contentsOf: url) }
+
     @Test func aWholeNewTextIsADiffAndTheCoreBlockMustStay() throws {
         let url = try file("edit/CLAUDE.md", "## A\na\n<!-- akit:core:start -->\n## Core\nc\n<!-- akit:core:end -->\n")
-        let plan = try InstructionEdit.editing(url, to: "## A\nbetter a\n<!-- akit:core:start -->\n## Core\nc\n<!-- akit:core:end -->\n", rendered: [], env: env)
+        let plan = try InstructionEdit.editing(url, original: bytes(url), to: "## A\nbetter a\n<!-- akit:core:start -->\n## Core\nc\n<!-- akit:core:end -->\n",
+                                               rendered: [], env: env)
         #expect(plan.diff.contains(.added("better a")))
         try InstructionEdit.apply(plan, env: env)
         #expect(String(decoding: try Data(contentsOf: url), as: UTF8.self).contains("better a"))
-        #expect { try InstructionEdit.editing(url, to: "## A\nbetter a\n<!-- akit:core:start -->\n## Core\nchanged\n<!-- akit:core:end -->\n", rendered: [], env: env) } throws: { error in
+        #expect { try InstructionEdit.editing(url, original: bytes(url), to: "## A\nbetter a\n<!-- akit:core:start -->\n## Core\nchanged\n<!-- akit:core:end -->\n",
+                                              rendered: [], env: env) } throws: { error in
             (error as? InstructionEdit.Failure)?.message.contains("changes AKit's core block") == true
         }
-        #expect(throws: InstructionEdit.Failure.self) { try InstructionEdit.editing(url, to: "x", rendered: [InstructionEdit.realPath(url)], env: env) }
+        // A marker indented 4 spaces is no longer found by Update Home Folder: refused too.
+        #expect(throws: InstructionEdit.Failure.self) {
+            try InstructionEdit.editing(url, original: bytes(url), to: "## A\nbetter a\n    <!-- akit:core:start -->\n## Core\nc\n<!-- akit:core:end -->\n",
+                                        rendered: [], env: env)
+        }
+        #expect(throws: InstructionEdit.Failure.self) { try InstructionEdit.editing(url, original: bytes(url), to: "x", rendered: [InstructionEdit.realPath(url)], env: env) }
+    }
+
+    @Test func aChangeMadeMeanwhileIsNeverUndone() throws {
+        let url = try file("meanwhile/CLAUDE.md", "## A\nold\n")
+        let original = bytes(url)
+        try Data("## A\nold\n## B\nuser added meanwhile\n".utf8).write(to: url)
+        #expect { try InstructionEdit.editing(url, original: original, to: "## A\nnew\n", rendered: [], env: env) } throws: { error in
+            (error as? InstructionEdit.Failure)?.message.contains("changed since its text was read") == true
+        }
+        #expect(String(decoding: try Data(contentsOf: url), as: UTF8.self).contains("user added meanwhile"))
+    }
+
+    @Test func aBlockBehindAnOpenFenceCantBeEdited() throws {
+        let url = try file("fence/CLAUDE.md", "## Notes\n```bash\nmake\n\n<!-- akit:core:start -->\n## Core\nRun.\n<!-- akit:core:end -->\n")
+        #expect(throws: InstructionEdit.Failure.self) {
+            try InstructionEdit.editing(url, original: bytes(url), to: "## Notes\n```bash\nmake\n\n<!-- akit:core:start -->\n## Core\nSkip.\n<!-- akit:core:end -->\n",
+                                        rendered: [], env: env)
+        }
     }
 }

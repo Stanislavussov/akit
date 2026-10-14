@@ -123,7 +123,7 @@ struct InstructionsView: View {
             EditInstructionSheet(entry: entry, rendered: rendered) { reload += 1 }
         }
         .sheet(item: $rewriting) { entry in
-            RewriteInstructionSheet(entry: entry, rendered: rendered) { reload += 1 }
+            RewriteInstructionSheet(entry: entry, reader: harness ?? .claudeCode, rendered: rendered) { reload += 1 }
         }
         .sheet(item: $movingUp) { request in
             MoveToGlobalSectionSheet(request: request, rendered: rendered) { reload += 1 }
@@ -998,6 +998,8 @@ private struct EditInstructionSheet: View {
     let rendered: Set<String>
     let onDone: () -> Void
     @State private var text = ""
+    /// The bytes the editor started from: Save is refused when the file is no longer them.
+    @State private var original: Data?
     @State private var plan: InstructionEdit.Plan?
     @State private var problem: String?
 
@@ -1037,7 +1039,7 @@ private struct EditInstructionSheet: View {
                     Button("Review Changes") {
                         problem = nil
                         do {
-                            plan = try InstructionEdit.editing(entry.file, to: text, rendered: rendered, env: .current)
+                            plan = try InstructionEdit.editing(entry.file, original: original, to: text, rendered: rendered, env: .current)
                         } catch {
                             problem = error.localizedDescription
                         }
@@ -1048,7 +1050,10 @@ private struct EditInstructionSheet: View {
         }
         .padding(20)
         .frame(width: 720, height: 560)
-        .onAppear { text = (try? String(contentsOf: entry.file, encoding: .utf8)) ?? entry.text }
+        .onAppear {
+            original = try? Data(contentsOf: entry.file)
+            text = original.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        }
     }
 }
 
@@ -1058,8 +1063,12 @@ private struct RewriteInstructionSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let entry: InstructionEntry
+    /// The harness the screen shows: the file's reader, the data's origin.
+    let reader: HarnessID
     let rendered: Set<String>
     let onDone: () -> Void
+    /// The running call: Cancel (or closing the sheet) stops it.
+    @State private var call: Task<Void, Never>?
     @State private var skillID: Skill.ID?
     @State private var harness: LabHarness = .claudeCode
     @State private var request = "Make it clearer and shorter; keep every rule."
@@ -1120,7 +1129,7 @@ private struct RewriteInstructionSheet: View {
             HStack {
                 if plan != nil { Button("Rewrite Again") { plan = nil; run() } }
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { call?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
                 if let plan {
                     Button("Apply") {
                         do {
@@ -1132,7 +1141,7 @@ private struct RewriteInstructionSheet: View {
                         }
                     }
                     .keyboardShortcut(.defaultAction)
-                    .help("Back up \(entry.file.tildePath), then write the rewrite. Refused if the file changed since the call.")
+                    .help("Back up \(entry.file.tildePath), then write the rewrite. Refused if the file changed since it was sent.")
                 } else {
                     Button("Rewrite", action: run)
                         .keyboardShortcut(.defaultAction)
@@ -1143,6 +1152,7 @@ private struct RewriteInstructionSheet: View {
         }
         .padding(20)
         .frame(width: 720, height: 560)
+        .onDisappear { call?.cancel() }
         .onAppear {
             if skillID == nil {
                 // A writing skill when there is one, else the first.
@@ -1156,9 +1166,12 @@ private struct RewriteInstructionSheet: View {
         guard let skill = model.skills.first(where: { $0.id == skillID }) else { return }
         busy = true
         problem = nil
-        Task {
+        call = Task {
             do {
-                plan = try await model.rewriteInstruction(entry.file, skill: skill, request: request, harness: harness, rendered: rendered)
+                plan = try await model.rewriteInstruction(entry.file, skill: skill, request: request, harness: harness, reader: reader,
+                                                          rendered: rendered)
+            } catch is CancellationError {
+                // Cancelled with the sheet: nothing to show.
             } catch {
                 problem = error.localizedDescription
             }

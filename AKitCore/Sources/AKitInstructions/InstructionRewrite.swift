@@ -26,8 +26,22 @@ public enum InstructionRewrite {
         let crlf: Bool
     }
 
+    /// A marker line of AKit's block that the section parser didn't take as one (a code fence
+    /// before it never closes): such a file is not sent, since the block would go out as text.
+    public static func hidesBlock(_ text: String) -> Bool {
+        let markers = InstructionText.lines(text).filter { $0.trimmingCharacters(in: .whitespacesAndNewlines) == InstructionText.akitStart }.count
+        return markers != InstructionText.sections(text).filter(\.isAKitBlock).count
+    }
+
     /// The text to send. `skill`: the skill's SKILL.md; `request`: what the user wants changed.
-    public static func prepare(file text: String, skillName: String, skill: String, request: String) -> Prepared {
+    /// Refused when AKit's block can't be taken out safely, or the file has the marker line.
+    public static func prepare(file text: String, skillName: String, skill: String, request: String) throws(Failure) -> Prepared {
+        if hidesBlock(text) {
+            throw Failure(message: "A code fence before AKit's core block never closes, so AKit can't keep the block out of the call. Close the fence first.")
+        }
+        if text.contains(marker) {
+            throw Failure(message: "The file has AKit's marker line (\(marker)) in its own text. Take it out first.")
+        }
         var blocks: [String] = []
         var lines: [String] = []
         let sections = InstructionText.sections(text)
@@ -62,9 +76,7 @@ public enum InstructionRewrite {
     /// The new file from the model's answer: the blocks put back, the file's line endings, a
     /// final newline. Refused when the answer isn't the JSON asked for or lost a marker.
     public static func result(_ answer: String, prepared: Prepared) throws(Failure) -> String {
-        guard let start = answer.firstIndex(of: "{"), let end = answer.lastIndex(of: "}"),
-              let object = try? JSONSerialization.jsonObject(with: Data(answer[start...end].utf8)) as? [String: Any],
-              let text = object["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let text = textField(in: answer), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw Failure(message: "The answer isn't the JSON asked for ({\"text\": …}). Try again, or with another model.")
         }
         var lines = InstructionText.lines(text.replacingOccurrences(of: "\r\n", with: "\n"))
@@ -80,5 +92,20 @@ public enum InstructionRewrite {
         while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
         let joined = lines.joined(separator: "\n") + "\n"
         return prepared.crlf ? joined.replacingOccurrences(of: "\n", with: "\r\n") : joined
+    }
+
+    /// The "text" of the first JSON object in the answer that has one: prose with braces
+    /// around it (Pi), or a fenced block, is skipped. Bounded tries; never traps on a `}` that
+    /// comes before every `{`.
+    static func textField(in answer: String) -> String? {
+        let starts = answer.indices.filter { answer[$0] == "{" }.prefix(64)
+        let ends = answer.indices.filter { answer[$0] == "}" }.reversed().prefix(64)
+        for start in starts {
+            for end in ends where start < end {
+                guard let object = try? JSONSerialization.jsonObject(with: Data(answer[start...end].utf8)) as? [String: Any] else { continue }
+                if let text = object["text"] as? String { return text }
+            }
+        }
+        return nil
     }
 }

@@ -68,7 +68,15 @@ through the chosen harness's sign-in (Claude Code or Pi; send policy with origin
 scrub, the monthly limit, the send log), the skill's SKILL.md as guidance, the user's request;
 AKit's core block is replaced by a marker that the answer must keep and is put back; a file or
 skill the scrub would change is not sent (the masked text would come back); the answer is a diff
-applied only on Apply. Not verified with a live model call in development. Step 0 (the facts below) is done: checked the same day in
+applied only on Apply. Not verified with a live model call in development. Review round the same
+day: the plan keeps the bytes the text was made from (when the editor opened, or what the model
+got), so Apply never undoes a change made meanwhile; a file whose AKit block hides behind an
+unclosed code fence, or that has the marker line itself, is neither sent nor edited; marker lines
+are compared as written (a 4-space indent is refused); the answer's JSON is found among braces in
+prose without trapping; Cancel stops the call. The send origin is the harness the screen shows
+(`.code(.claudeCode)` or `.code(.pi)`; Codex and OpenCode files are not sent), so a destination
+other than that reader needs the send policy's allow list. A file the scrub would mask (an e-mail
+address counts) is refused with the rules that matched. Not handled: the editor's smart quotes. Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem
