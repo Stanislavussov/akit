@@ -21,8 +21,9 @@ public struct InstructionDuplicate: Identifiable, Hashable, Sendable {
     public let kind: Kind
     /// In the order the model gets them.
     public let places: [Place]
-    /// The heading the places share; nil for a same-text lead.
-    public var heading: String? { places.first?.section.heading }
+    /// The heading the places share (the first place that has one: `# X` and `## X` count the
+    /// same); nil for leads only.
+    public var heading: String? { places.lazy.compactMap(\.section.heading).first }
     public var id: String { "\(kind)|" + places.map { "\($0.file.path):\($0.section.line)" }.joined(separator: ",") }
 
     /// The places other than those in this file.
@@ -35,11 +36,11 @@ extension InstructionText {
     public static func units(_ text: String) -> [InstructionSection] {
         sections(text).flatMap { section -> [InstructionSection] in
             guard section.isAKitBlock else { return [section] }
-            let lines = section.text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            let inner = lines.filter { line in
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                return trimmed != akitStart && trimmed != akitEnd
-            }.joined(separator: "\n")
+            // Only the block's own first and last lines are markers; a quoted marker inside stays.
+            var lines = Self.lines(section.text)
+            lines.removeFirst()
+            if lines.last?.trimmingCharacters(in: .whitespacesAndNewlines) == akitEnd { lines.removeLast() }
+            let inner = lines.joined(separator: "\n")
             // The block's first line is its start marker, so inner line n is file line start + n.
             return sections(inner).map {
                 InstructionSection(heading: $0.heading, text: $0.text, isAKitBlock: true, line: section.line + $0.line)
@@ -51,7 +52,7 @@ extension InstructionText {
     static func body(_ section: InstructionSection) -> String {
         let text = normalized(section)
         guard section.heading != nil else { return text }
-        return text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).dropFirst().first.map(String.init) ?? ""
+        return Self.lines(text).dropFirst().joined(separator: "\n")
     }
 }
 
@@ -61,7 +62,9 @@ extension InstructionView {
     public var duplicates: [InstructionDuplicate] {
         var units: [(file: URL, section: InstructionSection, order: Int)] = []
         for entry in loaded {
-            for section in InstructionText.units(entry.text) where !InstructionText.body(section).isEmpty {
+            // What the model gets: a file Codex cuts counts only up to the cut.
+            let text = entry.limit.map { String(decoding: entry.text.utf8.prefix($0), as: UTF8.self) } ?? entry.text
+            for section in InstructionText.units(text) where !InstructionText.body(section).isEmpty {
                 units.append((entry.file, section, units.count))
             }
         }

@@ -41,4 +41,38 @@ struct InstructionDuplicatesTests {
         #expect(groups.map(\.kind) == [.differs])
         #expect(groups.first?.places.map(\.section.heading) == ["Style", "style"])
     }
+
+    // MARK: - Review round (2026-10-14)
+
+    @Test func headingCaseAndLevelDontCountAndTheTitleComesFromAHeading() throws {
+        try files.write(".pi/agent/AGENTS.md", "# Style\nShort.\n")
+        try files.write("Projects/app/AGENTS.md", "## style\nShort.\n")
+        let groups = files.view(.pi).duplicates
+        #expect(groups.map(\.kind) == [.same] && groups.first?.heading == "style")
+    }
+
+    @Test func crlfAndTheCoreBlockMatchLfFiles() throws {
+        try files.write(".claude/CLAUDE.md", "<!-- akit:core:start -->\r\n## Tests\r\nRun them.\r\n<!-- akit:core:end -->\r\n")
+        try files.write("Projects/app/CLAUDE.md", "## Tests\nRun them.\n")
+        #expect(files.view(.claudeCode).duplicates.map(\.kind) == [.same])
+    }
+
+    @Test func aMarkerQuotedInsideTheBlockStaysAndLinesKeepTheirPlace() {
+        let text = "<!-- akit:core:start -->\n## Markers\n```\n<!-- akit:core:start -->\n```\n## Tests\nRun.\n<!-- akit:core:end -->\n"
+        let units = InstructionText.units(text)
+        #expect(units.map(\.heading) == ["Markers", "Tests"] && units.map(\.line) == [2, 6])
+        #expect(units.first?.text.contains("<!-- akit:core:start -->") == true)
+    }
+
+    @Test func codexComparesOnlyWhatItReads() throws {
+        try files.write(".codex/AGENTS.md", "## Tests\nRun.\n")
+        try files.write("Projects/app/AGENTS.md", String(repeating: "x", count: 40_000) + "\n## Tests\nRun.\n")
+        #expect(files.view(.codex).duplicates.isEmpty)
+    }
+
+    @Test func fencedHashLinesAreText() {
+        let a = InstructionSection(heading: "Setup", text: "## Setup\n```sh\n# install\nnpm i\n```", isAKitBlock: false, line: 1)
+        let b = InstructionSection(heading: "Setup", text: "## Setup\n```sh\ninstall\nnpm i\n```", isAKitBlock: false, line: 1)
+        #expect(InstructionText.normalized(a) != InstructionText.normalized(b))
+    }
 }

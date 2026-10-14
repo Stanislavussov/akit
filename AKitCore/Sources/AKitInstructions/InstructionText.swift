@@ -13,12 +13,26 @@ public struct InstructionSection: Hashable, Sendable {
     /// 1-based line of its first line in the file.
     public let line: Int
 
+    public init(heading: String?, text: String, isAKitBlock: Bool, line: Int) {
+        self.heading = heading
+        self.text = text
+        self.isAKitBlock = isAKitBlock
+        self.line = line
+    }
+
     public var bytes: Int { text.utf8.count }
     /// Only blank lines (a lead before the first heading that is empty).
     public var isBlank: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }
 
 public enum InstructionText {
+    /// The text's lines, split at `\n` only, each keeping a `\r` before it: joined with `\n`
+    /// they give the text back byte for byte. (A Swift String treats `\r\n` as one Character,
+    /// so `split(separator: "\n")` would leave a CRLF file as one line.)
+    public static func lines(_ text: String) -> [String] {
+        text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false).map { String(String.UnicodeScalarView($0)) }
+    }
+
     /// The core layer's block markers (`AKitProjectSetup.InstructionsBlock` writes them).
     public static let akitStart = "<!-- akit:core:start -->"
     public static let akitEnd = "<!-- akit:core:end -->"
@@ -26,7 +40,7 @@ public enum InstructionText {
     /// The file split into sections, in order; blank leads are left out. Headings inside
     /// fenced code blocks don't split.
     public static func sections(_ text: String) -> [InstructionSection] {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let lines = Self.lines(text)
         var result: [InstructionSection] = []
         var current: [String] = [], heading: String?, start = 1, inBlock = false
         var fence: Fence?
@@ -36,7 +50,7 @@ public enum InstructionText {
                 let section = InstructionSection(heading: heading, text: current.joined(separator: "\n"), isAKitBlock: inBlock, line: start)
                 // A lead that is blank, or only a `# Title`, is not a section (D11).
                 let titleOnly = section.heading == nil && !section.isAKitBlock && current.allSatisfy { line in
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
                     return trimmed.isEmpty || trimmed.hasPrefix("# ")
                 }
                 if !titleOnly { result.append(section) }
@@ -89,7 +103,7 @@ public enum InstructionText {
     public static func imports(in text: String) -> [String] {
         var found: [String] = []
         var fence: Fence?
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        for line in Self.lines(text) {
             let trimmed = line.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "\r", with: "")
             if let open = fence {
                 if open.closes(trimmed) { fence = nil }
@@ -115,16 +129,24 @@ public enum InstructionText {
     }
 
     /// The text two sections are compared by (decided D13): line ends, trailing spaces, blank
-    /// lines and the heading's level don't count.
+    /// lines, the heading's level and its letter case don't count. Lines in a fenced code block
+    /// stay as they are (`# install` in a shell example is not a heading).
     public static func normalized(_ section: InstructionSection) -> String {
         var lines: [String] = []
-        for raw in section.text.replacingOccurrences(of: "\r\n", with: "\n").split(separator: "\n", omittingEmptySubsequences: false) {
+        var fence: Fence?
+        for raw in Self.lines(section.text.replacingOccurrences(of: "\r\n", with: "\n")) {
             var line = String(raw)
-            while line.last == " " || line.last == "\t" { line.removeLast() }
-            // A heading's level doesn't count; `#include` or `#!/bin/sh` is text.
-            let marks = line.prefix { $0 == "#" }.count
-            if (1...6).contains(marks), line.dropFirst(marks).first == " " {
-                line = line.dropFirst(marks).trimmingCharacters(in: .whitespaces)
+            while line.last == " " || line.last == "\t" || line.last == "\r" { line.removeLast() }
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let open = fence {
+                if open.closes(trimmed) { fence = nil }
+            } else if let open = Fence(opening: trimmed) {
+                fence = open
+            } else {
+                let marks = line.prefix { $0 == "#" }.count
+                if (1...6).contains(marks), line.dropFirst(marks).first == " " {
+                    line = line.dropFirst(marks).trimmingCharacters(in: .whitespaces).lowercased()
+                }
             }
             if line.isEmpty { continue }
             lines.append(line)
@@ -134,7 +156,7 @@ public enum InstructionText {
 
     /// The keys of the `---` front matter at the very top of the file; empty without one.
     public static func frontMatterKeys(_ text: String) -> Set<String> {
-        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = Self.lines(text.replacingOccurrences(of: "\r\n", with: "\n"))
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return [] }
         var keys: Set<String> = []
         for line in lines.dropFirst() {
