@@ -235,6 +235,13 @@ final class AppModel {
         try await oneLayerEditAtATime { brain in try await LayerEditor.update(name, to: details, in: brain, env: .current) }
     }
 
+    /// Import to Brain… of an instruction section: the layer's AGENTS.md text (committed), then the
+    /// file when asked; in line with the other layer edits.
+    func applyInstructionImport(_ plan: InstructionImport.Plan) async throws {
+        defer { Task { await refresh() } }
+        try await oneLayerEditAtATime { brain in try await InstructionImport.apply(plan, brain: brain, env: .current) }
+    }
+
     private var lastLayerEdit: Task<Void, Never>?
 
     /// Runs layer edits one after another: two edits of one layer.yaml (or two git commits)

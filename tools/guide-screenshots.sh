@@ -69,6 +69,7 @@ LOCAL_MD="$DEMO/Projects/notes-mac/CLAUDE.local.md"
 printf -- '## Commits\nImperative summary line, 72 characters at most.\n\n## Style\nSwiftUI views stay under 200 lines.\n' > "$LOCAL_MD"
 shot instructions-duplicates $MAIN --section instructions --project notes-mac --tab duplicates --select CLAUDE.local.md
 shot instructions-remove $MAIN --section instructions --project notes-mac --tab remove-copy --select CLAUDE.local.md
+shot instructions-import $MAIN --section instructions --project notes-mac --tab import --select CLAUDE.local.md
 rm -f "$LOCAL_MD"
 rm -f "$ABOVE_MD"; if [[ -e "$GLOBAL_MD.keep" ]]; then mv "$GLOBAL_MD.keep" "$GLOBAL_MD"; else rm -f "$GLOBAL_MD"; fi
 shot skills-invocation-all $MAIN --section skills --tab invocation-all --delay 3

@@ -23,6 +23,8 @@ struct InstructionsView: View {
     /// Remove This Copy…: the planned change in its sheet, and why one couldn't be planned.
     @State private var removal: SectionRemoval?
     @State private var removalError: String?
+    /// Import to Brain… of a section (its sheet).
+    @State private var importing: SectionImport?
     /// Read the files again after a change made here.
     @State private var reload = 0
     /// Files AKit rendered from the brain into a project (their sections change in the brain);
@@ -42,7 +44,9 @@ struct InstructionsView: View {
                 if let entry = view?.entries.first(where: { $0.id == selection }) {
                     InstructionDetailView(entry: entry, home: HarnessEnvironment.current.homeDirectory,
                                           duplicates: duplicates.filter { $0.places.contains { $0.file == entry.file } },
-                                          rendered: rendered, onRemove: { planRemoval(of: $0, in: entry) })
+                                          rendered: rendered, canImport: model.brain != nil,
+                                          onRemove: { planRemoval(of: $0, in: entry) },
+                                          onImport: { importing = SectionImport(section: $0, file: entry.file, level: entry.level, project: project) })
                 } else {
                     ContentUnavailableView("Select a file", systemImage: "doc.text")
                 }
@@ -99,6 +103,9 @@ struct InstructionsView: View {
         .sheet(item: $removal) { request in
             SectionRemovalSheet(request: request) { reload += 1 }
         }
+        .sheet(item: $importing) { request in
+            SectionImportSheet(request: request, rendered: rendered) { reload += 1 }
+        }
         .alert("Can't remove the section", isPresented: Binding(get: { removalError != nil }, set: { if !$0 { removalError = nil } })) {
             Button("OK") {}
         } message: {
@@ -116,6 +123,12 @@ struct InstructionsView: View {
             view = made
             duplicates = groups
             rendered = written
+            // Snapshots: `--tab import` opens Import to Brain… for the selected file's first section.
+            if DebugSnapshot.options?.tab == "import", importing == nil, reload == 0,
+               let entry = made.entries.first(where: { $0.id == selection }),
+               let section = InstructionText.units(entry.text).first(where: { !$0.isAKitBlock && $0.heading != nil }) {
+                importing = SectionImport(section: section, file: entry.file, level: entry.level, project: project)
+            }
             // Snapshots: `--tab remove-copy` opens Remove This Copy… for the selected file's first repeated section.
             if DebugSnapshot.options?.tab == "remove-copy", removal == nil, reload == 0,
                let entry = made.entries.first(where: { $0.id == selection }),
@@ -300,7 +313,10 @@ private struct InstructionDetailView: View {
     let duplicates: [InstructionDuplicate]
     /// Files AKit rendered (their sections can't be removed here).
     let rendered: Set<String>
+    /// A brain is loaded: Import to Brain… is offered.
+    let canImport: Bool
     let onRemove: (InstructionSection) -> Void
+    let onImport: (InstructionSection) -> Void
 
     var body: some View {
         ScrollView {
@@ -356,13 +372,19 @@ private struct InstructionDetailView: View {
                                 ForEach(repeats(of: section), id: \.self) { line in
                                     Label(line, systemImage: "doc.on.doc").font(.caption).foregroundStyle(.orange)
                                 }
-                                if !repeats(of: section).isEmpty, entry.status.isLoaded {
-                                    let reason = InstructionEdit.unavailable(section, in: entry.file, rendered: rendered)
-                                    Button("Remove This Copy…") { onRemove(section) }
-                                        .controlSize(.small)
-                                        .disabled(reason != nil)
-                                        .help(reason ?? "Take this section out of \(entry.file.lastPathComponent): a diff first, then a backup. The model keeps the other places.")
+                                HStack(spacing: 6) {
+                                    if !repeats(of: section).isEmpty, entry.status.isLoaded {
+                                        let reason = InstructionEdit.unavailable(section, in: entry.file, rendered: rendered)
+                                        Button("Remove This Copy…") { onRemove(section) }
+                                            .disabled(reason != nil)
+                                            .help(reason ?? "Take this section out of \(entry.file.lastPathComponent): a diff first, then a backup. The model keeps the other places.")
+                                    }
+                                    if canImport, !section.isAKitBlock, !rendered.contains(InstructionEdit.realPath(entry.file)) {
+                                        Button("Import to Brain…") { onImport(section) }
+                                            .help("Add this section to a brain layer's AGENTS.md text (a commit), so the layer brings it to every place it renders")
+                                    }
                                 }
+                                .controlSize(.small)
                             }
                         }
                     }
@@ -495,6 +517,121 @@ private struct SectionRemovalSheet: View {
             parts.append("\(request.readers.map(\.displayName).joined(separator: ", ")) also read\(request.readers.count == 1 ? "s" : "") this file here and lose\(request.readers.count == 1 ? "s" : "") it too, unless they get it from another file.")
         }
         return parts.joined(separator: " ")
+    }
+}
+
+/// Import to Brain… waiting in its sheet: the section and where it is.
+struct SectionImport: Identifiable {
+    let id = UUID()
+    let section: InstructionSection
+    let file: URL
+    let level: InstructionLevel
+    let project: URL?
+}
+
+/// The layer to import into, whether the file loses the section, the layer's text as a diff.
+private struct SectionImportSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let request: SectionImport
+    let rendered: Set<String>
+    let onDone: () -> Void
+    @State private var layer = ""
+    @State private var removeHere = false
+    @State private var plan: InstructionImport.Plan?
+    @State private var problem: String?
+    @State private var busy = false
+    @State private var failed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Import \(request.section.heading.map { "“\($0)”" } ?? "the section") to the Brain").font(.title2.bold())
+            Text("The section joins a layer's AGENTS.md text (the text Edit Layer… changes), in one commit in the brain.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Picker("Layer", selection: $layer) {
+                    ForEach(model.brain?.layers.map(\.name) ?? [], id: \.self) { Text($0).tag($0) }
+                }
+                .fixedSize()
+                Toggle("Also remove it from \(request.file.lastPathComponent)", isOn: $removeHere)
+                    .help("Off: the file keeps its copy until the layer's next render; then Remove This Copy… takes it out. On: it leaves the file now, and sessions miss it until that render.")
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let plan {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("layers/\(plan.layer) · AGENTS.md text (brain)").fontWeight(.medium).padding(.bottom, 2)
+                            DiffPreview(diff: plan.diff)
+                        }
+                        if let removal = plan.removal {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(removal.file.tildePath).fontWeight(.medium).padding(.bottom, 2)
+                                DiffPreview(diff: removal.diff)
+                            }
+                        }
+                    } else if let problem {
+                        Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .font(.callout.monospaced())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
+            .frame(height: 260)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            ForEach(plan?.notes ?? [], id: \.self) { note in
+                Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Apply", action: apply)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(plan == nil || busy || failed)
+                    .help("Commit the layer's new AGENTS.md text in the brain, then (when asked) back up and rewrite the file. Refused if either changed since this preview.")
+            }
+        }
+        .padding(20)
+        .frame(width: 640)
+        .onAppear {
+            if layer.isEmpty, let brain = model.brain {
+                layer = InstructionImport.suggestedLayer(for: request.level, project: request.project, brain: brain, projects: model.brainProjectFolders)
+            }
+        }
+        .task(id: "\(layer)|\(removeHere)") { await replan() }
+    }
+
+    private func replan() async {
+        guard !layer.isEmpty, let brain = model.brain else { return }
+        let request = request, layer = layer, removeHere = removeHere, rendered = rendered, env = HarnessEnvironment.current
+        let result = await Task.detached {
+            Result { () throws(InstructionImport.Failure) in
+                try InstructionImport.plan(request.section, from: request.file, into: layer, removeHere: removeHere,
+                                           brain: brain, rendered: rendered, env: env)
+            }
+        }.value
+        guard !Task.isCancelled else { return }
+        switch result {
+        case .success(let made): plan = made; problem = nil
+        case .failure(let error): plan = nil; problem = error.message
+        }
+    }
+
+    private func apply() {
+        guard let plan else { return }
+        busy = true
+        Task {
+            do {
+                try await model.applyInstructionImport(plan)
+                onDone()
+                dismiss()
+            } catch {
+                problem = error.localizedDescription
+                self.plan = nil
+                failed = true
+            }
+            busy = false
+        }
     }
 }
 
