@@ -402,6 +402,41 @@ struct SendPolicyTests {
         #expect(SendLog.records(env: env).isEmpty)
     }
 
+    /// Ask AKit's Stop: the call runs in a cancellation scope of its own; cancelling it ends the
+    /// harness's process at once, and the call throws CancellationError.
+    @Test func cancellingTheScopeStopsTheHarnessProcess() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            echo $$ > "$HOME/pid"
+            sleep 60
+            echo '{"type":"result","is_error":false,"result":"late"}'
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let request = ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode))
+        let scope = Cancellation.Scope()
+        let env = env, folder = home.appending(path: "work")
+        let call = Task {
+            try await Cancellation.$scope.withValue(scope) {
+                try await ModelCall.run(request, gate: gate, folder: folder, env: env)
+            }
+        }
+        let pidFile = home.appending(path: "pid")
+        for _ in 0..<100 where !fm.fileExists(atPath: pidFile.path) { try await Task.sleep(for: .milliseconds(50)) }
+        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let started = Date.now
+        scope.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await call.value }
+        #expect(Date.now.timeIntervalSince(started) < 10)
+        // The process is gone (kill with signal 0 only checks).
+        var gone = false
+        for _ in 0..<50 { if kill(pid, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(50)) }
+        #expect(gone)
+        // Nothing was answered, so nothing cost anything: no send record.
+        #expect(SendLog.records(env: env).isEmpty)
+    }
+
     @Test func rateLimitedCallsAreRetriedWithBackoff() async throws {
         try write("bin/claude", """
             #!/bin/sh

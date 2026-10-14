@@ -40,15 +40,23 @@ final class AskAKitModel {
     /// What a screen's own view shows now (`.askAKitScreen`), per screen.
     var screenFacts: [SidebarSection: String] = [:]
     private let app: AppModel
+    /// True from a send until its task has really ended (its harness process is gone): New Chat
+    /// or Stop during a call never lets a second call start beside it.
     private(set) var isRunning = false
     private var call: Task<Void, Never>?
+    /// The running call's processes: Stop and New Chat cancel it, which ends the harness's
+    /// process (ChildProcess follows this scope, not Task cancellation).
+    private var scope: Cancellation.Scope?
     /// Counts chats: an answer that arrives after New Chat is dropped.
     private var chat = 0
+    /// The agent the next call runs with; `refreshAgent()` works it out again.
+    private(set) var agent = LabAgent(harness: .claudeCode, model: "", effort: "")
     private var guides: [AskAKit.Guide]?
     private var search: GuideSearch?
 
     init(app: AppModel) {
         self.app = app
+        refreshAgent()
         if DebugSnapshot.options?.ask == true {
             messages = Self.cannedChat
             focus = AskContext.Element(title: Self.cannedChat[0].about ?? "", facts: "")
@@ -98,28 +106,37 @@ final class AskAKitModel {
     }
 
     func newChat() {
-        call?.cancel()
-        call = nil
-        isRunning = false
+        // The old call ends on its own once its process is gone; until then isRunning stays.
+        stop()
         chat += 1
         messages = []
         focus = nil
         draft = ""
     }
 
-    func stop() { call?.cancel() }
+    func stop() {
+        scope?.cancel()
+        call?.cancel()
+    }
 
-    /// The agent the next call runs with: the panel's choice, else Lab's default for the harness.
-    var agent: LabAgent {
+    /// Works out the agent: the panel's choice, else Lab's default for the harness. A chosen
+    /// harness that isn't installed falls back to one that is, with that one's own default
+    /// model and effort (the stored model belongs to the other harness). Called when the panel
+    /// opens and when its fields change, not on every redraw (it reads files).
+    func refreshAgent() {
         let defaults = UserDefaults.standard
         let installed = LabHarness.allCases.filter { HarnessEnvironment.current.findExecutable($0.command) != nil }
-        var harness = LabHarness(rawValue: defaults.string(forKey: Self.harnessKey) ?? "") ?? .claudeCode
-        if !installed.contains(harness), let first = installed.first { harness = first }
+        let chosen = LabHarness(rawValue: defaults.string(forKey: Self.harnessKey) ?? "") ?? .claudeCode
+        let harness = installed.contains(chosen) ? chosen : installed.first ?? chosen
         let fallback = LabRuns.defaultAgent(harness, env: .current)
+        guard harness == chosen else {
+            agent = fallback
+            return
+        }
         let model = (defaults.string(forKey: Self.modelKey) ?? "").trimmingCharacters(in: .whitespaces)
         let effort = defaults.string(forKey: Self.effortKey) ?? ""
-        return LabAgent(harness: harness, model: model.isEmpty ? fallback.model : model,
-                        effort: harness.efforts.contains(effort) ? effort : fallback.effort)
+        agent = LabAgent(harness: harness, model: model.isEmpty ? fallback.model : model,
+                         effort: harness.efforts.contains(effort) ? effort : fallback.effort)
     }
 
     /// Sends the draft.
@@ -138,8 +155,9 @@ final class AskAKitModel {
         messages.append(Message(role: .user, text: question, about: about))
         let agent = self.agent
         let chat = self.chat
+        let scope = Cancellation.Scope()
+        self.scope = scope
         isRunning = true
-        // Not detached: Stop cancels the task, and that stops the harness's process.
         call = Task {
             let reply: Message
             do {
@@ -149,19 +167,23 @@ final class AskAKitModel {
                     AskAKit.prepare(question: question, context: context, history: history, guides: guides, search: search,
                                     language: language)
                 }.value
-                try Task.checkCancellation()
+                if scope.isCancelled { throw CancellationError() }
                 let env = HarnessEnvironment.current
-                let gate = try await SendGate.open(agent: agent, env: env)
                 let folder = FileManager.default.temporaryDirectory.appending(path: "akit-ask-\(UUID().uuidString)")
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 defer { try? FileManager.default.removeItem(at: folder) }
-                // The screen's data is the user's harness setup: the chosen harness's own account
-                // is its origin, so a work Mac sends it only to an allowed destination.
-                let answer = try await ModelCall.run(
-                    ModelCall.Request(agent: agent, purpose: "ask akit", system: prepared.system, input: prepared.input,
-                                      schema: AskAKit.schema, origin: .code(agent.harness)),
-                    gate: gate, folder: folder, env: env)
-                try Task.checkCancellation()
+                // The account check and the call run their processes in this call's scope.
+                let answer = try await Cancellation.$scope.withValue(scope) {
+                    let gate = try await SendGate.open(agent: agent, env: env)
+                    if scope.isCancelled { throw CancellationError() }
+                    // The screen's data is the user's harness setup: the chosen harness's own
+                    // account is its origin, so a work Mac sends it only to an allowed destination.
+                    return try await ModelCall.run(
+                        ModelCall.Request(agent: agent, purpose: "ask akit", system: prepared.system, input: prepared.input,
+                                          schema: AskAKit.schema, origin: .code(agent.harness)),
+                        gate: gate, folder: folder, env: env)
+                }
+                if scope.isCancelled { throw CancellationError() }
                 let text = AskAKit.answer(from: answer.text)
                 reply = Message(role: .assistant, text: text, sources: AskAKit.sources(in: text, guides: guides))
             } catch is CancellationError {
@@ -169,10 +191,12 @@ final class AskAKitModel {
             } catch {
                 reply = Message(role: .assistant, text: error.localizedDescription, failed: true)
             }
-            guard chat == self.chat else { return }
-            messages.append(reply)
+            // Only now is the process gone: the next send may start.
             isRunning = false
             call = nil
+            self.scope = nil
+            guard chat == self.chat else { return }
+            messages.append(reply)
         }
     }
 
@@ -294,6 +318,9 @@ struct AskAKitPanel: View {
             footer
         }
         .frame(minWidth: 280)
+        // The agent is worked out here, not on every redraw.
+        .onAppear { ask.refreshAgent() }
+        .onChange(of: "\(harnessRaw)|\(modelName)|\(effort)") { ask.refreshAgent() }
         // `[title](screens#id)` in an answer opens the Guide window at that section.
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme == nil, let section = url.fragment else { return .systemAction }

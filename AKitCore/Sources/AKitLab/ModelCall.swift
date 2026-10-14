@@ -74,14 +74,17 @@ public enum ModelCall {
         for origin in Set(request.origins) { try gate.check(origin) }
         let scrubbed = gate.scrub(request.input)
         let records = SendLog.records(env: env)
-        try SendLog.checkLimit(estimate: SendLog.estimate(characters: scrubbed.text.count, harness: request.agent.harness,
+        // The system prompt goes out with the input and is paid for too (a long one carries
+        // guide sections or a skill): both count in the estimate and the log.
+        let characters = scrubbed.text.count + request.system.count
+        try SendLog.checkLimit(estimate: SendLog.estimate(characters: characters, harness: request.agent.harness,
                                                           model: request.agent.model, records: records),
                                settings: gate.settings, env: env)
         // Matches of the caller's own scrub (done earlier so quotes match what was sent) count too.
         let counts = scrubbed.counts.merging(request.scrubbed ?? [:], uniquingKeysWith: +)
         func log(_ usage: SendUsage, error: String? = nil) throws {
             var record = SendRecord(purpose: request.purpose, session: request.session, runID: request.runID, destination: gate.destination,
-                                    model: request.agent.model, inputCharacters: scrubbed.text.count, usage: usage,
+                                    model: request.agent.model, inputCharacters: characters, usage: usage,
                                     scrubbed: counts.isEmpty ? nil : counts)
             record.error = error
             try SendLog.append(record, env: env)
