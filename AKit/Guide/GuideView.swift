@@ -5,13 +5,14 @@ import SwiftUI
 enum Guide: String, CaseIterable {
     case screens
     case errorAnalysis = "error-analysis"
-    // A glossary `docs/guides/terms.ru.md` joins as `case terms` (title "Terms"): the Guide
-    // window, the search and Ask AKit (`AskAKit.glossaryGuide`) pick it up from here.
+    /// The glossary: every label of the screens. Ask AKit reads it first (`AskAKit.glossaryGuide`).
+    case terms
 
     var title: String {
         switch self {
         case .screens: "AKit Screens"
         case .errorAnalysis: "Error Analysis"
+        case .terms: "AKit Terms"
         }
     }
 

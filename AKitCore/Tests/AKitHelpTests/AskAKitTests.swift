@@ -186,7 +186,7 @@ struct AskAKitTests {
     /// The bundled guides: a real question stays within the budget and finds its screen.
     @Test func realGuides() throws {
         let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../docs/guides").standardized
-        let guides: [AskAKit.Guide] = try ["screens", "error-analysis"].map { id in
+        let guides: [AskAKit.Guide] = try ["screens", "error-analysis", "terms"].map { id in
             (id, id, GuideDocument.parse(try String(contentsOf: folder.appending(path: "\(id).ru.md"), encoding: .utf8)))
         }
         let search = GuideSearch(guides: guides)
@@ -198,5 +198,7 @@ struct AskAKitTests {
         #expect(sent.reduce(0) { $0 + $1.text.count } <= AskAKit.guideBudget)
         #expect(prepared.sources.contains { $0.id == "screens#insights" })
         #expect(prepared.sources.count > 3)
+        // The glossary's entries for the question go along.
+        #expect(prepared.sources.contains { $0.guide == AskAKit.glossaryGuide })
     }
 }

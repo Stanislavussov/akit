@@ -86,7 +86,7 @@ struct GuideSearchTests {
     /// Every screenshot a guide names is in `docs/guides`, and has a caption to search by.
     @Test func theGuidesNameOnlyScreenshotsThatExist() throws {
         let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../docs/guides").standardizedFileURL
-        for name in ["screens.ru.md", "error-analysis.ru.md"] {
+        for name in ["screens.ru.md", "error-analysis.ru.md", "terms.ru.md"] {
             let document = GuideDocument.parse(try String(contentsOf: folder.appending(path: name), encoding: .utf8))
             func check(_ blocks: [GuideDocument.Block]) {
                 for case .image(let path, let caption) in blocks {
