@@ -1,8 +1,10 @@
 # Ask AKit: a helper inside the app
 
-Status: 2026-10-14, built on branch `ask-akit`: the core (`AKitHelp`), the side panel, the
+Status: 2026-10-15, built on branch `ask-akit`: the core (`AKitHelp`), the side panel, the
 toolbar button and Help → Ask AKit (⌥⌘/), and Ask AKit About This in the context menus of the
-screens listed under "Where it shows". Chats are not saved.
+screens listed under "Where it shows"; the glossary guide `terms.ru.md` (AKit Terms). After the
+code review of 2026-10-15: Stop ends the harness's process, no session text is sent, links are
+checked, the first send is confirmed and every question shows What Was Sent. Chats are not saved.
 
 ## What and why
 
@@ -26,32 +28,53 @@ question + screen (id, title, summary) + element (title, facts) + earlier turns
         ▼
 AKitHelp.AskAKit.prepare          (pure, AKitHelp)
   guide sections ≤ 40,000 characters, whole sections:
-   1. the screen's own section in screens.ru.md and its first subsection
+   1. the screen's own section in screens.ru.md (cut at a line to fit when it is
+      longer than the budget) and its first subsection
    2. glossary entries (guide `terms`) for the question's words, ≤ 8,000
    3. sections GuideSearch ranks best for the question, the element and their words
    4. more of the screen's sections while room is left
   earlier turns: newest first, ≤ 8 turns, ≤ 12,000 characters, each cut at 4,000
+  the question: cut at 4,000 (the panel says so under the field)
         │
         ▼
-App: SendGate.open → ModelCall.run (no tools, schema {"answer": string})
+App: AskContext.redacting (session titles, mode names and definitions → ‹session text›)
+     first send of a launch: the confirmation (unless Don't ask again)
+     in a Cancellation.Scope of its own: SendGate.open → ModelCall.run
+       (no tools, schema {"answer": string}); Stop and New Chat cancel the scope,
+       which ends the harness's process
         │
         ▼
-AskAKit.answer (the "answer" field, or the text as it came)
+AskAKit.answer (the "answer" field, or the text as it came; off the main actor, ≤ 65 parses)
 AskAKit.sources (the guide sections the answer links to; unknown ids dropped)
+AskAKit.linkTarget (a click: a known guide section → Guide window, https → browser,
+  anything else → nothing)
 ```
 
 The system prompt asks for: the language of the question (Ask AKit About This writes its own
 question in English, so it asks for the Review language from Settings instead); short plain
 sentences; what it means, why it matters, what to do; button names quoted exactly; "the
 guides don't cover this" instead of an invention; citations as `[title](guide#section)`. A
-link opens the Guide window at that section.
+link opens the Guide window at that section; only such links and `https` pages open.
 
 ## Data sent and the origin
 
 What leaves the Mac, in one call through the chosen harness and its own sign-in: the
 question, the screen's summary (counts, names, the scope and window the screen shows), the
 element's facts, the earlier turns of the chat, and the guide sections. The panel says this
-under the input field, with the harness and model, every time.
+under the input field, with the harness and model, every time. The first send of a launch asks
+first (Send to …?, with the kinds of data; Don't ask again stores `ask.dontConfirm`), and
+What Was Sent under each question shows the destination, the input as the scrub left it and
+the guide sections of the system prompt.
+
+**No session text.** Screen data is setup data only: harness, project, tab, ids, counts,
+statuses and numbers. Never a session's title (its first prompt), notes, quotes, evidence, or an
+error analysis mode's name or definition (they come from notes): sessions, modes, control tasks
+and Lab runs are named by id. Two layers keep it so: the facts the views build (Sessions,
+Error Analysis, Lab), and `AskContext.redacting`, run on every send with every session title
+AppModel has and every mode's name and definition, which replaces any of them a fact still
+quotes (tested in `AskAKitTests`). The user's own typed question and the chat are sent as
+written. The MCP pane sends names only, never a value (no arguments, the URL's host, the names
+of environment variables and headers).
 
 The origin is `SendOrigin.code(agent.harness)`: the screen's data describes the user's own
 harness setup (skill and server names, counts, project names), like the repository code that
@@ -60,13 +83,17 @@ goes only to a destination on the allowed list (Settings → Sending policy), el
 with the policy's reason shown in the chat. The scrub runs on the input as for every call.
 Unlike Rewrite with Skill, a masked value is fine here: the answer is only read, never
 written back, so the scrubbed text is sent. The monthly limit and the send log (Lab → Sends,
-purpose "ask akit") apply as for every call.
+purpose "ask akit") apply as for every call; since 2026-10-15 `ModelCall` counts the system
+prompt with the input in both (every caller's system prompt is sent and paid for), which
+matters here, where the guide sections are in the system prompt.
 
 ## The agent
 
 The same harness, model and effort fields as Lab and Rewrite with Skill (`ReviewAgentFields`),
 in a popover from the panel's header, remembered on this Mac (`ask.harness`, `ask.model`,
-`ask.effort`). An empty model means Lab's default for the harness.
+`ask.effort`). An empty model means Lab's default for the harness. A chosen harness that isn't
+installed falls back to one that is, with that harness's own default model and effort. The
+agent is worked out when the panel opens and when its fields change, not on every redraw.
 
 ## Limits
 
@@ -74,9 +101,15 @@ in a popover from the panel's header, remembered on this Mac (`ask.harness`, `as
 - A screen's summary is short: counts and names AKit already has, plus what a screen view adds
   with `.askAKitScreen(…)` (Insights: scope, window, recommendations). Rows add their own values
   through Ask AKit About This.
-- Chats live until New Chat or quit; they are not saved.
-- The glossary guide is picked up by its id `terms`; it is used once `Guide` has a `terms`
-  case (`AKit/Guide/GuideView.swift`) and `docs/guides/terms.ru.md` exists.
+- Chats live until New Chat or quit; they are not saved. One chat per app: the main scene is a
+  single `Window` (the screen in view, `AppModel.section`, was already shared by every window).
+- One call at a time: About This is off while a call runs or the confirmation waits, and sets
+  the focus only when its question is really sent; New Chat during a call cancels it and the
+  next send waits until its process is gone.
+- The glossary guide `terms` (`docs/guides/terms.ru.md`, Help → AKit Terms Guide) is a `Guide`
+  case; its matching entries go first, within 8,000 characters.
+- Facts for About This are built when the item is chosen (`@autoclosure`), not on every redraw;
+  a screen's own facts (`.askAKitScreen`) are a few short lines built with its view.
 
 ## Where it shows
 
