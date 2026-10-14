@@ -163,6 +163,14 @@ private struct LabRunRow: View {
             .lineLimit(1)
         }
         .padding(.vertical, 2)
+        .askAKit("Lab run “\(run.spec.title)”", facts: [
+            "Status: \(run.status.rawValue)", "Runs in: \(run.spec.environment.title)",
+            run.spec.agent.map { "Agent: \($0.label)" } ?? "",
+            run.result?.tests.map { "Tests: \($0.status)" } ?? "",
+            run.result?.batch.map { "Batch: \($0.done)/\($0.total) done, \($0.failed) failed" } ?? "",
+            run.result?.metrics.map { "\(UsageText.short($0.freshTokens)) fresh tokens · \($0.calls) calls" } ?? "",
+            cost.map { "Cost: \(LabCostText.short($0))" } ?? "",
+        ])
     }
 }
 
@@ -536,6 +544,7 @@ private struct LabRunDetail: View {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
             Text(value).monospaced(monospaced).lineLimit(2).truncationMode(.middle)
         }
+        .askAKit("Lab run detail: \(label)", facts: ["\(label): \(value)", "Run: \(run.spec.title)"])
     }
 
     private func act(_ work: @escaping () async throws -> Void) {

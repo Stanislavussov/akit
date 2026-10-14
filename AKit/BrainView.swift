@@ -541,6 +541,13 @@ struct BrainView: View {
                             Divider()
                             Button("Move to Trash…", role: .destructive) { pendingRemoval = .layer(layer.name) }
                                 .disabled(layer.name == "core")
+                            Divider()
+                            AskAKitMenuItem(title: "Brain layer \(layer.name)", facts: [
+                                "Skills: \(layer.skills.count)", "Fields: \(layer.fields.count)",
+                                "Problems: \(brain.problems(of: layer.name).count)",
+                                verdicts[layer.name]?.first.map { "Eval verdict: \($0.verdict.title)" } ?? "",
+                                layer.description.isEmpty ? "" : "Description: \(layer.description)",
+                            ])
                         }
                 }
             } header: {
@@ -564,6 +571,12 @@ struct BrainView: View {
                             if !project.isHome || model.brainProjectFolders[project.id] != nil {
                                 Button("Forget Project…", role: .destructive) { askForget(project) }
                             }
+                            Divider()
+                            AskAKitMenuItem(title: "Brain project \(project.name)", facts: [
+                                "Layers: \(brain.layers(of: project).joined(separator: ", "))",
+                                model.brainProjectFolders[project.id] == nil ? "Not on this Mac" : "On this Mac",
+                                project.isHome ? "This Mac's home folder" : "",
+                            ])
                         }
                 }
             } }
@@ -581,6 +594,8 @@ struct BrainView: View {
                         fileMenu(skill.folder, reveal: skill.file)
                         Divider()
                         Button("Move to Trash…", role: .destructive) { pendingRemoval = .skill(skill.name) }
+                        Divider()
+                        AskAKitMenuItem(title: "Brain skill \(skill.name)", facts: ["Description: \(skill.description.prefix(300))"])
                     }
                 }
             } }

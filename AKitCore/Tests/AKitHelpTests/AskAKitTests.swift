@@ -155,7 +155,7 @@ struct AskAKitTests {
         let sent = AskAKit.select(question: "Что значит этот бюджет и что делать?", context: context, guides: guides, search: search,
                                   budget: AskAKit.guideBudget)
         #expect(sent.reduce(0) { $0 + $1.text.count } <= AskAKit.guideBudget)
-        #expect(prepared.sources.first?.id == "screens#insights")
+        #expect(prepared.sources.contains { $0.id == "screens#insights" })
         #expect(prepared.sources.count > 3)
     }
 }

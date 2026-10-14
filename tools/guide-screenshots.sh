@@ -148,6 +148,8 @@ shot analysis-evals      $MAIN --section analysis --tab evals
 shot analysis-run-cells  $MAIN --section analysis --tab evals --select $TASK --add
 shot analysis-run-cells-layer $MAIN --section analysis --tab evals --select $TASK --query layer --project backend-node --add
 shot analysis-new-task   $MAIN --section analysis --tab evals --query fromSession
+# Ask AKit's panel with a made-up chat (no model call); Insights imports first.
+shot ask-akit            1380x800 --section insights --delay 8 --ask
 shot settings            900x760 --settings
 shot settings-lab        900x760 --tab lab --settings
 shot settings-scrub      900x760 --tab scrub --settings

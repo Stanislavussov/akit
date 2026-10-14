@@ -222,6 +222,8 @@ struct InstructionsView: View {
                                     if ExternalEditor.appURL != nil {
                                         Button("Open in \(ExternalEditor.name)") { ExternalEditor.open(entry.file) }
                                     }
+                                    Divider()
+                                    AskAKitMenuItem(title: "Instruction file \(entry.file.lastPathComponent)", facts: askFacts(entry, group: group.title))
                                 }
                         }
                     } header: {
@@ -1180,3 +1182,19 @@ private struct RewriteInstructionSheet: View {
     }
 }
 
+
+extension InstructionsView {
+    /// What a file's row shows, for Ask AKit About This.
+    func askFacts(_ entry: InstructionEntry, group: String) -> [String] {
+        let status: String = switch entry.status {
+        case .loaded: "Loaded at session start"
+        case .imported(let by): "Imported with @ from \(by.lastPathComponent)"
+        case .skipped(let reason): "Skipped: \(reason)"
+        case .onDemand(let when): "On demand: \(when)"
+        }
+        return [
+            "Group: \(group)", "Path: \(entry.file.tildePath)", status,
+            "Size sent: \(Self.size(entry.sentBytes))", entry.note ?? "",
+        ]
+    }
+}

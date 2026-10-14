@@ -56,7 +56,7 @@ under the input field, with the harness and model, every time.
 The origin is `SendOrigin.code(agent.harness)`: the screen's data describes the user's own
 harness setup (skill and server names, counts, project names), like the repository code that
 replays send. So on a personal Mac it may go to the harness's own account; on a work Mac it
-goes only to a destination on the allowed list (Settings → Lab), else the call fails closed
+goes only to a destination on the allowed list (Settings → Sending policy), else the call fails closed
 with the policy's reason shown in the chat. The scrub runs on the input as for every call.
 Unlike Rewrite with Skill, a masked value is fine here: the answer is only read, never
 written back, so the scrubbed text is sent. The monthly limit and the send log (Lab → Sends,
@@ -80,9 +80,29 @@ in a popover from the panel's header, remembered on this Mac (`ask.harness`, `as
 
 ## Where it shows
 
-Ask AKit About This is on: the sidebar items; Overview (harness cards, config locations, Pi
-packages); Insights (owners, recommendation cards, the Skills, MCP Servers and Tools tables,
-Skill Listing, Changes); and the other screens' rows as listed in the commit that adds them.
+Ask AKit About This is in the context menus of:
+
+| Screen | Elements |
+|---|---|
+| Sidebar | every item (next to What Is … For?) |
+| Overview | harness cards, config locations, Pi packages |
+| Skills | every skill row (switches, brain link, duplicate and warning marks in the facts) |
+| skills.sh | every search result |
+| MCP Servers | every server row |
+| Instructions | every file row |
+| Sessions | every session row; the Usage tab's rows, the Analysis tab's metrics, context rent and tool outcome tiles |
+| Usage | the summary tiles and every row of the table |
+| Insights | owners, recommendation cards, Skill Listing, Changes, every row of the Skills, MCP Servers and Tools tables |
+| Lab | every run row and the run detail's rows |
+| Error Analysis | the Modes table (the screen's facts name the tab) |
+| Brain | layers, projects, skills |
+
+Screen facts beyond AppModel's counts: Insights (scope, window, recommendations), Sessions (the
+open session and tab), Error Analysis (the tab and the Review queue).
+
+Not yet: Error Analysis's Review, Bootstrap, Reports and Evals items, and the detail panes of
+Skills, MCP Servers and Brain (their rows have it). Rows inside a view with selectable text
+(Usage's table) may show the system's text menu instead on some clicks.
 
 ## Code
 

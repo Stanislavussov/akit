@@ -55,6 +55,7 @@ struct ToolOutcomesView: View {
         .padding(10)
         .frame(minWidth: 110, maxWidth: 190, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .askAKit("Tool outcome: \(title)", facts: ["\(title): \(value)", caption])
     }
 
     // MARK: Bars

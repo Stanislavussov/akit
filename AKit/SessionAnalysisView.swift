@@ -135,6 +135,7 @@ struct MetricsView: View {
             Text(value).foregroundStyle(warn ? .orange : .primary)
         }
         .help(help ?? "")
+        .askAKit("Session metric: \(label)", facts: ["\(label): \(value)", warn ? "Shown as a warning" : "", help ?? ""])
     }
 }
 
@@ -174,6 +175,9 @@ struct ContextRentView: View {
                         Text("≈ \(UsageText.short(part.value)) tokens sent").foregroundStyle(.secondary)
                     }
                     .help(part.help)
+                    .askAKit("Context rent: \(part.name)", facts: [
+                        "Share: \(MetricsText.percent(rent.share(part.value)))", "≈ \(UsageText.short(part.value)) tokens sent", part.help,
+                    ])
                 }
             }
             .monospacedDigit()

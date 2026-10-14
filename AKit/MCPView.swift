@@ -158,6 +158,12 @@ struct MCPView: View {
                                     .disabled(!model.canEdit(server))
                                 Divider()
                                 MCPSwitchMenu(server: server)
+                                Divider()
+                                AskAKitMenuItem(title: "MCP server \(server.name)", facts: [
+                                    "Where: \(group.scope.title)", "File: \(server.file.tildePath)",
+                                    "Harnesses: " + server.uses.map { "\($0.harness.displayName) (\($0.state.title))" }.joined(separator: ", "),
+                                    model.warnings(of: server).isEmpty ? "" : "Warnings: \(model.warnings(of: server).joined(separator: "; "))",
+                                ])
                             }
                     }
                 } header: {

@@ -149,6 +149,7 @@ final class AskAKitModel {
                     AskAKit.prepare(question: question, context: context, history: history, guides: guides, search: search,
                                     language: language)
                 }.value
+                try Task.checkCancellation()
                 let env = HarnessEnvironment.current
                 let gate = try await SendGate.open(agent: agent, env: env)
                 let folder = FileManager.default.temporaryDirectory.appending(path: "akit-ask-\(UUID().uuidString)")
@@ -218,7 +219,10 @@ private struct AskScreenFacts: ViewModifier {
     let facts: String
 
     func body(content: Content) -> some View {
-        content.onChange(of: facts, initial: true) { ask.screenFacts[section] = facts }
+        content
+            .onChange(of: facts, initial: true) { ask.screenFacts[section] = facts }
+            // Gone with its view (no session open any more), unless another view set its own.
+            .onDisappear { if ask.screenFacts[section] == facts { ask.screenFacts[section] = nil } }
     }
 }
 

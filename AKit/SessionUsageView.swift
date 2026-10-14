@@ -157,5 +157,6 @@ struct SessionUsageView: View {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
             Text(value)
         }
+        .askAKit("Session usage: \(label)", facts: ["\(label): \(value)"])
     }
 }

@@ -331,6 +331,7 @@ private struct UsageSummary: View {
         .padding(14)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5)))
+        .askAKit("Usage: \(title)", facts: ["\(title): \(value)", detail])
     }
 }
 
@@ -582,6 +583,16 @@ private struct UsageTable: View {
         .monospacedDigit()
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .askAKit("Usage table row: \(title)", facts: zip(report.subscriptions, cells).map { subscription, cell in
+            "\(subscription.name): " + Self.askText(cell)
+        } + ["Total: " + Self.askText(total)])
+    }
+
+    /// A cell's values for Ask AKit: tokens, responses, cost.
+    private static func askText(_ total: UsageTotal?) -> String {
+        guard let total, total.requests > 0 else { return "no use" }
+        return "\(UsageText.short(total.tokens.total)) tokens, \(total.requests) responses" + (UsageText.cost(of: total).map { ", \($0)" } ?? "")
     }
 
     @ViewBuilder

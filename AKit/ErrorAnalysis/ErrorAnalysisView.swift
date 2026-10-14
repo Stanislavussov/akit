@@ -37,6 +37,8 @@ struct ErrorAnalysisView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) { statusBar }
+        // Ask AKit: the tab answers which part of the guide is meant.
+        .askAKitScreen(.analysis, facts: ["Tab: \(tab.title)", "Waiting in Review: \(analysis.data.queue.count)", subtitle])
         .navigationTitle("Error Analysis")
         .navigationSubtitle(subtitle)
         .toolbar {

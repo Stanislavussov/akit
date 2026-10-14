@@ -292,6 +292,27 @@ struct SkillsView: View {
             Button("Remove Everywhere…") { removeEverywhere(skill) }
             if let request = resolveRequest(skill) { Button("Resolve Duplicate…") { removing = request } }
         }
+        Divider()
+        AskAKitMenuItem(title: "Skill \(skill.name)", facts: askFacts(skill))
+    }
+
+    /// What the row shows, for Ask AKit About This.
+    private func askFacts(_ skill: Skill) -> [String] {
+        let brain: String = switch model.brainLinks[skill.id] {
+        case .rendered(_, let layers, let edited): "Brain: rendered from layers \(layers.joined(separator: ", "))\(edited ? ", then edited here" : "")"
+        case .sameName: "Brain: in brain (the brain has a skill of this name; this copy wasn't rendered by AKit)"
+        case .notInBrain: "Brain: not in brain"
+        case nil: ""
+        }
+        let duplicate = duplicate(of: skill).map { "Duplicate: \($0.harnesses.map(\.displayName).joined(separator: ", ")) load \($0.copies.count) copies together" }
+        return [
+            "Where: \(skill.scope.title)",
+            "Seen by: \(skill.visibleTo.map(\.displayName).joined(separator: ", "))",
+            brain, duplicate ?? "",
+            skill.warnings.isEmpty ? "" : "Warnings: \(skill.warnings.joined(separator: "; "))",
+            skill.isReadOnly ? "Read-only" : "",
+            "Description: \(skill.description.prefix(300))",
+        ]
     }
 
     /// A global skill AKit can move into projects (Move to Project…): the brain needed, not a

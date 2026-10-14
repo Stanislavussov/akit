@@ -97,6 +97,10 @@ struct ModesTab: View {
         .contextMenu(forSelectionType: Mode.ID.self) { ids in
             if let id = ids.first, let mode = data.mode(id) {
                 ModeActions(mode: mode, action: $action, menu: true)
+                Divider()
+                AskAKitMenuItem(title: "Failure mode \(mode.name)", facts: [
+                    "Kind: \(mode.kind.rawValue)", "Scope: \(mode.scope)", "Definition: \(mode.definition.prefix(400))",
+                ])
             }
         }
     }
