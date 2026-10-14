@@ -236,7 +236,8 @@ public enum AKitCLI {
           akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
                                           The instruction files each harness loads for a session in
                                           FOLDER (default: here), in the order the model gets them,
-                                          with sizes, and the files it skips with the reason
+                                          with sizes, the files it skips with the reason, and
+                                          sections it gets twice (twice) or in two versions (differs)
 
         This Mac (~/.akit/machine.json, never in the brain):
           akit doctor                     What AKit sees on this Mac and what is wrong (lines with !,

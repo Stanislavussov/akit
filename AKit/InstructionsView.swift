@@ -15,6 +15,10 @@ struct InstructionsView: View {
     @State private var harness: HarnessID?
     @State private var view: InstructionView?
     @State private var selection: InstructionEntry.ID?
+    /// Sections the model gets twice or in two versions, made with the view.
+    @State private var duplicates: [InstructionDuplicate] = []
+    /// Show only files with such a section.
+    @State private var duplicatesOnly = DebugSnapshot.options?.tab == "duplicates"
 
     /// Snapshots: `--project <folder name>` under ~/Projects.
     static var initialProject: URL? {
@@ -27,7 +31,8 @@ struct InstructionsView: View {
                 .frame(minWidth: 320, idealWidth: 400, maxWidth: 560)
             Group {
                 if let entry = view?.entries.first(where: { $0.id == selection }) {
-                    InstructionDetailView(entry: entry, home: HarnessEnvironment.current.homeDirectory)
+                    InstructionDetailView(entry: entry, home: HarnessEnvironment.current.homeDirectory,
+                                          duplicates: duplicates.filter { $0.places.contains { $0.file == entry.file } })
                 } else {
                     ContentUnavailableView("Select a file", systemImage: "doc.text")
                 }
@@ -62,6 +67,14 @@ struct InstructionsView: View {
                 .fixedSize()
                 .help("Each harness has its own rules for which files it reads")
             }
+            if !duplicates.isEmpty || duplicatesOnly {
+                ToolbarItem(placement: .navigation) {
+                    Toggle(isOn: $duplicatesOnly) {
+                        Label("Duplicates (\(duplicates.count))", systemImage: "doc.on.doc").labelStyle(.titleAndIcon)
+                    }
+                    .help("Show only files with a section the model gets twice (the same text in two places) or in two versions (the same ## heading, other text)")
+                }
+            }
         }
         // The picker shows installed harnesses; the choice follows when the list changes.
         .onChange(of: harnesses, initial: true) {
@@ -70,9 +83,13 @@ struct InstructionsView: View {
         .task(id: "\(project?.path ?? "-")|\(harness?.rawValue ?? "-")|\(model.lastScan?.timeIntervalSince1970 ?? 0)") {
             guard let harness else { return }
             let project = project, env = HarnessEnvironment.current
-            let made = await Task.detached { InstructionScanner.view(harness: harness, project: project, env: env) }.value
+            let (made, groups) = await Task.detached {
+                let view = InstructionScanner.view(harness: harness, project: project, env: env)
+                return (view, view.duplicates)
+            }.value
             guard !Task.isCancelled else { return }
             view = made
+            duplicates = groups
             if made.entries.first(where: { $0.id == selection }) == nil {
                 // Snapshots: `--select <file name>` picks the first file of that name.
                 let named = DebugSnapshot.options?.select.flatMap { name in made.entries.first { $0.file.lastPathComponent == name } }
@@ -114,7 +131,9 @@ struct InstructionsView: View {
                 ForEach(groups(view), id: \.title) { group in
                     Section {
                         ForEach(group.entries) { entry in
-                            InstructionRow(entry: entry, home: HarnessEnvironment.current.homeDirectory).tag(entry.id)
+                            InstructionRow(entry: entry, home: HarnessEnvironment.current.homeDirectory,
+                                           repeated: duplicates.filter { $0.places.contains { $0.file == entry.file } }.count)
+                                .tag(entry.id)
                                 .contextMenu {
                                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.file]) }
                                     if ExternalEditor.appURL != nil {
@@ -138,6 +157,10 @@ struct InstructionsView: View {
         }
     }
 
+    private func hasDuplicate(_ entry: InstructionEntry) -> Bool {
+        entry.status.isLoaded && duplicates.contains { $0.places.contains { $0.file == entry.file } }
+    }
+
     private struct FileGroup { let title: String; let help: String; let entries: [InstructionEntry] }
 
     /// Loaded files in the model's order, split where the level changes; skipped files last.
@@ -159,7 +182,9 @@ struct InstructionsView: View {
         if !skipped.isEmpty {
             result.append(FileGroup(title: "Not Loaded", help: "Found, but \(view.harness.displayName) doesn't read it here; each says why", entries: skipped))
         }
-        return result
+        // The Duplicates filter: only files with a repeated section, and no empty group.
+        guard duplicatesOnly else { return result }
+        return result.map { FileGroup(title: $0.title, help: $0.help, entries: $0.entries.filter(hasDuplicate)) }.filter { !$0.entries.isEmpty }
     }
 
     static func levelTitle(_ level: InstructionLevel) -> (String, String) {
@@ -174,6 +199,8 @@ struct InstructionsView: View {
 private struct InstructionRow: View {
     let entry: InstructionEntry
     let home: URL
+    /// Duplicate groups with a section of this file.
+    let repeated: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -182,6 +209,10 @@ private struct InstructionRow: View {
                 if case .imported(let by) = entry.status {
                     Text("@ from \(by.lastPathComponent)").font(.caption2).foregroundStyle(.secondary)
                         .help("Claude Code reads it because \(by.tildePath) imports it with @")
+                }
+                if repeated > 0 {
+                    Image(systemName: "doc.on.doc.fill").font(.caption).foregroundStyle(.orange)
+                        .help("\(repeated) section\(repeated == 1 ? "" : "s") of this file the model also gets from another place (or in another version)")
                 }
                 if entry.note != nil {
                     Image(systemName: "scissors").font(.caption).foregroundStyle(.orange).help(entry.note ?? "")
@@ -208,6 +239,8 @@ private struct InstructionRow: View {
 private struct InstructionDetailView: View {
     let entry: InstructionEntry
     let home: URL
+    /// The duplicate groups with a section of this file.
+    let duplicates: [InstructionDuplicate]
 
     var body: some View {
         ScrollView {
@@ -248,16 +281,21 @@ private struct InstructionDetailView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Sections").font(.headline)
                         ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                            HStack(spacing: 6) {
-                                Text(title(section)).lineLimit(1)
-                                if section.isAKitBlock {
-                                    Text("brain · core").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
-                                        .background(.purple.opacity(0.15), in: Capsule()).foregroundStyle(.purple)
-                                        .help("AKit's block of the core layer: it changes in the brain (Brain → core)")
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: 6) {
+                                    Text(title(section)).lineLimit(1)
+                                    if section.isAKitBlock {
+                                        Text("brain · core").font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
+                                            .background(.purple.opacity(0.15), in: Capsule()).foregroundStyle(.purple)
+                                            .help("AKit's block of the core layer: it changes in the brain (Brain → core)")
+                                    }
+                                    Spacer()
+                                    Text("line \(section.line) · \(InstructionsView.size(section.bytes))").font(.caption).foregroundStyle(.secondary)
+                                        .monospacedDigit()
                                 }
-                                Spacer()
-                                Text("line \(section.line) · \(InstructionsView.size(section.bytes))").font(.caption).foregroundStyle(.secondary)
-                                    .monospacedDigit()
+                                ForEach(repeats(of: section), id: \.self) { line in
+                                    Label(line, systemImage: "doc.on.doc").font(.caption).foregroundStyle(.orange)
+                                }
                             }
                         }
                     }
@@ -274,7 +312,18 @@ private struct InstructionDetailView: View {
         }
     }
 
-    private var sections: [InstructionSection] { entry.sections }
+    /// The file's parts as duplicates compare them: AKit's block split into its `##` parts.
+    private var sections: [InstructionSection] { InstructionText.units(entry.text) }
+
+    /// "Also in …" / "Differs from …" for each group this section is in.
+    private func repeats(of section: InstructionSection) -> [String] {
+        duplicates.compactMap { group in
+            guard group.places.contains(where: { $0.file == entry.file && $0.section.line == section.line }) else { return nil }
+            let others = group.places.filter { !($0.file == entry.file && $0.section.line == section.line) }
+                .map { "\($0.file.tildePath):\($0.section.line)" }.joined(separator: ", ")
+            return group.kind == .same ? "Also in \(others)" : "Same heading, other text in \(others)"
+        }
+    }
 
     private var status: String {
         switch entry.status {
@@ -286,8 +335,8 @@ private struct InstructionDetailView: View {
     }
 
     private func title(_ section: InstructionSection) -> String {
-        if section.isAKitBlock { return "AKit block" }
         if let heading = section.heading { return heading }
+        if section.isAKitBlock { return "AKit block" }
         return section.text.split(separator: "\n").first.map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "# ")) }.flatMap { $0.isEmpty ? nil : $0 } ?? "Lead"
     }
 

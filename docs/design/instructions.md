@@ -9,7 +9,13 @@ commit), duplicates are the same text after normalizing, and step 1 comes first 
 Step 1 built 2026-10-14: `AKitInstructions` (`InstructionScanner`, `InstructionText`), the
 Instructions screen (On This Mac) and `akit instructions [FOLDER] [--harness …] [--global]`.
 Not in step 1: files in subfolders that load later, and Codex's budget for the global file
-(only project files count against the 32 KiB). Step 0 (the facts below) is done: checked the same day in
+(only project files count against the 32 KiB).
+
+Step 2 built 2026-10-14: `InstructionView.duplicates` (`InstructionDuplicates.swift`): same text
+(D13) or the same `##` heading with other text, among the loaded files of one session; AKit's
+block compared by its `##` parts (`InstructionText.units`). The screen's Duplicates (N) filter,
+a mark per file and "Also in …" / "Same heading, other text in …" per section; `twice` and
+`differs` lines in `akit instructions`. Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem
