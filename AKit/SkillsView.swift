@@ -612,6 +612,7 @@ private struct SkillDetailView: View {
                     Label("Read-only", systemImage: "lock.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .askAKit("Read-only badge of skill \(skill.name)", facts: ["Where: \(skill.scope.title)", "Location: \(skill.file.tildePath)"])
                 }
                 Spacer()
                 if let onMoveToGlobal {
@@ -667,7 +668,10 @@ private struct SkillDetailView: View {
                     if skill.visibleTo.isEmpty {
                         Text("No harness").foregroundStyle(.secondary)
                     }
-                    ForEach(skill.visibleTo, id: \.self) { HarnessBadge(harness: $0) }
+                    ForEach(skill.visibleTo, id: \.self) { harness in
+                        HarnessBadge(harness: harness)
+                            .askAKit("\(harness.displayName) badge of skill \(skill.name)", facts: detailFacts)
+                    }
                 }
             }
             if let duplicate {
@@ -732,8 +736,28 @@ private struct SkillDetailView: View {
         }
     }
 
+    /// A field's name: not selectable, so a right-click on it gets Ask AKit About This.
     private func label(_ text: String) -> some View {
         Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            .textSelection(.disabled)
+            .askAKit("Skill \(skill.name): \(text)", facts: detailFacts)
+    }
+
+    /// The fields the pane shows, for Ask AKit About This.
+    private var detailFacts: [String] {
+        let brain: String = switch link {
+        case .rendered(_, let layers, let edited): "Brain: rendered from layers \(layers.joined(separator: ", "))\(edited ? ", edited here since" : "")"
+        case .sameName: "Brain: the brain has a skill with this name, but this copy wasn't rendered by AKit"
+        case .notInBrain: "Brain: not in the brain"
+        case nil: ""
+        }
+        return [
+            "Location: \(skill.file.tildePath)", skill.realFile.path != skill.file.path ? "Real path: \(skill.realFile.tildePath)" : "",
+            "Visible to: \(skill.visibleTo.isEmpty ? "No harness" : skill.visibleTo.map(\.displayName).joined(separator: ", "))",
+            duplicate.map { "Duplicate: \($0.harnesses.map(\.displayName).joined(separator: ", ")) load \($0.copies.count) copies together" } ?? "",
+            skill.origin.map { "Source: \($0)" } ?? "", brain, skill.isReadOnly ? "Read-only" : "",
+            skill.warnings.isEmpty ? "" : "Warnings: \(skill.warnings.joined(separator: "; "))",
+        ]
     }
 
     private var warnings: some View {
@@ -742,6 +766,7 @@ private struct SkillDetailView: View {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .font(.callout)
+                    .askAKit("Warning on skill \(skill.name)", facts: [warning, "Location: \(skill.file.tildePath)"])
             }
         }
     }

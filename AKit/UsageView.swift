@@ -568,7 +568,9 @@ private struct UsageTable: View {
     private func row(title: String, day: Date? = nil, cells: [UsageTotal?], total: UsageTotal?, tooltip: String,
                      peaks: [String: Int], bold: Bool = false) -> some View {
         HStack(spacing: 0) {
-            Text(title).frame(width: dayWidth, alignment: .leading)
+            // Not selectable: selectable text shows the system's text menu on a right-click, so
+            // the day is where Ask AKit About This (the row's menu) is always found.
+            Text(title).textSelection(.disabled).frame(width: dayWidth, alignment: .leading)
             ForEach(Array(zip(report.subscriptions, cells)), id: \.0.id) { subscription, cell in
                 cellView(cell, color: SubscriptionColor.color(for: subscription), peak: peaks[subscription.id],
                          limits: day.flatMap { UsageText.limits(limits?.peaks($0, subscription) ?? [], short: true) },

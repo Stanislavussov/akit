@@ -541,7 +541,7 @@ private struct LabRunDetail: View {
 
     private func row(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).monospaced(monospaced).lineLimit(2).truncationMode(.middle)
         }
         .askAKit("Lab run detail: \(label)", facts: ["\(label): \(value)", "Run: \(run.spec.title)"])

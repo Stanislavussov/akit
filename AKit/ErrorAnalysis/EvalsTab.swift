@@ -121,6 +121,7 @@ struct EvalsTab: View {
                                 Text("\(set.tasks.count) \(set.tasks.count == 1 ? "task" : "tasks")").font(.caption).foregroundStyle(.secondary)
                             }
                             .tag(Self.setTag + set.layer)
+                            .askAKit("Layer set \(set.layer) (Evals)", facts: ["Tasks: \(set.tasks.count)"])
                         }
                     }
                 }
@@ -139,6 +140,10 @@ struct EvalsTab: View {
                         }
                         .padding(.vertical, 2)
                         .tag(task.id)
+                        .askAKit("Control task \(task.title) (Evals)", facts: [
+                            "Repository: \(URL(filePath: task.repo).lastPathComponent) at \(task.base.prefix(7))", "Judged by: \(task.oracle.label)",
+                            task.referenceGreen.map { "Reference commit: tests \($0 ? "pass" : "fail")" } ?? "",
+                        ])
                     }
                 }
             }
@@ -257,9 +262,11 @@ private struct ControlTaskView: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            // Not selectable: a right-click on the label gets Ask AKit About This.
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).fixedSize(horizontal: false, vertical: true)
         }
+        .askAKit("Control task \(task.title): \(label) (Evals)", facts: ["\(label): \(value)"])
     }
 
     private func add(to layer: String) {

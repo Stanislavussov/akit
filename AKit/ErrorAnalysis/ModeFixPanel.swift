@@ -26,6 +26,9 @@ struct ModeFixPanel: View {
                 Text(status).foregroundStyle(.secondary)
                 Spacer()
             }
+            .askAKit("Fix of \(mode.name) (mode page)", facts: [
+                "Status: \(status)", mode.fixReason.map { "Reason: \($0)" } ?? "", draft == nil ? "No draft" : "A draft exists",
+            ])
             if let reason = mode.fixReason, mode.fix == .rejected {
                 Label("Rejected: \(reason)", systemImage: "xmark.circle").foregroundStyle(.red)
             }

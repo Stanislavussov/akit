@@ -86,23 +86,34 @@ Ask AKit About This is in the context menus of:
 |---|---|
 | Sidebar | every item (next to What Is … For?) |
 | Overview | harness cards, config locations, Pi packages |
-| Skills | every skill row (switches, brain link, duplicate and warning marks in the facts) |
+| Skills | every skill row; the detail pane's field names, harness badges, Read-only badge, warnings |
 | skills.sh | every search result |
-| MCP Servers | every server row |
+| MCP Servers | every server row; the detail pane's field names, transport badge, Used by rows, warnings (names only, never a value: no arguments, the URL's host only, only the names of environment variables and headers) |
 | Instructions | every file row |
 | Sessions | every session row; the Usage tab's rows, the Analysis tab's metrics, context rent and tool outcome tiles |
 | Usage | the summary tiles and every row of the table |
 | Insights | owners, recommendation cards, Skill Listing, Changes, every row of the Skills, MCP Servers and Tools tables |
-| Lab | every run row and the run detail's rows |
-| Error Analysis | the Modes table (the screen's facts name the tab) |
-| Brain | layers, projects, skills |
+| Lab | every run row and the run detail's rows; the batch section (summary, steps, every session and its status badge); the control task and its oracle result |
+| Error Analysis | Modes table; Review cards (candidates, routes, tough calls, spot checks, umbrellas); Bootstrap (reserved sessions, agreement rows, similar cases, finds); Reports (tiles, frequency rows, transition matrix cells); Evals (layer sets, tasks, task fields, comparison setups, verdicts); the mode page (header, code check, judge, fix, routed notes) |
+| Brain | layers, projects, skills; the detail panes' field grids and skill mode badges |
 
 Screen facts beyond AppModel's counts: Insights (scope, window, recommendations), Sessions (the
 open session and tab), Error Analysis (the tab and the Review queue).
 
-Not yet: Error Analysis's Review, Bootstrap, Reports and Evals items, and the detail panes of
-Skills, MCP Servers and Brain (their rows have it). Rows inside a view with selectable text
-(Usage's table) may show the system's text menu instead on some clicks.
+Not yet: the difference grid of two batches (its cells don't know their row and column), the
+skill switch and invocation rows of the Skills pane, and the layer pane's field and skill lists.
+
+### Selectable text
+
+A view with `.textSelection(.enabled)` shows the system's text menu (Look Up, Copy, …) on a
+right-click over its glyphs, and an ancestor's `.contextMenu` is not offered there; SwiftUI has no
+API to add an item to that menu. So the field names and row labels (the Usage table's day, the
+Sessions Usage rows, run detail rows, metric rows, the Skills, MCP and Brain panes' field names)
+are `.textSelection(.disabled)`: a right-click on them, or on empty space in the row, gets
+Ask AKit About This, while the values stay selectable for copying. Checked with
+`make snapshot … RCLICK="x,y;…"` (`--right-click`), which right-clicks there and prints each
+menu's items: in the demo home the Usage table's day column gave the text menu before the change
+and Ask AKit About This after it; a number still gives the text menu.
 
 ## Code
 

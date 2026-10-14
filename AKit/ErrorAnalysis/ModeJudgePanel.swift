@@ -28,6 +28,9 @@ struct ModeJudgePanel: View {
                 TrustBadge(level: data.trust[mode.id]?.level ?? .none)
                 Spacer()
             }
+            .askAKit("Judge & validation of \(mode.name) (mode page)", facts: [
+                "Trust: \(data.trust[mode.id]?.level ?? .none)", judge.map { "Judged by \($0.label)" } ?? "No judge",
+            ])
             judgeRow
             if judge != nil { poolRun }
             validation

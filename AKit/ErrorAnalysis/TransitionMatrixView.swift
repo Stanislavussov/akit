@@ -169,6 +169,9 @@ private struct MatrixGrid: View {
         .buttonStyle(.plain)
         .disabled(count == 0)
         .help("\(row.title) → \(columnTitle(column)): \(count) sessions")
+        .askAKit("Transition matrix cell \(row.title) → \(columnTitle(column)) (Reports)", facts: [
+            "Sessions: \(count)", "Share (\(normalisation.title.lowercased())): \(AnalysisText.percent(share))",
+        ])
     }
 }
 

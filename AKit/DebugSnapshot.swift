@@ -42,6 +42,8 @@ import SwiftUI
 /// scrolls to that table, `--query unused` turns on Unused Only and `--query open` opens every MCP server's tool list; it
 /// imports first, so give it `--delay 8`.
 ///
+/// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
+/// menu's items (to check which places get Ask AKit About This);
 /// `--ask` opens the Ask AKit panel with a made-up chat about the Listing budget (no model call).
 ///
 /// Flags are read from launch arguments; without `--snapshot` nothing happens. Put flags without
@@ -84,6 +86,9 @@ enum DebugSnapshot {
         var localOnly: Bool
         /// Open the Ask AKit panel with a made-up chat (no model call).
         var ask: Bool
+        /// Right-clicks, in the same points as `click`: each context menu's items are printed
+        /// and the menu closed again, so a script can check which menu a place gets.
+        var rightClicks: [CGPoint]
     }
 
     static let options: Options? = {
@@ -120,7 +125,11 @@ enum DebugSnapshot {
                 return parts.count == 2 ? CGPoint(x: parts[0], y: parts[1]) : nil
             },
             localOnly: args.contains("--local-only"),
-            ask: args.contains("--ask")
+            ask: args.contains("--ask"),
+            rightClicks: (value("--right-click") ?? "").split(separator: ";").compactMap { pair -> CGPoint? in
+                let parts = pair.split(separator: ",").compactMap { Double($0) }
+                return parts.count == 2 ? CGPoint(x: parts[0], y: parts[1]) : nil
+            }
         )
     }()
 
@@ -161,6 +170,32 @@ enum DebugSnapshot {
                 try? await Task.sleep(for: .milliseconds(80))
             }
             try? await Task.sleep(for: .seconds(1))
+        }
+        if !options.rightClicks.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(for: .milliseconds(300))
+            // The menu tracks in a loop of its own inside sendEvent: print it, then close it from there.
+            let observer = NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: nil) { note in
+                nonisolated(unsafe) let menu = note.object as? NSMenu
+                MainActor.assumeIsolated {
+                    guard let menu, menu.supermenu == nil else { return }
+                    print("  menu: " + menu.items.map { $0.isSeparatorItem ? "|" : $0.title }.joined(separator: ", "))
+                    RunLoop.main.perform(inModes: [.eventTracking, .default]) { menu.cancelTrackingWithoutAnimation() }
+                }
+            }
+            for click in options.rightClicks {
+                print("right-click \(Int(click.x)),\(Int(click.y))")
+                let point = view.convert(NSPoint(x: click.x, y: view.isFlipped ? click.y : view.bounds.height - click.y), to: nil)
+                for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                      windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        window.sendEvent(event)
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            NotificationCenter.default.removeObserver(observer)
         }
         let bounds = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { exit(1) }

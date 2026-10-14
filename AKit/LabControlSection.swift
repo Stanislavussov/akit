@@ -13,6 +13,10 @@ struct LabControlSection: View {
         let task = run.spec.controlTask.flatMap { model.labControlTasks[$0] }
         VStack(alignment: .leading, spacing: 6) {
             Text("Control task").font(.title3.bold())
+                .askAKit("Control task of this Lab run", facts: [
+                    task.map { "Task: \($0.title)" } ?? "The task is gone", task.map { "Oracle: \($0.oracle.label)" } ?? "",
+                    task.map { "Source: \($0.sourceTitle)" } ?? "", run.spec.controlSetup.map { "Setup: \($0.label)" } ?? "",
+                ])
             if let task {
                 Text(task.title).fontWeight(.medium).textSelection(.enabled)
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
@@ -49,6 +53,13 @@ struct LabControlSection: View {
             Label(control.passed ? "Passed" : "Failed", systemImage: control.passed ? "checkmark.seal" : "xmark.seal")
                 .foregroundStyle(control.passed ? .green : .red)
                 .font(.headline)
+                .askAKit("Oracle result of this control cell (Lab)", facts: [
+                    control.passed ? "Passed" : "Failed", "Oracle: \(control.oracle.prefix(300))",
+                    control.flagged ? "Flagged: comparisons count this cell as failed" : "",
+                    control.testsDropped ? "Fewer tests than before the agent ran" : "",
+                    control.changedTestFiles.isEmpty ? "" : "Test files changed: \(control.changedTestFiles.joined(separator: ", "))",
+                    control.leaks.isEmpty ? "" : "The agent's tool calls read \(control.leaks.joined(separator: " and "))",
+                ])
             Text(control.oracle).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             if !control.checkSteps.isEmpty {
                 Text("The mode shows at " + control.checkSteps.map { "#\($0)" }.joined(separator: ", ")).foregroundStyle(.secondary)
@@ -94,9 +105,11 @@ struct LabControlSection: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            // Not selectable: a right-click on the label gets Ask AKit About This.
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).lineLimit(2).truncationMode(.middle)
         }
+        .askAKit("Control task \(label) (Lab)", facts: ["\(label): \(value)"])
     }
 }
 

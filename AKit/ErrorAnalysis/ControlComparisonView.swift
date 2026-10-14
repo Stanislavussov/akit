@@ -191,6 +191,10 @@ struct ControlComparisonView: View {
                 }
             }
         }
+        .askAKit("Setup \(row.setup.label) in the comparison (Evals)", facts: [
+            "pass@1: \(AnalysisText.percent(row.passAt1))", "pass^k: \(AnalysisText.percent(row.passHatK)) (k = \(row.k))",
+            "Cells: \(row.cells)", row.flagged > 0 ? "\(row.flagged) flagged, counted as failed" : "",
+        ] + row.tasks.map { "\(title($0.task)): \($0.passed)/\($0.total)" })
     }
 
     private func rate(_ value: Double?, _ interval: Stats.Interval) -> some View {
@@ -274,5 +278,11 @@ private struct PairedVerdict: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .askAKit("Verdict \(pair.verdict.title): \(pair.variant.name) against \(pair.baseline.name) (Evals)", facts: [
+            "Change: " + (pair.meanChange.map { String(format: "%+.0f points per task", 100 * $0) } ?? "no change measured")
+                + " over \(pair.tasks) tasks",
+            "Bootstrap mass on improvement: \(AnalysisText.percent(pair.improvementShare))\(worse)",
+            "Reason: \(pair.reason)", "Cells: baseline \(pair.baselineCells), variant \(pair.variantCells)",
+        ])
     }
 }

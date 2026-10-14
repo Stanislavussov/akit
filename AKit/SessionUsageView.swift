@@ -154,7 +154,9 @@ struct SessionUsageView: View {
 
     private func row(_ label: String, _ value: String) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            // Not selectable, unlike the value: a right-click on it gets the row's menu (Ask AKit
+            // About This) instead of the system's text menu.
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value)
         }
         .askAKit("Session usage: \(label)", facts: ["\(label): \(value)"])

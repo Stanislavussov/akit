@@ -56,7 +56,8 @@ struct BootstrapOverview: View {
                     Divider()
                     ForEach(data.metrics, id: \.notesVersion) { m in
                         GridRow {
-                            Text(m.notesVersion)
+                            // Not selectable: a right-click here gets the row's Ask AKit About This.
+                            Text(m.notesVersion).textSelection(.disabled)
                             Text("\(m.sessions)")
                             Text(share(m.recall, m.recallCounts[0], m.recallCounts[1]))
                             Text(m.recallBeforeVerifierCounts.count == 2
@@ -67,6 +68,13 @@ struct BootstrapOverview: View {
                             Text(share(m.outcomeAgreement, m.outcomeCounts[0], m.outcomeCounts[1]))
                         }
                         .monospacedDigit()
+                        .askAKit("Agreement with the model, notes version \(m.notesVersion) (Bootstrap)", facts: [
+                            "Sessions: \(m.sessions)", "Recall: \(share(m.recall, m.recallCounts[0], m.recallCounts[1]))",
+                            "Precision: \(share(m.precision, m.precisionCounts[0], m.precisionCounts[1]))",
+                            "Phase: \(share(m.phaseAgreement, m.deviationCounts[0], m.deviationCounts[2]))",
+                            "±3 steps: \(share(m.stepAgreement, m.deviationCounts[1], m.deviationCounts[2]))",
+                            "Outcome: \(share(m.outcomeAgreement, m.outcomeCounts[0], m.outcomeCounts[1]))",
+                        ])
                     }
                 }
                 .textSelection(.enabled)
@@ -143,6 +151,7 @@ struct BootstrapOverview: View {
                     Button("Find Similar Cases…") { analysis.send = .similar(mode, data: data) }
                         .controlSize(.small)
                 }
+                .askAKit("Similar cases for \(mode.name) (Bootstrap)", facts: ["Your notes mapped to it: \(count)"])
             }
         }
     }
@@ -167,6 +176,10 @@ struct BootstrapOverview: View {
                         .controlSize(.small)
                     }
                     .card()
+                    .askAKit("Find for \(data.mode(find.modeID)?.name ?? find.modeID) (Bootstrap)", facts: [
+                        "Found from your note \(find.from.noteID)",
+                        find.accepted.map { $0 ? "Accepted" : "Rejected" } ?? "Not decided",
+                    ])
                 }
             }
         }

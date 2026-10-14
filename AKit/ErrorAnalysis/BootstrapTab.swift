@@ -79,6 +79,10 @@ struct BootstrapTab: View {
                             stateBadge(entry, label: data.labels[entry.sessionKey])
                         }
                         .tag(Selection.session(entry.sessionKey))
+                        .askAKit("Reserved session \(title(of: entry)) (Bootstrap)", facts: [
+                            "State: \(entry.labeledAt != nil ? "labeled" : data.labels[entry.sessionKey] == nil ? "to label" : "draft")",
+                            "Your notes: \(data.labels[entry.sessionKey]?.notes.count ?? 0)",
+                        ])
                     }
                 }
             }

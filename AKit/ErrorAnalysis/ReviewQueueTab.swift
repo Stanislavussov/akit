@@ -143,6 +143,10 @@ private struct CandidateCard: View {
             .controlSize(.small)
         }
         .card()
+        .askAKit("Candidate mode \(mode.name) (Review)", facts: [
+            "Kind: \(mode.kind.rawValue)", "Seen in \(seen) notes", "Definition: \(mode.definition.prefix(400))",
+            "Buttons: Confirm, Rename…, Merge into…, Reject…",
+        ])
     }
 }
 
@@ -166,6 +170,11 @@ private struct RouteCard: View {
             RouteActions(ref: ref, route: route)
         }
         .card()
+        .askAKit("Route of a note to a mode (Review)", facts: [
+            "Note: \(data.note(ref)?.note.description.prefix(300) ?? "")",
+            "Routed to: \(route.modeID.flatMap { data.mode($0)?.name ?? $0 } ?? "None fits")",
+            String(format: "Confidence: %.2f", route.confidence), route.reason.map { "Reason: \($0)" } ?? "",
+        ])
     }
 }
 
@@ -229,6 +238,9 @@ private struct ToughCallCard: View {
             .controlSize(.small)
         }
         .card()
+        .askAKit("Tough call of the check for \(data.mode(call.modeID)?.name ?? call.modeID) (Review)", facts: [
+            "Session: \(data.notes(of: call.sessionKey)?.title ?? call.sessionKey)", verdictText,
+        ])
     }
 
     /// "The check says present at #16: done with no check after the last edit."
@@ -263,6 +275,9 @@ private struct SpotCheckCard: View {
             .controlSize(.small)
         }
         .card()
+        .askAKit("Spot check of a note (Review)", facts: [
+            "Note: \(analysis.data.note(ref)?.note.description.prefix(300) ?? "")", "Buttons: Agree, Disagree",
+        ])
     }
 
     private func decide(_ agree: Bool) {
@@ -293,6 +308,9 @@ private struct UmbrellaCard: View {
             }
         }
         .card()
+        .askAKit("Umbrella mode \(mode?.name ?? umbrella.modeID) (Review)", facts: [
+            String(format: "Takes %.0f%% of the routed notes (%d)", umbrella.share * 100, umbrella.notes),
+        ])
     }
 }
 

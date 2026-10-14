@@ -131,7 +131,7 @@ struct MetricsView: View {
 
     private func row(_ label: String, _ value: String, warn: Bool = false, help: String? = nil) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).foregroundStyle(warn ? .orange : .primary)
         }
         .help(help ?? "")

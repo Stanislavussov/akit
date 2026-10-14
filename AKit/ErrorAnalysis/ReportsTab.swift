@@ -167,6 +167,9 @@ private struct ReportHeader: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .askAKit("Report tile \(title) (batch \(report.batchID))", facts: [
+            "\(title): \(value)", counts.flatMap { $0.count == 2 ? "Counts: \($0[0])/\($0[1])" : nil } ?? "", detail,
+        ])
     }
 }
 
