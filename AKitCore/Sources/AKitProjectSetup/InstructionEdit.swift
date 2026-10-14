@@ -86,6 +86,33 @@ public enum InstructionEdit {
                     before: before, after: Data(after.utf8))
     }
 
+    /// Edit… and Rewrite with Skill…: the file with a whole new text, as a plan with its diff.
+    /// Refused for a file AKit renders, and when AKit's core block would change (it changes in
+    /// the brain). Only reads.
+    public static func editing(_ file: URL, to text: String, rendered: Set<String>, env: HarnessEnvironment) throws(Failure) -> Plan {
+        let shown = FileWalk.tilde(file, home: env.homeDirectory)
+        if rendered.contains(realPath(file)) {
+            throw Failure(message: "AKit renders \(shown) from the brain's layers; the next Apply would undo the edit. Change the layer on the Brain screen.")
+        }
+        let before = try? Data(contentsOf: file)
+        guard let old = before.map({ String(data: $0, encoding: .utf8) }) ?? "" else {
+            throw Failure(message: "\(shown) can't be read as text.")
+        }
+        let blocks: (String) -> [String] = { text in
+            InstructionText.sections(text).filter(\.isAKitBlock).map { $0.text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        guard blocks(old) == blocks(text) else {
+            throw Failure(message: "The new text changes AKit's core block. Change it in the brain (Brain → core → Edit Layer…), then Update Home Folder.")
+        }
+        guard text != old else { throw Failure(message: "The text is the same as the file's: there is nothing to save.") }
+        var notes: [String] = []
+        if LocalOnly.tracked([file.lastPathComponent], in: file.deletingLastPathComponent(), env: env)?.isEmpty == false {
+            notes.append("git tracks \(file.lastPathComponent): the change shows in git status there. AKit doesn't commit it.")
+        }
+        return Plan(file: file, heading: nil, line: 0, diff: TextDiff.lines(from: old, to: text), notes: notes,
+                    before: before ?? Data(), after: Data(text.utf8))
+    }
+
     /// Backs the file up and writes it; refused when it changed since the plan. The backup, if made.
     @discardableResult
     public static func apply(_ plan: Plan, env: HarnessEnvironment) throws(Failure) -> URL? {

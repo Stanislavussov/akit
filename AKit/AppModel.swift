@@ -4,6 +4,7 @@ import AKitErrorAnalysis
 import AKitFoundation
 import AKitHarnesses
 import AKitInsights
+import AKitInstructions
 import AKitLab
 import AKitMCP
 import AKitModel
@@ -272,6 +273,35 @@ final class AppModel {
         try await holdingWorktrees(all: [context.homeID]) {
             try await InstructionMove.finish(plan, blocks: blocks, removeSource: removeSource, project: project, context: context)
         }
+    }
+
+    /// Rewrite with Skill…: one model call through `harness`'s own sign-in (send policy, scrub,
+    /// limit, send log) rewrites the file by the skill's guidance; returns the change as a plan
+    /// to show and apply. A file with something that looks like a secret is not sent: the
+    /// masked text would come back and be written over the real value.
+    func rewriteInstruction(_ file: URL, skill: Skill, request: String, harness: LabHarness, rendered: Set<String>) async throws -> InstructionEdit.Plan {
+        let env = HarnessEnvironment.current
+        return try await Task.detached {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+                throw InstructionRewrite.Failure(message: "\(file.tildePath) can't be read as text.")
+            }
+            let skillText = (try? String(contentsOf: skill.realFile, encoding: .utf8)) ?? ""
+            let prepared = InstructionRewrite.prepare(file: text, skillName: skill.name, skill: skillText, request: request)
+            let agent = LabRuns.defaultAgent(harness, env: env)
+            let gate = try await SendGate.open(agent: agent, env: env)
+            if gate.scrub(prepared.input).text != prepared.input || gate.scrub(prepared.system).text != prepared.system {
+                throw InstructionRewrite.Failure(message: "The file or the skill holds something that looks like a secret, so AKit doesn't send it: the answer would bring the masked text back. Take the secret out (or edit the file by hand).")
+            }
+            let folder = FileManager.default.temporaryDirectory.appending(path: "akit-rewrite-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let answer = try await ModelCall.run(
+                ModelCall.Request(agent: agent, purpose: "instruction rewrite", system: prepared.system, input: prepared.input,
+                                  schema: InstructionRewrite.schema, origin: .code(harness)),
+                gate: gate, folder: folder, env: env)
+            let rewritten = try InstructionRewrite.result(answer.text, prepared: prepared)
+            return try InstructionEdit.editing(file, to: rewritten, rendered: rendered, env: env)
+        }.value
     }
 
     private var lastLayerEdit: Task<Void, Never>?

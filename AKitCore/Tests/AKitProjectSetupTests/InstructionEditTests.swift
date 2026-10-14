@@ -111,4 +111,18 @@ struct InstructionEditTests {
             (error as? InstructionEdit.Failure)?.message.contains("holds its header or title") == true
         }
     }
+
+    // MARK: - Edit… (whole text)
+
+    @Test func aWholeNewTextIsADiffAndTheCoreBlockMustStay() throws {
+        let url = try file("edit/CLAUDE.md", "## A\na\n<!-- akit:core:start -->\n## Core\nc\n<!-- akit:core:end -->\n")
+        let plan = try InstructionEdit.editing(url, to: "## A\nbetter a\n<!-- akit:core:start -->\n## Core\nc\n<!-- akit:core:end -->\n", rendered: [], env: env)
+        #expect(plan.diff.contains(.added("better a")))
+        try InstructionEdit.apply(plan, env: env)
+        #expect(String(decoding: try Data(contentsOf: url), as: UTF8.self).contains("better a"))
+        #expect { try InstructionEdit.editing(url, to: "## A\nbetter a\n<!-- akit:core:start -->\n## Core\nchanged\n<!-- akit:core:end -->\n", rendered: [], env: env) } throws: { error in
+            (error as? InstructionEdit.Failure)?.message.contains("changes AKit's core block") == true
+        }
+        #expect(throws: InstructionEdit.Failure.self) { try InstructionEdit.editing(url, to: "x", rendered: [InstructionEdit.realPath(url)], env: env) }
+    }
 }

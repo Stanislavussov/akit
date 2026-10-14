@@ -70,6 +70,8 @@ printf -- '## Commits\nImperative summary line, 72 characters at most.\n\n## Sty
 shot instructions-duplicates $MAIN --section instructions --project notes-mac --tab duplicates --select CLAUDE.local.md
 shot instructions-remove $MAIN --section instructions --project notes-mac --tab remove-copy --select CLAUDE.local.md
 shot instructions-import $MAIN --section instructions --project notes-mac --tab import --select CLAUDE.local.md
+shot instructions-edit $MAIN --section instructions --project notes-mac --tab edit --select CLAUDE.local.md
+shot instructions-rewrite $MAIN --section instructions --project notes-mac --tab rewrite --select CLAUDE.local.md
 shot instructions-move-global $MAIN --section instructions --project notes-mac --tab move-up --select CLAUDE.local.md
 shot instructions-move-project $MAIN --section instructions --project notes-mac --tab move-down --select CLAUDE.md --query weather-app
 rm -f "$LOCAL_MD"
