@@ -170,7 +170,7 @@ public struct GuideSearch: Sendable {
     }
 
     /// The query's words as they are compared: lower-cased, without endings.
-    static func terms(_ query: String) -> [String] {
+    public static func terms(_ query: String) -> [String] {
         var seen = Set<String>()
         return words(query).map { stem($0.text) }.filter { seen.insert($0).inserted }
     }

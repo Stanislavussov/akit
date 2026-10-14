@@ -49,6 +49,12 @@ harness loads a skill from, and the brain edits and Applies that take it out) an
 `SkillRemoval` uses Insights' `WorkAnswers` for a work Mac's one brain answers edit, which
 ProjectSetup already sees.
 
+2026-10-14 (Ask AKit, `ask-akit.md`): new module `AKitHelp` (18 library targets now), on
+`AKitFoundation` only. It picks guide sections for a question about a screen (`GuideDocument`,
+`GuideSearch`), builds the text of the call and reads the answer. The app opens the send gate and
+calls `ModelCall` itself, as for Rewrite with Skill, so `AKitHelp` needs neither Lab nor any harness
+module. It is not in Foundation: the prompt is one feature's logic, not a shared tool.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -96,6 +102,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitLab` | Lab (added 2026-09-30, `lab.md`): session metrics and context rent from a Claude Code transcript and git, runs in a terminal (Orca, herdr, background), replay tasks and their tests; the sending policy, send log and cost of every model call that sends session data. | new |
 | `AKitErrorAnalysis` | Error analysis (added 2026-10-01, `error-analysis.md`): blind notes and the verifier, bootstrap labels, failure modes, checks, batch runs and reports, fixes and control sets. | new |
 | `AKitDoctor` | `akit doctor` and Help → Copy Diagnostics (added 2026-10-09, `machine-setup.md`): a read-only report of what AKit sees on this Mac, never a secret. Also the Help → Report a Bug… / Suggest a Feature… link (`IssueReport`, 2026-10-11). | new |
+| `AKitHelp` | Ask AKit (added 2026-10-14, `ask-akit.md`): the guide sections, prompt and answer of a question about a screen. Pure; the app makes the call. | new |
 | `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
 | `AKit` (app) | SwiftUI shell. | `AKit/*` |
@@ -151,6 +158,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |
+| `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
 | `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
