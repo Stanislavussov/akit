@@ -11,8 +11,9 @@ import Foundation
 /// folder `foo-old` named `foo` is not found here; the scanner's collision warning names it).
 /// Nested projects (a session in `mono/app` also loading `mono`'s skills) are not checked.
 ///
-/// Claude Code keeps one copy (personal before project); Pi and the others may list both. Either
-/// way the copy that reaches the agent is not obvious, so the Skills screen offers Resolve
+/// Claude Code keeps the personal copy; Pi keeps the first it finds, a trusted project's before the
+/// global one, with a collision warning (Pi 1.0.4 `core/skills.js`). So two harnesses may run two
+/// different copies, and the Skills screen offers Resolve
 /// Duplicate…: keep one copy, the others go (Remove Everywhere with the kept copy unticked).
 public enum SkillDuplicates {
     public struct Group: Identifiable, Hashable, Sendable {
