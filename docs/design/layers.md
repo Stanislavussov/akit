@@ -530,6 +530,19 @@ NAME --everywhere`) finds every place and takes the skill out of each. Core: `Sk
 - MCP servers: Insights → MCP Servers' context menu has the MCP Servers screen's **Delete…**
   (its confirmation and backup); a plugin's or claude.ai server can't be deleted there.
 
+### Resolve Duplicate (built 2026-10-14)
+
+A duplicate is one skill name in places one harness loads together: two global copies, a
+global and a project copy, or two copies in one project (`AKitSkills/SkillDuplicates.swift`,
+by folder name, one copy per real folder; plugin, claude.ai, bundled and package skills don't
+count, copies in two different projects don't either). The Skills screen marks them, filters
+them (Duplicates (N)) and offers Resolve Duplicate… on each: the Remove Everywhere sheet with
+one copy kept (the global one at first, Keep This Copy picks another) and every other copy of
+your own ticked (`SkillRemoval.leaving(_:toKeep:)`). Brain entries, project answers, the
+claude.ai switch and the library stay unticked, since the kept copy may come from them. Each
+copy says whether its SKILL.md matches the kept one; selecting it shows the diff. Rename of a
+project copy is not built.
+
 ## Several layers, one file
 
 - Markdown (any `.md` target, e.g. `AGENTS.md`): each layer adds a section;

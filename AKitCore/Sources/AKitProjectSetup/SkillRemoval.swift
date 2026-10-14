@@ -138,6 +138,18 @@ public enum SkillRemoval {
 
     static func prefix(_ name: String) -> String { "\(ProjectBundle.skillsFolder)/\(name)/" }
 
+    /// Resolve Duplicate…: the places to leave so that only the other copies of the skill go.
+    /// Ticked: every copy whose real folder is not `keep`'s (a copy of your own to the Trash).
+    /// Brain entries, project answers, the claude.ai switch and the library stay unticked: the
+    /// kept copy may come from them.
+    public static func leaving(_ plan: Plan, toKeep keep: Skill) -> Set<String> {
+        let kept = keep.realFolder.standardizedFileURL.path
+        return Set(plan.places.filter { place in
+            guard place.canSelect, let skill = place.skill, !place.byHeader, place.action == .trash else { return place.canSelect }
+            return skill.realFolder.standardizedFileURL.path == kept
+        }.map(\.id))
+    }
+
     /// Places left out by default: header-name matches, the claude.ai switch, the brain library.
     public static func defaultLeaving(_ plan: Plan) -> Set<String> {
         Set(plan.places.filter { $0.byHeader || $0.action == .claudeOff || $0.action == .library }.map(\.id))

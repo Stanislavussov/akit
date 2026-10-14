@@ -58,6 +58,13 @@ shot skills              $MAIN --section skills
 shot skills-switch       $MAIN --section skills --query tdd --add
 shot skills-invocation   $MAIN --section skills --tab invocation --select grilling
 shot skills-invocation-all $MAIN --section skills --tab invocation-all --delay 3
+# Only for these two: an older copy of commit-message in weather-app, so Claude Code and the
+# others load two copies of it there. Removed again, so the other shots stay as they are.
+DUP="$DEMO/Projects/weather-app/.agents/skills/commit-message"
+mkdir -p "$DUP" && printf -- '---\nname: commit-message\ndescription: Write a commit message from the staged diff.\n---\n\nSummary line of 50 characters at most.\n' > "$DUP/SKILL.md"
+shot skills-duplicates   $MAIN --section skills --tab duplicates --select commit-message
+shot skills-resolve      $MAIN --section skills --tab resolve --select commit-message --delay 5
+rm -rf "$DUP"
 shot skills-move         $MAIN --section skills --tab move --select grilling
 shot skills-move-check   $MAIN --section skills --tab move-check --select grilling
 shot skills-move-preview $MAIN --section skills --tab move-preview --select grilling

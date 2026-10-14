@@ -8,11 +8,18 @@ import SwiftUI
 /// Remove Everywhere…: every place a harness on this Mac loads the skill from, each with its
 /// action and a checkbox, so the skill stops reaching any context (docs/design/layers.md,
 /// "Remove a skill everywhere"). Places → Remove → the outcome.
+///
+/// With `keep`, it is Resolve Duplicate…: the kept copy stays unticked, every other copy of your
+/// own is ticked, and each copy shows how it differs from the kept one.
 struct RemoveEverywhereSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     /// The skill's folder name, as Claude Code and the brain call it.
     let name: String
+    /// Resolve Duplicate…: the copy to keep at first.
+    var keep: Skill? = nil
+    @State private var kept: Skill?
+    @State private var keptText: String?
 
     @State private var plan: SkillRemoval.Plan?
     @State private var selected: String?
@@ -31,7 +38,9 @@ struct RemoveEverywhereSheet: View {
         .padding(16)
         .frame(width: 820, height: 640)
         // Again after each rescan (the first one, or a switch or plugin change made here).
-        .task(id: model.lastScan) { await replan(leaving: plan?.leaving) }
+        .task(id: model.lastScan) {
+            if kept == nil, let keep { await keepCopy(keep) } else { await replan(leaving: plan?.leaving) }
+        }
         .modifier(DisablePluginAlert(plan: $pluginPlan, problem: $error) { Task { await replan(leaving: plan?.leaving) } })
         .alert("Turn \(name) Off in Pi?", isPresented: Binding(get: { piSwitch != nil }, set: { if !$0 { piSwitch = nil } }),
                presenting: piSwitch) { plan in
@@ -46,8 +55,10 @@ struct RemoveEverywhereSheet: View {
 
     private var places: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Remove “\(name)” Everywhere").font(.title2.bold())
-            Text("Every place Claude Code, Pi and the other harnesses on this Mac load \(name) from. Ticked places are removed: own copies go to the Trash, brain layers and project answers lose its entry (committed) and AKit's copies leave with their Apply. Untick what should stay.")
+            Text(kept == nil ? "Remove “\(name)” Everywhere" : "Resolve Duplicate “\(name)”").font(.title2.bold())
+            Text(kept == nil
+                 ? "Every place Claude Code, Pi and the other harnesses on this Mac load \(name) from. Ticked places are removed: own copies go to the Trash, brain layers and project answers lose its entry (committed) and AKit's copies leave with their Apply. Untick what should stay."
+                 : "Harnesses load more than one copy of \(name) together. Keep one: the other copies of your own are ticked and go to the Trash. Pick another with Keep This Copy; select a copy to see how it differs from the kept one. A copy AKit rendered from the brain leaves with its brain entry: tick its layer or project answers.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let plan {
@@ -75,7 +86,7 @@ struct RemoveEverywhereSheet: View {
                 if let error { Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3) }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction).disabled(isWorking)
-                Button(isWorking ? "Removing…" : "Remove", role: .destructive, action: remove)
+                Button(isWorking ? "Removing…" : kept == nil ? "Remove" : "Remove Other Copies", role: .destructive, action: remove)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!(plan?.canApply ?? false) || isWorking)
             }
@@ -108,6 +119,19 @@ struct RemoveEverywhereSheet: View {
                 if place.byHeader {
                     Text("maybe the same skill").font(.caption2).foregroundStyle(.orange)
                         .help("Its folder has another name, but its header says \(name)")
+                }
+                if let kept, let skill = place.skill, !place.byHeader {
+                    Spacer()
+                    if isKept(skill) {
+                        Text("Kept").font(.caption).foregroundStyle(.green)
+                    } else {
+                        Text(keptText != nil && SkillDuplicates.text(skill) == keptText ? "same text" : "differs")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .help("This copy's SKILL.md compared with the kept copy's (\(kept.file.tildePath))")
+                        Button("Keep This Copy") { Task { await keepCopy(skill) } }
+                            .controlSize(.small)
+                            .disabled(isWorking)
+                    }
                 }
             }
             if !place.via.isEmpty {
@@ -143,7 +167,20 @@ struct RemoveEverywhereSheet: View {
 
     @ViewBuilder
     private func detail(_ place: SkillRemoval.Place?) -> some View {
-        if let place, let before = place.before, let after = place.after {
+        if kept != nil, let skill = place?.skill, let keptText, !isKept(skill) {
+            // Resolve Duplicate…: the kept copy's SKILL.md (red) against this one's (green).
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Kept copy → this copy").fontWeight(.medium).padding(.bottom, 4)
+                    DiffPreview(diff: TextDiff.lines(from: keptText, to: SkillDuplicates.text(skill) ?? ""))
+                }
+                .font(.callout.monospaced())
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
+        } else if let place, let before = place.before, let after = place.after {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     DiffPreview(diff: TextDiff.lines(from: before, to: after))
@@ -178,8 +215,10 @@ struct RemoveEverywhereSheet: View {
                 Button("Show Edits: \(edit.path)") { comparison = edit; selected = nil }.buttonStyle(.link)
             }
             ForEach(plan.notes, id: \.self) { Label($0, systemImage: "info.circle").foregroundStyle(.secondary) }
-            Label(plan.summary, systemImage: plan.remaining.isEmpty ? "checkmark.circle" : "exclamationmark.circle")
-                .foregroundStyle(plan.remaining.isEmpty ? .green : .orange)
+            // Resolve Duplicate…: one place left (the kept copy) is the goal.
+            let fine = plan.remaining.count <= (kept == nil ? 0 : 1)
+            Label(plan.summary, systemImage: fine ? "checkmark.circle" : "exclamationmark.circle")
+                .foregroundStyle(fine ? .green : .orange)
                 .textSelection(.enabled)
         }
         .font(.callout)
@@ -194,7 +233,7 @@ struct RemoveEverywhereSheet: View {
                 Label("Removing stopped", systemImage: "exclamationmark.triangle.fill").font(.title2.bold()).foregroundStyle(.orange)
                 Text(failure).textSelection(.enabled)
             } else {
-                Label("\(name) is removed", systemImage: "checkmark.circle.fill").font(.title2.bold()).foregroundStyle(.green)
+                Label(kept == nil ? "\(name) is removed" : "The other copies of \(name) are removed", systemImage: "checkmark.circle.fill").font(.title2.bold()).foregroundStyle(.green)
                 if let plan { Text(plan.summary).foregroundStyle(.secondary) }
             }
             ScrollView {
@@ -221,6 +260,22 @@ struct RemoveEverywhereSheet: View {
         let made = await model.removalPlan(name: name, leaving: leaving)
         plan = made
         if selected == nil { selected = made.places.first { $0.before != nil }?.id }
+    }
+
+    private func isKept(_ skill: Skill) -> Bool {
+        kept?.realFolder.standardizedFileURL.path == skill.realFolder.standardizedFileURL.path
+    }
+
+    /// Resolve Duplicate…: keep this copy, tick the other copies of your own.
+    private func keepCopy(_ skill: Skill) async {
+        kept = skill
+        keptText = SkillDuplicates.text(skill)
+        isWorking = true
+        defer { isWorking = false }
+        let first = await model.removalPlan(name: name, leaving: nil)
+        let made = await model.removalPlan(name: name, leaving: SkillRemoval.leaving(first, toKeep: skill))
+        plan = made
+        selected = made.places.first { $0.selected && $0.skill != nil }?.id ?? selected
     }
 
     private func toggle(_ place: SkillRemoval.Place, on: Bool) {
