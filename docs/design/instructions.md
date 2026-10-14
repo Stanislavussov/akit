@@ -40,7 +40,20 @@ step 5 adds that render to the move. Review round the same day: the layer is wri
 its AGENTS.md template (own bytes and line ending kept), so a hand edit of layer.yaml after the
 scan is never reverted; the file is checked before the commit when it should lose the section;
 leads, open fences and a layer whose AGENTS.md entry is only under `when:` are refused; notes for
-a same-heading section in the layer, `{{…}}` and `@…` words. Step 0 (the facts below) is done: checked the same day in
+a same-heading section in the layer, `{{…}}` and `@…` words.
+
+Step 5 built 2026-10-14 (`AKitProjectSetup/InstructionMove.swift`). Move to Global… of a
+project's (or an above folder's) section: the file is checked, the section joins core
+(`appendToAgentsSection`, a commit), the home folder's plan is applied for its core blocks only
+(the other home changes are left for Update Home Folder), and only then the file loses it; each
+step runs when the one before worked, and a failure says what is done and how to finish. Move to
+Project… of a global section (decided 2026-10-14: the project's own file): each ticked project's
+AGENTS.md, else CLAUDE.md, else a new AGENTS.md gets the section (backup), then the global file
+loses it; nothing is written when any file changed. A project whose file AKit renders from the
+brain is not a target (Import to Brain… into its layer instead).
+
+Asked next (2026-10-14): edit an instruction file in AKit, and run an agent with a skill (for
+example a writing skill) that changes the file, then show the diff of its change. Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem
