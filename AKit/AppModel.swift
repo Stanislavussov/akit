@@ -275,13 +275,14 @@ final class AppModel {
         }
     }
 
-    /// Rewrite with Skill…: one model call through `harness`'s own sign-in (send policy, scrub,
+    /// Rewrite with Skill…: one model call through `agent`'s harness and its own sign-in, with the
+    /// chosen model and effort (send policy, scrub,
     /// limit, send log) rewrites the file by the skill's guidance; returns the change as a plan
     /// to show and apply. `reader`: the harness that reads the file on the screen, the data's
     /// origin for the send policy. A file the scrub would change is not sent: the masked text
     /// would come back and be written over the real value. Not detached, so cancelling the
     /// calling task stops the call.
-    func rewriteInstruction(_ file: URL, skill: Skill, request: String, harness: LabHarness, reader: HarnessID,
+    func rewriteInstruction(_ file: URL, skill: Skill, request: String, agent: LabAgent, reader: HarnessID,
                             rendered: Set<String>) async throws -> InstructionEdit.Plan {
         let env = HarnessEnvironment.current
         let origin: SendOrigin
@@ -298,7 +299,6 @@ final class AppModel {
             throw InstructionRewrite.Failure(message: "\(skill.realFile.tildePath) can't be read, so the skill gives no guidance. Pick another skill.")
         }
         let prepared = try InstructionRewrite.prepare(file: text, skillName: skill.name, skill: skillText, request: request)
-        let agent = LabRuns.defaultAgent(harness, env: env)
         let gate = try await SendGate.open(agent: agent, env: env)
         let checks = [gate.scrub(prepared.input), gate.scrub(prepared.system)]
         if checks[0].text != prepared.input || checks[1].text != prepared.system {

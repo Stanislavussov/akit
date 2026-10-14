@@ -1070,7 +1070,11 @@ private struct RewriteInstructionSheet: View {
     /// The running call: Cancel (or closing the sheet) stops it.
     @State private var call: Task<Void, Never>?
     @State private var skillID: Skill.ID?
-    @State private var harness: LabHarness = .claudeCode
+    /// The last choices, for the next rewrite (this Mac only).
+    @AppStorage("rewrite.skill") private var lastSkill = ""
+    @AppStorage("rewrite.harness") private var harnessRaw = LabHarness.claudeCode.rawValue
+    @AppStorage("rewrite.model") private var modelName = ""
+    @AppStorage("rewrite.effort") private var effort = "high"
     @State private var request = "Make it clearer and shorter; keep every rule."
     @State private var plan: InstructionEdit.Plan?
     @State private var problem: String?
@@ -1082,10 +1086,13 @@ private struct RewriteInstructionSheet: View {
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    private var harnesses: [LabHarness] {
-        let installed = Set(model.installations.map(\.id))
-        let known = LabHarness.allCases.filter { installed.contains($0 == .claudeCode ? .claudeCode : .pi) }
-        return known.isEmpty ? [.claudeCode] : known
+    private var harness: Binding<LabHarness> {
+        Binding(get: { LabHarness(rawValue: harnessRaw) ?? .claudeCode }, set: { harnessRaw = $0.rawValue })
+    }
+
+    /// The agent the call runs with: the harness, model and effort picked here.
+    private var agent: LabAgent {
+        LabAgent(harness: harness.wrappedValue, model: modelName.trimmingCharacters(in: .whitespaces), effort: effort)
     }
 
     var body: some View {
@@ -1093,33 +1100,25 @@ private struct RewriteInstructionSheet: View {
             Text("Rewrite \(entry.file.lastPathComponent) with a Skill").font(.title2.bold())
             Text("One model call through the harness's own sign-in rewrites the file by the skill's guidance. AKit's core block is not sent and stays as it is. You see the diff before anything is written.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
-                GridRow {
-                    Text("Skill").foregroundStyle(.secondary)
-                    Picker("Skill", selection: $skillID) {
-                        ForEach(skills) { Text($0.name).tag(Optional($0.id)) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+            Form {
+                Picker("Skill", selection: $skillID) {
+                    ForEach(skills) { Text($0.name).tag(Optional($0.id)) }
                 }
-                GridRow {
-                    Text("Run with").foregroundStyle(.secondary)
-                    Picker("Run with", selection: $harness) {
-                        ForEach(harnesses, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                GridRow {
-                    Text("Request").foregroundStyle(.secondary)
-                    TextField("What should change", text: $request)
-                }
+                .help(skills.first { $0.id == skillID }.map { $0.description } ?? "")
+                // Harness, model (with the models it offers) and effort, as in Lab.
+                // Snapshots start from the harness's defaults, never this Mac's remembered choice.
+                ReviewAgentFields(harness: harness, modelName: $modelName, effort: $effort, keepsValues: DebugSnapshot.options == nil)
+                TextField("Request", text: $request, prompt: Text("What should change"))
             }
+            .formStyle(.grouped)
+            .scrollDisabled(true)
+            .scrollContentBackground(.hidden)
+            .frame(height: 230)
             .disabled(busy || plan != nil)
             if let plan {
                 InstructionPlanReview(plan: plan)
             } else if busy {
-                ProgressView("Waiting for \(harness.title)…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView("Waiting for \(agent.label)…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Spacer()
             }
@@ -1145,8 +1144,8 @@ private struct RewriteInstructionSheet: View {
                 } else {
                     Button("Rewrite", action: run)
                         .keyboardShortcut(.defaultAction)
-                        .disabled(busy || skillID == nil)
-                        .help("Send the file (without AKit's block) and the skill to \(harness.title) in one call; it shows in Lab → Sends")
+                        .disabled(busy || skillID == nil || (agent.harness == .claudeCode && agent.model.isEmpty))
+                        .help("Send the file (without AKit's block) and the skill in one call to \(agent.label); it shows in Lab → Sends")
                 }
             }
         }
@@ -1155,20 +1154,21 @@ private struct RewriteInstructionSheet: View {
         .onDisappear { call?.cancel() }
         .onAppear {
             if skillID == nil {
-                // A writing skill when there is one, else the first.
-                skillID = (skills.first { $0.name.localizedCaseInsensitiveContains("writ") } ?? skills.first)?.id
+                // The last skill used here, else a writing skill when there is one, else the first.
+                let remembered = DebugSnapshot.options == nil ? lastSkill : ""
+                skillID = (skills.first { $0.name == remembered } ?? skills.first { $0.name.localizedCaseInsensitiveContains("writ") } ?? skills.first)?.id
             }
-            if !harnesses.contains(harness), let first = harnesses.first { harness = first }
         }
     }
 
     private func run() {
         guard let skill = model.skills.first(where: { $0.id == skillID }) else { return }
+        lastSkill = skill.name
         busy = true
         problem = nil
         call = Task {
             do {
-                plan = try await model.rewriteInstruction(entry.file, skill: skill, request: request, harness: harness, reader: reader,
+                plan = try await model.rewriteInstruction(entry.file, skill: skill, request: request, agent: agent, reader: reader,
                                                           rendered: rendered)
             } catch is CancellationError {
                 // Cancelled with the sheet: nothing to show.
