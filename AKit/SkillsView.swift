@@ -17,6 +17,9 @@ struct SkillsView: View {
     @State private var brainFilter = BrainFilter.any
     /// Show only skills with a duplicate (one name in places a harness loads together).
     @State private var duplicatesOnly = DebugSnapshot.options?.tab == "duplicates"
+    /// Duplicate groups among every skill (not only the shown ones), made again when the skills change.
+    @State private var duplicates: [SkillDuplicates.Group] = []
+    @State private var duplicateOf: [String: SkillDuplicates.Group] = [:]
     /// A skill to import into the brain (sheet).
     @State private var importing: Skill?
     /// A global skill to move into projects (sheet).
@@ -247,6 +250,7 @@ struct SkillsView: View {
                 }
             }
         }
+        .onChange(of: model.skills, initial: true) { regroupDuplicates() }
         .overlay {
             if !query.isEmpty && filtered.isEmpty {
                 ContentUnavailableView.search(text: query)
@@ -402,12 +406,14 @@ struct SkillsView: View {
         }
     }
 
-    /// Duplicate groups among every skill (not only the shown ones).
-    private var duplicates: [SkillDuplicates.Group] { SkillDuplicates.groups(model.skills) }
+    private func regroupDuplicates() {
+        duplicates = SkillDuplicates.groups(model.skills)
+        duplicateOf = Dictionary(duplicates.flatMap { group in group.copies.map { ($0.realFolder.standardizedFileURL.path, group) } },
+                                 uniquingKeysWith: { first, _ in first })
+    }
 
     private func duplicate(of skill: Skill) -> SkillDuplicates.Group? {
-        let path = skill.realFolder.standardizedFileURL.path
-        return duplicates.first { $0.copies.contains { $0.realFolder.standardizedFileURL.path == path } }
+        duplicateOf[skill.realFolder.standardizedFileURL.path]
     }
 
     /// Resolve Duplicate… for the skill's group, keeping this copy at first when it is the

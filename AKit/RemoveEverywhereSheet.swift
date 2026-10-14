@@ -20,6 +20,8 @@ struct RemoveEverywhereSheet: View {
     var keep: Skill? = nil
     @State private var kept: Skill?
     @State private var keptText: String?
+    /// Plans made while another is on its way: only the newest one counts.
+    @State private var generation = 0
 
     @State private var plan: SkillRemoval.Plan?
     @State private var selected: String?
@@ -39,7 +41,8 @@ struct RemoveEverywhereSheet: View {
         .frame(width: 820, height: 640)
         // Again after each rescan (the first one, or a switch or plugin change made here).
         .task(id: model.lastScan) {
-            if kept == nil, let keep { await keepCopy(keep) } else { await replan(leaving: plan?.leaving) }
+            // Resolve Duplicate…: after a rescan the ticks start again from the kept copy.
+            if let copy = kept ?? keep { await keepCopy(copy) } else { await replan(leaving: plan?.leaving) }
         }
         .modifier(DisablePluginAlert(plan: $pluginPlan, problem: $error) { Task { await replan(leaving: plan?.leaving) } })
         .alert("Turn \(name) Off in Pi?", isPresented: Binding(get: { piSwitch != nil }, set: { if !$0 { piSwitch = nil } }),
@@ -88,7 +91,7 @@ struct RemoveEverywhereSheet: View {
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction).disabled(isWorking)
                 Button(isWorking ? "Removing…" : kept == nil ? "Remove" : "Remove Other Copies", role: .destructive, action: remove)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(!(plan?.canApply ?? false) || isWorking)
+                    .disabled(!(plan?.canApply ?? false) || isWorking || plan.map(keptTicked) == true)
             }
         }
     }
@@ -128,6 +131,12 @@ struct RemoveEverywhereSheet: View {
                         Text(keptText != nil && SkillDuplicates.text(skill) == keptText ? "same text" : "differs")
                             .font(.caption2).foregroundStyle(.secondary)
                             .help("This copy's SKILL.md compared with the kept copy's (\(kept.file.tildePath))")
+                        let alone = SkillDuplicates.uncovered(by: kept, skill)
+                        if !alone.isEmpty {
+                            Text("only copy for " + alone.map(\.displayName).joined(separator: ", "))
+                                .font(.caption2).foregroundStyle(.orange)
+                                .help("The kept copy doesn't reach \(alone.map(\.displayName).joined(separator: ", ")) here (another project, or a folder that harness doesn't read), so this copy is not ticked. Tick it only if they should lose the skill.")
+                        }
                         Button("Keep This Copy") { Task { await keepCopy(skill) } }
                             .controlSize(.small)
                             .disabled(isWorking)
@@ -215,8 +224,7 @@ struct RemoveEverywhereSheet: View {
                 Button("Show Edits: \(edit.path)") { comparison = edit; selected = nil }.buttonStyle(.link)
             }
             ForEach(plan.notes, id: \.self) { Label($0, systemImage: "info.circle").foregroundStyle(.secondary) }
-            // Resolve Duplicate…: one place left (the kept copy) is the goal.
-            let fine = plan.remaining.count <= (kept == nil ? 0 : 1)
+            let fine = kept == nil ? plan.remaining.isEmpty : resolved(plan)
             Label(plan.summary, systemImage: fine ? "checkmark.circle" : "exclamationmark.circle")
                 .foregroundStyle(fine ? .green : .orange)
                 .textSelection(.enabled)
@@ -255,11 +263,34 @@ struct RemoveEverywhereSheet: View {
     // MARK: - Work
 
     private func replan(leaving: Set<String>?) async {
+        generation += 1
+        let current = generation
         isWorking = true
-        defer { isWorking = false }
+        defer { if current == generation { isWorking = false } }
+        var leaving = leaving
+        if let kept, let shown = plan {
+            // The kept copy never gets ticked, whatever the last plan said.
+            leaving = (leaving ?? []).union(shown.places.filter { $0.skill.map { SkillRemoval.isSameCopy($0, kept) } == true }.map(\.id))
+        }
         let made = await model.removalPlan(name: name, leaving: leaving)
+        guard current == generation else { return }
         plan = made
         if selected == nil { selected = made.places.first { $0.before != nil }?.id }
+    }
+
+    /// A place of the kept copy is ticked: Remove would trash the copy meant to stay.
+    private func keptTicked(_ plan: SkillRemoval.Plan) -> Bool {
+        guard let kept else { return false }
+        return plan.places.contains { $0.selected && $0.skill.map { SkillRemoval.isSameCopy($0, kept) } == true }
+    }
+
+    /// Resolve Duplicate…: the kept copy stays, and every copy it replaces is ticked.
+    private func resolved(_ plan: SkillRemoval.Plan) -> Bool {
+        guard let kept, !keptTicked(plan) else { return false }
+        return plan.places.allSatisfy { place in
+            guard let skill = place.skill, !place.byHeader, !place.selected, !SkillRemoval.isSameCopy(skill, kept) else { return true }
+            return !SkillDuplicates.uncovered(by: kept, skill).isEmpty
+        }
     }
 
     private func isKept(_ skill: Skill) -> Bool {
@@ -270,10 +301,14 @@ struct RemoveEverywhereSheet: View {
     private func keepCopy(_ skill: Skill) async {
         kept = skill
         keptText = SkillDuplicates.text(skill)
+        generation += 1
+        let current = generation
         isWorking = true
-        defer { isWorking = false }
+        defer { if current == generation { isWorking = false } }
         let first = await model.removalPlan(name: name, leaving: nil)
+        guard current == generation else { return }
         let made = await model.removalPlan(name: name, leaving: SkillRemoval.leaving(first, toKeep: skill))
+        guard current == generation else { return }
         plan = made
         selected = made.places.first { $0.selected && $0.skill != nil }?.id ?? selected
     }

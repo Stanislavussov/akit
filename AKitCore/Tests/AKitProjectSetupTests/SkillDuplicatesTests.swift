@@ -48,19 +48,60 @@ struct SkillDuplicatesTests {
         #expect(SkillDuplicates.preferred(tdd)?.scope == .global)
     }
 
-    @Test func resolvingKeepsTheChosenCopyAndTrashesTheOther() async throws {
+    func resolve(_ name: String, keep: Skill, projects: [String: URL] = [:]) -> SkillRemoval.Plan {
+        let context = removal.context(projects)
+        let first = SkillRemoval.plan(name: name, brain: nil, context: context)
+        return SkillRemoval.plan(name: name, brain: nil, context: context, leaving: SkillRemoval.leaving(first, toKeep: keep))
+    }
+
+    @Test func resolvingKeepsTheCopyThatReachesEveryHarnessAndTrashesTheOther() async throws {
         try move.harnesses()
         try f.write(".agents/skills/solo/SKILL.md", skill("solo"))
         try f.write(".pi/agent/skills/solo/SKILL.md", skill("solo", "Other"))
         let group = try #require(SkillDuplicates.groups(scan()).first)
-        let keep = try #require(group.copies.first { $0.file.path.contains("/.pi/") })
-
-        let context = removal.context([:])
-        let first = SkillRemoval.plan(name: "solo", brain: nil, context: context)
-        let plan = SkillRemoval.plan(name: "solo", brain: nil, context: context, leaving: SkillRemoval.leaving(first, toKeep: keep))
-        #expect(plan.canApply && plan.places.filter(\.selected).map(\.title) == ["~/.agents/skills/solo"])
+        // ~/.agents/skills reaches Claude (through its link) and Pi; Pi's own folder only Pi.
+        let keep = try #require(SkillDuplicates.preferred(group))
+        #expect(keep.realFile.path.contains("/.agents/"))
+        let plan = resolve("solo", keep: keep)
+        #expect(plan.canApply && plan.places.filter(\.selected).map(\.title) == ["~/.pi/agent/skills/solo"])
         try await SkillRemoval.apply(plan, brain: nil, env: f.env, trash: f.trash)
-        #expect(!removal.exists(".agents/skills/solo") && removal.exists(".pi/agent/skills/solo"))
+        #expect(removal.exists(".agents/skills/solo") && !removal.exists(".pi/agent/skills/solo"))
+        #expect(SkillDuplicates.groups(scan()).isEmpty)
+    }
+
+    @Test func aCopyThatIsTheOnlyOneForAHarnessIsNotTicked() throws {
+        try move.harnesses()
+        try f.write(".agents/skills/solo/SKILL.md", skill("solo"))
+        try f.write(".pi/agent/skills/solo/SKILL.md", skill("solo", "Other"))
+        let group = try #require(SkillDuplicates.groups(scan()).first)
+        // Keeping Pi's copy: Claude Code would lose its only one.
+        let keep = try #require(group.copies.first { $0.realFile.path.contains("/.pi/") })
+        let other = try #require(group.copies.first { $0.realFile.path.contains("/.agents/") })
+        #expect(SkillDuplicates.uncovered(by: keep, other).contains(.claudeCode))
+        #expect(resolve("solo", keep: keep).places.filter(\.selected).isEmpty)
+    }
+
+    @Test func anotherProjectsOnlyCopyIsNotTicked() throws {
+        try move.harnesses()
+        let one = f.home.appending(path: "Projects/one"), two = f.home.appending(path: "Projects/two")
+        // Pi reads both of project one's folders.
+        try f.write("Projects/one/.pi/skills/lint/SKILL.md", skill("lint"))
+        try f.write("Projects/one/.agents/skills/lint/SKILL.md", skill("lint", "Other"))
+        try f.write("Projects/two/.agents/skills/lint/SKILL.md", skill("lint"))
+        let group = try #require(SkillDuplicates.groups(scan([one, two])).first)
+        let keep = try #require(group.copies.first { $0.realFile.path.contains("one/.pi/") })
+        let plan = resolve("lint", keep: keep, projects: ["one": one, "two": two])
+        #expect(plan.places.filter(\.selected).map(\.title) == ["~/Projects/one/.agents/skills/lint"], "\(plan.places.map { ($0.title, $0.selected) })")
+    }
+
+    @Test func otherHarnessesKeyOnTheHeaderNameAndLoneFilesAreLeftOut() throws {
+        try move.harnesses()
+        // Same folder name, other header: Pi sees two names, Claude Code doesn't read ~/.pi.
+        try f.write(".agents/skills/foo/SKILL.md", skill("foo"))
+        try f.write(".pi/agent/skills/foo/SKILL.md", skill("foo-v2"))
+        // A lone Pi file next to a folder of the same name.
+        try f.write(".agents/skills/bar/SKILL.md", skill("bar"))
+        try f.write(".pi/agent/skills/bar.md", skill("bar"))
         #expect(SkillDuplicates.groups(scan()).isEmpty)
     }
 }
