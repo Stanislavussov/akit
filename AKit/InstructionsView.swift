@@ -1,8 +1,10 @@
 import AKitFoundation
 import AKitHarnesses
 import AKitInstructions
+import AKitLab
 import AKitModel
 import AKitProjectSetup
+import AKitSkills
 import AppKit
 import SwiftUI
 
@@ -25,6 +27,9 @@ struct InstructionsView: View {
     @State private var removalError: String?
     /// Import to Brain… of a section (its sheet).
     @State private var importing: SectionImport?
+    /// Edit… and Rewrite with Skill… of a file (their sheets).
+    @State private var editing: InstructionEntry?
+    @State private var rewriting: InstructionEntry?
     /// Move to Global… / Move to Project… of a section (their sheets).
     @State private var movingUp: SectionImport?
     @State private var movingDown: SectionImport?
@@ -50,6 +55,7 @@ struct InstructionsView: View {
                                           rendered: rendered, canImport: model.brain != nil,
                                           onRemove: { planRemoval(of: $0, in: entry) },
                                           onImport: { importing = SectionImport(section: $0, file: entry.file, level: entry.level, project: project) },
+                                          onEdit: { editing = entry }, onRewrite: { rewriting = entry },
                                           onMove: { section in
                                               let request = SectionImport(section: section, file: entry.file, level: entry.level, project: project)
                                               if entry.level == .global { movingDown = request } else { movingUp = request }
@@ -113,6 +119,12 @@ struct InstructionsView: View {
         .sheet(item: $importing) { request in
             SectionImportSheet(request: request, rendered: rendered) { reload += 1 }
         }
+        .sheet(item: $editing) { entry in
+            EditInstructionSheet(entry: entry, rendered: rendered) { reload += 1 }
+        }
+        .sheet(item: $rewriting) { entry in
+            RewriteInstructionSheet(entry: entry, reader: harness ?? .claudeCode, rendered: rendered) { reload += 1 }
+        }
         .sheet(item: $movingUp) { request in
             MoveToGlobalSectionSheet(request: request, rendered: rendered) { reload += 1 }
         }
@@ -143,6 +155,11 @@ struct InstructionsView: View {
                let section = InstructionText.units(entry.text).first(where: { !$0.isAKitBlock && $0.heading != nil }) {
                 let request = SectionImport(section: section, file: entry.file, level: entry.level, project: project)
                 if tab == "move-up" { movingUp = request } else { movingDown = request }
+            }
+            // Snapshots: `--tab edit` / `rewrite` open Edit… / Rewrite with Skill… for the selected file.
+            if let tab = DebugSnapshot.options?.tab, tab == "edit" || tab == "rewrite", editing == nil, rewriting == nil, reload == 0,
+               let entry = made.entries.first(where: { $0.id == selection }) {
+                if tab == "edit" { editing = entry } else { rewriting = entry }
             }
             // Snapshots: `--tab import` opens Import to Brain… for the selected file's first section.
             if DebugSnapshot.options?.tab == "import", importing == nil, reload == 0,
@@ -338,6 +355,8 @@ private struct InstructionDetailView: View {
     let canImport: Bool
     let onRemove: (InstructionSection) -> Void
     let onImport: (InstructionSection) -> Void
+    let onEdit: () -> Void
+    let onRewrite: () -> Void
     /// Move to Global… (a project's or an above file) or Move to Project… (a global file).
     let onMove: (InstructionSection) -> Void
 
@@ -347,8 +366,16 @@ private struct InstructionDetailView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(entry.file.lastPathComponent).font(.title2.bold())
                     Spacer()
+                    if !rendered.contains(InstructionEdit.realPath(entry.file)) {
+                        Button("Edit…", systemImage: "pencil", action: onEdit)
+                            .help("Edit the file here: a diff before it is saved, and a backup")
+                        Button("Rewrite with Skill…", systemImage: "wand.and.stars", action: onRewrite)
+                            .help("Let a model rewrite the file by a skill's guidance (a writing skill, say); you see the diff before anything is written")
+                    }
                     if ExternalEditor.appURL != nil {
                         Button("Open in \(ExternalEditor.name)", systemImage: "square.and.pencil") { ExternalEditor.open(entry.file) }
+                            .labelStyle(.iconOnly)
+                            .help("Open in \(ExternalEditor.name)")
                     }
                     Button("Show in Finder", systemImage: "folder") { NSWorkspace.shared.activateFileViewerSelecting([entry.file]) }
                         .labelStyle(.iconOnly)
@@ -940,6 +967,215 @@ private struct MoveToProjectSectionSheet: View {
             case .success(let made): plan = made
             case .failure(let error): problem = error.message
             }
+        }
+    }
+}
+
+/// The change of a whole file as a diff, with notes, Apply and Back.
+private struct InstructionPlanReview: View {
+    let plan: InstructionEdit.Plan
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(plan.file.tildePath).fontWeight(.medium).padding(.bottom, 2)
+                    DiffPreview(diff: plan.diff)
+                }
+                .font(.callout.monospaced())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            ForEach(plan.notes, id: \.self) { Text($0).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        }
+    }
+}
+
+/// Edit…: the file's text in an editor → Review Changes (the diff) → Save (backup first).
+private struct EditInstructionSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let entry: InstructionEntry
+    let rendered: Set<String>
+    let onDone: () -> Void
+    @State private var text = ""
+    /// The bytes the editor started from: Save is refused when the file is no longer them.
+    @State private var original: Data?
+    @State private var plan: InstructionEdit.Plan?
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Edit \(entry.file.lastPathComponent)").font(.title2.bold())
+            Text(entry.file.tildePath).font(.callout).foregroundStyle(.secondary)
+            if let plan {
+                InstructionPlanReview(plan: plan)
+            } else {
+                TextEditor(text: $text)
+                    .font(.callout.monospaced())
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            }
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                if plan != nil { Button("Back") { plan = nil } }
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                if let plan {
+                    Button("Save") {
+                        do {
+                            try InstructionEdit.apply(plan, env: .current)
+                            onDone()
+                            dismiss()
+                        } catch {
+                            problem = error.localizedDescription
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .help("Back up \(entry.file.tildePath), then write it. Refused if the file changed since you opened it.")
+                } else {
+                    Button("Review Changes") {
+                        problem = nil
+                        do {
+                            plan = try InstructionEdit.editing(entry.file, original: original, to: text, rendered: rendered, env: .current)
+                        } catch {
+                            problem = error.localizedDescription
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 720, height: 560)
+        .onAppear {
+            original = try? Data(contentsOf: entry.file)
+            text = original.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        }
+    }
+}
+
+/// Rewrite with Skill…: a skill, the harness that runs the call, a request → the model's
+/// rewrite as a diff → Apply (backup first). Nothing is written before Apply.
+private struct RewriteInstructionSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let entry: InstructionEntry
+    /// The harness the screen shows: the file's reader, the data's origin.
+    let reader: HarnessID
+    let rendered: Set<String>
+    let onDone: () -> Void
+    /// The running call: Cancel (or closing the sheet) stops it.
+    @State private var call: Task<Void, Never>?
+    @State private var skillID: Skill.ID?
+    @State private var harness: LabHarness = .claudeCode
+    @State private var request = "Make it clearer and shorter; keep every rule."
+    @State private var plan: InstructionEdit.Plan?
+    @State private var problem: String?
+    @State private var busy = false
+
+    private var skills: [Skill] {
+        var seen: Set<String> = []
+        return model.skills.filter { seen.insert($0.name).inserted }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    private var harnesses: [LabHarness] {
+        let installed = Set(model.installations.map(\.id))
+        let known = LabHarness.allCases.filter { installed.contains($0 == .claudeCode ? .claudeCode : .pi) }
+        return known.isEmpty ? [.claudeCode] : known
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Rewrite \(entry.file.lastPathComponent) with a Skill").font(.title2.bold())
+            Text("One model call through the harness's own sign-in rewrites the file by the skill's guidance. AKit's core block is not sent and stays as it is. You see the diff before anything is written.")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 8) {
+                GridRow {
+                    Text("Skill").foregroundStyle(.secondary)
+                    Picker("Skill", selection: $skillID) {
+                        ForEach(skills) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                GridRow {
+                    Text("Run with").foregroundStyle(.secondary)
+                    Picker("Run with", selection: $harness) {
+                        ForEach(harnesses, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                GridRow {
+                    Text("Request").foregroundStyle(.secondary)
+                    TextField("What should change", text: $request)
+                }
+            }
+            .disabled(busy || plan != nil)
+            if let plan {
+                InstructionPlanReview(plan: plan)
+            } else if busy {
+                ProgressView("Waiting for \(harness.title)…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Spacer()
+            }
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                if plan != nil { Button("Rewrite Again") { plan = nil; run() } }
+                Spacer()
+                Button("Cancel") { call?.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
+                if let plan {
+                    Button("Apply") {
+                        do {
+                            try InstructionEdit.apply(plan, env: .current)
+                            onDone()
+                            dismiss()
+                        } catch {
+                            problem = error.localizedDescription
+                        }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .help("Back up \(entry.file.tildePath), then write the rewrite. Refused if the file changed since it was sent.")
+                } else {
+                    Button("Rewrite", action: run)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(busy || skillID == nil)
+                        .help("Send the file (without AKit's block) and the skill to \(harness.title) in one call; it shows in Lab → Sends")
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 720, height: 560)
+        .onDisappear { call?.cancel() }
+        .onAppear {
+            if skillID == nil {
+                // A writing skill when there is one, else the first.
+                skillID = (skills.first { $0.name.localizedCaseInsensitiveContains("writ") } ?? skills.first)?.id
+            }
+            if !harnesses.contains(harness), let first = harnesses.first { harness = first }
+        }
+    }
+
+    private func run() {
+        guard let skill = model.skills.first(where: { $0.id == skillID }) else { return }
+        busy = true
+        problem = nil
+        call = Task {
+            do {
+                plan = try await model.rewriteInstruction(entry.file, skill: skill, request: request, harness: harness, reader: reader,
+                                                          rendered: rendered)
+            } catch is CancellationError {
+                // Cancelled with the sheet: nothing to show.
+            } catch {
+                problem = error.localizedDescription
+            }
+            busy = false
         }
     }
 }
