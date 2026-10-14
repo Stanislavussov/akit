@@ -15,7 +15,14 @@ Step 2 built 2026-10-14: `InstructionView.duplicates` (`InstructionDuplicates.sw
 (D13) or the same `##` heading with other text, among the loaded files of one session; AKit's
 block compared by its `##` parts (`InstructionText.units`). The screen's Duplicates (N) filter,
 a mark per file and "Also in …" / "Same heading, other text in …" per section; `twice` and
-`differs` lines in `akit instructions`. Step 0 (the facts below) is done: checked the same day in
+`differs` lines in `akit instructions`.
+
+Step 3 built 2026-10-14: Remove This Copy… on a repeated section (`AKitProjectSetup/InstructionEdit.swift`):
+the section's lines leave one file (one blank line kept between the parts around it, every other
+byte unchanged, CRLF too), diff first, `SettingsFile.write` with backup, refused when the file
+changed or the section moved. Not offered for AKit's block or a file in a brain project's lock
+(`InstructionEdit.renderedFiles`). A git-tracked file gets a note (D12); an emptied file stays.
+No CLI command yet. Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem

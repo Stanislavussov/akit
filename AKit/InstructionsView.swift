@@ -2,6 +2,7 @@ import AKitFoundation
 import AKitHarnesses
 import AKitInstructions
 import AKitModel
+import AKitProjectSetup
 import AppKit
 import SwiftUI
 
@@ -18,7 +19,12 @@ struct InstructionsView: View {
     /// Sections the model gets twice or in two versions, made with the view.
     @State private var duplicates: [InstructionDuplicate] = []
     /// Show only files with such a section.
-    @State private var duplicatesOnly = DebugSnapshot.options?.tab == "duplicates"
+    @State private var duplicatesOnly = DebugSnapshot.options?.tab == "duplicates" || DebugSnapshot.options?.tab == "remove-copy"
+    /// Remove This Copy…: the planned change in its sheet, and why one couldn't be planned.
+    @State private var removal: SectionRemoval?
+    @State private var removalError: String?
+    /// Read the files again after a change made here.
+    @State private var reload = 0
 
     /// Snapshots: `--project <folder name>` under ~/Projects.
     static var initialProject: URL? {
@@ -32,7 +38,8 @@ struct InstructionsView: View {
             Group {
                 if let entry = view?.entries.first(where: { $0.id == selection }) {
                     InstructionDetailView(entry: entry, home: HarnessEnvironment.current.homeDirectory,
-                                          duplicates: duplicates.filter { $0.places.contains { $0.file == entry.file } })
+                                          duplicates: duplicates.filter { $0.places.contains { $0.file == entry.file } },
+                                          rendered: rendered, onRemove: { planRemoval(of: $0, in: entry) })
                 } else {
                     ContentUnavailableView("Select a file", systemImage: "doc.text")
                 }
@@ -77,10 +84,24 @@ struct InstructionsView: View {
             }
         }
         // The picker shows installed harnesses; the choice follows when the list changes.
+        // The filter on: a selected file it hides gives way to the first one it shows.
+        .onChange(of: duplicatesOnly) {
+            if duplicatesOnly, let view, !(view.entries.first { $0.id == selection }.map(hasDuplicate) ?? false) {
+                selection = view.entries.first(where: hasDuplicate)?.id
+            }
+        }
         .onChange(of: harnesses, initial: true) {
             if harness.map({ !harnesses.contains($0) }) ?? true { harness = harnesses.first }
         }
-        .task(id: "\(project?.path ?? "-")|\(harness?.rawValue ?? "-")|\(model.lastScan?.timeIntervalSince1970 ?? 0)") {
+        .sheet(item: $removal) { request in
+            SectionRemovalSheet(request: request) { reload += 1 }
+        }
+        .alert("Can't remove the section", isPresented: Binding(get: { removalError != nil }, set: { if !$0 { removalError = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(removalError ?? "")
+        }
+        .task(id: "\(project?.path ?? "-")|\(harness?.rawValue ?? "-")|\(model.lastScan?.timeIntervalSince1970 ?? 0)|\(reload)") {
             guard let harness else { return }
             let project = project, env = HarnessEnvironment.current
             let (made, groups) = await Task.detached {
@@ -90,6 +111,12 @@ struct InstructionsView: View {
             guard !Task.isCancelled else { return }
             view = made
             duplicates = groups
+            // Snapshots: `--tab remove-copy` opens Remove This Copy… for the selected file's first repeated section.
+            if DebugSnapshot.options?.tab == "remove-copy", removal == nil, reload == 0,
+               let entry = made.entries.first(where: { $0.id == selection }),
+               let place = groups.lazy.flatMap(\.places).first(where: { $0.file == entry.file }) {
+                planRemoval(of: place.section, in: entry)
+            }
             if made.entries.first(where: { $0.id == selection }) == nil {
                 // Snapshots: `--select <file name>` picks the first file of that name.
                 let named = DebugSnapshot.options?.select.flatMap { name in made.entries.first { $0.file.lastPathComponent == name } }
@@ -132,7 +159,7 @@ struct InstructionsView: View {
                     Section {
                         ForEach(group.entries) { entry in
                             InstructionRow(entry: entry, home: HarnessEnvironment.current.homeDirectory,
-                                           repeated: duplicates.filter { $0.places.contains { $0.file == entry.file } }.count)
+                                           repeated: Set(duplicates.flatMap(\.places).filter { $0.file == entry.file }.map(\.section.line)).count)
                                 .tag(entry.id)
                                 .contextMenu {
                                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.file]) }
@@ -153,6 +180,26 @@ struct InstructionsView: View {
                                        description: Text("\(view.harness.displayName) loads no AGENTS.md or CLAUDE.md for this session."))
             } else if view == nil {
                 ProgressView()
+            }
+        }
+    }
+
+    /// Files AKit rendered from the brain into a project: their sections change in the brain.
+    private var rendered: Set<String> {
+        InstructionEdit.renderedFiles(projects: model.brainProjectFolders, store: model.projectStore)
+    }
+
+    private func planRemoval(of section: InstructionSection, in entry: InstructionEntry) {
+        let rendered = rendered, env = HarnessEnvironment.current, file = entry.file
+        let others = duplicates.first { $0.places.contains { $0.file == file && $0.section.line == section.line } }?
+            .places.filter { !($0.file == file && $0.section.line == section.line) } ?? []
+        Task {
+            let result = await Task.detached {
+                Result { () throws(InstructionEdit.Failure) in try InstructionEdit.removing(section, from: file, rendered: rendered, env: env) }
+            }.value
+            switch result {
+            case .success(let plan): removal = SectionRemoval(plan: plan, others: others)
+            case .failure(let error): removalError = error.message
             }
         }
     }
@@ -212,7 +259,7 @@ private struct InstructionRow: View {
                 }
                 if repeated > 0 {
                     Image(systemName: "doc.on.doc.fill").font(.caption).foregroundStyle(.orange)
-                        .help("\(repeated) section\(repeated == 1 ? "" : "s") of this file the model also gets from another place (or in another version)")
+                        .help("\(repeated) section\(repeated == 1 ? "" : "s") of this file the model also gets from another place, or in another version")
                 }
                 if entry.note != nil {
                     Image(systemName: "scissors").font(.caption).foregroundStyle(.orange).help(entry.note ?? "")
@@ -241,6 +288,9 @@ private struct InstructionDetailView: View {
     let home: URL
     /// The duplicate groups with a section of this file.
     let duplicates: [InstructionDuplicate]
+    /// Files AKit rendered (their sections can't be removed here).
+    let rendered: Set<String>
+    let onRemove: (InstructionSection) -> Void
 
     var body: some View {
         ScrollView {
@@ -296,6 +346,13 @@ private struct InstructionDetailView: View {
                                 ForEach(repeats(of: section), id: \.self) { line in
                                     Label(line, systemImage: "doc.on.doc").font(.caption).foregroundStyle(.orange)
                                 }
+                                if !repeats(of: section).isEmpty, entry.status.isLoaded {
+                                    let reason = InstructionEdit.unavailable(section, in: entry.file, rendered: rendered)
+                                    Button("Remove This Copy…") { onRemove(section) }
+                                        .controlSize(.small)
+                                        .disabled(reason != nil)
+                                        .help(reason ?? "Take this section out of \(entry.file.lastPathComponent): a diff first, then a backup. The model keeps the other places.")
+                                }
                             }
                         }
                     }
@@ -319,7 +376,10 @@ private struct InstructionDetailView: View {
     private func repeats(of section: InstructionSection) -> [String] {
         duplicates.compactMap { group in
             guard group.places.contains(where: { $0.file == entry.file && $0.section.line == section.line }) else { return nil }
+            // For "differs", only the places whose text is not this one's (the same ones say "Also in").
+            let own = InstructionText.normalized(section)
             let others = group.places.filter { !($0.file == entry.file && $0.section.line == section.line) }
+                .filter { group.kind == .same || InstructionText.normalized($0.section) != own }
                 .map { "\($0.file.tildePath):\($0.section.line)" }.joined(separator: ", ")
             return group.kind == .same ? "Also in \(others)" : "Same heading, other text in \(others)"
         }
@@ -344,3 +404,71 @@ private struct InstructionDetailView: View {
         Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
     }
 }
+
+/// Remove This Copy… waiting in its sheet: the change, and where the model still gets the section.
+struct SectionRemoval: Identifiable {
+    let id = UUID()
+    let plan: InstructionEdit.Plan
+    let others: [InstructionDuplicate.Place]
+}
+
+/// The removal as a diff, with Apply and Cancel.
+private struct SectionRemovalSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let request: SectionRemoval
+    let onDone: () -> Void
+    @State private var error: String?
+    @State private var done = false
+
+    private var plan: InstructionEdit.Plan { request.plan }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Remove \(plan.heading.map { "“\($0)”" } ?? "the section") from \(plan.file.lastPathComponent)").font(.title2.bold())
+            Text(summary).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(plan.file.tildePath).fontWeight(.medium).padding(.bottom, 2)
+                    DiffPreview(diff: plan.diff)
+                }
+                .font(.callout.monospaced())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
+            .frame(height: 240)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            ForEach(plan.notes, id: \.self) { note in
+                Text(note).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Apply") {
+                    do {
+                        try InstructionEdit.apply(plan, env: .current)
+                        onDone()
+                        dismiss()
+                    } catch {
+                        self.error = error.localizedDescription
+                        done = true
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(done)
+                .help("Back up \(plan.file.tildePath), then write it without the section. Refused if the file changed since this preview.")
+            }
+        }
+        .padding(20)
+        .frame(width: 600)
+    }
+
+    private var summary: String {
+        let kept = request.others.map { "\($0.file.tildePath):\($0.section.line)" }.joined(separator: ", ")
+        return kept.isEmpty ? "The section leaves this file." : "The section leaves this file; the model still gets it from \(kept)."
+    }
+}
+
