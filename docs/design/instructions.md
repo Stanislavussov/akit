@@ -4,12 +4,30 @@ Status: agreed 2026-10-14, from a chat request ("work with AGENTS.md on the same
 as skills"). Step 1 is built (below). Decided the same day (D11–D13, D15 in [`README.md`](README.md)):
 a section is one `##` heading, AKit may edit a project's tracked files (diff + backup, no
 commit), duplicates are the same text after normalizing, and step 1 comes first and alone. D14
-(where Move to Global puts a section) is open until step 5.
+(decided the same day): Move to Global puts a section into the core layer.
 
 Step 1 built 2026-10-14: `AKitInstructions` (`InstructionScanner`, `InstructionText`), the
 Instructions screen (On This Mac) and `akit instructions [FOLDER] [--harness …] [--global]`.
 Not in step 1: files in subfolders that load later, and Codex's budget for the global file
-(only project files count against the 32 KiB). Step 0 (the facts below) is done: checked the same day in
+(only project files count against the 32 KiB).
+
+Step 2 built 2026-10-14: `InstructionView.duplicates` (`InstructionDuplicates.swift`): same text
+(D13) or the same `##` heading with other text, among the loaded files of one session; AKit's
+block compared by its `##` parts (`InstructionText.units`). The screen's Duplicates (N) filter,
+a mark per file and "Also in …" / "Same heading, other text in …" per section; `twice` and
+`differs` lines in `akit instructions`.
+
+Step 3 built 2026-10-14: Remove This Copy… on a repeated section (`AKitProjectSetup/InstructionEdit.swift`):
+the section's lines leave one file (one blank line kept between the parts around it, every other
+byte unchanged, CRLF too), diff first, `SettingsFile.write` with backup, refused when the file
+changed or the section moved. Not offered for AKit's block or a file in a brain project's lock
+(`InstructionEdit.renderedFiles`). A git-tracked file gets a note (D12); an emptied file stays.
+No CLI command yet. Review round the same day: refused when another place of the section is the
+same file (a link or hard link, read twice by Pi or Codex), when the section changed since the
+screen read it (re-split and compared), for a lead with a header or `#` title and for a section
+with an unclosed fence. The sheet names the other harnesses that read the same file and says
+when the file is global or above the project. Not handled: a rendered file checked out in a
+worktree of a brain project (only the main checkout's paths are in the lock). Step 0 (the facts below) is done: checked the same day in
 the installed harnesses' code and docs.
 
 ## Problem

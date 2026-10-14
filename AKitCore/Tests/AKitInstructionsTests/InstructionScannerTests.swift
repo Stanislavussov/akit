@@ -220,4 +220,13 @@ struct InstructionScannerTests {
         #expect(InstructionText.frontMatterKeys("---\nname: x\npaths:\n  - a\n---\nbody") == ["name", "paths"])
         #expect(InstructionText.frontMatterKeys("---\npaths: a\n").isEmpty)
     }
+
+    @Test func crlfFilesSplitIntoSectionsAndImports() throws {
+        let text = "# T\r\n\r\n## Build\r\nmake\r\n## Test\r\nsee @docs/test.md\r\n"
+        let sections = InstructionText.sections(text)
+        #expect(sections.map(\.heading) == ["Build", "Test"] && sections.map(\.line) == [3, 5])
+        #expect(InstructionText.imports(in: text) == ["docs/test.md"])
+        #expect(InstructionText.lines(text).joined(separator: "\n") == text)
+        #expect(InstructionText.frontMatterKeys("---\r\npaths: a\r\n---\r\nbody") == ["paths"])
+    }
 }

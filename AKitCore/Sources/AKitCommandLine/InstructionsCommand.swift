@@ -5,7 +5,8 @@ import AKitModel
 import Foundation
 
 /// `akit instructions [FOLDER] [--harness NAME]`: the instruction files each harness loads for a
-/// session in the folder, in order, with the skipped ones and why (docs/design/instructions.md).
+/// session in the folder, in order, with the skipped ones and why, and the sections the model gets
+/// twice or in two versions (docs/design/instructions.md).
 extension AKitCLI {
     static let instructionsUsage = "Use: akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]"
 
@@ -57,6 +58,12 @@ extension AKitCLI {
             }
         }
         if view.entries.isEmpty { lines.append("  (no instruction files)") }
+        // Sections the model gets twice (same text), or in two versions (same heading).
+        for group in view.duplicates {
+            let places = group.places.map { "\(FileWalk.tilde($0.file, home: home)):\($0.section.line)" }.joined(separator: ", ")
+            let title = group.heading.map { "## \($0)" } ?? "(lead)"
+            lines.append(group.kind == .same ? "  twice    \(title): \(places)" : "  differs  \(title): \(places)")
+        }
         return lines.joined(separator: "\n")
     }
 

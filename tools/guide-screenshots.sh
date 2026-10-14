@@ -64,6 +64,12 @@ GLOBAL_MD="$DEMO/.claude/CLAUDE.md" ABOVE_MD="$DEMO/Projects/AGENTS.md"
 printf -- '# My rules\n\nAnswer in short sentences.\n\n## Commits\nImperative summary line, 72 characters at most.\n\n<!-- akit:core:start -->\n## Core\nRun the tests before you say a change is done.\n<!-- akit:core:end -->\n' > "$GLOBAL_MD"
 printf -- '# Projects\n\nEvery project here uses git.\n' > "$ABOVE_MD"
 shot instructions        $MAIN --section instructions --project notes-mac --select CLAUDE.md
+# A private file in notes-mac that repeats the global Commits rule, and has its own Style.
+LOCAL_MD="$DEMO/Projects/notes-mac/CLAUDE.local.md"
+printf -- '## Commits\nImperative summary line, 72 characters at most.\n\n## Style\nSwiftUI views stay under 200 lines.\n' > "$LOCAL_MD"
+shot instructions-duplicates $MAIN --section instructions --project notes-mac --tab duplicates --select CLAUDE.local.md
+shot instructions-remove $MAIN --section instructions --project notes-mac --tab remove-copy --select CLAUDE.local.md
+rm -f "$LOCAL_MD"
 rm -f "$ABOVE_MD"; if [[ -e "$GLOBAL_MD.keep" ]]; then mv "$GLOBAL_MD.keep" "$GLOBAL_MD"; else rm -f "$GLOBAL_MD"; fi
 shot skills-invocation-all $MAIN --section skills --tab invocation-all --delay 3
 # Only for these two: an older copy of commit-message in weather-app, so Claude Code and the
