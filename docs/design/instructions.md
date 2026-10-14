@@ -18,8 +18,11 @@ disagree both reach the model, and a file one harness reads may be skipped by an
 
 ## Facts (checked 2026-10-14)
 
-Claude Code 2.1.299, Pi 1.0.4, Codex 0.147, OpenCode 1.18.15; sources in the code and docs of
-each, listed in the research note of this commit.
+Claude Code 2.1.299, Pi 1.0.4, Codex 0.147, OpenCode 1.18.15. Sources: Claude Code's memory
+docs (code.claude.com/docs/en/memory, "How CLAUDE.md files load", "AGENTS.md") and its binary;
+Pi's `dist/core/resource-loader.js` (lines 115–191) and `dist/core/system-prompt.js`; Codex's
+AGENTS.md guide and `core/src/agents_md.rs` strings in its binary; OpenCode's rules docs
+(opencode.ai/docs/rules) and its `Instruction` service in the binary.
 
 | | Claude Code | Pi | Codex | OpenCode |
 |---|---|---|---|---|
