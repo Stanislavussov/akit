@@ -37,6 +37,8 @@ final class AppModel {
     /// A model invocation change (Auto / Manual) waiting in its sheet, and why one couldn't be planned.
     var skillInvocationRequest: SkillInvocationRequest?
     var skillInvocationError: String?
+    /// Every global skill Manual (or Auto) at once, waiting in its sheet.
+    var globalInvocationRequest: GlobalInvocationRequest?
     /// Saved conversations of all installed harnesses, newest first.
     private(set) var sessions: [SessionSummary] = []
     /// The person's ratings of runs (`akit rate`, Pi's ⌥G / ⌥X / ⌥R), by session log path.
@@ -682,6 +684,42 @@ final class AppModel {
                     skillInvocationRequest = SkillInvocationRequest(plan: plan)
                 }
             case .failure(let error): skillInvocationError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Plans making every global skill Manual or Auto (`SkillInvocation.planAll`, only reads) and
+    /// opens its sheet, or the alert when nothing would change.
+    func requestGlobalInvocation(manual: Bool) {
+        let env = HarnessEnvironment.current, brain = brain, links = brainLinks
+        let candidates = SkillInvocation.globalCandidates(skills, manual: manual)
+        guard !candidates.isEmpty else {
+            skillInvocationError = "Every global skill is already \(SkillInvocationText.title(manual: manual)); there is nothing to change."
+            return
+        }
+        let context = SkillMove.Context(env: env, store: projectStore, homeID: ProjectRecords.homeID(machineName: machine.homeName),
+                                        installed: skills, targets: installedTargets, projectFolders: brainProjectFolders,
+                                        piAgentDirSetting: env.variables["PI_CODING_AGENT_DIR"], rememberPiAgentDir: true)
+        Task {
+            let plan = await Task.detached {
+                SkillInvocation.planAll(candidates, links: links, manual: manual, brain: brain, context: context)
+            }.value
+            globalInvocationRequest = GlobalInvocationRequest(plan: plan)
+        }
+    }
+
+    /// Carries out the planned change of many skills, then rescans. With rendered copies: in line
+    /// with the Brain screen's layer edits, holding the home folder's worktree sync.
+    func applyGlobalInvocation(_ plan: SkillInvocation.BulkPlan) async throws {
+        defer { Task { await refresh() } }
+        let env = HarnessEnvironment.current
+        guard !plan.holds.isEmpty || !plan.layers.isEmpty else {
+            _ = try await SkillInvocation.applyAll(plan, brain: brain, env: env)
+            return
+        }
+        try await oneLayerEditAtATime { [self] brain in
+            _ = try await holdingWorktrees(all: Set(plan.holds)) {
+                try await SkillInvocation.applyAll(plan, brain: brain, env: env)
             }
         }
     }
