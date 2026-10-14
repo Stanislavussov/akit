@@ -57,6 +57,7 @@ shot overview            $MAIN --section overview
 shot skills              $MAIN --section skills
 shot skills-switch       $MAIN --section skills --query tdd --add
 shot skills-invocation   $MAIN --section skills --tab invocation --select grilling
+shot skills-invocation-all $MAIN --section skills --tab invocation-all --delay 3
 shot skills-move         $MAIN --section skills --tab move --select grilling
 shot skills-move-check   $MAIN --section skills --tab move-check --select grilling
 shot skills-move-preview $MAIN --section skills --tab move-preview --select grilling

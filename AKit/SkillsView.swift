@@ -111,6 +111,9 @@ struct SkillsView: View {
                 }
             }
             ToolbarItem {
+                GlobalInvocationMenu()
+            }
+            ToolbarItem {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
                     .disabled(model.isScanning)
                     .help("Rescan skills (⌘R)")
@@ -178,6 +181,12 @@ struct SkillsView: View {
                 snapshotInvocation = false
                 selection = skill.id
                 model.requestSkillInvocation(skill, manual: !skill.disablesModelInvocation)
+                return
+            }
+            // Snapshots: `--tab invocation-all` opens Make All Global Skills Manual….
+            if let options = DebugSnapshot.options, options.tab == "invocation-all", snapshotInvocation, model.lastScan != nil {
+                snapshotInvocation = false
+                model.requestGlobalInvocation(manual: true)
                 return
             }
             guard snapshotSwitch, let skill = model.skills.first(where: { $0.id == selection }) else { return }

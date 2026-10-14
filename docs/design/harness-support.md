@@ -94,6 +94,16 @@ bundled and Pi package skills; the list's menu then has no item. The sheet notes
 `skillOverrides` entry is Manual or Off (Auto in the file doesn't list it there), and when the
 skill has a recorded source (an update from there may write over the edit). No CLI command yet.
 
+**All global skills at once** (built 2026-10-14): Skills toolbar → Model Invocation → Make All Global
+Skills Manual… (or Auto…), to keep the skill listing out of every session's context. Core:
+`AKitProjectSetup/SkillInvocationBulk.swift` (`globalCandidates`, `planAll`, `applyAll`). The
+candidates are global skills not already in the target state, one per real file. Own copies use
+the one-skill plan each; rendered copies get their modes set together (`LayerEditor.setModes`, one
+commit for every changed layer) and one home folder Apply for all their files. A skill that can't
+change (the reasons above) is listed as skipped and the rest still change; a rendered copy whose
+home file can't follow is dropped and the plan made again without it. At Apply, own copies go one
+by one (a file changed since the preview fails alone); the error counts what changed.
+
 ## MCP switches
 
 Built 2026-10-10, two review rounds the same day. A server is turned off in the harness's own

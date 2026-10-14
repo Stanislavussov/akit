@@ -94,6 +94,34 @@ public enum LayerEditor {
         try await commit(["layers/\(name)/layer.yaml"], "Make \(skill) \(mode.rawValue) in layer \(name)", in: brain, env: env)
     }
 
+    /// The layer.yaml text with these skills' mode set, for a preview; nothing else changes.
+    public static func layerWithMode(_ mode: LayerSkill.Mode, ofSkills skills: [String], in layer: Layer) throws(Failure) -> (before: String, after: String) {
+        let text = try read(layer)
+        var after = text
+        for skill in skills { after = try settingMode(mode, of: skill, in: after) }
+        return (text, after)
+    }
+
+    /// Sets how each layer brings the listed skills (layer name → skill names), and commits all
+    /// the layer files in one commit.
+    public static func setModes(_ mode: LayerSkill.Mode, ofSkills skills: [String: [String]],
+                                in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
+        var changed: [(name: String, layer: Layer, text: String)] = []
+        for name in skills.keys.sorted() {
+            let layer = try find(name, in: brain)
+            let edit = try layerWithMode(mode, ofSkills: skills[name] ?? [], in: layer)
+            if edit.after != edit.before { changed.append((name, layer, edit.after)) }
+        }
+        guard !changed.isEmpty else { return }
+        for item in changed { try write(item.text, to: item.layer.manifest, item.name) }
+        let names = skills.filter { key, _ in changed.contains { $0.name == key } }.values.flatMap { $0 }.sorted()
+        let what = names.count == 1 ? names[0] : "\(names.count) skills"
+        try await commit(changed.map { "layers/\($0.name)/layer.yaml" },
+                         "Make \(what) \(mode.rawValue) in layer\(changed.count == 1 ? "" : "s") \(changed.map(\.name).joined(separator: ", "))",
+                         in: brain, env: env)
+    }
+
     /// Writes the description, requires and AGENTS.md section, and commits them together.
     public static func update(_ name: String, to details: Details, in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
         if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
