@@ -17,6 +17,7 @@ import SwiftUI
 /// Skills: `--add` opens the selected skill's switch sheet (the first harness with a switch, its first other state);
 /// `--tab invocation` opens Make Manual… / Make Auto… (model invocation) for the skill `--select <folder name>`;
 /// `--tab invocation-all` opens Model Invocation → Make All Global Skills Manual…;
+/// `--tab duplicates` turns the Duplicates filter on and selects `--select <folder name>`; `--tab resolve` opens its Resolve Duplicate…;
 /// `--tab global` opens Move to Global… for the project skill `--select <folder name>` on the Skills screen;
 /// `--tab remove` opens Remove Everywhere… for `--select <folder name>` on the Skills screen;
 /// `--tab move` opens Move to Project… for the global skill `--select <folder name>` (`move-check`, `move-preview` go on to those pages);

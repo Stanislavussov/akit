@@ -138,6 +138,23 @@ public enum SkillRemoval {
 
     static func prefix(_ name: String) -> String { "\(ProjectBundle.skillsFolder)/\(name)/" }
 
+    /// Resolve Duplicate…: the places to leave so that only the copies the kept one replaces go.
+    /// Ticked: a copy of your own whose every harness and project still gets the kept copy
+    /// (`SkillDuplicates.uncovered` is empty). A copy that is the only one for a harness or for
+    /// its project stays, and so do brain entries, project answers, the claude.ai switch and the
+    /// library: the kept copy may come from them.
+    public static func leaving(_ plan: Plan, toKeep keep: Skill) -> Set<String> {
+        Set(plan.places.filter { place in
+            guard place.canSelect, let skill = place.skill, !place.byHeader, place.action == .trash else { return place.canSelect }
+            return isSameCopy(skill, keep) || !SkillDuplicates.uncovered(by: keep, skill).isEmpty
+        }.map(\.id))
+    }
+
+    /// One real folder: a link to a copy is that copy.
+    public static func isSameCopy(_ a: Skill, _ b: Skill) -> Bool {
+        a.realFolder.standardizedFileURL.path == b.realFolder.standardizedFileURL.path
+    }
+
     /// Places left out by default: header-name matches, the claude.ai switch, the brain library.
     public static func defaultLeaving(_ plan: Plan) -> Set<String> {
         Set(plan.places.filter { $0.byHeader || $0.action == .claudeOff || $0.action == .library }.map(\.id))

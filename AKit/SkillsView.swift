@@ -15,6 +15,11 @@ struct SkillsView: View {
     @State private var pendingDelete: Skill?
     @State private var deleteError: String?
     @State private var brainFilter = BrainFilter.any
+    /// Show only skills with a duplicate (one name in places a harness loads together).
+    @State private var duplicatesOnly = DebugSnapshot.options?.tab == "duplicates"
+    /// Duplicate groups among every skill (not only the shown ones), made again when the skills change.
+    @State private var duplicates: [SkillDuplicates.Group] = []
+    @State private var duplicateOf: [String: SkillDuplicates.Group] = [:]
     /// A skill to import into the brain (sheet).
     @State private var importing: Skill?
     /// A global skill to move into projects (sheet).
@@ -43,7 +48,9 @@ struct SkillsView: View {
                                     onDelete: { pendingDelete = skill }, onImport: { importing = skill },
                                     onMove: canMove(skill) ? { moving = skill } : nil,
                                     onRemoveEverywhere: { removeEverywhere(skill) },
-                                    onMoveToGlobal: globalRequest(skill).map { request in { globalizing = request } })
+                                    onMoveToGlobal: globalRequest(skill).map { request in { globalizing = request } },
+                                    duplicate: duplicate(of: skill),
+                                    onResolve: resolveRequest(skill).map { request in { removing = request } })
                 } else {
                     ContentUnavailableView("Select a skill", systemImage: "book.closed")
                 }
@@ -110,6 +117,15 @@ struct SkillsView: View {
                     .help("From Brain: copies AKit rendered from a layer. Not in Brain: your own skills the brain doesn't have yet.")
                 }
             }
+            if !duplicates.isEmpty || duplicatesOnly {
+                ToolbarItem(placement: .navigation) {
+                    Toggle(isOn: $duplicatesOnly) {
+                        Label("Duplicates (\(duplicates.count))", systemImage: "doc.on.doc")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .help("Show only skills whose name is in more than one place a harness loads together: two global copies, or a global and a project copy. Resolve Duplicate… keeps one.")
+                }
+            }
             ToolbarItem {
                 GlobalInvocationMenu()
             }
@@ -125,7 +141,7 @@ struct SkillsView: View {
                              layer: layer, mode: layer == "core" ? .manual : .auto)
         }
         .sheet(item: $moving) { skill in MoveSkillSheet(name: Self.moveName(skill, link: model.brainLinks[skill.id])) }
-        .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name) }
+        .sheet(item: $removing) { RemoveEverywhereSheet(name: $0.name, keep: $0.keep) }
         .modifier(DisablePluginAlert(plan: $disabling, problem: $deleteError))
         .sheet(item: $globalizing) { MoveToGlobalSheet(name: $0.name, from: [$0.project]) }
         .confirmationDialog(
@@ -183,6 +199,15 @@ struct SkillsView: View {
                 model.requestSkillInvocation(skill, manual: !skill.disablesModelInvocation)
                 return
             }
+            // Snapshots: `--tab duplicates` selects `--select <folder name>` with the Duplicates filter on;
+            // `--tab resolve` opens Resolve Duplicate… for it.
+            if let options = DebugSnapshot.options, options.tab == "duplicates" || options.tab == "resolve", snapshotInvocation,
+               model.lastScan != nil, let skill = model.skills.first(where: { $0.folder.lastPathComponent == options.select && $0.scope == .global }) {
+                snapshotInvocation = false
+                selection = skill.id
+                if options.tab == "resolve" { removing = resolveRequest(skill) }
+                return
+            }
             // Snapshots: `--tab invocation-all` opens Make All Global Skills Manual….
             if let options = DebugSnapshot.options, options.tab == "invocation-all", snapshotInvocation, model.lastScan != nil {
                 snapshotInvocation = false
@@ -215,7 +240,7 @@ struct SkillsView: View {
             ForEach(groups, id: \.scope) { group in
                 Section {
                     ForEach(group.skills) { skill in
-                        SkillRow(skill: skill, link: model.brainLinks[skill.id])
+                        SkillRow(skill: skill, link: model.brainLinks[skill.id], duplicate: duplicate(of: skill))
                             .tag(skill.id)
                             .contextMenu { menu(for: skill) }
                     }
@@ -225,6 +250,7 @@ struct SkillsView: View {
                 }
             }
         }
+        .onChange(of: model.skills, initial: true) { regroupDuplicates() }
         .overlay {
             if !query.isEmpty && filtered.isEmpty {
                 ContentUnavailableView.search(text: query)
@@ -243,6 +269,7 @@ struct SkillsView: View {
             if canMove(skill) { Button("Move to Project…") { moving = skill } }
             if let request = globalRequest(skill) { Button("Move to Global…") { globalizing = request } }
             Button("Remove Everywhere…") { removeEverywhere(skill) }
+            if let request = resolveRequest(skill) { Button("Resolve Duplicate…") { removing = request } }
             Divider()
             SkillSwitchMenu(skill: skill)
             SkillInvocationMenu(skill: skill)
@@ -263,6 +290,7 @@ struct SkillsView: View {
             Button("Move to Trash…", role: .destructive) { pendingDelete = skill }
                 .disabled(skill.isReadOnly)
             Button("Remove Everywhere…") { removeEverywhere(skill) }
+            if let request = resolveRequest(skill) { Button("Resolve Duplicate…") { removing = request } }
         }
     }
 
@@ -374,7 +402,25 @@ struct SkillsView: View {
             model.skillsFilter.includes(skill.scope) && !hidden.contains(skill.id)
                 && (model.skillsHarness.map { id in skill.visibleTo.contains { $0.rawValue == id } } ?? true)
                 && matchesBrainFilter(skill)
+                && (!duplicatesOnly || duplicate(of: skill) != nil)
         }
+    }
+
+    private func regroupDuplicates() {
+        duplicates = SkillDuplicates.groups(model.skills)
+        duplicateOf = Dictionary(duplicates.flatMap { group in group.copies.map { ($0.realFolder.standardizedFileURL.path, group) } },
+                                 uniquingKeysWith: { first, _ in first })
+    }
+
+    private func duplicate(of skill: Skill) -> SkillDuplicates.Group? {
+        duplicateOf[skill.realFolder.standardizedFileURL.path]
+    }
+
+    /// Resolve Duplicate… for the skill's group, keeping this copy at first when it is the
+    /// preferred one, else the preferred (global) one.
+    private func resolveRequest(_ skill: Skill) -> RemovalRequest? {
+        guard let group = duplicate(of: skill) else { return nil }
+        return RemovalRequest(name: group.name, keep: SkillDuplicates.preferred(group))
     }
 
     private func matchesBrainFilter(_ skill: Skill) -> Bool {
@@ -461,19 +507,28 @@ struct SkillsView: View {
 private struct SkillRow: View {
     let skill: Skill
     let link: BrainLink?
+    let duplicate: SkillDuplicates.Group?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Text(skill.name).fontWeight(.medium)
-                if !skill.warnings.isEmpty {
+                // One line: the marks and badges must not squeeze the name into letters.
+                Text(skill.name).fontWeight(.medium).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+                // A duplicate's warnings are mostly its name collisions: its own mark says that.
+                if !skill.warnings.isEmpty && duplicate == nil {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .font(.caption)
                 }
+                if let duplicate {
+                    Image(systemName: "doc.on.doc.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                        .help("Duplicate: \(duplicate.harnesses.map(\.displayName).joined(separator: ", ")) load\(duplicate.harnesses.count == 1 ? "s" : "") \(duplicate.copies.count) copies of \(duplicate.name) together")
+                }
                 Spacer()
                 if let link { BrainLinkTag(link: link) }
-                ForEach(skill.visibleTo, id: \.self) { HarnessBadge(harness: $0) }
+                ForEach(skill.visibleTo, id: \.self) { HarnessBadge(harness: $0).fixedSize() }
             }
             SkillSwitchMarks(skill: skill)
             if !skill.description.isEmpty {
@@ -499,6 +554,9 @@ private struct SkillDetailView: View {
     let onRemoveEverywhere: () -> Void
     /// Move to Global…; nil when the skill isn't a project's own or from its answers.
     let onMoveToGlobal: (() -> Void)?
+    /// Other copies of the name that a harness loads with this one; Resolve Duplicate… keeps one.
+    let duplicate: SkillDuplicates.Group?
+    let onResolve: (() -> Void)?
     @State private var files: [String] = []
     @State private var text: String?
 
@@ -589,6 +647,22 @@ private struct SkillDetailView: View {
                         Text("No harness").foregroundStyle(.secondary)
                     }
                     ForEach(skill.visibleTo, id: \.self) { HarnessBadge(harness: $0) }
+                }
+            }
+            if let duplicate {
+                GridRow {
+                    label("Duplicate")
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(duplicate.copies.filter { $0.id != skill.id }) { copy in
+                            Text("Also \(copy.file.tildePath)").monospaced()
+                        }
+                        Text("\(duplicate.harnesses.map(\.displayName).joined(separator: ", ")) load\(duplicate.harnesses.count == 1 ? "s" : "") these copies together.")
+                            .foregroundStyle(.secondary)
+                        if let onResolve {
+                            Button("Resolve Duplicate…", action: onResolve)
+                                .help("Keep one copy; the other copies of your own go to the Trash")
+                        }
+                    }
                 }
             }
             SkillSwitchControls(skill: skill)
@@ -745,6 +819,8 @@ private struct BrainSkillButtons: View {
 /// A skill name for Remove Everywhere… (the Skills and Insights screens).
 struct RemovalRequest: Identifiable {
     let name: String
+    /// Resolve Duplicate…: the copy to keep.
+    var keep: Skill? = nil
     var id: String { name }
 }
 
