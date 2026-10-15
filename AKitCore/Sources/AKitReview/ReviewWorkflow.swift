@@ -74,7 +74,7 @@ public enum ReviewWorkflow {
         }
         let forced = Set(ReviewJSON.read([String].self, from: folder.appending(path: "forced-inline.json")) ?? [])
         var plan = ReviewPlanner.plan(.init(spec: run.spec, findings: findings.findings, gaps: run.gaps, diffs: snapshot.diffs, refs: refs,
-                                            drafts: snapshot.drafts, discussions: snapshot.discussions,
+                                            drafts: snapshot.drafts, discussions: snapshot.discussions, user: snapshot.user,
                                             scrub: LabSettings.load(env: env).scrub, forcedInline: forced),
                                       findingsVersion: findings.version)
         if let old = run.plan {
@@ -90,6 +90,11 @@ public enum ReviewWorkflow {
                 else if previous.decision == .approved { plan.requests[index].decision = .pending }
             }
         }
+        // What was sent stays on the list, first; the new requests are numbered after it.
+        let sent = run.plan?.requests.filter(\.isSent) ?? []
+        let start = (sent.compactMap { Int($0.id.dropFirst()) }.max() ?? 0)
+        for index in plan.requests.indices { plan.requests[index].id = "r\(start + index + 1)" }
+        plan.requests = sent + plan.requests
         try ReviewJSON.write(plan, to: folder.appending(path: "requests.json"))
         return plan
     }
@@ -142,14 +147,18 @@ public enum ReviewWorkflow {
     /// Sends the approved requests that weren't sent yet, as draft notes (R5: never publishes).
     /// The drafts and threads are read again first: a draft to change must still exist and
     /// carry AKit's line, a thread to reply in must be AKit's (R12).
-    public static func send(_ folder: URL, gitlab: GitLabClient) async throws -> SendReport {
+    /// `shown`: the requests the user saw when they pressed Send, by id, with the hash of their
+    /// text (`ReviewNotes.textHash(request.text)`); one that changed since, or wasn't shown, waits.
+    public static func send(_ folder: URL, gitlab: GitLabClient, shown: [String: String]? = nil) async throws -> SendReport {
         let run = try load(folder)
         guard let plan = run.plan else { throw Failure(message: "\(run.id) has no requests; plan it first.") }
         let ref = run.spec.mergeRequest
         let drafts = try await gitlab.drafts(ref)
         let discussions = try await gitlab.discussions(ref)
+        let user = try await gitlab.currentUser()
         var report = SendReport()
         for request in plan.requests where request.decision == .approved && !request.isSent {
+            if let shown, shown[request.id] != ReviewNotes.textHash(request.text) { continue }
             var sent = ReviewRequest.Sent(date: .now, draftID: request.draftID, error: nil)
             do {
                 let finding = run.finding(request.findingID)
@@ -187,7 +196,8 @@ public enum ReviewWorkflow {
                     }
                 case .reply:
                     guard let id = request.discussionID, let thread = discussions.first(where: { $0.id == id }),
-                          let first = thread.notes.first(where: { !$0.system }), ReviewNotes.parseMeta(first.body) != nil else {
+                          let first = thread.notes.first(where: { !$0.system }), first.author == user,
+                          ReviewNotes.parseMeta(first.body) != nil else {
                         throw Failure(message: "That thread isn't AKit's or is gone; AKit never writes in other people's threads.")
                     }
                     guard !thread.isResolved else { throw Failure(message: "A person resolved that thread; AKit leaves it.") }
@@ -202,12 +212,20 @@ public enum ReviewWorkflow {
                 if let index = file.requests.firstIndex(where: { $0.id == request.id }) { file.requests[index].sent = sent }
             }
         }
+        // The snapshot learns what GitLab holds now, so a later plan (Move Inline, a discussion)
+        // sees the drafts just sent instead of proposing them again.
+        if !report.sent.isEmpty, var snapshot = run.snapshot {
+            snapshot.drafts = (try? await gitlab.drafts(ref)) ?? snapshot.drafts
+            snapshot.discussions = (try? await gitlab.discussions(ref)) ?? snapshot.discussions
+            try? ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
+        }
         return report
     }
 
     /// The GitLab client of a run's host, with the token from `tokens`.
     public static func gitlab(for run: Run, tokens: (String) throws -> String?, fetch: @escaping ReviewFetch = ReviewHTTP.network) throws -> GitLabClient {
         let host = run.spec.mergeRequest.host
+        guard ReviewTokens.origin(.gitlab, host) != nil else { throw Failure(message: "\(host) is not https: AKit sends tokens only over https.") }
         guard let token = try tokens(ReviewTokens.account(.gitlab, for: host)) else {
             throw Failure(message: "There is no GitLab token for \(host).")
         }

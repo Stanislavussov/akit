@@ -67,7 +67,8 @@ public struct DiffPositions: Sendable {
             // An unchanged old line: its new number follows from the hunks before it.
             var shift = 0
             for hunk in hunks {
-                if line < hunk.oldStart { break }
+                // A hunk that only adds (`-3,0`) sits after its old start line.
+                if hunk.oldCount == 0 ? line <= hunk.oldStart : line < hunk.oldStart { break }
                 if line < hunk.oldStart + hunk.oldCount {
                     guard let new = hunk.newLines.first(where: { $0.value == line })?.key else { return nil }
                     return (line, new)
@@ -78,7 +79,8 @@ public struct DiffPositions: Sendable {
         }
         var shift = 0
         for hunk in hunks {
-            if line < hunk.newStart { break }
+            // A hunk that only removes (`+4,0`) sits after its new start line.
+            if hunk.newCount == 0 ? line <= hunk.newStart : line < hunk.newStart { break }
             if line < hunk.newStart + max(hunk.newCount, 1), let entry = hunk.newLines[line] {
                 return (entry, line)
             }

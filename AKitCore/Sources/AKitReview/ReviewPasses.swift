@@ -161,13 +161,13 @@ public enum ReviewPasses {
             arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-mcp", "--no-extensions", "--offline"]
             arguments += skills + ["--append-system-prompt", folder.appending(path: "prompts/system.md").path,
                                    "-e", folder.appending(path: "akit-review.ts").path, "--tools", tools, "--", prompt]
-            var environment = ChildProcess.harnessEnvironment(env)
+            var environment = passEnvironment(env)
             environment["AKIT_REVIEW_RUN"] = folder.path
             environment["AKIT_REVIEW_RUN_ID"] = spec.id
             environment["AKIT_REVIEW_PASS"] = name
             environment["AKIT_REVIEW_ROLE"] = role?.id ?? ""
             environment["AKIT_REVIEW_MAX"] = String(role?.maxFindings ?? 50)
-            environment["AKIT_REVIEW_ROOTS"] = (hasWorktree ? [worktree.path, folder.path] : [folder.path]).joined(separator: ":")
+            environment["AKIT_REVIEW_ROOTS"] = readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)
             environment["AKIT_REVIEW_SCENARIO"] = spec.scenario.value
             environment["AKIT_REVIEW_HEAD"] = head
             var record = ReviewPassRecord(name: name, role: role?.id, model: model.model, session: nil, started: .now, ended: nil,
@@ -237,6 +237,22 @@ public enum ReviewPasses {
         let gate = try await SendGate.open(agent: LabAgent(harness: .pi, model: model, effort: ""), env: env)
         try gate.check(.mergeRequest)
         return gate
+    }
+
+    /// What a pass may read (`AKIT_REVIEW_ROOTS`): the worktree and the scrubbed parts of the run
+    /// folder. Never `gitlab/` or `tracker/`: AKit's raw, unscrubbed copies (other drafts too).
+    static func readRoots(folder: URL, worktree: URL?) -> String {
+        ((worktree.map { [$0] } ?? []) + ["context", "roles", "prompts"].map { folder.appending(path: $0) })
+            .map(\.path).joined(separator: ":")
+    }
+
+    /// The environment of a pass or a discussion: none of the tokens a user may keep in their
+    /// shell for GitLab or Azure DevOps (a pass has no shell, but nothing should be there to find).
+    static func passEnvironment(_ env: HarnessEnvironment) -> [String: String] {
+        ChildProcess.harnessEnvironment(env).filter { key, _ in
+            let upper = key.uppercased()
+            return !["GITLAB", "GL_", "GLAB", "AZURE_DEVOPS", "ADO_", "SYSTEM_ACCESSTOKEN", "AKIT_REVIEW"].contains { upper.hasPrefix($0) }
+        }
     }
 
     /// Gaps of Gather and of every pass, numbered again: `gaps.json`.

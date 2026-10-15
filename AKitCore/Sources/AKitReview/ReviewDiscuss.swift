@@ -54,13 +54,15 @@ public enum ReviewDiscuss {
                       "-e", folder.appending(path: "akit-review.ts").path, "--tools", ReviewPasses.tools]
         let variables: [(String, String)] = [
             ("AKIT_REVIEW_RUN", folder.path), ("AKIT_REVIEW_RUN_ID", run.id), ("AKIT_REVIEW_PASS", "discuss"), ("AKIT_REVIEW_ROLE", "discuss"),
-            ("AKIT_REVIEW_MAX", "50"), ("AKIT_REVIEW_ROOTS", (worktree.map { [$0.path, folder.path] } ?? [folder.path]).joined(separator: ":")),
+            ("AKIT_REVIEW_MAX", "50"), ("AKIT_REVIEW_ROOTS", ReviewPasses.readRoots(folder: folder, worktree: worktree)),
             ("AKIT_REVIEW_SCENARIO", run.spec.scenario.value), ("AKIT_REVIEW_HEAD", run.spec.headSHA ?? ""),
         ]
         let text = """
         #!/bin/sh
         # Discuss in Pi… for AKit review run \(run.id). Written by AKit; it writes it again each time.
         cd \(shellQuoted(cwd.path)) || exit 1
+        # No GitLab or Azure DevOps token from your shell reaches Pi.
+        for v in $(env | cut -d= -f1 | grep -iE '^(GITLAB|GL_|GLAB|AZURE_DEVOPS|ADO_|SYSTEM_ACCESSTOKEN)'); do unset "$v"; done
         \(variables.map { "export \($0.0)=\(shellQuoted($0.1))" }.joined(separator: "\n"))
         echo "AKit review \(run.spec.mergeRequest.label): Pi has the whole review. Ask about a finding, or ask it to look again."
         echo "Changes come back to AKit through akit_submit_findings; nothing reaches GitLab without your approval."
@@ -95,7 +97,9 @@ public enum ReviewDiscuss {
         for file in files {
             guard let object = (try? Data(contentsOf: file)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { continue }
             for raw in object["findings"] as? [[String: Any]] ?? [] {
-                guard var finding = ReviewCandidates.finding(raw, role: raw["role"] as? String ?? "discuss", id: "f\(next)") else { continue }
+                // Only a role of the run: the role goes into the hidden line of a draft.
+                let role = (raw["role"] as? String).flatMap { name in run.spec.roles.contains { $0.id == name } ? name : nil } ?? "discuss"
+                guard var finding = ReviewCandidates.finding(raw, role: role, id: "f\(next)") else { continue }
                 ReviewCandidates.anchor(&finding, worktree: run.worktree)
                 finding.fingerprint = ReviewCandidates.fingerprint(finding, worktree: run.worktree)
                 guard !current.findings.contains(where: { $0.fingerprint == finding.fingerprint }) else { continue }

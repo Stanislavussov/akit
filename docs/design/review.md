@@ -65,6 +65,33 @@ into `findings.json` version N+1, keeps `findings-v<N>.json` and plans the reque
 add new ones (counted as confirmed: the developer was there); the discussion's tokens go into
 `passes.json` and the send log when its version is made.
 
+Built: step 5 (2026-10-15): Review → Roles, Scenarios (with the defaults) and Quality; Save… with a
+diff, Duplicate to Project…, Reset to Brain, Add to Brain (the built-ins into `layers/review`,
+committed), the work-word warning for brain saves on a work Mac; `layers/review` is reserved
+(the brain doesn't read it as a project layer). The guide `review.ru.md`, the Work group in the
+screens guide, the Review terms in the glossary.
+
+Review round (2026-10-15, code review of the branch), fixed:
+
+- The path policy refuses paths that start with `~`, `@` or `file:` (Pi expands them itself),
+  `find` patterns that leave the folder, and more secret files (`.npmrc`, `.netrc`,
+  `.git-credentials`, `id_*`, `*.p12`, …). A pass reads only the worktree and `context/`,
+  `roles/`, `prompts/` of the run: never `gitlab/` or `tracker/` (raw, unscrubbed).
+- AKit's own reads of worktree files (snippets, anchors, the screen) don't follow a symlink
+  out of the worktree and are masked.
+- Tokens: one Keychain account per exact `https://host[:port]` (Azure DevOps: per collection
+  address), https only, no redirects. They are now written and read in-process
+  (`ReviewKeychain`), not through `/usr/bin/security`, so another program gets a Keychain
+  prompt instead of the token. Gather commands (they run the merge request's code) and passes
+  get a minimal environment without GitLab or Azure DevOps variables.
+- A thread is AKit's only when the token's user started it with AKit's line; "looks fixed" is
+  proposed once per thread and only when no finding of the run has the fingerprint.
+- Model text can't open or close an HTML comment, the meta line is read from the end, and a
+  discussion's finding takes a role of the run only.
+- Send Drafts sends only the requests the sheet showed, with the text it showed; after a send
+  the snapshot learns GitLab's drafts, and sent requests stay on the list after a replan.
+- Diff positions after hunks that only add or only remove lines.
+
 ## What and why
 
 The user reviews GitLab merge requests at work. An agent can read the change first, check it

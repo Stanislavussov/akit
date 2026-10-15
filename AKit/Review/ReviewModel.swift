@@ -172,18 +172,25 @@ final class ReviewModel {
         guard let run else { return }
         Task {
             await attemptAsync {
-                let client = try ReviewWorkflow.gitlab(for: run, tokens: { try ReviewTokens.store().value($0) })
+                let client = try await self.client(for: run)
                 try await ReviewWorkflow.plan(run.folder, gitlab: client, env: self.env)
             }
         }
     }
 
-    /// Sends the approved requests; the report says what GitLab answered.
-    func send() async -> ReviewWorkflow.SendReport? {
+    /// The run's GitLab client; the Keychain is read off the main thread (it may ask first).
+    private func client(for run: ReviewWorkflow.Run) async throws -> GitLabClient {
+        try await Task.detached { try ReviewWorkflow.gitlab(for: run, tokens: { try ReviewTokens.store().value($0) }) }.value
+    }
+
+    /// Sends the approved requests the sheet showed (not any approved since); the report says
+    /// what GitLab answered.
+    func send(_ shown: [ReviewRequest]) async -> ReviewWorkflow.SendReport? {
         guard let run else { return nil }
         do {
-            let client = try ReviewWorkflow.gitlab(for: run, tokens: { try ReviewTokens.store().value($0) })
-            let report = try await ReviewWorkflow.send(run.folder, gitlab: client)
+            let client = try await client(for: run)
+            let ids = Dictionary(uniqueKeysWithValues: shown.map { ($0.id, ReviewNotes.textHash($0.text)) })
+            let report = try await ReviewWorkflow.send(run.folder, gitlab: client, shown: ids)
             open(run.id)
             return report
         } catch {

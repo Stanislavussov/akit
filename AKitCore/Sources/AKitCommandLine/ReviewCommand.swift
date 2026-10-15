@@ -126,16 +126,19 @@ extension AKitCLI {
             }
             let delete = args.flag("--delete")
             try args.finish()
+            guard let origin = ReviewTokens.origin(kind, name) else {
+                throw Failure(message: "\(name) is not an https address: AKit sends tokens only over https.")
+            }
             let account = ReviewTokens.account(kind, for: name)
             if delete {
                 try services.secrets.delete(account)
-                out("Removed the \(kind.title) token for \(name).")
+                out("Removed the \(kind.title) token for \(origin).")
                 return 0
             }
             let token = String(decoding: input(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !token.isEmpty else { throw Failure(message: "Pipe the token on stdin, for example: pbpaste | akit review token \(kind.rawValue) \(name)") }
             try services.secrets.save(token, for: account)
-            out("Saved the \(kind.title) token for \(name) in the Keychain (AKit Review · \(account)).")
+            out("Saved the \(kind.title) token for \(origin) in the Keychain (AKit Review).")
             return 0
         case "check":
             guard let host = args.positional() else { throw Failure(message: "akit review check HOST.") }
@@ -211,7 +214,9 @@ extension AKitCLI {
                 return 0
             }
             let client = try ReviewWorkflow.gitlab(for: run, tokens: { try secrets.value($0) }, fetch: services.fetch)
-            let report = try await ReviewWorkflow.send(folder, gitlab: client)
+            // Exactly what was printed above.
+            let shown = Dictionary(uniqueKeysWithValues: approved.map { ($0.id, ReviewNotes.textHash($0.text)) })
+            let report = try await ReviewWorkflow.send(folder, gitlab: client, shown: shown)
             out("Sent as drafts: \(report.sent.isEmpty ? "none" : report.sent.joined(separator: ", ")).")
             for failure in report.failed { err("akit: \(failure.id): \(failure.message)") }
             out("Publish them in GitLab with Submit review: \(run.spec.mergeRequest.url)")

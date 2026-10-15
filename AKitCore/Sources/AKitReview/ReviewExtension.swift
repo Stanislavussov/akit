@@ -8,7 +8,7 @@ import Foundation
 /// `AKIT_REVIEW_SCENARIO`, `AKIT_REVIEW_HEAD`.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 1
+    public static let version = 2
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -16,12 +16,13 @@ public enum ReviewExtension {
         let parts = path.split(separator: "/").map(String.init)
         guard let name = parts.last else { return false }
         let lower = name.lowercased()
-        return lower.hasPrefix(".env") || parts.dropLast().contains("secrets") || lower.hasSuffix(".pem") || lower.hasSuffix(".key")
-            || lower == "auth.json" || lower == "settings.local.json"
+        return lower.hasPrefix(".env") || parts.dropLast().contains("secrets") || lower.hasPrefix("id_")
+            || [".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"].contains { lower.hasSuffix($0) }
+            || ["auth.json", "settings.local.json", ".npmrc", ".netrc", ".pypirc", ".git-credentials"].contains(lower)
     }
 
     public static let source = #"""
-    // akit-review.ts v1: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v2: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -43,8 +44,9 @@ public enum ReviewExtension {
     function blocked(p: string): boolean {
       const parts = p.split("/").filter((x) => x.length > 0);
       const name = (parts[parts.length - 1] ?? "").toLowerCase();
-      return name.startsWith(".env") || parts.slice(0, -1).includes("secrets") || name.endsWith(".pem") || name.endsWith(".key")
-        || name === "auth.json" || name === "settings.local.json";
+      return name.startsWith(".env") || parts.slice(0, -1).includes("secrets") || name.startsWith("id_")
+        || [".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"].some((s) => name.endsWith(s))
+        || ["auth.json", "settings.local.json", ".npmrc", ".netrc", ".pypirc", ".git-credentials"].includes(name);
     }
 
     function inside(p: string): boolean {
@@ -175,11 +177,19 @@ public enum ReviewExtension {
         if (ownTools.includes(name)) return undefined;
         if (!readTools.includes(name)) return { block: true, reason: `AKit review allows only reading tools; ${name} is not one.` };
         const given = typeof event.input?.path === "string" && event.input.path.length > 0 ? event.input.path : ".";
+        // Pi expands a leading ~ and @ and reads file:// addresses itself: never let one through,
+        // or the check below would see a different path than Pi reads.
+        if (/^\s*(~|@|file:)/i.test(given)) return { block: true, reason: `AKit review takes plain paths only; ${given} is not one.` };
         const target = real(path.resolve(ctx?.cwd ?? process.cwd(), given));
         if (!inside(target)) return { block: true, reason: `AKit review reads only the worktree and the run's context pack; ${given} is outside.` };
         if (blocked(target)) return { block: true, reason: `${given} usually holds secrets; AKit review never reads it.` };
-        if (typeof event.input?.glob === "string" && blocked(event.input.glob)) {
-          return { block: true, reason: "That pattern names files that usually hold secrets." };
+        for (const key of ["glob", "pattern"]) {
+          const value = event.input?.[key];
+          if (name !== "grep" || key === "glob") {
+            if (typeof value === "string" && (blocked(value) || value.includes("..") || /^\s*(\/|~|@|file:)/i.test(value))) {
+              return { block: true, reason: "That pattern leaves the folder or names files that usually hold secrets." };
+            }
+          }
         }
         return undefined;
       });

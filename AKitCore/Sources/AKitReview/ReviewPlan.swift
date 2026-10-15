@@ -120,13 +120,16 @@ public enum ReviewPlanner {
         /// The user's draft notes now (AKit's are found by the meta line).
         public var drafts: [GitLabDraft]
         public var discussions: [GitLabDiscussion]
+        /// The token's user: a thread is AKit's only when this user wrote it with AKit's line
+        /// (anyone can paste the line into their own comment).
+        public var user: String
         public var scrub: Scrubber.OwnPatterns
         /// Findings the user moved inline by hand, by id.
         public var forcedInline: Set<String> = []
 
         public init(spec: ReviewRunSpec, findings: [ReviewFinding], gaps: [ContextGap], diffs: [GitLabFileDiff],
-                    refs: GitLabMergeRequest.DiffRefs, drafts: [GitLabDraft], discussions: [GitLabDiscussion], scrub: Scrubber.OwnPatterns,
-                    forcedInline: Set<String> = []) {
+                    refs: GitLabMergeRequest.DiffRefs, drafts: [GitLabDraft], discussions: [GitLabDiscussion], user: String,
+                    scrub: Scrubber.OwnPatterns, forcedInline: Set<String> = []) {
             self.spec = spec
             self.findings = findings
             self.gaps = gaps
@@ -134,6 +137,7 @@ public enum ReviewPlanner {
             self.refs = refs
             self.drafts = drafts
             self.discussions = discussions
+            self.user = user
             self.scrub = scrub
             self.forcedInline = forcedInline
         }
@@ -152,8 +156,8 @@ public enum ReviewPlanner {
         // AKit's published threads by fingerprint: open or resolved by a person.
         var published: [String: GitLabDiscussion] = [:]
         for discussion in input.discussions {
-            guard let first = discussion.notes.first(where: { !$0.system }), let meta = ReviewNotes.parseMeta(first.body),
-                  meta["kind"] != "summary", let fp = meta["fp"] else { continue }
+            guard let first = discussion.notes.first(where: { !$0.system }), first.author == input.user,
+                  let meta = ReviewNotes.parseMeta(first.body), meta["kind"] == "finding", let fp = meta["fp"] else { continue }
             published[fp] = discussion
         }
         let ignored = spec.pathInstructions.filter(\.ignore).flatMap(\.paths)
@@ -278,9 +282,12 @@ public enum ReviewPlanner {
                               line: draft.position?.newLine ?? draft.position?.oldLine, position: draft.position,
                               proposed: ReviewNotes.withoutMeta(draft.note), draftID: draft.id))
         }
-        let hidden = Set(placements.filter { $0.place == .onlyInAKit }.map(\.findingID))
-        let current = Set(input.findings.filter { !hidden.contains($0.id) }.compactMap(\.fingerprint))
+        // Gone means no finding of this run has it, whatever its place: one held back by a threshold
+        // is still there. A thread that has AKit's reply already gets no second one.
+        let current = Set(input.findings.compactMap(\.fingerprint))
         for (fp, discussion) in published.sorted(by: { $0.key < $1.key }) where !discussion.isResolved && !current.contains(fp) {
+            let replied = discussion.notes.contains { $0.author == input.user && ReviewNotes.parseMeta($0.body)?["kind"] == "reply" }
+            if replied { continue }
             let first = discussion.notes.first { !$0.system }
             add(ReviewRequest(id: "", kind: .reply, fingerprint: fp, role: first.flatMap { ReviewNotes.parseMeta($0.body)?["role"] },
                               file: first?.position?.newPath, line: first?.position?.newLine,

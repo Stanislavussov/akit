@@ -19,9 +19,21 @@ public enum ReviewHTTP {
     }
 
     public static let network: ReviewFetch = { request in
-        let (data, response) = try await URLSession.shared.data(for: request)
+        guard request.url?.scheme?.lowercased() == "https" else {
+            throw Failure(message: "AKit sends tokens only over https, not to \(request.url?.absoluteString ?? "this address").")
+        }
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw Failure(message: "\(request.url?.host() ?? "The server") gave no HTTP answer.") }
         return (data, http)
+    }
+
+    /// No redirects: a redirect to another host would carry the token's header there. A 3xx
+    /// comes back as an error that names it.
+    private static let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
+
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? { nil }
     }
 
     /// Sends the request and checks the status. The error text names the method and path,
@@ -35,6 +47,7 @@ public enum ReviewHTTP {
             case 401: " The token is missing, wrong or expired."
             case 403: " The token lacks a right this needs."
             case 404: " Not found, or the token can't see it."
+            case 300..<400: " GitLab or Azure DevOps answered with a redirect, which AKit doesn't follow: check the address in the profile."
             default: ""
             }
             throw Failure(message: "\(request.httpMethod ?? "GET") \(path): HTTP \(response.statusCode).\(hint) \(body)"

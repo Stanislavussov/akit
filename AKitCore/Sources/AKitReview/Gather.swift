@@ -294,7 +294,10 @@ public enum ReviewGather {
 
     static func runCommand(_ command: ReviewProfile.GatherCommand, in worktree: URL, env: HarnessEnvironment) async -> (text: String, problem: String?) {
         let shell = URL(filePath: "/bin/sh")
-        let variables = env.variables.merging(["PATH": env.pathForChildProcesses]) { $1 }
+        // The command runs the merge request's own code: it gets no more of your environment than a
+        // build needs (no tokens of your shell).
+        var variables = ["PATH": env.pathForChildProcesses, "HOME": env.homeDirectory.path, "TERM": "dumb"]
+        for key in ["USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL"] { variables[key] = env.variables[key] }
         let result = await ProcessRunner.run(shell, arguments: ["-c", command.run], directory: worktree, environment: variables,
                                              timeout: TimeInterval(command.timeoutSeconds))
         guard let result else { return ("The command couldn't start.\n", "It couldn't start.") }
@@ -442,7 +445,9 @@ public enum ReviewNotes {
 
     /// The fields of AKit's hidden line in a note, nil when there is none.
     public static func parseMeta(_ body: String) -> [String: String]? {
-        guard let start = body.range(of: metaPrefix), let end = body.range(of: "-->", range: start.upperBound..<body.endIndex) else { return nil }
+        // The last one: AKit writes it at the end, after any text a model or a person wrote.
+        guard let start = body.range(of: metaPrefix, options: .backwards),
+              let end = body.range(of: "-->", range: start.upperBound..<body.endIndex) else { return nil }
         var fields: [String: String] = [:]
         for part in body[start.upperBound..<end.lowerBound].split(separator: " ") {
             let pair = part.split(separator: "=", maxSplits: 1)
@@ -451,9 +456,15 @@ public enum ReviewNotes {
         return fields
     }
 
+    /// Model text can't open or close an HTML comment, so it can never forge AKit's hidden line.
+    public static func defused(_ text: String) -> String {
+        text.replacingOccurrences(of: "<!--", with: "<! --").replacingOccurrences(of: "-->", with: "-- >")
+    }
+
     /// The text without the hidden line.
     public static func withoutMeta(_ body: String) -> String {
-        guard let start = body.range(of: metaPrefix), let end = body.range(of: "-->", range: start.upperBound..<body.endIndex) else { return body }
+        guard let start = body.range(of: metaPrefix, options: .backwards),
+              let end = body.range(of: "-->", range: start.upperBound..<body.endIndex) else { return body }
         var text = body
         text.removeSubrange(start.lowerBound..<end.upperBound)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)

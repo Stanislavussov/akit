@@ -18,11 +18,12 @@ extension AKitCLITests {
         let secrets = MemorySecretStore()
         let saved = await review(["token", "gitlab", "https://gitlab.test"], secrets: secrets, stdin: "glpat-123\n")
         #expect(saved.code == 0 && !saved.out.contains("glpat-123"), "\(saved)")
-        #expect(secrets.value("gitlab_gitlab_test") == "glpat-123")
+        #expect(secrets.value("gitlab https://gitlab.test") == "glpat-123")
         #expect(await review(["token", "gitlab", "https://gitlab.test"], secrets: secrets).err.contains("Pipe the token"))
         #expect(await review(["token", "jira", "x"], secrets: secrets).code == 2)
+        #expect(await review(["token", "gitlab", "http://gitlab.test"], secrets: secrets, stdin: "x").err.contains("only over https"))
         _ = await review(["token", "gitlab", "https://gitlab.test", "--delete"], secrets: secrets)
-        #expect(secrets.value("gitlab_gitlab_test") == nil)
+        #expect(secrets.value("gitlab https://gitlab.test") == nil)
     }
 
     @Test func reviewConfigShowNamesSources() async throws {

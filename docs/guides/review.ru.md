@@ -106,7 +106,7 @@
 
 - `~/.akit/local/review/projects/<slug>.yaml` — профили проектов.
 - `~/.akit/local/review/runs/<run-id>/` — папка одного ревью: пакет контекста, worktree, сессии Pi, находки, запросы.
-- Токены — в Keychain, в записях службы «AKit Review».
+- Токены — в Keychain, в записях службы «AKit Review». Их читает только сам AKit. Другая программа на Mac (например, оболочка, которую запустил агент) получит запрос Keychain, а не токен. Приложение AKit и команда `akit` — две разные программы: та, что токен не сохраняла, спросит доступ один раз.
 - Общие роли и сценарии — в brain, в слое `layers/review`.
 
 Папки ревью и профили не покидают Mac. В brain попадают только общие роли и сценарии.
@@ -140,7 +140,7 @@
 - Кнопка **Remove** удаляет токен из Keychain.
 - Токен не показывается больше никогда, даже в AKit.
 
-> **Важно:** адрес в поле **GitLab** должен совпадать с адресом сервера в ссылке на MR. Для `https://gitlab.example.com/shop/orders-service/-/merge_requests/42` это `https://gitlab.example.com`.
+> **Важно:** адрес в поле **GitLab** должен совпадать с адресом сервера в ссылке на MR. Для `https://gitlab.example.com/shop/orders-service/-/merge_requests/42` это `https://gitlab.example.com`. Токен привязан к точному адресу: `gitlab-corp.example` и `gitlab.corp.example` — два разных токена. AKit отправляет токены только по https и не идёт по переадресациям: так токен не уйдёт на чужой сервер.
 
 ### Просто: сохранить токен Azure DevOps
 <!-- section: setup-azure -->
@@ -209,7 +209,7 @@ default_scenario: bugfix
 - `url` внутри `tracker` — адрес коллекции для Azure DevOps Server. Пусто — `https://dev.azure.com/<org>`.
 - `default_scenario` — сценарий по умолчанию: `feature`, `bugfix` или `dependency-upgrade`.
 - `knowledge` — папки с заметками в Markdown. Пример: `[~/notes/orders]`. Агент читает их как знания о проекте.
-- `gather` — команды, вывод которых нужен агенту. Пример: `- { name: tests, run: "dotnet test --no-build", timeout_s: 600 }`. Команда идёт в worktree до проходов.
+- `gather` — команды, вывод которых нужен агенту. Пример: `- { name: tests, run: "dotnet test --no-build", timeout_s: 600 }`. Команда идёт в worktree до проходов. Помните: она запускает код из MR. Поэтому AKit даёт ей только PATH, HOME, язык и временную папку, без остальных переменных вашей оболочки (и без токенов в них).
 - `constraints` — правила проекта. Пример: «Public DTOs change only in backward-compatible ways».
 - `path_instructions` — правила для путей. `{ paths: ["src/Domain/**"], instructions: "…" }` даёт указание. `{ paths: ["**/*.generated.cs"], ignore: true }` убирает пути из ревью.
 - `roles: { off: [...], add: [...] }` — выключить роли сценария или добавить свои роли проекта.
@@ -549,7 +549,8 @@ AKit собирает пакет сам, без модели. Файлы леж�
 
 - **New comment** и **Summary** создают новый черновик.
 - **Update draft** и **Delete draft** работают, только если черновик ещё есть и в нём скрытая строка AKit. Иначе: «The draft is gone from GitLab (published or deleted); plan again.» или «That draft isn't AKit's; AKit leaves it alone.».
-- **Reply: looks fixed** пишется только в тред, который начал AKit, и только если человек не закрыл его. Иначе AKit откажет.
+- **Reply: looks fixed** пишется только в тред, который начал AKit от вашего имени, и только если человек не закрыл его. Иначе AKit откажет.
+- AKit отправляет только те запросы, которые вы видели в окне **Send Drafts…**. Запрос, который одобрили или изменили после открытия окна, ждёт следующей отправки.
 
 В каждый черновик AKit добавляет скрытую строку `<!-- akit-review:v1 … -->`. По ней повторное ревью узнаёт свои черновики и треды.
 
@@ -799,7 +800,9 @@ AKit проверяет папку ревью каждые несколько с
 Для того, что было раньше, а теперь пропало:
 
 - Черновик AKit без находки → **Delete draft**.
-- Открытый опубликованный тред AKit без находки → **Reply: looks fixed** с текстом «Looks fixed in <коммит>: AKit review no longer finds this.».
+- Открытый опубликованный тред AKit без находки → **Reply: looks fixed** с текстом «Looks fixed in <коммит>: AKit review no longer finds this.». Только один раз: если AKit уже ответил в этом треде, второго ответа нет. Находка, которую только отсеял порог (она в **Only in AKit**), не считается пропавшей.
+
+Тред считается тредом AKit, только если его начали вы (пользователь токена) и в нём скрытая строка AKit. Строку может вставить в свой комментарий кто угодно, поэтому чужой тред с ней AKit не трогает.
 
 Сводка всегда одна: **Summary** в первый раз, **Update summary** потом, если текст изменился.
 

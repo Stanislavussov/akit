@@ -6,8 +6,8 @@ import Security
 public protocol SecretStore: Sendable {
     func contains(_ account: String) -> Bool
     func save(_ value: String, for account: String) throws
-    /// The stored value; nil when there is none. Only AKit's own requests use it (review's
-    /// GitLab and Azure DevOps tokens); it is never shown or passed to an agent.
+    /// The stored value; nil when there is none. Only for AKit's own requests (review's GitLab
+    /// and Azure DevOps tokens, `ReviewKeychain`); never shown or passed to an agent.
     func value(_ account: String) throws -> String?
     func delete(_ account: String) throws
 }
@@ -17,8 +17,6 @@ public protocol SecretStore: Sendable {
 /// `security find-generic-password -s "AKit MCP" -a NAME -w` without a Keychain prompt.
 public struct KeychainSecretStore: SecretStore {
     public static let service = "AKit MCP"
-    /// Review's tokens (GitLab, Azure DevOps): AKit's own, never looked up by a harness.
-    public static let reviewService = "AKit Review"
 
     /// The Keychain service of this store's items; MCP secrets by default.
     public let service: String

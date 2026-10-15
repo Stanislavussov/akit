@@ -18,16 +18,26 @@ public enum ReviewTokens {
         }
     }
 
-    /// One account per GitLab host and per Azure DevOps organization: `gitlab_gitlab_corp_example`.
+    /// One account per GitLab and per Azure DevOps address: `gitlab https://gitlab.corp.example`,
+    /// `azure-devops https://dev.azure.com/org`. The whole origin is the name, so two hosts never
+    /// share a token. nil for an address that isn't https (a token never goes out in clear text).
     public static func account(_ kind: Kind, for name: String) -> String {
-        let cleaned = name.lowercased()
-            .replacingOccurrences(of: "https://", with: "").replacingOccurrences(of: "http://", with: "")
-            .unicodeScalars.map { CharacterSet.alphanumerics.contains($0) && $0.isASCII ? String($0) : "_" }.joined()
-        let prefix = kind == .gitlab ? "gitlab" : "azure_devops"
-        return "\(prefix)_\(cleaned.trimmingCharacters(in: ["_"]))"
+        "\(kind.rawValue) \(origin(kind, name) ?? name.lowercased())"
     }
 
-    public static func store() -> KeychainSecretStore { KeychainSecretStore(service: KeychainSecretStore.reviewService) }
+    /// `https://host[:port]` (lowercased, no path) for GitLab; for Azure DevOps an organization
+    /// name means `https://dev.azure.com/<org>`, an address keeps its path (a Server collection).
+    public static func origin(_ kind: Kind, _ name: String) -> String? {
+        var text = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if kind == .azureDevOps, !text.contains("://") { text = "https://dev.azure.com/\(text)" }
+        guard let url = URL(string: text), url.scheme?.lowercased() == "https", let host = url.host()?.lowercased(), !host.isEmpty else { return nil }
+        let port = url.port.map { ":\($0)" } ?? ""
+        var path = kind == .azureDevOps ? url.path() : ""
+        while path.hasSuffix("/") { path.removeLast() }
+        return "https://\(host)\(port)\(path.lowercased())"
+    }
+
+    public static func store() -> ReviewKeychain { ReviewKeychain() }
 }
 
 /// A run's progress, beside `run.json` (`<run>/status.json`).
@@ -85,12 +95,16 @@ public enum ReviewRuns {
         if let project, profile == nil { throw Failure(message: "There is no project profile \(project).") }
         let id = newID(for: mr)
         let (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: mr, id: id)
+        guard ReviewTokens.origin(.gitlab, mr.host) != nil else {
+            throw Failure(message: "\(mr.host) is not https: AKit sends your GitLab token only over https.")
+        }
         let gitlabAccount = ReviewTokens.account(.gitlab, for: mr.host)
         guard let gitlabToken = try tokens(gitlabAccount) else {
             throw Failure(message: "There is no GitLab token for \(mr.host). Add it in Review → Settings or with: akit review token gitlab \(mr.host)")
         }
         var azure: AzureDevOpsClient?
-        if let tracker = profile?.tracker, let token = try tokens(ReviewTokens.account(.azureDevOps, for: tracker.org)) {
+        if let tracker = profile?.tracker, ReviewTokens.origin(.azureDevOps, tracker.baseURL) != nil,
+           let token = try tokens(ReviewTokens.account(.azureDevOps, for: tracker.baseURL)) {
             azure = AzureDevOpsClient(tracker: tracker, token: token, fetch: fetch)
         }
         let folder = ReviewPaths(home: home).run(id)

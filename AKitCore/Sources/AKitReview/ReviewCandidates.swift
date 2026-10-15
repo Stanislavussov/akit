@@ -37,11 +37,11 @@ public enum ReviewCandidates {
         let kind = (raw["kind"] as? String).flatMap(ReviewFinding.Kind.init) ?? .finding
         let file = (raw["file"] as? String).map { $0.hasPrefix("./") ? String($0.dropFirst(2)) : $0 }.flatMap { $0.isEmpty ? nil : $0 }
         let line = (raw["line"] as? NSNumber).flatMap { $0.intValue >= 1 ? $0.intValue : nil }
-        func text(_ key: String) -> String { SecretFilter.masked(raw[key] as? String ?? "") }
+        func text(_ key: String) -> String { ReviewNotes.defused(SecretFilter.masked(raw[key] as? String ?? "")) }
         return ReviewFinding(id: id, kind: kind, role: role, file: file, side: (raw["side"] as? String) == "old" ? .old : .new,
-                             line: file == nil ? nil : line, title: SecretFilter.masked(title), evidence: text("evidence"), why: text("why"),
+                             line: file == nil ? nil : line, title: ReviewNotes.defused(SecretFilter.masked(title)), evidence: text("evidence"), why: text("why"),
                              severity: severity, confidence: confidence,
-                             suggestion: (raw["suggestion"] as? String).map(SecretFilter.masked).flatMap { $0.isEmpty ? nil : $0 },
+                             suggestion: (raw["suggestion"] as? String).map { ReviewNotes.defused(SecretFilter.masked($0)) }.flatMap { $0.isEmpty ? nil : $0 },
                              related: (raw["related"] as? [String]) ?? [])
     }
 
@@ -71,10 +71,15 @@ public enum ReviewCandidates {
         return ReviewFingerprint.make(path: path, snippet: snippet, title: finding.title)
     }
 
+    /// A file of the worktree, its lines masked. A merge request can add a symlink that points out
+    /// of the worktree, so the real path must stay inside it; secret files are never read.
     static func fileLines(_ path: String, worktree: URL?) -> [String]? {
-        guard let worktree, !path.contains(".."), !path.hasPrefix("/") else { return nil }
-        guard let text = try? String(contentsOf: worktree.appending(path: path), encoding: .utf8) else { return nil }
-        return text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let worktree, !path.contains(".."), !path.hasPrefix("/"), !ReviewExtension.isBlocked(path) else { return nil }
+        let root = worktree.resolvingSymlinksInPath().path
+        let file = worktree.appending(path: path).resolvingSymlinksInPath()
+        guard file.path.hasPrefix(root + "/"), !ReviewExtension.isBlocked(file.path),
+              let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        return text.split(separator: "\n", omittingEmptySubsequences: false).map { SecretFilter.masked(String($0)) }
     }
 
     /// The verifier's input: each candidate with ±5 numbered lines around its anchor.
@@ -114,7 +119,7 @@ public enum ReviewCandidates {
             let into = raw["into"] as? String
             // A merge into a finding that doesn't exist (or into itself) isn't a merge.
             if value == .merged, into == nil || into == id || !candidates.contains(where: { $0.id == into }) { continue }
-            byID[id] = ReviewFinding.Verdict(verdict: value, note: SecretFilter.masked(raw["note"] as? String ?? ""), into: into,
+            byID[id] = ReviewFinding.Verdict(verdict: value, note: ReviewNotes.defused(SecretFilter.masked(raw["note"] as? String ?? "")), into: into,
                                              severity: (raw["severity"] as? String).flatMap(ReviewSeverity.init),
                                              confidence: (raw["confidence"] as? NSNumber).flatMap { (0...1).contains($0.doubleValue) ? $0.doubleValue : nil })
         }

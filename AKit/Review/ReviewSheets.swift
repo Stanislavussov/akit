@@ -243,7 +243,7 @@ enum ReviewProfileTemplate {
     # tracker url for Azure DevOps Server: url: https://ado.example.com/tfs/Collection
     default_scenario: feature              # feature, bugfix, dependency-upgrade
     knowledge: []                          # markdown folders, e.g. [~/notes/my-service]
-    gather: []                             # e.g. - { name: tests, run: "npm test", timeout_s: 600 }
+    gather: []                             # e.g. - { name: tests, run: "npm test", timeout_s: 600 }; runs the MR's own code
     constraints: []                        # e.g. - "Public DTOs change only in backward-compatible ways"
     path_instructions: []                  # e.g. - { paths: ["**/*.generated.ts"], ignore: true }
     roles: { off: [], add: [] }            # project roles live in projects/<id>/skills/review-<role>/SKILL.md
@@ -296,7 +296,7 @@ struct SendDraftsSheet: View {
                     Button("Send Drafts") {
                         sending = true
                         Task {
-                            report = await model.send()
+                            report = await model.send(approved)
                             sending = false
                             if report == nil { dismiss() }
                         }
