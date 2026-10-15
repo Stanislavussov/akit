@@ -80,8 +80,12 @@ public struct SendRecord: Codable, Hashable, Sendable {
     public var account: String
     public var org: String
     public var model: String
-    /// Characters sent after scrubbing: the estimate of the next call scales with it.
+    /// Characters of the input sent, after scrubbing; never the system prompt.
     public var inputCharacters: Int
+    /// Characters of the system prompt sent with it (`ModelCall`, since 2026-10-15); nil for
+    /// agent runs, whose whole prompt is the input, and older records. The estimate counts
+    /// input + system as what was sent.
+    public var systemCharacters: Int?
     public var usage: SendUsage
     public var scrubVersion: Int
     /// Scrubber matches per rule, so the log shows what was masked (never the values).
@@ -90,7 +94,8 @@ public struct SendRecord: Codable, Hashable, Sendable {
     public var error: String?
 
     public init(date: Date = .now, purpose: String, session: String?, runID: String?, destination: SendDestination, model: String,
-                inputCharacters: Int, usage: SendUsage, scrubVersion: Int = Scrubber.version, scrubbed: [String: Int]? = nil) {
+                inputCharacters: Int, systemCharacters: Int? = nil, usage: SendUsage, scrubVersion: Int = Scrubber.version,
+                scrubbed: [String: Int]? = nil) {
         self.date = date
         self.purpose = purpose
         self.session = session
@@ -101,6 +106,7 @@ public struct SendRecord: Codable, Hashable, Sendable {
         org = destination.org
         self.model = model
         self.inputCharacters = inputCharacters
+        self.systemCharacters = systemCharacters
         self.usage = usage
         self.scrubVersion = scrubVersion
         self.scrubbed = scrubbed
@@ -167,14 +173,20 @@ public enum SendLog {
         records.filter { calendar.isDate($0.date, equalTo: date, toGranularity: .month) }.compactMap(\.usage.cost).reduce(0, +)
     }
 
-    /// "≈" cost of sending `characters` to `model` of `harness`: the recorded cost per input
-    /// character of earlier calls to the same model. nil until one such call recorded a cost.
-    public static func estimate(characters: Int, harness: LabHarness, model: String, records: [SendRecord]) -> Double? {
+    /// The cost of sending `characters` of input with a `system` prompt of that size, at the
+    /// recorded cost per character sent (input + system) of the same harness and model. Without
+    /// `system`, the mean system prompt of past calls with `purpose` stands in (pre-send
+    /// estimates know their input, not the prompt); with neither, input only. Records without
+    /// `systemCharacters` count their input only. nil without a priced record.
+    public static func estimate(characters: Int, system: Int? = nil, purpose: String? = nil, harness: LabHarness, model: String,
+                                records: [SendRecord]) -> Double? {
         let same = records.filter { $0.harness == harness && $0.model == model && $0.usage.cost != nil && $0.inputCharacters > 0 }
         guard !same.isEmpty else { return nil }
         let cost = same.compactMap(\.usage.cost).reduce(0, +)
-        let sent = same.map(\.inputCharacters).reduce(0, +)
-        return cost / Double(sent) * Double(characters)
+        let sent = same.map { $0.inputCharacters + ($0.systemCharacters ?? 0) }.reduce(0, +)
+        let past = purpose.map { purpose in records.filter { $0.purpose == purpose }.compactMap(\.systemCharacters) } ?? []
+        let systemSize = system ?? (past.isEmpty ? 0 : past.reduce(0, +) / past.count)
+        return cost / Double(sent) * Double(characters + systemSize)
     }
 
     /// Throws when the month's recorded cost plus `estimate` would pass the monthly limit.

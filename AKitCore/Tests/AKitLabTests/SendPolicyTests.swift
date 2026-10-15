@@ -215,6 +215,34 @@ struct SendPolicyTests {
 
     // MARK: Send log and limit
 
+    /// The system prompt counts as sent: the log keeps it apart from the input, and the
+    /// estimate's cost per character is over input + system on both sides.
+    @Test func theSystemPromptCountsInTheEstimateAndTheLog() async throws {
+        let records = [
+            SendRecord(purpose: "ask akit", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                       inputCharacters: 1000, systemCharacters: 3000, usage: SendUsage(cost: 0.40)),
+            // Older or agent records: input only.
+            SendRecord(purpose: "notes", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                       inputCharacters: 1000, usage: SendUsage(cost: 0.10)),
+        ]
+        // 0.50 for 5,000 characters sent: 0.0001 each.
+        func near(_ value: Double?, _ expected: Double) -> Bool { value.map { abs($0 - expected) < 1e-9 } ?? false }
+        #expect(near(SendLog.estimate(characters: 500, system: 1500, harness: .claudeCode, model: "opus", records: records), 0.20))
+        // Without the prompt's size, the purpose's past prompts stand in.
+        #expect(near(SendLog.estimate(characters: 500, purpose: "ask akit", harness: .claudeCode, model: "opus", records: records), 0.35))
+        #expect(near(SendLog.estimate(characters: 500, purpose: "notes", harness: .claudeCode, model: "opus", records: records), 0.05))
+
+        try fakeClaude(result: #"{"type":"result","is_error":false,"result":"x","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0.01}"#)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let system = String(repeating: "s", count: 700)
+        _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: system, input: "twelve chars", origin: .code(.claudeCode)),
+                                    gate: gate, folder: home.appending(path: "work"), env: env)
+        let logged = try #require(SendLog.records(env: env).last)
+        #expect(logged.inputCharacters == 12)
+        #expect(logged.systemCharacters == 700)
+    }
+
     @Test func sendLogAppendsAndEstimatesFromRecordedCost() throws {
         let first = SendRecord(purpose: "notes", session: "claude-code:a", runID: nil, destination: claudeAccount, model: "opus",
                                inputCharacters: 1000, usage: SendUsage(input: 300, cached: 0, output: 50, cost: 0.10))

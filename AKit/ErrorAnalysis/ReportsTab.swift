@@ -266,6 +266,7 @@ extension AnalysisSend {
         let items = Clustering.items(data.pool)
         return AnalysisSend(
             title: "Cluster All Notes Again",
+            purpose: "clustering",
             detail: "One call over all \(AnalysisText.notes(items.count)) of the pool, without the list of modes: a rebuild from scratch to compare with the list. Nothing is saved.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in

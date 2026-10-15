@@ -11,6 +11,7 @@ extension AnalysisSend {
         let items = data.unmatchedItems()
         return AnalysisSend(
             title: "Cluster Unmatched Notes",
+            purpose: "clustering",
             detail: "One call over the \(AnalysisText.notes(items.count)) no mode fits: it proposes candidate modes. The candidates wait for you; one also becomes a mode when a later session matches it.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in
@@ -35,6 +36,7 @@ extension AnalysisSend {
         let id = mode.id
         return AnalysisSend(
             title: "Retro-match the Note Pool",
+            purpose: "retro-matching",
             detail: "Asks whether each of the \(AnalysisText.notes(parts.flatMap(\.refs).count)) in the pool fits \(mode.name). A note with no mode moves to it; a note routed elsewhere gets a second route for you to decide.",
             characters: parts.map(\.text.count).reduce(0, +)
         ) { agent, gate, env in
@@ -55,6 +57,7 @@ extension AnalysisSend {
             .reduce(0, +)
         return AnalysisSend(
             title: "Propose Pairs",
+            purpose: "pairing",
             detail: "Sends your \(AnalysisText.notes(label.notes.count)) and the model's \(notes.notes.count) (descriptions, steps and quotes) so the model pairs the ones about the same problem. You confirm the pairs.",
             characters: characters
         ) { agent, gate, env in
@@ -73,6 +76,7 @@ extension AnalysisSend {
         let done = data.labels.values.filter { $0.labeledAt != nil }
         return AnalysisSend(
             title: "First Modes",
+            purpose: "clustering",
             detail: "Clusters the notes of your \(done.count) labeled sessions, yours and the model's, into candidate modes. Seeds are in the list already.",
             characters: done.flatMap(\.notes).map { $0.description.count + $0.quote.count + 60 }.reduce(0, +) * 2
         ) { agent, gate, env in
@@ -96,6 +100,7 @@ extension AnalysisSend {
         let id = mode.id
         return AnalysisSend(
             title: "Find Similar Cases",
+            purpose: "similar-cases",
             detail: "Sends your notes mapped to \(mode.name) and the \(AnalysisText.notes(items.count)) of other reviewed sessions; the model lists the ones that show the same mode. You accept or reject each find.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in

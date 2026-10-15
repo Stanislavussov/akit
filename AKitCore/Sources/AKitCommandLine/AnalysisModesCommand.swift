@@ -147,7 +147,7 @@ extension AKitCLI {
                     let quotes: Int = (exemplars[mode.id] ?? []).map(\.quote.count).reduce(0, +)
                     characters += mode.name.count + mode.definition.count + criteria + quotes + 40
                 }
-                guard try confirmCost(characters: characters, agent: agent, what: "Routing \(notes.accepted.count) notes of \(key)",
+                guard try confirmCost(characters: characters, purpose: "matching", agent: agent, what: "Routing \(notes.accepted.count) notes of \(key)",
                                       options: options, env: env, out: out) else { return 0 }
                 let gate = try await SendGate.open(agent: agent, env: env)
                 let routed = try await Matching.route(notes, modes: modes, exemplars: exemplars, agent: agent, gate: gate, origin: notes.origin,
@@ -166,7 +166,7 @@ extension AKitCLI {
                 let pool = notesStore.all()
                 let items = rebuild ? Clustering.items(pool) : Clustering.unmatchedItems(pool, modes: modes)
                 guard !items.isEmpty else { out("No notes to cluster."); return 0 }
-                guard try confirmCost(characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +), agent: agent,
+                guard try confirmCost(characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +), purpose: "clustering", agent: agent,
                                       what: "Clustering \(items.count) notes", options: options, env: env, out: out) else { return 0 }
                 let gate = try await SendGate.open(agent: agent, env: env)
                 let candidates = try await Clustering.cluster(items, existing: modes, rejected: try await store.rejectedNames(),
@@ -193,7 +193,7 @@ extension AKitCLI {
                 let pool = notesStore.all()
                 let origins = Dictionary(pool.map { ($0.sessionKey, $0.origin) }, uniquingKeysWith: { first, _ in first })
                 let parts = Matching.retroInput(mode: mode, pool: pool, origins: origins)
-                guard try confirmCost(characters: parts.map(\.text.count).reduce(0, +), agent: agent,
+                guard try confirmCost(characters: parts.map(\.text.count).reduce(0, +), purpose: "retro-matching", agent: agent,
                                       what: "Retro-matching \(parts.flatMap(\.refs).count) notes against \(mode.name)",
                                       options: options, env: env, out: out) else { return 0 }
                 let gate = try await SendGate.open(agent: agent, env: env)
@@ -287,9 +287,11 @@ extension AKitCLI {
     }
 
     /// Prints the "≈" cost of a call; true when it may go ahead (`--yes`).
-    static func confirmCost(characters: Int, agent: LabAgent, what: String, options: AnalysisOptions, env: HarnessEnvironment,
+    /// `purpose`: the send log's purpose of the calls, whose past system prompts count in the estimate.
+    static func confirmCost(characters: Int, purpose: String, agent: LabAgent, what: String, options: AnalysisOptions, env: HarnessEnvironment,
                             out: (String) -> Void) throws -> Bool {
-        let estimate = SendLog.estimate(characters: characters, harness: agent.harness, model: agent.model, records: SendLog.records(env: env))
+        let estimate = SendLog.estimate(characters: characters, purpose: purpose, harness: agent.harness, model: agent.model,
+                                        records: SendLog.records(env: env))
         let cost = estimate.map { String(format: "≈ $%.2f", $0) } ?? "no estimate yet (no recorded calls of this model)"
         out("\(what): about \(characters / 1000)K characters to \(agent.label), \(cost).")
         if !options.yes { out("Run it again with --yes to send.") }
@@ -514,7 +516,7 @@ extension AKitCLI {
             }
             let agent = try options.agent(env: env)
             guard try confirmCost(characters: (label.notes + notes.notes).map { $0.description.count + $0.quote.count + 40 }.reduce(0, +),
-                                  agent: agent, what: "Pairing \(label.notes.count) of your notes with \(notes.notes.count) of the model's",
+                                  purpose: "pairing", agent: agent, what: "Pairing \(label.notes.count) of your notes with \(notes.notes.count) of the model's",
                                   options: options, env: env, out: out) else { return 0 }
             let gate = try await SendGate.open(agent: agent, env: env)
             let pairing = try await Bootstrap.proposePairs(label: label, notes: notes, agent: agent, gate: gate, origin: notes.origin,
@@ -562,7 +564,7 @@ extension AKitCLI {
             let store = ModeStore(env: env)
             let pool = NotesStore(env: env).all()
             guard try confirmCost(characters: all.flatMap(\.notes).map { $0.description.count + $0.quote.count + 60 }.reduce(0, +) * 2,
-                                  agent: agent, what: "Clustering the notes of \(all.count) labeled sessions", options: options, env: env,
+                                  purpose: "clustering", agent: agent, what: "Clustering the notes of \(all.count) labeled sessions", options: options, env: env,
                                   out: out) else { return 0 }
             let gate = try await SendGate.open(agent: agent, env: env)
             let candidates = try await Bootstrap.firstModes(labels: all, pool: pool, existing: try await store.list(),
@@ -603,7 +605,7 @@ extension AKitCLI {
             guard let mode = try await ModeStore(env: env).mode(id) else { throw Failure(message: "No mode \(id).") }
             let pool = NotesStore(env: env).all()
             guard try confirmCost(characters: Clustering.items(pool).map { $0.description.count + $0.quote.count + 60 }.reduce(0, +),
-                                  agent: agent, what: "Searching the pool for cases of \(mode.name)", options: options, env: env,
+                                  purpose: "similar-cases", agent: agent, what: "Searching the pool for cases of \(mode.name)", options: options, env: env,
                                   out: out) else { return 0 }
             let gate = try await SendGate.open(agent: agent, env: env)
             let finds = try await Bootstrap.findSimilar(mode: mode, labels: labels.all(), pool: pool, book: LabelBookStore(env: env).load(),

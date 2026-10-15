@@ -9,6 +9,8 @@ import SwiftUI
 struct AnalysisSend: Identifiable {
     let id = UUID()
     let title: String
+    /// The send log's purpose of its calls: their past system prompts count in the estimate.
+    let purpose: String
     /// What goes out, in one sentence.
     let detail: String
     let characters: Int
@@ -56,7 +58,7 @@ struct AnalysisSendSheet: View {
                 .scrollContentBackground(.hidden)
                 .frame(height: 150)
             }
-            Text("\(AnalysisText.size(send.characters).capitalizedFirst) to \(agent.label): \(AnalysisText.cost(characters: send.characters, agent: agent, records: records)).")
+            Text("\(AnalysisText.size(send.characters).capitalizedFirst) to \(agent.label): \(AnalysisText.cost(characters: send.characters, purpose: send.purpose, agent: agent, records: records)).")
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
             Text("The sending policy (Settings → Sending policy) decides whether it may go there; the monthly limit applies.")
