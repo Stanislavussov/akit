@@ -837,6 +837,23 @@ OpenCode `opencode.json` has its own layout).
 Layers may bring MCP servers, merged into `.mcp.json`. Secrets are written only
 as `${VAR}` references; the real values come from Keychain.
 
+### Secrets from Keychain (decided 2026-10-15, not built)
+
+Decisions D20 and D21 of `README.md`.
+
+- The value lives in Keychain. AKit stores what the user types and never shows, copies or
+  logs it. Items are made so that `/usr/bin/security` reads them without a password prompt
+  (`security -i`, `-T /usr/bin/security`; an item from `SecItemAdd` lands in AKit's
+  partition and prompts on every read).
+- A stdio server gets the value through a wrapper in its `command`:
+  `akit mcp exec NAME -- <the server's command>`. akit reads Keychain and starts the
+  server with the value in that process's environment only. No file and no shell gets it.
+- Only where git doesn't track the file: local-only project files (the default on a work
+  Mac) and the home folder. A committed `.mcp.json` keeps `${VAR}`, and the plan warns
+  that the value must come from the environment there.
+- HTTP servers: to verify before building. Claude Code has `headersHelper` (a command that
+  prints the headers); Pi's adapter is not checked.
+
 ## Roadmap
 
 1. Safe write: backup + diff viewer + Apply. (Done, for MCP and for the render.)

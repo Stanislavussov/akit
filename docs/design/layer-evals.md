@@ -135,6 +135,31 @@ Further choices of the step 4 plan, accepted on the same day:
     the project tracks gets an overlap line (and blocks the task when the base holds all of the
     layer); a plugin's or a synced claude.ai skill still only gets the overlap warning.
 
+## Decisions (2026-10-15)
+
+From a grilling session on the next waves (`README.md`, Next, wave 1; D16–D19). Not built.
+
+1. **Pi first, on the work Mac.** The project the user evaluates layers on is JS/TS on the
+   work Mac, where Pi is the agent. Pi becomes a cell agent for layer setups (it already
+   runs control cells): the `AGENTS.md` rule below, a setup check from Pi's own skill
+   listing, its transcript and numbers from Pi's session file. Pi has no deny flag; the
+   AKit-repository deny list doesn't apply there. This revises I2's "Claude Code only".
+2. **No stack knowledge in commit tasks.** A commit task outside SwiftPM keeps the commit's
+   test files hidden until the agent is done, then runs the user's command (`{files}` is
+   replaced by those files) and judges by its exit code. Validation: the command fails on
+   the parent with the files copied in and passes on the commit. An optional second command
+   (the whole suite) must pass too. One result per task, no per-test fail-to-pass counts.
+   AKit never parses vitest, jest or `package.json`. The SwiftPM oracle stays as it is.
+3. **The judge command is per repository**, stored in `~/.akit/lab`, entered once in
+   From Commit… and editable per task. Never in a layer: on a work Mac that would be a
+   brain write.
+4. **Cells don't count in Insights.** The index leaves out sessions whose folder is a Lab
+   clone (`akit-control-*`, `akit-replay-*` in the temporary folder); Lab and Error
+   Analysis keep reading them from their runs. One such session was in this Mac's index on
+   2026-10-15.
+5. **Later, not in this wave:** side metrics and the Clean setup (the Later rows). With Pi,
+   Clean needs no API key: Pi has its own flags to leave skills and extensions out.
+
 ## Built
 
 **Slice 1, overlay and layer setup (2026-10-08).**
@@ -571,7 +596,7 @@ The render's `CLAUDE.md` shim is dropped; the overlay decides about `CLAUDE.md` 
 | Output of the render | In the clone |
 |---|---|
 | `AGENTS.md` section, agent = Claude Code | Claude reads `CLAUDE.md` and `.claude/CLAUDE.md`. If either is a link to `AGENTS.md` or has an import line (`@AGENTS.md`, `@./AGENTS.md`): append to `AGENTS.md`. If one exists without that: append the section to it (root `CLAUDE.md` first); the project's `AGENTS.md`, unread before, stays unread. If neither exists: write a new `CLAUDE.md` holding only the section |
-| `AGENTS.md` section, agent = Pi | Not in v1 (I2). Designed: Pi reads one of `AGENTS.md` and `CLAUDE.md` per folder. If the root has only one of them: append to it. If it has neither: write `AGENTS.md`. If it has both: the task is blocked for Pi until Pi's choice between them is verified |
+| `AGENTS.md` section, agent = Pi | Wave 1 (Decisions (2026-10-15)). Pi reads one file per folder, the first that exists of `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD` (verified in Pi 1.0.4, `dist/core/resource-loader.js`, 2026-10-15). Append the section to that file; if none exists, write `AGENTS.md`. Pi also reads `AGENTS.md` (or the first of the list) in `~/.pi/agent`, which holds the core layer's block |
 | other Markdown file | append when it exists, else write |
 | skill folder `.agents/skills/<name>` | written. A skill folder with the same name already in the clone wins and the layer's copy is skipped with a warning. (`ProjectSetup.plan` decides this only with a lock, which a clone doesn't have, and it lives in `AKitProjectSetup`; the overlay uses this simpler rule) |
 | `.claude/skills` link (Claude only) | made when the clone has nothing there. A non-empty real folder blocks the task, as it blocks Apply |
@@ -1065,7 +1090,8 @@ weakened tests or suppressions).
   Code reads there."): there a new `CLAUDE.md` would hide the question.
 - A `diff` check sees T0..T1 only; a pattern the agent added and removed again isn't
   counted (a `transcript` or later `order` question).
-- Pi's choice when a folder has both `AGENTS.md` and `CLAUDE.md` isn't verified (not in v1, I2).
+- Pi's choice when a folder has both `AGENTS.md` and `CLAUDE.md`: verified 2026-10-15, the
+  first of `AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, `CLAUDE.MD`.
 
 - The overlap warning compares skill names only; two skills with different names and the
   same content aren't caught. The isolation check also goes by name (and SKILL.md `name:`)
