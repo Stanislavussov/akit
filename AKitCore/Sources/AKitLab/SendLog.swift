@@ -82,9 +82,11 @@ public struct SendRecord: Codable, Hashable, Sendable {
     public var model: String
     /// Characters of the input sent, after scrubbing; never the system prompt.
     public var inputCharacters: Int
-    /// Characters of the system prompt sent with it (`ModelCall`, since 2026-10-15); nil for
-    /// agent runs, whose whole prompt is the input, and older records. The estimate counts
-    /// input + system as what was sent.
+    /// Characters of the system text sent with it (`ModelCall`, since 2026-10-15): the system
+    /// prompt and, from the round after, the answer's JSON schema (Claude Code) or the schema and
+    /// JSON rule Pi gets appended; records of the first day count the prompt alone. nil for agent
+    /// runs, whose whole prompt is the input, and older records. The estimate counts input +
+    /// system as what was sent.
     public var systemCharacters: Int?
     public var usage: SendUsage
     public var scrubVersion: Int

@@ -605,9 +605,8 @@ extension AKitCLI {
             let agent = try options.agent(env: env)
             guard let mode = try await ModeStore(env: env).mode(id) else { throw Failure(message: "No mode \(id).") }
             let pool = NotesStore(env: env).all()
-            // One call per 80 notes of the pool (Labels.findSimilar).
-            guard try confirmCost(characters: Clustering.items(pool).map { $0.description.count + $0.quote.count + 60 }.reduce(0, +),
-                                  purpose: "similar-cases", calls: (Clustering.items(pool).count + 79) / 80, agent: agent, what: "Searching the pool for cases of \(mode.name)", options: options, env: env,
+            let size = Bootstrap.similarSize(mode: mode, labels: labels.all(), pool: pool, book: LabelBookStore(env: env).load())
+            guard try confirmCost(characters: size.characters, purpose: "similar-cases", calls: size.calls, agent: agent, what: "Searching the pool for cases of \(mode.name)", options: options, env: env,
                                   out: out) else { return 0 }
             let gate = try await SendGate.open(agent: agent, env: env)
             let finds = try await Bootstrap.findSimilar(mode: mode, labels: labels.all(), pool: pool, book: LabelBookStore(env: env).load(),

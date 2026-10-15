@@ -98,14 +98,14 @@ extension AnalysisSend {
     static func similar(_ mode: Mode, data: AnalysisData) -> AnalysisSend {
         let labeled = Set(data.labels.keys)
         let items = Clustering.items(data.pool.filter { !labeled.contains($0.sessionKey) })
+        let size = Bootstrap.similarSize(mode: mode, labels: Array(data.labels.values), pool: data.pool, book: data.book)
         let id = mode.id
         return AnalysisSend(
             title: "Find Similar Cases",
             purpose: "similar-cases",
-            // One call per 80 notes (Labels.findSimilar).
-            calls: (items.count + 79) / 80,
+            calls: size.calls,
             detail: "Sends your notes mapped to \(mode.name) and the \(AnalysisText.notes(items.count)) of other reviewed sessions; the model lists the ones that show the same mode. You accept or reject each find.",
-            characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
+            characters: size.characters
         ) { agent, gate, env in
             guard let mode = try await ModeStore(env: env).mode(id) else { throw AnalysisFailure( "There is no mode \(id).") }
             var leftOut: [String] = []

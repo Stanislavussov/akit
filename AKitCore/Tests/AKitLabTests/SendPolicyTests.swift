@@ -575,6 +575,8 @@ struct SendPolicyTests {
         let seen = Sent()
         _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode)),
                                     gate: gate, folder: home.appending(path: "work"), env: env, sleep: { _ in }, onSend: { seen.add($0) })
+        // The fake really ran three times: two rate-limited answers, then one.
+        #expect(try String(contentsOf: home.appending(path: "count"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "3")
         #expect(seen.all == ["q"])
     }
 

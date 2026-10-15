@@ -158,6 +158,23 @@ extension Bootstrap {
         {"type":"object","properties":{"found":{"type":"array","items":{"type":"string"}}},"required":["found"]}
         """#
 
+    /// What findSimilar sends, before the policy filters it: the pool's notes outside labeled
+    /// sessions, in calls of 80, each with the user's mapped notes as examples again.
+    public static func similarSize(mode: Mode, labels: [Label], pool: [SessionNotes], book: LabelBook) -> (characters: Int, calls: Int) {
+        let labeled = Set(labels.map(\.sessionKey))
+        let items = Clustering.items(pool.filter { !labeled.contains($0.sessionKey) })
+        let calls = (items.count + 79) / 80
+        var shown = 0
+        for label in labels {
+            for note in label.notes where book.mapping["\(label.sessionKey)#\(note.id)"] == mode.id {
+                shown += note.description.count + note.quote.count + 16
+            }
+        }
+        var pooled = 0
+        for item in items { pooled += item.description.count + item.quote.count + 60 }
+        return (pooled + shown * calls, calls)
+    }
+
     /// Searches the pool for cases similar to the user's notes mapped to `mode`; every find is
     /// stored unreviewed, for the user to accept or reject (a cheap label for checks). Notes
     /// whose session may not go to the gate's destination are left out, and `out` says how many.
