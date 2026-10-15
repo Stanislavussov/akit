@@ -81,6 +81,10 @@ public enum ReviewGather {
         guard let refs = snapshot.refs, !refs.headSHA.isEmpty else {
             throw Failure(message: "\(ref.label) has no diff refs (no head commit) in what the fetch pass read, so there is nothing to review.")
         }
+        // The commits go to git as arguments: only commit ids, never text that git could read as an option.
+        guard isCommitID(refs.headSHA), refs.baseSHA.isEmpty || isCommitID(refs.baseSHA), refs.startSHA.isEmpty || isCommitID(refs.startSHA) else {
+            throw Failure(message: "The diff refs the fetch pass read for \(ref.label) are not commit ids.")
+        }
         let head = refs.headSHA
         spec.headSHA = head
 
@@ -273,6 +277,15 @@ public enum ReviewGather {
         return nil
     }
 
+    static func isBranchName(_ text: String) -> Bool {
+        text.range(of: "^[A-Za-z0-9_][A-Za-z0-9._/-]*$", options: .regularExpression) != nil && !text.contains("..")
+            && !text.contains("//") && !text.hasSuffix(".lock") && !text.hasSuffix("/") && text.count <= 200
+    }
+
+    static func isCommitID(_ text: String) -> Bool {
+        text.range(of: "^[0-9a-fA-F]{7,64}$", options: .regularExpression) != nil
+    }
+
     /// The merge request's diff by git, `base..head`, file by file as GitLab gives it; nil when
     /// git can't make it (the base commit can't be fetched).
     static func localDiffs(checkout: URL, base: String, head: String, target: String, env: HarnessEnvironment) async -> [GitLabFileDiff]? {
@@ -280,8 +293,10 @@ public enum ReviewGather {
         func run(_ arguments: [String], timeout: TimeInterval = 120) async -> ProcessRunner.Result? {
             await ProcessRunner.run(git, arguments: ["-C", checkout.path] + arguments, environment: env.gitVariables, timeout: timeout)
         }
-        if await run(["cat-file", "-e", "\(base)^{commit}"])?.succeeded != true, !target.isEmpty, !target.hasPrefix("-") {
-            _ = await run(["fetch", "--no-tags", "origin", target], timeout: 300)
+        // The target branch comes from an MCP answer: only a plain branch name, fetched without a
+        // destination, so no refspec can move a branch of the user's clone.
+        if await run(["cat-file", "-e", "\(base)^{commit}"])?.succeeded != true, isBranchName(target) {
+            _ = await run(["fetch", "--no-tags", "origin", "refs/heads/\(target)"], timeout: 300)
         }
         guard let result = await run(["diff", "--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
                                       base, head], timeout: 120), result.succeeded else { return nil }

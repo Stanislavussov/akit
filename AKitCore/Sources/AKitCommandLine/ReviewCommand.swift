@@ -262,7 +262,7 @@ extension AKitCLI {
         var lines = ["Pi's MCP servers" + (project.map { " for project \($0)" } ?? "") + " (pi mcp list):"]
         if report.servers.isEmpty { lines.append("  none. Add your GitLab and tracker servers to Pi: pi mcp add …") }
         for server in report.servers {
-            let used = access.servers.isEmpty || access.servers.map(ReviewMCPPolicy.normalized).contains(ReviewMCPPolicy.normalized(server.name))
+            let used = access.allows(server: server.name)
             lines.append("  \(server.name): \(server.enabled ? server.state : "disabled")" + (used ? "" : " · not used by this project")
                          + " · \(server.tools.count) tools: \(server.count(.read)) read, \(server.count(.write)) write drafts, \(server.count(.blocked)) blocked")
             for kind in [ReviewMCPPolicy.Kind.read, .write] {

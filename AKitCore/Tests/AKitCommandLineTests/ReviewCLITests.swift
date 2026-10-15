@@ -39,7 +39,7 @@ extension AKitCLITests {
     @Test func reviewCheckListsPiServers() async throws {
         try write("bin/pi", """
         #!/bin/sh
-        echo '{"servers":[{"name":"gitlab","enabled":true,"state":"connected","transport":"npx mcp-gitlab --token glpat-SECRET","tools":["get_merge_request","mr_discussions","create_draft_note","bulk_publish_draft_notes"]},{"name":"jira","enabled":true,"state":"failed","tools":[]}],"errors":[]}'
+        echo '{"servers":[{"name":"gitlab","enabled":true,"state":"connected","transport":"npx mcp-gitlab --token glpat-SECRET","tools":["get_merge_request","mr_discussions","create_draft_note","bulk_publish_draft_notes"]},{"name":"jira","enabled":true,"state":"failed","tools":[]},{"name":"fetch","enabled":true,"state":"connected","tools":["fetch"]}],"errors":[]}'
 
         """)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/pi").path)
@@ -51,7 +51,7 @@ extension AKitCLITests {
         #expect(code == 0, "\(text) \(err)")
         #expect(text.contains("gitlab: connected · 4 tools: 2 read, 1 write drafts, 1 blocked"))
         #expect(text.contains("read: get_merge_request, mr_discussions") && text.contains("write: create_draft_note"))
-        #expect(text.contains("jira: failed"))
+        #expect(text.contains("jira: failed · not used by this project") && text.contains("fetch: connected · not used by this project"))
         #expect(!text.contains("glpat-SECRET") && !text.contains("npx"), "never a server's command line")
     }
 }

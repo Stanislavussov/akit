@@ -239,7 +239,7 @@ extension ReviewProcessTests {
             var plan = try #require(ReviewWorkflow.load(run.folder).plan)
             #expect(plan.requests.map(\.kind) == [.create, .summary])
             let create = plan.requests[0]
-            #expect(create.position?.newLine == 3 && create.position?.headSHA == run.head && create.position?.baseSHA == "b1")
+            #expect(create.position?.newLine == 3 && create.position?.headSHA == run.head && create.position?.baseSHA == "b1b1b1b1")
 
             // Nothing approved: no send pass starts.
             var report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
@@ -261,8 +261,10 @@ extension ReviewProcessTests {
             let position = try #require(approved[0]["position"] as? [String: Any])
             #expect(position["new_line"] as? Int == 3 && position["old_line"] == nil && position["head_sha"] as? String == run.head)
             #expect(approved[0]["path"] as? String == "src/Auth.swift" && approved[0]["line"] as? Int == 3)
+            let mr = try #require(approved[0]["mr"] as? [String: Any])
+            #expect(mr["iid"] as? Int == 7 && (mr["projects"] as? [Any])?.first as? String == "team/app")
             let args = run.args("send-1")
-            #expect(args.contains("builtin:mcp") && args.contains("akit_approved_requests,codemode"))
+            #expect(args.contains("builtin:mcp") && args.contains("akit_approved_requests,codemode,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-send-1.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MODE=send"))
 

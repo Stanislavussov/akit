@@ -148,9 +148,10 @@ public enum ReviewPrompts {
              `discussion_id`, create it as a reply in that thread.
            - update: update draft note `draft_id` with `body` (and `position` when given).
            - delete: delete draft note `draft_id`.
-        3. Pass `body` exactly as given, unchanged: AKit lets a call through only when it carries the approved text, the \
-           draft, the thread, the file and the line of a request. A blocked call means it didn't match: fix the arguments, \
-           don't change the text.
+        3. Pass exactly the request's fields and nothing else: the project (`mr.projects`, the path or the number), the merge \
+           request number (`mr.iid`), `body` unchanged, and `draft_id`, `discussion_id` and `position` when the request has \
+           them. AKit lets a call through only when its arguments are exactly one approved request; a blocked call says what \
+           didn't match: fix the arguments, never the text.
         4. Make one call per request. If a call fails, try once more; then go on with the next request.
 
         Never publish the drafts or the review, never approve, merge or resolve anything: the user does that in GitLab. \

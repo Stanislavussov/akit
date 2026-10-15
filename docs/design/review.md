@@ -90,10 +90,7 @@ Built the same day:
   the cap; it goes through the sending policy like every pass.
 - **MCP rules** (`ReviewMCPPolicy`, the same in `akit-review.ts`): a profile's `mcp:` names the
   servers (none = all), extra read patterns, the write patterns (default `*draft_note*`) and
-  `in_passes`. A tool reads when its server marks it read-only, a read pattern names it, or no
-  word of its name is a writing word (`get_merge_request`, `mr_discussions`); a write pattern
-  takes only tools with a writing word (`create_draft_note`, not `list_draft_notes`); tools whose
-  verb publishes, approves, merges, resolves, closes or rebases are blocked in every pass.
+  `in_passes` (the rules were tightened by the security review below).
   `--tools mcp__<server>__*` keeps other servers' tools out too. Every call, direct or from a
   codemode script, passes the extension's `tool_call` (verified with Pi 1.0.4).
 - **Passes** read through MCP too when `in_passes` (default): codemode with reading tools only.
@@ -115,6 +112,27 @@ Built the same day:
   passes → approve → send; in the send pass an altered text, another line, another draft, a
   second send, a published note and bulk publish were blocked, and only the three approved
   calls reached the server.
+
+Security review of the MCP change (2026-10-15), fixed the same day:
+
+- Servers: without `servers:` a run uses only Pi servers named like `gitlab`, `azure`,
+  `devops` or `ado` (and `--tools` keeps only theirs), never a browser, file or fetch server.
+- Reading is an allowlist: a reading verb as the first word or the second after a namespace
+  (`get_merge_request`, `wit_get_work_item`), a server's read-only hint, `mr_discussions`, or
+  the profile's `read:`; `publish`, `submit`, `approve`, `vote`, `resolve`, `rebase` anywhere in
+  a name block it in every pass.
+- Writes are checked by field, not by value: only known arguments (project, merge request
+  number, body, draft, thread, position with its known fields); the project and number must be
+  the run's (`mr` in each approved request), every other argument (`resolve_discussion`, a
+  second text field) blocks the call; the verb comes from the tool's own name.
+- `akit_submit_context` is the model's account: it may give the merge request and diffs for the
+  context, never the user, the threads or the drafts that decide what AKit may change.
+- Commit ids from MCP answers must be hex; the target branch must be a plain branch name and is
+  fetched as `refs/heads/<name>` without a destination.
+- A server is the longest allowed name before `__`, so `gitlab__x` is not `gitlab`.
+- Checked again with real Pi: `resolve_discussion`, a reply into another thread, a second text
+  field, another MR or project, an extra position field, a decoy delete argument and another
+  server were blocked, each with its reason; the exact calls went through.
 
 Review round (2026-10-15, code review of the branch), fixed:
 

@@ -158,7 +158,7 @@ extension ReviewProcessTests {
             #expect(result.spec.workItems == [41])
             #expect(result.workItems.map(\.id) == [41, 40])
             #expect(result.workItems.map(\.reason) == ["named by the merge request", "parent of #41"])
-            #expect(result.snapshot.refs?.baseSHA == "b1", "the latest version's refs")
+            #expect(result.snapshot.refs?.baseSHA == "b1b1b1b1", "the latest version's refs")
             #expect(result.snapshot.user == "me" && result.snapshot.discussions.map(\.id) == ["d1", "d2"])
 
             func context(_ name: String) throws -> String { try String(contentsOf: folder.appending(path: "context/\(name)"), encoding: .utf8) }
@@ -188,7 +188,7 @@ extension ReviewProcessTests {
             // The fetch pass: Pi with its own MCP servers, its own session, nothing of the review's rules.
             let args = try String(contentsOf: home.url.appending(path: "fake/args-fetch.txt"), encoding: .utf8).split(separator: "\n").map(String.init)
             for flag in ["builtin:mcp", "builtin:codemode", "--no-extensions", "--no-skills", "--no-context-files"] { #expect(args.contains(flag), "\(flag)") }
-            #expect(args.contains("akit_submit_context,akit_report_context_gap,codemode"))
+            #expect(args.contains("akit_submit_context,akit_report_context_gap,codemode,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             #expect(!args.contains("--append-system-prompt") && !args.contains("--skill"))
             let prompt = try String(contentsOf: folder.appending(path: "prompts/fetch.md"), encoding: .utf8)
             #expect(prompt.contains(FakeMergeRequest.ref.url) && prompt.contains("`(?:AB#|WI-)(\\d+)`"))
@@ -213,7 +213,7 @@ extension ReviewProcessTests {
             FakeMergeRequest.serve(home, head: head, diff: "@@ -1 +1 @@\n-made up by a model\n+not the real diff\n")
             // The latest version names the real base.
             let versions = home.url.appending(path: "fake/calls/fetch-1001.json")
-            let text = try String(contentsOf: versions, encoding: .utf8).replacingOccurrences(of: #"\"b1\""#, with: "\\\"\(base)\\\"")
+            let text = try String(contentsOf: versions, encoding: .utf8).replacingOccurrences(of: #"\"b1b1b1b1\""#, with: "\\\"\(base)\\\"")
             try Data(text.utf8).write(to: versions)
             let result = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env,
                                                     brain: nil)
@@ -235,6 +235,17 @@ extension ReviewProcessTests {
                 #expect(error.localizedDescription.contains("read no merge request team/app!7"), "\(error.localizedDescription)")
                 #expect(error.localizedDescription.contains("401 Unauthorized"))
             }
+        }
+
+        @Test func refsThatArentCommitIDsNeverReachGit() async throws {
+            let (home, _) = try setUp()
+            FakeMergeRequest.serve(home, head: "--output=/tmp/x", diff: "@@ -1 +1 @@\n-a\n+b\n")
+            await #expect(throws: ReviewGather.Failure.self) {
+                try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env, brain: nil)
+            }
+            #expect(ReviewGather.isCommitID("46a85fb") && !ReviewGather.isCommitID("-c x") && !ReviewGather.isCommitID("old"))
+            #expect(ReviewGather.isBranchName("main") && ReviewGather.isBranchName("release/1.2"))
+            for bad in ["+refs/heads/evil:refs/heads/main", "-u", "a..b", "x:y", "main.lock", ""] { #expect(!ReviewGather.isBranchName(bad), "\(bad)") }
         }
 
         @Test func aMissingTrackerServerIsAGap() async throws {
@@ -282,7 +293,8 @@ extension ReviewProcessTests {
                                           structured: #"{"merge_request":{"iid":7,"title":"T","source_branch":"b","diff_refs":{"base_sha":"a","start_sha":"a","head_sha":"c"}},"discussions":[{"id":"d9","notes":[]}]}"#,
                                           isError: false)
             let data = ReviewMCPData.read([submitted], iid: 7)
-            #expect(data.mergeRequest?.diffRefs?.headSHA == "c" && data.discussions.map(\.id) == ["d9"])
+            #expect(data.mergeRequest?.diffRefs?.headSHA == "c")
+            #expect(data.discussions.isEmpty && data.user == nil, "the model's own account never names threads, drafts or the user")
         }
 
         @Test func parsesGitDiff() {
@@ -317,22 +329,28 @@ extension ReviewProcessTests {
     struct MCPPolicyTests {
         @Test func sortsTools() {
             let all = ReviewMCPAccess()
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "get_merge_request", access: all) == .read)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "mr_discussions", access: all) == .read)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "execute_graphql", access: all) == .blocked)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "execute_graphql", readOnlyHint: true, access: all) == .read)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "create_draft_note", access: all) == .write)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "list_draft_notes", access: all) == .read, "a write pattern takes only writing tools")
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "bulk_publish_draft_notes", access: all) == .blocked)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "publish_draft_note", access: all) == .blocked)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "merge_merge_request", access: all) == .blocked)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "approve_merge_request", readOnlyHint: true, access: all) == .blocked)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "create_note", access: all) == .blocked, "a published note is not a draft")
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "get_merge_request_diffs", access: all) == .read, "merge in a reading name is fine")
-            let limited = ReviewMCPAccess(servers: ["azure-devops"], read: ["wit_*"])
-            #expect(ReviewMCPPolicy.kind(server: "azure_devops", tool: "wit_my_work_items", access: limited) == .read)
-            #expect(ReviewMCPPolicy.kind(server: "gitlab", tool: "get_merge_request", access: limited) == .blocked, "not the project's server")
+            func kind(_ tool: String, server: String = "gitlab", hint: Bool = false, _ access: ReviewMCPAccess = ReviewMCPAccess()) -> ReviewMCPPolicy.Kind {
+                ReviewMCPPolicy.kind(server: server, tool: tool, readOnlyHint: hint, access: access)
+            }
+            #expect(kind("get_merge_request") == .read && kind("get_merge_request_diffs") == .read, "merge after a reading verb is fine")
+            #expect(kind("mr_discussions") == .read && kind("list_draft_notes") == .read)
+            #expect(kind("wit_get_work_item", server: "azure-devops") == .read && kind("repo_list_pull_requests", server: "ado") == .read)
+            #expect(kind("create_draft_note") == .write && kind("update_draft_note") == .write && kind("delete_draft_note") == .write)
+            for blocked in ["bulk_publish_draft_notes", "publish_draft_note", "merge_merge_request", "gitlab_merge_merge_request", "mr_merge",
+                            "repo_vote_pull_request", "create_note", "execute_graphql", "squash_commits", "new_issue", "cherry_pick",
+                            "resolve_thread"] {
+                #expect(kind(blocked, server: blocked.hasPrefix("repo") ? "ado" : "gitlab") == .blocked, "\(blocked)")
+            }
+            #expect(kind("approve_merge_request", hint: true) == .blocked, "a read-only hint never opens a forbidden word")
+            #expect(kind("execute_graphql", hint: true) == .read, "the server's read-only hint")
+            // Only the project's servers; without a list, only servers named like GitLab or Azure DevOps.
+            #expect(kind("fetch", server: "fetch") == .blocked && kind("read_file", server: "filesystem") == .blocked)
+            #expect(kind("get_issue", server: "jira") == .blocked && kind("get_issue", server: "jira", ReviewMCPAccess(servers: ["jira"])) == .read)
+            let limited = ReviewMCPAccess(servers: ["azure-devops"], read: ["wit_my_*"])
+            #expect(kind("wit_my_work_items", server: "azure_devops", limited) == .read)
+            #expect(kind("get_merge_request", server: "gitlab", limited) == .blocked, "not the project's server")
             #expect(limited.toolPatterns == ["mcp__azure_devops__*"])
+            #expect(all.toolPatterns == ["mcp__*gitlab*__*", "mcp__*azure*__*", "mcp__*devops*__*", "mcp__ado__*"])
         }
 
         @Test func parsesTheProfileBlock() throws {
@@ -355,6 +373,7 @@ extension ReviewProcessTests {
             """, access: ReviewMCPAccess())
             #expect(report.servers.map(\.name) == ["gitlab", "jira"])
             #expect(report.servers[0].count(.read) == 1 && report.servers[0].count(.write) == 1 && report.servers[0].count(.blocked) == 1)
+            #expect(report.servers[1].tools.isEmpty)
             #expect(!report.servers[1].enabled && report.errors == ["mcp.json: bad entry"])
         }
     }

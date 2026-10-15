@@ -132,8 +132,7 @@ struct ReviewSettingsSheet: View {
                                 .font(.callout).foregroundStyle(.orange)
                         }
                         ForEach(report.servers) { server in
-                            let used = access.servers.isEmpty
-                                || access.servers.map(ReviewMCPPolicy.normalized).contains(ReviewMCPPolicy.normalized(server.name))
+                            let used = access.allows(server: server.name)
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
                                     Image(systemName: server.state == "connected" && server.enabled ? "circle.fill" : "circle")
@@ -237,7 +236,7 @@ enum ReviewProfileTemplate {
     gitlab: { host: https://gitlab.example.com, project_path: group/my-service }
     checkout: ~/work/my-service            # your clone: the worktree at the reviewed commit comes from it
     # tracker: { kind: azure-devops, org: my-org, project: MyProject, wi_ref_regex: "(?:AB#|WI-)(\\\\d+)" }
-    # mcp:                                 # Pi's MCP servers review may use (pi mcp list); none = every server
+    # mcp:                                 # Pi's MCP servers review may use (pi mcp list); none = those named gitlab, azure, devops, ado
     #   servers: [gitlab, azure-devops]
     #   read: []                           # more reading tools, e.g. ["wit_get_*"]; get_/list_/search_… read anyway
     #   write: ["*draft_note*"]            # the tools Send Drafts may call; only approved text passes

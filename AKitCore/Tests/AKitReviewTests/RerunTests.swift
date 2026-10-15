@@ -63,7 +63,7 @@ extension ReviewProcessTests {
             let body = try #require((try JSONSerialization.jsonObject(with: sent) as? [[String: Any]])?.first?["body"] as? String)
             // GitLab now holds that draft (as the user's own, pending): the next fetch reads it.
             let draft: [String: Any] = ["id": 501, "note": body, "author_id": 5, "position": [
-                "position_type": "text", "base_sha": "b1", "start_sha": "s1", "head_sha": run.head,
+                "position_type": "text", "base_sha": "b1b1b1b1", "start_sha": "c1c1c1c1", "head_sha": run.head,
                 "old_path": "src/Auth.swift", "new_path": "src/Auth.swift", "new_line": 3]]
             FakeMergeRequest.serve(run.home, head: run.head, diff: "@@ -1,3 +1,4 @@\n import Foundation\n func auth(header: String) {\n+    log(\"Auth: \\(header)\")\n }\n",
                                    drafts: [draft])

@@ -153,6 +153,9 @@ public enum ReviewWorkflow {
         let snapshot = run.snapshot
         var report = SendReport()
         var approved: [JSONObject] = []
+        // The merge request every write must name: the project by path or GitLab's number.
+        let projects: [Any] = [run.spec.mergeRequest.projectPath] + (snapshot?.mergeRequest.projectID.map { [$0] } ?? [])
+        let mr: JSONObject = ["projects": projects, "iid": run.spec.mergeRequest.iid]
         var bodies: [String: (body: String, request: ReviewRequest)] = [:]
         func fail(_ id: String, _ message: String) throws {
             report.failed.append((id, message))
@@ -212,6 +215,7 @@ public enum ReviewWorkflow {
                 entry["path"] = position.newLine != nil || position.oldLine == nil ? position.newPath : position.oldPath
                 entry["line"] = position.newLine ?? position.oldLine
             }
+            entry["mr"] = mr
             approved.append(entry)
             bodies[request.id] = (body, request)
         }

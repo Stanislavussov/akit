@@ -186,8 +186,8 @@ public enum ReviewResolver {
         let access = spec.access
         let source = spec.project == nil ? "default" : "project"
         lines += ["MCP (Pi's servers) [\(source)]:",
-                  "  servers: " + (access.servers.isEmpty ? "every enabled server" : access.servers.joined(separator: ", ")),
-                  "  read: tools marked read-only, get_/list_/search_/… tools" + (access.read.isEmpty ? "" : ", " + access.read.joined(separator: ", ")),
+                  "  servers: " + (access.servers.isEmpty ? "those named like gitlab, azure, devops or ado" : access.servers.joined(separator: ", ")),
+                  "  read: get_/list_/search_/… tools, tools marked read-only" + (access.read.isEmpty ? "" : ", " + access.read.joined(separator: ", ")),
                   "  write (Send Drafts only): " + access.write.joined(separator: ", "),
                   "  in passes: " + (access.inPasses ? "yes" : "no, only the fetch pass")]
         if let tracker = spec.tracker { lines += ["Tracker [project]: \(tracker.kind) \(tracker.org)/\(tracker.project), work items \(tracker.wiRefRegex)"] }

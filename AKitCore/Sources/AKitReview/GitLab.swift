@@ -24,6 +24,8 @@ public struct GitLabMergeRequest: Codable, Sendable, Hashable {
     public var labels: [String]
     public var webURL: String
     public var diffRefs: DiffRefs?
+    /// GitLab's number of the project: some MCP tools take it instead of the path.
+    public var projectID: Int?
 }
 
 /// One version of a merge request's diff (`GET …/versions`).
@@ -163,7 +165,8 @@ public enum GitLabJSON {
         return GitLabMergeRequest(iid: iid, title: object.string("title") ?? "", description: object.string("description") ?? "",
                                   state: object.string("state") ?? "", author: object.object("author")?.string("username") ?? "",
                                   sourceBranch: object.string("source_branch") ?? "", targetBranch: object.string("target_branch") ?? "",
-                                  labels: object["labels"] as? [String] ?? [], webURL: object.string("web_url") ?? "", diffRefs: refs)
+                                  labels: object["labels"] as? [String] ?? [], webURL: object.string("web_url") ?? "", diffRefs: refs,
+                                  projectID: object.int("project_id"))
     }
 
     public static func version(_ object: JSONObject) -> GitLabVersion? {

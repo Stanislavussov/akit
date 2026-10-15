@@ -6,11 +6,12 @@ import Foundation
 /// connects to GitLab, Azure DevOps and the other trackers itself, with the servers the user
 /// configured in Pi; AKit only says which of them a run may use and checks every call.
 public struct ReviewMCPAccess: Codable, Sendable, Hashable {
-    /// Pi MCP server names (`~/.pi/agent/mcp.json`); empty = every enabled server.
+    /// Pi MCP server names (`~/.pi/agent/mcp.json`); empty = the servers whose names say GitLab
+    /// or Azure DevOps (`gitlab…`, `…azure…`, `…devops…`, `ado`), never a browser, a file system or
+    /// a web fetcher by default.
     public var servers: [String]
     /// Tool name patterns (`*` = any characters) that only read, on top of the tools a server
-    /// marks `readOnlyHint` and the tools without a writing word in their name (`get_…`,
-    /// `mr_discussions`; not `create_…`, `execute_graphql`).
+    /// marks `readOnlyHint` and the tools named by a reading verb (`get_…`, `wit_get_…`).
     public var read: [String]
     /// Tool name patterns the send pass may call to write draft notes.
     public var write: [String]
@@ -19,6 +20,8 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
     public var inPasses: Bool
 
     public static let defaultWrite = ["*draft_note*", "*draft*note*"]
+    /// Server names a run uses when the profile names none.
+    public static let defaultServerWords = ["gitlab", "azure", "devops"]
 
     public init(servers: [String] = [], read: [String] = [], write: [String] = ReviewMCPAccess.defaultWrite, inPasses: Bool = true) {
         self.servers = servers
@@ -38,30 +41,37 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
                                inPasses: map["in_passes"] as? Bool ?? true)
     }
 
+    /// Whether a run may use this Pi server at all.
+    public func allows(server: String) -> Bool {
+        let name = ReviewMCPPolicy.normalized(server).lowercased()
+        if !servers.isEmpty { return servers.map { ReviewMCPPolicy.normalized($0).lowercased() }.contains(name) }
+        return Self.defaultServerWords.contains { name.contains($0) } || name == "ado"
+    }
+
     /// `mcp__<server>__*` for `--tools`: Pi then keeps only these servers' tools.
     public var toolPatterns: [String] {
-        servers.isEmpty ? [] : servers.map { "mcp__\(ReviewMCPPolicy.normalized($0))__*" }
+        servers.isEmpty ? Self.defaultServerWords.map { "mcp__*\($0)*__*" } + ["mcp__ado__*"]
+            : servers.map { "mcp__\(ReviewMCPPolicy.normalized($0))__*" }
     }
 }
 
 /// The rules the extension applies to every MCP call (`akit-review.ts`), written once more in
-/// Swift for `akit review check` and the tests.
+/// Swift for `akit review check` and the tests. An allowlist: a tool reads only when its verb
+/// reads; anything else is blocked unless the send pass may write with it.
 public enum ReviewMCPPolicy {
     public enum Kind: String, Sendable {
         case read, write, blocked
     }
 
-    /// Never, in any pass: tools whose verb (first word) publishes, approves, merges or resolves,
-    /// and tools that publish or approve anywhere in their name (`bulk_publish_draft_notes`) (R5).
-    public static let forbiddenVerbs = ["publish", "submit", "approve", "unapprove", "merge", "resolve", "unresolve", "rebase", "close",
-                                        "reopen", "accept"]
-    public static let forbiddenWords = ["publish", "submit", "approve", "unapprove"]
-    /// Words of tool names that change something: a tool with one of them never reads by its name.
-    public static let writeWords = ["create", "update", "delete", "remove", "add", "set", "post", "put", "patch", "edit", "write", "upload",
-                                    "push", "fork", "cancel", "retry", "run", "trigger", "execute", "exec", "invoke", "assign", "unassign",
-                                    "move", "link", "unlink", "archive", "restore", "import", "transfer", "subscribe", "unsubscribe", "comment",
-                                    "reply", "mark", "toggle", "start", "stop", "label", "graphql", "api", "send", "save",
-                                    "make", "change", "modify", "rename", "lock", "unlock", "play", "erase", "destroy", "revert"]
+    /// Never, in any pass (R5): anywhere in a tool's name.
+    public static let forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"]
+    /// The verbs of reading tools: the first word (`get_merge_request`), or the second after a
+    /// namespace (`wit_get_work_item`, `repo_list_pull_requests`).
+    public static let readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"]
+    /// The verbs a draft note tool may have in the send pass.
+    public static let writeVerbs = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy"]
+    /// Reading tools of common GitLab servers whose names carry no verb.
+    public static let knownReads = ["mr_discussions"]
 
     /// Pi names a server's tool `mcp__<server>__<tool>`, every character but letters, digits
     /// and `_` turned into `_`.
@@ -74,20 +84,25 @@ public enum ReviewMCPPolicy {
         return name.lowercased().range(of: "^\(escaped)$", options: .regularExpression) != nil
     }
 
+    /// The first two words of a tool's name: where its verb is.
+    static func lead(_ tool: String) -> [String] {
+        Array(tool.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init).prefix(2))
+    }
+
     /// What a tool of a server is to a run: read, write (only in the send pass) or blocked.
     public static func kind(server: String, tool: String, readOnlyHint: Bool = false, access: ReviewMCPAccess) -> Kind {
-        if !access.servers.isEmpty, !access.servers.map(normalized).contains(normalized(server)) { return .blocked }
-        let lower = tool.lowercased()
-        let words = lower.split(whereSeparator: { !$0.isLetter }).map(String.init)
-        if words.first.map(forbiddenVerbs.contains) == true || words.contains(where: forbiddenWords.contains) { return .blocked }
-        let writes = words.contains(where: writeWords.contains)
-        // A write pattern catches only tools that write: `*draft_note*` takes `create_draft_note`,
-        // not `list_draft_notes`.
-        if writes, access.write.contains(where: { matches($0, tool) }) { return .write }
-        if readOnlyHint || access.read.contains(where: { matches($0, tool) }) { return .read }
-        // `get_merge_request`, `mr_discussions`, `wit_my_work_items` read; `create_note`,
-        // `execute_graphql` don't.
-        return writes ? .blocked : .read
+        guard access.allows(server: server) else { return .blocked }
+        let words = tool.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
+        if words.contains(where: forbiddenWords.contains) { return .blocked }
+        let lead = lead(tool)
+        let writes = lead.contains(where: writeVerbs.contains)
+        // A write pattern catches only tools whose verb writes: `*draft_note*` takes
+        // `create_draft_note`, not `list_draft_notes`.
+        if writes { return access.write.contains(where: { matches($0, tool) }) ? .write : .blocked }
+        if let first = lead.first, readVerbs.contains(first) { return .read }
+        if lead.count == 2, readVerbs.contains(lead[1]) { return .read }
+        if readOnlyHint || (access.read + knownReads).contains(where: { matches($0, tool) }) { return .read }
+        return .blocked
     }
 }
 
@@ -155,13 +170,16 @@ public struct ReviewMCPData: Sendable {
                 data.failures.append("\(call.tool): " + SecretFilter.masked(String(call.text.joined(separator: " ").prefix(200))))
                 continue
             }
-            let aboutThis = mentions(call.inputObject, iid) || call.tool == "akit_submit_context"
-            for value in call.values { visit(value, depth: 0, aboutThis: aboutThis) }
+            // What the model submits itself is its account: context for the passes, never the
+            // threads, drafts or user that decide what AKit may change in GitLab.
+            let trusted = call.tool != "akit_submit_context"
+            let aboutThis = trusted && mentions(call.inputObject, iid)
+            for value in call.values { visit(value, depth: 0, aboutThis: aboutThis, trusted: trusted) }
         }
-        func visit(_ value: Any, depth: Int, aboutThis: Bool) {
+        func visit(_ value: Any, depth: Int, aboutThis: Bool, trusted: Bool) {
             guard depth < 5 else { return }
             if let list = value as? [Any] {
-                for item in list { visit(item, depth: depth + 1, aboutThis: aboutThis) }
+                for item in list { visit(item, depth: depth + 1, aboutThis: aboutThis, trusted: trusted) }
                 return
             }
             guard let object = value as? JSONObject else { return }
@@ -198,12 +216,12 @@ public struct ReviewMCPData: Sendable {
                 return
             }
             // The signed-in user: a whole answer that is one user.
-            if depth == 0, let name = object.string("username"), object["iid"] == nil, object["notes"] == nil, data.user == nil {
+            if trusted, depth == 0, let name = object.string("username"), object["iid"] == nil, object["notes"] == nil, data.user == nil {
                 data.user = name
                 return
             }
             for (key, child) in object where key != "author" && key != "assignee" && key != "assignees" && key != "reviewers" {
-                if child is [Any] || child is JSONObject { visit(child, depth: depth + 1, aboutThis: aboutThis) }
+                if child is [Any] || child is JSONObject { visit(child, depth: depth + 1, aboutThis: aboutThis, trusted: trusted) }
             }
         }
         func add(_ diff: GitLabFileDiff?) {
