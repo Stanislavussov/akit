@@ -249,7 +249,8 @@ private struct PairedVerdict: View {
                      + (pair.meanChange.map { String(format: "%+.0f points per task", 100 * $0) } ?? "no change measured")
                      + " over \(pair.tasks) tasks · \(AnalysisText.percent(pair.improvementShare)) of the bootstrap mass on improvement\(worse)")
                     .fixedSize(horizontal: false, vertical: true)
-                Text("\(pair.reason) Cells: baseline \(pair.baselineCells), variant \(pair.variantCells).")
+                // On screen the task's own title (or its id when it's gone); Ask AKit gets a neutral name.
+                Text("\(pair.reason { id in tasks.first { $0.id == id }?.title ?? id }) Cells: baseline \(pair.baselineCells), variant \(pair.variantCells).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -287,7 +288,7 @@ private struct PairedVerdict: View {
                 + " over \(pair.tasks) tasks",
             "Bootstrap mass on improvement: \(AnalysisText.percent(pair.improvementShare))\(worse)",
             // The reason may name the read-only task that passed by its id, a prompt slug.
-            "Reason: \(ControlTask.neutralizing(pair.reason, tasks: tasks))", "Cells: baseline \(pair.baselineCells), variant \(pair.variantCells)",
+            "Reason: \(pair.reason { ControlTask.neutralName(of: $0, in: tasks) })", "Cells: baseline \(pair.baselineCells), variant \(pair.variantCells)",
         ])
     }
 }

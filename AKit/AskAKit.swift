@@ -1,3 +1,4 @@
+import AKitErrorAnalysis
 import AKitFoundation
 import AKitHelp
 import AKitLab
@@ -249,6 +250,7 @@ final class AskAKitModel {
         // Screen data is setup data only: no session titles (first prompts), no mode names or
         // definitions. The views send ids and numbers; this catches what a fact still quotes.
         let hidden = app.sessions.map(\.title) + self.sessionTexts()
+        let labTasks = Array(app.labControlTasks.values)
         let history = messages.filter { !$0.failed }.map { AskTurn(role: $0.role, text: $0.text) }
         let asked = Message(role: .user, text: question, about: about)
         messages.append(asked)
@@ -262,9 +264,11 @@ final class AskAKitModel {
             do {
                 let (guides, search) = await loadGuides()
                 let language = inSettingsLanguage ? LabSettings.load(env: .current).reportLanguage.name : nil
+                // Modes and control tasks from disk, not only when Error Analysis has loaded them.
+                let words = await Self.sessionWords(labTasks: labTasks)
                 // Off the main actor: the backstop scans every session title.
                 let prepared = await Task.detached {
-                    AskAKit.prepare(question: question, context: context.redacting(hidden), history: history, guides: guides,
+                    AskAKit.prepare(question: question, context: context.redacting(hidden + words.texts, ids: words.ids), history: history, guides: guides,
                                     search: search, language: language)
                 }.value
                 if scope.isCancelled { throw CancellationError() }
@@ -280,12 +284,14 @@ final class AskAKitModel {
                     guard await confirm(gate.destination, agent: agent) else { throw NotSent() }
                     if scope.isCancelled { throw CancellationError() }
                     let destination = "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model) · \(gate.destination.label)"
-                    let id = asked.id, sources = prepared.sources, system = prepared.system.count
                     // The screen's data is the user's harness setup: the chosen harness's own
                     // account is its origin, so a work Mac sends it only to an allowed destination.
+                    let request = ModelCall.Request(agent: agent, purpose: "ask akit", system: prepared.system, input: prepared.input,
+                                                    schema: AskAKit.schema, origin: .code(agent.harness))
+                    // The size the send log records: the system text as really sent.
+                    let id = asked.id, sources = prepared.sources, system = ModelCall.systemCharacters(request)
                     return try await ModelCall.run(
-                        ModelCall.Request(agent: agent, purpose: "ask akit", system: prepared.system, input: prepared.input,
-                                          schema: AskAKit.schema, origin: .code(agent.harness)),
+                        request,
                         gate: gate, folder: folder, env: env,
                         // Only now does it leave: What Was Sent, and the element becomes the focus.
                         onSend: { input in
@@ -326,6 +332,22 @@ final class AskAKitModel {
         guard chat == self.chat else { return }
         if let index = messages.firstIndex(where: { $0.id == message }) { messages[index].sent = sent }
         if let element { focus = element }
+    }
+
+    /// The texts and ids made from session words, read from disk off the main actor: every
+    /// mode's name and definition and every non-seed mode id; every non-commit control task's
+    /// title, prompt and id (Lab's tasks too). The backstop of every send uses them.
+    private nonisolated static func sessionWords(labTasks: [ControlTask]) async -> (texts: [String], ids: [String]) {
+        await Task.detached {
+            let env = HarnessEnvironment.current
+            let modes = (try? await ModeStore(env: env).list()) ?? []
+            var tasks = ControlTasks.list(env: env)
+            let known = Set(tasks.map(\.id))
+            tasks += labTasks.filter { !known.contains($0.id) }
+            let fromSessions = tasks.filter { if case .commit = $0.source { false } else { true } }
+            return (modes.flatMap { [$0.name, $0.definition] } + fromSessions.flatMap { [$0.title, $0.prompt] },
+                    Mode.sessionDerivedIDs(modes) + ControlTask.sessionDerivedIDs(tasks))
+        }.value
     }
 
     /// What a link in an answer may open: a section a guide has, or an https page.
@@ -701,7 +723,7 @@ private struct SentDisclosure: View {
         DisclosureGroup("What Was Sent") {
             VStack(alignment: .leading, spacing: 6) {
                 Text("To \(sent.destination)").font(.caption)
-                Text("System prompt: Ask AKit's rules and \(sent.sections.count) guide sections, \(sent.systemCharacters.formatted()) characters")
+                Text("System prompt and answer schema: Ask AKit's rules and \(sent.sections.count) guide sections, \(sent.systemCharacters.formatted()) characters")
                     .font(.caption)
                 ForEach(sent.sections) { source in
                     Button(source.title) { open(Guide(rawValue: source.guide) ?? .screens, source.section) }

@@ -56,14 +56,20 @@ extension AskContext {
     /// characters count: a short title such as "status" would blank out ordinary words. Linear in
     /// the words of the context times the texts that start with each word, so thousands of
     /// session titles are fine; still, call it off the main actor.
-    public func redacting(_ texts: [String]) -> AskContext {
+    ///
+    /// `ids`: ids made from session words (an emergent mode's slug, a session task's prompt
+    /// slug). They count whatever their length, matched as one exact token, case-insensitive:
+    /// not inside a longer token of letters, digits, `-` or `_`, so `export-1a2b` is caught and
+    /// a plain "Export" isn't.
+    public func redacting(_ texts: [String], ids: [String] = []) -> AskContext {
+        let ids = Set(ids.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }).sorted { $0.count > $1.count }
         var byFirst: [String: [[String]]] = [:]
         for text in texts {
             let words = Self.words(text).map(\.word)
             guard let first = words.first, words.count >= 3 || text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 16 else { continue }
             byFirst[first, default: []].append(words)
         }
-        guard !byFirst.isEmpty else { return self }
+        guard !byFirst.isEmpty || !ids.isEmpty else { return self }
         for key in byFirst.keys { byFirst[key]?.sort { $0.count > $1.count } }
         func clean(_ text: String) -> String {
             let words = Self.words(text)
@@ -83,12 +89,32 @@ extension AskContext {
             }
             var result = text
             for cut in cuts.reversed() { result.replaceSubrange(cut, with: Self.redacted) }
+            for id in ids { result = Self.replacingToken(id, in: result) }
             return result
         }
         var copy = self
         copy.summary = clean(summary)
         copy.element = element.map { Element(title: clean($0.title), facts: clean($0.facts)) }
         return copy
+    }
+
+    /// `text` with every whole-token occurrence of `token` replaced by `redacted`.
+    static func replacingToken(_ token: String, in text: String) -> String {
+        func joins(_ character: Character) -> Bool { character.isLetter || character.isNumber || character == "-" || character == "_" }
+        var result = text
+        var from = result.startIndex
+        while let found = result.range(of: token, options: .caseInsensitive, range: from..<result.endIndex) {
+            let before = found.lowerBound > result.startIndex ? result[result.index(before: found.lowerBound)] : nil
+            let after = found.upperBound < result.endIndex ? result[found.upperBound] : nil
+            if before.map(joins) != true && after.map(joins) != true {
+                result.replaceSubrange(found, with: redacted)
+                from = result.index(found.lowerBound, offsetBy: redacted.count)
+            } else {
+                // Progress: on past the first character of this match.
+                from = result.index(after: found.lowerBound)
+            }
+        }
+        return result
     }
 
     /// Runs of letters and digits, lower-cased, with their place in `text`.

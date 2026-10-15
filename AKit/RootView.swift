@@ -178,8 +178,6 @@ struct RootView: View {
             ask.sessionTexts = { [analysis] in
                 analysis.data.modes.flatMap { [$0.name, $0.definition] }
                     + analysis.data.controlTasks.filter { if case .commit = $0.source { false } else { true } }.flatMap { [$0.title, $0.prompt] }
-                    // The ids made from those words, whatever their length: structural.
-                    + Mode.sessionDerivedIDs(analysis.data.modes) + ControlTask.sessionDerivedIDs(analysis.data.controlTasks)
             }
         }
         .environment(analysis)

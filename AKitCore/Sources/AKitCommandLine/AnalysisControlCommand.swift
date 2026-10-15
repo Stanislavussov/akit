@@ -539,7 +539,7 @@ extension AKitCLI {
             lines.append("")
             lines.append("\(pair.variant.name) vs \(pair.baseline.name): \(change) per task over \(pair.tasks) tasks; "
                          + "\(percent(pair.improvementShare)) of the bootstrap mass on improvement: \(pair.verdict.title).")
-            lines.append("  \(pair.reason)")
+            lines.append("  \(pair.reason { $0 })")
             if pair.harnessVersions.count > 1 { lines.append("  The cells mix Claude Code versions: \(pair.harnessVersions.joined(separator: ", ")).") }
         }
         if comparison.leftOut > 0 {

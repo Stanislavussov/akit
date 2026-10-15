@@ -36,14 +36,14 @@ struct NeutralNamesTests {
         #expect(ControlTask.Oracle.tests(command: "make test").neutralLabel == "tests: make test")
     }
 
-    /// A comparison's reason names the read-only task that passed by its id.
-    @Test func aReasonNamesNoSessionTask() {
+    /// A task is named neutrally by id, whether it is still in the list or not.
+    @Test func aTaskIDIsNamedNeutrallyEvenWhenTheTaskIsGone() {
         let task = ControlTask(id: ControlTasks.newID("Make the export button work on iPad"), title: "t", repo: "/r", base: "b", prompt: "p",
                                source: .reproduction, oracle: .tests(command: "make test"))
-        let reason = "A read-only agent passed \(task.id): its oracle can't tell work from no work (40% …)."
-        let neutral = ControlTask.neutralizing(reason, tasks: [task])
-        #expect(!neutral.contains(task.id) && !neutral.contains("export"))
-        #expect(neutral.hasPrefix("A read-only agent passed a control task from a reproduction #"))
+        #expect(ControlTask.neutralName(of: task.id, in: [task]) == task.neutralName)
+        let gone = ControlTask.neutralName(of: task.id, in: [])
+        #expect(gone.hasPrefix("a removed control task #") && !gone.contains("export"))
+        #expect(gone == ControlTask.neutralName(of: task.id, in: []))
     }
 
     /// The backstop is structural: the ids themselves, as AKit makes them, are caught.
@@ -58,10 +58,24 @@ struct NeutralNamesTests {
         #expect(ids == [task.id, mode.id])
         let context = AskContext(screen: "analysis", screenTitle: "Error Analysis", summary: "Oracle: \(mode.id): present",
                                  element: .init(title: "Control task \(task.id)", facts: "Mode: \(seed.id)\nTask: \(commit.id)"))
-        let clean = context.redacting(ids)
+        let clean = context.redacting([], ids: ids)
         #expect(clean.summary == "Oracle: \(AskContext.redacted): present")
         #expect(clean.element?.title == "Control task \(AskContext.redacted)")
         // Seed and commit ids stay.
         #expect(clean.element?.facts == "Mode: \(seed.id)\nTask: \(commit.id)")
+    }
+
+    /// Short ids count too, as exact tokens; a plain word that equals part of one doesn't.
+    @Test func shortIDsAreCaughtAsExactTokens() {
+        let task = ControlTasks.newID("Export")
+        let mode = Clustering.slug("Over-reading", taken: [])
+        #expect(task.hasPrefix("export-") && mode == "over-reading")
+        let context = AskContext(screen: "analysis", screenTitle: "Error Analysis", summary: "Export… button\nTask \(task) ok\nMode \(mode): present",
+                                 element: .init(title: "Over reading and EXPORT", facts: "Path: x/\(task)/y\nNot \(task)-2 nor pre\(mode)"))
+        let clean = context.redacting([], ids: [task, mode])
+        #expect(clean.summary == "Export… button\nTask \(AskContext.redacted) ok\nMode \(AskContext.redacted): present")
+        #expect(clean.element?.title == "Over reading and EXPORT")
+        // Bounded by "/" it is a token; inside a longer id or word it isn't.
+        #expect(clean.element?.facts == "Path: x/\(AskContext.redacted)/y\nNot \(task)-2 nor pre\(mode)")
     }
 }

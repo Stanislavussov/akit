@@ -79,7 +79,7 @@ under the input field, with the harness and model, every time. The first send to
 Ask before Ask AKit sends (`ask.confirmBeforeSend`) turns the confirmation off, and turning it
 on again clears the stored destinations and this launch's confirmations. What Was Sent under each question shows the
 destination, the input as the scrub left it and the guide sections of the system prompt; it
-appears only for a question that really went out.
+appears only for a question that really went out, with the system size the send log records.
 
 **No session text.** Screen data is setup data only: harness, project, tab, ids, counts,
 statuses and numbers. Never a session's title (its first prompt), notes, quotes, evidence, or an
@@ -89,12 +89,16 @@ of a model's name for it, a session or reproduction control task's id a slug of 
 `Mode.neutralName` and `ControlTask.neutralName` (AKitErrorAnalysis, tested) name them by kind
 and a short hash ("an emergent failure mode #1a2b"); seed modes and commit tasks keep their ids,
 and an assertion oracle is sent without its mode (also not a control cell's oracle text, which
-names it), and a comparison's reason names a read-only task by its neutral name. Two layers keep
+names it). A comparison's reason holds no task id at all: `Paired.readOnlyTask` says which
+read-only task passed, and each place names it (its title on screen, its id in `akit analysis`,
+`ControlTask.neutralName(of:in:)` for Ask AKit, "a removed control task #hash" when it is gone). Two layers keep
 it so: the facts the views build, and `AskContext.redacting`, run on every send with every
 session title AppModel has, every mode's name and definition, every non-commit task's title and
-prompt, and, structurally, the session-derived ids themselves (`Mode.sessionDerivedIDs`: every
+prompt (read from disk for each send, with Lab's tasks, so not only once Error Analysis has
+loaded), and, structurally, the session-derived ids themselves (`Mode.sessionDerivedIDs`: every
 non-seed mode id, renamed modes included; `ControlTask.sessionDerivedIDs`: every non-commit task
-id), which replaces any of them a fact still quotes, as whole words across any separators
+id), which replaces any of them a fact still quotes: texts as whole words across any separators,
+ids as exact tokens of any length (`export-1a2b`, not a plain "Export")
 (tested in `AskAKitTests` and, with ids made by `ControlTasks.newID` and `Clustering.slug`, in
 `NeutralNamesTests`). A batch's pause reason, a worker's free text, is not sent. The user's own typed question and the chat are sent as
 written. The MCP pane sends names only, never a value (no arguments, the URL's host, the names

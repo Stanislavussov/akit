@@ -27,12 +27,10 @@ extension ControlTask {
 }
 
 extension ControlTask {
-    /// `text` (a comparison's reason, say) with every one of `tasks`' ids in it replaced by
-    /// the task's neutral name.
-    public static func neutralizing(_ text: String, tasks: [ControlTask]) -> String {
-        tasks.sorted { $0.id.count > $1.id.count }.reduce(text) { text, task in
-            task.neutralName == task.id ? text : text.replacingOccurrences(of: task.id, with: task.neutralName)
-        }
+    /// The neutral name of the task with `id` among `tasks`; a task that is gone (removed,
+    /// its cells kept) is "a removed control task #1a2b", since its id may be a prompt slug.
+    public static func neutralName(of id: String, in tasks: [ControlTask]) -> String {
+        tasks.first { $0.id == id }?.neutralName ?? "a removed control task #\(NeutralName.hash(id))"
     }
 
     /// The ids that are made from session words (a session or reproduction task's prompt

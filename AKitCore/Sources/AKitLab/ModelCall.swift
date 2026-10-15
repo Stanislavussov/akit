@@ -160,7 +160,7 @@ public enum ModelCall {
 
     /// The system text as really sent: Claude Code's system prompt and its JSON schema, Pi's
     /// system prompt with the schema and the rule appended.
-    static func systemCharacters(_ request: Request) -> Int {
+    public static func systemCharacters(_ request: Request) -> Int {
         switch request.agent.harness {
         case .claudeCode: request.system.count + (request.schema?.count ?? 0)
         case .pi: piSystemPrompt(request).count
