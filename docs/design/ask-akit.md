@@ -4,7 +4,10 @@ Status: 2026-10-15, built on branch `ask-akit`: the core (`AKitHelp`), the side 
 toolbar button and Help → Ask AKit (⌥⌘/), and Ask AKit About This in the context menus of the
 screens listed under "Where it shows"; the glossary guide `terms.ru.md` (AKit Terms). After the
 code review of 2026-10-15: Stop ends the harness's process, no session text is sent, links are
-checked, the first send is confirmed and every question shows What Was Sent. Chats are not saved.
+checked, the first send is confirmed and every question shows What Was Sent. After the second
+review: neutral names for emergent modes and session tasks, whole-word redaction, the system
+prompt logged apart, a cancellable account check, consent per destination with a Settings switch.
+Chats are not saved.
 
 ## What and why
 
@@ -37,11 +40,17 @@ AKitHelp.AskAKit.prepare          (pure, AKitHelp)
   the question: cut at 4,000 (the panel says so under the field)
         │
         ▼
-App: AskContext.redacting (session titles, mode names and definitions → ‹session text›)
-     first send of a launch: the confirmation (unless Don't ask again)
-     in a Cancellation.Scope of its own: SendGate.open → ModelCall.run
-       (no tools, schema {"answer": string}); Stop and New Chat cancel the scope,
-       which ends the harness's process
+App: AskContext.redacting, off the main actor (session titles, mode names and
+       definitions, task prompts → ‹session text›; whole words, texts of ≥ 3 words or
+       ≥ 16 characters, slugs too)
+     in a Cancellation.Scope of its own:
+       SendGate.open (the account check is a ChildProcess in the scope)
+       → the confirmation, before the first send to this harness|provider in a launch
+         (unless Don't ask again for it, or Settings → Ask before Ask AKit sends is off)
+       → ModelCall.run (no tools, schema {"answer": string}); its onSend hook, called
+         only once the policy and the limit let the call go, fills What Was Sent and
+         sets the element as the focus
+       Stop and New Chat cancel the scope, which ends whichever process runs
         │
         ▼
 AskAKit.answer (the "answer" field, or the text as it came; off the main actor, ≤ 65 parses)
@@ -61,18 +70,27 @@ link opens the Guide window at that section; only such links and `https` pages o
 What leaves the Mac, in one call through the chosen harness and its own sign-in: the
 question, the screen's summary (counts, names, the scope and window the screen shows), the
 element's facts, the earlier turns of the chat, and the guide sections. The panel says this
-under the input field, with the harness and model, every time. The first send of a launch asks
-first (Send to …?, with the kinds of data; Don't ask again stores `ask.dontConfirm`), and
-What Was Sent under each question shows the destination, the input as the scrub left it and
-the guide sections of the system prompt.
+under the input field, with the harness and model, every time. The first send to a destination
+(harness and provider) in a launch asks first, after the account check, naming the account
+(Send to …?, with the kinds of data). Don't ask again stores that destination
+(`ask.dontConfirmDestinations`); another harness or provider asks again; Settings → Ask AKit →
+Ask before Ask AKit sends (`ask.confirmBeforeSend`) turns the confirmation off, and turning it
+on again clears the stored destinations. What Was Sent under each question shows the
+destination, the input as the scrub left it and the guide sections of the system prompt; it
+appears only for a question that really went out.
 
 **No session text.** Screen data is setup data only: harness, project, tab, ids, counts,
 statuses and numbers. Never a session's title (its first prompt), notes, quotes, evidence, or an
-error analysis mode's name or definition (they come from notes): sessions, modes, control tasks
-and Lab runs are named by id. Two layers keep it so: the facts the views build (Sessions,
-Error Analysis, Lab), and `AskContext.redacting`, run on every send with every session title
-AppModel has and every mode's name and definition, which replaces any of them a fact still
-quotes (tested in `AskAKitTests`). The user's own typed question and the chat are sent as
+error analysis mode's name or definition (they come from notes). Sessions and Lab runs are
+named by id. Ids made from session words are not sent either: an emergent mode's id is a slug
+of a model's name for it, a session or reproduction control task's id a slug of its prompt, so
+`Mode.neutralName` and `ControlTask.neutralName` (AKitErrorAnalysis, tested) name them by kind
+and a short hash ("an emergent failure mode #1a2b"); seed modes and commit tasks keep their ids,
+and an assertion oracle is sent without its mode. Two layers keep it so: the facts the views
+build, and `AskContext.redacting`, run on every send with every session title AppModel has,
+every mode's name and definition and every non-commit task's title and prompt, which replaces
+any of them a fact still quotes, as whole words across any separators (tested in
+`AskAKitTests`). The user's own typed question and the chat are sent as
 written. The MCP pane sends names only, never a value (no arguments, the URL's host, the names
 of environment variables and headers).
 
@@ -83,9 +101,12 @@ goes only to a destination on the allowed list (Settings → Sending policy), el
 with the policy's reason shown in the chat. The scrub runs on the input as for every call.
 Unlike Rewrite with Skill, a masked value is fine here: the answer is only read, never
 written back, so the scrubbed text is sent. The monthly limit and the send log (Lab → Sends,
-purpose "ask akit") apply as for every call; since 2026-10-15 `ModelCall` counts the system
-prompt with the input in both (every caller's system prompt is sent and paid for), which
-matters here, where the guide sections are in the system prompt.
+purpose "ask akit") apply as for every call. The system prompt is sent and paid for, and here it
+carries the guide sections, so it counts: a send record keeps `inputCharacters` (the input only,
+as before) and `systemCharacters` (the system prompt of a model call; nil for agent runs and
+older records). `SendLog.estimate` prices a character as cost / (input + system) over the records
+of the harness and model; `ModelCall` passes the exact prompt size, and the pre-send estimates
+of error analysis pass their purpose, whose past prompts stand in for the size.
 
 ## The agent
 
@@ -101,8 +122,9 @@ agent is worked out when the panel opens and when its fields change, not on ever
 - A screen's summary is short: counts and names AKit already has, plus what a screen view adds
   with `.askAKitScreen(…)` (Insights: scope, window, recommendations). Rows add their own values
   through Ask AKit About This.
-- Chats live until New Chat or quit; they are not saved. One chat per app: the main scene is a
-  single `Window` (the screen in view, `AppModel.section`, was already shared by every window).
+- Chats live until New Chat or quit; they are not saved. One chat per app: the main window is
+  the only one (a `WindowGroup` without File → New Window, so a Dock click reopens it; the
+  screen in view, `AppModel.section`, was already shared by every window).
 - One call at a time: About This is off while a call runs or the confirmation waits, and sets
   the focus only when its question is really sent; New Chat during a call cancels it and the
   next send waits until its process is gone.

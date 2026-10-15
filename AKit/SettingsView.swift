@@ -153,20 +153,6 @@ struct SettingsView: View {
                 Text("The language of new session reviews: the paragraph and the improvements. Kept in ~/.akit/lab/settings.json, so akit lab new review uses it too (--language overrides).")
                     .foregroundStyle(.secondary)
             }
-            Section {
-                Toggle("Ask before Ask AKit sends", isOn: Binding(get: { askConfirms }, set: { on in
-                    askConfirms = on
-                    // On again: Don't ask again is undone for every destination.
-                    if on { UserDefaults.standard.removeObject(forKey: AskAKitModel.skipConfirmKey) }
-                }))
-            } header: {
-                Text("Ask AKit")
-            } footer: {
-                let skipped = UserDefaults.standard.stringArray(forKey: AskAKitModel.skipConfirmKey) ?? []
-                Text("Before the first question of a launch to a harness and provider, Ask AKit says what it sends and where. "
-                     + (skipped.isEmpty ? "" : "Not asked for (Don't ask again): \(skipped.map { $0.replacingOccurrences(of: "|", with: " · ") }.joined(separator: ", ")). Turn the switch off and on to ask for them again."))
-                    .foregroundStyle(.secondary)
-            }
             // `akit lab policy` may change the file while the form is open: only the form's own
             // edit is applied, onto what is on disk now, and the form then shows the result.
             .onAppear { lab = LabSettings.load(env: .current) }
@@ -182,6 +168,20 @@ struct SettingsView: View {
                 }
             }
             SendingPolicySections(lab: $lab)
+            Section {
+                Toggle("Ask before Ask AKit sends", isOn: Binding(get: { askConfirms }, set: { on in
+                    askConfirms = on
+                    // On again: Don't ask again is undone for every destination.
+                    if on { UserDefaults.standard.removeObject(forKey: AskAKitModel.skipConfirmKey) }
+                }))
+            } header: {
+                Text("Ask AKit")
+            } footer: {
+                let skipped = UserDefaults.standard.stringArray(forKey: AskAKitModel.skipConfirmKey) ?? []
+                Text("Before the first question of a launch to a harness and provider, Ask AKit says what it sends and where. "
+                     + (skipped.isEmpty ? "" : "Not asked for (Don't ask again): \(skipped.map { $0.replacingOccurrences(of: "|", with: " · ") }.joined(separator: ", ")). Turn the switch off and on to ask for them again."))
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)
