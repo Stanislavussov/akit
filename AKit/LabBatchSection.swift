@@ -32,7 +32,8 @@ struct LabBatchSection: View {
                 .askAKit("Error analysis batch \(batch.runID) (Lab)", facts: [
                     summary(batch), "Notes \(batch.progress(of: "notes"))/\(total)", "Verifier \(batch.progress(of: "verifier"))/\(total)",
                     "Matching \(batch.progress(of: "matching"))/\(total)", "Clustering: \(batch.clustered ? "done, \(batch.candidates.count) candidates" : "not yet")",
-                    batch.paused ? "Paused\(batch.pauseReason.map { ": \($0)" } ?? "")" : "",
+                    // Not the worker's reason: free text that may name a mode or a session.
+                    batch.paused ? "Paused" + (batch.pauseReason == nil ? "" : " by the worker (its reason is on screen)") : "",
                 ])
             Text(summary(batch))
                 .foregroundStyle(.secondary)

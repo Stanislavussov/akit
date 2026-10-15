@@ -26,6 +26,30 @@ extension ControlTask {
     }
 }
 
+extension ControlTask {
+    /// `text` (a comparison's reason, say) with every one of `tasks`' ids in it replaced by
+    /// the task's neutral name.
+    public static func neutralizing(_ text: String, tasks: [ControlTask]) -> String {
+        tasks.sorted { $0.id.count > $1.id.count }.reduce(text) { text, task in
+            task.neutralName == task.id ? text : text.replacingOccurrences(of: task.id, with: task.neutralName)
+        }
+    }
+
+    /// The ids that are made from session words (a session or reproduction task's prompt
+    /// slug): Ask AKit's backstop never lets them out.
+    public static func sessionDerivedIDs(_ tasks: [ControlTask]) -> [String] {
+        tasks.filter { if case .commit = $0.source { false } else { true } }.map(\.id)
+    }
+}
+
+extension Mode {
+    /// The ids that are made from session words (an emergent mode's name slug, kept after a
+    /// rename): Ask AKit's backstop never lets them out.
+    public static func sessionDerivedIDs(_ modes: [Mode]) -> [String] {
+        modes.filter { !$0.origin.isSeed }.map(\.id)
+    }
+}
+
 extension ControlTask.Oracle {
     /// `label` without a mode's id (an assertion names its mode, which may be emergent).
     public var neutralLabel: String {

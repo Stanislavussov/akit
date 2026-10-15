@@ -54,7 +54,9 @@ struct LabControlSection: View {
                 .foregroundStyle(control.passed ? .green : .red)
                 .font(.headline)
                 .askAKit("Oracle result of this control cell (Lab)", facts: [
-                    control.passed ? "Passed" : "Failed", "Oracle: \(control.oracle.prefix(300))",
+                    // Not the oracle's own text: an assertion's names its mode, which may be emergent.
+                    control.passed ? "Passed" : "Failed",
+                    run.spec.controlTask.flatMap { model.labControlTasks[$0] }.map { "Oracle: \($0.oracle.neutralLabel)" } ?? "",
                     control.flagged ? "Flagged: comparisons count this cell as failed" : "",
                     control.testsDropped ? "Fewer tests than before the agent ran" : "",
                     control.changedTestFiles.isEmpty ? "" : "Test files changed: \(control.changedTestFiles.joined(separator: ", "))",

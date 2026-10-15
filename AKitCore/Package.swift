@@ -75,7 +75,7 @@ let package = Package(
         .testTarget(name: "AKitRenderTests", dependencies: ["AKitRender", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitProjectSetupTests", dependencies: ["AKitProjectSetup", "AKitFoundation", "AKitBrain", "AKitRender", "AKitMCP", "AKitModel", "AKitHarnesses", "AKitSkills"]),
         .testTarget(name: "AKitLabTests", dependencies: ["AKitLab", "AKitFoundation", "AKitModel", "AKitBrain"]),
-        .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitBrain", "AKitRender"]),
+        .testTarget(name: "AKitErrorAnalysisTests", dependencies: ["AKitErrorAnalysis", "AKitHelp", "AKitLab", "AKitFoundation", "AKitModel", "AKitSessions", "AKitInsights", "AKitBrain", "AKitRender"]),
         .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
         .testTarget(name: "AKitHelpTests", dependencies: ["AKitHelp", "AKitFoundation"]),
         .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),

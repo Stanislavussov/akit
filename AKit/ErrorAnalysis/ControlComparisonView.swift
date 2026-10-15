@@ -129,7 +129,7 @@ struct ControlComparisonView: View {
                 PairedVerdict(pair: pair, eval: eval.flatMap { verdicts[$0] },
                               waiting: evalRuns.filter { run in
                                   run.spec.controlSetup?.layer?.evalID == eval && (run.status == .queued || run.status == .running)
-                              }.count)
+                              }.count, tasks: tasks)
             }
             if open > 0 {
                 Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
@@ -222,6 +222,8 @@ private struct PairedVerdict: View {
     let eval: ControlComparisonView.EvalVerdict?
     /// Cells of the layer pair's eval still queued or running.
     let waiting: Int
+    /// The tasks compared: Ask AKit names them neutrally in the reason.
+    var tasks: [ControlTask] = []
 
     var body: some View {
         let color: Color = switch pair.verdict {
@@ -284,7 +286,8 @@ private struct PairedVerdict: View {
             "Change: " + (pair.meanChange.map { String(format: "%+.0f points per task", 100 * $0) } ?? "no change measured")
                 + " over \(pair.tasks) tasks",
             "Bootstrap mass on improvement: \(AnalysisText.percent(pair.improvementShare))\(worse)",
-            "Reason: \(pair.reason)", "Cells: baseline \(pair.baselineCells), variant \(pair.variantCells)",
+            // The reason may name the read-only task that passed by its id, a prompt slug.
+            "Reason: \(ControlTask.neutralizing(pair.reason, tasks: tasks))", "Cells: baseline \(pair.baselineCells), variant \(pair.variantCells)",
         ])
     }
 }
