@@ -354,9 +354,11 @@ struct ReviewRunDetail: View {
                 .help("Open Pi in a terminal with the whole review (a fork of the verifier's session). What it submits becomes a new version here.")
                 .disabled(run.passes?.verifierSession == nil && run.passes == nil)
             Button("Refresh from GitLab") { model.refreshFromGitLab() }
-                .help("Read your drafts and the threads again and plan the requests anew (after a push, or edits in GitLab)")
+                .help("Read your drafts and the threads again and plan the requests anew (after you edited, published or deleted drafts in GitLab). After a push, start a new review of the merge request")
                 .disabled(run.findings == nil)
-            if run.status?.stage == .gathered || run.status?.stage == .failed || run.status?.stage == .stopped {
+            // A run left mid-way when AKit quit still says gathering or passes: nothing runs it now.
+            let interrupted = [.gathering, .estimating, .passes].contains(run.status?.stage) && model.activity?.runID != run.id
+            if run.status?.stage == .gathered || run.status?.stage == .failed || run.status?.stage == .stopped || interrupted {
                 Button("Run Passes") { model.runPasses(run.id) }
                     .disabled(model.isBusy)
                     .help("Run the brief, the roles and the verifier on the gathered context")

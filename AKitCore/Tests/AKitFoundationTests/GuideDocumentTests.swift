@@ -107,6 +107,17 @@ struct GuideDocumentTests {
         #expect(document.path(to: "evaluate-layer") == ["evals", "evaluate-layer"])
     }
 
+    /// The Review screen's Guide button and the parts of `docs/guides/review.ru.md` (docs/design/review.md, Guide).
+    @Test func theReviewGuideHasItsParts() throws {
+        let file = URL(filePath: #filePath).deletingLastPathComponent()
+            .appending(path: "../../../docs/guides/review.ru.md").standardizedFileURL
+        let document = GuideDocument.parse(try String(contentsOf: file, encoding: .utf8))
+        #expect(!document.title.isEmpty)
+        for id in ["overview", "setup", "run", "screen", "noise", "gaps", "discuss", "reruns", "config", "quality"] {
+            #expect(document.path(to: id) == [id], "no section \(id)")
+        }
+    }
+
     /// The sidebar opens `docs/guides/screens.ru.md` at its group and screen ids
     /// (`SidebarGroup`, `SidebarSection` raw values in the app).
     @Test func theScreensGuideHasASectionPerSidebarItem() throws {
@@ -115,7 +126,7 @@ struct GuideDocumentTests {
         let document = GuideDocument.parse(try String(contentsOf: file, encoding: .utf8))
         #expect(!document.title.isEmpty)
         let screens = ["installed": ["overview", "skills", "skillsSh", "mcp"], "setup": ["brain"],
-                       "activity": ["sessions", "usage"], "improve": ["insights", "lab", "analysis"]]
+                       "activity": ["sessions", "usage"], "improve": ["insights", "lab", "analysis"], "work": ["review"]]
         for (group, ids) in screens {
             #expect(document.path(to: group) == [group], "no section \(group)")
             for id in ids { #expect(document.path(to: id) == [group, id], "no section \(id) in \(group)") }
@@ -128,7 +139,7 @@ struct GuideDocumentTests {
     @Test func theTermsGuideHasAGroupPerScreenAndItsLinksResolve() throws {
         let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../docs/guides").standardizedFileURL
         var documents: [String: GuideDocument] = [:]
-        for name in ["terms", "screens", "error-analysis"] {
+        for name in ["terms", "screens", "error-analysis", "review"] {
             documents[name] = GuideDocument.parse(try String(contentsOf: folder.appending(path: "\(name).ru.md"), encoding: .utf8))
         }
         let terms = try #require(documents["terms"])
