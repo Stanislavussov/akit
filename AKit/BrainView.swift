@@ -541,6 +541,13 @@ struct BrainView: View {
                             Divider()
                             Button("Move to Trash…", role: .destructive) { pendingRemoval = .layer(layer.name) }
                                 .disabled(layer.name == "core")
+                            Divider()
+                            AskAKitMenuItem(title: "Brain layer \(layer.name)", facts: [
+                                "Skills: \(layer.skills.count)", "Fields: \(layer.fields.count)",
+                                "Problems: \(brain.problems(of: layer.name).count)",
+                                verdicts[layer.name]?.first.map { "Eval verdict: \($0.verdict.title)" } ?? "",
+                                layer.description.isEmpty ? "" : "Description: \(layer.description)",
+                            ])
                         }
                 }
             } header: {
@@ -564,6 +571,12 @@ struct BrainView: View {
                             if !project.isHome || model.brainProjectFolders[project.id] != nil {
                                 Button("Forget Project…", role: .destructive) { askForget(project) }
                             }
+                            Divider()
+                            AskAKitMenuItem(title: "Brain project \(project.name)", facts: [
+                                "Layers: \(brain.layers(of: project).joined(separator: ", "))",
+                                model.brainProjectFolders[project.id] == nil ? "Not on this Mac" : "On this Mac",
+                                project.isHome ? "This Mac's home folder" : "",
+                            ])
                         }
                 }
             } }
@@ -581,6 +594,8 @@ struct BrainView: View {
                         fileMenu(skill.folder, reveal: skill.file)
                         Divider()
                         Button("Move to Trash…", role: .destructive) { pendingRemoval = .skill(skill.name) }
+                        Divider()
+                        AskAKitMenuItem(title: "Brain skill \(skill.name)", facts: ["Description: \(skill.description.prefix(300))"])
                     }
                 }
             } }
@@ -1067,6 +1082,12 @@ private struct BrainProjectDetailView: View {
         }
         .font(.callout)
         .textSelection(.enabled)
+        .askAKit("Brain project \(project.name) (details)", facts: [
+            "Layers: \(layers.isEmpty ? "none" : layers.map { project.answers.layers.contains($0) ? $0 : "\($0) (required)" }.joined(separator: ", "))",
+            "Harnesses: \(project.answers.targets.isEmpty ? "—" : project.answers.targets.joined(separator: ", "))",
+            "Folder: \(folder?.tildePath ?? "Not on this Mac")",
+            "Rendered from: \(project.brainCommit.map { "brain commit \($0)" } ?? "—")",
+        ])
     }
 
     private var fields: some View {
@@ -1164,6 +1185,13 @@ private struct LayerDetailView: View {
         }
         .font(.callout)
         .textSelection(.enabled)
+        .askAKit("Brain layer \(layer.name) (details)", facts: [
+            "Requires: \(layer.requires.isEmpty ? "—" : layer.requires.joined(separator: ", "))",
+            "Conflicts: \(layer.conflicts.isEmpty ? "—" : layer.conflicts.joined(separator: ", "))",
+            "Skills: \(layer.skills.count)", "Fields: \(layer.fields.count)", "Files: \(layer.files.count)",
+            "Projects using it: \(projects.count)", problems.isEmpty ? "" : "Problems: \(problems.joined(separator: "; "))",
+            verdicts.first.map { "Newest eval verdict: \($0.verdict.title)" } ?? "",
+        ])
     }
 
     private var usedBy: some View {
@@ -1359,6 +1387,12 @@ private struct BrainSkillDetailView: View {
                     }
                 }
                 .font(.callout)
+                .askAKit("Brain skill \(skill.name) (details)", facts: [
+                    "Location: \(skill.file.tildePath)",
+                    "Used by: \(usedBy.isEmpty ? "No layer" : usedBy.map { "\($0.layer) (\($0.mode.rawValue))" }.joined(separator: ", "))",
+                    onMove != nil ? "Global: every session gets it through the core layer" : "",
+                    "Description: \(skill.description.prefix(300))",
+                ])
                 .textSelection(.enabled)
                 GroupBox("SKILL.md") {
                     Text(text ?? "")
@@ -1438,7 +1472,8 @@ private struct GridLabel: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+        // Not selectable: a right-click on a field's name reaches the grid's Ask AKit About This.
+        Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
     }
 }
 
@@ -1460,10 +1495,21 @@ private struct ModeTag: View {
     let mode: LayerSkill.Mode
 
     var body: some View {
+        Group {
+            switch mode {
+            case .auto: Tag(text: "auto", tint: .green).help("In the agent's context; the agent may invoke it")
+            case .manual: Tag(text: "manual", tint: .blue).help("Runs only on an explicit /name")
+            case .off: Tag(text: "off", tint: .secondary).help("Not rendered")
+            }
+        }
+        .askAKit("Skill mode badge “\(mode.rawValue)” in a brain layer", facts: [meaning])
+    }
+
+    private var meaning: String {
         switch mode {
-        case .auto: Tag(text: "auto", tint: .green).help("In the agent's context; the agent may invoke it")
-        case .manual: Tag(text: "manual", tint: .blue).help("Runs only on an explicit /name")
-        case .off: Tag(text: "off", tint: .secondary).help("Not rendered")
+        case .auto: "auto: in the agent's context; the agent may invoke it"
+        case .manual: "manual: runs only on an explicit /name"
+        case .off: "off: not rendered"
         }
     }
 }

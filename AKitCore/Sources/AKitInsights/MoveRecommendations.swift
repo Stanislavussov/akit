@@ -86,7 +86,7 @@ extension Recommender {
             let evidence = RecommendReport.Evidence(
                 sessions: sessions, distinctDays: days.count, from: sortedDays.first, to: sortedDays.last, machines: machines, binding: nil,
                 approxContextSpace: tally.contextSpace, modelCalls: 0, userCalls: 0, callRate: 0,
-                callRateUpperBound95: min(1, (3 / Double(max(sessions, 1)) * 1000).rounded() / 1000))
+                callRateUpperBound95: Recommender.zeroCallBound(sessions: sessions))
             let text = "Only used in \(project) (\(calls) call\(calls == 1 ? "" : "s") / \(moveWindowDays) days), but listed with its description in "
                 + "\(sessions) session\(sessions == 1 ? "" : "s") elsewhere. Move it there, so other sessions stop paying for its description: "
                 + "Move to Project… (Skills or Insights), or \(moveCommand(skill: name, project: project))."

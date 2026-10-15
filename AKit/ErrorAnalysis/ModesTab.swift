@@ -97,6 +97,12 @@ struct ModesTab: View {
         .contextMenu(forSelectionType: Mode.ID.self) { ids in
             if let id = ids.first, let mode = data.mode(id) {
                 ModeActions(mode: mode, action: $action, menu: true)
+                Divider()
+                // Ids and numbers only: a mode's name and definition come from sessions' notes.
+                AskAKitMenuItem(title: "Mode: \(mode.neutralName)", facts: [
+                    "Kind: \(mode.kind.rawValue)", "Scope: \(mode.scope)", "Status: \(mode.status.title)",
+                    "Seen in \(data.seenByMode[mode.id]?.count ?? 0) notes",
+                ])
             }
         }
     }

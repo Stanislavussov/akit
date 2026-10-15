@@ -170,6 +170,8 @@ struct InsightsUsageTable: View {
                                         Button("Not installed on this Mac") {}.disabled(true)
                                     }
                                     Divider()
+                                    AskAKitMenuItem(title: "Skill \(skill.name) in the Insights table", facts: skillFacts(skill))
+                                    Divider()
                                     // A plugin skill (`plugin:skill`) leaves only with its plugin; any other row is
                                     // Claude Code's name for it, its folder name.
                                     if let colon = skill.name.firstIndex(of: ":") {
@@ -196,6 +198,7 @@ struct InsightsUsageTable: View {
                                 .help("≈ description tokens × requests, summed over the sessions where it was listed")
                         }
                         .font(.callout.monospacedDigit())
+                        .askAKit("Skill \(skill.name) in the Insights table", facts: skillFacts(skill))
                     }
                 }
                 showAllButton(all.count, noun: "Skills")
@@ -242,6 +245,8 @@ struct InsightsUsageTable: View {
                                         } else {
                                             Button("Not configured on this Mac") {}.disabled(true)
                                         }
+                                        Divider()
+                                        AskAKitMenuItem(title: "MCP server \(server.name) in the Insights table", facts: serverFacts(server))
                                     }
                                 Text("\(server.toolsCalled) / \(server.tools)")
                                     .help("Its tools with a call in the window, of the tools it had available or called")
@@ -252,6 +257,7 @@ struct InsightsUsageTable: View {
                                 lastCall(server.lastCall)
                             }
                             .font(.callout.monospacedDigit())
+                            .askAKit("MCP server \(server.name) in the Insights table", facts: serverFacts(server))
                         case .notCalled(let server):
                             GridRow {
                                 Text("Not called: " + server.unusedTools.map { Self.shortTool($0, server: server.name) }.joined(separator: ", "))
@@ -359,6 +365,12 @@ struct InsightsUsageTable: View {
                             lastCall(tool.lastCall)
                         }
                         .font(.callout.monospacedDigit())
+                        .askAKit("Tool \(tool.name) in the Insights table", facts: [
+                            "Harness: \(tool.harnesses.map(Self.harnessTitle).joined(separator: ", "))",
+                            tool.server.map { "MCP server: \($0)" } ?? "Built-in or extension tool",
+                            "Calls: \(tool.calls) in \(InsightsView.count(tool.calledSessions, "session"))\(tool.unused ? " (unused)" : "")",
+                            "Available: \(tool.availableSessions) sessions · \(InsightsView.count(tool.availableDays, "day"))",
+                        ])
                     }
                 }
                 showAllButton(all.count, noun: "Tools")
@@ -379,6 +391,33 @@ struct InsightsUsageTable: View {
         ForEach(tools.notes, id: \.self) { note in
             Text(note + ".").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: Ask AKit
+
+    /// A skill row's visible values, for Ask AKit About This.
+    private func skillFacts(_ skill: StatsReport.SkillStats) -> [String] {
+        [
+            "Owner: \([InsightsView.ownerTitle(skill.owner.kind), skill.owner.name].compactMap { $0 }.joined(separator: " "))",
+            "Listed: \(skill.listedSessions) sessions · \(InsightsView.count(skill.listedDays, "day"))",
+            "Model calls: \(InsightsView.modelCalls(skill))",
+            "User calls: \(skill.userCalls)",
+            "Last call: \(skill.lastCall.map(InsightsView.day) ?? "—")",
+            "≈ Tokens: \(ContextSize.short(skill.approxTokens))",
+            "≈ Context space: \(ContextSize.short(skill.approxContextSpace))",
+            skill.unused ? "Unused: no call by the model or the user in the window" : "",
+        ]
+    }
+
+    /// An MCP server row's visible values, for Ask AKit About This.
+    private func serverFacts(_ server: ToolsReport.Server) -> [String] {
+        [
+            "Tools called: \(server.toolsCalled) / \(server.tools)",
+            "Calls: \(server.unused ? "Unused" : server.calls.formatted())",
+            "Available: \(server.availableSessions) sessions",
+            "Last call: \(server.lastCall.map(InsightsView.day) ?? "—")",
+            server.unusedTools.isEmpty ? "" : "Tools without a call: \(server.unusedTools.count)",
+        ]
     }
 
     // MARK: Cells

@@ -158,6 +158,12 @@ private struct HarnessCard: View {
                 }
             }
         }
+        .askAKit("Harness \(installation.displayName)", facts: [
+            "Version: \(version ?? "unknown")",
+            "Executable: \(installation.executableURL?.tildePath ?? "not found in PATH")",
+            "Config: \(installation.configRoot.tildePath)",
+            installation.isCustom ? "Described by the user (Custom)" : "",
+        ])
         .confirmationDialog("Remove “\(installation.displayName)” from AKit?", isPresented: $confirmRemove,
                             titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
@@ -196,6 +202,9 @@ private struct PiPackageRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(package.name)
+                        .askAKit("Pi package \(package.name)", facts: [
+                            "Version: \(package.version ?? "—")", package.isInstalled ? "Installed" : "Not installed",
+                        ])
                     if let version = package.version {
                         Text(version).foregroundStyle(.secondary)
                     }
@@ -304,6 +313,10 @@ private struct LocationRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(location.title)
+                    .askAKit("Config location \(location.title)", facts: [
+                        "Path: \(location.url.tildePath)", location.exists ? "Exists" : "Not created yet",
+                        location.symlinkDestination.map { "Symlink to \($0.tildePath)" } ?? "", location.note ?? "",
+                    ])
                 Text(location.url.tildePath)
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)

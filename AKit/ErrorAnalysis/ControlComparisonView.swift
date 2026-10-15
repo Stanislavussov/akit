@@ -129,7 +129,7 @@ struct ControlComparisonView: View {
                 PairedVerdict(pair: pair, eval: eval.flatMap { verdicts[$0] },
                               waiting: evalRuns.filter { run in
                                   run.spec.controlSetup?.layer?.evalID == eval && (run.status == .queued || run.status == .running)
-                              }.count)
+                              }.count, tasks: tasks)
             }
             if open > 0 {
                 Text("\(open) cells still queued or running.").foregroundStyle(.secondary)
@@ -191,6 +191,12 @@ struct ControlComparisonView: View {
                 }
             }
         }
+        .askAKit("Setup \(row.setup.label) in the comparison (Evals)", facts: [
+            "pass@1: \(AnalysisText.percent(row.passAt1))", "pass^k: \(AnalysisText.percent(row.passHatK)) (k = \(row.k))",
+            "Cells: \(row.cells)", row.flagged > 0 ? "\(row.flagged) flagged, counted as failed" : "",
+        ] + row.tasks.map { rate in
+            "Task \(tasks.first { $0.id == rate.task }?.neutralName ?? "a control task"): \(rate.passed)/\(rate.total)"
+        })
     }
 
     private func rate(_ value: Double?, _ interval: Stats.Interval) -> some View {
@@ -216,6 +222,8 @@ private struct PairedVerdict: View {
     let eval: ControlComparisonView.EvalVerdict?
     /// Cells of the layer pair's eval still queued or running.
     let waiting: Int
+    /// The tasks compared: Ask AKit names them neutrally in the reason.
+    var tasks: [ControlTask] = []
 
     var body: some View {
         let color: Color = switch pair.verdict {
@@ -241,7 +249,8 @@ private struct PairedVerdict: View {
                      + (pair.meanChange.map { String(format: "%+.0f points per task", 100 * $0) } ?? "no change measured")
                      + " over \(pair.tasks) tasks · \(AnalysisText.percent(pair.improvementShare)) of the bootstrap mass on improvement\(worse)")
                     .fixedSize(horizontal: false, vertical: true)
-                Text("\(pair.reason) Cells: baseline \(pair.baselineCells), variant \(pair.variantCells).")
+                // On screen the task's own title (or its id when it's gone); Ask AKit gets a neutral name.
+                Text("\(pair.reason { id in tasks.first { $0.id == id }?.title ?? id }) Cells: baseline \(pair.baselineCells), variant \(pair.variantCells).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -274,5 +283,12 @@ private struct PairedVerdict: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .askAKit("Verdict \(pair.verdict.title): \(pair.variant.name) against \(pair.baseline.name) (Evals)", facts: [
+            "Change: " + (pair.meanChange.map { String(format: "%+.0f points per task", 100 * $0) } ?? "no change measured")
+                + " over \(pair.tasks) tasks",
+            "Bootstrap mass on improvement: \(AnalysisText.percent(pair.improvementShare))\(worse)",
+            // The reason may name the read-only task that passed by its id, a prompt slug.
+            "Reason: \(pair.reason { ControlTask.neutralName(of: $0, in: tasks) })", "Cells: baseline \(pair.baselineCells), variant \(pair.variantCells)",
+        ])
     }
 }

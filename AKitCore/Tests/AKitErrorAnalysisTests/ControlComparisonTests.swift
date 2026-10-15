@@ -189,13 +189,22 @@ struct ControlComparisonTests {
         let passed = [ControlComparison.Cell(task: "t0", setup: sanity, passed: false), ControlComparison.Cell(task: "t2", setup: sanity, passed: true)]
         let open = try #require(ControlComparison.compare(main + passed).paired.first)
         #expect(open.verdict == .noConclusion && open.improvementShare == 1)
-        #expect(open.reason.hasPrefix("A read-only agent passed t2: its oracle can't tell work from no work"))
+        // The reason never holds the id (a prompt slug for a task from a session): the field does.
+        #expect(open.reason.hasPrefix("A read-only agent passed a task: its oracle can't tell work from no work"))
+        #expect(open.readOnlyTask == "t2" && !open.reason.contains("t2"))
+        #expect(open.reason { $0 }.hasPrefix("A read-only agent passed t2: its oracle"))
+        // A task no longer in the list (removed, its cells kept) is named without its id.
+        let named = open.reason { ControlTask.neutralName(of: $0, in: []) }
+        #expect(named.hasPrefix("A read-only agent passed a removed control task #") && !named.contains("t2:"))
         // A read-only pass of another eval doesn't count here.
         let other = [ControlComparison.Cell(task: "t2", setup: layerSetup(.requiredOnly, eval: "swiftui-2", readOnly: true), passed: true)]
         #expect(ControlComparison.compare(main + other).paired.first?.verdict == .helpsOffline)
         // A passed read-only cell on a task that isn't compared still counts, without a row of its own.
         let elsewhere = ControlComparison.compare(main, sanity: [ControlComparison.Cell(task: "t9", setup: sanity, passed: true)])
-        #expect(elsewhere.paired.first?.verdict == .noConclusion && elsewhere.paired.first?.reason.contains("passed t9") == true)
+        #expect(elsewhere.paired.first?.verdict == .noConclusion && elsewhere.paired.first?.readOnlyTask == "t9")
+        // Not among the compared tasks: Ask AKit names it without its id.
+        let unknown = try #require(elsewhere.paired.first).reason { ControlTask.neutralName(of: $0, in: []) }
+        #expect(!unknown.contains("t9") && unknown.contains("a removed control task #"))
         #expect(elsewhere.rows.count == 2)
     }
 

@@ -197,6 +197,7 @@ extension AnalysisSend {
         let key = notes.sessionKey
         return AnalysisSend(
             title: "Route Again",
+            purpose: "matching",
             detail: "Sends the \(AnalysisText.notes(notes.accepted.count)) of this session the verifier accepted (descriptions, steps and quotes) with the list of modes and their exemplars, so matching routes each to a mode. Routes you reviewed are kept. When the notes, the verifier, the matching model and the list of modes are as at the last routing, nothing is sent.",
             characters: characters
         ) { agent, gate, env in

@@ -113,9 +113,21 @@ public struct ControlComparison: Codable, Sendable, Hashable {
         /// from its check over indexed sessions, when both sides have enough sessions.
         public var productionHigher: Double?
         public var verdict: Verdict
+        /// Why, in one sentence. Never a task id (a prompt slug for a task from a session): a
+        /// read-only pass reads "a task", and `readOnlyTask` says which.
         public var reason: String
         /// The Claude Code versions of both sides' cells; more than one means the eval mixes them.
         public var harnessVersions: [String] = []
+        /// The task whose read-only sanity cell passed, which left the pair without a conclusion.
+        public var readOnlyTask: String? = nil
+
+        /// `reason` with the read-only task named by `name` (its id, title or neutral name).
+        public func reason(naming name: (String) -> String) -> String {
+            guard let task = readOnlyTask else { return reason }
+            return reason.replacingOccurrences(of: Self.readOnlyLead, with: "A read-only agent passed \(name(task)):")
+        }
+
+        static let readOnlyLead = "A read-only agent passed a task:"
     }
 
     public static let minimumRepeats = 3
@@ -293,7 +305,8 @@ public struct ControlComparison: Codable, Sendable, Hashable {
             // A brain layer's own level: judged before anyone uses it, so no production guard.
             let shares = "\(percent) of the bootstrap mass on improvement, \(String(format: "%.0f%%", 100 * (result.worseShare ?? 0))) on worse"
             if let readOnlyPassed {
-                result.reason = "A read-only agent passed \(readOnlyPassed): its oracle can't tell work from no work (\(shares))."
+                result.readOnlyTask = readOnlyPassed
+                result.reason = "\(Paired.readOnlyLead) its oracle can't tell work from no work (\(shares))."
             } else if share >= helpedShare {
                 result.verdict = .helpsOffline
                 result.reason = "\(shares) (needs \(Int(helpedShare * 100))%; offline, without the production guard)."

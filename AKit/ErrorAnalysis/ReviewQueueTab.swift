@@ -143,6 +143,10 @@ private struct CandidateCard: View {
             .controlSize(.small)
         }
         .card()
+        .askAKit("Candidate mode: \(mode.neutralName) (Review)", facts: [
+            "Kind: \(mode.kind.rawValue)", "Seen in \(seen) notes",
+            "Buttons: Confirm, Rename…, Merge into…, Reject…",
+        ])
     }
 }
 
@@ -166,6 +170,10 @@ private struct RouteCard: View {
             RouteActions(ref: ref, route: route)
         }
         .card()
+        .askAKit("Route of a note to a mode (Review)", facts: [
+            "Routed to: \(route.modeID.map { data.mode($0)?.neutralName ?? "a mode" } ?? "None fits")",
+            String(format: "Confidence: %.2f", route.confidence), "Buttons: Accept, Reject, Move to…",
+        ])
     }
 }
 
@@ -229,6 +237,11 @@ private struct ToughCallCard: View {
             .controlSize(.small)
         }
         .card()
+        .askAKit("Tough call of the check for \(data.mode(call.modeID)?.neutralName ?? "a mode") (Review)", facts: [
+            "Session: \(call.sessionKey)", "The check says \(call.verdict.positive ? "present" : "absent")",
+            call.verdict.steps.isEmpty ? "" : "At steps: \(call.verdict.steps.map { "#\($0)" }.joined(separator: ", "))",
+            "Buttons: Present, Not Present",
+        ])
     }
 
     /// "The check says present at #16: done with no check after the last edit."
@@ -263,6 +276,7 @@ private struct SpotCheckCard: View {
             .controlSize(.small)
         }
         .card()
+        .askAKit("Spot check of a note (Review)", facts: ["Session: \(ref.sessionKey)", "Buttons: Agree, Disagree"])
     }
 
     private func decide(_ agree: Bool) {
@@ -293,6 +307,9 @@ private struct UmbrellaCard: View {
             }
         }
         .card()
+        .askAKit("Umbrella mode: \(mode?.neutralName ?? "a mode") (Review)", facts: [
+            String(format: "Takes %.0f%% of the routed notes (%d)", umbrella.share * 100, umbrella.notes),
+        ])
     }
 }
 

@@ -13,11 +13,15 @@ struct LabControlSection: View {
         let task = run.spec.controlTask.flatMap { model.labControlTasks[$0] }
         VStack(alignment: .leading, spacing: 6) {
             Text("Control task").font(.title3.bold())
+                .askAKit("Control task of this Lab run", facts: [
+                    task.map { "Task: \($0.neutralName)" } ?? "The task is gone", task.map { "Oracle: \($0.oracle.neutralLabel)" } ?? "",
+                    task.map { "Source: \($0.sourceTitle)" } ?? "", run.spec.controlSetup.map { "Setup: \($0.label)" } ?? "",
+                ])
             if let task {
                 Text(task.title).fontWeight(.medium).textSelection(.enabled)
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
                     row("Repository", "\(URL(filePath: task.repo).tildePath) at \(task.base.prefix(7))")
-                    row("Oracle", task.oracle.label)
+                    row("Oracle", task.oracle.label, asked: task.oracle.neutralLabel)
                     row("Source", task.sourceTitle)
                     if let setup = run.spec.controlSetup { row("Setup", setup.label) }
                     if let index = run.spec.repeatIndex, let repeats = run.spec.repeats { row("Repeat", "\(index) of \(repeats)") }
@@ -49,6 +53,15 @@ struct LabControlSection: View {
             Label(control.passed ? "Passed" : "Failed", systemImage: control.passed ? "checkmark.seal" : "xmark.seal")
                 .foregroundStyle(control.passed ? .green : .red)
                 .font(.headline)
+                .askAKit("Oracle result of this control cell (Lab)", facts: [
+                    // Not the oracle's own text: an assertion's names its mode, which may be emergent.
+                    control.passed ? "Passed" : "Failed",
+                    run.spec.controlTask.flatMap { model.labControlTasks[$0] }.map { "Oracle: \($0.oracle.neutralLabel)" } ?? "",
+                    control.flagged ? "Flagged: comparisons count this cell as failed" : "",
+                    control.testsDropped ? "Fewer tests than before the agent ran" : "",
+                    control.changedTestFiles.isEmpty ? "" : "Test files changed: \(control.changedTestFiles.joined(separator: ", "))",
+                    control.leaks.isEmpty ? "" : "The agent's tool calls read \(control.leaks.joined(separator: " and "))",
+                ])
             Text(control.oracle).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             if !control.checkSteps.isEmpty {
                 Text("The mode shows at " + control.checkSteps.map { "#\($0)" }.joined(separator: ", ")).foregroundStyle(.secondary)
@@ -92,11 +105,14 @@ struct LabControlSection: View {
         }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
+    /// `asked`: what Ask AKit sends for the value, when the value names a mode.
+    private func row(_ label: String, _ value: String, asked: String? = nil) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            // Not selectable: a right-click on the label gets Ask AKit About This.
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).lineLimit(2).truncationMode(.middle)
         }
+        .askAKit("Control task \(label) (Lab)", facts: ["\(label): \(asked ?? value)"])
     }
 }
 

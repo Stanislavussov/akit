@@ -15,22 +15,25 @@ enum ChildProcess {
 
     /// nil = couldn't start. `onLine` gets stdout and stderr lines (without the newline).
     /// `input`: a file for stdin (else /dev/null).
+    /// `onStart`: called once the child has started, before any output.
     static func run(_ executable: URL, arguments: [String], directory: URL, environment: [String: String], input: URL? = nil,
-                    timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) async -> Exit? {
+                    timeout: TimeInterval?, onStart: (@Sendable () -> Void)? = nil,
+                    onLine: @escaping @Sendable (String) -> Void) async -> Exit? {
         // The thread carries the caller's cancellation scope.
         let scope = Cancellation.scope
         return await withCheckedContinuation { continuation in
             Thread.detachNewThread {
                 continuation.resume(returning: Cancellation.$scope.withValue(scope) {
                     runBlocking(executable, arguments: arguments, directory: directory, environment: environment, input: input,
-                                timeout: timeout, onLine: onLine)
+                                timeout: timeout, onStart: onStart, onLine: onLine)
                 })
             }
         }
     }
 
     private static func runBlocking(_ executable: URL, arguments: [String], directory: URL, environment: [String: String],
-                                    input: URL?, timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) -> Exit? {
+                                    input: URL?, timeout: TimeInterval?, onStart: (@Sendable () -> Void)?,
+                                    onLine: @escaping @Sendable (String) -> Void) -> Exit? {
         guard !Cancellation.isCancelled else { return Exit(status: 0, exitedNormally: false, timedOut: false, cancelled: true) }
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { return nil }
@@ -43,6 +46,7 @@ enum ChildProcess {
         }
         close(writeEnd)
         Cancellation.track(pid)
+        onStart?()
 
         let reader = FileHandle(fileDescriptor: readEnd, closeOnDealloc: false)
         let drained = DispatchSemaphore(value: 0)
@@ -177,6 +181,21 @@ public enum Cancellation {
     private static let sourcesLock = NSLock()
 
     public static var isCancelled: Bool { scope.isCancelled }
+
+    /// Runs `work` in a scope of its own that the calling task's cancellation cancels: the
+    /// children it starts end when the task is cancelled (ChildProcess follows scopes, not
+    /// Task cancellation). Throws CancellationError when it was cancelled.
+    public static func followingTask<T: Sendable>(isolation: isolated (any Actor)? = #isolation,
+                                                  _ work: () async throws -> T) async throws -> T {
+        let scope = Scope()
+        let result = try await withTaskCancellationHandler {
+            try await $scope.withValue(scope) { try await work() }
+        } onCancel: {
+            scope.cancel()
+        }
+        if scope.isCancelled { throw CancellationError() }
+        return result
+    }
 
     /// Process groups of the running children (each child leads its own group).
     static var trackedGroups: Set<pid_t> { scope.groups }

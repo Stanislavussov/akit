@@ -1391,7 +1391,7 @@ public enum AKitCLI {
                              + "never called there; ≈ \(short(evidence.approxContextSpace)) context space")
             } else {
                 lines.append("  ≈ \(short(evidence.approxContextSpace)) context space; listed with its description in \(count(evidence.sessions, "session")) on "
-                             + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(Int((evidence.callRateUpperBound95 * 100).rounded(.up)))% "
+                             + "\(count(evidence.distinctDays, "day"))\(period)\(macs); model calls 0 (rate < \(evidence.callRateBoundText) "
                              + "at 95%), user calls \(evidence.userCalls)")
             }
             if let skills = evidence.skills {

@@ -158,15 +158,44 @@ extension Bootstrap {
         {"type":"object","properties":{"found":{"type":"array","items":{"type":"string"}}},"required":["found"]}
         """#
 
+    /// What findSimilar sends, before the policy filters it: one input per 80 notes of the pool
+    /// outside labeled sessions, each with the mode and the user's mapped notes again. Built
+    /// with the same text as the calls, so the estimate is the input's real size.
+    public static func similarSize(mode: Mode, labels: [Label], pool: [SessionNotes], book: LabelBook) -> (characters: Int, calls: Int) {
+        let labeled = Set(labels.map(\.sessionKey))
+        let items = Clustering.items(pool.filter { !labeled.contains($0.sessionKey) })
+        let shown = similarExamples(mapped(mode: mode, labels: labels, book: book).map(\.1))
+        var characters = 0
+        var calls = 0
+        for start in stride(from: 0, to: items.count, by: 80) {
+            characters += similarInput(mode: mode, shown: shown, part: Array(items[start..<min(items.count, start + 80)])).count
+            calls += 1
+        }
+        return (characters, calls)
+    }
+
+    static func mapped(mode: Mode, labels: [Label], book: LabelBook) -> [(Label, Note)] {
+        labels.flatMap { label in
+            label.notes.filter { book.mapping["\(label.sessionKey)#\($0.id)"] == mode.id }.map { (label, $0) }
+        }
+    }
+
+    static func similarExamples(_ notes: [Note]) -> String {
+        notes.map { "- \($0.description)\n  quote: \($0.quote)" }.joined(separator: "\n")
+    }
+
+    static func similarInput(mode: Mode, shown: String, part: [Clustering.Item]) -> String {
+        let list = part.map { "- \($0.ref): \($0.description)\n  quote: \($0.quote)" }.joined(separator: "\n")
+        return "## Mode \(mode.name)\n\n\(mode.definition)\n\n## The person's notes\n\n\(shown)\n\n## Other notes\n\n\(list)\n"
+    }
+
     /// Searches the pool for cases similar to the user's notes mapped to `mode`; every find is
     /// stored unreviewed, for the user to accept or reject (a cheap label for checks). Notes
     /// whose session may not go to the gate's destination are left out, and `out` says how many.
     @discardableResult
     public static func findSimilar(mode: Mode, labels: [Label], pool: [SessionNotes], book: LabelBook, agent: LabAgent, gate: SendGate,
                                    workFolder: URL, env: HarnessEnvironment, out: (String) -> Void) async throws -> [LabelBook.Find] {
-        let mapped = labels.flatMap { label in
-            label.notes.filter { book.mapping["\(label.sessionKey)#\($0.id)"] == mode.id }.map { (label, $0) }
-        }
+        let mapped = mapped(mode: mode, labels: labels, book: book)
         let examples = mapped.filter { gate.decide(SessionNotes.origin(sessionKey: $0.0.sessionKey, transcript: $0.0.transcript)).allowed }
         guard let first = examples.first else {
             throw Failure(message: mapped.isEmpty ? "None of your bootstrap notes is mapped to \(mode.name) yet."
@@ -180,15 +209,14 @@ extension Bootstrap {
             out("\(leftOut) of \(mapped.count + pooled.count) notes left out: their sessions may not be sent to \(agent.label).")
         }
         guard !candidates.isEmpty else { return [] }
-        let shown = examples.map { "- \($0.1.description)\n  quote: \($0.1.quote)" }.joined(separator: "\n")
+        let shown = similarExamples(examples.map(\.1))
         var finds: [LabelBook.Find] = []
         for start in stride(from: 0, to: candidates.count, by: 80) {
             let part = Array(candidates[start..<min(candidates.count, start + 80)])
-            let list = part.map { "- \($0.ref): \($0.description)\n  quote: \($0.quote)" }.joined(separator: "\n")
             let origins = part.map(\.origin) + examples.map { SessionNotes.origin(sessionKey: $0.0.sessionKey, transcript: $0.0.transcript) }
             let answer = try await ModelCall.run(
                 ModelCall.Request(agent: agent, purpose: "similar-cases", system: similarSystem,
-                                  input: "## Mode \(mode.name)\n\n\(mode.definition)\n\n## The person's notes\n\n\(shown)\n\n## Other notes\n\n\(list)\n",
+                                  input: similarInput(mode: mode, shown: shown, part: part),
                                   schema: similarSchema, origins: origins),
                 gate: gate, folder: workFolder, env: env)
             struct Answer: Decodable { let found: [String] }

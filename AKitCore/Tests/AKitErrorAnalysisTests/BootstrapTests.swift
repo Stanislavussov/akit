@@ -247,4 +247,23 @@ struct BootstrapTests {
         #expect(lines.count == 1 && lines[0].hasPrefix("3 of 5 notes left out"))
         #expect(LabelBookStore(env: env).load().finds.count == 1)
     }
+
+    /// The cost estimate's size is the input findSimilar really sends (two calls of 80 here).
+    @Test func similarSizeIsWhatFindSimilarSends() async throws {
+        try fakeClaude(#"{"found":[]}"#)
+        var h1 = note("a", step: 3); h1.id = "h1"
+        let labels = [label("claude:a", notes: [h1])]
+        let book = LabelBook(mapping: ["claude:a#h1": "m"])
+        let pool = [review("claude:c", notes: (1...85).map { modelNote("n\($0)", step: $0, accepted: true) }, outcome: .no, decisive: 2)]
+        let mode = Mode(id: "m", name: "Scope creep", definition: "The agent does more than asked.")
+        let size = Bootstrap.similarSize(mode: mode, labels: labels, pool: pool, book: book)
+        #expect(size.calls == 2)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "low")
+        let gate = try await SendGate.open(agent: agent, env: env)
+        _ = try await Bootstrap.findSimilar(mode: mode, labels: labels, pool: pool, book: book, agent: agent, gate: gate,
+                                            workFolder: home.appending(path: "w"), env: env, out: { _ in })
+        let sent = SendLog.records(env: env).filter { $0.purpose == "similar-cases" }
+        #expect(sent.count == 2)
+        #expect(sent.map(\.inputCharacters).reduce(0, +) == size.characters)
+    }
 }

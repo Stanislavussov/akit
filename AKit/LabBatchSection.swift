@@ -29,6 +29,12 @@ struct LabBatchSection: View {
         let failed = batch.sessions.filter { $0.status == .error }.count
         VStack(alignment: .leading, spacing: 10) {
             Text("Batch").font(.title3.bold())
+                .askAKit("Error analysis batch \(batch.runID) (Lab)", facts: [
+                    summary(batch), "Notes \(batch.progress(of: "notes"))/\(total)", "Verifier \(batch.progress(of: "verifier"))/\(total)",
+                    "Matching \(batch.progress(of: "matching"))/\(total)", "Clustering: \(batch.clustered ? "done, \(batch.candidates.count) candidates" : "not yet")",
+                    // Not the worker's reason: free text that may name a mode or a session.
+                    batch.paused ? "Paused" + (batch.pauseReason == nil ? "" : " by the worker (its reason is on screen)") : "",
+                ])
             Text(summary(batch))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -92,6 +98,7 @@ struct LabBatchSection: View {
                 .frame(width: 180)
             Text("\(done)/\(total)")
         }
+        .askAKit("Batch step \(name) (Lab)", facts: ["\(name): \(done) of \(total) sessions done"])
     }
 
     private func actions(_ batch: Batch, failed: Int) -> some View {
@@ -141,6 +148,7 @@ struct LabBatchSection: View {
                 ForEach(batch.sessions, id: \.pick.sessionKey) { session in
                     GridRow {
                         BatchStatusBadge(status: session.status)
+                            .askAKit("Batch session status \(session.status) (Lab)", facts: ["Session: \(session.pick.sessionKey)"])
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title(session)).lineLimit(1)
                             if let message = session.message {
@@ -158,6 +166,11 @@ struct LabBatchSection: View {
                             .help(session.pick.stratum)
                         Text(session.steps.last ?? "—").foregroundStyle(.secondary).lineLimit(1)
                             .help(session.steps.joined(separator: " → "))
+                            .askAKit("Batch session \(session.pick.sessionKey) (Lab)", facts: [
+                                "Status: \(session.status)",
+                                String(format: "Inclusion probability π: %.2f", session.pick.inclusion), "Sampled: \(session.pick.sampling)",
+                                "Steps: \(session.steps.joined(separator: " → "))",
+                            ])
                         if session.steps.contains("notes") {
                             Button("Show Notes") { notesFor = SessionNotesTarget(sessionKey: session.pick.sessionKey) }
                                 .controlSize(.small)

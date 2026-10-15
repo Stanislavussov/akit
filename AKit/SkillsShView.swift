@@ -54,6 +54,10 @@ struct SkillsShView: View {
                         if let repo = remote.repoURL {
                             Button("Open on GitHub") { NSWorkspace.shared.open(repo) }
                         }
+                        Divider()
+                        AskAKitMenuItem(title: "skills.sh result \(remote.name)", facts: [
+                            "Source: \(remote.source)", "Installs: \(remote.installs)", isInstalled(remote) ? "Installed on this Mac" : "",
+                        ])
                     }
             }
         }

@@ -167,6 +167,9 @@ private struct ReportHeader: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+        .askAKit("Report tile \(title) (batch \(report.batchID))", facts: [
+            "\(title): \(value)", counts.flatMap { $0.count == 2 ? "Counts: \($0[0])/\($0[1])" : nil } ?? "", detail,
+        ])
     }
 }
 
@@ -263,6 +266,7 @@ extension AnalysisSend {
         let items = Clustering.items(data.pool)
         return AnalysisSend(
             title: "Cluster All Notes Again",
+            purpose: "clustering",
             detail: "One call over all \(AnalysisText.notes(items.count)) of the pool, without the list of modes: a rebuild from scratch to compare with the list. Nothing is saved.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in

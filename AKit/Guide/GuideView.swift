@@ -5,11 +5,14 @@ import SwiftUI
 enum Guide: String, CaseIterable {
     case screens
     case errorAnalysis = "error-analysis"
+    /// The glossary: every label of the screens. Ask AKit reads it first (`AskAKit.glossaryGuide`).
+    case terms
 
     var title: String {
         switch self {
         case .screens: "AKit Screens"
         case .errorAnalysis: "Error Analysis"
+        case .terms: "AKit Terms"
         }
     }
 
@@ -125,6 +128,9 @@ struct GuideMenuItems: View {
 /// searches every guide and every screen at once and shows the places found; a click opens one.
 struct GuideView: View {
     static let windowID = "guide"
+    /// The main window's scene (AKitApp).
+    static let mainWindowID = "main"
+    @Environment(\.openWindow) private var openWindow
 
     @Environment(GuideNavigator.self) private var navigator
     @Environment(AppModel.self) private var model
@@ -249,7 +255,11 @@ struct GuideView: View {
         let guide = NSApp.keyWindow
         guard let window = NSApp.windows.first(where: {
             $0.canBecomeMain && $0 !== guide && $0.identifier?.rawValue.contains("Settings") != true && ($0.isVisible || $0.isMiniaturized)
-        }) else { return }
+        }) else {
+            // The main window was closed: open it again, on the chosen screen.
+            openWindow(id: Self.mainWindowID)
+            return
+        }
         if window.isMiniaturized { window.deminiaturize(nil) }
         window.makeKeyAndOrderFront(nil)
     }
@@ -415,8 +425,8 @@ private struct GuideSectionView: View {
     }
 }
 
-/// Paragraphs, lists, callouts and code of one section.
-private struct GuideBlocks: View {
+/// Paragraphs, lists, callouts and code of one section (and of an Ask AKit answer).
+struct GuideBlocks: View {
     let blocks: [GuideDocument.Block]
     let highlight: String?
 

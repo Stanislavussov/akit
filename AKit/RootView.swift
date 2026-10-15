@@ -1,3 +1,4 @@
+import AKitErrorAnalysis
 import SwiftUI
 
 /// Sidebar groups, by the question their screens answer. The screens guide has one section
@@ -107,6 +108,7 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(SelfRebuild.self) private var rebuild
     @Environment(GuideNavigator.self) private var guides
+    @Environment(AskAKitModel.self) private var ask
     @Environment(\.openWindow) private var openWindow
     /// Error Analysis state lives as long as the window: the last pool judge run and rebuild
     /// stay when you leave the section, until AKit quits. Lab sheets read it too.
@@ -114,6 +116,7 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = model
+        @Bindable var ask = ask
         NavigationSplitView {
             List(selection: $model.section) {
                 ForEach(SidebarGroup.allCases) { group in
@@ -126,6 +129,10 @@ struct RootView: View {
                                     Button("What Is \(section.title) For?", systemImage: "book") {
                                         showGuide(section.rawValue)
                                     }
+                                    AskAKitMenuItem(title: "The \(section.title) screen (sidebar item)",
+                                                    facts: ["Sidebar group: \(group.title)", "Tooltip: \(section.summary)",
+                                                            badge(for: section) > 0 ? "Number next to it: \(badge(for: section))" : ""],
+                                                    screen: section)
                                 }
                                 .tag(section)
                         }
@@ -151,6 +158,26 @@ struct RootView: View {
             case .lab: LabView()
             case .analysis: ErrorAnalysisView()
             case .brain: BrainView()
+            }
+        }
+        // Ask AKit: a chat beside every screen (Help → Ask AKit, ⌥⌘/).
+        .inspector(isPresented: $ask.isOpen) {
+            AskAKitPanel()
+                .inspectorColumnWidth(min: 300, ideal: 380, max: 600)
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Ask AKit", systemImage: "questionmark.bubble") { ask.toggle() }
+                    .help("Ask what something on this screen means or how to use it (⌥⌘/)")
+            }
+        }
+        .onChange(of: model.section ?? .overview, initial: true) { _, section in ask.section = section }
+        // Mode names and definitions, and the ids made from them or from prompts, come from
+        // sessions: never sent as screen data.
+        .onAppear {
+            ask.sessionTexts = { [analysis] in
+                analysis.data.modes.flatMap { [$0.name, $0.definition] }
+                    + analysis.data.controlTasks.filter { if case .commit = $0.source { false } else { true } }.flatMap { [$0.title, $0.prompt] }
             }
         }
         .environment(analysis)

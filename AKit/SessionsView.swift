@@ -90,6 +90,13 @@ struct SessionsView: View {
                     if let project = session.project {
                         Button("Show Project in Finder") { NSWorkspace.shared.activateFileViewerSelecting([project]) }
                     }
+                    Divider()
+                    AskAKitMenuItem(title: "A \(session.harness.displayName) session", facts: [
+                        "Harness: \(session.harness.displayName)",
+                        session.project.map { "Project: \($0.lastPathComponent)" } ?? "",
+                        "Last change: \(session.modified.formatted(date: .abbreviated, time: .shortened))",
+                        (model.ratings[session.file.path] ?? []).isEmpty ? "" : "Ratings: \(RatingText.counts(model.ratings[session.file.path] ?? []))",
+                    ])
                 }
         }
         .overlay {
@@ -363,6 +370,11 @@ private struct SessionDetailView: View {
                 ForEach(SessionDetailTab.available(for: session.harness)) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
+            .askAKitScreen(.sessions, facts: [
+                // Never the title: it is the session's first prompt.
+                "Open session: one \(session.harness.displayName) session", "Last change: \(session.modified.formatted(date: .abbreviated, time: .shortened))",
+                session.project.map { "Project: \($0.lastPathComponent)" } ?? "", "Tab: \(tab.title)",
+            ])
             .labelsHidden()
             .fixedSize()
         }

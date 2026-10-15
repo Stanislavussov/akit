@@ -98,11 +98,8 @@ public enum LayerVerdicts {
         let sanityPassed = sanity.filter(\.passed).count
         // In run order, so the same runs always give the same sum.
         let priced = mine.sorted { $0.id < $1.id }.compactMap { costs[$0.id]?.dollars }
-        // Task ids come from prompts: the stored reason doesn't name one.
-        var reason = pair.reason
-        if let task = sanity.first(where: \.passed)?.task {
-            reason = reason.replacingOccurrences(of: "A read-only agent passed \(task):", with: "A read-only agent passed a task:")
-        }
+        // Task ids come from prompts: the stored reason names none (Paired.reason never does).
+        let reason = pair.reason
         return LayerVerdict(
             layer: manifest.layer, evalID: manifest.id, evalCreatedAt: seconds(manifest.createdAt), harness: variant.agent.harness,
             model: variant.agent.model, effort: variant.agent.effort, brainCommit: manifest.brainCommit,

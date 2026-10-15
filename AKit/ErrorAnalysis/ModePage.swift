@@ -62,6 +62,12 @@ struct ModePage: View {
                 ModeStatusBadge(mode: mode)
                 Spacer()
             }
+            .askAKit("Mode: \(mode.neutralName) (mode page)", facts: [
+                "Status: \(mode.mergedInto != nil ? "merged" : mode.status.title)",
+                "\(mode.kind.rawValue) · \(mode.origin.title) · \(mode.scope.description) · v\(mode.version)",
+                "Seen in \(analysis.data.seenByMode[mode.id]?.count ?? 0) notes",
+                mode.kind.takesFixes ? "Fix: \(mode.fix?.title ?? "none yet")" : "A success mode: takes no fix",
+            ])
             Text("\(mode.id) · \(mode.kind.rawValue) · \(mode.origin.title) · \(mode.scope.description) · v\(mode.version)")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -121,6 +127,14 @@ struct ModePage: View {
     @ViewBuilder private func check(_ mode: Mode) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Code check").font(.title3.bold())
+                .askAKit("Code check of \(mode.neutralName) (mode page)", facts: [
+                    CodeChecks.check(for: mode.id).map { "Check: \($0.summary)" } ?? "No code check",
+                    CodeChecks.check(for: mode.id).map {
+                        AnalysisText.checkTrust($0, trust: analysis.data.codeCheckTrust(mode), seen: analysis.data.seenByMode[mode.id]?.count ?? 0,
+                                                judged: analysis.data.judges[mode.id] != nil)
+                    } ?? "",
+                    analysis.data.checks[mode.id].flatMap(AnalysisText.rate).map { "Over indexed sessions: \($0)" } ?? "Not run yet",
+                ])
             if let check = CodeChecks.check(for: mode.id) {
                 let results = analysis.data.checks[mode.id]
                 let seen = analysis.data.seenByMode[mode.id]?.count ?? 0
@@ -189,6 +203,7 @@ struct ModePage: View {
         let exemplars = analysis.data.exemplars[mode.id] ?? []
         return VStack(alignment: .leading, spacing: 12) {
             Text("Seen in \(refs.count) \(refs.count == 1 ? "note" : "notes")").font(.title3.bold())
+                .askAKit("Notes routed to \(mode.neutralName) (mode page)", facts: ["Seen in \(refs.count) notes", "Exemplars: \(exemplars.count)"])
             if refs.isEmpty {
                 Text("No accepted note is routed here yet.").foregroundStyle(.secondary)
             }

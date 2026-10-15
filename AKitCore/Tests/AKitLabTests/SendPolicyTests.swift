@@ -215,6 +215,34 @@ struct SendPolicyTests {
 
     // MARK: Send log and limit
 
+    /// The system prompt counts as sent: the log keeps it apart from the input, and the
+    /// estimate's cost per character is over input + system on both sides.
+    @Test func theSystemPromptCountsInTheEstimateAndTheLog() async throws {
+        let records = [
+            SendRecord(purpose: "ask akit", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                       inputCharacters: 1000, systemCharacters: 3000, usage: SendUsage(cost: 0.40)),
+            // Older or agent records: input only.
+            SendRecord(purpose: "notes", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                       inputCharacters: 1000, usage: SendUsage(cost: 0.10)),
+        ]
+        // 0.50 for 5,000 characters sent: 0.0001 each.
+        func near(_ value: Double?, _ expected: Double) -> Bool { value.map { abs($0 - expected) < 1e-9 } ?? false }
+        #expect(near(SendLog.estimate(characters: 500, system: 1500, harness: .claudeCode, model: "opus", records: records), 0.20))
+        // Without the prompt's size, the purpose's past prompts stand in.
+        #expect(near(SendLog.estimate(characters: 500, purpose: "ask akit", harness: .claudeCode, model: "opus", records: records), 0.35))
+        #expect(near(SendLog.estimate(characters: 500, purpose: "notes", harness: .claudeCode, model: "opus", records: records), 0.05))
+
+        try fakeClaude(result: #"{"type":"result","is_error":false,"result":"x","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0.01}"#)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let system = String(repeating: "s", count: 700)
+        _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: system, input: "twelve chars", origin: .code(.claudeCode)),
+                                    gate: gate, folder: home.appending(path: "work"), env: env)
+        let logged = try #require(SendLog.records(env: env).last)
+        #expect(logged.inputCharacters == 12)
+        #expect(logged.systemCharacters == 700)
+    }
+
     @Test func sendLogAppendsAndEstimatesFromRecordedCost() throws {
         let first = SendRecord(purpose: "notes", session: "claude-code:a", runID: nil, destination: claudeAccount, model: "opus",
                                inputCharacters: 1000, usage: SendUsage(input: 300, cached: 0, output: 50, cost: 0.10))
@@ -400,6 +428,174 @@ struct SendPolicyTests {
         }
         #expect(!fm.fileExists(atPath: home.appending(path: "stdin.txt").path))
         #expect(SendLog.records(env: env).isEmpty)
+    }
+
+    /// Ask AKit's Stop: the call runs in a cancellation scope of its own; cancelling it ends the
+    /// harness's process at once, and the call throws CancellationError.
+    @Test func cancellingTheScopeStopsTheHarnessProcess() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            echo $$ > "$HOME/pid"
+            sleep 60
+            echo '{"type":"result","is_error":false,"result":"late"}'
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let request = ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode))
+        let scope = Cancellation.Scope()
+        let env = env, folder = home.appending(path: "work")
+        let call = Task {
+            try await Cancellation.$scope.withValue(scope) {
+                try await ModelCall.run(request, gate: gate, folder: folder, env: env)
+            }
+        }
+        let pidFile = home.appending(path: "pid")
+        for _ in 0..<100 where !fm.fileExists(atPath: pidFile.path) { try await Task.sleep(for: .milliseconds(50)) }
+        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let started = Date.now
+        scope.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await call.value }
+        #expect(Date.now.timeIntervalSince(started) < 10)
+        // The process is gone (kill with signal 0 only checks).
+        var gone = false
+        for _ in 0..<50 { if kill(pid, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(50)) }
+        #expect(gone)
+        // Nothing was answered, so nothing cost anything: no send record.
+        #expect(SendLog.records(env: env).isEmpty)
+    }
+
+    /// Stop during the account check: `claude auth status` runs in the caller's scope too.
+    @Test func cancellingTheScopeStopsTheAccountCheck() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            echo $$ > "$HOME/pid"
+            sleep 60
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let scope = Cancellation.Scope()
+        let env = env
+        let open = Task { try await Cancellation.$scope.withValue(scope) { try await SendGate.open(agent: agent, env: env) } }
+        let pidFile = home.appending(path: "pid")
+        for _ in 0..<100 where !fm.fileExists(atPath: pidFile.path) { try await Task.sleep(for: .milliseconds(50)) }
+        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let started = Date.now
+        scope.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await open.value }
+        #expect(Date.now.timeIntervalSince(started) < 10)
+        var gone = false
+        for _ in 0..<50 { if kill(pid, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(50)) }
+        #expect(gone)
+    }
+
+    /// Rewrite with Skill's Cancel: cancelling the task ends the harness through followingTask.
+    @Test func cancellingTheTaskStopsTheHarnessProcessThroughFollowingTask() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            echo $$ > "$HOME/pid"
+            sleep 60
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let request = ModelCall.Request(agent: agent, purpose: "instruction rewrite", system: "s", input: "q", origin: .code(.claudeCode))
+        let env = env, folder = home.appending(path: "work")
+        let call = Task { try await Cancellation.followingTask { try await ModelCall.run(request, gate: gate, folder: folder, env: env) } }
+        let pidFile = home.appending(path: "pid")
+        for _ in 0..<100 where !fm.fileExists(atPath: pidFile.path) { try await Task.sleep(for: .milliseconds(50)) }
+        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        call.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await call.value }
+        var gone = false
+        for _ in 0..<50 { if kill(pid, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(50)) }
+        #expect(gone)
+    }
+
+    /// What onSend saw.
+    final class Sent: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [String] = []
+        func add(_ text: String) { lock.withLock { stored.append(text) } }
+        var all: [String] { lock.withLock { stored } }
+    }
+
+    /// onSend reports the scrubbed input, once, when the harness has started with it; never for
+    /// a call refused by the policy or the monthly limit, nor one whose harness is missing.
+    @Test func onSendSeesOnlyCallsThatGoOut() async throws {
+        try fakeClaude(result: #"{"type":"result","is_error":false,"result":"x"}"#)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let seen = Sent()
+        let folder = home.appending(path: "work")
+        let token = "ghp_" + String(repeating: "a1B2", count: 9)
+        let allowed = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "key \(token)", origin: .code(.claudeCode)),
+                                    gate: allowed, folder: folder, env: env, onSend: { seen.add($0) })
+        #expect(seen.all.count == 1)
+        #expect(!seen.all[0].contains(token) && seen.all[0].hasPrefix("key "))
+        #expect(seen.all[0] == allowed.scrub("key \(token)").text)
+
+        // The policy refuses.
+        let refused = SendGate(destination: claudeAccount, isWork: true, settings: LabSettings())
+        await #expect(throws: SendAccounts.Failure.self) {
+            _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .piSession(providers: ["zai"])),
+                                        gate: refused, folder: folder, env: env, onSend: { seen.add($0) })
+        }
+        // The monthly limit refuses: this month already cost more than it.
+        try SendLog.append(SendRecord(purpose: "notes", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                                      inputCharacters: 10, usage: SendUsage(cost: 5)), env: env)
+        let limited = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings(monthlyLimit: 1))
+        await #expect(throws: (any Error).self) {
+            _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode)),
+                                        gate: limited, folder: folder, env: env, onSend: { seen.add($0) })
+        }
+        // The harness isn't there.
+        try fm.removeItem(at: home.appending(path: "bin/claude"))
+        await #expect(throws: ModelCall.Failure.self) {
+            _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode)),
+                                        gate: allowed, folder: folder, env: env, onSend: { seen.add($0) })
+        }
+        #expect(seen.all.count == 1)
+    }
+
+    /// A rate-limited call that is retried went out once as far as onSend is concerned.
+    @Test func onSendFiresOnceAcrossRetries() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            n=$(cat "$HOME/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$HOME/count"
+            if [ $n -lt 3 ]; then
+              echo '{"type":"result","is_error":true,"result":"API Error: 429 Too Many Requests"}'
+            else
+              echo '{"type":"result","is_error":false,"result":"done","usage":{"input_tokens":1,"output_tokens":1}}'
+            fi
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let seen = Sent()
+        _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode)),
+                                    gate: gate, folder: home.appending(path: "work"), env: env, sleep: { _ in }, onSend: { seen.add($0) })
+        // The fake really ran three times: two rate-limited answers, then one.
+        #expect(try String(contentsOf: home.appending(path: "count"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "3")
+        #expect(seen.all == ["q"])
+    }
+
+    /// The system text as really sent: Claude Code's prompt and schema; Pi's prompt with the
+    /// schema and the JSON rule appended. Several calls send it several times.
+    @Test func theSystemTextCountsAsSentAndPerCall() {
+        let schema = #"{"type":"object"}"#
+        let claude = ModelCall.Request(agent: LabAgent(harness: .claudeCode, model: "opus", effort: "high"), purpose: "p", system: "sys",
+                                       input: "i", schema: schema, origin: .code(.claudeCode))
+        #expect(ModelCall.systemCharacters(claude) == 3 + schema.count)
+        let pi = ModelCall.Request(agent: LabAgent(harness: .pi, model: "zai/glm", effort: "medium"), purpose: "p", system: "sys",
+                                   input: "i", schema: schema, origin: .code(.pi))
+        #expect(ModelCall.systemCharacters(pi) == ModelCall.piSystemPrompt(pi).count)
+        #expect(ModelCall.piSystemPrompt(pi).contains(schema) && ModelCall.systemCharacters(pi) > 3 + schema.count)
+        let records = [SendRecord(purpose: "judge", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                                  inputCharacters: 1000, systemCharacters: 1000, usage: SendUsage(cost: 0.2))]
+        // 0.0001 per character: 10 calls of 100 input characters each send the 1,000-character prompt 10 times.
+        let estimate = SendLog.estimate(characters: 1000, purpose: "judge", calls: 10, harness: .claudeCode, model: "opus", records: records)
+        #expect(estimate.map { abs($0 - 1.1) < 1e-9 } == true)
     }
 
     @Test func rateLimitedCallsAreRetriedWithBackoff() async throws {

@@ -158,6 +158,12 @@ struct MCPView: View {
                                     .disabled(!model.canEdit(server))
                                 Divider()
                                 MCPSwitchMenu(server: server)
+                                Divider()
+                                AskAKitMenuItem(title: "MCP server \(server.name)", facts: [
+                                    "Where: \(group.scope.title)", "File: \(server.file.tildePath)",
+                                    "Harnesses: " + server.uses.map { "\($0.harness.displayName) (\($0.state.title))" }.joined(separator: ", "),
+                                    model.warnings(of: server).isEmpty ? "" : "Warnings: \(model.warnings(of: server).joined(separator: "; "))",
+                                ])
                             }
                     }
                 } header: {
@@ -366,6 +372,7 @@ private struct MCPServerDetailView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1)
                 .background(.quaternary, in: Capsule())
+                .askAKit("\(server.transport.title) badge of MCP server \(server.name)", facts: detailFacts)
             if server.isReadOnly {
                 Label("Read-only", systemImage: "lock.fill")
                     .font(.caption)
@@ -436,6 +443,9 @@ private struct MCPServerDetailView: View {
                         Label(use.state.title, systemImage: use.state.icon)
                             .foregroundStyle(use.state.isActive ? Color.green : use.state == .disabled ? .secondary : .orange)
                     }
+                    .askAKit("MCP server \(server.name) in \(use.harness.displayName)", facts: [
+                        "Harness: \(use.harness.displayName)", "Where: \(use.layer)", "State: \(use.state.title)",
+                    ])
                 }
             }
             .font(.callout)
@@ -517,12 +527,32 @@ private struct MCPServerDetailView: View {
                 Label(warning, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .font(.callout)
+                    .askAKit("Warning on MCP server \(server.name)", facts: [warning, "Defined in: \(server.file.tildePath)"])
             }
         }
     }
 
+    /// A field's name: not selectable, so a right-click on it gets Ask AKit About This.
     private func label(_ text: String) -> some View {
         Text(text).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            .textSelection(.disabled)
+            .askAKit("MCP server \(server.name): \(text)", facts: detailFacts)
+    }
+
+    /// What the pane shows, for Ask AKit About This. Never a value: no arguments (they may
+    /// carry a token), only the URL's host, only the names of environment variables and headers.
+    private var detailFacts: [String] {
+        [
+            "Transport: \(server.transport.title)", "Defined in: \(server.file.tildePath)",
+            server.command.map { "Command: \(URL(filePath: $0).lastPathComponent) with \(server.arguments.count) arguments" } ?? "",
+            server.url.flatMap { URL(string: $0)?.host() }.map { "URL host: \($0)" } ?? "",
+            "Used by: " + server.uses.map { "\($0.harness.displayName) (\($0.layer), \($0.state.title))" }.joined(separator: ", "),
+            server.environment.isEmpty ? "" : "Environment variable names: \(server.environment.map(\.key).joined(separator: ", "))",
+            server.headers.isEmpty ? "" : "Header names: \(server.headers.map(\.key).joined(separator: ", "))",
+            server.variables.isEmpty ? "" : "Needs variables: " + server.variables.map { "\($0) (\(model.isInKeychain($0) ? "in Keychain" : "not in AKit's Keychain"))" }.joined(separator: ", "),
+            server.isReadOnly ? "Read-only" : "",
+            model.warnings(of: server).isEmpty ? "" : "Warnings: \(model.warnings(of: server).joined(separator: "; "))",
+        ]
     }
 }
 

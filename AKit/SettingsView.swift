@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var brainIdentityError: String?
     @State private var lab = LabSettings.load(env: .current)
     @State private var labError: String?
+    @AppStorage(AskAKitModel.confirmKey) private var askConfirms = true
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -167,6 +168,25 @@ struct SettingsView: View {
                 }
             }
             SendingPolicySections(lab: $lab)
+            Section {
+                Toggle("Ask before Ask AKit sends", isOn: Binding(get: { askConfirms }, set: { on in
+                    askConfirms = on
+                    // On again: Don't ask again is undone for every destination, and so is this
+                    // launch's Send.
+                    if on {
+                        let defaults = UserDefaults.standard
+                        defaults.removeObject(forKey: AskAKitModel.skipConfirmKey)
+                        defaults.set(defaults.integer(forKey: AskAKitModel.confirmResetKey) + 1, forKey: AskAKitModel.confirmResetKey)
+                    }
+                }))
+            } header: {
+                Text("Ask AKit")
+            } footer: {
+                let skipped = UserDefaults.standard.stringArray(forKey: AskAKitModel.skipConfirmKey) ?? []
+                Text("Before the first question of a launch to a harness and provider, Ask AKit says what it sends and where. "
+                     + (skipped.isEmpty ? "" : "Not asked for (Don't ask again): \(skipped.map { $0.replacingOccurrences(of: "|", with: " · ") }.joined(separator: ", ")). Turn the switch off and on to ask for them again."))
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)

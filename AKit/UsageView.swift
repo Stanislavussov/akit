@@ -331,6 +331,7 @@ private struct UsageSummary: View {
         .padding(14)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.5)))
+        .askAKit("Usage: \(title)", facts: ["\(title): \(value)", detail])
     }
 }
 
@@ -567,7 +568,9 @@ private struct UsageTable: View {
     private func row(title: String, day: Date? = nil, cells: [UsageTotal?], total: UsageTotal?, tooltip: String,
                      peaks: [String: Int], bold: Bool = false) -> some View {
         HStack(spacing: 0) {
-            Text(title).frame(width: dayWidth, alignment: .leading)
+            // Not selectable: selectable text shows the system's text menu on a right-click, so
+            // the day is where Ask AKit About This (the row's menu) is always found.
+            Text(title).textSelection(.disabled).frame(width: dayWidth, alignment: .leading)
             ForEach(Array(zip(report.subscriptions, cells)), id: \.0.id) { subscription, cell in
                 cellView(cell, color: SubscriptionColor.color(for: subscription), peak: peaks[subscription.id],
                          limits: day.flatMap { UsageText.limits(limits?.peaks($0, subscription) ?? [], short: true) },
@@ -582,6 +585,19 @@ private struct UsageTable: View {
         .monospacedDigit()
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .askAKit("Usage table row: \(title)", facts: zip(report.subscriptions, cells).map { subscription, cell in
+            "\(subscription.name): " + Self.askText(cell)
+        } + ["Total: " + Self.askText(total)],
+                 // The day isn't selectable (so the right-click gets this menu): copy the row here.
+                 copy: ([title] + zip(report.subscriptions, cells).map { "\($0.name): " + Self.askText($1) } + ["Total: " + Self.askText(total)])
+                    .joined(separator: "\t"))
+    }
+
+    /// A cell's values for Ask AKit: tokens, responses, cost.
+    private static func askText(_ total: UsageTotal?) -> String {
+        guard let total, total.requests > 0 else { return "no use" }
+        return "\(UsageText.short(total.tokens.total)) tokens, \(total.requests) responses" + (UsageText.cost(of: total).map { ", \($0)" } ?? "")
     }
 
     @ViewBuilder

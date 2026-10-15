@@ -34,6 +34,12 @@ struct SkillListingBox: View {
         } label: {
             Text("Skill Listing").font(.headline)
         }
+        .askAKit("Skill Listing (Claude Code's skill descriptions in every request)", facts: [
+            "Budget: \(Self.percent(listing.settings.fraction)) of the context window, descriptions cut at \(listing.settings.maxDescChars) characters",
+            "Sessions measured: \(listing.sessions.count)",
+            listing.sessions.count == 0 ? "" : "Listing median \(listing.sessions.medianChars) characters (p90 \(listing.sessions.p90Chars)), \(listing.sessions.medianFullChars) with every description",
+            listing.sessions.count == 0 ? "" : "Budget (median session): \(listing.sessions.medianBudget) characters; over budget: \(listing.sessions.overBudget) sessions (\(Self.percent(listing.sessions.share)))",
+        ])
         .sheet(item: Binding(get: { raising.map(RaiseTarget.init) }, set: { raising = $0?.fraction })) { target in
             RaiseBudgetSheet(fraction: target.fraction, listing: listing)
         }

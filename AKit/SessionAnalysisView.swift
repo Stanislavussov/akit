@@ -131,10 +131,11 @@ struct MetricsView: View {
 
     private func row(_ label: String, _ value: String, warn: Bool = false, help: String? = nil) -> some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+            Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).foregroundStyle(warn ? .orange : .primary)
         }
         .help(help ?? "")
+        .askAKit("Session metric: \(label)", facts: ["\(label): \(value)", warn ? "Shown as a warning" : "", help ?? ""])
     }
 }
 
@@ -174,6 +175,9 @@ struct ContextRentView: View {
                         Text("≈ \(UsageText.short(part.value)) tokens sent").foregroundStyle(.secondary)
                     }
                     .help(part.help)
+                    .askAKit("Context rent: \(part.name)", facts: [
+                        "Share: \(MetricsText.percent(rent.share(part.value)))", "≈ \(UsageText.short(part.value)) tokens sent", part.help,
+                    ])
                 }
             }
             .monospacedDigit()

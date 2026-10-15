@@ -172,11 +172,35 @@ public enum SendAccounts {
         }
     }
 
+    /// An account check: a ChildProcess, so cancelling the caller's `Cancellation.scope` (Ask
+    /// AKit's Stop) ends it at once instead of after its 30 s timeout. nil = it didn't start.
+    static func check(_ executable: URL, arguments: [String], env: HarnessEnvironment) async throws -> CheckResult? {
+        let collector = Lines()
+        let exit = await ChildProcess.run(executable, arguments: arguments, directory: env.homeDirectory,
+                                          environment: AgentRun.environment(env, runFolder: nil), timeout: 30) { collector.add($0) }
+        guard let exit else { return nil }
+        if exit.cancelled { throw CancellationError() }
+        return CheckResult(succeeded: exit.succeeded, output: collector.text, timedOut: exit.timedOut)
+    }
+
+    struct CheckResult {
+        let succeeded: Bool
+        let output: String
+        let timedOut: Bool
+        var failureText: String { timedOut ? "timed out" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    private final class Lines: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [String] = []
+        func add(_ line: String) { lock.withLock { stored.append(line) } }
+        var text: String { lock.withLock { stored.joined(separator: "\n") } }
+    }
+
     /// `claude auth status --json`: e-mail, organization and API provider, no secrets.
     static func claude(env: HarnessEnvironment) async throws -> SendDestination {
         guard let claude = env.findExecutable("claude") else { throw Failure(message: "Claude Code (claude) is not installed.") }
-        let result = await ProcessRunner.run(claude, arguments: ["auth", "status", "--json"],
-                                             environment: AgentRun.environment(env, runFolder: nil), timeout: 30)
+        let result = try await check(claude, arguments: ["auth", "status", "--json"], env: env)
         guard let result, result.succeeded else {
             throw Failure(message: "Couldn't check the Claude Code account (claude auth status): \(result?.failureText ?? "it didn't start").")
         }
@@ -208,8 +232,7 @@ public enum SendAccounts {
         guard !provider.isEmpty else { throw Failure(message: "Which Pi provider? Pick a model as provider/model.") }
         let entry = piEntry(provider: provider, settings: settings)
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
-        let result = await ProcessRunner.run(pi, arguments: ["auth", "check", "--provider", provider, "--json", "--no-refresh"],
-                                             environment: AgentRun.environment(env, runFolder: nil), timeout: 30)
+        let result = try await check(pi, arguments: ["auth", "check", "--provider", provider, "--json", "--no-refresh"], env: env)
         let status = result.flatMap { result -> String? in
             let text = result.output
             let json = text.firstIndex(of: "{").map { String(text[$0...]) } ?? text

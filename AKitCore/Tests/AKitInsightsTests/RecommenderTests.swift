@@ -241,6 +241,7 @@ extension RecommenderTests {
         let evidence = item.evidence
         #expect(evidence.sessions == 20 && evidence.distinctDays == 14 && evidence.from == day(14) && evidence.to == day(1))
         #expect(evidence.modelCalls == 0 && evidence.userCalls == 0 && evidence.callRate == 0 && evidence.callRateUpperBound95 == 0.15)
+        #expect(evidence.callRateBoundText == "15%")
         #expect(evidence.approxContextSpace == 200, "20 sessions × 1 request × ≈ 10 tokens")
         #expect(evidence.binding == nil && evidence.machines.map(\.name) == ["this Mac"])
         // review is listed nowhere; the core layer still holds it as auto.
@@ -915,5 +916,14 @@ extension RecommenderTests {
         }
         #expect(await akit("recommend", "--min-sessions", "5", "--min-days", "3", "--all").code == 0)
         #expect(await akit("--help").out.contains("akit recommend apply ID [--yes]"))
+    }
+
+    /// Above 6,000 sessions 3/n rounds to 0.0 % at 0.1 %: the bound stays 0.1 % and reads "1%", never "0%".
+    @Test func theZeroCallBoundNeverReadsZero() {
+        #expect(Recommender.zeroCallBound(sessions: 20) == 0.15)
+        #expect(Recommender.zeroCallBound(sessions: 0) == 1)
+        #expect(Recommender.zeroCallBound(sessions: 6_001) == 0.001)
+        #expect(Recommender.zeroCallBound(sessions: 100_000) == 0.001)
+        #expect(Recommender.zeroCallBound(sessions: 2_000) == 0.002)
     }
 }

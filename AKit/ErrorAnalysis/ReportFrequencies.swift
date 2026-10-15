@@ -6,6 +6,7 @@ import SwiftUI
 /// one) with its 95% interval, the plain share, goal reached against not. Modes without such a
 /// check show "seen in k notes" and never a percentage.
 struct ReportFrequencies: View {
+    @Environment(AnalysisModel.self) private var analysis
     let report: BatchReport
 
     var body: some View {
@@ -75,6 +76,16 @@ struct ReportFrequencies: View {
                     .help("Sessions of the batch the check has a verdict on, of the done sessions it counts over (its project's only, for a mode of one project)")
             }
         }
+        .askAKit("Frequency of \(analysis.data.mode(mode.modeID)?.neutralName ?? "a mode") (Reports)", facts: [
+            !mode.hasFrequency ? "No frequency: seen in \(AnalysisText.notes(mode.seenInNotes))"
+                : mode.belowDetectionThreshold ? "Below detection threshold"
+                : "Share: \(AnalysisText.percent(mode.corrected ?? mode.weighted))\(mode.corrected != nil ? " (corrected for the check)" : "")"
+                    + (mode.interval.map { ", interval \(AnalysisText.percent($0.low))–\(AnalysisText.percent($0.high))" } ?? ""),
+            mode.hasFrequency ? "Unweighted: \(AnalysisText.percent(mode.unweighted)) (\(mode.positive) of \(mode.checked))" : "",
+            mode.hasFrequency ? "Goal reached / not: \(AnalysisText.percent(mode.achieved)) / \(AnalysisText.percent(mode.notAchieved))" : "",
+            "Check trust: \(mode.trust)", "Checked \(mode.checked)/\(mode.sessions) sessions",
+            mode.notWorthFixing ? "As frequent when the goal was reached: maybe not worth fixing" : "",
+        ])
     }
 
     @ViewBuilder private func share(_ mode: ModeFrequency, scale: Double) -> some View {

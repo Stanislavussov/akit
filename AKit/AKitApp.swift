@@ -4,12 +4,24 @@ import SwiftUI
 /// App entry point.
 @main
 struct AKitApp: App {
-    @State private var model = AppModel()
+    @State private var model: AppModel
     @State private var rebuild = SelfRebuild()
     @State private var guides = GuideNavigator()
+    @State private var ask: AskAKitModel
+
+    init() {
+        // A window tab's "+" would open a second main window.
+        NSWindow.allowsAutomaticWindowTabbing = false
+        let model = AppModel()
+        _model = State(initialValue: model)
+        _ask = State(initialValue: AskAKitModel(app: model))
+    }
 
     var body: some Scene {
-        WindowGroup("AKit") {
+        // One main window: the screen in view (AppModel.section) and Ask AKit's chat belong to
+        // the app, so a second window would only mirror the first (File → New Window is gone).
+        // A WindowGroup, not a Window: a Dock click reopens it after it was closed.
+        WindowGroup("AKit", id: GuideView.mainWindowID) {
             Group {
                 // The Settings and Guide windows can't be captured; `--settings` and `--guide <section>`
                 // show their views in the main one.
@@ -24,6 +36,7 @@ struct AKitApp: App {
                 .environment(model)
                 .environment(rebuild)
                 .environment(guides)
+                .environment(ask)
                 .frame(minWidth: 820, minHeight: 520)
                 .task {
                     if SelfRebuild.requestedAtLaunch {
@@ -45,11 +58,16 @@ struct AKitApp: App {
                     ])
                 }
             }
+            CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .toolbar) {
                 Button("Refresh") { Task { await model.refresh() } }
                     .keyboardShortcut("r")
             }
             CommandGroup(replacing: .help) {
+                Button(ask.isOpen ? "Hide Ask AKit" : "Ask AKit") { ask.toggle() }
+                    .keyboardShortcut("/", modifiers: [.command, .option])
+                    .help("A side panel that answers what something on the screen means, from AKit's guides")
+                Divider()
                 GuideMenuItems(navigator: guides)
                 Divider()
                 Button("Copy Diagnostics") {

@@ -122,4 +122,32 @@ struct GuideDocumentTests {
         }
         for id in ["start", "map", "menus", "settings"] { #expect(document.path(to: id) == [id], "no section \(id)") }
     }
+
+    /// `docs/guides/terms.ru.md`, the glossary Ask AKit reads first: a section per screen, and
+    /// every `[text](guide#id)` link in it opens a section that guide has.
+    @Test func theTermsGuideHasAGroupPerScreenAndItsLinksResolve() throws {
+        let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../docs/guides").standardizedFileURL
+        var documents: [String: GuideDocument] = [:]
+        for name in ["terms", "screens", "error-analysis"] {
+            documents[name] = GuideDocument.parse(try String(contentsOf: folder.appending(path: "\(name).ru.md"), encoding: .utf8))
+        }
+        let terms = try #require(documents["terms"])
+        #expect(!terms.title.isEmpty)
+        for id in ["terms-sidebar", "terms-overview", "terms-skills", "terms-skillsSh", "terms-mcp", "terms-instructions", "terms-settings",
+                   "terms-sessions", "terms-usage", "terms-brain", "terms-insights", "terms-lab", "terms-analysis"] {
+            #expect(terms.path(to: id) == [id], "no section \(id)")
+        }
+        #expect(terms.path(to: "terms-sidebar-ask") == ["terms-sidebar", "terms-sidebar-ask"])
+        let text = try String(contentsOf: folder.appending(path: "terms.ru.md"), encoding: .utf8)
+        var links = 0
+        for match in text.matches(of: /\]\(([a-z-]*)#([A-Za-z0-9-]+)\)/) {
+            let guide = match.output.1.isEmpty ? "terms" : String(match.output.1)
+            let document = try #require(documents[guide], "no guide \(guide)")
+            #expect(document.path(to: String(match.output.2)) != nil, "terms.ru.md links to \(guide)#\(match.output.2), which doesn't exist")
+            links += 1
+        }
+        #expect(links > 100)
+        // Ask AKit's sections that the glossary and the panel point to.
+        for id in ["ask", "ask-panel", "ask-element", "ask-data"] { #expect(documents["screens"]?.path(to: id) != nil, "no screens#\(id)") }
+    }
 }
