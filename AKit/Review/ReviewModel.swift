@@ -229,6 +229,43 @@ final class ReviewModel {
         }
     }
 
+    // MARK: - Discuss in Pi…
+
+    /// Submissions from Discuss in Pi… that aren't a version yet.
+    private(set) var pendingDiscuss = 0
+    /// What the last new version changed.
+    var discussChanges: ReviewDiscuss.Changes?
+
+    func discuss() {
+        guard let run else { return }
+        Task {
+            await attemptAsync {
+                let script = try await ReviewDiscuss.script(run.folder, env: self.env)
+                let place = try await Launcher.openInteractive(script: script, folder: run.worktree ?? run.folder,
+                                                               title: "Review: \(run.spec.mergeRequest.label)", env: self.env)
+                self.problem = nil
+                self.discussOpenedIn = place
+            }
+        }
+    }
+
+    var discussOpenedIn: String?
+
+    func checkDiscuss() {
+        guard let folder else { return }
+        pendingDiscuss = ReviewDiscuss.pending(folder).count
+    }
+
+    func applyDiscuss() {
+        guard let folder else { return }
+        Task {
+            await attemptAsync {
+                self.discussChanges = try await ReviewDiscuss.apply(folder, env: self.env)
+                self.checkDiscuss()
+            }
+        }
+    }
+
     // MARK: - Tokens
 
     func hasToken(_ kind: ReviewTokens.Kind, for name: String) -> Bool {

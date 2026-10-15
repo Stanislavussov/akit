@@ -144,7 +144,6 @@ struct ReviewRunDetail: View {
     let run: ReviewWorkflow.Run
     @State private var showSend = false
     @State private var showMissed = false
-    @State private var showDiscuss = false
 
     private var requests: [ReviewRequest] { run.plan?.requests ?? [] }
     private var approved: [ReviewRequest] { requests.filter { $0.decision == .approved && !$0.isSent } }
@@ -153,6 +152,7 @@ struct ReviewRunDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                discussBanner
                 if let message = run.status?.message, run.status?.stage == .failed || run.status?.stage == .stopped {
                     Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
                 }
@@ -169,7 +169,44 @@ struct ReviewRunDetail: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { actions }
         .sheet(isPresented: $showSend) { SendDraftsSheet(run: run, approved: approved) }
+        .task(id: run.id) {
+            // Discuss in Pi… writes into the run folder from a terminal: look every few seconds.
+            while !Task.isCancelled {
+                model.checkDiscuss()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
         .sheet(isPresented: $showMissed) { AddMissedSheet() }
+    }
+
+    @ViewBuilder private var discussBanner: some View {
+        if model.pendingDiscuss > 0 {
+            HStack {
+                Label("Pi sent \(model.pendingDiscuss) change\(model.pendingDiscuss == 1 ? "" : "s") from the discussion.", systemImage: "bubble.left.and.text.bubble.right")
+                Spacer()
+                Button("Make New Version") { model.applyDiscuss() }
+                    .help("Apply them as a new version of the findings; the requests are planned again and wait for your approval")
+            }
+            .padding(10)
+            .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
+        if let changes = model.discussChanges {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Version \(changes.version) of the findings").fontWeight(.medium)
+                    Spacer()
+                    Button("Dismiss") { model.discussChanges = nil }
+                }
+                if changes.isEmpty { Text("Nothing changed.").foregroundStyle(.secondary) }
+                ForEach(changes.added, id: \.self) { Text("New: \($0)").font(.callout) }
+                ForEach(changes.changed, id: \.self) { Text("Changed: \($0)").font(.callout) }
+            }
+            .padding(10)
+            .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        }
+        if let place = model.discussOpenedIn {
+            Text("Discuss in Pi… opened in \(place). Changes Pi submits there show up here.").font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     private var header: some View {
@@ -286,6 +323,9 @@ struct ReviewRunDetail: View {
         HStack {
             Button("Add Missed…") { showMissed = true }
                 .help("Something the reviewer should have found: it improves the roles, never goes to GitLab")
+            Button("Discuss in Pi…") { model.discuss() }
+                .help("Open Pi in a terminal with the whole review (a fork of the verifier's session). What it submits becomes a new version here.")
+                .disabled(run.passes?.verifierSession == nil && run.passes == nil)
             Button("Refresh from GitLab") { model.refreshFromGitLab() }
                 .help("Read your drafts and the threads again and plan the requests anew (after a push, or edits in GitLab)")
                 .disabled(run.findings == nil)

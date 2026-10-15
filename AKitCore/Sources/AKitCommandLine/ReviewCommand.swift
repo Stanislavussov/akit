@@ -43,6 +43,10 @@ extension AKitCLI {
                                         Print the requests; --yes sends the approved ones as draft
                                         notes (you publish them in GitLab with Submit review).
                                         --refresh reads your drafts and the threads again first
+      akit review discuss RUN           Write the Discuss in Pi… script (pi --fork of the verifier's
+                                        session) and print how to start it
+      akit review apply RUN             Make a new version of the findings from what Pi submitted in
+                                        the discussion; the requests are planned again
       akit review quality               Precision by role, scenario and model from your verdicts
       akit review runs                  Every run on this Mac, newest first
       akit review config show [--project P] [--mr MR-URL] [--scenario S] [--brain DIR]
@@ -212,6 +216,25 @@ extension AKitCLI {
             for failure in report.failed { err("akit: \(failure.id): \(failure.message)") }
             out("Publish them in GitLab with Submit review: \(run.spec.mergeRequest.url)")
             return report.failed.isEmpty ? 0 : 1
+        case "discuss":
+            guard let id = args.positional() else { throw Failure(message: "akit review discuss RUN.") }
+            try args.finish()
+            let script = try await ReviewDiscuss.script(try runFolder(id, env: env), env: env)
+            out("Start the discussion in a terminal: \(script.path)")
+            out("Then: akit review apply \(id)")
+            return 0
+        case "apply":
+            guard let id = args.positional() else { throw Failure(message: "akit review apply RUN.") }
+            try args.finish()
+            guard let changes = try await ReviewDiscuss.apply(try runFolder(id, env: env), env: env) else {
+                out("Pi submitted nothing new in the discussion.")
+                return 0
+            }
+            out("Version \(changes.version) of the findings.")
+            for line in changes.added { out("  new: \(line)") }
+            for line in changes.changed { out("  changed: \(line)") }
+            out("The requests were planned again: akit review show \(id)")
+            return 0
         case "quality":
             try args.finish()
             out(qualityText(ReviewQuality.entries(home: env.homeDirectory)))

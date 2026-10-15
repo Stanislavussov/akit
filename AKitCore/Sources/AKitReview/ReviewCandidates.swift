@@ -102,7 +102,9 @@ public enum ReviewCandidates {
 
     /// The verifier's verdicts on the candidates. A candidate without a verdict stays
     /// unverified, which never goes inline.
-    static func apply(verdictsFile: URL, to candidates: [ReviewFinding]) -> [ReviewFinding] {
+    /// `keepingUnmentioned`: a candidate without a verdict in the file keeps the one it has (a
+    /// discussion changes some findings, not all).
+    static func apply(verdictsFile: URL, to candidates: [ReviewFinding], keepingUnmentioned: Bool = false) -> [ReviewFinding] {
         guard let object = (try? Data(contentsOf: verdictsFile)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else {
             return candidates
         }
@@ -118,7 +120,7 @@ public enum ReviewCandidates {
         }
         return candidates.map { finding in
             var finding = finding
-            finding.verifier = byID[finding.id]
+            if let verdict = byID[finding.id] { finding.verifier = verdict } else if !keepingUnmentioned { finding.verifier = nil }
             if let verdict = byID[finding.id], verdict.verdict == .merged, let into = verdict.into, !finding.related.contains(into) {
                 finding.related.append(into)
             }

@@ -56,6 +56,15 @@ Decisions made while building:
 - Gather and the passes run inside the app (one review at a time, Stop ends the pass); a run
   survives a quit as a folder, and Run Passes (or `akit review passes RUN`) runs it again.
 
+Built: step 4 (2026-10-15): reruns by fingerprint end to end (a new run of the same merge
+request sees the drafts the last one sent: same text → nothing, gone → delete), Discuss in Pi…
+(`ReviewDiscuss`: `<run>/discuss.command` with `pi --fork` of the verifier's session, opened in
+Orca, herdr or Terminal by `Launcher.openInteractive`; Make New Version turns what Pi submitted
+into `findings.json` version N+1, keeps `findings-v<N>.json` and plans the requests again),
+`akit review discuss|apply`. In a discussion, `verdicts` change findings by id and `findings`
+add new ones (counted as confirmed: the developer was there); the discussion's tokens go into
+`passes.json` and the send log when its version is made.
+
 ## What and why
 
 The user reviews GitLab merge requests at work. An agent can read the change first, check it

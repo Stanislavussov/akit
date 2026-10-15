@@ -43,6 +43,8 @@ public struct ReviewFindingsFile: Codable, Sendable, Hashable {
     public var findings: [ReviewFinding]
     /// Where this version came from: `passes`, or `discuss`.
     public var source: String
+    /// Discuss in Pi… submissions already in a version (`passes/discuss-<time>.json`).
+    public var appliedDiscuss: [String]?
 
     public init(version: Int, created: Date = .now, findings: [ReviewFinding], source: String) {
         self.version = version
