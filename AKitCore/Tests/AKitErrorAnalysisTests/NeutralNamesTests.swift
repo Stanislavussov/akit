@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AKitFoundation
 @testable import AKitHelp
 @testable import AKitErrorAnalysis
 
@@ -77,5 +78,35 @@ struct NeutralNamesTests {
         #expect(clean.element?.title == "Over reading and EXPORT")
         // Bounded by "/" it is a token; inside a longer id or word it isn't.
         #expect(clean.element?.facts == "Path: x/\(AskContext.redacted)/y\nNot \(task)-2 nor pre\(mode)")
+    }
+
+    /// An emergent mode's name counts whatever its length, as a whole word sequence.
+    @Test func shortModeNamesAreCaughtAsWordSequences() {
+        let context = AskContext(screen: "analysis", screenTitle: "Error Analysis", summary: "Mode: Scope creep (12 notes)\nScope: all projects",
+                                 element: .init(title: "scope-creep", facts: "Scoped creeping"))
+        let clean = context.redacting([], names: ["Scope creep"])
+        #expect(clean.summary == "Mode: \(AskContext.redacted) (12 notes)\nScope: all projects")
+        #expect(clean.element?.title == AskContext.redacted)
+        #expect(clean.element?.facts == "Scoped creeping")
+    }
+
+    /// The backstop reads the saved modes and tasks without setting anything up, and says when
+    /// a file is there but can't be read.
+    @Test func storedModesAndTasksAreReadOnlyAndStrict() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "akit-stored-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let env = HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path], executableSearchPaths: [])
+        #expect(try ModeStore(env: env).storedModes().isEmpty)
+        #expect(try ControlTasks.storedTasks(env: env).isEmpty)
+        // Nothing was created: no repository, no seeds.
+        #expect(!FileManager.default.fileExists(atPath: AnalysisPaths(env: env).folder.path))
+        let modes = AnalysisPaths(env: env).modesFile
+        try FileManager.default.createDirectory(at: modes.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: modes)
+        #expect(throws: ModeStore.Failure.self) { try ModeStore(env: env).storedModes() }
+        let tasks = EvalPaths(env: env).tasks
+        try FileManager.default.createDirectory(at: tasks, withIntermediateDirectories: true)
+        try Data("{".utf8).write(to: tasks.appending(path: "broken.json"))
+        #expect(throws: ControlTasks.Failure.self) { try ControlTasks.storedTasks(env: env) }
     }
 }

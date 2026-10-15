@@ -61,13 +61,21 @@ extension AskContext {
     /// slug). They count whatever their length, matched as one exact token, case-insensitive:
     /// not inside a longer token of letters, digits, `-` or `_`, so `export-1a2b` is caught and
     /// a plain "Export" isn't.
-    public func redacting(_ texts: [String], ids: [String] = []) -> AskContext {
+    ///
+    /// `names`: names made from session words (an emergent mode's name), matched like `texts`
+    /// as whole word sequences but whatever their length: "Scope creep" is caught, the word
+    /// "scope" alone isn't.
+    public func redacting(_ texts: [String], ids: [String] = [], names: [String] = []) -> AskContext {
         let ids = Set(ids.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }).sorted { $0.count > $1.count }
         var byFirst: [String: [[String]]] = [:]
         for text in texts {
             let words = Self.words(text).map(\.word)
             guard let first = words.first, words.count >= 3 || text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 16 else { continue }
             byFirst[first, default: []].append(words)
+        }
+        for name in names {
+            let words = Self.words(name).map(\.word)
+            if let first = words.first { byFirst[first, default: []].append(words) }
         }
         guard !byFirst.isEmpty || !ids.isEmpty else { return self }
         for key in byFirst.keys { byFirst[key]?.sort { $0.count > $1.count } }

@@ -265,10 +265,11 @@ final class AskAKitModel {
                 let (guides, search) = await loadGuides()
                 let language = inSettingsLanguage ? LabSettings.load(env: .current).reportLanguage.name : nil
                 // Modes and control tasks from disk, not only when Error Analysis has loaded them.
-                let words = await Self.sessionWords(labTasks: labTasks)
+                let words = try await Self.sessionWords(labTasks: labTasks)
+                if scope.isCancelled { throw CancellationError() }
                 // Off the main actor: the backstop scans every session title.
                 let prepared = await Task.detached {
-                    AskAKit.prepare(question: question, context: context.redacting(hidden + words.texts, ids: words.ids), history: history, guides: guides,
+                    AskAKit.prepare(question: question, context: context.redacting(hidden + words.texts, ids: words.ids, names: words.names), history: history, guides: guides,
                                     search: search, language: language)
                 }.value
                 if scope.isCancelled { throw CancellationError() }
@@ -334,20 +335,39 @@ final class AskAKitModel {
         if let element { focus = element }
     }
 
-    /// The texts and ids made from session words, read from disk off the main actor: every
-    /// mode's name and definition and every non-seed mode id; every non-commit control task's
-    /// title, prompt and id (Lab's tasks too). The backstop of every send uses them.
-    private nonisolated static func sessionWords(labTasks: [ControlTask]) async -> (texts: [String], ids: [String]) {
-        await Task.detached {
+    /// The texts, names and ids made from session words, read from disk off the main actor
+    /// and without setting anything up (`storedModes`, `storedTasks`): every mode's definition,
+    /// every non-seed mode's name and id; every non-commit control task's title, prompt and id
+    /// (Lab's tasks too). The backstop of every send uses them; a file that is there but can't
+    /// be read stops the send. Cancelling the calling task (Stop) cancels the read.
+    private nonisolated static func sessionWords(labTasks: [ControlTask]) async throws -> (texts: [String], names: [String], ids: [String]) {
+        let read = Task.detached { () throws -> (texts: [String], names: [String], ids: [String]) in
             let env = HarnessEnvironment.current
-            let modes = (try? await ModeStore(env: env).list()) ?? []
-            var tasks = ControlTasks.list(env: env)
-            let known = Set(tasks.map(\.id))
-            tasks += labTasks.filter { !known.contains($0.id) }
-            let fromSessions = tasks.filter { if case .commit = $0.source { false } else { true } }
-            return (modes.flatMap { [$0.name, $0.definition] } + fromSessions.flatMap { [$0.title, $0.prompt] },
-                    Mode.sessionDerivedIDs(modes) + ControlTask.sessionDerivedIDs(tasks))
-        }.value
+            do {
+                let modes = try ModeStore(env: env).storedModes()
+                try Task.checkCancellation()
+                var tasks = try ControlTasks.storedTasks(env: env)
+                let known = Set(tasks.map(\.id))
+                tasks += labTasks.filter { !known.contains($0.id) }
+                let fromSessions = tasks.filter { if case .commit = $0.source { false } else { true } }
+                let emergent = modes.filter { !$0.origin.isSeed }
+                return (modes.map(\.definition) + fromSessions.flatMap { [$0.title, $0.prompt] }, emergent.map(\.name),
+                        Mode.sessionDerivedIDs(modes) + ControlTask.sessionDerivedIDs(tasks))
+            } catch let failure as ModeStore.Failure {
+                throw BackstopUnreadable(reason: failure.message)
+            } catch let failure as ControlTasks.Failure {
+                throw BackstopUnreadable(reason: failure.message)
+            }
+        }
+        return try await withTaskCancellationHandler { try await read.value } onCancel: { read.cancel() }
+    }
+
+    /// A modes or tasks file the backstop can't read: the question isn't sent.
+    private struct BackstopUnreadable: LocalizedError {
+        let reason: String
+        var errorDescription: String? {
+            "Not sent: AKit couldn't read its error analysis files to keep session text out of the question (\(reason)). Fix or remove that file, then ask again."
+        }
     }
 
     /// What a link in an answer may open: a section a guide has, or an https page.

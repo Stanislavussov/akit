@@ -293,6 +293,18 @@ public enum ControlTasks {
         return task
     }
 
+    /// Every task file decoded, read-only (no repository lookups); throws for a file that can't
+    /// be read or decoded, which `list` skips. No folder yet: none.
+    public static func storedTasks(env: HarnessEnvironment) throws -> [ControlTask] {
+        try FileWalk.children(of: EvalPaths(env: env).tasks).filter { $0.pathExtension == "json" }.map { file in
+            do {
+                return try AnalysisJSON.decoder.decode(ControlTask.self, from: Data(contentsOf: file))
+            } catch {
+                throw Failure(message: "\(file.path) can't be read: \(error.localizedDescription)")
+            }
+        }
+    }
+
     /// Every task, oldest first.
     public static func list(env: HarnessEnvironment) -> [ControlTask] {
         FileWalk.children(of: EvalPaths(env: env).tasks)

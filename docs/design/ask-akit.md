@@ -94,11 +94,14 @@ read-only task passed, and each place names it (its title on screen, its id in `
 `ControlTask.neutralName(of:in:)` for Ask AKit, "a removed control task #hash" when it is gone). Two layers keep
 it so: the facts the views build, and `AskContext.redacting`, run on every send with every
 session title AppModel has, every mode's name and definition, every non-commit task's title and
-prompt (read from disk for each send, with Lab's tasks, so not only once Error Analysis has
-loaded), and, structurally, the session-derived ids themselves (`Mode.sessionDerivedIDs`: every
+prompt (read from disk for each send, read-only and without the store's lock or setup
+(`ModeStore.storedModes`, `ControlTasks.storedTasks`), with Lab's tasks, so not only once Error
+Analysis has loaded; a file that is there but can't be read stops the send with "Not sent: AKit
+couldn't read …"; Stop cancels the read), and, structurally, the session-derived ids themselves (`Mode.sessionDerivedIDs`: every
 non-seed mode id, renamed modes included; `ControlTask.sessionDerivedIDs`: every non-commit task
 id), which replaces any of them a fact still quotes: texts as whole words across any separators,
-ids as exact tokens of any length (`export-1a2b`, not a plain "Export")
+ids as exact tokens of any length (`export-1a2b`, not a plain "Export"), and emergent mode
+names as whole word sequences of any length ("Scope creep", not the word "scope")
 (tested in `AskAKitTests` and, with ids made by `ControlTasks.newID` and `Clustering.slug`, in
 `NeutralNamesTests`). A batch's pause reason, a worker's free text, is not sent. The user's own typed question and the chat are sent as
 written. The MCP pane sends names only, never a value (no arguments, the URL's host, the names

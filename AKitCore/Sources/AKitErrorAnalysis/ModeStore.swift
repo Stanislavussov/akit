@@ -34,6 +34,19 @@ public struct ModeStore: Sendable {
         try await locked { try await prepare() }
     }
 
+    /// The modes as saved, read-only: no repository set up, no seeds, no lock (Ask AKit's
+    /// backstop reads them for every send). No folder or file yet: none. Throws when the file
+    /// is there but can't be read or decoded.
+    public func storedModes() throws -> [Mode] {
+        let file = paths.modesFile
+        guard FileManager.default.fileExists(atPath: file.path) else { return [] }
+        do {
+            return try AnalysisJSON.decoder.decode([Mode].self, from: Data(contentsOf: file))
+        } catch {
+            throw Failure(message: "\(file.path) can't be read: \(error.localizedDescription)")
+        }
+    }
+
     public func mode(_ id: String) async throws -> Mode? {
         try await list().first { $0.id == id }
     }
