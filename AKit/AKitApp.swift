@@ -17,8 +17,9 @@ struct AKitApp: App {
 
     var body: some Scene {
         // One main window: the screen in view (AppModel.section) and Ask AKit's chat belong to
-        // the app, so a second window would only mirror the first.
-        Window("AKit", id: "main") {
+        // the app, so a second window would only mirror the first (File → New Window is gone).
+        // A WindowGroup, not a Window: a Dock click reopens it after it was closed.
+        WindowGroup("AKit", id: GuideView.mainWindowID) {
             Group {
                 // The Settings and Guide windows can't be captured; `--settings` and `--guide <section>`
                 // show their views in the main one.
@@ -55,6 +56,7 @@ struct AKitApp: App {
                     ])
                 }
             }
+            CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .toolbar) {
                 Button("Refresh") { Task { await model.refresh() } }
                     .keyboardShortcut("r")

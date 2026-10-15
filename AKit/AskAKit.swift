@@ -32,7 +32,7 @@ final class AskAKitModel {
         var systemCharacters: Int
     }
 
-    /// A question waiting for the first-send confirmation.
+    /// A question to send.
     struct Pending {
         var question: String
         var element: AskContext.Element?
@@ -40,12 +40,24 @@ final class AskAKitModel {
         var inSettingsLanguage: Bool
     }
 
+    /// The confirmation before the first send to a destination (harness and provider) in this
+    /// launch: the call waits for the answer.
+    struct Consent {
+        /// `harness|provider`.
+        let key: String
+        /// The account's label (`SendDestination.label`), with the harness and model.
+        let destination: String
+        let answer: CheckedContinuation<Bool, Never>
+    }
+
     /// The agent's settings, shared with the panel's fields (`@AppStorage`).
     static let harnessKey = "ask.harness"
     static let modelKey = "ask.model"
     static let effortKey = "ask.effort"
-    /// Set by "Don't ask again" in the first-send confirmation.
-    static let consentKey = "ask.dontConfirm"
+    /// Settings → Ask before Ask AKit sends (default on); off never asks.
+    static let confirmKey = "ask.confirmBeforeSend"
+    /// The destinations (`harness|provider`) "Don't ask again" was ticked for; Settings clears them.
+    static let skipConfirmKey = "ask.dontConfirmDestinations"
     /// What Ask AKit About This asks.
     static let aboutQuestion = "What does this mean, why does it matter, and what can I do about it?"
 
@@ -67,10 +79,10 @@ final class AskAKitModel {
     /// True from a send until its task has really ended (its harness process is gone): New Chat
     /// or Stop during a call never lets a second call start beside it.
     private(set) var isRunning = false
-    /// The question the first-send confirmation asks about; nil when none is shown.
-    var pending: Pending?
-    /// Confirmed once in this launch (or "Don't ask again"): later sends go straight out.
-    private var confirmed = UserDefaults.standard.bool(forKey: consentKey)
+    /// The confirmation shown now; nil when none waits.
+    private(set) var consent: Consent?
+    /// Destinations confirmed in this launch.
+    private var confirmed = Set<String>()
     private var call: Task<Void, Never>?
     /// The running call's processes: Stop and New Chat cancel it, which ends the harness's
     /// process (ChildProcess follows this scope, not Task cancellation).
@@ -132,9 +144,9 @@ final class AskAKitModel {
     /// Opens the panel and asks about `element` on `screen` (the current one by default; a
     /// sidebar item names its own). Ignored while a call runs: the menu item is off then too.
     func ask(about element: AskContext.Element, screen: SidebarSection? = nil) {
-        guard !isRunning, pending == nil else { return }
+        guard !isRunning else { return }
         isOpen = true
-        request(Pending(question: Self.aboutQuestion, element: element, screen: screen ?? section, inSettingsLanguage: true))
+        send(Pending(question: Self.aboutQuestion, element: element, screen: screen ?? section, inSettingsLanguage: true))
     }
 
     func newChat() {
@@ -149,6 +161,38 @@ final class AskAKitModel {
     func stop() {
         scope?.cancel()
         call?.cancel()
+        // A confirmation still open: not sent.
+        answerConsent(send: false, dontAskAgain: false)
+    }
+
+    /// Whether a send to `key` (`harness|provider`) asks first.
+    static func needsConsent(_ key: String, confirmedThisLaunch: Set<String>) -> Bool {
+        let defaults = UserDefaults.standard
+        let asks = defaults.object(forKey: confirmKey) as? Bool ?? true
+        return asks && !confirmedThisLaunch.contains(key) && !(defaults.stringArray(forKey: skipConfirmKey) ?? []).contains(key)
+    }
+
+    /// The confirmation's Send or Cancel; "Don't ask again" stores the destination.
+    func answerConsent(send: Bool, dontAskAgain: Bool) {
+        guard let consent else { return }
+        self.consent = nil
+        if send {
+            confirmed.insert(consent.key)
+            if dontAskAgain {
+                let defaults = UserDefaults.standard
+                defaults.set(Array(Set(defaults.stringArray(forKey: Self.skipConfirmKey) ?? []).union([consent.key])).sorted(),
+                             forKey: Self.skipConfirmKey)
+            }
+        }
+        consent.answer.resume(returning: send)
+    }
+
+    /// Asks before the first send to a destination; true to send.
+    private func confirm(_ destination: SendDestination, agent: LabAgent) async -> Bool {
+        let key = "\(destination.harness.rawValue)|\(destination.provider)"
+        guard Self.needsConsent(key, confirmedThisLaunch: confirmed) else { return true }
+        let label = "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model) · \(destination.label)"
+        return await withCheckedContinuation { answer in consent = Consent(key: key, destination: label, answer: answer) }
     }
 
     /// Works out the agent: the panel's choice, else Lab's default for the harness. A chosen
@@ -176,38 +220,12 @@ final class AskAKitModel {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isRunning else { return }
         draft = ""
-        request(Pending(question: question, element: focus, screen: section, inSettingsLanguage: false))
-    }
-
-    /// Sends at once once confirmed; else shows the first-send confirmation.
-    private func request(_ question: Pending) {
-        guard !isRunning, pending == nil else { return }
-        if confirmed {
-            send(question)
-        } else {
-            pending = question
-        }
-    }
-
-    /// The confirmation's Send. `dontAskAgain`: its suppression toggle.
-    func confirmPending(dontAskAgain: Bool) {
-        guard let question = pending else { return }
-        pending = nil
-        confirmed = true
-        if dontAskAgain { UserDefaults.standard.set(true, forKey: Self.consentKey) }
-        send(question)
-    }
-
-    func cancelPending() {
-        // A typed question goes back into the field; About This just isn't asked.
-        if let question = pending, !question.inSettingsLanguage { draft = question.question }
-        pending = nil
+        send(Pending(question: question, element: focus, screen: section, inSettingsLanguage: false))
     }
 
     private func send(_ question: Pending) {
         guard !isRunning else { return }
-        // The element becomes the focus only now that the question is really sent.
-        if let element = question.element { focus = element }
+        let element = question.element
         let about = question.element?.title
         let inSettingsLanguage = question.inSettingsLanguage
         var context = context(for: question.screen)
@@ -239,21 +257,28 @@ final class AskAKitModel {
                 let folder = FileManager.default.temporaryDirectory.appending(path: "akit-ask-\(UUID().uuidString)")
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 defer { try? FileManager.default.removeItem(at: folder) }
-                // The account check and the call run their processes in this call's scope.
+                // The account check (SendAccounts runs it as a ChildProcess) and the call run
+                // their processes in this call's scope: Stop ends either.
                 let answer = try await Cancellation.$scope.withValue(scope) {
                     let gate = try await SendGate.open(agent: agent, env: env)
                     if scope.isCancelled { throw CancellationError() }
-                    // What Was Sent: the input as the scrub leaves it, before the call starts.
-                    let sent = Sent(destination: "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model) · \(gate.destination.label)",
-                                    input: gate.scrub(prepared.input).text, sections: prepared.sources,
-                                    systemCharacters: prepared.system.count)
-                    if chat == self.chat, let index = messages.firstIndex(where: { $0.id == asked.id }) { messages[index].sent = sent }
+                    guard await confirm(gate.destination, agent: agent) else { throw NotSent() }
+                    if scope.isCancelled { throw CancellationError() }
+                    let destination = "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model) · \(gate.destination.label)"
+                    let id = asked.id, sources = prepared.sources, system = prepared.system.count
                     // The screen's data is the user's harness setup: the chosen harness's own
                     // account is its origin, so a work Mac sends it only to an allowed destination.
                     return try await ModelCall.run(
                         ModelCall.Request(agent: agent, purpose: "ask akit", system: prepared.system, input: prepared.input,
                                           schema: AskAKit.schema, origin: .code(agent.harness)),
-                        gate: gate, folder: folder, env: env)
+                        gate: gate, folder: folder, env: env,
+                        // Only now does it leave: What Was Sent, and the element becomes the focus.
+                        onSend: { input in
+                            Task { @MainActor in
+                                self.didSend(Sent(destination: destination, input: input, sections: sources, systemCharacters: system),
+                                             message: id, element: element, chat: chat)
+                            }
+                        })
                 }
                 if scope.isCancelled { throw CancellationError() }
                 // Reading the answer parses JSON: off the main actor.
@@ -264,6 +289,8 @@ final class AskAKitModel {
                 }.value
             } catch is CancellationError {
                 reply = Message(role: .assistant, text: "Stopped.", failed: true)
+            } catch is NotSent {
+                reply = Message(role: .assistant, text: "Not sent.", failed: true)
             } catch {
                 reply = Message(role: .assistant, text: error.localizedDescription, failed: true)
             }
@@ -274,6 +301,16 @@ final class AskAKitModel {
             guard chat == self.chat else { return }
             messages.append(reply)
         }
+    }
+
+    /// The confirmation's Cancel.
+    private struct NotSent: Error {}
+
+    /// The question went out: What Was Sent, and its element is the focus from now on.
+    private func didSend(_ sent: Sent, message: UUID, element: AskContext.Element?, chat: Int) {
+        guard chat == self.chat else { return }
+        if let index = messages.firstIndex(where: { $0.id == message }) { messages[index].sent = sent }
+        if let element { focus = element }
     }
 
     /// What a link in an answer may open: a section a guide has, or an https page.
@@ -340,8 +377,19 @@ extension View {
     /// Adds Ask AKit About This to the view's context menu. For a view that already has a
     /// context menu, put `AskAKitMenuItem` in that menu instead. The facts are built only when
     /// the item is chosen.
-    func askAKit(_ title: String, facts: @autoclosure @escaping () -> [String] = []) -> some View {
-        contextMenu { AskAKitMenuItem(title: title, facts: facts()) }
+    /// `copy`: a Copy item first, for a row whose label isn't selectable (so that a right-click
+    /// on it reaches this menu).
+    func askAKit(_ title: String, facts: @autoclosure @escaping () -> [String] = [], copy: String? = nil) -> some View {
+        contextMenu {
+            if let copy {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(copy, forType: .string)
+                }
+                Divider()
+            }
+            AskAKitMenuItem(title: title, facts: facts())
+        }
     }
 
     /// What the screen shows now (`label: value` lines), for Ask AKit's questions on it.
@@ -369,7 +417,7 @@ struct AskAKitMenuItem: View {
         Button("Ask AKit About This", systemImage: "questionmark.bubble") {
             ask.ask(about: AskContext.Element(title: title, facts: facts().filter { !$0.isEmpty }.joined(separator: "\n")), screen: screen)
         }
-        .disabled(ask.isRunning || ask.pending != nil)
+        .disabled(ask.isRunning)
     }
 }
 
@@ -416,25 +464,32 @@ struct AskAKitPanel: View {
             footer
         }
         .frame(minWidth: 280)
-        // The first send (of this launch, until Don't ask again): what leaves the Mac and where.
-        .confirmationDialog("Send to \(ask.agent.harness.title)?", isPresented: Binding(get: { ask.pending != nil }, set: { if !$0 { ask.cancelPending() } }),
-                            titleVisibility: .visible) {
-            Button("Send") { ask.confirmPending(dontAskAgain: dontAskAgain) }
-            Button("Cancel", role: .cancel) { ask.cancelPending() }
+        // The first send to a destination (harness and provider) in this launch, until Don't ask
+        // again: what leaves the Mac and where. The call waits for the answer.
+        .confirmationDialog("Send to \(ask.agent.harness.title)?", isPresented: Binding(get: { ask.consent != nil }, set: { shown in
+            if !shown { answer(false) }
+        }), titleVisibility: .visible) {
+            Button("Send") { answer(true) }
+            Button("Cancel", role: .cancel) { answer(false) }
         } message: {
             Text("""
-                Ask AKit sends one request to \(agentName), with the account signed in there:
+                Ask AKit sends one request to \(ask.consent?.destination ?? agentName), with the account signed in there:
                 • your question and the chat so far;
                 • this screen's data: names, counts, ids, statuses and numbers (never text from sessions);
                 • the values of the element you asked about;
                 • the AKit guide sections that fit the question.
-                The sending policy, the scrub and the monthly limit apply, and Lab → Sends logs it. What Was Sent under each question shows it.
+                The sending policy, the scrub and the monthly limit apply, and Lab → Sends logs it. What Was Sent under each question shows it. Settings → Ask before Ask AKit sends brings this back after Don't ask again.
                 """)
         }
         .dialogSuppressionToggle("Don't ask again", isSuppressed: $dontAskAgain)
         // The agent is worked out here, not on every redraw.
         .onAppear { ask.refreshAgent() }
-        .onChange(of: "\(harnessRaw)|\(modelName)|\(effort)") { ask.refreshAgent() }
+        // A hidden panel can't show the confirmation: the waiting call isn't sent.
+        .onDisappear { if ask.consent != nil { answer(false) } }
+        // Not per keystroke of the model field: when the harness or effort changes, and when the
+        // agent popover closes.
+        .onChange(of: "\(harnessRaw)|\(effort)") { ask.refreshAgent() }
+        .onChange(of: choosingAgent) { _, open in if !open { ask.refreshAgent() } }
         // `[title](screens#id)` in an answer opens the Guide window at that section.
         // Only a guide section the guides have (in the Guide window) or an https page (in the
         // browser) opens; a file, an app's scheme or an unknown section does nothing.
@@ -535,6 +590,12 @@ struct AskAKitPanel: View {
         }
         .padding(12)
         .onAppear { inputFocused = true }
+    }
+
+    /// The confirmation's answer; the suppression toggle starts unticked next time.
+    private func answer(_ send: Bool) {
+        ask.answerConsent(send: send, dontAskAgain: send && dontAskAgain)
+        dontAskAgain = false
     }
 
     /// "Claude Code · opus".

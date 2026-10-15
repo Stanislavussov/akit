@@ -743,6 +743,19 @@ private struct SkillDetailView: View {
             .askAKit("Skill \(skill.name): \(text)", facts: detailFacts)
     }
 
+    /// A source as Ask AKit may send it: a URL as host and path only (no user, password,
+    /// query or fragment, where a token could be), `git@host:path` without its user.
+    static func safeSource(_ origin: String) -> String {
+        if origin.contains("://") {
+            guard let url = URLComponents(string: origin), let host = url.host else { return "a URL" }
+            return host + url.path
+        }
+        if let at = origin.firstIndex(of: "@"), origin[origin.index(after: at)...].contains(":") {
+            return String(origin[origin.index(after: at)...])
+        }
+        return origin
+    }
+
     /// The fields the pane shows, for Ask AKit About This.
     private var detailFacts: [String] {
         let brain: String = switch link {
@@ -755,7 +768,7 @@ private struct SkillDetailView: View {
             "Location: \(skill.file.tildePath)", skill.realFile.path != skill.file.path ? "Real path: \(skill.realFile.tildePath)" : "",
             "Visible to: \(skill.visibleTo.isEmpty ? "No harness" : skill.visibleTo.map(\.displayName).joined(separator: ", "))",
             duplicate.map { "Duplicate: \($0.harnesses.map(\.displayName).joined(separator: ", ")) load \($0.copies.count) copies together" } ?? "",
-            skill.origin.map { "Source: \($0)" } ?? "", brain, skill.isReadOnly ? "Read-only" : "",
+            skill.origin.map { "Source: \(Self.safeSource($0))" } ?? "", brain, skill.isReadOnly ? "Read-only" : "",
             skill.warnings.isEmpty ? "" : "Warnings: \(skill.warnings.joined(separator: "; "))",
         ]
     }

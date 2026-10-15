@@ -588,7 +588,10 @@ private struct UsageTable: View {
         .contentShape(Rectangle())
         .askAKit("Usage table row: \(title)", facts: zip(report.subscriptions, cells).map { subscription, cell in
             "\(subscription.name): " + Self.askText(cell)
-        } + ["Total: " + Self.askText(total)])
+        } + ["Total: " + Self.askText(total)],
+                 // The day isn't selectable (so the right-click gets this menu): copy the row here.
+                 copy: ([title] + zip(report.subscriptions, cells).map { "\($0.name): " + Self.askText($1) } + ["Total: " + Self.askText(total)])
+                    .joined(separator: "\t"))
     }
 
     /// A cell's values for Ask AKit: tokens, responses, cost.

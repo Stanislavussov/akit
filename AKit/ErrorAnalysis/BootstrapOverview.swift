@@ -74,7 +74,7 @@ struct BootstrapOverview: View {
                             "Phase: \(share(m.phaseAgreement, m.deviationCounts[0], m.deviationCounts[2]))",
                             "±3 steps: \(share(m.stepAgreement, m.deviationCounts[1], m.deviationCounts[2]))",
                             "Outcome: \(share(m.outcomeAgreement, m.outcomeCounts[0], m.outcomeCounts[1]))",
-                        ])
+                        ], copy: m.notesVersion)
                     }
                 }
                 .textSelection(.enabled)
