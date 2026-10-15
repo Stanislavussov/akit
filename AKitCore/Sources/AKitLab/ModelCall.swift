@@ -67,9 +67,12 @@ public enum ModelCall {
 
     /// Checks, scrubs, sends, logs. Retries a rate-limited call with exponential backoff.
     /// `folder` holds the input file (Pi reads it as `@file`) for the length of the call.
+    /// `onSend` gets the scrubbed input once the policy and the limit allow the call, right
+    /// before it goes out (never for a refused call).
     public static func run(_ request: Request, gate: SendGate, folder: URL, env: HarnessEnvironment,
                            timeout: TimeInterval = 20 * 60, retries: Int = 4,
-                           sleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) async throws -> Answer {
+                           sleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+                           onSend: (@Sendable (String) -> Void)? = nil) async throws -> Answer {
         guard !request.origins.isEmpty else { throw SendAccounts.Failure(message: "Not sent: the data names no origin.") }
         for origin in Set(request.origins) { try gate.check(origin) }
         let scrubbed = gate.scrub(request.input)
@@ -90,6 +93,7 @@ public enum ModelCall {
             record.error = error
             try SendLog.append(record, env: env)
         }
+        onSend?(scrubbed.text)
         var attempt = 0
         while true {
             do {

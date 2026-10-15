@@ -465,6 +465,71 @@ struct SendPolicyTests {
         #expect(SendLog.records(env: env).isEmpty)
     }
 
+    /// Stop during the account check: `claude auth status` runs in the caller's scope too.
+    @Test func cancellingTheScopeStopsTheAccountCheck() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            echo $$ > "$HOME/pid"
+            sleep 60
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let scope = Cancellation.Scope()
+        let env = env
+        let open = Task { try await Cancellation.$scope.withValue(scope) { try await SendGate.open(agent: agent, env: env) } }
+        let pidFile = home.appending(path: "pid")
+        for _ in 0..<100 where !fm.fileExists(atPath: pidFile.path) { try await Task.sleep(for: .milliseconds(50)) }
+        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let started = Date.now
+        scope.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await open.value }
+        #expect(Date.now.timeIntervalSince(started) < 10)
+        var gone = false
+        for _ in 0..<50 { if kill(pid, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(50)) }
+        #expect(gone)
+    }
+
+    /// Rewrite with Skill's Cancel: cancelling the task ends the harness through followingTask.
+    @Test func cancellingTheTaskStopsTheHarnessProcessThroughFollowingTask() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            echo $$ > "$HOME/pid"
+            sleep 60
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let request = ModelCall.Request(agent: agent, purpose: "instruction rewrite", system: "s", input: "q", origin: .code(.claudeCode))
+        let env = env, folder = home.appending(path: "work")
+        let call = Task { try await Cancellation.followingTask { try await ModelCall.run(request, gate: gate, folder: folder, env: env) } }
+        let pidFile = home.appending(path: "pid")
+        for _ in 0..<100 where !fm.fileExists(atPath: pidFile.path) { try await Task.sleep(for: .milliseconds(50)) }
+        let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        call.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await call.value }
+        var gone = false
+        for _ in 0..<50 { if kill(pid, 0) != 0 { gone = true; break }; try await Task.sleep(for: .milliseconds(50)) }
+        #expect(gone)
+    }
+
+    /// onSend reports what goes out, and only when it goes out.
+    @Test func onSendSeesOnlyCallsThatGoOut() async throws {
+        try fakeClaude(result: #"{"type":"result","is_error":false,"result":"x"}"#)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let seen = Pauses()
+        let token = "ghp_" + String(repeating: "a1B2", count: 9)
+        let allowed = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "key \(token)", origin: .code(.claudeCode)),
+                                    gate: allowed, folder: home.appending(path: "work"), env: env, onSend: { _ in seen.add(.seconds(1)) })
+        #expect(seen.all.count == 1)
+        let refused = SendGate(destination: claudeAccount, isWork: true, settings: LabSettings())
+        await #expect(throws: SendAccounts.Failure.self) {
+            _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .piSession(providers: ["zai"])),
+                                        gate: refused, folder: home.appending(path: "work"), env: env, onSend: { _ in seen.add(.seconds(1)) })
+        }
+        #expect(seen.all.count == 1)
+    }
+
     @Test func rateLimitedCallsAreRetriedWithBackoff() async throws {
         try write("bin/claude", """
             #!/bin/sh

@@ -280,8 +280,8 @@ final class AppModel {
     /// limit, send log) rewrites the file by the skill's guidance; returns the change as a plan
     /// to show and apply. `reader`: the harness that reads the file on the screen, the data's
     /// origin for the send policy. A file the scrub would change is not sent: the masked text
-    /// would come back and be written over the real value. Not detached, so cancelling the
-    /// calling task stops the call.
+    /// would come back and be written over the real value. Cancelling the calling task stops
+    /// the account check and the call: their processes run in a scope that follows the task.
     func rewriteInstruction(_ file: URL, skill: Skill, request: String, agent: LabAgent, reader: HarnessID,
                             rendered: Set<String>) async throws -> InstructionEdit.Plan {
         let env = HarnessEnvironment.current
@@ -299,6 +299,16 @@ final class AppModel {
             throw InstructionRewrite.Failure(message: "\(skill.realFile.tildePath) can't be read, so the skill gives no guidance. Pick another skill.")
         }
         let prepared = try InstructionRewrite.prepare(file: text, skillName: skill.name, skill: skillText, request: request)
+        let answer = try await Cancellation.followingTask {
+            try await rewriteCall(prepared, agent: agent, origin: origin, env: env)
+        }
+        let rewritten = try InstructionRewrite.result(answer.text, prepared: prepared)
+        return try InstructionEdit.editing(file, original: original, to: rewritten, rendered: rendered, env: env)
+    }
+
+    /// The gate, the scrub check and the call of Rewrite with Skill.
+    private nonisolated func rewriteCall(_ prepared: InstructionRewrite.Prepared, agent: LabAgent, origin: SendOrigin,
+                                         env: HarnessEnvironment) async throws -> ModelCall.Answer {
         let gate = try await SendGate.open(agent: agent, env: env)
         let checks = [gate.scrub(prepared.input), gate.scrub(prepared.system)]
         if checks[0].text != prepared.input || checks[1].text != prepared.system {
@@ -310,13 +320,10 @@ final class AppModel {
         let folder = FileManager.default.temporaryDirectory.appending(path: "akit-rewrite-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let answer = try await ModelCall.run(
+        return try await ModelCall.run(
             ModelCall.Request(agent: agent, purpose: "instruction rewrite", system: prepared.system, input: prepared.input,
                               schema: InstructionRewrite.schema, origin: origin),
             gate: gate, folder: folder, env: env)
-        try Task.checkCancellation()
-        let rewritten = try InstructionRewrite.result(answer.text, prepared: prepared)
-        return try InstructionEdit.editing(file, original: original, to: rewritten, rendered: rendered, env: env)
     }
 
     private var lastLayerEdit: Task<Void, Never>?

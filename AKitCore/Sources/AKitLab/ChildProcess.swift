@@ -178,6 +178,21 @@ public enum Cancellation {
 
     public static var isCancelled: Bool { scope.isCancelled }
 
+    /// Runs `work` in a scope of its own that the calling task's cancellation cancels: the
+    /// children it starts end when the task is cancelled (ChildProcess follows scopes, not
+    /// Task cancellation). Throws CancellationError when it was cancelled.
+    public static func followingTask<T: Sendable>(isolation: isolated (any Actor)? = #isolation,
+                                                  _ work: () async throws -> T) async throws -> T {
+        let scope = Scope()
+        let result = try await withTaskCancellationHandler {
+            try await $scope.withValue(scope) { try await work() }
+        } onCancel: {
+            scope.cancel()
+        }
+        if scope.isCancelled { throw CancellationError() }
+        return result
+    }
+
     /// Process groups of the running children (each child leads its own group).
     static var trackedGroups: Set<pid_t> { scope.groups }
 
