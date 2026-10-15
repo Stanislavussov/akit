@@ -3735,7 +3735,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - **Pi accounts**: учётные записи Pi, по одной на провайдера. У каждой справа карандаш (изменить) и минус в кружке (убрать). Кнопка **Add Pi Account…**.
 - **Masked before sending**: что AKit прячет в тексте перед отправкой. Переключатель **Mask e-mail addresses** и два поля: **Internal host patterns** и **Other patterns**.
 - **Cost**: поле **Monthly limit (US dollars)** и строка **Recorded this month**.
-- **Ask AKit**: переключатель **Ask before Ask AKit sends**. Включён — [Ask AKit](#ask) спрашивает перед первой отправкой к каждому агенту и провайдеру за запуск. Выключите его, если не хотите этих вопросов. Если вы раньше нажали **Don't ask again**, выключите и снова включите переключатель: AKit опять будет спрашивать. Под ним перечислены адресаты, для которых вопрос отключён.
+- **Ask AKit**: переключатель **Ask before Ask AKit sends**. Включён — [Ask AKit](#ask) спрашивает перед первой отправкой к каждому агенту и провайдеру за запуск. Выключите его, если не хотите этих вопросов. Если вы раньше нажали **Don't ask again**, выключите и снова включите переключатель: AKit опять будет спрашивать, и уже в этом запуске. Под ним перечислены адресаты, для которых вопрос отключён.
 
 ![Окно Settings, прокрученное к части Lab: Review language со значением English, Sending policy со строкой Personal Mac, записью Pi · github-copilot · demo@example.com · acme и кнопками Add Destination… и Check Accounts, Pi accounts с записью github-copilot · demo@example.com · acme и кнопкой Add Pi Account…, начало Masked before sending с переключателем Mask e-mail addresses и полем Internal host patterns](images/settings-lab.png)
 

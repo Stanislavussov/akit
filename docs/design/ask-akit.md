@@ -47,8 +47,10 @@ App: AskContext.redacting, off the main actor (session titles, mode names and
        SendGate.open (the account check is a ChildProcess in the scope)
        → the confirmation, before the first send to this harness|provider in a launch
          (unless Don't ask again for it, or Settings → Ask before Ask AKit sends is off)
+         (a closed panel can't show it: not sent)
        → ModelCall.run (no tools, schema {"answer": string}); its onSend hook, called
-         only once the policy and the limit let the call go, fills What Was Sent and
+         once when the harness's process has started (never for a refused call or one
+         that couldn't start, once across rate-limit retries), fills What Was Sent and
          sets the element as the focus
        Stop and New Chat cancel the scope, which ends whichever process runs
         │
@@ -75,7 +77,7 @@ under the input field, with the harness and model, every time. The first send to
 (Send to …?, with the kinds of data). Don't ask again stores that destination
 (`ask.dontConfirmDestinations`); another harness or provider asks again; Settings → Ask AKit →
 Ask before Ask AKit sends (`ask.confirmBeforeSend`) turns the confirmation off, and turning it
-on again clears the stored destinations. What Was Sent under each question shows the
+on again clears the stored destinations and this launch's confirmations. What Was Sent under each question shows the
 destination, the input as the scrub left it and the guide sections of the system prompt; it
 appears only for a question that really went out.
 
@@ -86,11 +88,15 @@ named by id. Ids made from session words are not sent either: an emergent mode's
 of a model's name for it, a session or reproduction control task's id a slug of its prompt, so
 `Mode.neutralName` and `ControlTask.neutralName` (AKitErrorAnalysis, tested) name them by kind
 and a short hash ("an emergent failure mode #1a2b"); seed modes and commit tasks keep their ids,
-and an assertion oracle is sent without its mode. Two layers keep it so: the facts the views
-build, and `AskContext.redacting`, run on every send with every session title AppModel has,
-every mode's name and definition and every non-commit task's title and prompt, which replaces
-any of them a fact still quotes, as whole words across any separators (tested in
-`AskAKitTests`). The user's own typed question and the chat are sent as
+and an assertion oracle is sent without its mode (also not a control cell's oracle text, which
+names it), and a comparison's reason names a read-only task by its neutral name. Two layers keep
+it so: the facts the views build, and `AskContext.redacting`, run on every send with every
+session title AppModel has, every mode's name and definition, every non-commit task's title and
+prompt, and, structurally, the session-derived ids themselves (`Mode.sessionDerivedIDs`: every
+non-seed mode id, renamed modes included; `ControlTask.sessionDerivedIDs`: every non-commit task
+id), which replaces any of them a fact still quotes, as whole words across any separators
+(tested in `AskAKitTests` and, with ids made by `ControlTasks.newID` and `Clustering.slug`, in
+`NeutralNamesTests`). A batch's pause reason, a worker's free text, is not sent. The user's own typed question and the chat are sent as
 written. The MCP pane sends names only, never a value (no arguments, the URL's host, the names
 of environment variables and headers).
 
@@ -103,10 +109,12 @@ Unlike Rewrite with Skill, a masked value is fine here: the answer is only read,
 written back, so the scrubbed text is sent. The monthly limit and the send log (Lab → Sends,
 purpose "ask akit") apply as for every call. The system prompt is sent and paid for, and here it
 carries the guide sections, so it counts: a send record keeps `inputCharacters` (the input only,
-as before) and `systemCharacters` (the system prompt of a model call; nil for agent runs and
-older records). `SendLog.estimate` prices a character as cost / (input + system) over the records
-of the harness and model; `ModelCall` passes the exact prompt size, and the pre-send estimates
-of error analysis pass their purpose, whose past prompts stand in for the size.
+as before) and `systemCharacters` (the system text of a model call as really sent: Claude Code's
+prompt and its JSON schema, Pi's prompt with the schema and the JSON rule appended; nil for agent
+runs and older records). `SendLog.estimate` prices a character as cost / (input + system) over
+the records of the harness and model; `ModelCall` passes the exact system size, and the
+pre-send estimates of error analysis pass their purpose, whose past prompts stand in for the
+size, and their number of calls, since each call sends the prompt again.
 
 ## The agent
 
@@ -123,7 +131,7 @@ agent is worked out when the panel opens and when its fields change, not on ever
   with `.askAKitScreen(…)` (Insights: scope, window, recommendations). Rows add their own values
   through Ask AKit About This.
 - Chats live until New Chat or quit; they are not saved. One chat per app: the main window is
-  the only one (a `WindowGroup` without File → New Window, so a Dock click reopens it; the
+  the only one (a `WindowGroup` without File → New Window or window tabs, so a Dock click reopens it; the
   screen in view, `AppModel.section`, was already shared by every window).
 - One call at a time: About This is off while a call runs or the confirmation waits, and sets
   the focus only when its question is really sent; New Chat during a call cancels it and the

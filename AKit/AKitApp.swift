@@ -10,6 +10,8 @@ struct AKitApp: App {
     @State private var ask: AskAKitModel
 
     init() {
+        // A window tab's "+" would open a second main window.
+        NSWindow.allowsAutomaticWindowTabbing = false
         let model = AppModel()
         _model = State(initialValue: model)
         _ask = State(initialValue: AskAKitModel(app: model))

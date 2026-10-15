@@ -171,8 +171,13 @@ struct SettingsView: View {
             Section {
                 Toggle("Ask before Ask AKit sends", isOn: Binding(get: { askConfirms }, set: { on in
                     askConfirms = on
-                    // On again: Don't ask again is undone for every destination.
-                    if on { UserDefaults.standard.removeObject(forKey: AskAKitModel.skipConfirmKey) }
+                    // On again: Don't ask again is undone for every destination, and so is this
+                    // launch's Send.
+                    if on {
+                        let defaults = UserDefaults.standard
+                        defaults.removeObject(forKey: AskAKitModel.skipConfirmKey)
+                        defaults.set(defaults.integer(forKey: AskAKitModel.confirmResetKey) + 1, forKey: AskAKitModel.confirmResetKey)
+                    }
                 }))
             } header: {
                 Text("Ask AKit")

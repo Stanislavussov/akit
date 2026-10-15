@@ -47,6 +47,8 @@ final class AskAKitModel {
         let key: String
         /// The account's label (`SendDestination.label`), with the harness and model.
         let destination: String
+        /// The harness's title, for the dialog's title.
+        let harness: String
         let answer: CheckedContinuation<Bool, Never>
     }
 
@@ -58,6 +60,8 @@ final class AskAKitModel {
     static let confirmKey = "ask.confirmBeforeSend"
     /// The destinations (`harness|provider`) "Don't ask again" was ticked for; Settings clears them.
     static let skipConfirmKey = "ask.dontConfirmDestinations"
+    /// Bumped by Settings when the switch is turned on again: this launch's confirmations go too.
+    static let confirmResetKey = "ask.confirmResets"
     /// What Ask AKit About This asks.
     static let aboutQuestion = "What does this mean, why does it matter, and what can I do about it?"
 
@@ -83,6 +87,8 @@ final class AskAKitModel {
     private(set) var consent: Consent?
     /// Destinations confirmed in this launch.
     private var confirmed = Set<String>()
+    /// The Settings reset `confirmed` belongs to.
+    private var confirmedReset = UserDefaults.standard.integer(forKey: confirmResetKey)
     private var call: Task<Void, Never>?
     /// The running call's processes: Stop and New Chat cancel it, which ends the harness's
     /// process (ChildProcess follows this scope, not Task cancellation).
@@ -190,9 +196,18 @@ final class AskAKitModel {
     /// Asks before the first send to a destination; true to send.
     private func confirm(_ destination: SendDestination, agent: LabAgent) async -> Bool {
         let key = "\(destination.harness.rawValue)|\(destination.provider)"
+        let reset = UserDefaults.standard.integer(forKey: Self.confirmResetKey)
+        if reset != confirmedReset {
+            confirmed = []
+            confirmedReset = reset
+        }
         guard Self.needsConsent(key, confirmedThisLaunch: confirmed) else { return true }
+        // A closed panel can't show the confirmation: not sent.
+        guard isOpen else { return false }
         let label = "\(agent.harness.title) · \(agent.model.isEmpty ? "default model" : agent.model) · \(destination.label)"
-        return await withCheckedContinuation { answer in consent = Consent(key: key, destination: label, answer: answer) }
+        return await withCheckedContinuation { answer in
+            consent = Consent(key: key, destination: label, harness: destination.harness.title, answer: answer)
+        }
     }
 
     /// Works out the agent: the panel's choice, else Lab's default for the harness. A chosen
@@ -466,7 +481,7 @@ struct AskAKitPanel: View {
         .frame(minWidth: 280)
         // The first send to a destination (harness and provider) in this launch, until Don't ask
         // again: what leaves the Mac and where. The call waits for the answer.
-        .confirmationDialog("Send to \(ask.agent.harness.title)?", isPresented: Binding(get: { ask.consent != nil }, set: { shown in
+        .confirmationDialog("Send to \(ask.consent?.harness ?? ask.agent.harness.title)?", isPresented: Binding(get: { ask.consent != nil }, set: { shown in
             if !shown { answer(false) }
         }), titleVisibility: .visible) {
             Button("Send") { answer(true) }
