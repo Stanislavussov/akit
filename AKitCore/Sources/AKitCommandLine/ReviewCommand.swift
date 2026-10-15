@@ -23,9 +23,13 @@ extension AKitCLI {
     Usage:
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
+                         [--gather-only] [--over-cap]
                                         Gather the merge request, its work items, the worktree at
-                                        head_sha, history, commands and knowledge into a context pack
-                                        and write run.json
+                                        head_sha, history, commands and knowledge into a context pack,
+                                        then run the passes in Pi (brief, roles, verifier).
+                                        --over-cap goes on when the estimate is over the credit cap
+      akit review passes RUN [--over-cap]
+                                        Run the passes again on a gathered run
       akit review runs                  Every run on this Mac, newest first
       akit review config show [--project P] [--mr MR-URL] [--scenario S] [--brain DIR]
                                         The resolved configuration with the source of each value
@@ -60,6 +64,8 @@ extension AKitCLI {
         if let model = args.value("--verifier-model") { settings.verifier = ReviewModelChoice(model: model) }
         if let cap = try positiveNumber(args.value("--cap"), "--cap") { settings.capCredits = cap }
         let mrText = args.value("--mr")
+        let gatherOnly = args.flag("--gather-only")
+        let overCap = args.flag("--over-cap")
         var choices = ReviewRunChoices(scenario: scenario, settings: settings, workItems: wis)
         for change in roleChanges {
             guard let sign = change.first, sign == "+" || sign == "-", change.count > 1 else {
@@ -122,10 +128,43 @@ extension AKitCLI {
             let result = try await ReviewRuns.start(mr: mr, project: project, choices: choices, env: env, brain: brain,
                                                     tokens: { try secrets.value($0) }, fetch: services.fetch, progress: { out($0) })
             out(gatherSummary(result))
-            return 0
+            if gatherOnly { return 0 }
+            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
+        case "passes":
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review passes RUN.") }
+            try args.finish()
+            return try await runPasses(folder: try runFolder(id, env: env), overCap: overCap, env: env, out: out)
         case nil:
             throw Failure(message: "Which merge request? akit review MR-URL.")
         }
+    }
+
+    static func runFolder(_ id: String, env: HarnessEnvironment) throws -> URL {
+        guard !id.contains("/"), !id.hasPrefix(".") else { throw Failure(message: "\(id) is not a run id (akit review runs lists them).") }
+        let folder = ReviewPaths(home: env.homeDirectory).run(id)
+        guard FileManager.default.fileExists(atPath: folder.appending(path: "run.json").path) else {
+            throw Failure(message: "There is no review run \(id) (akit review runs lists them).")
+        }
+        return folder
+    }
+
+    static func runPasses(folder: URL, overCap: Bool, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        let lines = LineBox()
+        let options = ReviewPasses.Options(confirmOverCap: overCap ? { @Sendable _, _ in true } : nil, progress: { lines.add($0) })
+        let findings: ReviewFindingsFile
+        do {
+            findings = try await ReviewPasses.run(folder: folder, env: env, options: options)
+        } catch {
+            lines.drain(out)
+            throw Failure(message: error.localizedDescription + (error.localizedDescription.contains("over the cap") ? " Add --over-cap to go on." : ""))
+        }
+        lines.drain(out)
+        let log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
+        let confirmed = findings.findings.filter { $0.verifier?.verdict == .confirmed }.count
+        out("Passes done: \(findings.findings.count) candidates, \(confirmed) confirmed by the verifier"
+            + (log.map { String(format: ", ≈ %.1f credits", $0.credits) } ?? "") + ".")
+        out("Next: akit review show \(folder.lastPathComponent)")
+        return 0
     }
 
     static func mergeRequest(_ text: String) throws -> MergeRequestRef {
@@ -149,5 +188,15 @@ extension AKitCLI {
             lines += result.gaps.map { "  - \($0.needed): \($0.why)" }
         }
         return lines.joined(separator: "\n")
+    }
+}
+
+/// Progress lines from a pass, which may come from another thread, printed in order.
+final class LineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var lines: [String] = []
+    func add(_ line: String) { lock.withLock { lines.append(line) } }
+    func drain(_ out: (String) -> Void) {
+        for line in lock.withLock({ defer { lines = [] }; return lines }) { out(line) }
     }
 }

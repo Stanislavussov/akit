@@ -61,7 +61,7 @@ let package = Package(
         // Ask AKit: questions about a screen, answered from the in-app guides (docs/design/ask-akit.md).
         .target(name: "AKitHelp", dependencies: ["AKitFoundation"]),
         // AI review of GitLab merge requests: AKit gathers, Pi reads, AKit posts drafts after approval (docs/design/review.md).
-        .target(name: "AKitReview", dependencies: ["AKitFoundation", "AKitModel", "AKitLab", "AKitBrain", "Yams"]),
+        .target(name: "AKitReview", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitBrain", "Yams"]),
         .target(name: "AKitCommandLine", dependencies: ["AKitReview", "AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitMCP", "AKitBrain", "AKitInsights", "AKitProjectSetup", "AKitLab", "AKitErrorAnalysis", "AKitDoctor"]),
         .executableTarget(name: "akit", dependencies: ["AKitCommandLine", "AKitInsights", "AKitHarnesses", "AKitBrain", "AKitFoundation"]),
         .testTarget(name: "AKitFoundationTests", dependencies: ["AKitFoundation"]),

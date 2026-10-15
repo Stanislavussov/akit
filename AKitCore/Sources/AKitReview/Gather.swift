@@ -247,7 +247,25 @@ public enum ReviewGather {
         guard added?.succeeded == true else {
             return "git worktree add failed: \(SecretFilter.masked(String((added?.failureText ?? "it didn't start").suffix(300))))"
         }
+        removeSecretFiles(in: worktree)
         return nil
+    }
+
+    /// Files that usually hold secrets leave AKit's own worktree: a pass's `grep` or `find`
+    /// over a folder would read them, and the path policy sees only the folder (R15).
+    static func removeSecretFiles(in folder: URL) {
+        let worktree = folder.resolvingSymlinksInPath()
+        guard let walker = FileManager.default.enumerator(at: worktree, includingPropertiesForKeys: [.isRegularFileKey]) else { return }
+        var doomed: [URL] = []
+        for case let url as URL in walker {
+            if url.lastPathComponent == ".git" {
+                walker.skipDescendants()
+                continue
+            }
+            let relative = url.path.hasPrefix(worktree.path) ? String(url.path.dropFirst(worktree.path.count)) : url.lastPathComponent
+            if ReviewExtension.isBlocked(relative) || SecretFilter.isSecretFile(relative) { doomed.append(url) }
+        }
+        for url in doomed { try? FileManager.default.removeItem(at: url) }
     }
 
     /// Removes a run's worktree from its checkout (when a run is deleted).

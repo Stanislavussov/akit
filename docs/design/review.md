@@ -15,6 +15,29 @@ scrubbed context pack, the worktree at `head_sha`, `akit review MR-URL`, `akit r
 roles and scenarios of step 5 ship built in (`ReviewBuiltIns`, source `built-in`) and are used
 while the brain has no layer `review`.
 
+Built: step 2 (2026-10-15): `ReviewPasses` runs brief → roles → verifier in one Pi session
+(`--session-id`, the verifier as `--fork` of it with its own model), `akit-review.ts`
+(`ReviewExtension`) with the two tools and the `tool_call` policy, the estimate and the cap, the
+send log (purpose `review-<pass>`, the paths read), `akit review passes RUN`. Checked with a fake
+Pi in tests and with real Pi 1.0.4 against a fake model server. Decisions made while building:
+
+- **Credits** (R14): AKit's own unit, 1 credit = 1,000 tokens as Pi recorded them (input, cache
+  writes, output); a cached read counts one tenth. Recorded numbers only. Step 0 checks how it
+  lines up with the Copilot plan.
+- **Sending policy**: a new origin `mergeRequest`. It has no same origin, so it goes only to a
+  destination on the allowed list, on any Mac.
+- **Role text**: every pass gets all of the run's role skills (`--skill`) and the same appended
+  system prompt, so the session keeps one prompt cache; each role pass's prompt carries its
+  checklist.
+- **Verifier**: a fork of the session (it sees the brief and the roles), prompted with only the
+  candidates and their snippets (`prompts/candidates.md`); one tool, `akit_submit_findings`, takes
+  `findings` or `verdicts`.
+- **Secret files**: Gather deletes them from AKit's own worktree, because `grep` and `find` read
+  folders and the policy sees only the folder.
+- **Anchors**: when a finding's evidence isn't within ±3 lines of its line but is on exactly one
+  line of the file, AKit moves the anchor there.
+- Pi reads stdin when it isn't a terminal: a pass's stdin is `/dev/null`.
+
 ## What and why
 
 The user reviews GitLab merge requests at work. An agent can read the change first, check it
@@ -439,6 +462,7 @@ verifier.
 
 ## Open
 
-- Whether Pi's `tool_result` event can change a tool's output (a second scrub inside Pi).
+- Whether Pi's `tool_result` event can change a tool's output (a second scrub inside Pi). Pi's
+  docs (1.0.4) say `tool_result` handlers compose and may replace `content`; not used yet.
 - The exact Pi provider id `github-copilot` and the model names on the work account.
 - Drafts on files over GitLab's diff limits on the user's GitLab version.

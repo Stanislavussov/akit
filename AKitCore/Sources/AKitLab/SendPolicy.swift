@@ -71,6 +71,9 @@ public enum SendOrigin: Hashable, Sendable {
     /// Repository code an agent works on (replays, control runs): the user already gives it
     /// to that harness in daily work, so its own signed-in account counts as the origin.
     case code(LabHarness)
+    /// A merge request, its threads and work items, with the repository's code (AKit Review).
+    /// No harness produced it, so only a destination on the allowed list may get it.
+    case mergeRequest
 
     /// The origin of a recorded session; for Pi, the providers its answers came from.
     public static func of(harness: HarnessID, sessionFile: URL) -> SendOrigin {
@@ -132,6 +135,8 @@ public enum SendPolicy {
                 && providers.first?.caseInsensitiveCompare(destination.provider) == .orderedSame
         case .code(let harness):
             return destination.harness == harness
+        case .mergeRequest:
+            return false
         }
     }
 }
@@ -150,6 +155,7 @@ extension SendOrigin {
             providers.isEmpty ? "a Pi session with no recorded provider"
                 : "a Pi session through \(providers.sorted().joined(separator: ", "))"
         case .code(let harness): "repository code worked on with \(harness.title)"
+        case .mergeRequest: "a merge request with its threads and work items"
         }
     }
 }
