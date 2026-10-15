@@ -45,6 +45,8 @@ public struct Brain: Sendable {
     public let root: URL
     public let skills: [Skill]
     public let layers: [Layer]
+    /// `layers/review` belongs to AKit Review.
+    public static let reviewLayer = "review"
     public let problems: [Problem]
     public var projects: [Project] = []
 
@@ -129,6 +131,9 @@ public struct Brain: Sendable {
         var layers: [Layer] = []
         for folder in subfolders(of: root.appending(path: "layers")) {
             let name = folder.lastPathComponent
+            // AKit Review's roles, scenarios and defaults (docs/design/review.md): not a layer a
+            // project picks, and never rendered into a harness's folders.
+            if name == Brain.reviewLayer { continue }
             guard let text = try? String(contentsOf: folder.appending(path: "layer.yaml"), encoding: .utf8) else {
                 problems.append(Problem(layer: nil, message: "layers/\(name) has no layer.yaml."))
                 continue

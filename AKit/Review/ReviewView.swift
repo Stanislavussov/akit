@@ -6,34 +6,28 @@ import SwiftUI
 /// Review screen: AI review of GitLab merge requests (`docs/design/review.md`). AKit gathers
 /// the context, Pi proposes findings, and nothing reaches GitLab until you approve it here.
 struct ReviewView: View {
+    enum Page: String, CaseIterable {
+        case runs, roles, scenarios, quality
+        var title: String { rawValue.capitalized }
+    }
+
     @Environment(AppModel.self) private var app
     @Environment(ReviewModel.self) private var model
+    /// Snapshots: `--tab roles|scenarios|quality|settings`.
+    @State private var page = DebugSnapshot.options?.tab.flatMap(Page.init(rawValue:)) ?? .runs
     @State private var showNew = DebugSnapshot.options?.add == true && DebugSnapshot.options?.tab != "settings"
     @State private var showSettings = DebugSnapshot.options?.tab == "settings"
 
     var body: some View {
         @Bindable var model = model
-        HSplitView {
-            list
-                .frame(minWidth: 260, idealWidth: 300, maxWidth: 420)
-            Group {
-                if let run = model.run {
-                    ReviewRunDetail(run: run).id(run.id)
-                } else {
-                    ContentUnavailableView {
-                        Label("Review", systemImage: "checklist")
-                    } description: {
-                        Text("An agent reads a GitLab merge request with its work items and proposes comments. You approve each one; only then does AKit add it to your pending review in GitLab, where you publish it with Submit review.")
-                    } actions: {
-                        Button("New Review…") { showNew = true }
-                        Button("Review Settings…") { showSettings = true }
-                    }
-                }
+        Group {
+            switch page {
+            case .runs: runs
+            case .roles: ReviewConfigView(kind: .role, brain: app.brainRoot)
+            case .scenarios: ReviewConfigView(kind: .scenario, brain: app.brainRoot)
+            case .quality: ReviewQualityView()
             }
-            .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle("Review")
-        .navigationSubtitle(model.runs.count == 1 ? "1 run" : "\(model.runs.count) runs")
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 if let activity = model.activity {
@@ -60,7 +54,24 @@ struct ReviewView: View {
                 }
             }
         }
+        .alert("Over the credit cap", isPresented: Binding(get: { model.capQuestion != nil }, set: { if !$0 { model.answerCap(false) } }),
+               presenting: model.capQuestion) { question in
+            Button("Run Anyway") { model.answerCap(true) }
+            Button("Stop", role: .cancel) { model.answerCap(false) }
+        } message: { question in
+            Text(String(format: "This review needs about %.0f credits; the cap is %d. A big merge request costs more: run it anyway, or stop and narrow the roles.", question.estimate, question.cap))
+        }
+        .navigationTitle("Review")
+        .navigationSubtitle(page == .runs ? (model.runs.count == 1 ? "1 run" : "\(model.runs.count) runs") : page.title)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("Show", selection: $page) {
+                    ForEach(Page.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                .help("Runs: your reviews. Roles and Scenarios: what a review checks, from the brain or a project. Quality: how often you approve what each role finds.")
+            }
             ToolbarItem {
                 Button("New Review…", systemImage: "plus") { showNew = true }
                     .disabled(model.isBusy)
@@ -76,12 +87,28 @@ struct ReviewView: View {
         }
         .sheet(isPresented: $showNew) { NewReviewSheet(brain: app.brainRoot) }
         .sheet(isPresented: $showSettings) { ReviewSettingsSheet(brain: app.brainRoot) }
-        .alert("Over the credit cap", isPresented: Binding(get: { model.capQuestion != nil }, set: { if !$0 { model.answerCap(false) } }),
-               presenting: model.capQuestion) { question in
-            Button("Run Anyway") { model.answerCap(true) }
-            Button("Stop", role: .cancel) { model.answerCap(false) }
-        } message: { question in
-            Text(String(format: "This review needs about %.0f credits; the cap is %d. A big merge request costs more: run it anyway, or stop and narrow the roles.", question.estimate, question.cap))
+    }
+
+    private var runs: some View {
+        @Bindable var model = model
+        return HSplitView {
+            list
+                .frame(minWidth: 260, idealWidth: 300, maxWidth: 420)
+            Group {
+                if let run = model.run {
+                    ReviewRunDetail(run: run).id(run.id)
+                } else {
+                    ContentUnavailableView {
+                        Label("Review", systemImage: "checklist")
+                    } description: {
+                        Text("An agent reads a GitLab merge request with its work items and proposes comments. You approve each one; only then does AKit add it to your pending review in GitLab, where you publish it with Submit review.")
+                    } actions: {
+                        Button("New Review…") { showNew = true }
+                        Button("Review Settings…") { showSettings = true }
+                    }
+                }
+            }
+            .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
         }
         .task { model.reload(select: DebugSnapshot.options?.select) }
     }

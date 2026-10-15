@@ -34,6 +34,7 @@ public enum LayerWriter {
         guard name.allSatisfy({ ($0.isLowercase && $0.isASCII) || $0.isNumber || $0 == "-" }), name.first?.isLetter == true else {
             return "Use lowercase letters, digits and -, starting with a letter."
         }
+        if name == Brain.reviewLayer { return "layers/review holds AKit Review's roles and scenarios; pick another name." }
         if brain.layers.contains(where: { $0.name == name })
             || FileManager.default.fileExists(atPath: brain.root.appending(path: "layers/\(name)").path) {
             return "A layer named \(name) already exists."

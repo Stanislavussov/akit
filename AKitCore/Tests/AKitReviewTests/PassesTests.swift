@@ -13,7 +13,7 @@ struct ReviewRunFixture {
     let folder: URL
 
     static func make(allowed: Bool = true, cap: Int? = nil) async throws -> ReviewRunFixture {
-        let (home, server, head) = try GatherTests().setUp()
+        let (home, server, head) = try ReviewProcessTests.GatherTests().setUp()
         let secrets = MemorySecretStore()
         try secrets.save("glpat-secret", for: ReviewTokens.account(.gitlab, for: "https://gitlab.test"))
         try secrets.save("ado-secret", for: ReviewTokens.account(.azureDevOps, for: "corp"))
@@ -88,112 +88,114 @@ struct ReviewRunFixture {
     }
 }
 
-struct PassesTests {
-    @Test func runsBriefRolesAndVerifierInOneSession() async throws {
-        let run = try await ReviewRunFixture.make()
-        run.playTypicalRun()
-        let result = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+extension ReviewProcessTests {
+    struct PassesTests {
+        @Test func runsBriefRolesAndVerifierInOneSession() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            let result = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
 
-        // Duplicates folded, the low one dropped, the anchor moved to the evidence's line.
-        #expect(result.findings.map(\.id) == ["f1", "f2"])
-        let logged = try #require(result.findings.first)
-        #expect(logged.line == 3)
-        #expect(logged.related == ["tests:header is LOGGED in full!"])
-        #expect(logged.fingerprint?.count == 16)
-        #expect(logged.verifier?.verdict == .confirmed && logged.finalConfidence == 0.95)
-        #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
+            // Duplicates folded, the low one dropped, the anchor moved to the evidence's line.
+            #expect(result.findings.map(\.id) == ["f1", "f2"])
+            let logged = try #require(result.findings.first)
+            #expect(logged.line == 3)
+            #expect(logged.related == ["tests:header is LOGGED in full!"])
+            #expect(logged.fingerprint?.count == 16)
+            #expect(logged.verifier?.verdict == .confirmed && logged.finalConfidence == 0.95)
+            #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
 
-        let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-        #expect(log.passes.map(\.name) == ["brief", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
-        #expect(log.passes.allSatisfy { $0.succeeded })
-        #expect(log.brief == "Intent: log less.")
-        #expect(log.verifierSession == "fork-0001")
-        #expect(log.passes[0].paths == ["context/diff.patch"])
-        #expect(abs(log.credits - 5 * (2.3 + 0.1)) < 1e-9)
+            let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
+            #expect(log.passes.map(\.name) == ["brief", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
+            #expect(log.passes.allSatisfy { $0.succeeded })
+            #expect(log.brief == "Intent: log less.")
+            #expect(log.verifierSession == "fork-0001")
+            #expect(log.passes[0].paths == ["context/diff.patch"])
+            #expect(abs(log.credits - 5 * (2.3 + 0.1)) < 1e-9)
 
-        // One session for brief and roles; the verifier forks it with its own model.
-        for pass in ["brief", "role-bug-hunter", "role-tests"] {
-            let args = run.args(pass)
-            #expect(args.contains(log.mainSession) && args.contains("--session-id"), "\(pass)")
-            #expect(args.contains("fake/m1"))
+            // One session for brief and roles; the verifier forks it with its own model.
+            for pass in ["brief", "role-bug-hunter", "role-tests"] {
+                let args = run.args(pass)
+                #expect(args.contains(log.mainSession) && args.contains("--session-id"), "\(pass)")
+                #expect(args.contains("fake/m1"))
+            }
+            let verifier = run.args("verifier")
+            #expect(verifier.contains("--fork") && verifier.contains("fake/strong") && verifier.contains("high"))
+            let brief = run.args("brief")
+            for flag in ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-mcp", "--no-extensions"] {
+                #expect(brief.contains(flag), "\(flag)")
+            }
+            #expect(brief.contains(ReviewPasses.tools))
+            #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
+            #expect(brief.filter { $0 == "--skill" }.count == 3)
+            let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)
+            #expect(env.contains("AKIT_REVIEW_MAX=3") && env.contains("AKIT_REVIEW_ROLE=tests"))
+            #expect(!env.contains("glpat-secret") && !env.contains("ado-secret"), "no token in a pass's environment")
+
+            // The send log records every pass, with the paths read.
+            let sends = SendLog.records(env: run.home.env).filter { $0.runID == run.folder.lastPathComponent }
+            #expect(sends.map(\.purpose) == ["review-brief", "review-role-bug-hunter", "review-role-requirements", "review-role-tests", "review-verifier"])
+            #expect(sends.first?.paths == ["context/diff.patch"] && sends.first?.provider == "fake")
+
+            let gaps = try #require(ReviewJSON.read([ContextGap].self, from: run.folder.appending(path: "gaps.json")))
+            #expect(gaps.contains { $0.needed == "Test output" && $0.reportedBy == "role-tests" })
+            #expect(gaps.contains { $0.reportedBy == "gather" })
+            #expect(Set(gaps.map(\.id)).count == gaps.count)
+            #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .planned)
+            let candidates = try String(contentsOf: run.folder.appending(path: "prompts/candidates.md"), encoding: .utf8)
+            #expect(candidates.contains(">    3      log(\"Auth: \\(header)\")"))
         }
-        let verifier = run.args("verifier")
-        #expect(verifier.contains("--fork") && verifier.contains("fake/strong") && verifier.contains("high"))
-        let brief = run.args("brief")
-        for flag in ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-mcp", "--no-extensions"] {
-            #expect(brief.contains(flag), "\(flag)")
+
+        @Test func aMergeRequestGoesOnlyToAnAllowedDestination() async throws {
+            let run = try await ReviewRunFixture.make(allowed: false)
+            await #expect(throws: SendAccounts.Failure.self) { try await ReviewPasses.run(folder: run.folder, env: run.home.env) }
+            #expect(run.args("brief").isEmpty, "Pi never started")
         }
-        #expect(brief.contains(ReviewPasses.tools))
-        #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
-        #expect(brief.filter { $0 == "--skill" }.count == 3)
-        let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)
-        #expect(env.contains("AKIT_REVIEW_MAX=3") && env.contains("AKIT_REVIEW_ROLE=tests"))
-        #expect(!env.contains("glpat-secret") && !env.contains("ado-secret"), "no token in a pass's environment")
 
-        // The send log records every pass, with the paths read.
-        let sends = SendLog.records(env: run.home.env).filter { $0.runID == run.folder.lastPathComponent }
-        #expect(sends.map(\.purpose) == ["review-brief", "review-role-bug-hunter", "review-role-requirements", "review-role-tests", "review-verifier"])
-        #expect(sends.first?.paths == ["context/diff.patch"] && sends.first?.provider == "fake")
-
-        let gaps = try #require(ReviewJSON.read([ContextGap].self, from: run.folder.appending(path: "gaps.json")))
-        #expect(gaps.contains { $0.needed == "Test output" && $0.reportedBy == "role-tests" })
-        #expect(gaps.contains { $0.reportedBy == "gather" })
-        #expect(Set(gaps.map(\.id)).count == gaps.count)
-        #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .planned)
-        let candidates = try String(contentsOf: run.folder.appending(path: "prompts/candidates.md"), encoding: .utf8)
-        #expect(candidates.contains(">    3      log(\"Auth: \\(header)\")"))
-    }
-
-    @Test func aMergeRequestGoesOnlyToAnAllowedDestination() async throws {
-        let run = try await ReviewRunFixture.make(allowed: false)
-        await #expect(throws: SendAccounts.Failure.self) { try await ReviewPasses.run(folder: run.folder, env: run.home.env) }
-        #expect(run.args("brief").isEmpty, "Pi never started")
-    }
-
-    @Test func theCapStopsBeforeThePasses() async throws {
-        let run = try await ReviewRunFixture.make(cap: 1)
-        await #expect(throws: ReviewPasses.Failure.self) { try await ReviewPasses.run(folder: run.folder, env: run.home.env) }
-        #expect(run.args("brief").isEmpty)
-        #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .stopped)
-        // Confirmed: the passes run.
-        run.playTypicalRun()
-        let result = try await ReviewPasses.run(folder: run.folder, env: run.home.env,
-                                                options: .init(confirmOverCap: { @Sendable _, _ in true }))
-        #expect(result.findings.count == 2)
-    }
-
-    @Test func aFailedPassStopsTheRunAndIsLogged() async throws {
-        let run = try await ReviewRunFixture.make()
-        run.playTypicalRun()
-        run.home.write("fake/fail-role-requirements", "")
-        do {
-            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
-            Issue.record("expected a failure")
-        } catch {
-            #expect(error.localizedDescription.contains("quota exceeded"))
+        @Test func theCapStopsBeforeThePasses() async throws {
+            let run = try await ReviewRunFixture.make(cap: 1)
+            await #expect(throws: ReviewPasses.Failure.self) { try await ReviewPasses.run(folder: run.folder, env: run.home.env) }
+            #expect(run.args("brief").isEmpty)
+            #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .stopped)
+            // Confirmed: the passes run.
+            run.playTypicalRun()
+            let result = try await ReviewPasses.run(folder: run.folder, env: run.home.env,
+                                                    options: .init(confirmOverCap: { @Sendable _, _ in true }))
+            #expect(result.findings.count == 2)
         }
-        let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-        #expect(log.passes.map(\.name) == ["brief", "role-bug-hunter", "role-requirements"])
-        #expect(log.passes.last?.error?.contains("quota") == true)
-        #expect(SendLog.records(env: run.home.env).last?.error?.contains("quota") == true, "a failed pass's cost still counts")
-        #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .failed)
-    }
 
-    @Test func invalidFindingsAreDropped() {
-        #expect(ReviewCandidates.finding(["title": "x", "severity": "huge", "confidence": 0.5], role: "r", id: "f1") == nil)
-        #expect(ReviewCandidates.finding(["title": "x", "severity": "high", "confidence": 1.5], role: "r", id: "f1") == nil)
-        #expect(ReviewCandidates.finding(["title": " ", "severity": "high", "confidence": 0.5], role: "r", id: "f1") == nil)
-        let masked = ReviewCandidates.finding(["title": "Key ghp_abcdefghijklmnopqrstuvwxyz0123456789 leaked", "severity": "high",
-                                               "confidence": 0.5, "file": "./a.swift", "line": 0], role: "r", id: "f1")
-        #expect(masked?.title.contains("ghp_") == false)
-        #expect(masked?.file == "a.swift" && masked?.line == nil)
-    }
+        @Test func aFailedPassStopsTheRunAndIsLogged() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            run.home.write("fake/fail-role-requirements", "")
+            do {
+                try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+                Issue.record("expected a failure")
+            } catch {
+                #expect(error.localizedDescription.contains("quota exceeded"))
+            }
+            let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
+            #expect(log.passes.map(\.name) == ["brief", "role-bug-hunter", "role-requirements"])
+            #expect(log.passes.last?.error?.contains("quota") == true)
+            #expect(SendLog.records(env: run.home.env).last?.error?.contains("quota") == true, "a failed pass's cost still counts")
+            #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .failed)
+        }
 
-    @Test func secretFilesLeaveTheWorktree() async throws {
-        let run = try await ReviewRunFixture.make()
-        // .env was never committed; a committed key file would be removed the same way.
-        #expect(!FileManager.default.fileExists(atPath: run.folder.appending(path: "worktree/.env").path))
-        #expect(ReviewExtension.isBlocked("/x/config/.env.local") && ReviewExtension.isBlocked("deploy/secrets/db.txt"))
-        #expect(ReviewExtension.isBlocked("certs/server.pem") && !ReviewExtension.isBlocked("src/Keys.swift"))
+        @Test func invalidFindingsAreDropped() {
+            #expect(ReviewCandidates.finding(["title": "x", "severity": "huge", "confidence": 0.5], role: "r", id: "f1") == nil)
+            #expect(ReviewCandidates.finding(["title": "x", "severity": "high", "confidence": 1.5], role: "r", id: "f1") == nil)
+            #expect(ReviewCandidates.finding(["title": " ", "severity": "high", "confidence": 0.5], role: "r", id: "f1") == nil)
+            let masked = ReviewCandidates.finding(["title": "Key ghp_abcdefghijklmnopqrstuvwxyz0123456789 leaked", "severity": "high",
+                                                   "confidence": 0.5, "file": "./a.swift", "line": 0], role: "r", id: "f1")
+            #expect(masked?.title.contains("ghp_") == false)
+            #expect(masked?.file == "a.swift" && masked?.line == nil)
+        }
+
+        @Test func secretFilesLeaveTheWorktree() async throws {
+            let run = try await ReviewRunFixture.make()
+            // .env was never committed; a committed key file would be removed the same way.
+            #expect(!FileManager.default.fileExists(atPath: run.folder.appending(path: "worktree/.env").path))
+            #expect(ReviewExtension.isBlocked("/x/config/.env.local") && ReviewExtension.isBlocked("deploy/secrets/db.txt"))
+            #expect(ReviewExtension.isBlocked("certs/server.pem") && !ReviewExtension.isBlocked("src/Keys.swift"))
+        }
     }
 }

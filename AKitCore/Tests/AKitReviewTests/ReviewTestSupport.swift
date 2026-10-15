@@ -1,6 +1,11 @@
 import AKitFoundation
 @testable import AKitReview
 import Foundation
+import Testing
+
+/// Suites that start git and a fake Pi many times run one after another: in parallel with the
+/// rest of the package they push the process-timing tests over their limits on a busy Mac.
+@Suite(.serialized) struct ReviewProcessTests {}
 
 /// A fake GitLab and Azure DevOps: canned answers by method and path, every request recorded.
 final class FakeServer: @unchecked Sendable {

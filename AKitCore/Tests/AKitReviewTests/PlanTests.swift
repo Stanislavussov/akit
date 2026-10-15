@@ -176,79 +176,81 @@ struct PlanTests {
     }
 }
 
-struct SendTests {
-    /// A planned run on the fake server: drafts are created, updated and deleted only after approval.
-    @Test func sendsOnlyApprovedRequestsAsDrafts() async throws {
-        let run = try await ReviewRunFixture.make()
-        run.playTypicalRun()
-        try await ReviewPasses.run(folder: run.folder, env: run.home.env)
-        var plan = try #require(ReviewWorkflow.load(run.folder).plan)
-        #expect(plan.requests.map(\.kind) == [.create, .summary])
-        let create = plan.requests[0]
-        #expect(create.position?.newLine == 3 && create.position?.headSHA == run.head && create.position?.baseSHA == "b1")
+extension ReviewProcessTests {
+    struct SendTests {
+        /// A planned run on the fake server: drafts are created, updated and deleted only after approval.
+        @Test func sendsOnlyApprovedRequestsAsDrafts() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            var plan = try #require(ReviewWorkflow.load(run.folder).plan)
+            #expect(plan.requests.map(\.kind) == [.create, .summary])
+            let create = plan.requests[0]
+            #expect(create.position?.newLine == 3 && create.position?.headSHA == run.head && create.position?.baseSHA == "b1")
 
-        let draftsPath = FakeMergeRequest.base + "/draft_notes"
-        run.server.on(draftsPath, method: "POST", json: ["id": 501, "note": "x"])
-        let client = GitLabClient(host: "https://gitlab.test", token: "glpat-secret", fetch: run.server.fetch)
+            let draftsPath = FakeMergeRequest.base + "/draft_notes"
+            run.server.on(draftsPath, method: "POST", json: ["id": 501, "note": "x"])
+            let client = GitLabClient(host: "https://gitlab.test", token: "glpat-secret", fetch: run.server.fetch)
 
-        // Nothing approved: nothing goes out.
-        var report = try await ReviewWorkflow.send(run.folder, gitlab: client)
-        #expect(report.sent.isEmpty && !run.server.calls.contains { $0.method != "GET" })
+            // Nothing approved: nothing goes out.
+            var report = try await ReviewWorkflow.send(run.folder, gitlab: client)
+            #expect(report.sent.isEmpty && !run.server.calls.contains { $0.method != "GET" })
 
-        #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected) }
-        try ReviewWorkflow.decide(run.folder, request: create.id, decision: .approved, edited: "Shorter text.")
-        report = try await ReviewWorkflow.send(run.folder, gitlab: client)
-        #expect(report.sent == [create.id] && report.failed.isEmpty)
-        let post = try #require(run.server.calls.last { $0.method == "POST" })
-        #expect(post.path == draftsPath)
-        let note = try #require(post.body?["note"] as? String)
-        #expect(note.hasPrefix("Shorter text.\n<!-- akit-review:v1 kind=finding fp="))
-        #expect(note.contains("th=\(ReviewNotes.textHash(create.proposed))"))
-        let position = try #require(post.body?["position"] as? [String: Any])
-        #expect(position["new_line"] as? Int == 3 && position["old_line"] == nil && position["head_sha"] as? String == run.head)
-        #expect(!run.server.calls.contains { $0.path.contains("bulk_publish") || $0.path.contains("/publish") })
-        plan = try #require(ReviewWorkflow.load(run.folder).plan)
-        #expect(plan.requests[0].isSent && plan.requests[0].sent?.draftID == 501)
-        #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected, reason: .falsePositive) }
+            #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected) }
+            try ReviewWorkflow.decide(run.folder, request: create.id, decision: .approved, edited: "Shorter text.")
+            report = try await ReviewWorkflow.send(run.folder, gitlab: client)
+            #expect(report.sent == [create.id] && report.failed.isEmpty)
+            let post = try #require(run.server.calls.last { $0.method == "POST" })
+            #expect(post.path == draftsPath)
+            let note = try #require(post.body?["note"] as? String)
+            #expect(note.hasPrefix("Shorter text.\n<!-- akit-review:v1 kind=finding fp="))
+            #expect(note.contains("th=\(ReviewNotes.textHash(create.proposed))"))
+            let position = try #require(post.body?["position"] as? [String: Any])
+            #expect(position["new_line"] as? Int == 3 && position["old_line"] == nil && position["head_sha"] as? String == run.head)
+            #expect(!run.server.calls.contains { $0.path.contains("bulk_publish") || $0.path.contains("/publish") })
+            plan = try #require(ReviewWorkflow.load(run.folder).plan)
+            #expect(plan.requests[0].isSent && plan.requests[0].sent?.draftID == 501)
+            #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected, reason: .falsePositive) }
 
-        // Sending again sends nothing twice.
-        report = try await ReviewWorkflow.send(run.folder, gitlab: client)
-        #expect(report.sent.isEmpty)
+            // Sending again sends nothing twice.
+            report = try await ReviewWorkflow.send(run.folder, gitlab: client)
+            #expect(report.sent.isEmpty)
 
-        // Quality: one approved_edited finding.
-        let entries = ReviewQuality.entries(of: try ReviewWorkflow.load(run.folder))
-        #expect(entries.map(\.label) == [.approvedEdited])
-        #expect(ReviewQuality.precision(entries).roles.first?.value == 1)
-    }
-
-    @Test func aDraftThatIsGoneOrNotAKitsIsLeftAlone() async throws {
-        let run = try await ReviewRunFixture.make()
-        run.playTypicalRun()
-        try await ReviewPasses.run(folder: run.folder, env: run.home.env)
-        // Pretend the plan updates draft 77, which is someone's own draft by now.
-        try ReviewJSON.update(run.folder.appending(path: "requests.json"),
-                              empty: ReviewPlanFile(created: .now, findingsVersion: 0, requests: [], placements: [])) { plan in
-            plan.requests[0].kind = .update
-            plan.requests[0].draftID = 77
-            plan.requests[0].decision = .approved
+            // Quality: one approved_edited finding.
+            let entries = ReviewQuality.entries(of: try ReviewWorkflow.load(run.folder))
+            #expect(entries.map(\.label) == [.approvedEdited])
+            #expect(ReviewQuality.precision(entries).roles.first?.value == 1)
         }
-        run.server.on(FakeMergeRequest.base + "/draft_notes", json: [["id": 77, "note": "my own words"]])
-        let client = GitLabClient(host: "https://gitlab.test", token: "t", fetch: run.server.fetch)
-        let report = try await ReviewWorkflow.send(run.folder, gitlab: client)
-        #expect(report.failed.first?.message.contains("isn't AKit's") == true)
-        #expect(!run.server.calls.contains { $0.method == "PUT" || $0.method == "DELETE" })
-    }
 
-    @Test func decisionsSurviveAReplan() async throws {
-        let run = try await ReviewRunFixture.make()
-        run.playTypicalRun()
-        try await ReviewPasses.run(folder: run.folder, env: run.home.env)
-        let summary = try #require(ReviewWorkflow.load(run.folder).plan?.requests.first { $0.kind == .summary })
-        try ReviewWorkflow.decide(run.folder, request: summary.id, decision: .approved, edited: "My summary")
-        try await ReviewWorkflow.plan(run.folder, env: run.home.env)
-        let again = try #require(ReviewWorkflow.load(run.folder).plan?.requests.first { $0.kind == .summary })
-        #expect(again.decision == .approved && again.edited == "My summary")
-        try ReviewWorkflow.addMissed(run.folder, file: "src/Auth.swift", line: 1, text: "Missing import check")
-        #expect(ReviewQuality.entries(of: try ReviewWorkflow.load(run.folder)).contains { $0.label == .missed })
+        @Test func aDraftThatIsGoneOrNotAKitsIsLeftAlone() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            // Pretend the plan updates draft 77, which is someone's own draft by now.
+            try ReviewJSON.update(run.folder.appending(path: "requests.json"),
+                                  empty: ReviewPlanFile(created: .now, findingsVersion: 0, requests: [], placements: [])) { plan in
+                plan.requests[0].kind = .update
+                plan.requests[0].draftID = 77
+                plan.requests[0].decision = .approved
+            }
+            run.server.on(FakeMergeRequest.base + "/draft_notes", json: [["id": 77, "note": "my own words"]])
+            let client = GitLabClient(host: "https://gitlab.test", token: "t", fetch: run.server.fetch)
+            let report = try await ReviewWorkflow.send(run.folder, gitlab: client)
+            #expect(report.failed.first?.message.contains("isn't AKit's") == true)
+            #expect(!run.server.calls.contains { $0.method == "PUT" || $0.method == "DELETE" })
+        }
+
+        @Test func decisionsSurviveAReplan() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            let summary = try #require(ReviewWorkflow.load(run.folder).plan?.requests.first { $0.kind == .summary })
+            try ReviewWorkflow.decide(run.folder, request: summary.id, decision: .approved, edited: "My summary")
+            try await ReviewWorkflow.plan(run.folder, env: run.home.env)
+            let again = try #require(ReviewWorkflow.load(run.folder).plan?.requests.first { $0.kind == .summary })
+            #expect(again.decision == .approved && again.edited == "My summary")
+            try ReviewWorkflow.addMissed(run.folder, file: "src/Auth.swift", line: 1, text: "Missing import check")
+            #expect(ReviewQuality.entries(of: try ReviewWorkflow.load(run.folder)).contains { $0.label == .missed })
+        }
     }
 }
