@@ -64,6 +64,23 @@ struct AskAKitTests {
         #expect(context.redacting([]) == context)
     }
 
+    @Test func redactionMatchesWholeWordsOfLongTextsAndSlugs() {
+        let context = AskContext(screen: "analysis", screenTitle: "Error Analysis", summary: "Status: active\nTab: Modes",
+                                 element: .init(title: "Control task fix-the-login-bug-in-the-ios-app-1a2b",
+                                                facts: "Statuses: 3\nTask fix_the_login_bug_in_the_ios_app ok\nThe login bug in the iOS app is mentioned"))
+        // A short title ("status") never blanks out ordinary words.
+        let short = context.redacting(["status", "Modes"])
+        #expect(short == context)
+        // A long title is caught in slug form, and only as whole words.
+        let clean = context.redacting(["Fix the login bug in the iOS app"])
+        #expect(clean.element?.title == "Control task \(AskContext.redacted)-1a2b")
+        #expect(clean.element?.facts == "Statuses: 3\nTask \(AskContext.redacted) ok\nThe login bug in the iOS app is mentioned")
+        // 16 characters count even as one or two words; a word inside a longer word doesn't.
+        let word = AskContext(screen: "x", screenTitle: "X", summary: "Seen in supercalifragilistic and supercalifragilisticexpialidocious")
+            .redacting(["supercalifragilistic"])
+        #expect(word.summary == "Seen in \(AskContext.redacted) and supercalifragilisticexpialidocious")
+    }
+
     @Test func alwaysSendsTheScreensOwnSections() {
         let context = AskContext(screen: "skills", screenTitle: "Skills", summary: "")
         let prepared = AskAKit.prepare(question: "привет", context: context, history: [], guides: Self.guides)

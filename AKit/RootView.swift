@@ -171,8 +171,14 @@ struct RootView: View {
             }
         }
         .onChange(of: model.section ?? .overview, initial: true) { _, section in ask.section = section }
-        // Mode names and definitions come from sessions' notes: never sent as screen data.
-        .onAppear { ask.sessionTexts = { [analysis] in analysis.data.modes.flatMap { [$0.name, $0.definition] } } }
+        // Mode names and definitions, and the ids made from them or from prompts, come from
+        // sessions: never sent as screen data.
+        .onAppear {
+            ask.sessionTexts = { [analysis] in
+                analysis.data.modes.flatMap { [$0.name, $0.definition] }
+                    + analysis.data.controlTasks.filter { if case .commit = $0.source { false } else { true } }.flatMap { [$0.title, $0.prompt] }
+            }
+        }
         .environment(analysis)
         // Skill switch changes (Skills, Insights): one sheet for the whole window.
         .skillSwitchSheet(model)

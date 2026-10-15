@@ -26,7 +26,7 @@ struct ModeFixPanel: View {
                 Text(status).foregroundStyle(.secondary)
                 Spacer()
             }
-            .askAKit("Fix of mode \(mode.id) (mode page)", facts: [
+            .askAKit("Fix of \(mode.neutralName) (mode page)", facts: [
                 "Status: \(status)", draft == nil ? "No draft" : "A draft exists",
             ])
             if let reason = mode.fixReason, mode.fix == .rejected {

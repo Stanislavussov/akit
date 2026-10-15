@@ -215,7 +215,7 @@ final class AskAKitModel {
         let question = question.question
         // Screen data is setup data only: no session titles (first prompts), no mode names or
         // definitions. The views send ids and numbers; this catches what a fact still quotes.
-        context = context.redacting(app.sessions.map(\.title) + sessionTexts())
+        let hidden = app.sessions.map(\.title) + self.sessionTexts()
         let history = messages.filter { !$0.failed }.map { AskTurn(role: $0.role, text: $0.text) }
         let asked = Message(role: .user, text: question, about: about)
         messages.append(asked)
@@ -229,9 +229,10 @@ final class AskAKitModel {
             do {
                 let (guides, search) = await loadGuides()
                 let language = inSettingsLanguage ? LabSettings.load(env: .current).reportLanguage.name : nil
+                // Off the main actor: the backstop scans every session title.
                 let prepared = await Task.detached {
-                    AskAKit.prepare(question: question, context: context, history: history, guides: guides, search: search,
-                                    language: language)
+                    AskAKit.prepare(question: question, context: context.redacting(hidden), history: history, guides: guides,
+                                    search: search, language: language)
                 }.value
                 if scope.isCancelled { throw CancellationError() }
                 let env = HarnessEnvironment.current

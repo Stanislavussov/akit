@@ -140,8 +140,8 @@ struct EvalsTab: View {
                         }
                         .padding(.vertical, 2)
                         .tag(task.id)
-                        .askAKit("Control task \(task.id) (Evals)", facts: [
-                            "Repository: \(URL(filePath: task.repo).lastPathComponent) at \(task.base.prefix(7))", "Judged by: \(task.oracle.label)",
+                        .askAKit("Control task: \(task.neutralName) (Evals)", facts: [
+                            "Repository: \(URL(filePath: task.repo).lastPathComponent) at \(task.base.prefix(7))", "Judged by: \(task.oracle.neutralLabel)",
                             task.referenceGreen.map { "Reference commit: tests \($0 ? "pass" : "fail")" } ?? "",
                         ])
                     }
@@ -236,9 +236,9 @@ private struct ControlTaskView: View {
             .controlSize(.small)
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
                 row("Repository", "\(URL(filePath: task.repo).tildePath) at \(task.base.prefix(10))")
-                row("Oracle", task.oracle.label + (task.successMode == true ? " (a success mode: passes when it shows)" : ""))
+                row("Oracle", task.oracle.label + (task.successMode == true ? " (a success mode: passes when it shows)" : ""), asked: task.oracle.neutralLabel)
                 row("Source", task.sourceTitle)
-                if let mode = task.modeID { row("Mode", analysis.data.mode(mode)?.name ?? mode, asked: mode) }
+                if let mode = task.modeID { row("Mode", analysis.data.mode(mode)?.name ?? mode, asked: analysis.data.mode(mode)?.neutralName ?? "a mode") }
                 if let reference = task.reference {
                     if case .hiddenTests = task.oracle {
                         row("Reference", "\(reference.prefix(10)) · the commit itself: its tests pass there (checked when the task was made)")
@@ -247,7 +247,7 @@ private struct ControlTaskView: View {
                     }
                 }
                 if !inSets.isEmpty { row("In sets", inSets.joined(separator: ", ")) }
-                row("Id", task.id)
+                row("Id", task.id, asked: task.neutralName)
             }
             .font(.callout)
             .textSelection(.enabled)
@@ -267,7 +267,7 @@ private struct ControlTaskView: View {
             Text(label).foregroundStyle(.secondary).gridColumnAlignment(.trailing).textSelection(.disabled)
             Text(value).fixedSize(horizontal: false, vertical: true)
         }
-        .askAKit("Control task \(task.id): \(label) (Evals)", facts: ["\(label): \(asked ?? value)"])
+        .askAKit("Control task: \(task.neutralName), \(label) (Evals)", facts: ["\(label): \(asked ?? value)"])
     }
 
     private func add(to layer: String) {

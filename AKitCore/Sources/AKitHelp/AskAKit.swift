@@ -49,23 +49,62 @@ extension AskContext {
     /// The context with every occurrence of `texts` replaced by `redacted`, in the summary, the
     /// element's title and its facts. Ask AKit sends setup data (names, counts, ids, statuses),
     /// never text from sessions: this is the backstop for session titles (first prompts), mode
-    /// names and definitions, and notes that a fact line might still quote. Texts shorter than
-    /// 4 characters are left alone (they would match everywhere); longer ones go first.
+    /// names and definitions, and notes that a fact line might still quote.
+    ///
+    /// Whole words only, case-insensitive, with any non-letters between them, so a slug of the
+    /// text (`fix-the-login-bug-1a2b`) is caught too. Only texts of at least 3 words or 16
+    /// characters count: a short title such as "status" would blank out ordinary words. Linear in
+    /// the words of the context times the texts that start with each word, so thousands of
+    /// session titles are fine; still, call it off the main actor.
     public func redacting(_ texts: [String]) -> AskContext {
-        let needles = Set(texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { $0.count >= 4 })
-            .sorted { $0.count > $1.count }
-        guard !needles.isEmpty else { return self }
+        var byFirst: [String: [[String]]] = [:]
+        for text in texts {
+            let words = Self.words(text).map(\.word)
+            guard let first = words.first, words.count >= 3 || text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 16 else { continue }
+            byFirst[first, default: []].append(words)
+        }
+        guard !byFirst.isEmpty else { return self }
+        for key in byFirst.keys { byFirst[key]?.sort { $0.count > $1.count } }
         func clean(_ text: String) -> String {
-            var text = text
-            for needle in needles where text.localizedCaseInsensitiveContains(needle) {
-                text = text.replacingOccurrences(of: needle, with: Self.redacted, options: .caseInsensitive)
+            let words = Self.words(text)
+            var cuts: [Range<String.Index>] = []
+            var index = 0
+            while index < words.count {
+                // Progress: the longest match from here, else one word on.
+                var matched = 1
+                for needle in byFirst[words[index].word] ?? [] where index + needle.count <= words.count {
+                    if zip(needle, words[index..<(index + needle.count)]).allSatisfy({ $0 == $1.word }) {
+                        cuts.append(words[index].range.lowerBound..<words[index + needle.count - 1].range.upperBound)
+                        matched = needle.count
+                        break
+                    }
+                }
+                index += matched
             }
-            return text
+            var result = text
+            for cut in cuts.reversed() { result.replaceSubrange(cut, with: Self.redacted) }
+            return result
         }
         var copy = self
         copy.summary = clean(summary)
         copy.element = element.map { Element(title: clean($0.title), facts: clean($0.facts)) }
         return copy
+    }
+
+    /// Runs of letters and digits, lower-cased, with their place in `text`.
+    static func words(_ text: String) -> [(word: String, range: Range<String.Index>)] {
+        var found: [(word: String, range: Range<String.Index>)] = []
+        var start: String.Index?
+        for index in text.indices {
+            if text[index].isLetter || text[index].isNumber {
+                if start == nil { start = index }
+            } else if let from = start {
+                found.append((text[from..<index].lowercased(), from..<index))
+                start = nil
+            }
+        }
+        if let from = start { found.append((text[from...].lowercased(), from..<text.endIndex)) }
+        return found
     }
 }
 
