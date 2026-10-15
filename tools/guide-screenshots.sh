@@ -157,5 +157,14 @@ shot settings-add        900x760 --tab lab --settings --add
 # The guide window itself: a search over every guide, and a section with a screenshot.
 shot guide-search        820x900 --guide screens:start --query "usage"
 shot guide-section       820x900 --guide screens:skills
+# Review (guide review.ru.md): the made-up review of shop/orders-service!42 from tools/demo-home.sh.
+REVIEWMR="https://gitlab.example.com/shop/orders-service/-/merge_requests/42"
+shot review-run          1280x860 --section review --select 20261015-091500-orders-service-42
+shot review-new          $MAIN --section review --query "$REVIEWMR" --add
+shot review-settings     $MAIN --section review --tab settings --add
+shot review-roles        $MAIN --section review --tab roles --select security
+shot review-scenarios    $MAIN --section review --tab scenarios --select bugfix
+shot review-project-role $MAIN --section review --tab roles --project orders-service --select tests
+shot review-quality      $MAIN --section review --tab quality
 
 exit $FAILED

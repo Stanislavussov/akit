@@ -232,6 +232,11 @@ public enum AKitCLI {
           akit analysis notes [SESSION]   Error analysis: a reviewed session's outcome, verified notes
                                           and advice. akit analysis --help lists the rest
 
+        Review (AI review of GitLab merge requests; ~/.akit/local/review, never in the brain):
+          akit review MR-URL [--wi N] [--scenario S]
+                                          Gather the context, run the review passes, plan the drafts.
+                                          akit review --help lists the rest
+
         Instructions (AGENTS.md, CLAUDE.md; only reads):
           akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
                                           The instruction files each harness loads for a session in
@@ -277,7 +282,8 @@ public enum AKitCLI {
                            trash: (URL) throws -> URL? = Trash.move,
                            ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil,
                            input: () -> Data = { Data() }, runner: CommandRunner? = nil,
-                           hardwareHash: () -> String? = MachineProfile.currentHardwareHash) async -> Int32 {
+                           hardwareHash: () -> String? = MachineProfile.currentHardwareHash,
+                           review: ReviewServices = ReviewServices()) async -> Int32 {
         // Hidden; the akit binary runs it before everything else (main.swift). Silent, exit 0.
         if arguments.first == "record-session" {
             RecordSession.run(harness: RecordSession.harness(in: arguments), stdin: input(), env: env)
@@ -298,6 +304,10 @@ public enum AKitCLI {
             // Lab has its own options (--repo, --json, …); none of the brain's apply.
             if arguments.first == "lab" {
                 return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
+            }
+            if arguments.first == "review" {
+                return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input,
+                                             services: review)
             }
             if arguments.first == "analysis" {
                 return try await analysis(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, err: err,

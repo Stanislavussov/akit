@@ -1,6 +1,6 @@
 # AKit: словарь надписей
 
-Этот словарь объясняет каждую надпись, число, значок и совет на экранах AKit. Ищите надпись так, как она написана на экране: названия даны по-английски, жирным. У каждой статьи есть ссылка «Подробнее» на раздел [руководства по экранам](screens#start) или [руководства Error Analysis](error-analysis#overview).
+Этот словарь объясняет каждую надпись, число, значок и совет на экранах AKit. Ищите надпись так, как она написана на экране: названия даны по-английски, жирным. У каждой статьи есть ссылка «Подробнее» на раздел [руководства по экранам](screens#start) или [руководства Error Analysis](error-analysis#overview) или [руководства AKit Review](review#overview).
 
 Словарь разбит по экранам в том же порядке, что и боковое меню. Если надписи здесь нет, нажмите на неё правой кнопкой и выберите **Ask AKit About This**: помощник ответит по руководствам и данным экрана. Подробнее: [Ask AKit](screens#ask).
 
@@ -14,6 +14,7 @@
 - **Setup**: группа про то, что у агентов должно быть. В ней один экран, Brain: ваш git-репозиторий со скиллами и слоями, которые AKit ставит в проекты («rendered into projects»). Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Activity**: группа про то, как агенты работали. В ней Sessions (сохранённые сессии) и Usage (токены и деньги по дням). Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Improve**: группа про то, что в настройке лишнее, почему сессии идут плохо и помог ли фикс. В ней Insights, Lab и Error Analysis. Подробнее: [Боковое меню](screens#menus-sidebar)
+- **Work**: группа агентов, которые помогают в ежедневной работе. В ней Review: ИИ-ревью merge request'ов GitLab. Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Число справа от Skills**: сколько скиллов AKit нашёл всего, во всех группах экрана Skills. Фильтры экрана это число не меняют. Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Число справа от MCP Servers**: сколько записей MCP-серверов AKit нашёл во всех файлах настроек всех агентов. Фильтры экрана это число не меняют. Подробнее: [Боковое меню](screens#menus-sidebar)
 - **Число справа от Lab**: сколько запусков Lab сейчас идёт или ждёт в очереди. Если таких нет, числа нет. Пример: «2» значит, что два разбора ещё не закончены. Подробнее: [Боковое меню](screens#menus-sidebar)
@@ -1028,3 +1029,113 @@ Friction («трение») — места, где агент спотыкалс
 - **helps (offline)**: вердикт оценки слоя brain. То же правило 95%, но без данных реальной работы. Не ставится, если ячейка «только чтение» этой оценки прошла. Подробнее: [Вердикт слоя](error-analysis#evals-layer-verdict)
 - **Layer Sets**: набор слоя — задачи и ответы на поля, на которых оценивается слой brain. Хранится только на этом Mac. Подробнее: [Набор слоя](error-analysis#evals-layer-sets)
 - **Queue 2 Calibration Cells…**: кнопка в окне Brain → слой → **Evaluate…**. Она ставит по одной платной ячейке каждой настройки (без слоя и со слоем), у которой ещё нет записанной цены. Ячейки меряют цену одной ячейки с этой моделью, и оценка потом их переиспользует. Если калибровка нужна только одной настройке, кнопка называется **Queue 1 Calibration Cell…**. Подробнее: [Калибровка](error-analysis#evaluate-layer-calibration)
+
+## Review
+<!-- section: terms-review -->
+
+### Страницы и панель инструментов
+<!-- section: terms-review-toolbar -->
+
+- **Runs**: страница ваших ревью. Слева список ревью, справа одно ревью с его запросами. Подробнее: [Экран Review](review#screen-parts)
+- **Roles**: страница ролей. Роль — один взгляд на изменение, файл `SKILL.md`. Пример: `security` ищет утечки секретов. Подробнее: [Посмотреть роль](review#config-roles)
+- **Scenarios**: страница сценариев и значений по умолчанию (**Defaults (review.yaml)**). Подробнее: [Сценарии](review#config-scenarios)
+- **Quality**: страница точности: как часто вы одобряете находки каждой роли, сценария и модели. Подробнее: [Качество](review#quality-read)
+- **New Review…** (плюс): начать ревью merge request'а. В окне: адрес MR, **Work items**, сценарий, роли и блок **This run only** (модели и предел кредитов только для этого ревью). Кнопка **Start Review** неактивна без токена GitLab. Подробнее: [Начать ревью](review#run-new)
+- **Review Settings…** (ключ): токены GitLab и Azure DevOps в Keychain и профили проектов (**New Profile…**, **Show Folder**, **Edit…**). Токен после сохранения не показывается никогда. Подробнее: [Настройка](review#setup)
+- **Stop**: кнопка в голубой полосе вверху, пока идёт ревью. Завершает текущий проход; сделанное остаётся. Подробнее: [Следить за ревью](review#run-progress)
+- **Over the credit cap**: окно, когда оценка выше предела кредитов. **Run Anyway** продолжает (предел этого ревью станет полторы оценки), **Stop** останавливает ревью до проходов. Подробнее: [Оценка и предел](review#run-credits)
+
+### Метки этапа и источника
+<!-- section: terms-review-badges -->
+
+- **Gathering**: AKit собирает MR, задачи и код в пакет контекста. Модель не участвует. Подробнее: [Следить за ревью](review#run-progress)
+- **Gathered**: пакет собран, проходов не было. Внизу есть **Run Passes**. Подробнее: [Следить за ревью](review#run-progress)
+- **Passes**: идёт оценка кредитов или проходы Pi (brief, роли, verifier). Подробнее: [Проходы](review#run-passes)
+- **Ready**: проходы закончены, запросы ждут вашего решения. Подробнее: [Экран Review](review#screen)
+- **Failed**: ошибка. Подсказка у метки и оранжевая строка говорят причину. **Run Passes** запускает проходы снова. Подробнее: [Следить за ревью](review#run-progress)
+- **Stopped**: вы нажали **Stop** или отказались превысить предел кредитов. Подробнее: [Следить за ревью](review#run-progress)
+- **built-in**: роль или сценарий встроены в AKit. Они действуют, пока в brain нет своих. Подробнее: [Три уровня](review#config-levels)
+- **brain**: из слоя `review` в brain. Действует во всех проектах на всех Mac. Подробнее: [Три уровня](review#config-levels)
+- **project**: своя копия проекта, только на этом Mac. Подробнее: [Копия для проекта](review#config-project)
+- **run**: значение задано для одного ревью (в **New Review…** или флагом команды). Видно в `akit review config show`. Подробнее: [config show](review#config-show)
+
+### Шапка ревью
+<!-- section: terms-review-header -->
+
+- **shop/orders-service!42 at 4f2c9e1b7a**: ссылка на MR и коммит, на котором шло ревью (`head_sha`). Подробнее: [Экран Review](review#screen-parts)
+- **Credits «55.9 of 150 credits»**: сколько кредитов потратили проходы и предел ревью. 1 кредит = 1 000 токенов, которые записал Pi (вход, запись в кэш, выход); чтение из кэша — одна десятая. Это не деньги. Подсказка показывает оценку до проходов. Подробнее: [Оценка и предел](review#run-credits)
+- **brief / role-… / verifier**: метки проходов. Галочка — закончен, пунктирный круг — идёт, крестик — ошибка. Подсказка: модель, кредиты, сколько файлов прочитано. Подробнее: [Проходы](review#run-passes)
+- **Brief**: раскрывающийся текст первого прохода: цель изменения, затронутые части, что уже сказали люди, критерии приёмки, первые пробелы. Подробнее: [Проходы](review#run-passes)
+
+### Карточка запроса
+<!-- section: terms-review-card -->
+
+- **Requests — Nothing goes to GitLab until you approve it.**: блок запросов. Запрос — одна запись в GitLab, которая ждёт вашего решения. Подробнее: [Карточка запроса](review#screen-card)
+- **New comment**: новый черновик-комментарий к строке. Подробнее: [Карточка запроса](review#screen-card)
+- **Update draft**: новый текст или строка для черновика AKit, который ещё не опубликован. Подробнее: [Повторные ревью](review#reruns-table)
+- **Delete draft**: удалить черновик AKit, потому что его находки больше нет. **Edit** здесь неактивна. Подробнее: [Повторные ревью](review#reruns-table)
+- **Summary**: один черновик-сводка ко всему MR: другие находки, вопросы автору, матрица критериев, пробелы. Подробнее: [Сводка](review#noise-summary)
+- **Update summary**: новый текст сводки, которая уже лежит в ваших черновиках. Подробнее: [Сводка](review#noise-summary)
+- **Reply: looks fixed**: ответ «Looks fixed in <коммит>» в опубликованном открытом треде AKit, когда находка пропала. Подробнее: [Повторные ревью](review#reruns-table)
+- **security · high · 0.93**: роль, серьёзность (`nit`, `low`, `medium`, `high`, `critical`) и уверенность от 0 до 1. Подробнее: [Карточка запроса](review#screen-card)
+- **Verifier: confirmed — …**: вердикт проверяющего и его заметка. Вердикты: `confirmed`, `rejected`, `question`, `merged`. Подробнее: [Проходы](review#run-passes)
+- **Approve / Undo Approve**: одобрить запрос или снять одобрение. Одобренные уходят с **Send Drafts…**. Подробнее: [Одобрить и отправить](review#screen-approve)
+- **Approved / Approved, edited / Rejected: … / Sent**: состояние запроса. «Approved, edited» — одобрен с вашей правкой. **Sent** — черновик уже в GitLab. Подробнее: [Одобрить и отправить](review#screen-approve)
+- **Edit**: поправить текст до отправки. **Done** сохраняет, **Cancel** отменяет. Правка хранится, чтобы улучшать роли. Подробнее: [Исправить текст](review#screen-edit)
+- **Reject**: у находки — меню причин; у запроса без находки — простая кнопка. Причина идёт в числа качества роли. Подробнее: [Отклонить с причиной](review#screen-reject)
+- **False positive**: проблемы нет (`false-positive`). Подробнее: [Отклонить с причиной](review#screen-reject)
+- **Lacked context**: агенту не хватило контекста (`no-context`). Подробнее: [Отклонить с причиной](review#screen-reject)
+- **Style nit**: придирка к стилю (`style-nit`). Подробнее: [Отклонить с причиной](review#screen-reject)
+- **Wrong line**: проблема есть, но не на этой строке (`wrong-anchor`). Подробнее: [Отклонить с причиной](review#screen-reject)
+- **Already handled**: уже решено или уже сказано (`already-handled`). Подробнее: [Отклонить с причиной](review#screen-reject)
+- **Wrong requirement**: агент неверно понял требование (`wrong-requirement`). Подробнее: [Отклонить с причиной](review#screen-reject)
+- **Out of scope**: не про этот MR (`out-of-scope`). Подробнее: [Отклонить с причиной](review#screen-reject)
+- **GitLab: …**: красная строка на карточке: GitLab или проверка AKit отказали при отправке. Запрос остаётся одобренным, его можно отправить снова. Подробнее: [Что AKit проверяет](review#screen-safety)
+
+### Блоки под запросами
+<!-- section: terms-review-blocks -->
+
+- **Only in AKit (N)**: находки, которые не идут в GitLab, с причиной. Примеры: «Not confirmed by the verifier.», «Confidence 0.70 is below 0.80.». Автор MR их не видит. Подробнее: [Only in AKit](review#noise-move)
+- **Move Inline**: сделать находку из **Only in AKit** комментарием к строке, даже сверх предела. Запрос ждёт **Approve**. В качестве считается одобренной (`missed-by-filter`). Подробнее: [Only in AKit](review#noise-move)
+- **Context gaps (N)**: пробелы контекста: чего не хватило, почему, как получить, система и кто сообщил («reported by gather» — AKit при сборе). Подробнее: [Пробелы контекста](review#gaps-read)
+- **Missed by the reviewer (N)**: что вы записали через **Add Missed…**. В GitLab не уходит. Подробнее: [Add Missed…](review#quality-missed)
+- **Pi sent N changes from the discussion. / Make New Version**: Pi в обсуждении вернул изменения. **Make New Version** делает из них новую версию находок; запросы строятся заново. Подробнее: [Make New Version](review#discuss-version)
+- **Version N of the findings**: что изменила новая версия: «New: …», «Changed: …» или «Nothing changed.». Подробнее: [Make New Version](review#discuss-version)
+
+### Нижняя строка
+<!-- section: terms-review-actions -->
+
+- **Add Missed…**: записать, что ревьюер пропустил: файл, строка, текст. Учит роли, в GitLab не уходит. Подробнее: [Add Missed…](review#quality-missed)
+- **Discuss in Pi…**: открыть Pi в терминале (Orca, herdr или Terminal) как ответвление сессии verifier. Что Pi вернёт, станет новой версией находок. Подробнее: [Discuss in Pi…](review#discuss-open)
+- **Refresh from GitLab**: перечитать ваши черновики и треды MR и построить запросы заново. Новый код не читает: после push нужно новое ревью. Подробнее: [Refresh from GitLab](review#reruns-refresh)
+- **Run Passes**: запустить brief, роли и verifier снова на собранном пакете. Есть у ревью **Gathered**, **Failed**, **Stopped** и у ревью, прерванного выходом из AKit. Подробнее: [Следить за ревью](review#run-progress)
+- **N approved**: сколько запросов одобрено и ещё не отправлено. Подробнее: [Одобрить и отправить](review#screen-approve)
+- **Send Drafts…**: добавить одобренные запросы в ваш pending review в GitLab как черновики. AKit никогда не публикует: публикуете вы кнопкой **Submit review** в GitLab. Подробнее: [Send Drafts…](review#screen-send)
+
+### Страницы Roles, Scenarios и Quality
+<!-- section: terms-review-config -->
+
+- **Level**: уровень настройки. **Brain** — общие роли всех проектов. «Project: …» — что видит этот проект, с его копиями. Подробнее: [Три уровня](review#config-levels)
+- **Add to Brain**: записать встроенные роли, сценарии и `review.yaml` в слой `review` brain и сделать коммит. Подробнее: [Изменить роль в brain](review#config-brain)
+- **Save… / Revert**: **Save…** показывает diff и сохраняет (в brain — с коммитом). **Revert** возвращает текст. Подробнее: [Изменить роль в brain](review#config-brain)
+- **Save Anyway**: кнопка сохранения в brain на рабочем Mac, если в тексте нашлись рабочие слова: хосты, пути проектов, организации, адреса почты. Подробнее: [Рабочие слова](review#config-work-words)
+- **Duplicate to Project…**: сделать копию роли или сценария только для этого проекта, на этом Mac. Подробнее: [Копия для проекта](review#config-project)
+- **Reset to Brain**: переместить копию проекта в Корзину; снова действует роль из brain. Подробнее: [Копия для проекта](review#config-project)
+- **New Role… / New Scenario…**: новая роль или сценарий из шаблона, на выбранном уровне. Подробнее: [Новая роль](review#config-new)
+- **Defaults (review.yaml)**: модели, уровень рассуждения, пороги (`severity_threshold`, `confidence_threshold`, `max_inline`, `nitpicks`) и предел кредитов. Подробнее: [Где менять пороги](review#noise-thresholds)
+- **By role / By scenario / By model**: точность = одобрено / (одобрено + отклонено). Пример: «security 100% 1 approved, 0 rejected». Подробнее: [Качество](review#quality-read)
+- **Why findings were rejected / Missed (added by you)**: причины отклонений с числом и ваши записи **Add Missed…**. Подробнее: [Что считается](review#quality-labels)
+
+### Слова AKit Review
+<!-- section: terms-review-words -->
+
+- **Пакет контекста** (context pack): файлы, которые AKit сам собрал для агента: MR, diff, треды, задачи, история, вывод команд, заметки. Агент читает только их и код MR. Подробнее: [Пакет контекста](review#run-pack)
+- **Находка** (finding): одна проблема, которую нашла роль: файл, строка, цитата кода, почему это проблема, серьёзность, уверенность. Подробнее: [Главные слова](review#overview-terms)
+- **Пробел контекста** (context gap): то, чего агенту не хватило. Агент пишет пробел вместо догадки. Подробнее: [Пробелы контекста](review#gaps)
+- **Запрос** (request): одна запись в GitLab, которая ждёт вашего решения. Подробнее: [Карточка запроса](review#screen-card)
+- **Отпечаток** (fingerprint): хэш пути, кода вокруг строки и заголовка находки. Без номера строки и без роли. По нему повторное ревью узнаёт ту же находку. Подробнее: [Отпечаток](review#reruns-fingerprint)
+- **Verifier**: последний проход. Сильная модель подтверждает, отклоняет, сливает находки или делает из них вопрос автору. Подробнее: [Проходы](review#run-passes)
+- **Сценарий** (scenario): какие роли идут в ревью и что проверять: **Feature**, **Bugfix**, **Dependency upgrade**. Подробнее: [Сценарий и роли](review#run-scenario)
+- **Роль** (role): один взгляд на изменение, файл `SKILL.md` с блоком `akit-review`. Встроенные: `domain`, `requirements`, `tests`, `bug-hunter`, `upgrade-risk`, `security`. Подробнее: [Посмотреть роль](review#config-roles)
+- **Профиль проекта** (project profile): YAML-файл `~/.akit/local/review/projects/<slug>.yaml`: сервер и проект GitLab, ваша копия репозитория, трекер, правила, папки знаний, пороги. Только на этом Mac. Подробнее: [Профиль проекта](review#setup-profile)
+- **Кредит** (credit): единица цены ревью в AKit: 1 000 токенов, которые записал Pi. Подробнее: [Оценка и предел](review#run-credits)

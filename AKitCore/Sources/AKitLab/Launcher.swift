@@ -82,6 +82,39 @@ public enum Launcher {
         return nil
     }
 
+    /// Opens an interactive command in a new tab: Orca when the folder is in a worktree Orca
+    /// knows, else herdr, else Terminal (`script` must be an executable `.command` file).
+    /// Returns where it opened. For AKit Review's Discuss in Pi….
+    @discardableResult
+    public static func openInteractive(script: URL, folder: URL, title: String, env: HarnessEnvironment) async throws -> String {
+        let command = quoted(script.path)
+        if env.findExecutable("orca") != nil,
+           let worktree = await orcaWorktree(for: folder, known: await orcaWorktrees(env: env), env: env) {
+            let object = try await json("orca", ["terminal", "create", "--worktree", "path:\(worktree)", "--title", title,
+                                                 "--command", command, "--json"], env: env)
+            if let terminal = ((object["result"] as? [String: Any])?["terminal"] as? [String: Any])?["handle"] as? String {
+                _ = try? await json("orca", ["terminal", "switch", "--terminal", terminal, "--json"], env: env)
+                if let app = app(for: .orca, env: env) { _ = try? await run("open", [app.path], env: env) }
+                return "Orca"
+            }
+        }
+        if env.findExecutable("herdr") != nil {
+            let path = folder.standardizedFileURL.path
+            let object: [String: Any]
+            if let workspace = await herdrWorkspace(for: path, env: env) {
+                object = try await json("herdr", ["tab", "create", "--workspace", workspace, "--cwd", path, "--label", title], env: env)
+            } else {
+                object = try await json("herdr", ["workspace", "create", "--cwd", path, "--label", title], env: env)
+            }
+            if let pane = ((object["result"] as? [String: Any])?["root_pane"] as? [String: Any])?["pane_id"] as? String {
+                _ = try await run("herdr", ["pane", "run", pane, command], env: env)
+                return "herdr"
+            }
+        }
+        _ = try await run("open", ["-a", "Terminal", script.path], env: env)
+        return "Terminal"
+    }
+
     // MARK: Orca
 
     private static func launchOrca(_ spec: RunSpec, title: String, env: HarnessEnvironment) async throws -> LaunchInfo {

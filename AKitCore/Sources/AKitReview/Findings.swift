@@ -1,0 +1,128 @@
+import AKitFoundation
+import Foundation
+
+/// One problem a role found (`docs/design/review.md`, "Findings"). The model fills it through
+/// `akit_submit_findings`; AKit checks it and adds the fingerprint.
+public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
+    public enum Side: String, Codable, Sendable { case new, old }
+
+    /// `finding`: a problem in the code. `ac`: a row of the acceptance-criteria matrix
+    /// (requirements role). `question`: something to ask the author.
+    public enum Kind: String, Codable, Sendable { case finding, ac, question }
+
+    public struct Verdict: Codable, Sendable, Hashable {
+        public enum Value: String, Codable, Sendable, CaseIterable { case confirmed, rejected, question, merged }
+        public var verdict: Value
+        public var note: String
+        /// For `merged`: the finding it went into.
+        public var into: String?
+        /// The verifier's own severity and confidence, when it changed them.
+        public var severity: ReviewSeverity?
+        public var confidence: Double?
+
+        public init(verdict: Value, note: String, into: String? = nil, severity: ReviewSeverity? = nil, confidence: Double? = nil) {
+            self.verdict = verdict
+            self.note = note
+            self.into = into
+            self.severity = severity
+            self.confidence = confidence
+        }
+    }
+
+    public var id: String
+    public var kind: Kind
+    public var role: String
+    public var file: String?
+    public var side: Side
+    public var line: Int?
+    public var title: String
+    public var evidence: String
+    public var why: String
+    public var severity: ReviewSeverity
+    public var confidence: Double
+    public var suggestion: String?
+    public var related: [String]
+    public var verifier: Verdict?
+    /// Hash of the path, the anchor snippet and the title (`ReviewFingerprint`); set by AKit.
+    public var fingerprint: String?
+
+    public init(id: String, kind: Kind = .finding, role: String, file: String?, side: Side = .new, line: Int?, title: String,
+                evidence: String, why: String, severity: ReviewSeverity, confidence: Double, suggestion: String? = nil,
+                related: [String] = [], verifier: Verdict? = nil, fingerprint: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.role = role
+        self.file = file
+        self.side = side
+        self.line = line
+        self.title = title
+        self.evidence = evidence
+        self.why = why
+        self.severity = severity
+        self.confidence = confidence
+        self.suggestion = suggestion
+        self.related = related
+        self.verifier = verifier
+        self.fingerprint = fingerprint
+    }
+
+    /// The severity and confidence after the verifier.
+    public var finalSeverity: ReviewSeverity { verifier?.severity ?? severity }
+    public var finalConfidence: Double { verifier?.confidence ?? confidence }
+}
+
+/// Something the agent needed and the context pack didn't have (`akit_report_context_gap`),
+/// or something Gather couldn't get.
+public struct ContextGap: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    /// gitlab, azure-devops, repository, knowledge, tests, other.
+    public var system: String
+    public var needed: String
+    public var why: String
+    public var howToGet: String
+    /// How the missing piece lowers confidence: which findings or checks it affects.
+    public var effect: String
+    /// `gather`, or the pass that reported it.
+    public var reportedBy: String
+
+    public init(id: String, system: String, needed: String, why: String, howToGet: String = "", effect: String = "", reportedBy: String) {
+        self.id = id
+        self.system = system
+        self.needed = needed
+        self.why = why
+        self.howToGet = howToGet
+        self.effect = effect
+        self.reportedBy = reportedBy
+    }
+}
+
+/// Fingerprint = hash of the path, the anchor snippet (±2 lines, whitespace normalized) and
+/// the normalized title. Not the line number, so it survives shifts; not the role, so one
+/// problem from two roles is one finding (R12).
+public enum ReviewFingerprint {
+    public static func make(path: String, snippet: String, title: String) -> String {
+        let text = "\(path)\n\(normalize(snippet))\n\(normalizeTitle(title))"
+        return String(Checksum.sha256(Data(text.utf8)).prefix(16))
+    }
+
+    /// Lines `line-2 … line+2` of `fileLines` (1-based), nil when the line is outside.
+    public static func snippet(_ fileLines: [String], line: Int, radius: Int = 2) -> String? {
+        guard line >= 1, line <= fileLines.count else { return nil }
+        let start = max(1, line - radius)
+        let end = min(fileLines.count, line + radius)
+        return fileLines[(start - 1)..<end].joined(separator: "\n")
+    }
+
+    static func normalize(_ snippet: String) -> String {
+        snippet.split(whereSeparator: \.isNewline)
+            .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    static func normalizeTitle(_ title: String) -> String {
+        title.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) || $0 == " " }
+            .map(String.init).joined()
+            .split(separator: " ").joined(separator: " ")
+    }
+}

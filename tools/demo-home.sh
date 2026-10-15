@@ -831,4 +831,133 @@ for rep in 1 2 3; do
     done
 done
 
+# Review: a project profile and one finished review of a made-up merge request
+# (Review screen: requests, only in AKit, gaps). Dates without fractions: review's JSON reads ISO 8601.
+rago() { date -u -v-"$1" +%Y-%m-%dT%H:%M:%SZ; }
+REVIEWRUN="$DEMO/.akit/local/review/runs/20261015-091500-orders-service-42"
+HEADSHA=4f2c9e1b7a6d3c5e8f0a1b2c3d4e5f60718293a4
+file "$DEMO/.akit/local/review/projects/orders-service.yaml" <<'EOF'
+project: orders-service
+gitlab: { host: https://gitlab.example.com, project_path: shop/orders-service }
+checkout: ~/Projects/orders-service
+tracker: { kind: azure-devops, org: example-org, project: Orders }
+default_scenario: bugfix
+knowledge: [~/notes/orders]
+gather:
+  - { name: tests, run: "dotnet test --no-build", timeout_s: 600 }
+constraints:
+  - "Public DTOs in Contracts/ change only in backward-compatible ways"
+path_instructions:
+  - { paths: ["**/*.generated.cs"], ignore: true }
+review: { max_inline: 5 }
+EOF
+file "$REVIEWRUN/worktree/.git" <<<"gitdir: $DEMO/Projects/orders-service/.git/worktrees/42"
+file "$REVIEWRUN/worktree/src/Auth/AuthMiddleware.cs" <<'EOF'
+namespace Orders.Auth;
+
+public sealed class AuthMiddleware(RequestDelegate next, ILogger<AuthMiddleware> logger)
+{
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var header = context.Request.Headers.Authorization.ToString();
+        logger.LogInformation("Auth: {Header}", header);
+        if (string.IsNullOrEmpty(header))
+        {
+            context.Response.StatusCode = 401;
+            return;
+        }
+        var token = header["Bearer ".Length..];
+        context.Items["token"] = token;
+        await next(context);
+    }
+}
+EOF
+file "$REVIEWRUN/run.json" <<EOF
+{"version":1,"id":"20261015-091500-orders-service-42","created":"$(rago 3H)",
+ "mergeRequest":{"host":"https://gitlab.example.com","projectPath":"shop/orders-service","iid":42},"project":"orders-service",
+ "scenario":{"value":"bugfix","source":"project"},
+ "checks":["Is the cause fixed, not the symptom (from the repro steps)?","Does a regression test reproduce the bug?"],
+ "contextRequired":["wi","full_files"],
+ "roles":[
+  {"id":"bug-hunter","source":"built-in","reason":"required by bugfix","minSeverity":"medium","maxFindings":3,"needs":["diff"],"doNotComment":[],"sha256":"0"},
+  {"id":"requirements","source":"built-in","reason":"required by bugfix","minSeverity":"medium","maxFindings":3,"needs":["wi"],"doNotComment":[],"sha256":"0"},
+  {"id":"tests","source":"built-in","reason":"required by bugfix","minSeverity":"medium","maxFindings":3,"needs":["tests"],"doNotComment":[],"sha256":"0"},
+  {"id":"security","source":"brain","reason":"optional, turned on","minSeverity":"medium","maxFindings":3,"needs":["diff"],"doNotComment":[],"sha256":"0"}],
+ "passes":{"value":{"model":"github-copilot/gpt-5.4-mini","thinking":""},"source":"brain"},
+ "verifier":{"value":{"model":"github-copilot/claude-opus-5-5","thinking":"high"},"source":"brain"},
+ "posting":{"marker":{"value":"🤖 AKit review","source":"built-in"},"severityThreshold":{"value":"medium","source":"built-in"},
+  "confidenceThreshold":{"value":0.8,"source":"built-in"},"maxInline":{"value":5,"source":"project"},"nitpicks":{"value":false,"source":"built-in"}},
+ "capCredits":{"value":150,"source":"built-in"},
+ "constraints":["Public DTOs in Contracts/ change only in backward-compatible ways"],
+ "pathInstructions":[{"paths":["**/*.generated.cs"],"ignore":true}],"knowledge":["~/notes/orders"],
+ "gather":[{"name":"tests","run":"dotnet test --no-build","timeoutSeconds":600}],"workItems":[4512],"headSHA":"$HEADSHA"}
+EOF
+file "$REVIEWRUN/status.json" <<EOF
+{"stage":"planned","updated":"$(rago 170M)"}
+EOF
+file "$REVIEWRUN/passes.json" <<EOF
+{"mainSession":"0b6f1c2a-1111-4a4a-9c9c-000000000042","verifierSession":"0b6f1c2a-2222-4a4a-9c9c-000000000042","estimate":64,
+ "brief":"Intent: stop the token from reaching the log after bug #4512.\nTouched components: AuthMiddleware.\nAlready raised: bob asked why the header is logged (resolved).\nAcceptance criteria: no secret reaches a log; requests without a header get 401.\nFirst gaps: no test output for the middleware.",
+ "passes":[
+  {"name":"brief","model":"github-copilot/gpt-5.4-mini","started":"$(rago 178M)","ended":"$(rago 177M)","usage":{"input":14200,"cached":0,"output":420},"credits":14.6,"paths":["../context/README.md","../context/diff.patch","../context/work-items/4512.md"]},
+  {"name":"role-bug-hunter","role":"bug-hunter","model":"github-copilot/gpt-5.4-mini","started":"$(rago 177M)","ended":"$(rago 176M)","usage":{"input":3100,"cached":14500,"output":610},"credits":5.2,"paths":["src/Auth/AuthMiddleware.cs"]},
+  {"name":"role-requirements","role":"requirements","model":"github-copilot/gpt-5.4-mini","started":"$(rago 176M)","ended":"$(rago 175M)","usage":{"input":1800,"cached":18400,"output":380},"credits":4.0,"paths":[]},
+  {"name":"role-tests","role":"tests","model":"github-copilot/gpt-5.4-mini","started":"$(rago 175M)","ended":"$(rago 174M)","usage":{"input":2600,"cached":20100,"output":350},"credits":4.96,"paths":["tests/Auth/AuthMiddlewareTests.cs"]},
+  {"name":"role-security","role":"security","model":"github-copilot/gpt-5.4-mini","started":"$(rago 174M)","ended":"$(rago 173M)","usage":{"input":1500,"cached":22800,"output":520},"credits":4.3,"paths":[]},
+  {"name":"verifier","model":"github-copilot/claude-opus-5-5","started":"$(rago 173M)","ended":"$(rago 171M)","usage":{"input":21900,"cached":0,"output":900},"credits":22.8,"paths":["src/Auth/AuthMiddleware.cs"]}]}
+EOF
+file "$REVIEWRUN/findings.json" <<EOF
+{"version":1,"created":"$(rago 170M)","source":"passes","findings":[
+ {"id":"f1","kind":"finding","role":"security","file":"src/Auth/AuthMiddleware.cs","side":"new","line":8,"title":"The Authorization header is logged in full",
+  "evidence":"logger.LogInformation(\"Auth: {Header}\", header);","why":"The log goes to the shared log store; anyone who reads it gets a valid bearer token.",
+  "severity":"high","confidence":0.88,"suggestion":"logger.LogDebug(\"Auth header present: {Present}\", header.Length > 0);","related":["bug-hunter:Header reaches the log"],
+  "verifier":{"verdict":"confirmed","note":"Line 8 logs the raw header; the bug's repro steps show the same line.","confidence":0.93},"fingerprint":"7c1e9a04b2d6f318"},
+ {"id":"f2","kind":"finding","role":"bug-hunter","file":"src/Auth/AuthMiddleware.cs","side":"new","line":14,"title":"A header without the Bearer prefix crashes the request",
+  "evidence":"var token = header[\"Bearer \".Length..];","why":"Basic credentials or a short header throw ArgumentOutOfRangeException: a 500 instead of 401.",
+  "severity":"medium","confidence":0.84,"related":[],"verifier":{"verdict":"confirmed","note":"Any header shorter than 7 characters throws."},"fingerprint":"a91f2c7d0e3b5a66"},
+ {"id":"f3","kind":"finding","role":"tests","file":"src/Auth/AuthMiddleware.cs","side":"new","line":8,"title":"No test checks what is logged",
+  "evidence":"logger.LogInformation","why":"A regression test with a fake logger would keep the token out of the log.","severity":"medium","confidence":0.72,"related":[],
+  "verifier":{"verdict":"confirmed","note":"Fair, but the cause is fixed by f1."},"fingerprint":"5d0c13e8a2f47b90"},
+ {"id":"f4","kind":"ac","role":"requirements","side":"new","title":"No secret reaches a log","evidence":"","why":"code: AuthMiddleware.cs:8 still logs the header (f1)",
+  "severity":"high","confidence":0.9,"related":[],"verifier":{"verdict":"confirmed","note":""},"fingerprint":"0e44c1d2b3a59f71"},
+ {"id":"f5","kind":"finding","role":"requirements","file":"src/Auth/AuthMiddleware.cs","side":"new","line":11,"title":"Should a missing header answer 401 or pass through to anonymous endpoints?",
+  "evidence":"context.Response.StatusCode = 401;","why":"The work item doesn't say whether /health stays open.","severity":"medium","confidence":0.6,"related":[],
+  "verifier":{"verdict":"question","note":"Ask whether /health and /metrics must stay anonymous."},"fingerprint":"c3b7e2a1d9f04e88"},
+ {"id":"f6","kind":"finding","role":"bug-hunter","file":"src/Auth/AuthMiddleware.cs","side":"new","line":15,"title":"Token stored in HttpContext.Items",
+  "evidence":"context.Items[\"token\"] = token;","why":"Items may be logged by diagnostics.","severity":"medium","confidence":0.65,"related":[],
+  "verifier":{"verdict":"rejected","note":"No code path logs Items; speculation without a sink."},"fingerprint":"9e8d7c6b5a4f3e21"}]}
+EOF
+file "$REVIEWRUN/gaps.json" <<'EOF'
+[{"id":"g1","system":"tests","needed":"Output of tests","why":"dotnet test failed to build in the worktree.","howToGet":"Check the command in the profile.","effect":"","reportedBy":"gather"},
+ {"id":"g2","system":"azure-devops","needed":"Which endpoints stay anonymous","why":"Work item #4512 doesn't list them.","howToGet":"Ask the author.","effect":"f5 is a question, not a finding.","reportedBy":"role-requirements"}]
+EOF
+file "$REVIEWRUN/gitlab/snapshot.json" <<EOF
+{"mergeRequest":{"iid":42,"title":"Stop logging the Authorization header (AB#4512)","description":"Fixes AB#4512.","state":"opened","author":"alice",
+  "sourceBranch":"fix/4512-auth-log","targetBranch":"main","labels":["backend","security"],"webURL":"https://gitlab.example.com/shop/orders-service/-/merge_requests/42",
+  "diffRefs":{"baseSHA":"1a2b3c4d","startSHA":"1a2b3c4d","headSHA":"$HEADSHA"}},
+ "versions":[{"id":3,"headSHA":"$HEADSHA","baseSHA":"1a2b3c4d","startSHA":"1a2b3c4d"}],
+ "diffs":[{"oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs","diff":"@@ -5,10 +5,13 @@\n     public async Task InvokeAsync(HttpContext context)\n     {\n         var header = context.Request.Headers.Authorization.ToString();\n+        logger.LogInformation(\"Auth: {Header}\", header);\n         if (string.IsNullOrEmpty(header))\n         {\n             context.Response.StatusCode = 401;\n             return;\n         }\n+        var token = header[\"Bearer \".Length..];\n+        context.Items[\"token\"] = token;\n         await next(context);\n     }\n }\n","newFile":false,"renamedFile":false,"deletedFile":false,"tooLarge":false}],
+ "discussions":[],"drafts":[],"user":"demo","gathered":"$(rago 179M)"}
+EOF
+SUMMARY='🤖 AKit review · summary · scenario **bugfix** · roles `bug-hunter`, `requirements`, `tests`, `security`\n\n2 inline comments on the diff.\n\n### Questions to the author\n\n- `src/Auth/AuthMiddleware.cs:11`: Should a missing header answer 401 or pass through to anonymous endpoints? — Ask whether /health and /metrics must stay anonymous.\n\n### Acceptance criteria\n\n| Criterion | Status |\n|---|---|\n| No secret reaches a log | code: AuthMiddleware.cs:8 still logs the header (f1) |\n\n### What was missing\n\n- Output of tests: dotnet test failed to build in the worktree.\n- Which endpoints stay anonymous: Work item #4512 doesn'"'"'t list them.\n\n<sub>AKit is an AI reviewer; check before applying. Reviewed commit 4f2c9e1b7a.</sub>'
+POS='"baseSHA":"1a2b3c4d","startSHA":"1a2b3c4d","headSHA":"'"$HEADSHA"'","oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs"'
+file "$REVIEWRUN/requests.json" <<EOF
+{"created":"$(rago 170M)","findingsVersion":1,"requests":[
+ {"id":"r1","kind":"create","findingID":"f1","fingerprint":"7c1e9a04b2d6f318","role":"security","severity":"high","confidence":0.93,
+  "file":"src/Auth/AuthMiddleware.cs","line":8,"position":{$POS,"newLine":8},
+  "proposed":"🤖 AKit review · \`security\` · **high** · confidence 0.93\n\n**The Authorization header is logged in full**\n\nThe log goes to the shared log store; anyone who reads it gets a valid bearer token.\n\n\`\`\`suggestion\nlogger.LogDebug(\"Auth header present: {Present}\", header.Length > 0);\n\`\`\`\n\n<sub>AKit is an AI reviewer; check before applying.</sub>",
+  "decision":"approved","movedByUser":false},
+ {"id":"r2","kind":"create","findingID":"f2","fingerprint":"a91f2c7d0e3b5a66","role":"bug-hunter","severity":"medium","confidence":0.84,
+  "file":"src/Auth/AuthMiddleware.cs","line":14,"position":{$POS,"newLine":14},
+  "proposed":"🤖 AKit review · \`bug-hunter\` · **medium** · confidence 0.84\n\n**A header without the Bearer prefix crashes the request**\n\nBasic credentials or a short header throw ArgumentOutOfRangeException: a 500 instead of 401.\n\n<sub>AKit is an AI reviewer; check before applying.</sub>",
+  "decision":"pending","movedByUser":false},
+ {"id":"r3","kind":"summary","proposed":"$SUMMARY","decision":"pending","movedByUser":false}],
+ "placements":[{"findingID":"f1","place":"inline","reason":"Confirmed and over the thresholds."},
+  {"findingID":"f2","place":"inline","reason":"Confirmed and over the thresholds."},
+  {"findingID":"f3","place":"onlyInAKit","reason":"Confidence 0.72 is below 0.80."},
+  {"findingID":"f4","place":"matrix","reason":"A row of the acceptance-criteria matrix."},
+  {"findingID":"f5","place":"question","reason":"Not enough context: a question to the author."},
+  {"findingID":"f6","place":"onlyInAKit","reason":"Rejected by the verifier: No code path logs Items; speculation without a sink."}]}
+EOF
+
 echo "Demo home: $DEMO"

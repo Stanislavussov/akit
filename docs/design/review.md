@@ -1,9 +1,96 @@
 # AKit Review: AI review of merge requests
 
-Status: 2026-10-15, design only, nothing built. Grilled with the user on 2026-10-15 from a
+Status: 2026-10-15, being built on branch `akit-review`. Grilled with the user on 2026-10-15 from a
 research plan (Pi with the `github-copilot` provider, GitLab, Azure DevOps). The decisions
 below are agreed. The user's employer allows both parts: Copilot from a third-party harness
-(Pi) and AI comments in merge requests. Next: step 0 (facts on the work Mac, no code).
+(Pi) and AI comments in merge requests. Step 0 (facts on the work Mac) is still open: the code
+was built against the public GitLab and Azure DevOps REST and Pi 1.0.4 on a personal Mac, and
+`akit review check HOST` is the first fact to collect there.
+
+Built: step 1 (2026-10-15): module `AKitReview` with the project profile, the three levels
+(`ReviewCatalog`, `ReviewResolver`, `run.json`), Gather from GitLab and Azure DevOps REST into a
+scrubbed context pack, the worktree at `head_sha`, `akit review MR-URL`, `akit review config show`,
+`akit review token`, `akit review check`. Two additions to the design: the profile's `checkout:`
+(the local clone the worktree comes from) and the tracker's `url:` (Azure DevOps Server). The
+roles and scenarios of step 5 ship built in (`ReviewBuiltIns`, source `built-in`) and are used
+while the brain has no layer `review`.
+
+Built: step 2 (2026-10-15): `ReviewPasses` runs brief → roles → verifier in one Pi session
+(`--session-id`, the verifier as `--fork` of it with its own model), `akit-review.ts`
+(`ReviewExtension`) with the two tools and the `tool_call` policy, the estimate and the cap, the
+send log (purpose `review-<pass>`, the paths read), `akit review passes RUN`. Checked with a fake
+Pi in tests and with real Pi 1.0.4 against a fake model server. Decisions made while building:
+
+- **Credits** (R14): AKit's own unit, 1 credit = 1,000 tokens as Pi recorded them (input, cache
+  writes, output); a cached read counts one tenth. Recorded numbers only. Step 0 checks how it
+  lines up with the Copilot plan.
+- **Sending policy**: a new origin `mergeRequest`. It has no same origin, so it goes only to a
+  destination on the allowed list, on any Mac.
+- **Role text**: every pass gets all of the run's role skills (`--skill`) and the same appended
+  system prompt, so the session keeps one prompt cache; each role pass's prompt carries its
+  checklist.
+- **Verifier**: a fork of the session (it sees the brief and the roles), prompted with only the
+  candidates and their snippets (`prompts/candidates.md`); one tool, `akit_submit_findings`, takes
+  `findings` or `verdicts`.
+- **Secret files**: Gather deletes them from AKit's own worktree, because `grep` and `find` read
+  folders and the policy sees only the folder.
+- **Anchors**: when a finding's evidence isn't within ±3 lines of its line but is on exactly one
+  line of the file, AKit moves the anchor there.
+- Pi reads stdin when it isn't a terminal: a pass's stdin is `/dev/null`.
+
+Built: step 3 (2026-10-15): `ReviewPlanner` (the noise rules, positions from the diff hunks, the
+scrubber, the summary draft, the rerun table), `ReviewWorkflow` (decisions with reasons, Move
+Inline, Add Missed…, Send Drafts with a fresh read of the drafts and threads first),
+`ReviewQuality` (labels and precision read from each run's `requests.json`), the Review screen
+(sidebar group Work: the runs, the requests with the code around each anchor, Edit, Approve,
+Reject with a reason, Only in AKit with Move Inline, the gaps, Send Drafts…, New Review…, Review
+Settings… with the tokens and the profiles), `akit review show|approve|reject|inline|missed|post|quality`.
+Decisions made while building:
+
+- The hidden meta line also carries `th=`, a hash of the text AKit proposed: a rerun that would
+  propose the same text leaves a draft the user edited alone.
+- A suggestion block whose code the scrubber would change is left out of the draft.
+- Labels are not a separate log: they are read from the runs' decisions. Error Analysis notes
+  (origin `review`) are not written yet: notes there belong to agent sessions, and review's
+  labels fit them only through the verifier's session; open.
+- Gather and the passes run inside the app (one review at a time, Stop ends the pass); a run
+  survives a quit as a folder, and Run Passes (or `akit review passes RUN`) runs it again.
+
+Built: step 4 (2026-10-15): reruns by fingerprint end to end (a new run of the same merge
+request sees the drafts the last one sent: same text → nothing, gone → delete), Discuss in Pi…
+(`ReviewDiscuss`: `<run>/discuss.command` with `pi --fork` of the verifier's session, opened in
+Orca, herdr or Terminal by `Launcher.openInteractive`; Make New Version turns what Pi submitted
+into `findings.json` version N+1, keeps `findings-v<N>.json` and plans the requests again),
+`akit review discuss|apply`. In a discussion, `verdicts` change findings by id and `findings`
+add new ones (counted as confirmed: the developer was there); the discussion's tokens go into
+`passes.json` and the send log when its version is made.
+
+Built: step 5 (2026-10-15): Review → Roles, Scenarios (with the defaults) and Quality; Save… with a
+diff, Duplicate to Project…, Reset to Brain, Add to Brain (the built-ins into `layers/review`,
+committed), the work-word warning for brain saves on a work Mac; `layers/review` is reserved
+(the brain doesn't read it as a project layer). The guide `review.ru.md`, the Work group in the
+screens guide, the Review terms in the glossary.
+
+Review round (2026-10-15, code review of the branch), fixed:
+
+- The path policy refuses paths that start with `~`, `@` or `file:` (Pi expands them itself),
+  `find` patterns that leave the folder, and more secret files (`.npmrc`, `.netrc`,
+  `.git-credentials`, `id_*`, `*.p12`, …). A pass reads only the worktree and `context/`,
+  `roles/`, `prompts/` of the run: never `gitlab/` or `tracker/` (raw, unscrubbed).
+- AKit's own reads of worktree files (snippets, anchors, the screen) don't follow a symlink
+  out of the worktree and are masked.
+- Tokens: one Keychain account per exact `https://host[:port]` (Azure DevOps: per collection
+  address), https only, no redirects. They are now written and read in-process
+  (`ReviewKeychain`), not through `/usr/bin/security`, so another program gets a Keychain
+  prompt instead of the token. Gather commands (they run the merge request's code) and passes
+  get a minimal environment without GitLab or Azure DevOps variables.
+- A thread is AKit's only when the token's user started it with AKit's line; "looks fixed" is
+  proposed once per thread and only when no finding of the run has the fingerprint.
+- Model text can't open or close an HTML comment, the meta line is read from the end, and a
+  discussion's finding takes a role of the run only.
+- Send Drafts sends only the requests the sheet showed, with the text it showed; after a send
+  the snapshot learns GitLab's drafts, and sent requests stay on the list after a replan.
+- Diff positions after hunks that only add or only remove lines.
 
 ## What and why
 
@@ -429,6 +516,7 @@ verifier.
 
 ## Open
 
-- Whether Pi's `tool_result` event can change a tool's output (a second scrub inside Pi).
+- Whether Pi's `tool_result` event can change a tool's output (a second scrub inside Pi). Pi's
+  docs (1.0.4) say `tool_result` handlers compose and may replace `content`; not used yet.
 - The exact Pi provider id `github-copilot` and the model names on the work account.
 - Drafts on files over GitLab's diff limits on the user's GitLab version.

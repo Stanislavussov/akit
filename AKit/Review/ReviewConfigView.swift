@@ -1,0 +1,406 @@
+import AKitFoundation
+import AKitReview
+import SwiftUI
+
+/// Review → Roles and Scenarios: every role or scenario with its source (built-in, brain,
+/// project), Edit…, Duplicate to Project…, Reset to Brain (`docs/design/review.md`, R9–R10, R17).
+struct ReviewConfigView: View {
+    @Environment(ReviewModel.self) private var model
+    let kind: ReviewConfigEditor.Kind
+    let brain: URL
+    @State private var catalog: ReviewCatalog?
+    /// nil = the brain; else a project profile's slug.
+    @State private var project: String? = DebugSnapshot.options?.project
+    @State private var selection: String? = DebugSnapshot.options?.select
+    @State private var text = ""
+    @State private var save: ReviewConfigEditor.Save?
+    @State private var showNew = false
+    @State private var message: String?
+
+    struct Item: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let detail: String
+        let source: ReviewSource
+        let text: String
+    }
+
+    private var profile: ReviewProfile? { project.flatMap { slug in catalog?.profiles.first { $0.slug == slug } } }
+
+    private var items: [Item] {
+        guard let catalog else { return [] }
+        switch kind {
+        case .role:
+            return catalog.roles(for: profile).map { Item(id: $0.id, title: $0.id, detail: $0.description, source: $0.source, text: $0.text) }
+        case .scenario, .defaults:
+            var list = catalog.scenarios(for: profile).map {
+                Item(id: $0.id, title: $0.title, detail: "Roles: " + ($0.required + $0.optional.map { "\($0)?" }).joined(separator: ", "),
+                     source: $0.source, text: $0.text)
+            }
+            if project == nil {
+                let file = ReviewConfigEditor.file(.defaults, id: "", level: .brain, home: model.home, brain: brain)
+                let brainText = try? String(contentsOf: file, encoding: .utf8)
+                list.append(Item(id: "review.yaml", title: "Defaults (review.yaml)", detail: "Models, thresholds, the inline cap, the credit cap",
+                                 source: brainText == nil ? .builtIn : .brain, text: brainText ?? ReviewBuiltIns.defaultsYAML + "\n"))
+            }
+            return list
+        }
+    }
+
+    private var selected: Item? { items.first { $0.id == selection } }
+    private var hasBuiltIns: Bool { (catalog?.roles ?? []).contains { $0.source == .builtIn } || (catalog?.scenarios ?? []).contains { $0.source == .builtIn } }
+
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                Picker("Level", selection: $project) {
+                    Text("Brain").tag(String?.none)
+                    ForEach(catalog?.profiles ?? [], id: \.slug) { Text("Project: \($0.project)").tag(Optional($0.slug)) }
+                }
+                .padding(8)
+                .help("Brain: the generic \(kind == .role ? "roles" : "scenarios") of every project. A project: what that project sees, its own copies on top")
+                List(items, selection: $selection) { item in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(item.title).fontWeight(.medium)
+                            Spacer()
+                            ReviewSourceBadge(source: item.source)
+                        }
+                        Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    .tag(item.id)
+                }
+                HStack {
+                    Button("New \(kind == .role ? "Role" : "Scenario")…") { showNew = true }
+                    Spacer()
+                    if hasBuiltIns, project == nil {
+                        Button("Add to Brain") { addBuiltIns() }
+                            .help("Write the built-in roles, scenarios and defaults into the brain layer review, so you can edit them there (committed)")
+                    }
+                }
+                .padding(8)
+            }
+            .frame(minWidth: 260, idealWidth: 300, maxWidth: 400)
+            editor
+                .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .task { reload() }
+        .onChange(of: selection) { text = selected?.text ?? "" }
+        .onChange(of: project) {
+            reload()
+            text = selected?.text ?? ""
+        }
+        .sheet(item: Binding(get: { save.map { SaveBox(save: $0) } }, set: { save = $0?.save })) { box in
+            ReviewSaveSheet(save: box.save, brain: brain) { done in
+                save = nil
+                if done { reload() }
+            }
+        }
+        .sheet(isPresented: $showNew) {
+            ReviewNewItemSheet(kind: kind) { id in
+                let template = kind == .role ? ReviewConfigTemplates.role(id) : ReviewConfigTemplates.scenario(id)
+                plan(id: id, text: template)
+            }
+        }
+    }
+
+    @ViewBuilder private var editor: some View {
+        if let item = selected {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(item.title).font(.title3.weight(.semibold))
+                    ReviewSourceBadge(source: item.source)
+                    Spacer()
+                }
+                Text(sourceText(item)).font(.caption).foregroundStyle(.secondary)
+                TextEditor(text: $text)
+                    .font(.body.monospaced())
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+                if let message { Text(message).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
+                HStack {
+                    if let slug = project {
+                        if item.source == .project {
+                            Button("Reset to Brain") { reset(item, slug: slug) }
+                                .help("Move the project's own copy to the Trash: the brain's applies again")
+                        } else if item.id != "review.yaml" {
+                            Button("Duplicate to Project…") { duplicate(item, slug: slug) }
+                                .help("Make a copy only this project uses; it stays on this Mac (~/.akit/local)")
+                        }
+                    }
+                    Spacer()
+                    Button("Revert") { text = item.text }.disabled(text == item.text)
+                    Button("Save…") { plan(id: item.id == "review.yaml" ? "" : item.id, text: text) }
+                        .keyboardShortcut("s", modifiers: .command)
+                        .disabled(text == item.text)
+                        .help(project == nil ? "Show the change, then save it in the brain (committed)" : "Show the change, then save the project's copy")
+                }
+            }
+            .padding(16)
+        } else {
+            ContentUnavailableView("Pick a \(kind == .role ? "role" : "scenario")", systemImage: kind == .role ? "person.2" : "list.bullet.rectangle",
+                                   description: Text(kind == .role
+                                                     ? "A role is a SKILL.md with an akit-review: block: its checklist, what not to comment on, how many findings, from which severity."
+                                                     : "A scenario names the roles a review runs and what it checks. The defaults set models, thresholds and the caps."))
+        }
+    }
+
+    private func sourceText(_ item: Item) -> String {
+        switch item.source {
+        case .builtIn: "Built into AKit. Edit it to save it into the brain, or Add to Brain first."
+        case .brain: "From the brain layer review: every project on every Mac uses it."
+        case .project: "This project's own copy, only on this Mac."
+        case .run: "Set for one run."
+        }
+    }
+
+    private var level: ReviewConfigEditor.Level { project.map { .project($0) } ?? .brain }
+
+    private func reload() {
+        catalog = model.catalog(brain: brain)
+        message = catalog?.problems.first
+        if selection == nil { selection = items.first?.id }
+        text = selected?.text ?? ""
+    }
+
+    private func plan(id: String, text: String) {
+        do {
+            let itemKind: ReviewConfigEditor.Kind = id.isEmpty ? .defaults : kind
+            save = try ReviewConfigEditor.plan(itemKind, id: id, text: text, level: level, home: model.home, brain: brain)
+            message = nil
+            selection = id.isEmpty ? "review.yaml" : id
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func duplicate(_ item: Item, slug: String) {
+        guard let catalog else { return }
+        do {
+            save = try ReviewConfigEditor.duplicate(kind, id: item.id, toProject: slug, catalog: catalog, home: model.home, brain: brain)
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func reset(_ item: Item, slug: String) {
+        do {
+            try ReviewConfigEditor.resetToBrain(kind, id: item.id, project: slug, home: model.home, brain: brain)
+            reload()
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func addBuiltIns() {
+        Task {
+            do {
+                let written = try await ReviewConfigEditor.addBuiltIns(brain: brain, env: model.env)
+                message = written.isEmpty ? "The brain has them all already." : nil
+                reload()
+            } catch {
+                message = error.localizedDescription
+            }
+        }
+    }
+
+    private struct SaveBox: Identifiable {
+        let save: ReviewConfigEditor.Save
+        var id: String { save.file.path }
+    }
+}
+
+struct ReviewSourceBadge: View {
+    let source: ReviewSource
+
+    var body: some View {
+        let color: Color = switch source {
+        case .builtIn: .secondary
+        case .brain: .purple
+        case .project: .blue
+        case .run: .orange
+        }
+        Text(source.rawValue)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .background(color.opacity(0.15), in: Capsule())
+            .foregroundStyle(color)
+    }
+}
+
+/// The diff of a save, with the work words a brain save from a work Mac holds (R17).
+struct ReviewSaveSheet: View {
+    @Environment(ReviewModel.self) private var model
+    let save: ReviewConfigEditor.Save
+    let brain: URL
+    let done: (Bool) -> Void
+    @State private var problem: String?
+    @State private var saving = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Save \(save.kind.rawValue) \(save.id.isEmpty ? "review.yaml" : save.id) in \(save.level.title)?").font(.title3.weight(.semibold))
+            Text(save.file.path).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+            if !save.workWords.isEmpty {
+                Label("This is a work Mac, and the text names \(save.workWords.joined(separator: ", ")) from your work profiles. The brain may go to your personal GitHub: keep work names in a project copy instead.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(save.diff.enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(line.hasPrefix("+") ? .green : line.hasPrefix("-") ? .red : .secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .frame(minHeight: 200, maxHeight: 360)
+            .padding(6)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            if let problem { Text(problem).foregroundStyle(.red).font(.callout) }
+            HStack {
+                Spacer()
+                Button("Cancel") { done(false) }
+                Button(save.workWords.isEmpty ? "Save" : "Save Anyway") {
+                    saving = true
+                    Task {
+                        do {
+                            try await ReviewConfigEditor.apply(save, brain: brain, env: model.env)
+                            done(true)
+                        } catch {
+                            problem = error.localizedDescription
+                        }
+                        saving = false
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(saving)
+            }
+        }
+        .padding(20)
+        .frame(width: 640)
+    }
+}
+
+struct ReviewNewItemSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let kind: ReviewConfigEditor.Kind
+    let create: (String) -> Void
+    @State private var id = ""
+
+    private var valid: Bool { id.range(of: "^[a-z0-9][a-z0-9-]{0,62}$", options: .regularExpression) != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New \(kind == .role ? "role" : "scenario")").font(.title3.weight(.semibold))
+            TextField("Id", text: $id, prompt: Text(kind == .role ? "e.g. performance (the skill is review-performance)" : "e.g. hotfix"))
+            Text("It starts from a template; you see the diff before it is saved at the level picked on the left.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Create") {
+                    create(id)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!valid)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+}
+
+enum ReviewConfigTemplates {
+    static func role(_ id: String) -> String {
+        """
+        ---
+        name: review-\(id)
+        description: "Review a change for …"
+        akit-review:
+          min_severity: medium
+          max_findings: 3
+          needs: [diff, full_files]
+          do_not_comment:
+            - style and naming
+        ---
+
+        What to check, as a list the model can follow:
+
+        - …
+
+        """
+    }
+
+    static func scenario(_ id: String) -> String {
+        """
+        id: \(id)
+        title: \(id.capitalized)
+        roles: { required: [bug-hunter], optional: [] }
+        checks:
+          - "…"
+        context_required: [full_files]
+
+        """
+    }
+}
+
+/// Review → Quality: precision from your verdicts at approval (R16).
+struct ReviewQualityView: View {
+    @Environment(ReviewModel.self) private var model
+    @State private var entries: [ReviewQuality.Entry] = []
+
+    var body: some View {
+        let precision = ReviewQuality.precision(entries)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Precision = approved / (approved + rejected), from your verdicts on the Review screen. A finding you moved inline counts as approved: the filter, not the reviewer, was wrong.")
+                    .foregroundStyle(.secondary)
+                if entries.isEmpty {
+                    ContentUnavailableView("No verdicts yet", systemImage: "chart.bar",
+                                           description: Text("Approve or reject findings on a run; the numbers appear here."))
+                } else {
+                    table("By role", precision.roles)
+                    table("By scenario", precision.scenarios)
+                    table("By model", precision.models)
+                    let reasons = Dictionary(grouping: entries.compactMap(\.reason), by: { $0 }).mapValues(\.count)
+                    if !reasons.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Why findings were rejected").font(.headline)
+                            ForEach(reasons.sorted { $0.value > $1.value }, id: \.key) { reason, count in
+                                Text("\(reason.title): \(count)")
+                            }
+                        }
+                    }
+                    let missed = entries.filter { $0.label == .missed }
+                    if !missed.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Missed (added by you): \(missed.count)").font(.headline)
+                            ForEach(missed.prefix(20), id: \.self) { Text("\($0.run): \($0.title)").font(.callout).lineLimit(2) }
+                        }
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task { entries = ReviewQuality.entries(home: model.home) }
+    }
+
+    private func table(_ title: String, _ rows: [ReviewQuality.Precision]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.headline)
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 4) {
+                ForEach(rows, id: \.key) { row in
+                    GridRow {
+                        Text(row.key)
+                        Text(row.value.map { String(format: "%.0f%%", $0 * 100) } ?? "–").monospacedDigit().fontWeight(.medium)
+                        Text("\(row.approved) approved, \(row.rejected) rejected").foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+}

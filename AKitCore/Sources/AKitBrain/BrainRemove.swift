@@ -195,7 +195,7 @@ public enum BrainRemove {
     }
 
     /// Stages these paths (removals included) and commits only them, if the brain is a git repo.
-    static func commit(_ paths: [String], _ message: String, in root: URL, env: HarnessEnvironment) async throws(Failure) {
+    public static func commit(_ paths: [String], _ message: String, in root: URL, env: HarnessEnvironment) async throws(Failure) {
         guard FileManager.default.fileExists(atPath: root.appending(path: ".git").path) else { return }
         guard let git = env.findExecutable("git") else { throw Failure(message: "Done, but git was not found, so nothing was committed.") }
         let style: BrainGit.CommitStyle

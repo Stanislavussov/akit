@@ -94,6 +94,9 @@ public struct SendRecord: Codable, Hashable, Sendable {
     public var scrubbed: [String: Int]?
     /// Why the call failed, when it did (its cost still counts).
     public var error: String?
+    /// Files an agent read (AKit Review's passes record them from the tool calls), relative
+    /// to the folder it worked in.
+    public var paths: [String]?
 
     public init(date: Date = .now, purpose: String, session: String?, runID: String?, destination: SendDestination, model: String,
                 inputCharacters: Int, systemCharacters: Int? = nil, usage: SendUsage, scrubVersion: Int = Scrubber.version,

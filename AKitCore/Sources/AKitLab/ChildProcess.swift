@@ -1,22 +1,23 @@
+import AKitFoundation
 import Darwin
 import Foundation
 
 /// A long child of `akit lab run` (the agent, a build, one test) in its own process group,
 /// its output handed over line by line. Cancelling the run stops the current child's
 /// whole group, so nothing it started keeps running.
-enum ChildProcess {
-    struct Exit: Sendable {
-        let status: Int32
-        let exitedNormally: Bool
-        let timedOut: Bool
-        let cancelled: Bool
-        var succeeded: Bool { exitedNormally && status == 0 && !timedOut && !cancelled }
+public enum ChildProcess {
+    public struct Exit: Sendable {
+        public let status: Int32
+        public let exitedNormally: Bool
+        public let timedOut: Bool
+        public let cancelled: Bool
+        public var succeeded: Bool { exitedNormally && status == 0 && !timedOut && !cancelled }
     }
 
     /// nil = couldn't start. `onLine` gets stdout and stderr lines (without the newline).
     /// `input`: a file for stdin (else /dev/null).
     /// `onStart`: called once the child has started, before any output.
-    static func run(_ executable: URL, arguments: [String], directory: URL, environment: [String: String], input: URL? = nil,
+    public static func run(_ executable: URL, arguments: [String], directory: URL, environment: [String: String], input: URL? = nil,
                     timeout: TimeInterval?, onStart: (@Sendable () -> Void)? = nil,
                     onLine: @escaping @Sendable (String) -> Void) async -> Exit? {
         // The thread carries the caller's cancellation scope.
@@ -29,6 +30,12 @@ enum ChildProcess {
                 })
             }
         }
+    }
+
+    /// The environment of a harness AKit starts: the full PATH, none of Claude Code's own
+    /// variables (a harness started from inside Claude Code would think it is nested).
+    public static func harnessEnvironment(_ env: HarnessEnvironment) -> [String: String] {
+        AgentRun.environment(env, runFolder: nil)
     }
 
     private static func runBlocking(_ executable: URL, arguments: [String], directory: URL, environment: [String: String],
