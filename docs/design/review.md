@@ -38,6 +38,24 @@ Pi in tests and with real Pi 1.0.4 against a fake model server. Decisions made w
   line of the file, AKit moves the anchor there.
 - Pi reads stdin when it isn't a terminal: a pass's stdin is `/dev/null`.
 
+Built: step 3 (2026-10-15): `ReviewPlanner` (the noise rules, positions from the diff hunks, the
+scrubber, the summary draft, the rerun table), `ReviewWorkflow` (decisions with reasons, Move
+Inline, Add Missed…, Send Drafts with a fresh read of the drafts and threads first),
+`ReviewQuality` (labels and precision read from each run's `requests.json`), the Review screen
+(sidebar group Work: the runs, the requests with the code around each anchor, Edit, Approve,
+Reject with a reason, Only in AKit with Move Inline, the gaps, Send Drafts…, New Review…, Review
+Settings… with the tokens and the profiles), `akit review show|approve|reject|inline|missed|post|quality`.
+Decisions made while building:
+
+- The hidden meta line also carries `th=`, a hash of the text AKit proposed: a rerun that would
+  propose the same text leaves a draft the user edited alone.
+- A suggestion block whose code the scrubber would change is left out of the draft.
+- Labels are not a separate log: they are read from the runs' decisions. Error Analysis notes
+  (origin `review`) are not written yet: notes there belong to agent sessions, and review's
+  labels fit them only through the verifier's session; open.
+- Gather and the passes run inside the app (one review at a time, Stop ends the pass); a run
+  survives a quit as a folder, and Run Passes (or `akit review passes RUN`) runs it again.
+
 ## What and why
 
 The user reviews GitLab merge requests at work. An agent can read the change first, check it

@@ -154,9 +154,8 @@ struct GatherTests {
         let secrets = MemorySecretStore()
         try secrets.save("glpat-secret", for: ReviewTokens.account(.gitlab, for: "https://gitlab.test"))
         try secrets.save("ado-secret", for: ReviewTokens.account(.azureDevOps, for: "corp"))
-        var messages: [String] = []
         let result = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunChoices(), env: home.env, brain: nil,
-                                                tokens: { secrets.value($0) }, fetch: server.fetch, progress: { messages.append($0) })
+                                                tokens: { secrets.value($0) }, fetch: server.fetch)
         let folder = ReviewPaths(home: home.url).run(result.spec.id)
         #expect(result.spec.headSHA == head)
         #expect(result.spec.workItems == [41])

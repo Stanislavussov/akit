@@ -219,6 +219,7 @@ public enum ReviewPasses {
             let findings = ReviewFindingsFile(version: 1, findings: candidates, source: "passes")
             try ReviewJSON.write(findings, to: folder.appending(path: "findings.json"))
             try mergeGaps(folder: folder)
+            try await ReviewWorkflow.plan(folder, env: env)
             try ReviewRuns.setStatus(.planned, folder: folder)
             return findings
         } catch {

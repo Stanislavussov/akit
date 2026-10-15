@@ -78,7 +78,7 @@ public enum ReviewRuns {
     /// `tokens` reads a token by Keychain account; the app and the CLI pass the Keychain.
     public static func start(mr: MergeRequestRef, project: String?, choices: ReviewRunChoices, env: HarnessEnvironment, brain: URL?,
                              tokens: @Sendable (String) throws -> String?, fetch: @escaping ReviewFetch = ReviewHTTP.network,
-                             progress: (String) -> Void = { _ in }) async throws -> ReviewGather.Result {
+                             progress: @Sendable (String) -> Void = { _ in }) async throws -> ReviewGather.Result {
         let home = env.homeDirectory
         let catalog = ReviewCatalog.load(home: home, brain: brain)
         let profile = catalog.profile(for: mr, named: project)

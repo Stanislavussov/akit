@@ -9,6 +9,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
     case setup
     case activity
     case improve
+    case work
     var id: Self { self }
 
     var title: String {
@@ -17,6 +18,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: "Setup"
         case .activity: "Activity"
         case .improve: "Improve"
+        case .work: "Work"
         }
     }
 
@@ -26,6 +28,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: "What the agents should have: your brain of skills and layers, rendered into projects"
         case .activity: "How the agents worked: their saved sessions, tokens and cost"
         case .improve: "What the setup costs unused, why sessions went wrong and whether a fix helped"
+        case .work: "Agents that help with your daily work: review of merge requests"
         }
     }
 
@@ -35,6 +38,7 @@ enum SidebarGroup: String, CaseIterable, Identifiable {
         case .setup: [.brain]
         case .activity: [.sessions, .usage]
         case .improve: [.insights, .lab, .analysis]
+        case .work: [.review]
         }
     }
 }
@@ -52,6 +56,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
     case lab
     case analysis
     case brain
+    case review
     var id: Self { self }
 
     var title: String {
@@ -67,6 +72,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .lab: "Lab"
         case .analysis: "Error Analysis"
         case .brain: "Brain"
+        case .review: "Review"
         }
     }
 
@@ -84,6 +90,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .lab: "The queue of runs that start an agent or a model: reviews, replays, analysis batches, control cells; Sends logs what went out"
         case .analysis: "Recurring failure modes across many sessions, their frequencies, and whether a fix helped; its batches run in Lab"
         case .brain: "Your git repo of skills and layers; Set Up Project… renders them into a project"
+        case .review: "AI review of GitLab merge requests: Pi proposes comments, you approve each, AKit adds them as your drafts"
         }
     }
 
@@ -100,6 +107,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
         case .lab: "flask"
         case .analysis: "stethoscope"
         case .brain: "brain"
+        case .review: "checklist"
         }
     }
 }
@@ -113,6 +121,8 @@ struct RootView: View {
     /// Error Analysis state lives as long as the window: the last pool judge run and rebuild
     /// stay when you leave the section, until AKit quits. Lab sheets read it too.
     @State private var analysis = AnalysisModel()
+    /// Review state lives as long as the window: a review keeps running when you leave the section.
+    @State private var review = ReviewModel()
 
     var body: some View {
         @Bindable var model = model
@@ -158,8 +168,10 @@ struct RootView: View {
             case .lab: LabView()
             case .analysis: ErrorAnalysisView()
             case .brain: BrainView()
+            case .review: ReviewView()
             }
         }
+        .environment(review)
         // Ask AKit: a chat beside every screen (Help → Ask AKit, ⌥⌘/).
         .inspector(isPresented: $ask.isOpen) {
             AskAKitPanel()

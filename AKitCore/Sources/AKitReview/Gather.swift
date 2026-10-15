@@ -53,7 +53,7 @@ public enum ReviewGather {
     static let maxHistoryFiles = 40
 
     public static func run(spec: ReviewRunSpec, profile: ReviewProfile?, roles: [ReviewRole], folder: URL, sources: Sources,
-                           scrub: Scrubber.OwnPatterns, env: HarnessEnvironment, progress: (String) -> Void = { _ in }) async throws -> Result {
+                           scrub: Scrubber.OwnPatterns, env: HarnessEnvironment, progress: @Sendable (String) -> Void = { _ in }) async throws -> Result {
         var spec = spec
         var gaps: [ContextGap] = []
         func gap(_ system: String, _ needed: String, _ why: String, how: String = "", effect: String = "") {
@@ -428,9 +428,16 @@ public enum ReviewGather {
 public enum ReviewNotes {
     public static let metaPrefix = "<!-- akit-review:v1 "
 
-    /// `<!-- akit-review:v1 fp=… role=… sev=… run=… -->`.
-    public static func meta(fingerprint: String, role: String, severity: ReviewSeverity?, run: String, kind: String = "finding") -> String {
-        "\(metaPrefix)kind=\(kind) fp=\(fingerprint) role=\(role)\(severity.map { " sev=\($0.rawValue)" } ?? "") run=\(run) -->"
+    /// `<!-- akit-review:v1 kind=… fp=… role=… sev=… run=… th=… -->`. `th` is the hash of the text
+    /// AKit proposed, so a rerun knows a draft the user edited still says what AKit would.
+    public static func meta(fingerprint: String, role: String, severity: ReviewSeverity?, run: String, kind: String = "finding",
+                            proposed: String? = nil) -> String {
+        "\(metaPrefix)kind=\(kind) fp=\(fingerprint) role=\(role)\(severity.map { " sev=\($0.rawValue)" } ?? "") run=\(run)"
+            + (proposed.map { " th=\(textHash($0))" } ?? "") + " -->"
+    }
+
+    public static func textHash(_ text: String) -> String {
+        String(Checksum.sha256(Data(text.trimmingCharacters(in: .whitespacesAndNewlines).utf8)).prefix(12))
     }
 
     /// The fields of AKit's hidden line in a note, nil when there is none.
