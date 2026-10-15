@@ -1,7 +1,7 @@
 # Design map
 
 Status: 2026-10-11, checked against the code; `model-guidance.md` added the same day as a
-proposal; the order after step 9 is in "Next (2026-10-11)". This is the index of `docs/design/`: what
+proposal; `review.md` (AKit Review) added 2026-10-15 and placed before wave 1; the order after step 9 is in "Next (2026-10-11)". This is the index of `docs/design/`: what
 each design is for, what is built, what to build next and in which order. Each design
 keeps its own details and its own status note; the order across designs and the open
 decisions live only here.
@@ -56,6 +56,7 @@ change, change the setup. The sidebar groups follow it (Setup, Activity, Improve
 | [`harness-support.md`](harness-support.md) | What does AKit do for Claude Code and for Pi? | Skills and MCP Servers (switches); `akit skills state`, `akit skills set`, `akit mcp` | the table per feature, with each gap marked as a decision or open (2026-10-09); skill switches per harness, MCP servers off everywhere or in a project, with the verified setting formats (2026-10-10); moving a global skill into projects, Pi's only per-project control (2026-10-11); Model invocation, Auto / Manual in the skill itself or its layer (2026-10-12); all global skills Manual or Auto at once (2026-10-14) | Pi: replays, layer evals, hidden-test tasks, Analysis tab (decisions); `pi-mcp-adapter` fields beyond env and headers (open) |
 | [`machine-setup.md`](machine-setup.md) | What does AKit see on this Mac, and how does a new Mac get set up? | `akit doctor`; Help → Copy Diagnostics; Help → Report a Bug…; Set Up This Mac (proposal) | `akit doctor` (2026-10-09), Help → Copy Diagnostics (2026-10-10), Help → Report a Bug… / Suggest a Feature… (2026-10-11) | onboarding (proposal, user review open) |
 | [`ask-akit.md`](ask-akit.md) | What does this label, number or badge mean, and what do I do about it? | Toolbar → Ask AKit, Help → Ask AKit (⌥⌘/), right-click → Ask AKit About This | the core (`AKitHelp`: guide sections, prompt, answer, sources), the side panel with agent choice, Stop and New Chat, context menus (2026-10-14); the review round (2026-10-15): Stop ends the harness process, no session text (ids only, redaction backstop), checked links, first-send confirmation and What Was Sent; the AKit Terms glossary guide; the second review (2026-10-15): neutral names for emergent modes and session tasks, whole-word redaction, `systemCharacters` in the send log, a cancellable account check, consent per destination with Settings → Ask before Ask AKit sends | saved chats; About This on the batch difference grid and a few pane lists |
+| [`review.md`](review.md) | How does an agent review a GitLab merge request without writing anything the user didn't approve? | (design) Review screen, Roles and Scenarios; `akit review`, `akit review post`; guide `review.ru.md` | — (design 2026-10-15, decisions R1–R19 agreed) | everything: step 0 (facts on the work Mac), Gather, the passes, the Review screen, reruns, configuration screens, the guide |
 | [`definitions.md`](definitions.md) | What does a shared term mean? | — | tiers, sending policy, keys, shared `FailureSignals` (2026-10-08) | fingerprint, `dirty` / `diff_hash` |
 
 The in-app guides are in `docs/guides/` (`screens.ru.md`, `error-analysis.ru.md`). Since
@@ -116,11 +117,12 @@ design doc and this table say so.
 
 ## Next (2026-10-11)
 
-The user chose wave 1 as the next step on 2026-10-11. Waves 2–4 are proposals in this
+The user chose wave 1 as the next step on 2026-10-11; on 2026-10-15 the user put AKit Review (wave 0) before it. Waves 2–4 are proposals in this
 order; each wave is one or more feature branches.
 
 | Wave | Step | Design | Why at this place |
 |---|---|---|---|
+| 0 | AKit Review, steps 0–5 (agreed 2026-10-15, R18): step 0 is facts on the work Mac, no code | `review.md`, Steps | The user's daily work tool; it comes before wave 1 |
 | 1 | Layer evals on the user's JS/TS project. Commit tasks for `package.json` repositories (vitest or jest from its scripts, one process per hidden test file, the same watchdog); side metrics next to success (cost, tokens, turns, tool-output bytes, with the same paired bootstrap); the third setup **Clean** if the wave's plan keeps it. Then the pilot there, not on AKit | `layer-evals.md`, Later (the bold rows) | The pilot is the open part of step 4. The user evaluates layers on JS/TS, and AKit's hidden tests don't judge SwiftUI work, so a pilot on AKit says little. Cost and tokens are recorded already, so each paid cell gives more |
 | 2 | Onboarding: **Set Up This Mac** | `machine-setup.md`, Onboarding | From the work Mac (Pi, herdr): AKit guesses tools and folders. The user reviews the proposal first |
 | 3 | Model guidance: step 0 (facts, no code), the guidance review, then model notes with the model × setup matrix of evals | `model-guidance.md`; `layer-evals.md`, Later | D5–D10 first. The review is useful alone (proposal for D10); model notes need the matrix to prove them |
