@@ -193,7 +193,7 @@ extension AKitCLI {
                 let pool = notesStore.all()
                 let origins = Dictionary(pool.map { ($0.sessionKey, $0.origin) }, uniquingKeysWith: { first, _ in first })
                 let parts = Matching.retroInput(mode: mode, pool: pool, origins: origins)
-                guard try confirmCost(characters: parts.map(\.text.count).reduce(0, +), purpose: "retro-matching", agent: agent,
+                guard try confirmCost(characters: parts.map(\.text.count).reduce(0, +), purpose: "retro-matching", calls: parts.count, agent: agent,
                                       what: "Retro-matching \(parts.flatMap(\.refs).count) notes against \(mode.name)",
                                       options: options, env: env, out: out) else { return 0 }
                 let gate = try await SendGate.open(agent: agent, env: env)
@@ -288,9 +288,10 @@ extension AKitCLI {
 
     /// Prints the "≈" cost of a call; true when it may go ahead (`--yes`).
     /// `purpose`: the send log's purpose of the calls, whose past system prompts count in the estimate.
-    static func confirmCost(characters: Int, purpose: String, agent: LabAgent, what: String, options: AnalysisOptions, env: HarnessEnvironment,
-                            out: (String) -> Void) throws -> Bool {
-        let estimate = SendLog.estimate(characters: characters, purpose: purpose, harness: agent.harness, model: agent.model,
+    /// `calls`: how many model calls it makes; each sends the system prompt again.
+    static func confirmCost(characters: Int, purpose: String, calls: Int = 1, agent: LabAgent, what: String, options: AnalysisOptions,
+                            env: HarnessEnvironment, out: (String) -> Void) throws -> Bool {
+        let estimate = SendLog.estimate(characters: characters, purpose: purpose, calls: calls, harness: agent.harness, model: agent.model,
                                         records: SendLog.records(env: env))
         let cost = estimate.map { String(format: "≈ $%.2f", $0) } ?? "no estimate yet (no recorded calls of this model)"
         out("\(what): about \(characters / 1000)K characters to \(agent.label), \(cost).")
@@ -604,8 +605,9 @@ extension AKitCLI {
             let agent = try options.agent(env: env)
             guard let mode = try await ModeStore(env: env).mode(id) else { throw Failure(message: "No mode \(id).") }
             let pool = NotesStore(env: env).all()
+            // One call per 80 notes of the pool (Labels.findSimilar).
             guard try confirmCost(characters: Clustering.items(pool).map { $0.description.count + $0.quote.count + 60 }.reduce(0, +),
-                                  purpose: "similar-cases", agent: agent, what: "Searching the pool for cases of \(mode.name)", options: options, env: env,
+                                  purpose: "similar-cases", calls: (Clustering.items(pool).count + 79) / 80, agent: agent, what: "Searching the pool for cases of \(mode.name)", options: options, env: env,
                                   out: out) else { return 0 }
             let gate = try await SendGate.open(agent: agent, env: env)
             let finds = try await Bootstrap.findSimilar(mode: mode, labels: labels.all(), pool: pool, book: LabelBookStore(env: env).load(),

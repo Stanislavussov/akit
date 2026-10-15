@@ -512,22 +512,88 @@ struct SendPolicyTests {
         #expect(gone)
     }
 
-    /// onSend reports what goes out, and only when it goes out.
+    /// What onSend saw.
+    final class Sent: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [String] = []
+        func add(_ text: String) { lock.withLock { stored.append(text) } }
+        var all: [String] { lock.withLock { stored } }
+    }
+
+    /// onSend reports the scrubbed input, once, when the harness has started with it; never for
+    /// a call refused by the policy or the monthly limit, nor one whose harness is missing.
     @Test func onSendSeesOnlyCallsThatGoOut() async throws {
         try fakeClaude(result: #"{"type":"result","is_error":false,"result":"x"}"#)
         let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
-        let seen = Pauses()
+        let seen = Sent()
+        let folder = home.appending(path: "work")
         let token = "ghp_" + String(repeating: "a1B2", count: 9)
         let allowed = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
         _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "key \(token)", origin: .code(.claudeCode)),
-                                    gate: allowed, folder: home.appending(path: "work"), env: env, onSend: { _ in seen.add(.seconds(1)) })
+                                    gate: allowed, folder: folder, env: env, onSend: { seen.add($0) })
         #expect(seen.all.count == 1)
+        #expect(!seen.all[0].contains(token) && seen.all[0].hasPrefix("key "))
+        #expect(seen.all[0] == allowed.scrub("key \(token)").text)
+
+        // The policy refuses.
         let refused = SendGate(destination: claudeAccount, isWork: true, settings: LabSettings())
         await #expect(throws: SendAccounts.Failure.self) {
             _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .piSession(providers: ["zai"])),
-                                        gate: refused, folder: home.appending(path: "work"), env: env, onSend: { _ in seen.add(.seconds(1)) })
+                                        gate: refused, folder: folder, env: env, onSend: { seen.add($0) })
+        }
+        // The monthly limit refuses: this month already cost more than it.
+        try SendLog.append(SendRecord(purpose: "notes", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                                      inputCharacters: 10, usage: SendUsage(cost: 5)), env: env)
+        let limited = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings(monthlyLimit: 1))
+        await #expect(throws: (any Error).self) {
+            _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode)),
+                                        gate: limited, folder: folder, env: env, onSend: { seen.add($0) })
+        }
+        // The harness isn't there.
+        try fm.removeItem(at: home.appending(path: "bin/claude"))
+        await #expect(throws: ModelCall.Failure.self) {
+            _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode)),
+                                        gate: allowed, folder: folder, env: env, onSend: { seen.add($0) })
         }
         #expect(seen.all.count == 1)
+    }
+
+    /// A rate-limited call that is retried went out once as far as onSend is concerned.
+    @Test func onSendFiresOnceAcrossRetries() async throws {
+        try write("bin/claude", """
+            #!/bin/sh
+            n=$(cat "$HOME/count" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$HOME/count"
+            if [ $n -lt 3 ]; then
+              echo '{"type":"result","is_error":true,"result":"API Error: 429 Too Many Requests"}'
+            else
+              echo '{"type":"result","is_error":false,"result":"done","usage":{"input_tokens":1,"output_tokens":1}}'
+            fi
+
+            """, executable: true)
+        let agent = LabAgent(harness: .claudeCode, model: "opus", effort: "high")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let seen = Sent()
+        _ = try await ModelCall.run(ModelCall.Request(agent: agent, purpose: "ask akit", system: "s", input: "q", origin: .code(.claudeCode)),
+                                    gate: gate, folder: home.appending(path: "work"), env: env, sleep: { _ in }, onSend: { seen.add($0) })
+        #expect(seen.all == ["q"])
+    }
+
+    /// The system text as really sent: Claude Code's prompt and schema; Pi's prompt with the
+    /// schema and the JSON rule appended. Several calls send it several times.
+    @Test func theSystemTextCountsAsSentAndPerCall() {
+        let schema = #"{"type":"object"}"#
+        let claude = ModelCall.Request(agent: LabAgent(harness: .claudeCode, model: "opus", effort: "high"), purpose: "p", system: "sys",
+                                       input: "i", schema: schema, origin: .code(.claudeCode))
+        #expect(ModelCall.systemCharacters(claude) == 3 + schema.count)
+        let pi = ModelCall.Request(agent: LabAgent(harness: .pi, model: "zai/glm", effort: "medium"), purpose: "p", system: "sys",
+                                   input: "i", schema: schema, origin: .code(.pi))
+        #expect(ModelCall.systemCharacters(pi) == ModelCall.piSystemPrompt(pi).count)
+        #expect(ModelCall.piSystemPrompt(pi).contains(schema) && ModelCall.systemCharacters(pi) > 3 + schema.count)
+        let records = [SendRecord(purpose: "judge", session: nil, runID: nil, destination: claudeAccount, model: "opus",
+                                  inputCharacters: 1000, systemCharacters: 1000, usage: SendUsage(cost: 0.2))]
+        // 0.0001 per character: 10 calls of 100 input characters each send the 1,000-character prompt 10 times.
+        let estimate = SendLog.estimate(characters: 1000, purpose: "judge", calls: 10, harness: .claudeCode, model: "opus", records: records)
+        #expect(estimate.map { abs($0 - 1.1) < 1e-9 } == true)
     }
 
     @Test func rateLimitedCallsAreRetriedWithBackoff() async throws {

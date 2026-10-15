@@ -315,8 +315,8 @@ enum AnalysisText {
     }
 
     /// "≈ $0.12" or why there is no estimate.
-    static func cost(characters: Int, purpose: String, agent: LabAgent, records: [SendRecord]) -> String {
-        guard let cost = SendLog.estimate(characters: characters, purpose: purpose, harness: agent.harness, model: agent.model,
+    static func cost(characters: Int, purpose: String, calls: Int = 1, agent: LabAgent, records: [SendRecord]) -> String {
+        guard let cost = SendLog.estimate(characters: characters, purpose: purpose, calls: calls, harness: agent.harness, model: agent.model,
                                           records: records) else {
             return "no estimate yet (no recorded calls of this model)"
         }

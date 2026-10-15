@@ -37,6 +37,7 @@ extension AnalysisSend {
         return AnalysisSend(
             title: "Retro-match the Note Pool",
             purpose: "retro-matching",
+            calls: parts.count,
             detail: "Asks whether each of the \(AnalysisText.notes(parts.flatMap(\.refs).count)) in the pool fits \(mode.name). A note with no mode moves to it; a note routed elsewhere gets a second route for you to decide.",
             characters: parts.map(\.text.count).reduce(0, +)
         ) { agent, gate, env in
@@ -101,6 +102,8 @@ extension AnalysisSend {
         return AnalysisSend(
             title: "Find Similar Cases",
             purpose: "similar-cases",
+            // One call per 80 notes (Labels.findSimilar).
+            calls: (items.count + 79) / 80,
             detail: "Sends your notes mapped to \(mode.name) and the \(AnalysisText.notes(items.count)) of other reviewed sessions; the model lists the ones that show the same mode. You accept or reject each find.",
             characters: items.map { $0.description.count + $0.quote.count + 60 }.reduce(0, +)
         ) { agent, gate, env in

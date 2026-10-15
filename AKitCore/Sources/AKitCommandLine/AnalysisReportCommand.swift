@@ -107,7 +107,7 @@ extension AKitCLI {
                     // Only the sessions without a current verdict cost anything.
                     let pending = Judges.pending(mode: target, sessions: sessions, agent: judge, env: env).count
                     if pending > 0 {
-                        guard try confirmCost(characters: pending * 60_000, purpose: "judge", agent: judge,
+                        guard try confirmCost(characters: pending * 60_000, purpose: "judge", calls: pending, agent: judge,
                                               what: "Judging \(pending) of \(pool.count) sessions for \(target.name)",
                                               options: options, env: env, out: out) else { return 0 }
                     } else {
@@ -129,7 +129,7 @@ extension AKitCLI {
                 let judge = ValidationStore(env: env).judges()[target.id]
                 var gate: SendGate?
                 if let judge {
-                    guard try confirmCost(characters: 60_000 * 20, purpose: "judge", agent: judge, what: "Judging the \(set.rawValue) labels of \(target.name)",
+                    guard try confirmCost(characters: 60_000 * 20, purpose: "judge", calls: 20, agent: judge, what: "Judging the \(set.rawValue) labels of \(target.name)",
                                           options: options, env: env, out: out) else { return 0 }
                     gate = try await SendGate.open(agent: judge, env: env)
                 }

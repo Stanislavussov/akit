@@ -15,22 +15,25 @@ enum ChildProcess {
 
     /// nil = couldn't start. `onLine` gets stdout and stderr lines (without the newline).
     /// `input`: a file for stdin (else /dev/null).
+    /// `onStart`: called once the child has started, before any output.
     static func run(_ executable: URL, arguments: [String], directory: URL, environment: [String: String], input: URL? = nil,
-                    timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) async -> Exit? {
+                    timeout: TimeInterval?, onStart: (@Sendable () -> Void)? = nil,
+                    onLine: @escaping @Sendable (String) -> Void) async -> Exit? {
         // The thread carries the caller's cancellation scope.
         let scope = Cancellation.scope
         return await withCheckedContinuation { continuation in
             Thread.detachNewThread {
                 continuation.resume(returning: Cancellation.$scope.withValue(scope) {
                     runBlocking(executable, arguments: arguments, directory: directory, environment: environment, input: input,
-                                timeout: timeout, onLine: onLine)
+                                timeout: timeout, onStart: onStart, onLine: onLine)
                 })
             }
         }
     }
 
     private static func runBlocking(_ executable: URL, arguments: [String], directory: URL, environment: [String: String],
-                                    input: URL?, timeout: TimeInterval?, onLine: @escaping @Sendable (String) -> Void) -> Exit? {
+                                    input: URL?, timeout: TimeInterval?, onStart: (@Sendable () -> Void)?,
+                                    onLine: @escaping @Sendable (String) -> Void) -> Exit? {
         guard !Cancellation.isCancelled else { return Exit(status: 0, exitedNormally: false, timedOut: false, cancelled: true) }
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { return nil }
@@ -43,6 +46,7 @@ enum ChildProcess {
         }
         close(writeEnd)
         Cancellation.track(pid)
+        onStart?()
 
         let reader = FileHandle(fileDescriptor: readEnd, closeOnDealloc: false)
         let drained = DispatchSemaphore(value: 0)

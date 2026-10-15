@@ -178,15 +178,16 @@ public enum SendLog {
     /// `system`, the mean system prompt of past calls with `purpose` stands in (pre-send
     /// estimates know their input, not the prompt); with neither, input only. Records without
     /// `systemCharacters` count their input only. nil without a priced record.
-    public static func estimate(characters: Int, system: Int? = nil, purpose: String? = nil, harness: LabHarness, model: String,
-                                records: [SendRecord]) -> Double? {
+    /// `calls`: how many calls the input is spread over; each sends the system prompt again.
+    public static func estimate(characters: Int, system: Int? = nil, purpose: String? = nil, calls: Int = 1, harness: LabHarness,
+                                model: String, records: [SendRecord]) -> Double? {
         let same = records.filter { $0.harness == harness && $0.model == model && $0.usage.cost != nil && $0.inputCharacters > 0 }
         guard !same.isEmpty else { return nil }
         let cost = same.compactMap(\.usage.cost).reduce(0, +)
         let sent = same.map { $0.inputCharacters + ($0.systemCharacters ?? 0) }.reduce(0, +)
         let past = purpose.map { purpose in records.filter { $0.purpose == purpose }.compactMap(\.systemCharacters) } ?? []
         let systemSize = system ?? (past.isEmpty ? 0 : past.reduce(0, +) / past.count)
-        return cost / Double(sent) * Double(characters + systemSize)
+        return cost / Double(sent) * Double(characters + systemSize * max(1, calls))
     }
 
     /// Throws when the month's recorded cost plus `estimate` would pass the monthly limit.

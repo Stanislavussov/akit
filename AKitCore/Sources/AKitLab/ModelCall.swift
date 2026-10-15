@@ -67,8 +67,9 @@ public enum ModelCall {
 
     /// Checks, scrubs, sends, logs. Retries a rate-limited call with exponential backoff.
     /// `folder` holds the input file (Pi reads it as `@file`) for the length of the call.
-    /// `onSend` gets the scrubbed input once the policy and the limit allow the call, right
-    /// before it goes out (never for a refused call).
+    /// `onSend` gets the scrubbed input once, when the harness's process has started with it
+    /// (never for a call the policy or the limit refuses, nor one that couldn't start; a
+    /// rate-limited retry doesn't call it again).
     public static func run(_ request: Request, gate: SendGate, folder: URL, env: HarnessEnvironment,
                            timeout: TimeInterval = 20 * 60, retries: Int = 4,
                            sleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
@@ -79,7 +80,8 @@ public enum ModelCall {
         let records = SendLog.records(env: env)
         // The system prompt goes out with the input and is paid for too (a long one carries
         // guide sections or a skill): the estimate counts it, and the log records it apart.
-        try SendLog.checkLimit(estimate: SendLog.estimate(characters: scrubbed.text.count, system: request.system.count,
+        let system = systemCharacters(request)
+        try SendLog.checkLimit(estimate: SendLog.estimate(characters: scrubbed.text.count, system: system,
                                                           harness: request.agent.harness,
                                                           model: request.agent.model, records: records),
                                settings: gate.settings, env: env)
@@ -88,16 +90,18 @@ public enum ModelCall {
         func log(_ usage: SendUsage, error: String? = nil) throws {
             var record = SendRecord(purpose: request.purpose, session: request.session, runID: request.runID, destination: gate.destination,
                                     model: request.agent.model, inputCharacters: scrubbed.text.count,
-                                    systemCharacters: request.system.count, usage: usage,
+                                    systemCharacters: system, usage: usage,
                                     scrubbed: counts.isEmpty ? nil : counts)
             record.error = error
             try SendLog.append(record, env: env)
         }
-        onSend?(scrubbed.text)
+        let sent = Once()
+        let text = scrubbed.text
         var attempt = 0
         while true {
             do {
-                let answer = try await once(request, input: scrubbed.text, folder: folder, env: env, timeout: timeout)
+                let answer = try await once(request, input: text, folder: folder, env: env, timeout: timeout,
+                                            onStart: { if sent.first() { onSend?(text) } })
                 try log(answer.usage)
                 return answer
             } catch let failure as Failure {
@@ -110,7 +114,8 @@ public enum ModelCall {
         }
     }
 
-    static func once(_ request: Request, input: String, folder: URL, env: HarnessEnvironment, timeout: TimeInterval) async throws -> Answer {
+    static func once(_ request: Request, input: String, folder: URL, env: HarnessEnvironment, timeout: TimeInterval,
+                     onStart: (@Sendable () -> Void)? = nil) async throws -> Answer {
         let harness = request.agent.harness
         guard let command = env.findExecutable(harness.command) else {
             throw Failure(message: "\(harness.title) (\(harness.command)) is not installed.", rateLimited: false)
@@ -122,7 +127,8 @@ public enum ModelCall {
         let collector = Collector()
         let exit = await ChildProcess.run(command, arguments: arguments(request, input: file), directory: folder,
                                           environment: AgentRun.environment(env, runFolder: nil),
-                                          input: harness == .claudeCode ? file : nil, timeout: timeout) { collector.add($0) }
+                                          input: harness == .claudeCode ? file : nil, timeout: timeout,
+                                          onStart: onStart) { collector.add($0) }
         guard let exit else { throw Failure(message: "Couldn't start \(command.path).", rateLimited: false) }
         if exit.cancelled { throw CancellationError() }
         if exit.timedOut { throw Failure(message: "The model call timed out.", rateLimited: false) }
@@ -139,12 +145,33 @@ public enum ModelCall {
                     "--system-prompt", request.system]
                 + (request.schema.map { ["--json-schema", $0] } ?? []) + request.agent.flags
         case .pi:
-            let schema = request.schema.map { "\nThe answer is one JSON object matching this JSON schema:\n\($0)" } ?? ""
             return ["-p", "Answer for the attached input.", "--mode", "json", "--no-session", "--offline",
                     "--no-tools", "--no-skills", "--no-context-files", "--no-prompt-templates",
-                    "--system-prompt", request.system + schema + "\nAnswer with the JSON object only, no other text."]
+                    "--system-prompt", piSystemPrompt(request)]
                 + request.agent.flags + ["@\(input.path)"]
         }
+    }
+
+    /// Pi gets the schema and the JSON rule in its system prompt.
+    static func piSystemPrompt(_ request: Request) -> String {
+        let schema = request.schema.map { "\nThe answer is one JSON object matching this JSON schema:\n\($0)" } ?? ""
+        return request.system + schema + "\nAnswer with the JSON object only, no other text."
+    }
+
+    /// The system text as really sent: Claude Code's system prompt and its JSON schema, Pi's
+    /// system prompt with the schema and the rule appended.
+    static func systemCharacters(_ request: Request) -> Int {
+        switch request.agent.harness {
+        case .claudeCode: request.system.count + (request.schema?.count ?? 0)
+        case .pi: piSystemPrompt(request).count
+        }
+    }
+
+    /// True the first time only.
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done = false
+        func first() -> Bool { lock.withLock { defer { done = true }; return !done } }
     }
 
     /// `{"type":"result","is_error":…,"result":…,"structured_output":…,"usage":…,"total_cost_usd":…}`.

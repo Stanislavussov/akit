@@ -323,6 +323,7 @@ extension AnalysisSend {
         return AnalysisSend(
             title: "Run the Judge over the Pool",
             purpose: "judge",
+            calls: pending,
             detail: "Judges \(pending) of the \(data.pool.count) reviewed sessions for \(mode.name) (a digest of each transcript, secrets masked)"
                 + (skipped > 0 ? "; \(skipped) judged before on an unchanged file are skipped and cost nothing." : ".")
                 + " Then: where it finds the mode, and the cases the notes missed.",
@@ -347,6 +348,7 @@ extension AnalysisSend {
         return AnalysisSend(
             title: set == .test ? "Validate on Test" : "Validate on Dev",
             purpose: "judge",
+            calls: max(sessions, 1),
             detail: set == .test
                 ? "Judges the \(sessions) held-out test sessions once for this mode version and judge, and records TPR and TNR. Iterate on dev first: test runs once."
                 : "Judges the \(sessions) dev sessions and records TPR and TNR against your labels.",
