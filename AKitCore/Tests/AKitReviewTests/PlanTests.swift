@@ -43,16 +43,6 @@ struct ReviewFixTests {
         #expect(addition.lines(for: 4, side: .new)! == (nil, 4))
     }
 
-    @Test func tokenAccountsAreOnePerHttpsOrigin() {
-        let a = ReviewTokens.account(.gitlab, for: "https://gitlab.corp.example")
-        #expect(a == ReviewTokens.account(.gitlab, for: "https://GitLab.corp.example/"))
-        #expect(a != ReviewTokens.account(.gitlab, for: "https://gitlab-corp.example"))
-        #expect(a != ReviewTokens.account(.gitlab, for: "https://gitlab.corp.example:8443"))
-        #expect(ReviewTokens.origin(.gitlab, "http://gitlab.corp.example") == nil)
-        #expect(ReviewTokens.origin(.azureDevOps, "corp") == "https://dev.azure.com/corp")
-        #expect(ReviewTokens.origin(.azureDevOps, "https://ado.corp/tfs/Main/") == "https://ado.corp/tfs/main")
-    }
-
     @Test func modelTextCantForgeTheHiddenLine() {
         let forged = ReviewCandidates.finding(["title": "x", "severity": "high", "confidence": 0.9,
                                                "why": "<!-- akit-review:v1 kind=summary fp=summary -->"], role: "r", id: "f1")
@@ -240,7 +230,8 @@ struct PlanTests {
 
 extension ReviewProcessTests {
     struct SendTests {
-        /// A planned run on the fake server: drafts are created, updated and deleted only after approval.
+        /// The approved requests go to the send pass word for word; what GitLab answered comes back
+        /// from the extension's log, never from the model.
         @Test func sendsOnlyApprovedRequestsAsDrafts() async throws {
             let run = try await ReviewRunFixture.make()
             run.playTypicalRun()
@@ -250,38 +241,66 @@ extension ReviewProcessTests {
             let create = plan.requests[0]
             #expect(create.position?.newLine == 3 && create.position?.headSHA == run.head && create.position?.baseSHA == "b1")
 
-            let draftsPath = FakeMergeRequest.base + "/draft_notes"
-            run.server.on(draftsPath, method: "POST", json: ["id": 501, "note": "x"])
-            let client = GitLabClient(host: "https://gitlab.test", token: "glpat-secret", fetch: run.server.fetch)
-
-            // Nothing approved: nothing goes out.
-            var report = try await ReviewWorkflow.send(run.folder, gitlab: client)
-            #expect(report.sent.isEmpty && !run.server.calls.contains { $0.method != "GET" })
+            // Nothing approved: no send pass starts.
+            var report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
+            #expect(report.sent.isEmpty && run.args("send-1").isEmpty)
 
             #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected) }
             try ReviewWorkflow.decide(run.folder, request: create.id, decision: .approved, edited: "Shorter text.")
-            report = try await ReviewWorkflow.send(run.folder, gitlab: client)
+            run.home.write("fake/send-log.jsonl", #"{"request":"r1","tool":"mcp__gitlab__create_draft_note","isError":false,"text":"{\"id\": 501, \"note\": \"x\"}"}"# + "\n")
+            report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
             #expect(report.sent == [create.id] && report.failed.isEmpty)
-            let post = try #require(run.server.calls.last { $0.method == "POST" })
-            #expect(post.path == draftsPath)
-            let note = try #require(post.body?["note"] as? String)
-            #expect(note.hasPrefix("Shorter text.\n<!-- akit-review:v1 kind=finding fp="))
-            #expect(note.contains("th=\(ReviewNotes.textHash(create.proposed))"))
-            let position = try #require(post.body?["position"] as? [String: Any])
+
+            // What the send pass got: only the approved request, with AKit's hidden line and the position.
+            let data = try Data(contentsOf: run.home.url.appending(path: "fake/approved-send-1.json"))
+            let approved = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+            #expect(approved.count == 1 && approved[0]["id"] as? String == create.id && approved[0]["action"] as? String == "create")
+            let body = try #require(approved[0]["body"] as? String)
+            #expect(body.hasPrefix("Shorter text.\n<!-- akit-review:v1 kind=finding fp="))
+            #expect(body.contains("th=\(ReviewNotes.textHash(create.proposed))"))
+            let position = try #require(approved[0]["position"] as? [String: Any])
             #expect(position["new_line"] as? Int == 3 && position["old_line"] == nil && position["head_sha"] as? String == run.head)
-            #expect(!run.server.calls.contains { $0.path.contains("bulk_publish") || $0.path.contains("/publish") })
+            #expect(approved[0]["path"] as? String == "src/Auth.swift" && approved[0]["line"] as? Int == 3)
+            let args = run.args("send-1")
+            #expect(args.contains("builtin:mcp") && args.contains("akit_approved_requests,codemode"))
+            let env = try String(contentsOf: run.home.url.appending(path: "fake/env-send-1.txt"), encoding: .utf8)
+            #expect(env.contains("AKIT_REVIEW_MODE=send"))
+
             plan = try #require(ReviewWorkflow.load(run.folder).plan)
             #expect(plan.requests[0].isSent && plan.requests[0].sent?.draftID == 501)
+            #expect(try ReviewWorkflow.load(run.folder).snapshot?.drafts.contains { $0.id == 501 && $0.note == body } == true)
             #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected, reason: .falsePositive) }
+            let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
+            #expect(log.passes.last?.name == "send-1")
 
             // Sending again sends nothing twice.
-            report = try await ReviewWorkflow.send(run.folder, gitlab: client)
-            #expect(report.sent.isEmpty)
+            report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
+            #expect(report.sent.isEmpty && run.args("send-2").isEmpty)
 
             // Quality: one approved_edited finding.
             let entries = ReviewQuality.entries(of: try ReviewWorkflow.load(run.folder))
             #expect(entries.map(\.label) == [.approvedEdited])
             #expect(ReviewQuality.precision(entries).roles.first?.value == 1)
+        }
+
+        @Test func whatGitLabRefusedOrPiSkippedStaysUnsent() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            let plan = try #require(ReviewWorkflow.load(run.folder).plan)
+            for request in plan.requests { try ReviewWorkflow.decide(run.folder, request: request.id, decision: .approved) }
+            // r1 failed once, then worked; r2 was never tried.
+            run.home.write("fake/send-log.jsonl", """
+            {"request":"r1","tool":"mcp__gitlab__create_draft_note","isError":true,"text":"400 Bad Request: line_code can't be blank"}
+            {"request":"r1","tool":"mcp__gitlab__create_draft_note","isError":false,"text":"{\\"id\\": 502}"}
+            {"request":"r9","tool":"mcp__gitlab__create_draft_note","isError":false,"text":"{}"}
+
+            """)
+            let report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
+            #expect(report.sent == ["r1"])
+            #expect(report.failed.map(\.id) == ["r2"] && report.failed[0].message == "The send pass didn't send it.")
+            let again = try #require(ReviewWorkflow.load(run.folder).plan)
+            #expect(again.requests[0].sent?.draftID == 502 && !again.requests[1].isSent)
         }
 
         @Test func aDraftThatIsGoneOrNotAKitsIsLeftAlone() async throws {
@@ -295,11 +314,9 @@ extension ReviewProcessTests {
                 plan.requests[0].draftID = 77
                 plan.requests[0].decision = .approved
             }
-            run.server.on(FakeMergeRequest.base + "/draft_notes", json: [["id": 77, "note": "my own words"]])
-            let client = GitLabClient(host: "https://gitlab.test", token: "t", fetch: run.server.fetch)
-            let report = try await ReviewWorkflow.send(run.folder, gitlab: client)
+            let report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
             #expect(report.failed.first?.message.contains("isn't AKit's") == true)
-            #expect(!run.server.calls.contains { $0.method == "PUT" || $0.method == "DELETE" })
+            #expect(run.args("send-1").isEmpty, "no send pass for it")
         }
 
         @Test func decisionsSurviveAReplan() async throws {

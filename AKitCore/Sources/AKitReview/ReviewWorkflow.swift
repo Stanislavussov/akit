@@ -59,19 +59,14 @@ public enum ReviewWorkflow {
                    missed: ReviewJSON.read([ReviewMissed].self, from: folder.appending(path: "missed.json")) ?? [])
     }
 
-    /// Plans the requests from the findings. `gitlab` given: the user's drafts and the threads
-    /// are read again first (a rerun, or before sending); else Gather's snapshot is used.
-    /// Decisions and edits of requests that are planned again are kept.
+    /// Plans the requests from the findings, against the drafts and threads the run's fetch pass
+    /// read (a rerun is a new run, with a new fetch). Decisions and edits of requests that are
+    /// planned again are kept.
     @discardableResult
-    public static func plan(_ folder: URL, gitlab: GitLabClient? = nil, env: HarnessEnvironment) async throws -> ReviewPlanFile {
+    public static func plan(_ folder: URL, env: HarnessEnvironment) async throws -> ReviewPlanFile {
         let run = try load(folder)
         guard let findings = run.findings else { throw Failure(message: "\(run.id) has no findings yet; run the passes first.") }
-        guard var snapshot = run.snapshot, let refs = snapshot.refs else { throw Failure(message: "\(run.id) has no GitLab snapshot.") }
-        if let gitlab {
-            snapshot.drafts = try await gitlab.drafts(run.spec.mergeRequest)
-            snapshot.discussions = try await gitlab.discussions(run.spec.mergeRequest)
-            try ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
-        }
+        guard let snapshot = run.snapshot, let refs = snapshot.refs else { throw Failure(message: "\(run.id) has no GitLab snapshot.") }
         let forced = Set(ReviewJSON.read([String].self, from: folder.appending(path: "forced-inline.json")) ?? [])
         var plan = ReviewPlanner.plan(.init(spec: run.spec, findings: findings.findings, gaps: run.gaps, diffs: snapshot.diffs, refs: refs,
                                             drafts: snapshot.drafts, discussions: snapshot.discussions, user: snapshot.user,
@@ -144,91 +139,139 @@ public enum ReviewWorkflow {
         public var failed: [(id: String, message: String)] = []
     }
 
-    /// Sends the approved requests that weren't sent yet, as draft notes (R5: never publishes).
-    /// The drafts and threads are read again first: a draft to change must still exist and
-    /// carry AKit's line, a thread to reply in must be AKit's (R12).
+    /// Sends the approved requests that weren't sent yet, as draft notes (R5: never publishes):
+    /// a Pi send pass writes them through the user's GitLab MCP server, and the extension lets a
+    /// call through only with an approved request's text, draft, thread, file and line
+    /// (`ReviewExtension`). A draft to change must carry AKit's line and a thread to reply in must
+    /// be AKit's, by what the run's fetch pass read (R12).
     /// `shown`: the requests the user saw when they pressed Send, by id, with the hash of their
     /// text (`ReviewNotes.textHash(request.text)`); one that changed since, or wasn't shown, waits.
-    public static func send(_ folder: URL, gitlab: GitLabClient, shown: [String: String]? = nil) async throws -> SendReport {
+    public static func send(_ folder: URL, env: HarnessEnvironment, shown: [String: String]? = nil,
+                            options: ReviewPasses.Options = .init()) async throws -> SendReport {
         let run = try load(folder)
         guard let plan = run.plan else { throw Failure(message: "\(run.id) has no requests; plan it first.") }
-        let ref = run.spec.mergeRequest
-        let drafts = try await gitlab.drafts(ref)
-        let discussions = try await gitlab.discussions(ref)
-        let user = try await gitlab.currentUser()
+        let snapshot = run.snapshot
         var report = SendReport()
-        for request in plan.requests where request.decision == .approved && !request.isSent {
-            if let shown, shown[request.id] != ReviewNotes.textHash(request.text) { continue }
-            var sent = ReviewRequest.Sent(date: .now, draftID: request.draftID, error: nil)
-            do {
-                let finding = run.finding(request.findingID)
-                let meta: String = switch request.kind {
-                case .summary: ReviewNotes.meta(fingerprint: "summary", role: "summary", severity: nil, run: run.id, kind: "summary",
-                                                proposed: request.proposed)
-                case .reply: ReviewNotes.meta(fingerprint: request.fingerprint ?? "", role: request.role ?? "", severity: nil, run: run.id,
-                                              kind: "reply")
-                default: ReviewNotes.meta(fingerprint: request.fingerprint ?? finding?.fingerprint ?? "", role: request.role ?? "",
-                                          severity: request.severity, run: run.id, proposed: request.proposed)
-                }
-                let body = request.text + "\n" + meta
-                func ours(_ id: Int?) throws -> GitLabDraft {
-                    guard let id, let draft = drafts.first(where: { $0.id == id }) else {
-                        throw Failure(message: "The draft is gone from GitLab (published or deleted); plan again.")
-                    }
-                    guard ReviewNotes.parseMeta(draft.note) != nil else { throw Failure(message: "That draft isn't AKit's; AKit leaves it alone.") }
-                    return draft
-                }
-                switch request.kind {
-                case .create:
-                    sent.draftID = try await gitlab.createDraft(ref, note: body, position: request.position).id
-                case .update:
-                    let draft = try ours(request.draftID)
-                    try await gitlab.updateDraft(ref, id: draft.id, note: body, position: request.position ?? draft.position)
-                case .delete:
-                    let draft = try ours(request.draftID)
-                    try await gitlab.deleteDraft(ref, id: draft.id)
-                case .summary:
-                    if let id = request.draftID {
-                        _ = try ours(id)
-                        try await gitlab.updateDraft(ref, id: id, note: body, position: nil)
-                    } else {
-                        sent.draftID = try await gitlab.createDraft(ref, note: body, position: nil).id
-                    }
-                case .reply:
-                    guard let id = request.discussionID, let thread = discussions.first(where: { $0.id == id }),
-                          let first = thread.notes.first(where: { !$0.system }), first.author == user,
-                          ReviewNotes.parseMeta(first.body) != nil else {
-                        throw Failure(message: "That thread isn't AKit's or is gone; AKit never writes in other people's threads.")
-                    }
-                    guard !thread.isResolved else { throw Failure(message: "A person resolved that thread; AKit leaves it.") }
-                    sent.draftID = try await gitlab.createDraftReply(ref, discussionID: id, note: body).id
-                }
-                report.sent.append(request.id)
-            } catch {
-                sent.error = error.localizedDescription
-                report.failed.append((request.id, error.localizedDescription))
-            }
+        var approved: [JSONObject] = []
+        var bodies: [String: (body: String, request: ReviewRequest)] = [:]
+        func fail(_ id: String, _ message: String) throws {
+            report.failed.append((id, message))
             try ReviewJSON.update(folder.appending(path: "requests.json"), empty: plan) { file in
-                if let index = file.requests.firstIndex(where: { $0.id == request.id }) { file.requests[index].sent = sent }
+                if let index = file.requests.firstIndex(where: { $0.id == id }) {
+                    file.requests[index].sent = ReviewRequest.Sent(date: .now, draftID: nil, error: message)
+                }
             }
         }
-        // The snapshot learns what GitLab holds now, so a later plan (Move Inline, a discussion)
-        // sees the drafts just sent instead of proposing them again.
-        if !report.sent.isEmpty, var snapshot = run.snapshot {
-            snapshot.drafts = (try? await gitlab.drafts(ref)) ?? snapshot.drafts
-            snapshot.discussions = (try? await gitlab.discussions(ref)) ?? snapshot.discussions
+        for request in plan.requests where request.decision == .approved && !request.isSent {
+            if let shown, shown[request.id] != ReviewNotes.textHash(request.text) { continue }
+            let finding = run.finding(request.findingID)
+            let meta: String = switch request.kind {
+            case .summary: ReviewNotes.meta(fingerprint: "summary", role: "summary", severity: nil, run: run.id, kind: "summary",
+                                            proposed: request.proposed)
+            case .reply: ReviewNotes.meta(fingerprint: request.fingerprint ?? "", role: request.role ?? "", severity: nil, run: run.id, kind: "reply")
+            default: ReviewNotes.meta(fingerprint: request.fingerprint ?? finding?.fingerprint ?? "", role: request.role ?? "",
+                                      severity: request.severity, run: run.id, proposed: request.proposed)
+            }
+            let body = request.text + "\n" + meta
+            func ours(_ id: Int?) -> Bool {
+                guard let id, let draft = snapshot?.drafts.first(where: { $0.id == id }) else { return false }
+                return ReviewNotes.parseMeta(draft.note) != nil
+            }
+            var entry: JSONObject = ["id": request.id, "body": body]
+            switch request.kind {
+            case .create:
+                entry["action"] = "create"
+            case .update:
+                guard ours(request.draftID) else { try fail(request.id, "The draft is gone or isn't AKit's; plan again with a new run."); continue }
+                entry["action"] = "update"
+                entry["draft_id"] = request.draftID
+            case .delete:
+                guard ours(request.draftID) else { try fail(request.id, "The draft is gone or isn't AKit's; AKit leaves it alone."); continue }
+                entry = ["id": request.id, "action": "delete", "draft_id": request.draftID as Any]
+            case .summary:
+                if let id = request.draftID {
+                    guard ours(id) else { try fail(request.id, "The summary draft is gone or isn't AKit's; plan again with a new run."); continue }
+                    entry["action"] = "update"
+                    entry["draft_id"] = id
+                } else {
+                    entry["action"] = "create"
+                }
+            case .reply:
+                guard let id = request.discussionID, let thread = snapshot?.discussions.first(where: { $0.id == id }),
+                      let first = thread.notes.first(where: { !$0.system }), !(snapshot?.user ?? "").isEmpty, first.author == snapshot?.user,
+                      ReviewNotes.parseMeta(first.body) != nil else {
+                    try fail(request.id, "That thread isn't AKit's or is gone; AKit never writes in other people's threads.")
+                    continue
+                }
+                guard !thread.isResolved else { try fail(request.id, "A person resolved that thread; AKit leaves it."); continue }
+                entry["action"] = "create"
+                entry["discussion_id"] = id
+            }
+            if entry["action"] as? String != "delete", let position = request.position {
+                entry["position"] = position.json
+                entry["path"] = position.newLine != nil || position.oldLine == nil ? position.newPath : position.oldPath
+                entry["line"] = position.newLine ?? position.oldLine
+            }
+            approved.append(entry)
+            bodies[request.id] = (body, request)
+        }
+        guard !approved.isEmpty else { return report }
+        let sendFolder = folder.appending(path: "send", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sendFolder, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: approved, options: [.prettyPrinted, .sortedKeys]).write(to: sendFolder.appending(path: "approved.json"))
+        let logFile = sendFolder.appending(path: "log.jsonl")
+        let before = (try? Data(contentsOf: logFile))?.count ?? 0
+        var passError: String?
+        do {
+            try await ReviewPasses.send(folder: folder, spec: run.spec, count: approved.count, env: env, options: options)
+        } catch {
+            passError = error.localizedDescription
+        }
+        // What the extension saw GitLab answer, for each request this send carried.
+        var outcome: [String: (draftID: Int?, error: String?)] = [:]
+        let data = (try? Data(contentsOf: logFile)) ?? Data()
+        for line in data.dropFirst(before).split(separator: 0x0A) {
+            guard let object = (try? JSONSerialization.jsonObject(with: Data(line))) as? JSONObject, let id = object.string("request"),
+                  bodies[id] != nil else { continue }
+            let text = object.string("text") ?? ""
+            if !object.bool("isError") {
+                let answer = ReviewMCPCall.json(text) as? JSONObject
+                    ?? text.firstIndex(of: "{").flatMap { ReviewMCPCall.json(String(text[$0...])) as? JSONObject }
+                outcome[id] = (answer?.int("id"), nil)
+            } else if outcome[id] == nil || outcome[id]?.error != nil {
+                // A retry that worked wins over the failure before it.
+                outcome[id] = (nil, "GitLab: " + SecretFilter.masked(String(text.prefix(300))))
+            }
+        }
+        var drafts = snapshot?.drafts ?? []
+        for entry in approved {
+            guard let id = entry["id"] as? String, let (body, request) = bodies[id] else { continue }
+            var sent = ReviewRequest.Sent(date: .now, draftID: request.draftID, error: nil)
+            if let result = outcome[id], result.error == nil {
+                if let draftID = result.draftID { sent.draftID = draftID }
+                report.sent.append(id)
+                // The snapshot learns the drafts just sent, so a later plan (Move Inline, a
+                // discussion) doesn't propose them again.
+                switch entry["action"] as? String {
+                case "delete": drafts.removeAll { $0.id == request.draftID }
+                default:
+                    if let draftID = sent.draftID {
+                        drafts.removeAll { $0.id == draftID }
+                        drafts.append(GitLabDraft(id: draftID, note: body, position: request.position, discussionID: request.discussionID))
+                    }
+                }
+            } else {
+                sent.error = outcome[id]?.error ?? passError ?? "The send pass didn't send it."
+                report.failed.append((id, sent.error ?? ""))
+            }
+            try ReviewJSON.update(folder.appending(path: "requests.json"), empty: plan) { file in
+                if let index = file.requests.firstIndex(where: { $0.id == id }) { file.requests[index].sent = sent }
+            }
+        }
+        if !report.sent.isEmpty, var snapshot {
+            snapshot.drafts = drafts
             try? ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
         }
         return report
-    }
-
-    /// The GitLab client of a run's host, with the token from `tokens`.
-    public static func gitlab(for run: Run, tokens: (String) throws -> String?, fetch: @escaping ReviewFetch = ReviewHTTP.network) throws -> GitLabClient {
-        let host = run.spec.mergeRequest.host
-        guard ReviewTokens.origin(.gitlab, host) != nil else { throw Failure(message: "\(host) is not https: AKit sends tokens only over https.") }
-        guard let token = try tokens(ReviewTokens.account(.gitlab, for: host)) else {
-            throw Failure(message: "There is no GitLab token for \(host).")
-        }
-        return GitLabClient(host: host, token: token, fetch: fetch)
     }
 }

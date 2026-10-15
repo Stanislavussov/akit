@@ -189,28 +189,20 @@ public struct ReviewProfile: Sendable, Hashable {
         }
     }
 
+    /// The work item tracker, named to the fetch pass: Pi reads it through its MCP server.
     public struct Tracker: Codable, Sendable, Hashable {
         /// `azure-devops`.
         public var kind: String
         public var org: String
         public var project: String
-        /// Azure DevOps Server's collection address; empty = `https://dev.azure.com/<org>`.
-        public var url: String
         /// Finds work item numbers in a title, description or branch: the first group is the number.
         public var wiRefRegex: String
 
-        public init(kind: String = "azure-devops", org: String, project: String, url: String = "", wiRefRegex: String = "(?:AB#|WI-)(\\d+)") {
+        public init(kind: String = "azure-devops", org: String, project: String, wiRefRegex: String = "(?:AB#|WI-)(\\d+)") {
             self.kind = kind
             self.org = org
             self.project = project
-            self.url = url
             self.wiRefRegex = wiRefRegex
-        }
-
-        /// `https://dev.azure.com/<org>`, or the server's collection address.
-        public var baseURL: String {
-            let trimmed = url.trimmingCharacters(in: .whitespaces)
-            return trimmed.isEmpty ? "https://dev.azure.com/\(org)" : (trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed)
         }
     }
 
@@ -222,6 +214,8 @@ public struct ReviewProfile: Sendable, Hashable {
     /// The local clone the worktree is made from.
     public var checkout: String?
     public var tracker: Tracker?
+    /// Which of Pi's MCP servers and tools the review may use.
+    public var mcp: ReviewMCPAccess
     public var defaultScenario: String?
     public var knowledge: [String]
     public var gather: [GatherCommand]
@@ -233,7 +227,7 @@ public struct ReviewProfile: Sendable, Hashable {
     public var file: URL?
 
     public init(slug: String, project: String, gitlabHost: String, gitlabProjectPath: String, checkout: String? = nil,
-                tracker: Tracker? = nil, defaultScenario: String? = nil, knowledge: [String] = [], gather: [GatherCommand] = [],
+                tracker: Tracker? = nil, mcp: ReviewMCPAccess = ReviewMCPAccess(), defaultScenario: String? = nil, knowledge: [String] = [], gather: [GatherCommand] = [],
                 constraints: [String] = [], pathInstructions: [PathInstruction] = [], rolesOff: [String] = [], rolesAdd: [String] = [],
                 settings: ReviewSettingsPatch = ReviewSettingsPatch(), file: URL? = nil) {
         self.slug = slug
@@ -242,6 +236,7 @@ public struct ReviewProfile: Sendable, Hashable {
         self.gitlabProjectPath = gitlabProjectPath
         self.checkout = checkout
         self.tracker = tracker
+        self.mcp = mcp
         self.defaultScenario = defaultScenario
         self.knowledge = knowledge
         self.gather = gather
@@ -278,7 +273,6 @@ public struct ReviewProfile: Sendable, Hashable {
         var tracker: Tracker?
         if let value = map["tracker"] as? [String: Any] {
             let kind = value["kind"] as? String ?? "azure-devops"
-            guard kind == "azure-devops" else { throw ReviewRole.Failure(message: "\(where_): tracker kind \(kind) is not supported (azure-devops).") }
             guard let org = value["org"] as? String, let project = value["project"] as? String else {
                 throw ReviewRole.Failure(message: "\(where_): tracker needs org and project.")
             }
@@ -286,7 +280,7 @@ public struct ReviewProfile: Sendable, Hashable {
             guard (try? NSRegularExpression(pattern: regex)) != nil else {
                 throw ReviewRole.Failure(message: "\(where_): wi_ref_regex is not a valid regular expression.")
             }
-            tracker = Tracker(kind: kind, org: org, project: project, url: value["url"] as? String ?? "", wiRefRegex: regex)
+            tracker = Tracker(kind: kind, org: org, project: project, wiRefRegex: regex)
         }
         let gather = try (map["gather"] as? [[String: Any]] ?? []).map { entry -> GatherCommand in
             guard let name = entry["name"] as? String, ReviewYAML.isID(name), let run = entry["run"] as? String else {
@@ -300,7 +294,8 @@ public struct ReviewProfile: Sendable, Hashable {
         }
         let roles = map["roles"] as? [String: Any] ?? [:]
         return ReviewProfile(slug: slug, project: map["project"] as? String ?? slug, gitlabHost: host, gitlabProjectPath: path,
-                             checkout: map["checkout"] as? String, tracker: tracker, defaultScenario: map["default_scenario"] as? String,
+                             checkout: map["checkout"] as? String, tracker: tracker,
+                             mcp: try ReviewMCPAccess.parse(map["mcp"] as? [String: Any], where: where_), defaultScenario: map["default_scenario"] as? String,
                              knowledge: ReviewYAML.strings(map["knowledge"]), gather: gather,
                              constraints: ReviewYAML.strings(map["constraints"]), pathInstructions: instructions,
                              rolesOff: ReviewYAML.strings(roles["off"]), rolesAdd: ReviewYAML.strings(roles["add"]),

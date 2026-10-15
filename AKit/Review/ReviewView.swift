@@ -75,11 +75,11 @@ struct ReviewView: View {
             ToolbarItem {
                 Button("New Review…", systemImage: "plus") { showNew = true }
                     .disabled(model.isBusy)
-                    .help("Review a merge request: AKit gathers it, Pi reads it, you approve what goes to GitLab")
+                    .help("Review a merge request: Pi reads it through its MCP servers, you approve what goes to GitLab")
             }
             ToolbarItem {
-                Button("Review Settings…", systemImage: "key") { showSettings = true }
-                    .help("GitLab and Azure DevOps tokens (in the Keychain) and project profiles")
+                Button("Review Settings…", systemImage: "gearshape") { showSettings = true }
+                    .help("Pi's MCP servers as review uses them, and the project profiles")
             }
             ToolbarItem {
                 GuideButton(guide: .review)
@@ -353,9 +353,6 @@ struct ReviewRunDetail: View {
             Button("Discuss in Pi…") { model.discuss() }
                 .help("Open Pi in a terminal with the whole review (a fork of the verifier's session). What it submits becomes a new version here.")
                 .disabled(run.passes?.verifierSession == nil && run.passes == nil)
-            Button("Refresh from GitLab") { model.refreshFromGitLab() }
-                .help("Read your drafts and the threads again and plan the requests anew (after you edited, published or deleted drafts in GitLab). After a push, start a new review of the merge request")
-                .disabled(run.findings == nil)
             // A run left mid-way when AKit quit still says gathering or passes: nothing runs it now.
             let interrupted = [.gathering, .estimating, .passes].contains(run.status?.stage) && model.activity?.runID != run.id
             if run.status?.stage == .gathered || run.status?.stage == .failed || run.status?.stage == .stopped || interrupted {

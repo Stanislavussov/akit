@@ -5,42 +5,53 @@ import Testing
 @testable import AKitCommandLine
 
 extension AKitCLITests {
-    /// `akit review` with an in-memory Keychain and a fake GitLab.
-    func review(_ arguments: [String], secrets: MemorySecretStore, stdin: String = "",
-                fetch: @escaping ReviewFetch = { _ in throw URLError(.notConnectedToInternet) }) async -> (code: Int32, out: String, err: String) {
+    /// `akit review` in the fake home.
+    func review(_ arguments: [String]) async -> (code: Int32, out: String, err: String) {
         var out: [String] = [], err: [String] = []
-        let code = await AKitCLI.run(["review"] + arguments, env: env, cwd: home, out: { out.append($0) }, err: { err.append($0) },
-                                     input: { Data(stdin.utf8) }, review: ReviewServices(secrets: secrets, fetch: fetch))
+        let code = await AKitCLI.run(["review"] + arguments, env: env, cwd: home, out: { out.append($0) }, err: { err.append($0) })
         return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
     }
 
-    @Test func reviewTokensGoToTheKeychainOnly() async throws {
-        let secrets = MemorySecretStore()
-        let saved = await review(["token", "gitlab", "https://gitlab.test"], secrets: secrets, stdin: "glpat-123\n")
-        #expect(saved.code == 0 && !saved.out.contains("glpat-123"), "\(saved)")
-        #expect(secrets.value("gitlab https://gitlab.test") == "glpat-123")
-        #expect(await review(["token", "gitlab", "https://gitlab.test"], secrets: secrets).err.contains("Pipe the token"))
-        #expect(await review(["token", "jira", "x"], secrets: secrets).code == 2)
-        #expect(await review(["token", "gitlab", "http://gitlab.test"], secrets: secrets, stdin: "x").err.contains("only over https"))
-        _ = await review(["token", "gitlab", "https://gitlab.test", "--delete"], secrets: secrets)
-        #expect(secrets.value("gitlab https://gitlab.test") == nil)
-    }
-
     @Test func reviewConfigShowNamesSources() async throws {
-        try write(".akit/local/review/projects/app.yaml", "gitlab: { host: https://gitlab.test, project_path: team/app }\nreview: { max_inline: 4 }\n")
-        let shown = await review(["config", "show", "--project", "app", "--scenario", "bugfix", "--brain", home.appending(path: "none").path],
-                                 secrets: MemorySecretStore())
+        try write(".akit/local/review/projects/app.yaml", """
+        gitlab: { host: https://gitlab.test, project_path: team/app }
+        mcp: { servers: [gitlab], write: [create_draft_note] }
+        review: { max_inline: 4 }
+
+        """)
+        let shown = await review(["config", "show", "--project", "app", "--scenario", "bugfix", "--brain", home.appending(path: "none").path])
         #expect(shown.code == 0, "\(shown)")
         #expect(shown.out.contains("scenario: bugfix  [run]"))
         #expect(shown.out.contains("max_inline: 4  [project]"))
         #expect(shown.out.contains("bug-hunter [built-in] required by bugfix"))
-        #expect(await review(["config", "show", "--project", "nope"], secrets: MemorySecretStore()).err.contains("no project profile nope"))
+        #expect(shown.out.contains("servers: gitlab") && shown.out.contains("write (Send Drafts only): create_draft_note"))
+        #expect(await review(["config", "show", "--project", "nope"]).err.contains("no project profile nope"))
     }
 
-    @Test func reviewNeedsAMergeRequestAndAToken() async throws {
-        #expect(await review(["https://gitlab.test/a/-/issues/1"], secrets: MemorySecretStore()).err.contains("not a merge request address"))
-        let noToken = await review(["https://gitlab.test/team/app/-/merge_requests/7", "--brain", home.path], secrets: MemorySecretStore())
-        #expect(noToken.code == 2 && noToken.err.contains("no GitLab token"), "\(noToken)")
-        #expect(await review(["--help"], secrets: MemorySecretStore()).out.contains("akit review token gitlab HOST"))
+    @Test func reviewNeedsAMergeRequest() async throws {
+        #expect(await review(["https://gitlab.test/a/-/issues/1"]).err.contains("not a merge request address"))
+        let help = await review(["--help"])
+        #expect(help.out.contains("akit review check [--project P]") && !help.out.contains("token"))
+        #expect(await review(["token", "gitlab", "https://gitlab.test"]).code != 0, "tokens are gone: Pi's MCP servers connect")
+    }
+
+    /// `akit review check`: Pi's servers and what review may do with each tool; never a command line.
+    @Test func reviewCheckListsPiServers() async throws {
+        try write("bin/pi", """
+        #!/bin/sh
+        echo '{"servers":[{"name":"gitlab","enabled":true,"state":"connected","transport":"npx mcp-gitlab --token glpat-SECRET","tools":["get_merge_request","mr_discussions","create_draft_note","bulk_publish_draft_notes"]},{"name":"jira","enabled":true,"state":"failed","tools":[]}],"errors":[]}'
+
+        """)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/pi").path)
+        var environment = env
+        environment.executableSearchPaths.insert(home.appending(path: "bin"), at: 0)
+        var out: [String] = [], err: [String] = []
+        let code = await AKitCLI.run(["review", "check"], env: environment, cwd: home, out: { out.append($0) }, err: { err.append($0) })
+        let text = out.joined(separator: "\n")
+        #expect(code == 0, "\(text) \(err)")
+        #expect(text.contains("gitlab: connected · 4 tools: 2 read, 1 write drafts, 1 blocked"))
+        #expect(text.contains("read: get_merge_request, mr_discussions") && text.contains("write: create_draft_note"))
+        #expect(text.contains("jira: failed"))
+        #expect(!text.contains("glpat-SECRET") && !text.contains("npx"), "never a server's command line")
     }
 }

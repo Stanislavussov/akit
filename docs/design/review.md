@@ -1,6 +1,7 @@
 # AKit Review: AI review of merge requests
 
-Status: 2026-10-15, being built on branch `akit-review`. Grilled with the user on 2026-10-15 from a
+Status: 2026-10-15, built on branch `akit-review`; MCP change (R2, R3 revised, below) on branch
+`review-mcp`. Grilled with the user on 2026-10-15 from a
 research plan (Pi with the `github-copilot` provider, GitLab, Azure DevOps). The decisions
 below are agreed. The user's employer allows both parts: Copilot from a third-party harness
 (Pi) and AI comments in merge requests. Step 0 (facts on the work Mac) is still open: the code
@@ -71,6 +72,50 @@ committed), the work-word warning for brain saves on a work Mac; `layers/review`
 (the brain doesn't read it as a project layer). The guide `review.ru.md`, the Work group in the
 screens guide, the Review terms in the glossary.
 
+MCP change (2026-10-15, the user's decision after trying the first build): AKit keeps no GitLab or
+Azure DevOps token and has no REST client. Pi connects to GitLab, Azure DevOps and the other
+trackers with the MCP servers the user configured in Pi; AKit is the configuration that fits each
+kind of merge request (roles, scenario checks, rules, models and thinking, which servers and tools)
+and the guard around every call. In the user's words: AKit passes Pi what to call, with which
+roles, tools and skills, what to check, in which context, with which guardrails and limits.
+Built the same day:
+
+- **Fetch pass** (Gather, R3): Pi (`-ne -e builtin:mcp -e builtin:codemode`, the user's
+  `mcp.json`) reads the MR, versions, diffs, threads, the user's drafts, the signed-in user and
+  the work items in codemode scripts. The extension saves every MCP answer word for word in
+  `<run>/mcp/calls/`; AKit sorts them by shape (`ReviewMCPData`: GitLab's and Azure DevOps's
+  JSON) and trusts the servers' answers, never the model's account. `akit_submit_context` takes
+  what a server answers in prose. With a `checkout:` AKit makes the worktree and the diff with
+  git (`base..head`), so no model carries the diff. Its own session; its credits count toward
+  the cap; it goes through the sending policy like every pass.
+- **MCP rules** (`ReviewMCPPolicy`, the same in `akit-review.ts`): a profile's `mcp:` names the
+  servers (none = all), extra read patterns, the write patterns (default `*draft_note*`) and
+  `in_passes`. A tool reads when its server marks it read-only, a read pattern names it, or no
+  word of its name is a writing word (`get_merge_request`, `mr_discussions`); a write pattern
+  takes only tools with a writing word (`create_draft_note`, not `list_draft_notes`); tools whose
+  verb publishes, approves, merges, resolves, closes or rebases are blocked in every pass.
+  `--tools mcp__<server>__*` keeps other servers' tools out too. Every call, direct or from a
+  codemode script, passes the extension's `tool_call` (verified with Pi 1.0.4).
+- **Passes** read through MCP too when `in_passes` (default): codemode with reading tools only.
+- **Send pass** (Send Drafts…, R4–R5): AKit writes the approved requests to
+  `<run>/send/approved.json`; Pi creates, updates and deletes draft notes with the GitLab
+  server's draft tools, reading the requests from `akit_approved_requests` in a script. The
+  extension lets a write through only when it carries an unsent approved request word for word:
+  the same action (create, update, delete by the tool's verb), the body, the draft id, the
+  thread, the file and the line; each request once. It logs GitLab's answer per request in
+  `<run>/send/log.jsonl`; AKit marks requests sent from that log, not from the model. Drafts to
+  change and threads to reply in are checked against what the run's fetch pass read (a fresh
+  read is a new run: Refresh from GitLab is gone). The send pass is never stopped by the cap.
+- Pass environments keep the user's variables, so Pi's MCP servers find the `${VAR}` their
+  `mcp.json` names; the model has no shell or environment tool.
+- `akit review check [--project P]` and Review Settings… → **Check Servers** run
+  `pi mcp list --json` and sort each tool (read, write drafts, blocked); never a server's
+  command line, environment or headers. `akit review token` and the token blocks are gone.
+- Checked end to end with real Pi 1.0.4, a fake model and a fake GitLab MCP server: fetch →
+  passes → approve → send; in the send pass an altered text, another line, another draft, a
+  second send, a published note and bulk publish were blocked, and only the three approved
+  calls reached the server.
+
 Review round (2026-10-15, code review of the branch), fixed:
 
 - The path policy refuses paths that start with `~`, `@` or `file:` (Pi expands them itself),
@@ -114,8 +159,8 @@ the harness replaceable (Pi now, Claude Code later).
 | # | Question | Decision |
 |---|---|---|
 | R1 | Where does it live? | A new module `AKitReview` in AKit. It depends on `AKitLab` and `AKitFoundation`, not the other way. Work configuration lives only in `~/.akit/local/review/` |
-| R2 | Who writes to GitLab? | Only AKit, through the REST API, with a token in the Keychain. The agent never sees a GitLab or Azure DevOps token |
-| R3 | How does the agent read GitLab and Azure DevOps? | It doesn't. AKit fetches everything itself (step Gather) into a context pack of local files. The agent has no MCP servers and no network except the model provider. What it lacks it reports as a context gap |
+| R2 | Who writes to GitLab? | (revised 2026-10-15) Pi, through the user's GitLab MCP server, in a send pass that only carries out approved requests: the extension blocks every write that isn't an approved request word for word. AKit keeps no token. (Was: only AKit, through REST, with a Keychain token) |
+| R3 | How does the agent read GitLab and Azure DevOps? | (revised 2026-10-15) Through the MCP servers configured in Pi, reading tools only: the fetch pass reads the MR and work items, and AKit builds the context pack from the servers' saved answers; the passes may read more (`in_passes`). (Was: it doesn't; AKit fetched everything by REST) |
 | R4 | When does AKit write? | Only after the user approves each request on the Review screen (or `akit review post RUN --yes`). Not one request goes out unapproved, deletes and updates included |
 | R5 | What does AKit write? | Draft notes. The user publishes them in GitLab with **Submit review**, together with their own comments. AKit never calls `bulk_publish` or publishes a draft |
 | R6 | Who orchestrates the passes? | AKit (Swift). Brief → roles → verifier, one after another **in one Pi session**, so later passes see the earlier ones and findings stay linked. Parallel fan-out only later, for big MRs |
@@ -133,9 +178,10 @@ the harness replaceable (Pi now, Claude Code later).
 | R18 | Order | Before wave 1 of `README.md` (layer evals on JS/TS) |
 | R19 | Docs | An in-app guide `review.ru.md` describes how review works; each screen step updates it in the same commit (see Guide) |
 
-Rejected on the way: the agent writing through GitLab MCP (no protection against injection);
-read-only GitLab MCP (`zereight/gitlab-mcp`) and Azure DevOps MCP for the agent (third-party
-servers on the work Mac, more tokens, a context the evals can't replay); orchestration in a Pi
+Rejected on the way: the agent writing through GitLab MCP *unguarded* (no protection against
+injection; now it writes only approved requests word for word, checked by the extension); AKit's
+own REST clients and tokens (first build; the user wants Pi's MCP servers as the one way to the
+work systems); orchestration in a Pi
 extension (Pi only, no tests, the budget and send log written again in TypeScript); three
 model tiers (switching models in one session loses the prompt cache); the role in the
 fingerprint (one problem from two roles would become two comments).
@@ -145,12 +191,13 @@ fingerprint (one problem from two roles would become two comments).
 ```
 akit review <mr-url> [--wi N] [--scenario S]        or  Review → New Review…
    │
-   ├─ 1 Gather (AKit, no model)
-   │     GitLab REST: MR, diff_refs, versions, changes, discussions (resolved too, with
-   │     position), labels, branch; worktree at head_sha
-   │     Azure DevOps REST: the work items (from --wi, the title, the description, the
-   │     branch), their parents and related items one level deep: title, description,
-   │     acceptance criteria, repro steps, state, comments, revisions
+   ├─ 1 Gather: the fetch pass (Pi + its MCP servers, reading tools only)
+   │     GitLab: MR, diff_refs, versions, diffs, discussions (resolved too, with
+   │     position), the user's drafts, the signed-in user
+   │     Tracker: the work items (from --wi, the title, the description, the branch),
+   │     parents and related items one level deep, comments
+   │     → <run>/mcp/calls/ (every answer word for word); AKit sorts them by shape
+   │     AKit: worktree at head_sha and the diff by git (with a checkout)
    │     git log / blame of the changed files; profile commands (tests, linter) if set
    │     knowledge folders from the profile
    │     → <run>/context/  (files the agent reads)
@@ -173,7 +220,8 @@ akit review <mr-url> [--wi N] [--scenario S]        or  Review → New Review…
    │
    ├─ 6 Review screen: the user edits, approves or rejects each request (with a reason)
    │
-   └─ 7 Send Drafts… → GitLab draft notes → the user's Submit review in GitLab
+   └─ 7 Send Drafts… → the send pass: Pi writes the approved requests word for word
+         with the GitLab MCP server's draft tools → the user's Submit review in GitLab
 ```
 
 The run folder is `~/.akit/local/review/runs/<run-id>/`. Nothing of it leaves the Mac.
@@ -203,6 +251,7 @@ ReviewRunSpec (JSON)        <run>/run.json: exactly what this run used, with the
 | Credit cap per run | ✓ | ✓ | ✓ |
 | Constraints, path instructions, knowledge folders, Gather commands | — | ✓ | — |
 | GitLab host and project, Azure DevOps org and project, WI pattern | — | ✓ | — |
+| Pi MCP servers, read and write tool patterns, MCP in passes (`mcp:`) | — | ✓ | — |
 
 Roles that name work systems, hosts or team rules live only in the project profile.
 
@@ -263,6 +312,7 @@ constraints:
 path_instructions:
   - { paths: ["src/Domain/**"], instructions: "Aggregate invariants; no dependency on Infrastructure" }
   - { paths: ["**/*.generated.cs"], ignore: true }
+mcp: { servers: [gitlab, azure-devops], write: ["*draft_note*"], in_passes: true }
 roles: { off: [security], add: [orders-integration] }     # orders-integration: a project role
 review: { max_inline: 5 }                                  # overrides review.yaml
 ```
@@ -296,10 +346,19 @@ Each pass is a Lab model call through the sending policy and the send log:
 ```
 pi -p --mode json --session-id <run-session> --session-dir <run>/sessions
    --provider github-copilot --model <model> [--thinking <level>]
-   --no-skills --no-context-files --no-prompt-templates --no-mcp --no-extensions
+   --no-skills --no-context-files --no-prompt-templates --no-extensions --offline
+   -e builtin:mcp -e builtin:codemode            (or --no-mcp when in_passes is false)
    --skill <role skill> …  --append-system-prompt <run>/prompts/<pass>.md
-   -e <akit-review.ts>  --tools read,grep,find,ls,akit_submit_findings,akit_report_context_gap
+   -e <akit-review.ts>
+   --tools read,grep,find,ls,akit_submit_findings,akit_report_context_gap,codemode[,mcp__<server>__*]
    "<pass prompt>"
+```
+
+The fetch pass and the send pass use the same line without the skills and the system prompt,
+with `--tools akit_submit_context,akit_report_context_gap,codemode…` or
+`--tools akit_approved_requests,codemode…`, and `AKIT_REVIEW_MODE=fetch|send`.
+
+```
 ```
 
 The working folder is the worktree at `head_sha`. The prompt names the context pack files.
@@ -310,12 +369,15 @@ The extension `akit-review.ts` is thin:
 |---|---|
 | `akit_submit_findings` | Validates the findings against the schema and writes `<run>/passes/<pass>.json` |
 | `akit_report_context_gap` | Writes a gap: system, what is needed, why, how to get it, the effect on confidence |
-| `tool_call` policy | Allows paths only inside the worktree and the run folder; blocks `**/.env*`, `**/secrets/**`, `*.pem`, `*.key`, `auth.json`, `settings.local.json` |
+| `tool_call` policy | Allows paths only inside the worktree and the run folder; blocks `**/.env*`, `**/secrets/**`, `*.pem`, `*.key`, `auth.json`, `settings.local.json`. MCP calls: the run's servers, reading tools; writes only in the send pass and only an approved request word for word; never publish, approve, merge, resolve |
+| `tool_result` | Saves every MCP answer in `<run>/mcp/calls/`; in the send pass logs each write's answer in `<run>/send/log.jsonl` |
+| `akit_submit_context`, `akit_approved_requests` | Fetch pass: what a server said in prose. Send pass: the approved requests as JSON |
 | `appendEntry` | Records the run id, the scenario and `head_sha` in the session |
 
-MR descriptions, comments and work item texts are untrusted input. The agent has no tool
-that writes outside the run folder and no network tool, so an injection can at most produce a
-bad finding, which the user sees before anything is sent.
+MR descriptions, comments and work item texts are untrusted input. The agent has no tool that
+writes outside the run folder, its MCP tools only read, and the send pass can only carry out
+approved requests word for word, so an injection can at most produce a bad finding, which the
+user sees before anything is sent.
 
 For Claude Code later the same pipeline runs `claude -p --resume`, the role skill as a
 subagent body, and the `akit_*` tools as a small local MCP server with PreToolUse hooks for
@@ -439,18 +501,17 @@ edit of a role, a scenario or a threshold. Later: past MRs with known findings, 
 - What goes to the provider: the context pack files the agent reads (diff, files, threads,
   work items, knowledge notes). The send log records the run id, provider, model, tokens and
   credits, and the paths read (from `tool_call`).
-- Run folders, findings, verdicts, profiles and tokens stay in `~/.akit/local` and the
-  Keychain. The brain gets only generic roles and scenarios (R17).
+- What Pi's MCP servers answer reaches the model of the pass that asked (the fetch pass's
+  scripts return only short notes; the context pack is scrubbed as before; MCP answers read in
+  the passes are not).
+- Run folders, findings, verdicts and profiles stay in `~/.akit/local`; AKit keeps no tokens. The brain gets only generic roles and scenarios (R17).
 - Review credits are their own line in the monthly limit.
 
 ## Tokens
 
-| Token | Where | Rights |
-|---|---|---|
-| GitLab | Keychain, AKit only | read the MR and its notes, create, update and delete the user's draft notes (`api`, or fine-grained with these rights on the needed projects) |
-| Azure DevOps | Keychain, AKit only | Work Items (Read) |
-
-Neither token is passed to the agent, put in an environment variable of a pass, or shown.
+AKit keeps none (since 2026-10-15). The tokens belong to the MCP servers in Pi's settings, with
+the rights those servers need: GitLab to read MRs and notes and to create, update and delete the
+user's draft notes; Azure DevOps to read work items.
 
 ## Steps
 
@@ -458,7 +519,7 @@ Each step is one feature branch.
 
 | # | Step | Check |
 |---|---|---|
-| 0 | No code, on the work Mac: GitLab version (`/api/v4/version`), fine-grained tokens allowed; Azure DevOps Services or Server; `pi --list-models` for `github-copilot`; the two tokens created | the facts written into this doc |
+| 0 | No code, on the work Mac: `akit review check` (Pi's GitLab and tracker MCP servers, their tool names and which read or write); Azure DevOps Services or Server; `pi --list-models` for `github-copilot`; one real fetch pass on a small MR | the facts written into this doc |
 | 1 | `AKitReview`: project profile, the three config levels, `ReviewRunSpec`; Gather from GitLab and Azure DevOps REST into the context pack; the worktree; `akit review` up to `run.json` | Swift tests on a fake server |
 | 2 | The passes: brief → roles → verifier in one Pi session, `akit-review.ts` with the tools and the path policy, the estimate and the cap, the send log | fake Pi |
 | 3 | Requests and the Review screen: noise rules, positions, scrubber, verdicts, Send Drafts…; `akit review post` | tests on a fake server; `make snapshot` |
@@ -520,3 +581,6 @@ verifier.
   docs (1.0.4) say `tool_result` handlers compose and may replace `content`; not used yet.
 - The exact Pi provider id `github-copilot` and the model names on the work account.
 - Drafts on files over GitLab's diff limits on the user's GitLab version.
+- Whether the work Mac's GitLab and Azure DevOps MCP servers answer in GitLab's and Azure
+  DevOps's JSON (AKit sorts answers by shape); if not, the fetch pass falls back to
+  `akit_submit_context`, which is the model's account.

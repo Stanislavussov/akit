@@ -841,6 +841,8 @@ project: orders-service
 gitlab: { host: https://gitlab.example.com, project_path: shop/orders-service }
 checkout: ~/Projects/orders-service
 tracker: { kind: azure-devops, org: example-org, project: Orders }
+mcp:
+  servers: [gitlab, azure-devops]
 default_scenario: bugfix
 knowledge: [~/notes/orders]
 gather:
@@ -899,6 +901,7 @@ file "$REVIEWRUN/passes.json" <<EOF
 {"mainSession":"0b6f1c2a-1111-4a4a-9c9c-000000000042","verifierSession":"0b6f1c2a-2222-4a4a-9c9c-000000000042","estimate":64,
  "brief":"Intent: stop the token from reaching the log after bug #4512.\nTouched components: AuthMiddleware.\nAlready raised: bob asked why the header is logged (resolved).\nAcceptance criteria: no secret reaches a log; requests without a header get 401.\nFirst gaps: no test output for the middleware.",
  "passes":[
+  {"name":"fetch","model":"github-copilot/gpt-5.4-mini","started":"$(rago 180M)","ended":"$(rago 179M)","usage":{"input":4800,"cached":0,"output":1400},"credits":6.2,"paths":[]},
   {"name":"brief","model":"github-copilot/gpt-5.4-mini","started":"$(rago 178M)","ended":"$(rago 177M)","usage":{"input":14200,"cached":0,"output":420},"credits":14.6,"paths":["../context/README.md","../context/diff.patch","../context/work-items/4512.md"]},
   {"name":"role-bug-hunter","role":"bug-hunter","model":"github-copilot/gpt-5.4-mini","started":"$(rago 177M)","ended":"$(rago 176M)","usage":{"input":3100,"cached":14500,"output":610},"credits":5.2,"paths":["src/Auth/AuthMiddleware.cs"]},
   {"name":"role-requirements","role":"requirements","model":"github-copilot/gpt-5.4-mini","started":"$(rago 176M)","ended":"$(rago 175M)","usage":{"input":1800,"cached":18400,"output":380},"credits":4.0,"paths":[]},

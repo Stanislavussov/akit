@@ -32,6 +32,10 @@ final class ReviewModel {
     private(set) var run: ReviewWorkflow.Run?
     private(set) var activity: Activity?
     var problem: String?
+    /// Review Settings…: the last `pi mcp list`, or why it failed.
+    private(set) var mcpReport: ReviewMCPCheck.Report?
+    private(set) var mcpProblem: String?
+    private(set) var checkingMCP = false
     var capQuestion: CapQuestion?
     private var capAnswer: CheckedContinuation<Bool, Never>?
     private var task: Task<Void, Never>?
@@ -73,9 +77,8 @@ final class ReviewModel {
         task = Task { [weak self] in
             await Cancellation.$scope.withValue(scope) {
             do {
-                let result = try await ReviewRuns.start(mr: mr, project: project, choices: choices, env: env, brain: brain,
-                                                        tokens: { try ReviewTokens.store().value($0) },
-                                                        progress: { line in Task { @MainActor in self?.log(line) } })
+                let options = ReviewPasses.Options(progress: { line in Task { @MainActor in self?.log(line) } })
+                let result = try await ReviewRuns.start(mr: mr, project: project, choices: choices, env: env, brain: brain, options: options)
                 self?.activity?.runID = result.spec.id
                 self?.reload(select: result.spec.id)
                 try await self?.passes(ReviewPaths(home: env.homeDirectory).run(result.spec.id))
@@ -167,30 +170,14 @@ final class ReviewModel {
         attempt { try ReviewWorkflow.addMissed(folder, file: file, line: line, text: text) }
     }
 
-    /// Reads the user's drafts and the threads again and plans the requests anew.
-    func refreshFromGitLab() {
-        guard let run else { return }
-        Task {
-            await attemptAsync {
-                let client = try await self.client(for: run)
-                try await ReviewWorkflow.plan(run.folder, gitlab: client, env: self.env)
-            }
-        }
-    }
-
-    /// The run's GitLab client; the Keychain is read off the main thread (it may ask first).
-    private func client(for run: ReviewWorkflow.Run) async throws -> GitLabClient {
-        try await Task.detached { try ReviewWorkflow.gitlab(for: run, tokens: { try ReviewTokens.store().value($0) }) }.value
-    }
-
-    /// Sends the approved requests the sheet showed (not any approved since); the report says
-    /// what GitLab answered.
+    /// Sends the approved requests the sheet showed (not any approved since) through a Pi send
+    /// pass and the user's GitLab MCP server; the report says what GitLab answered.
     func send(_ shown: [ReviewRequest]) async -> ReviewWorkflow.SendReport? {
         guard let run else { return nil }
         do {
-            let client = try await client(for: run)
             let ids = Dictionary(uniqueKeysWithValues: shown.map { ($0.id, ReviewNotes.textHash($0.text)) })
-            let report = try await ReviewWorkflow.send(run.folder, gitlab: client, shown: ids)
+            let options = ReviewPasses.Options(progress: { [weak self] line in Task { @MainActor in self?.log(line) } })
+            let report = try await ReviewWorkflow.send(run.folder, env: env, shown: ids, options: options)
             open(run.id)
             return report
         } catch {
@@ -273,22 +260,22 @@ final class ReviewModel {
         }
     }
 
-    // MARK: - Tokens
+    // MARK: - MCP
 
-    func hasToken(_ kind: ReviewTokens.Kind, for name: String) -> Bool {
-        !name.isEmpty && ReviewTokens.store().contains(ReviewTokens.account(kind, for: name))
-    }
-
-    func saveToken(_ kind: ReviewTokens.Kind, for name: String, value: String) throws {
-        // The same name a review looks the token up by; a token never goes out over plain http.
-        guard ReviewTokens.origin(kind, name) != nil else {
-            throw ConfigTextError(kind == .gitlab ? "Enter the GitLab address with https://, as in the merge request's link."
-                                         : "Enter the organization, or the https:// address of your Azure DevOps Server collection.")
+    /// Review Settings…: Pi's MCP servers (`pi mcp list`) sorted by a profile's rules.
+    func checkMCP(access: ReviewMCPAccess) {
+        guard !checkingMCP else { return }
+        checkingMCP = true
+        mcpProblem = nil
+        let env = env
+        Task {
+            do {
+                mcpReport = try await ReviewMCPCheck.run(env: env, access: access)
+            } catch {
+                mcpReport = nil
+                mcpProblem = error.localizedDescription
+            }
+            checkingMCP = false
         }
-        try ReviewTokens.store().save(value.trimmingCharacters(in: .whitespacesAndNewlines), for: ReviewTokens.account(kind, for: name))
-    }
-
-    func deleteToken(_ kind: ReviewTokens.Kind, for name: String) throws {
-        try ReviewTokens.store().delete(ReviewTokens.account(kind, for: name))
     }
 }
