@@ -282,8 +282,7 @@ public enum AKitCLI {
                            trash: (URL) throws -> URL? = Trash.move,
                            ask: ((String) -> String?)? = nil, preferences: Onboarding.Preferences? = nil,
                            input: () -> Data = { Data() }, runner: CommandRunner? = nil,
-                           hardwareHash: () -> String? = MachineProfile.currentHardwareHash,
-                           review: ReviewServices = ReviewServices()) async -> Int32 {
+                           hardwareHash: () -> String? = MachineProfile.currentHardwareHash) async -> Int32 {
         // Hidden; the akit binary runs it before everything else (main.swift). Silent, exit 0.
         if arguments.first == "record-session" {
             RecordSession.run(harness: RecordSession.harness(in: arguments), stdin: input(), env: env)
@@ -306,8 +305,7 @@ public enum AKitCLI {
                 return try await lab(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, trash: trash)
             }
             if arguments.first == "review" {
-                return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input,
-                                             services: review)
+                return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input)
             }
             if arguments.first == "analysis" {
                 return try await analysis(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, err: err,

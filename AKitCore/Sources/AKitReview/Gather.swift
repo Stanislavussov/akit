@@ -1,8 +1,9 @@
 import AKitFoundation
 import Foundation
 
-/// What GitLab said about the merge request when Gather ran (`<run>/gitlab/snapshot.json`).
-/// AKit's own data for positions and reruns; the agent reads the context pack instead.
+/// What GitLab said about the merge request when Gather ran (`<run>/gitlab/snapshot.json`), as
+/// the fetch pass read it through MCP, with the diff from git when there is a checkout. AKit's own
+/// data for positions and reruns; the agent reads the context pack instead.
 public struct ReviewSnapshot: Codable, Sendable, Hashable {
     public var mergeRequest: GitLabMergeRequest
     public var versions: [GitLabVersion]
@@ -21,18 +22,13 @@ public struct ReviewSnapshot: Codable, Sendable, Hashable {
     }
 }
 
-/// Step 1 of a run: AKit fetches everything itself into `<run>/context/`, files the agent
-/// reads (R3). No model is involved; the agent never sees a token.
+/// Step 1 of a run: the fetch pass reads the merge request and its work items through Pi's MCP
+/// servers (R3), AKit makes the worktree and the diff with git, and writes `<run>/context/`, the
+/// files the passes read. AKit never holds a GitLab or Azure DevOps token (R2).
 public enum ReviewGather {
-    public struct Sources: Sendable {
-        public var gitlab: GitLabClient
-        /// nil without a tracker in the profile or without its token.
-        public var azure: AzureDevOpsClient?
-
-        public init(gitlab: GitLabClient, azure: AzureDevOpsClient?) {
-            self.gitlab = gitlab
-            self.azure = azure
-        }
+    public struct Failure: Error, LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
     }
 
     public struct Result: Sendable {
@@ -52,62 +48,73 @@ public enum ReviewGather {
     static let maxKnowledgeCharacters = 300_000
     static let maxHistoryFiles = 40
 
-    public static func run(spec: ReviewRunSpec, profile: ReviewProfile?, roles: [ReviewRole], folder: URL, sources: Sources,
-                           scrub: Scrubber.OwnPatterns, env: HarnessEnvironment, progress: @Sendable (String) -> Void = { _ in }) async throws -> Result {
+    public static func run(spec: ReviewRunSpec, profile: ReviewProfile?, roles: [ReviewRole], folder: URL, scrub: Scrubber.OwnPatterns,
+                           env: HarnessEnvironment, options: ReviewPasses.Options = .init()) async throws -> Result {
         var spec = spec
+        let progress = options.progress
         var gaps: [ContextGap] = []
         func gap(_ system: String, _ needed: String, _ why: String, how: String = "", effect: String = "") {
             gaps.append(ContextGap(id: "g\(gaps.count + 1)", system: system, needed: needed, why: why, howToGet: how, effect: effect,
                                    reportedBy: "gather"))
         }
         let ref = spec.mergeRequest
-        let gitlab = sources.gitlab
 
-        progress("Reading \(ref.label) from GitLab…")
-        let mr = try await gitlab.mergeRequest(ref)
-        let versions = try await gitlab.versions(ref)
-        let diffs = try await gitlab.diffs(ref)
-        let discussions = try await gitlab.discussions(ref)
-        let drafts = try await gitlab.drafts(ref)
-        let user = try await gitlab.currentUser()
-        let snapshot = ReviewSnapshot(mergeRequest: mr, versions: versions, diffs: diffs, discussions: discussions, drafts: drafts,
-                                      user: user, gathered: .now)
-        guard let head = snapshot.refs?.headSHA, !head.isEmpty else {
-            throw ReviewHTTP.Failure(message: "\(ref.label) has no diff yet (no head commit), so there is nothing to review.")
+        progress("Reading \(ref.label) through Pi's MCP servers…")
+        try await ReviewPasses.fetch(folder: folder, spec: spec, env: env, options: options)
+        let data = ReviewMCPData.read(ReviewMCPData.calls(in: folder, pass: "fetch"), iid: ref.iid)
+        guard let mr = data.mergeRequest else {
+            throw Failure(message: "The fetch pass read no merge request \(ref.label) that AKit understands (\(data.calls) MCP calls"
+                          + (data.failures.isEmpty ? "" : "; failed: " + data.failures.prefix(3).joined(separator: "; ")) + "). "
+                          + "Check that Pi has a GitLab MCP server (pi mcp list, or akit review check) and that it answers in GitLab's JSON.")
         }
+        for failure in data.failures.prefix(10) {
+            gap("mcp", "An answer of \(failure.split(separator: ":").first.map(String.init) ?? "an MCP tool")", failure,
+                how: "Check the server in Pi (pi mcp list).")
+        }
+        if data.user == nil {
+            gap("gitlab", "Who you are on GitLab", "The fetch pass read no signed-in user.",
+                how: "Give the GitLab MCP server a tool for the current user.",
+                effect: "AKit can't tell its own published threads, so it proposes no replies in them.")
+        }
+        var snapshot = ReviewSnapshot(mergeRequest: mr, versions: data.versions, diffs: data.diffs, discussions: data.discussions,
+                                      drafts: data.drafts, user: data.user ?? "", gathered: .now)
+        guard let refs = snapshot.refs, !refs.headSHA.isEmpty else {
+            throw Failure(message: "\(ref.label) has no diff refs (no head commit) in what the fetch pass read, so there is nothing to review.")
+        }
+        // The commits go to git as arguments: only commit ids, never text that git could read as an option.
+        guard isCommitID(refs.headSHA), refs.baseSHA.isEmpty || isCommitID(refs.baseSHA), refs.startSHA.isEmpty || isCommitID(refs.startSHA) else {
+            throw Failure(message: "The diff refs the fetch pass read for \(ref.label) are not commit ids.")
+        }
+        let head = refs.headSHA
         spec.headSHA = head
-        try ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
 
         // Work items: given by hand, plus those the title, description or branch names.
         var ids = spec.workItems
-        if let tracker = profile?.tracker {
-            for id in AzureDevOpsClient.references(in: [mr.title, mr.description, mr.sourceBranch], pattern: tracker.wiRefRegex)
-            where !ids.contains(id) { ids.append(id) }
+        let pattern = profile?.tracker?.wiRefRegex ?? ReviewProfile.Tracker(org: "", project: "").wiRefRegex
+        for id in AzureDevOpsJSON.references(in: [mr.title, mr.description, mr.sourceBranch], pattern: pattern) where !ids.contains(id) {
+            ids.append(id)
         }
         spec.workItems = ids
-        var workItems: [WorkItem] = []
-        if ids.isEmpty {
-            gap("azure-devops", "The work item of this change",
-                "Neither --wi nor the title, description or branch names one" + (profile?.tracker == nil ? ", and the project profile has no tracker." : "."),
+        let tracker = profile?.tracker?.kind ?? "tracker"
+        var workItems = data.workItems
+        for index in workItems.indices {
+            let id = workItems[index].id
+            workItems[index].reason = ids.contains(id) ? "named by the merge request"
+                : workItems.first(where: { $0.parents.contains(id) }).map { "parent of #\($0.id)" }
+                ?? workItems.first(where: { $0.related.contains(id) }).map { "related to #\($0.id)" } ?? "read by the fetch pass"
+        }
+        if ids.isEmpty && workItems.isEmpty {
+            gap(tracker, "The work item of this change", "Neither --wi nor the title, description or branch names one.",
                 how: "Run again with --wi N, or name the item in the MR (the profile's wi_ref_regex).",
                 effect: "Requirements and acceptance criteria can't be checked.")
-        } else if let azure = sources.azure {
-            progress("Reading work items \(ids.map { "#\($0)" }.joined(separator: ", ")) from Azure DevOps…")
-            let gathered = await azure.gather(ids)
-            workItems = gathered.items
-            for missing in gathered.missing {
-                gap("azure-devops", "Work item #\(missing.id)", "Azure DevOps didn't give it: \(missing.reason)",
-                    how: "Check the Azure DevOps token (Work Items: Read) and the profile's tracker.")
-            }
-            for item in workItems where ids.contains(item.id) && item.acceptanceCriteria.isEmpty && item.type != "Bug" {
-                gap("azure-devops", "Acceptance criteria of #\(item.id)", "The work item has none.",
-                    how: "Ask the author or the product owner.", effect: "The requirements matrix has nothing to check against.")
-            }
-        } else {
-            gap("azure-devops", "Work items \(ids.map { "#\($0)" }.joined(separator: ", "))",
-                profile?.tracker == nil ? "The project profile has no tracker." : "There is no Azure DevOps token in the Keychain.",
-                how: "Add the tracker to the profile and the token (Review → Settings, or akit review token azure-devops).",
-                effect: "Requirements and acceptance criteria can't be checked.")
+        }
+        for id in ids where !workItems.contains(where: { $0.id == id }) {
+            gap(tracker, "Work item #\(id)", "The fetch pass didn't read it.",
+                how: "Check that Pi has a tracker MCP server that can read it.", effect: "Requirements and acceptance criteria can't be checked.")
+        }
+        for item in workItems where ids.contains(item.id) && item.acceptanceCriteria.isEmpty && item.type != "Bug" {
+            gap(tracker, "Acceptance criteria of #\(item.id)", "The work item has none.",
+                how: "Ask the author or the product owner.", effect: "The requirements matrix has nothing to check against.")
         }
         try ReviewJSON.write(workItems, to: folder.appending(path: "tracker/work-items.json"))
 
@@ -126,6 +133,25 @@ public enum ReviewGather {
                 effect: "Only the diff can be read: findings that need the whole file are less certain.")
         }
         let hasWorktree = FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path)
+        // The diff from git when there is a checkout: exact, and no model has to carry it.
+        if hasWorktree, let checkout = profile?.checkout.map({ env.expand($0) }) {
+            if let local = await localDiffs(checkout: checkout, base: refs.baseSHA, head: head, target: mr.targetBranch, env: env) {
+                let large = Set(snapshot.diffs.filter(\.tooLarge).map(\.newPath))
+                snapshot.diffs = local.map { diff in
+                    var diff = diff
+                    diff.tooLarge = large.contains(diff.newPath)
+                    return diff
+                }
+            } else if snapshot.diffs.isEmpty {
+                gap("repository", "The diff", "git couldn't make the diff from \(refs.baseSHA.prefix(10)) to \(head.prefix(10)), and the fetch pass read none.")
+            }
+        }
+        guard !snapshot.diffs.isEmpty else {
+            throw Failure(message: "There is no diff of \(ref.label): the fetch pass read none, and there is no checkout to make it with git.")
+        }
+        try ReviewJSON.write(snapshot, to: folder.appending(path: "gitlab/snapshot.json"))
+        let diffs = snapshot.diffs
+        let discussions = snapshot.discussions
 
         // The pack.
         let context = folder.appending(path: "context", directoryHint: .isDirectory)
@@ -249,6 +275,74 @@ public enum ReviewGather {
         }
         removeSecretFiles(in: worktree)
         return nil
+    }
+
+    static func isBranchName(_ text: String) -> Bool {
+        text.range(of: "^[A-Za-z0-9_][A-Za-z0-9._/-]*$", options: .regularExpression) != nil && !text.contains("..")
+            && !text.contains("//") && !text.hasSuffix(".lock") && !text.hasSuffix("/") && text.count <= 200
+    }
+
+    static func isCommitID(_ text: String) -> Bool {
+        text.range(of: "^[0-9a-fA-F]{7,64}$", options: .regularExpression) != nil
+    }
+
+    /// The merge request's diff by git, `base..head`, file by file as GitLab gives it; nil when
+    /// git can't make it (the base commit can't be fetched).
+    static func localDiffs(checkout: URL, base: String, head: String, target: String, env: HarnessEnvironment) async -> [GitLabFileDiff]? {
+        guard !base.isEmpty, let git = env.findExecutable("git") else { return nil }
+        func run(_ arguments: [String], timeout: TimeInterval = 120) async -> ProcessRunner.Result? {
+            await ProcessRunner.run(git, arguments: ["-C", checkout.path] + arguments, environment: env.gitVariables, timeout: timeout)
+        }
+        // The target branch comes from an MCP answer: only a plain branch name, fetched without a
+        // destination, so no refspec can move a branch of the user's clone.
+        if await run(["cat-file", "-e", "\(base)^{commit}"])?.succeeded != true, isBranchName(target) {
+            _ = await run(["fetch", "--no-tags", "origin", "refs/heads/\(target)"], timeout: 300)
+        }
+        guard let result = await run(["diff", "--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
+                                      base, head], timeout: 120), result.succeeded else { return nil }
+        return parseGitDiff(result.output)
+    }
+
+    /// `git diff` output → one `GitLabFileDiff` per file, the hunks as GitLab's `diff` field.
+    static func parseGitDiff(_ text: String) -> [GitLabFileDiff] {
+        var result: [GitLabFileDiff] = []
+        var current: GitLabFileDiff?
+        var inHunks = false
+        func finish() {
+            if let current { result.append(current) }
+        }
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line.hasPrefix("diff --git ") {
+                finish()
+                // `diff --git a/<old> b/<new>`; `---`/`+++` below name them exactly when there is text.
+                let rest = line.dropFirst("diff --git ".count)
+                let parts = rest.components(separatedBy: " b/")
+                let old = parts.first.map { $0.hasPrefix("a/") ? String($0.dropFirst(2)) : $0 } ?? ""
+                let new = parts.count > 1 ? parts.dropFirst().joined(separator: " b/") : old
+                current = GitLabFileDiff(oldPath: old, newPath: new, diff: "")
+                inHunks = false
+                continue
+            }
+            guard current != nil else { continue }
+            if inHunks {
+                current?.diff += line + "\n"
+            } else if line.hasPrefix("@@") {
+                inHunks = true
+                current?.diff += line + "\n"
+            } else if line.hasPrefix("new file mode") {
+                current?.newFile = true
+            } else if line.hasPrefix("deleted file mode") {
+                current?.deletedFile = true
+            } else if line.hasPrefix("--- a/") {
+                current?.oldPath = String(line.dropFirst(6))
+            } else if line.hasPrefix("+++ b/") {
+                current?.newPath = String(line.dropFirst(6))
+            }
+        }
+        finish()
+        // The output ends with a newline: the last hunk carries one empty line too many.
+        for index in result.indices where result[index].diff.hasSuffix("\n\n") { result[index].diff.removeLast() }
+        return result
     }
 
     /// Files that usually hold secrets leave AKit's own worktree: a pass's `grep` or `find`
@@ -415,8 +509,8 @@ public enum ReviewGather {
         var text = """
         # Context pack
 
-        AKit gathered these files for the review. Read what your role needs; you have no network.
-        If something you need is not here, report it with akit_report_context_gap instead of guessing.
+        AKit gathered these files for the review. Read what your role needs. If something you need
+        is not here, report it with akit_report_context_gap instead of guessing.
 
         """
         text += hasWorktree

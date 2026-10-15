@@ -162,10 +162,13 @@ public enum ReviewConfigEditor {
             words.insert(profile.gitlabProjectPath)
             if let last = profile.gitlabProjectPath.split(separator: "/").last, last.count >= 4 { words.insert(String(last)) }
             if profile.project.count >= 4 { words.insert(profile.project) }
+            // MCP server names often name the company's systems.
+            for server in profile.mcp.servers where server.count >= 4 && !["gitlab", "azure-devops", "jira"].contains(server.lowercased()) {
+                words.insert(server)
+            }
             if let tracker = profile.tracker {
                 if tracker.org.count >= 3 { words.insert(tracker.org) }
                 if tracker.project.count >= 4 { words.insert(tracker.project) }
-                if let host = URL(string: tracker.url)?.host() { words.insert(host) }
             }
         }
         let lower = text.lowercased()

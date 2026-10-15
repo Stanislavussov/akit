@@ -66,6 +66,13 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var workItems: [Int]
     /// Filled by Gather: the commit the worktree and every finding refer to.
     public var headSHA: String?
+    /// The project's tracker, named to the fetch pass; nil without a profile or a tracker.
+    public var tracker: ReviewProfile.Tracker?
+    /// Pi's MCP servers and tools this run may use; nil in runs made before MCP (2026-10-15).
+    public var mcp: ReviewMCPAccess?
+
+    /// The run's MCP access: the project's, or every server with the default rules.
+    public var access: ReviewMCPAccess { mcp ?? ReviewMCPAccess() }
 }
 
 /// Brain → project profile → one run (`docs/design/review.md`, "Levels").
@@ -145,7 +152,7 @@ public enum ReviewResolver {
                                            maxInline: pick(\.maxInline, fallback: 7), nitpicks: pick(\.nitpicks, fallback: false)),
             capCredits: pick(\.capCredits, fallback: 150), constraints: profile?.constraints ?? [],
             pathInstructions: profile?.pathInstructions ?? [], knowledge: profile?.knowledge ?? [], gather: profile?.gather ?? [],
-            workItems: choices.workItems, headSHA: nil)
+            workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: profile?.mcp ?? ReviewMCPAccess())
         return (spec, roles)
     }
 
@@ -176,6 +183,14 @@ public enum ReviewResolver {
         }
         if !spec.knowledge.isEmpty { lines += ["Knowledge folders [project]:"] + spec.knowledge.map { "  \($0)" } }
         if !spec.gather.isEmpty { lines += ["Gather commands [project]:"] + spec.gather.map { "  \($0.name): \($0.run)" } }
+        let access = spec.access
+        let source = spec.project == nil ? "default" : "project"
+        lines += ["MCP (Pi's servers) [\(source)]:",
+                  "  servers: " + (access.servers.isEmpty ? "those named like gitlab, azure, devops or ado" : access.servers.joined(separator: ", ")),
+                  "  read: get_/list_/search_/… tools, tools marked read-only" + (access.read.isEmpty ? "" : ", " + access.read.joined(separator: ", ")),
+                  "  write (Send Drafts only): " + access.write.joined(separator: ", "),
+                  "  in passes: " + (access.inPasses ? "yes" : "no, only the fetch pass")]
+        if let tracker = spec.tracker { lines += ["Tracker [project]: \(tracker.kind) \(tracker.org)/\(tracker.project), work items \(tracker.wiRefRegex)"] }
         return lines.joined(separator: "\n")
     }
 }

@@ -3,30 +3,20 @@ import AKitFoundation
 import AKitReview
 import Foundation
 
-/// What `akit review` reaches outside the Mac, so tests can pass fakes: the Keychain of
-/// review's tokens and GitLab's and Azure DevOps's REST.
-public struct ReviewServices: Sendable {
-    public var secrets: any SecretStore
-    public var fetch: ReviewFetch
-
-    public init(secrets: any SecretStore = ReviewTokens.store(), fetch: @escaping ReviewFetch = ReviewHTTP.network) {
-        self.secrets = secrets
-        self.fetch = fetch
-    }
-}
-
 extension AKitCLI {
     static let reviewUsage = """
-    akit review: AI review of GitLab merge requests (docs/design/review.md). AKit gathers the
-    context, Pi reads it and proposes findings, and nothing reaches GitLab until you approve it.
+    akit review: AI review of GitLab merge requests (docs/design/review.md). Pi reads the merge
+    request and its work items through your MCP servers, AKit gathers the rest and gives Pi the
+    roles, the rules and the limits, and nothing reaches GitLab until you approve it.
 
     Usage:
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
                          [--gather-only] [--over-cap]
-                                        Gather the merge request, its work items, the worktree at
-                                        head_sha, history, commands and knowledge into a context pack,
-                                        then run the passes in Pi (brief, roles, verifier).
+                                        Gather: Pi reads the merge request and its work items through
+                                        its MCP servers; AKit adds the worktree at head_sha, the diff,
+                                        history, commands and knowledge into a context pack. Then the
+                                        passes run in Pi (brief, roles, verifier).
                                         --over-cap goes on when the estimate is over the credit cap
       akit review passes RUN [--over-cap]
                                         Run the passes again on a gathered run
@@ -39,10 +29,10 @@ extension AKitCLI {
       akit review inline RUN FINDING    Move an "only in AKit" finding inline (missed-by-filter)
       akit review missed RUN TEXT [--file F --line N]
                                         What the reviewer missed (label missed); stays in AKit
-      akit review post RUN [--refresh] [--yes]
+      akit review post RUN [--yes]
                                         Print the requests; --yes sends the approved ones as draft
-                                        notes (you publish them in GitLab with Submit review).
-                                        --refresh reads your drafts and the threads again first
+                                        notes through Pi's GitLab MCP server, word for word (you
+                                        publish them in GitLab with Submit review)
       akit review discuss RUN           Write the Discuss in Pi… script (pi --fork of the verifier's
                                         session) and print how to start it
       akit review apply RUN             Make a new version of the findings from what Pi submitted in
@@ -51,17 +41,14 @@ extension AKitCLI {
       akit review runs                  Every run on this Mac, newest first
       akit review config show [--project P] [--mr MR-URL] [--scenario S] [--brain DIR]
                                         The resolved configuration with the source of each value
-      akit review token gitlab HOST     Save a GitLab token (read from stdin) in the Keychain
-      akit review token azure-devops ORG
-                                        Save an Azure DevOps token (Work Items: Read) in the Keychain
-      akit review token … --delete      Remove it
-      akit review check HOST            GitLab's version and your user, with the saved token
+      akit review check [--project P]   Pi's MCP servers (pi mcp list) and what review may do with
+                                        each tool: read, write drafts (Send Drafts only) or blocked
 
     Files: ~/.akit/local/review/projects/<slug>.yaml (project profiles), runs/<run-id>/.
     """
 
     static func review(_ arguments: [String], env: HarnessEnvironment, cwd: URL, out: (String) -> Void, err: (String) -> Void,
-                       input: () -> Data, services: ReviewServices) async throws -> Int32 {
+                       input: () -> Data) async throws -> Int32 {
         var args = Arguments(arguments)
         if args.flag("--help") || args.flag("-h") || args.isEmpty {
             out(reviewUsage)
@@ -84,7 +71,6 @@ extension AKitCLI {
         let mrText = args.value("--mr")
         let gatherOnly = args.flag("--gather-only")
         let yes = args.flag("--yes")
-        let refresh = args.flag("--refresh")
         let reasonText = args.value("--reason")
         let comment = args.value("--comment")
         let textFile = args.value("--text")
@@ -116,39 +102,18 @@ extension AKitCLI {
             for problem in catalog.problems { err("akit: \(problem)") }
             out(ReviewResolver.describe(try ReviewRuns.plan(mr: mr, project: project, choices: choices, home: env.homeDirectory, brain: brain)))
             return 0
-        case "token":
-            guard let kindText = args.positional(), let kind = ReviewTokens.Kind(rawValue: kindText) else {
-                throw Failure(message: "akit review token gitlab HOST, or akit review token azure-devops ORG.")
-            }
-            guard let name = args.positional() else {
-                throw Failure(message: kind == .gitlab ? "Which GitLab? akit review token gitlab https://gitlab.example.com"
-                                  : "Which organization? akit review token azure-devops ORG")
-            }
-            let delete = args.flag("--delete")
-            try args.finish()
-            guard let origin = ReviewTokens.origin(kind, name) else {
-                throw Failure(message: "\(name) is not an https address: AKit sends tokens only over https.")
-            }
-            let account = ReviewTokens.account(kind, for: name)
-            if delete {
-                try services.secrets.delete(account)
-                out("Removed the \(kind.title) token for \(origin).")
-                return 0
-            }
-            let token = String(decoding: input(), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !token.isEmpty else { throw Failure(message: "Pipe the token on stdin, for example: pbpaste | akit review token \(kind.rawValue) \(name)") }
-            try services.secrets.save(token, for: account)
-            out("Saved the \(kind.title) token for \(origin) in the Keychain (AKit Review).")
-            return 0
         case "check":
-            guard let host = args.positional() else { throw Failure(message: "akit review check HOST.") }
             try args.finish()
-            guard let token = try services.secrets.value(ReviewTokens.account(.gitlab, for: host)) else {
-                throw Failure(message: "There is no GitLab token for \(host): akit review token gitlab \(host)")
+            let catalog = ReviewCatalog.load(home: env.homeDirectory, brain: brain)
+            let profile = try project.map { name -> ReviewProfile in
+                guard let profile = catalog.profiles.first(where: { $0.slug == name }) else { throw Failure(message: "There is no project profile \(name).") }
+                return profile
             }
-            let client = GitLabClient(host: host, token: token, fetch: services.fetch)
-            out("GitLab \(try await client.version()) at \(client.host), signed in as \(try await client.currentUser()).")
-            return 0
+            let access = profile?.mcp ?? ReviewMCPAccess()
+            let report = try await ReviewMCPCheck.run(env: env, access: access)
+            out(mcpCheckText(report, access: access, project: profile?.slug))
+            let connected = report.servers.filter { $0.enabled && $0.state == "connected" }
+            return connected.contains(where: { $0.count(.read) > 0 }) ? 0 : 1
         case "show":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review show RUN.") }
             try args.finish()
@@ -197,11 +162,6 @@ extension AKitCLI {
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review post RUN.") }
             try args.finish()
             let folder = try runFolder(id, env: env)
-            let secrets = services.secrets
-            if refresh {
-                let client = try ReviewWorkflow.gitlab(for: try ReviewWorkflow.load(folder), tokens: { try secrets.value($0) }, fetch: services.fetch)
-                try await ReviewWorkflow.plan(folder, gitlab: client, env: env)
-            }
             let run = try ReviewWorkflow.load(folder)
             out(requestsText(run))
             guard yes else {
@@ -213,10 +173,11 @@ extension AKitCLI {
                 out("No approved request is waiting to be sent.")
                 return 0
             }
-            let client = try ReviewWorkflow.gitlab(for: run, tokens: { try secrets.value($0) }, fetch: services.fetch)
             // Exactly what was printed above.
             let shown = Dictionary(uniqueKeysWithValues: approved.map { ($0.id, ReviewNotes.textHash($0.text)) })
-            let report = try await ReviewWorkflow.send(folder, gitlab: client, shown: shown)
+            let lines = LineBox()
+            let report = try await ReviewWorkflow.send(folder, env: env, shown: shown, options: ReviewPasses.Options(progress: { lines.add($0) }))
+            lines.drain(out)
             out("Sent as drafts: \(report.sent.isEmpty ? "none" : report.sent.joined(separator: ", ")).")
             for failure in report.failed { err("akit: \(failure.id): \(failure.message)") }
             out("Publish them in GitLab with Submit review: \(run.spec.mergeRequest.url)")
@@ -247,12 +208,11 @@ extension AKitCLI {
         case let text?:
             let mr = try mergeRequest(text)
             try args.finish()
-            let secrets = services.secrets
             let lines = LineBox()
             let result: ReviewGather.Result
             do {
                 result = try await ReviewRuns.start(mr: mr, project: project, choices: choices, env: env, brain: brain,
-                                                    tokens: { try secrets.value($0) }, fetch: services.fetch, progress: { lines.add($0) })
+                                                    options: ReviewPasses.Options(progress: { lines.add($0) }))
             } catch {
                 lines.drain(out)
                 throw error
@@ -296,6 +256,26 @@ extension AKitCLI {
             + (log.map { String(format: ", ≈ %.1f credits", $0.credits) } ?? "") + ".")
         out("Next: akit review show \(folder.lastPathComponent)")
         return 0
+    }
+
+    static func mcpCheckText(_ report: ReviewMCPCheck.Report, access: ReviewMCPAccess, project: String?) -> String {
+        var lines = ["Pi's MCP servers" + (project.map { " for project \($0)" } ?? "") + " (pi mcp list):"]
+        if report.servers.isEmpty { lines.append("  none. Add your GitLab and tracker servers to Pi: pi mcp add …") }
+        for server in report.servers {
+            let used = access.allows(server: server.name)
+            lines.append("  \(server.name): \(server.enabled ? server.state : "disabled")" + (used ? "" : " · not used by this project")
+                         + " · \(server.tools.count) tools: \(server.count(.read)) read, \(server.count(.write)) write drafts, \(server.count(.blocked)) blocked")
+            for kind in [ReviewMCPPolicy.Kind.read, .write] {
+                let names = server.tools.filter { $0.kind == kind }.map(\.name)
+                if !names.isEmpty, used { lines.append("    \(kind == .read ? "read" : "write"): \(names.joined(separator: ", "))") }
+            }
+        }
+        for error in report.errors { lines.append("  error: \(error)") }
+        if !report.servers.contains(where: { $0.enabled && $0.state == "connected" && $0.count(.read) > 0 }) {
+            lines.append("No connected server has a tool review may read with: a review can't start.")
+        }
+        lines.append("A tool its server marks read-only also reads in a run, whatever its name.")
+        return lines.joined(separator: "\n")
     }
 
     static func showText(_ run: ReviewWorkflow.Run) -> String {

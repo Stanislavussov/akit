@@ -98,10 +98,133 @@ public enum ReviewPasses {
 
     public static let tools = "read,grep,find,ls,akit_submit_findings,akit_report_context_gap"
 
+    /// What one Pi process of a run is: its mode for the extension and what it may reach.
+    struct PassSetup: Sendable {
+        var name: String
+        var mode: String
+        var role: ReviewRunSpec.Role?
+        var prompt: String
+        var model: ReviewModelChoice
+        var gate: SendGate
+        /// `--session-id …` or `--fork …`.
+        var session: [String]
+        var skills: [String]
+        var tools: String
+        /// Pi's MCP (with codemode) for this pass, limited to the run's servers.
+        var mcp: Bool
+        var cwd: URL
+        var systemPrompt: URL?
+        var roots: String
+    }
+
+    /// The Pi arguments of a pass. Pi's own MCP support (`builtin:mcp`, with `builtin:codemode`
+    /// to call the tools) loads the user's servers from Pi's `mcp.json`; nothing else of the
+    /// user's Pi set-up is loaded (R2, R15).
+    static func arguments(_ setup: PassSetup, folder: URL, access: ReviewMCPAccess) -> [String] {
+        let sessions = folder.appending(path: "sessions")
+        var arguments = ["-p", "--mode", "json"] + setup.session + ["--session-dir", sessions.path]
+        if !setup.model.model.isEmpty { arguments += ["--model", setup.model.model] }
+        if !setup.model.thinking.isEmpty { arguments += ["--thinking", setup.model.thinking] }
+        arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-extensions", "--offline"]
+        var tools = setup.tools
+        if setup.mcp {
+            arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode"]
+            tools += ",codemode" + access.toolPatterns.map { "," + $0 }.joined()
+        } else {
+            arguments += ["--no-mcp"]
+        }
+        arguments += setup.skills
+        if let system = setup.systemPrompt { arguments += ["--append-system-prompt", system.path] }
+        arguments += ["-e", folder.appending(path: "akit-review.ts").path, "--tools", tools, "--", setup.prompt]
+        return arguments
+    }
+
+    /// Runs one pass: checks the sending policy and the run's limit, starts Pi, records the pass
+    /// in `passes.json` and the send log. Throws when the pass failed.
+    static func runPass(_ setup: PassSetup, spec: ReviewRunSpec, folder: URL, log: inout ReviewPassLog, limit: Double, env: HarnessEnvironment,
+                        options: Options, pi: URL) async throws -> PassOutput {
+        guard log.credits < limit else {
+            throw Failure(message: String(format: "Stopped before %@: %.0f credits used, the run's limit is %.0f.", setup.name, log.credits, limit))
+        }
+        options.progress("Pass \(setup.name)…")
+        try setup.gate.check(.mergeRequest)
+        try write(setup.prompt, to: folder.appending(path: "prompts/\(setup.name).md"))
+        try write(ReviewExtension.source, to: folder.appending(path: "akit-review.ts"))
+        try FileManager.default.createDirectory(at: folder.appending(path: "sessions"), withIntermediateDirectories: true)
+        var environment = passEnvironment(env)
+        environment["AKIT_REVIEW_RUN"] = folder.path
+        environment["AKIT_REVIEW_RUN_ID"] = spec.id
+        environment["AKIT_REVIEW_MODE"] = setup.mode
+        environment["AKIT_REVIEW_PASS"] = setup.name
+        environment["AKIT_REVIEW_ROLE"] = setup.role?.id ?? ""
+        environment["AKIT_REVIEW_MAX"] = String(setup.role?.maxFindings ?? 50)
+        environment["AKIT_REVIEW_ROOTS"] = setup.roots
+        environment["AKIT_REVIEW_MCP"] = String(decoding: (try? JSONEncoder().encode(spec.access)) ?? Data("{}".utf8), as: UTF8.self)
+        environment["AKIT_REVIEW_SCENARIO"] = spec.scenario.value
+        environment["AKIT_REVIEW_HEAD"] = spec.headSHA ?? ""
+        var record = ReviewPassRecord(name: setup.name, role: setup.role?.id, model: setup.model.model, session: nil, started: .now, ended: nil,
+                                      usage: SendUsage(), credits: 0, paths: [], error: nil)
+        let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: spec.access), directory: setup.cwd,
+                                 environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"))
+        record.ended = .now
+        record.session = output.session
+        record.usage = output.usage
+        record.credits = ReviewCredits.of(output.usage)
+        record.paths = output.paths.map { relative($0, to: setup.cwd, run: folder) }
+        record.error = output.error
+        log.passes.append(record)
+        try ReviewJSON.write(log, to: folder.appending(path: "passes.json"))
+        let system = setup.systemPrompt.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+        var send = SendRecord(purpose: "review-\(setup.name)", session: output.session, runID: spec.id, destination: setup.gate.destination,
+                              model: setup.model.model, inputCharacters: setup.prompt.count, systemCharacters: system.count, usage: output.usage)
+        send.paths = record.paths
+        send.error = output.error
+        _ = SendLog.appendAfterRun(send, env: env, out: options.progress)
+        if let error = output.error { throw Failure(message: "Pass \(setup.name) failed: \(error)") }
+        return output
+    }
+
+    /// The fetch pass (Gather, R3): Pi reads the merge request, its threads, the user's drafts
+    /// and the work items through the user's MCP servers. The extension saves every answer in
+    /// `<run>/mcp/calls/`; AKit reads them there. Its own session, so the review session
+    /// starts clean.
+    static func fetch(folder: URL, spec: ReviewRunSpec, env: HarnessEnvironment, options: Options) async throws {
+        guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
+        let gate = try await gate(model: spec.passes.value.model, env: env)
+        var log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
+            ?? ReviewPassLog(mainSession: UUID().uuidString.lowercased())
+        log.passes.removeAll { $0.name == "fetch" }
+        try? FileManager.default.removeItem(at: folder.appending(path: "mcp/calls"))
+        let cwd = folder.appending(path: "fetch", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+        let setup = PassSetup(name: "fetch", mode: "fetch", role: nil, prompt: ReviewPrompts.fetch(spec: spec), model: spec.passes.value,
+                              gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
+                              tools: "akit_submit_context,akit_report_context_gap", mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
+        _ = try await runPass(setup, spec: spec, folder: folder, log: &log, limit: Double(spec.capCredits.value), env: env, options: options, pi: pi)
+    }
+
+    /// The send pass (Send Drafts…, R4–R5): Pi writes the approved requests of
+    /// `<run>/send/approved.json` as draft notes through the user's GitLab MCP server. The
+    /// extension lets through only calls that carry an approved request word for word and logs
+    /// each in `<run>/send/log.jsonl`.
+    static func send(folder: URL, spec: ReviewRunSpec, count: Int, env: HarnessEnvironment, options: Options) async throws {
+        guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
+        let gate = try await gate(model: spec.passes.value.model, env: env)
+        var log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
+            ?? ReviewPassLog(mainSession: UUID().uuidString.lowercased())
+        let cwd = folder.appending(path: "send", directoryHint: .isDirectory)
+        let name = "send-\(log.passes.filter { $0.name.hasPrefix("send") }.count + 1)"
+        let setup = PassSetup(name: name, mode: "send", role: nil, prompt: ReviewPrompts.send(spec: spec, count: count), model: spec.passes.value,
+                              gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
+                              tools: "akit_approved_requests", mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
+        // Sending is never stopped by the run's credit cap: the user asked for it.
+        _ = try await runPass(setup, spec: spec, folder: folder, log: &log, limit: .infinity, env: env, options: options, pi: pi)
+    }
+
     /// Runs every pass of a gathered run and writes `findings.json` and `gaps.json`.
     @discardableResult
     public static func run(folder: URL, env: HarnessEnvironment, options: Options = Options()) async throws -> ReviewFindingsFile {
-        guard let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")), let head = spec.headSHA else {
+        guard let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")), spec.headSHA != nil else {
             throw Failure(message: "\(folder.lastPathComponent) has no gathered run.json; gather it first.")
         }
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
@@ -117,22 +240,26 @@ public enum ReviewPasses {
         let hasWorktree = FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path)
         let cwd = hasWorktree ? worktree : folder
         let system = ReviewPrompts.system(spec: spec, hasWorktree: hasWorktree)
-        try write(system, to: folder.appending(path: "prompts/system.md"))
-        try write(ReviewExtension.source, to: folder.appending(path: "akit-review.ts"))
+        let systemFile = folder.appending(path: "prompts/system.md")
+        try write(system, to: systemFile)
 
         let contextSize = directorySize(context)
         let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count, roles: roles.count)
         try ReviewRuns.setStatus(.estimating, message: String(format: "≈ %.0f credits (cap %d)", estimate, spec.capCredits.value), folder: folder)
+        // The fetch pass counts against the cap too.
+        let previous = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
+        let fetched = previous?.passes.filter { $0.name == "fetch" } ?? []
+        let spent = fetched.map(\.credits).reduce(0, +)
         // A confirmed estimate over the cap raises the run's limit to half again the estimate.
         var limit = Double(spec.capCredits.value)
-        if estimate > limit {
-            guard let confirm = options.confirmOverCap, await confirm(estimate, spec.capCredits.value) else {
-                let message = String(format: "Stopped before the passes: the estimate is ≈ %.0f credits, over the cap of %d.", estimate,
+        if estimate + spent > limit {
+            guard let confirm = options.confirmOverCap, await confirm(estimate + spent, spec.capCredits.value) else {
+                let message = String(format: "Stopped before the passes: the estimate is ≈ %.0f credits, over the cap of %d.", estimate + spent,
                                      spec.capCredits.value)
                 try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
                 throw Failure(message: message)
             }
-            limit = estimate * 1.5
+            limit = (estimate + spent) * 1.5
         }
         // The monthly limit (US dollars, Settings → Lab) counts review passes too.
         let records = SendLog.records(env: env)
@@ -140,81 +267,44 @@ public enum ReviewPasses {
         try SendLog.checkLimit(estimate: dollars, settings: passesGate.settings, env: env)
 
         var log = ReviewPassLog(mainSession: UUID().uuidString.lowercased(), estimate: estimate)
+        log.passes = fetched
         let logFile = folder.appending(path: "passes.json")
         try ReviewJSON.write(log, to: logFile)
         try ReviewRuns.setStatus(.passes, folder: folder)
-        let sessions = folder.appending(path: "sessions", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
         let skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
+        let roots = readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)
 
         func pass(_ name: String, role: ReviewRunSpec.Role?, prompt: String, model: ReviewModelChoice, gate: SendGate,
-                  session: [String], skills: [String]) async throws -> PassOutput {
-            guard log.credits < limit else {
-                throw Failure(message: String(format: "Stopped before %@: %.0f credits used, the run's limit is %.0f.", name, log.credits, limit))
-            }
-            options.progress("Pass \(name)…")
-            try gate.check(.mergeRequest)
-            try write(prompt, to: folder.appending(path: "prompts/\(name).md"))
-            var arguments = ["-p", "--mode", "json"] + session + ["--session-dir", sessions.path]
-            if !model.model.isEmpty { arguments += ["--model", model.model] }
-            if !model.thinking.isEmpty { arguments += ["--thinking", model.thinking] }
-            arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-mcp", "--no-extensions", "--offline"]
-            arguments += skills + ["--append-system-prompt", folder.appending(path: "prompts/system.md").path,
-                                   "-e", folder.appending(path: "akit-review.ts").path, "--tools", tools, "--", prompt]
-            var environment = passEnvironment(env)
-            environment["AKIT_REVIEW_RUN"] = folder.path
-            environment["AKIT_REVIEW_RUN_ID"] = spec.id
-            environment["AKIT_REVIEW_PASS"] = name
-            environment["AKIT_REVIEW_ROLE"] = role?.id ?? ""
-            environment["AKIT_REVIEW_MAX"] = String(role?.maxFindings ?? 50)
-            environment["AKIT_REVIEW_ROOTS"] = readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)
-            environment["AKIT_REVIEW_SCENARIO"] = spec.scenario.value
-            environment["AKIT_REVIEW_HEAD"] = head
-            var record = ReviewPassRecord(name: name, role: role?.id, model: model.model, session: nil, started: .now, ended: nil,
-                                          usage: SendUsage(), credits: 0, paths: [], error: nil)
-            let output = await runPi(pi, arguments: arguments, directory: cwd, environment: environment, timeout: options.timeout,
-                                     stream: folder.appending(path: "passes/\(name).jsonl"))
-            record.ended = .now
-            record.session = output.session
-            record.usage = output.usage
-            record.credits = ReviewCredits.of(output.usage)
-            record.paths = output.paths.map { relative($0, to: cwd, run: folder) }
-            record.error = output.error
-            log.passes.append(record)
-            try ReviewJSON.write(log, to: logFile)
-            var send = SendRecord(purpose: "review-\(name)", session: output.session, runID: spec.id, destination: gate.destination,
-                                  model: model.model, inputCharacters: prompt.count, systemCharacters: system.count, usage: output.usage)
-            send.paths = record.paths
-            send.error = output.error
-            _ = SendLog.appendAfterRun(send, env: env, out: options.progress)
-            if let error = output.error { throw Failure(message: "Pass \(name) failed: \(error)") }
-            return output
+                  session: [String]) async throws -> PassOutput {
+            let setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
+                                  skills: skills, tools: tools, mcp: spec.access.inPasses, cwd: cwd, systemPrompt: systemFile, roots: roots)
+            return try await runPass(setup, spec: spec, folder: folder, log: &log, limit: limit, env: env, options: options, pi: pi)
         }
 
         do {
             let main = ["--session-id", log.mainSession]
             let brief = try await pass("brief", role: nil, prompt: ReviewPrompts.brief(spec: spec), model: spec.passes.value, gate: passesGate,
-                                       session: main, skills: skills)
+                                       session: main)
             log.brief = brief.answer.map(SecretFilter.masked)
             try ReviewJSON.write(log, to: logFile)
             for role in roles {
                 let definition = try? String(contentsOf: folder.appending(path: "roles/review-\(role.id)/SKILL.md"), encoding: .utf8)
                 _ = try await pass("role-\(role.id)", role: role,
                                    prompt: ReviewPrompts.role(role, body: definition.map(ReviewYAML.body) ?? "", spec: spec),
-                                   model: spec.passes.value, gate: passesGate, session: main, skills: skills)
+                                   model: spec.passes.value, gate: passesGate, session: main)
             }
             var candidates = ReviewCandidates.collect(folder: folder, spec: spec, worktree: hasWorktree ? worktree : nil)
             try ReviewJSON.write(candidates, to: folder.appending(path: "candidates.json"))
             if !candidates.isEmpty {
                 let input = ReviewCandidates.verifierInput(candidates, worktree: hasWorktree ? worktree : nil)
                 try write(input, to: folder.appending(path: "prompts/candidates.md"))
-                guard let mainFile = sessionFile(id: log.mainSession, in: sessions) else {
+                guard let mainFile = sessionFile(id: log.mainSession, in: folder.appending(path: "sessions")) else {
                     throw Failure(message: "Pi saved no session for the passes, so the verifier can't fork it.")
                 }
                 let verified = try await pass("verifier", role: nil, prompt: ReviewPrompts.verifier(candidates: input), model: spec.verifier.value,
-                                              gate: verifierGate, session: ["--fork", mainFile.path], skills: skills)
+                                              gate: verifierGate, session: ["--fork", mainFile.path])
                 log.verifierSession = verified.session
-                log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: sessions) }?.path
+                log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
                 try ReviewJSON.write(log, to: logFile)
                 candidates = ReviewCandidates.apply(verdictsFile: folder.appending(path: "passes/verifier.json"), to: candidates)
             }
@@ -246,13 +336,11 @@ public enum ReviewPasses {
             .map(\.path).joined(separator: ":")
     }
 
-    /// The environment of a pass or a discussion: none of the tokens a user may keep in their
-    /// shell for GitLab or Azure DevOps (a pass has no shell, but nothing should be there to find).
+    /// The environment of a pass or a discussion: the user's, so Pi's MCP servers find the
+    /// variables their `mcp.json` entries name (`${GITLAB_TOKEN}`). The model has no shell and no
+    /// tool that reads the environment. Values of an earlier run's `AKIT_REVIEW_*` never leak in.
     static func passEnvironment(_ env: HarnessEnvironment) -> [String: String] {
-        ChildProcess.harnessEnvironment(env).filter { key, _ in
-            let upper = key.uppercased()
-            return !["GITLAB", "GL_", "GLAB", "AZURE_DEVOPS", "ADO_", "SYSTEM_ACCESSTOKEN", "AKIT_REVIEW"].contains { upper.hasPrefix($0) }
-        }
+        ChildProcess.harnessEnvironment(env).filter { key, _ in !key.uppercased().hasPrefix("AKIT_REVIEW") }
     }
 
     /// Gaps of Gather and of every pass, numbered again: `gaps.json`.
@@ -320,6 +408,9 @@ public enum ReviewPasses {
                 let name = event["toolName"] as? String ?? ""
                 if ["read", "grep", "find", "ls"].contains(name), let args = event["args"] as? [String: Any] {
                     output.paths.append(args["path"] as? String ?? ".")
+                } else if name.hasPrefix("mcp__") {
+                    // What a pass read through MCP, by tool (never the arguments).
+                    output.paths.append("mcp:" + name)
                 }
             case "message_end":
                 guard let message = event["message"] as? [String: Any], message["role"] as? String == "assistant" else { continue }
@@ -353,6 +444,7 @@ public enum ReviewPasses {
 
     static func relative(_ path: String, to cwd: URL, run: URL) -> String {
         let absolute = path.hasPrefix("/") ? path : cwd.appending(path: path).standardizedFileURL.path
+        if path.hasPrefix("mcp:") { return path }
         for root in [cwd.path, run.path] where absolute.hasPrefix(root + "/") { return String(absolute.dropFirst(root.count + 1)) }
         return absolute == cwd.path ? "." : absolute
     }

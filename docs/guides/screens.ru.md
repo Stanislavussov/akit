@@ -3709,12 +3709,12 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 Экраны этой группы помогают в обычной работе разработчика, а не в настройке агентов. Пока здесь один экран.
 
-- **Review** — ИИ-ревью merge request'ов GitLab. Агент Pi читает MR и предлагает комментарии. Вы одобряете каждый, и только тогда AKit добавляет его в GitLab как ваш черновик.
+- **Review** — ИИ-ревью merge request'ов GitLab. Агент Pi читает MR и предлагает комментарии. Вы одобряете каждый, и только тогда он попадает в GitLab как ваш черновик.
 
 ### Review
 <!-- section: review -->
 
-**Что это:** AKit сам читает merge request из GitLab и его задачи из Azure DevOps. Агент Pi читает собранное и предлагает находки. Вы решаете по каждой: одобрить, поправить или отклонить с причиной. Одобренные AKit добавляет в ваш pending review в GitLab как черновики. Публикуете их вы, кнопкой **Submit review** в GitLab.
+**Что это:** агент Pi читает merge request из GitLab и его задачи из Azure DevOps через MCP-серверы из своих настроек. AKit даёт ему роли, правила и список разрешённых инструментов и проверяет каждый вызов. Pi предлагает находки. Вы решаете по каждой: одобрить, поправить или отклонить с причиной. Одобренные Pi добавляет в ваш pending review в GitLab как черновики, а AKit пропускает только одобренный текст, слово в слово. Публикуете их вы, кнопкой **Submit review** в GitLab.
 
 У этого экрана есть своё подробное руководство. Откройте его кнопкой **Guide** на этом экране или через Help → **AKit Review Guide**. Ниже — только вход.
 
@@ -3726,7 +3726,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Автор сделал push после моих комментариев» → новое ревью того же MR обновит или удалит старые черновики.
 - «Какая роль чаще ошибается?» → страница **Quality**.
 
-![Экран Review, страница Runs: слева ревью shop/orders-service!42 с меткой Ready; справа заголовок Stop logging the Authorization header (AB#4512), строка 55.9 of 150 credits, метки проходов, блок Requests с карточкой New comment src/Auth/AuthMiddleware.cs:8 и меткой Approved; внизу кнопки Add Missed…, Discuss in Pi…, Refresh from GitLab, счётчик 1 approved и Send Drafts…](images/review-run.png)
+![Экран Review, страница Runs: слева ревью shop/orders-service!42 с меткой Ready; справа заголовок Stop logging the Authorization header (AB#4512), строка 62.1 of 150 credits, метки проходов от fetch до verifier, блок Requests с карточкой New comment src/Auth/AuthMiddleware.cs:8 и меткой Approved; внизу кнопки Add Missed…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
 #### Что на экране
 <!-- section: review-screen -->
@@ -3735,7 +3735,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 - **Runs | Roles | Scenarios | Quality** — страницы экрана. **Runs** — ваши ревью. **Roles** и **Scenarios** — что проверяет ревью. **Quality** — как часто вы одобряете находки.
 - **New Review…** (плюс) — начать ревью по адресу MR.
-- **Review Settings…** (ключ) — токены GitLab и Azure DevOps в Keychain и профили проектов.
+- **Review Settings…** (шестерёнка) — MCP-серверы Pi, как их видит ревью (кнопка **Check Servers**), и профили проектов.
 - **Guide** — подробное руководство.
 
 Страница **Runs**:
@@ -3743,14 +3743,14 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Слева список ревью: MR, метка этапа (**Gathering**, **Gathered**, **Passes**, **Ready**, **Failed**, **Stopped**), сценарий и роли.
 - Справа одно ревью: заголовок MR, кредиты, проходы, блок **Requests** с карточками запросов.
 - Ниже блоки **Only in AKit**, **Context gaps** и **Missed by the reviewer**.
-- Внизу кнопки **Add Missed…**, **Discuss in Pi…**, **Refresh from GitLab**, **Send Drafts…**.
+- Внизу кнопки **Add Missed…**, **Discuss in Pi…**, **Send Drafts…**.
 
 Подробно о каждой части: [экран Review](review#screen).
 
 #### Просто: первое ревью
 <!-- section: review-first -->
 
-1. Нажмите **Review Settings…** и сохраните токен GitLab: [токен GitLab](review#setup-gitlab).
+1. Добавьте в Pi MCP-сервер GitLab (и сервер трекера). Потом в **Review Settings…** нажмите **Check Servers**: [MCP-серверы в Pi](review#setup-mcp).
 2. В Settings → **Lab** разрешите адресата Pi с вашим провайдером: [политика отправки](review#setup-policy).
 3. Нажмите **New Review…**, вставьте адрес MR, выберите сценарий и нажмите **Start Review**.
 4. Когда метка станет **Ready**, прочитайте карточки. Нажмите **Approve** или **Reject** у каждой.
@@ -3763,7 +3763,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 
 - Одновременно идёт одно ревью. Кнопка **Stop** вверху завершает текущий проход.
 - Ревью — папка в `~/.akit/local/review/runs`. Она не покидает Mac.
-- Агент не видит токенов, не имеет сети и не пишет файлы: он только читает и возвращает находки.
+- AKit не хранит токенов. Pi читает GitLab и трекер через свои MCP-серверы, только инструментами чтения. Агент не пишет файлы и не пишет в GitLab; черновики пишет только **Send Drafts…**, слово в слово как вы одобрили.
 - Правый щелчок по ревью: **Show in Finder** и **Move to Trash**.
 
 #### Связи с другими экранами

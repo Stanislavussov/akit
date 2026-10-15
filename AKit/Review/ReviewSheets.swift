@@ -35,9 +35,6 @@ struct NewReviewSheet: View {
                         Text(profile.map { "Project profile: \($0.project) (\($0.slug).yaml)" }
                              ?? "No project profile for \(mr.projectPath): no checkout, tracker or project rules. Review Settings… adds one.")
                             .font(.caption).foregroundStyle(.secondary)
-                        if !model.hasToken(.gitlab, for: mr.host) {
-                            Text("No GitLab token for \(mr.host): add it in Review Settings… first.").font(.caption).foregroundStyle(.red)
-                        }
                     }
                     TextField("Work items", text: $workItems, prompt: Text("e.g. 4512, 4513 (else found in the title, description and branch)"))
                 }
@@ -73,13 +70,13 @@ struct NewReviewSheet: View {
             }
             .formStyle(.grouped)
             HStack {
-                Text("AKit reads GitLab and Azure DevOps with your tokens; Pi sees only the files AKit gathered. Nothing is written to GitLab here.")
+                Text("Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Start Review") { start() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(mr == nil || model.isBusy || (mr.map { !model.hasToken(.gitlab, for: $0.host) } ?? true))
+                    .disabled(mr == nil || model.isBusy)
             }
             .padding()
         }
@@ -105,58 +102,76 @@ struct NewReviewSheet: View {
     }
 }
 
-/// Review Settings…: the two tokens (saved in the Keychain, never shown again) and the project profiles.
+/// Review Settings…: Pi's MCP servers as review uses them, and the project profiles. AKit keeps
+/// no GitLab or Azure DevOps token: Pi connects with the servers in its own settings.
 struct ReviewSettingsSheet: View {
     @Environment(ReviewModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let brain: URL
-    @State private var gitlabHost = "https://"
-    @State private var gitlabToken = ""
-    @State private var org = ""
-    @State private var azureToken = ""
+    @State private var rules = ""
     @State private var message: String?
     @State private var catalog: ReviewCatalog?
+
+    private var access: ReviewMCPAccess { catalog?.profiles.first { $0.slug == rules }?.mcp ?? ReviewMCPAccess() }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
                 Section {
-                    TextField("GitLab", text: $gitlabHost, prompt: Text("https://gitlab.example.com"))
-                    SecureField("Token", text: $gitlabToken, prompt: Text(model.hasToken(.gitlab, for: gitlabHost) ? "Saved; paste to replace" : "glpat-…"))
                     HStack {
-                        Button("Save GitLab Token") { save(.gitlab, gitlabHost, $gitlabToken) }
-                            .disabled(gitlabToken.isEmpty || URL(string: gitlabHost)?.host() == nil)
-                        if model.hasToken(.gitlab, for: gitlabHost) {
-                            Button("Remove") { remove(.gitlab, gitlabHost) }
+                        Picker("Rules of", selection: $rules) {
+                            Text("Default").tag("")
+                            ForEach(catalog?.profiles ?? [], id: \.slug) { Text($0.project).tag($0.slug) }
                         }
+                        Button(model.checkingMCP ? "Checking…" : "Check Servers") { model.checkMCP(access: access) }
+                            .disabled(model.checkingMCP)
+                    }
+                    if let report = model.mcpReport {
+                        if report.servers.isEmpty {
+                            Text("Pi has no MCP servers. Add your GitLab and tracker servers to Pi (pi mcp add …, or the MCP screen).")
+                                .font(.callout).foregroundStyle(.orange)
+                        }
+                        ForEach(report.servers) { server in
+                            let used = access.allows(server: server.name)
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Image(systemName: server.state == "connected" && server.enabled ? "circle.fill" : "circle")
+                                        .foregroundStyle(server.state == "connected" && server.enabled ? .green : .secondary).font(.caption2)
+                                    Text(server.name)
+                                    Text(server.enabled ? server.state : "disabled").font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                    if used {
+                                        Text("\(server.count(.read)) read · \(server.count(.write)) write drafts · \(server.count(.blocked)) blocked")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    } else {
+                                        Text("not used by this project").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                let writes = server.tools.filter { $0.kind == .write }.map(\.name)
+                                if used, !writes.isEmpty {
+                                    Text("Send Drafts may call: " + writes.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        ForEach(report.errors, id: \.self) { Label($0, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
+                    }
+                    if let problem = model.mcpProblem {
+                        Label(problem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
                     }
                 } header: {
-                    Text("GitLab")
+                    Text("Pi's MCP servers")
                 } footer: {
-                    Text("Rights: read the merge request and its notes; create, update and delete your draft notes (scope api, or a fine-grained token with these rights). Only AKit uses it; Pi never sees it.")
+                    Text("Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens. A review reads with their reading tools, writes only the drafts you approved, word for word, and never publishes, approves, merges or resolves. A profile's mcp: names the servers and tools it may use.")
                         .font(.caption).foregroundStyle(.secondary)
-                }
-                Section {
-                    TextField("Organization", text: $org, prompt: Text("the org in dev.azure.com/<org>, or your Server's https:// collection address"))
-                    SecureField("Token", text: $azureToken, prompt: Text(model.hasToken(.azureDevOps, for: org) ? "Saved; paste to replace" : "personal access token"))
-                    HStack {
-                        Button("Save Azure DevOps Token") { save(.azureDevOps, org, $azureToken) }
-                            .disabled(azureToken.isEmpty || org.isEmpty)
-                        if model.hasToken(.azureDevOps, for: org) {
-                            Button("Remove") { remove(.azureDevOps, org) }
-                        }
-                    }
-                } header: {
-                    Text("Azure DevOps")
-                } footer: {
-                    Text("Rights: Work Items (Read). AKit never writes to Azure DevOps. For Azure DevOps Server, enter the same address as url: in the project profile.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
                     ForEach(catalog?.profiles ?? [], id: \.slug) { profile in
                         HStack {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(profile.project)
-                                Text("\(profile.gitlabHost)/\(profile.gitlabProjectPath)").font(.caption).foregroundStyle(.secondary)
+                                Text("\(profile.gitlabHost)/\(profile.gitlabProjectPath)"
+                                     + (profile.mcp.servers.isEmpty ? "" : " · MCP: " + profile.mcp.servers.joined(separator: ", ")))
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             if let file = profile.file {
@@ -178,7 +193,7 @@ struct ReviewSettingsSheet: View {
                 } header: {
                     Text("Project profiles")
                 } footer: {
-                    Text("One YAML file per GitLab project in ~/.akit/local/review/projects: the checkout, the tracker, rules, knowledge folders, gather commands and overrides. Only on this Mac.")
+                    Text("One YAML file per GitLab project in ~/.akit/local/review/projects: the checkout, the tracker, the MCP servers and tools, rules, knowledge folders, gather commands and overrides. Only on this Mac.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -192,25 +207,6 @@ struct ReviewSettingsSheet: View {
         }
         .frame(width: 600, height: 640)
         .task { catalog = model.catalog(brain: brain) }
-    }
-
-    private func save(_ kind: ReviewTokens.Kind, _ name: String, _ value: Binding<String>) {
-        do {
-            try model.saveToken(kind, for: name, value: value.wrappedValue)
-            value.wrappedValue = ""
-            message = "Saved the \(kind.title) token in the Keychain."
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func remove(_ kind: ReviewTokens.Kind, _ name: String) {
-        do {
-            try model.deleteToken(kind, for: name)
-            message = "Removed the \(kind.title) token."
-        } catch {
-            message = error.localizedDescription
-        }
     }
 
     /// A commented template, opened in the editor.
@@ -240,7 +236,11 @@ enum ReviewProfileTemplate {
     gitlab: { host: https://gitlab.example.com, project_path: group/my-service }
     checkout: ~/work/my-service            # your clone: the worktree at the reviewed commit comes from it
     # tracker: { kind: azure-devops, org: my-org, project: MyProject, wi_ref_regex: "(?:AB#|WI-)(\\\\d+)" }
-    # tracker url for Azure DevOps Server: url: https://ado.example.com/tfs/Collection
+    # mcp:                                 # Pi's MCP servers review may use (pi mcp list); none = those named gitlab, azure, devops, ado
+    #   servers: [gitlab, azure-devops]
+    #   read: []                           # more reading tools, e.g. ["wit_get_*"]; get_/list_/search_… read anyway
+    #   write: ["*draft_note*"]            # the tools Send Drafts may call; only approved text passes
+    #   in_passes: true                    # the brief, roles and verifier may read through MCP too
     default_scenario: feature              # feature, bugfix, dependency-upgrade
     knowledge: []                          # markdown folders, e.g. [~/notes/my-service]
     gather: []                             # e.g. - { name: tests, run: "npm test", timeout_s: 600 }; runs the MR's own code
@@ -264,6 +264,9 @@ struct SendDraftsSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(report == nil ? "Send \(approved.count) drafts to GitLab?" : "Sent").font(.title3.weight(.semibold))
+            if sending {
+                ProgressView("Pi writes the drafts through your GitLab MCP server…").controlSize(.small)
+            }
             if let report {
                 if !report.sent.isEmpty {
                     Label("\(report.sent.count) added to your pending review as drafts.", systemImage: "checkmark.circle").foregroundStyle(.green)
@@ -274,7 +277,7 @@ struct SendDraftsSheet: View {
                 Text("Open the merge request in GitLab, check the drafts beside your own comments, and publish them with Submit review.")
                     .foregroundStyle(.secondary)
             } else {
-                Text("AKit adds them to your own pending review as draft notes. Nobody sees them until you press Submit review in GitLab; AKit never publishes.")
+                Text("Pi adds them to your own pending review as draft notes, with your GitLab MCP server. AKit lets through only these texts, word for word. Nobody sees them until you press Submit review in GitLab; nothing is published.")
                     .foregroundStyle(.secondary)
                 List(approved) { request in
                     HStack {

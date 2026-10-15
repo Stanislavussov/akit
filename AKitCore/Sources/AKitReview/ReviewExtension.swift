@@ -1,14 +1,21 @@
 import Foundation
 
 /// The Pi extension of a review pass, `<run>/akit-review.ts` (`docs/design/review.md`, "The agent
-/// in a pass"). It is thin: two tools that write into the run folder, and a `tool_call` policy.
-/// Everything that decides what reaches GitLab is Swift. AKit passes it, per pass:
-/// `AKIT_REVIEW_RUN` (the run folder), `AKIT_REVIEW_PASS`, `AKIT_REVIEW_ROLE`, `AKIT_REVIEW_MAX`,
-/// `AKIT_REVIEW_ROOTS` (folders reads may reach, `:`-separated), `AKIT_REVIEW_RUN_ID`,
-/// `AKIT_REVIEW_SCENARIO`, `AKIT_REVIEW_HEAD`.
+/// in a pass"). It is thin: the tools that write into the run folder, and a `tool_call` policy.
+/// AKit passes it, per pass: `AKIT_REVIEW_RUN` (the run folder), `AKIT_REVIEW_MODE` (`fetch`,
+/// `review` or `send`), `AKIT_REVIEW_PASS`, `AKIT_REVIEW_ROLE`, `AKIT_REVIEW_MAX`,
+/// `AKIT_REVIEW_ROOTS` (folders reads may reach, `:`-separated), `AKIT_REVIEW_MCP` (the run's
+/// `ReviewMCPAccess` as JSON), `AKIT_REVIEW_RUN_ID`, `AKIT_REVIEW_SCENARIO`, `AKIT_REVIEW_HEAD`.
+///
+/// MCP calls (R2–R3): every call of a Pi MCP tool, direct or from a codemode script, passes the
+/// policy of `ReviewMCPPolicy`. Reading tools of the run's servers are allowed; a writing tool
+/// only in `send` mode and only with the text of a request the user approved
+/// (`<run>/send/approved.json`); publishing, approving, merging and resolving never. Every answer
+/// is saved word for word in `<run>/mcp/calls/`, and every write in `<run>/send/log.jsonl`:
+/// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 2
+    public static let version = 4
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -22,23 +29,167 @@ public enum ReviewExtension {
     }
 
     public static let source = #"""
-    // akit-review.ts v2: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v4: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
     const run = process.env.AKIT_REVIEW_RUN ?? "";
+    const mode = process.env.AKIT_REVIEW_MODE ?? "review";
     const pass = process.env.AKIT_REVIEW_PASS ?? "pass";
     const role = process.env.AKIT_REVIEW_ROLE ?? "";
     const max = Number(process.env.AKIT_REVIEW_MAX ?? "20");
     const roots = (process.env.AKIT_REVIEW_ROOTS ?? "").split(":").filter((r) => r.length > 0).map((r) => real(r));
+    const access = parse(process.env.AKIT_REVIEW_MCP ?? "{}") ?? {};
+    const servers: string[] = (access.servers ?? []).map(norm);
+    const readPatterns: string[] = access.read ?? [];
+    const writePatterns: string[] = access.write ?? [];
+    const mcpAllowed = mode !== "review" || access.inPasses !== false;
     const severities = ["nit", "low", "medium", "high", "critical"];
     const verdicts = ["confirmed", "rejected", "question", "merged"];
     const kinds = ["finding", "ac", "question"];
     const readTools = ["read", "grep", "find", "ls"];
-    const ownTools = ["akit_submit_findings", "akit_report_context_gap"];
+    const ownTools = ["akit_submit_findings", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests"];
+    const resourceTools = ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"];
+    const forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"];
+    const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
+    const writeVerbs = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy"];
+    const knownReads = ["mr_discussions"];
+    const defaultServerWords = ["gitlab", "azure", "devops"];
+    const approved: any[] = mode === "send" ? (parse(readText(path.join(run, "send/approved.json"))) ?? []) : [];
+    const claimed = new Set<string>();
+    const pending = new Map<string, string>();
+    let saved = 0;
+
+    function parse(text: string): any {
+      try { return JSON.parse(text); } catch { return undefined; }
+    }
+
+    function readText(file: string): string {
+      try { return fs.readFileSync(file, "utf8"); } catch { return ""; }
+    }
 
     function real(p: string): string {
       try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+    }
+
+    function norm(name: string): string {
+      return String(name).replace(/[^A-Za-z0-9_]/g, "_");
+    }
+
+    function like(pattern: string, name: string): boolean {
+      const parts = pattern.toLowerCase().split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&"));
+      return new RegExp("^" + parts.join(".*") + "$").test(name.toLowerCase());
+    }
+
+    function serverAllowed(server: string): boolean {
+      const name = norm(server).toLowerCase();
+      if (servers.length > 0) return servers.map((s) => s.toLowerCase()).includes(name);
+      return defaultServerWords.some((w) => name.includes(w)) || name === "ado";
+    }
+
+    // mcp__<server>__<tool>: the server is one the run allows, the longest that fits, so a
+    // server named like another plus `__…` is never taken for it.
+    function split(name: string): { server: string; tool: string } | null {
+      const match = /^mcp__(.+)$/.exec(name);
+      if (!match) return null;
+      const rest = match[1];
+      const named = servers.filter((s) => rest.startsWith(s + "__")).sort((a, b) => b.length - a.length)[0];
+      if (named !== undefined) return { server: named, tool: rest.slice(named.length + 2) };
+      const at = rest.indexOf("__");
+      return at < 0 ? { server: rest, tool: "" } : { server: rest.slice(0, at), tool: rest.slice(at + 2) };
+    }
+
+    function lead(tool: string): string[] {
+      return tool.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 0).slice(0, 2);
+    }
+
+    // The same rules as ReviewMCPPolicy.kind in AKit. null: not an MCP tool.
+    function mcpKind(name: string, hints: any): "read" | "write" | "blocked" | null {
+      const parts = split(name);
+      if (parts === null) return null;
+      const { server, tool } = parts;
+      if (!serverAllowed(server)) return "blocked";
+      const words = tool.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 0);
+      if (words.some((w) => forbiddenWords.includes(w))) return "blocked";
+      const verbs = lead(tool);
+      if (verbs.some((w) => writeVerbs.includes(w))) return writePatterns.some((p) => like(p, tool)) ? "write" : "blocked";
+      if (readVerbs.includes(verbs[0] ?? "") || (verbs.length === 2 && readVerbs.includes(verbs[1]))) return "read";
+      if (hints?.readOnlyHint === true || [...readPatterns, ...knownReads].some((p) => like(p, tool))) return "read";
+      return "blocked";
+    }
+
+    function verb(name: string): string | null {
+      const verbs = lead(split(name)?.tool ?? "");
+      if (verbs.some((w) => ["delete", "remove", "destroy"].includes(w))) return "delete";
+      if (verbs.some((w) => ["update", "edit", "modify", "put", "patch"].includes(w))) return "update";
+      if (verbs.some((w) => ["create", "add", "post", "new"].includes(w))) return "create";
+      return null;
+    }
+
+    // The arguments a write may have, by meaning: anything else (resolve_discussion, another
+    // field with the text, …) blocks the call.
+    const fields: Record<string, string[]> = {
+      project: ["project_id", "projectId", "project", "project_path", "projectPath"],
+      iid: ["merge_request_iid", "mergeRequestIid", "iid", "mr_iid"],
+      body: ["body", "note"],
+      draft: ["draft_note_id", "draftNoteId", "draft_id", "note_id"],
+      discussion: ["in_reply_to_discussion_id", "discussion_id", "discussionId"],
+      position: ["position"],
+    };
+    const positionFields = ["position_type", "base_sha", "start_sha", "head_sha", "old_path", "new_path", "old_line", "new_line"];
+
+    function given(input: any, field: string): any[] {
+      return fields[field].filter((k) => input[k] !== undefined && input[k] !== null).map((k) => input[k]);
+    }
+
+    function same(a: any, b: any): boolean {
+      return a !== undefined && a !== null && b !== undefined && b !== null && String(a).trim() === String(b).trim();
+    }
+
+    // Why a write's arguments are not exactly this approved request; null when they are.
+    function mismatch(request: any, name: string, input: any): string | null {
+      if (request.action !== verb(name)) return "another action";
+      if (input === null || typeof input !== "object" || Array.isArray(input)) return "no arguments";
+      const known = Object.values(fields).flat();
+      for (const [key, value] of Object.entries(input)) {
+        if (value !== undefined && value !== null && !known.includes(key)) return `the argument ${key}`;
+      }
+      const projects = given(input, "project");
+      if (projects.length === 0 || !projects.every((p) => (request.mr?.projects ?? []).some((q: any) => same(p, q)))) return "another project";
+      const iids = given(input, "iid");
+      if (iids.length === 0 || !iids.every((i) => same(i, request.mr?.iid))) return "another merge request";
+      const bodies = given(input, "body");
+      if (request.action === "delete" ? bodies.length > 0 : (bodies.length === 0 || !bodies.every((b) => same(b, request.body)))) return "another text";
+      const drafts = given(input, "draft");
+      if (request.draft_id != null ? (drafts.length === 0 || !drafts.every((d) => same(d, request.draft_id))) : drafts.length > 0) return "another draft";
+      const threads = given(input, "discussion");
+      if (request.discussion_id ? (threads.length === 0 || !threads.every((d) => same(d, request.discussion_id))) : threads.length > 0) return "another thread";
+      const positions = given(input, "position");
+      if (request.position && request.action !== "delete") {
+        const p = positions[0];
+        if (positions.length !== 1 || typeof p !== "object") return "no position";
+        for (const key of Object.keys(p)) if (p[key] !== undefined && p[key] !== null && !positionFields.includes(key)) return `the position field ${key}`;
+        for (const key of positionFields) {
+          const want = request.position[key];
+          const got = p[key];
+          if ((want === undefined || want === null) !== (got === undefined || got === null)) return "another place in the diff";
+          if (want !== undefined && want !== null && !same(want, got)) return "another place in the diff";
+        }
+      } else if (positions.length > 0) return "a position the request doesn't have";
+      return null;
+    }
+
+    // The approved request a write call carries out exactly. null: none, so it is blocked.
+    function approvedMatch(name: string, input: any): { request: any; why: string } {
+      let why = "no approved request is waiting";
+      for (const request of approved) {
+        if (claimed.has(request.id)) continue;
+        const wrong = mismatch(request, name, input);
+        if (wrong === null) return { request, why: "" };
+        // The reason of a request with the call's own action says what to fix.
+        if (wrong !== "another action" || why === "no approved request is waiting") why = wrong;
+      }
+      return { request: null, why };
     }
 
     function blocked(p: string): boolean {
@@ -57,6 +208,18 @@ public enum ReviewExtension {
       const target = path.join(run, file);
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, text);
+    }
+
+    function append(file: string, line: string) {
+      const target = path.join(run, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.appendFileSync(target, line + "\n");
+    }
+
+    function save(tool: string, input: any, text: string[], structured: any, isError: boolean) {
+      saved += 1;
+      write(`mcp/calls/${pass}-${Date.now()}-${String(saved).padStart(4, "0")}.json`, JSON.stringify({ pass, tool,
+        input: JSON.stringify(input ?? {}), text, structured: structured === undefined ? null : JSON.stringify(structured), isError }));
     }
 
     function problems(findings: any[], verdictList: any[]): string[] {
@@ -86,68 +249,104 @@ public enum ReviewExtension {
     }
 
     export default function (pi: any) {
-      pi.registerTool({
-        name: "akit_submit_findings",
-        label: "Submit findings",
-        description: "Hand your findings (role passes) or verdicts (the verifier) to AKit. Call it once per pass; an empty list is a valid answer. "
-          + "AKit checks every field and shows nothing to anyone before the user approves it.",
-        parameters: {
-          type: "object",
-          properties: {
-            findings: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  kind: { type: "string", enum: kinds },
-                  file: { type: ["string", "null"], description: "Path in the repository" },
-                  side: { type: "string", enum: ["new", "old"], description: "new: the line in the changed file; old: a removed line" },
-                  line: { type: ["integer", "null"] },
-                  title: { type: "string" },
-                  evidence: { type: "string", description: "The exact code line(s) you rely on, copied from the file; never a secret's value" },
-                  why: { type: "string" },
-                  severity: { type: "string", enum: severities },
-                  confidence: { type: "number", minimum: 0, maximum: 1 },
-                  suggestion: { type: "string", description: "Replacement code for the anchored line, when there is a clear fix" },
-                  related: { type: "array", items: { type: "string" } },
+      if (mode === "review") {
+        pi.registerTool({
+          name: "akit_submit_findings",
+          label: "Submit findings",
+          description: "Hand your findings (role passes) or verdicts (the verifier) to AKit. Call it once per pass; an empty list is a valid answer. "
+            + "AKit checks every field and shows nothing to anyone before the user approves it.",
+          parameters: {
+            type: "object",
+            properties: {
+              findings: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    kind: { type: "string", enum: kinds },
+                    file: { type: ["string", "null"], description: "Path in the repository" },
+                    side: { type: "string", enum: ["new", "old"], description: "new: the line in the changed file; old: a removed line" },
+                    line: { type: ["integer", "null"] },
+                    title: { type: "string" },
+                    evidence: { type: "string", description: "The exact code line(s) you rely on, copied from the file; never a secret's value" },
+                    why: { type: "string" },
+                    severity: { type: "string", enum: severities },
+                    confidence: { type: "number", minimum: 0, maximum: 1 },
+                    suggestion: { type: "string", description: "Replacement code for the anchored line, when there is a clear fix" },
+                    related: { type: "array", items: { type: "string" } },
+                  },
+                  required: ["title", "evidence", "why", "severity", "confidence"],
                 },
-                required: ["title", "evidence", "why", "severity", "confidence"],
               },
-            },
-            verdicts: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  id: { type: "string" },
-                  verdict: { type: "string", enum: verdicts },
-                  note: { type: "string" },
-                  into: { type: "string" },
-                  severity: { type: "string", enum: severities },
-                  confidence: { type: "number", minimum: 0, maximum: 1 },
+              verdicts: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    verdict: { type: "string", enum: verdicts },
+                    note: { type: "string" },
+                    into: { type: "string" },
+                    severity: { type: "string", enum: severities },
+                    confidence: { type: "number", minimum: 0, maximum: 1 },
+                  },
+                  required: ["id", "verdict", "note"],
                 },
-                required: ["id", "verdict", "note"],
               },
             },
           },
-        },
-        async execute(_id: string, params: any) {
-          const findings = Array.isArray(params?.findings) ? params.findings : [];
-          const verdictList = Array.isArray(params?.verdicts) ? params.verdicts : [];
-          const wrong = problems(findings, verdictList);
-          if (wrong.length > 0) {
-            return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
-          }
-          const name = pass === "discuss" ? `passes/discuss-${Date.now()}.json` : `passes/${pass}.json`;
-          write(name, JSON.stringify({ pass, role, findings, verdicts: verdictList }, null, 2));
-          return { content: [{ type: "text", text: `Saved ${findings.length} findings and ${verdictList.length} verdicts.` }], details: undefined };
-        },
-      });
+          async execute(_id: string, params: any) {
+            const findings = Array.isArray(params?.findings) ? params.findings : [];
+            const verdictList = Array.isArray(params?.verdicts) ? params.verdicts : [];
+            const wrong = problems(findings, verdictList);
+            if (wrong.length > 0) {
+              return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
+            }
+            const name = pass === "discuss" ? `passes/discuss-${Date.now()}.json` : `passes/${pass}.json`;
+            write(name, JSON.stringify({ pass, role, findings, verdicts: verdictList }, null, 2));
+            return { content: [{ type: "text", text: `Saved ${findings.length} findings and ${verdictList.length} verdicts.` }], details: undefined };
+          },
+        });
+      }
+
+      if (mode === "fetch") {
+        pi.registerTool({
+          name: "akit_submit_context",
+          label: "Submit context",
+          description: "Only when an MCP tool answers in prose instead of JSON: hand AKit what it said, in GitLab's and Azure DevOps's "
+            + "JSON field names. AKit already saves every JSON answer of your MCP tools itself.",
+          parameters: {
+            type: "object",
+            properties: {
+              merge_request: { type: "object" }, versions: { type: "array" }, diffs: { type: "array" }, discussions: { type: "array" },
+              draft_notes: { type: "array" }, user: { type: "object" }, work_items: { type: "array" },
+            },
+          },
+          async execute(_id: string, params: any) {
+            save("akit_submit_context", {}, [], params ?? {}, false);
+            return { content: [{ type: "text", text: "Saved." }], details: undefined };
+          },
+        });
+      }
+
+      if (mode === "send") {
+        pi.registerTool({
+          name: "akit_approved_requests",
+          label: "Approved requests",
+          description: "The draft notes the user approved and that are not sent yet, as JSON. Pass each body to the draft note tool "
+            + "exactly as it is: AKit lets through only the approved text.",
+          parameters: { type: "object", properties: {} },
+          async execute() {
+            const open = approved.filter((r) => !claimed.has(r.id));
+            return { content: [{ type: "text", text: JSON.stringify(open, null, 2) }], details: undefined };
+          },
+        });
+      }
 
       pi.registerTool({
         name: "akit_report_context_gap",
         label: "Report a context gap",
-        description: "Say what you needed and the context pack didn't have, instead of guessing.",
+        description: "Say what you needed and couldn't read, instead of guessing.",
         parameters: {
           type: "object",
           properties: {
@@ -163,11 +362,8 @@ public enum ReviewExtension {
           if (typeof params?.needed !== "string" || typeof params?.why !== "string") {
             return { content: [{ type: "text", text: "Not saved: needed and why are required." }], details: undefined, isError: true };
           }
-          const line = JSON.stringify({ system: String(params.system ?? "other"), needed: params.needed, why: params.why,
-            howToGet: String(params.how_to_get ?? ""), effect: String(params.effect ?? ""), reportedBy: pass }) + "\n";
-          const target = path.join(run, `passes/gaps-${pass}.jsonl`);
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.appendFileSync(target, line);
+          append(`passes/gaps-${pass}.jsonl`, JSON.stringify({ system: String(params.system ?? "other"), needed: params.needed, why: params.why,
+            howToGet: String(params.how_to_get ?? ""), effect: String(params.effect ?? ""), reportedBy: pass }));
           return { content: [{ type: "text", text: "Gap recorded." }], details: undefined };
         },
       });
@@ -175,6 +371,38 @@ public enum ReviewExtension {
       pi.on("tool_call", async (event: any, ctx: any) => {
         const name = String(event.toolName ?? "");
         if (ownTools.includes(name)) return undefined;
+        if (name === "codemode" || name === "tool_search") {
+          // Every tool a script or a search reaches comes back through this check.
+          return mcpAllowed ? undefined : { block: true, reason: "AKit review gives this pass no MCP tools." };
+        }
+        if (resourceTools.includes(name)) {
+          if (!mcpAllowed) return { block: true, reason: "AKit review gives this pass no MCP tools." };
+          const server = norm(event.input?.server ?? "");
+          if (!serverAllowed(server)) return { block: true, reason: "That server is not one this review may use." };
+          return undefined;
+        }
+        const hints = (pi.getAllTools?.() ?? []).find((tool: any) => tool.name === name)?.annotations;
+        const kind = mcpKind(name, hints);
+        if (kind !== null) {
+          if (!mcpAllowed) return { block: true, reason: "AKit review gives this pass no MCP tools." };
+          if (kind === "blocked") {
+            return { block: true, reason: `AKit review doesn't let ${name} run: it isn't a reading tool of the project's servers, `
+              + "and review never publishes, approves, merges or resolves." };
+          }
+          if (kind === "write") {
+            if (mode !== "send") return { block: true, reason: "Only Send Drafts writes, and only what the user approved." };
+            const { request, why } = approvedMatch(name, event.input);
+            if (request === null) {
+              return { block: true, reason: `This call carries none of the approved requests exactly (${why}). Pass the project, the `
+                + "merge request number, and each request's body, draft_id, discussion_id and position from akit_approved_requests "
+                + "unchanged, and no other argument." };
+            }
+            claimed.add(request.id);
+            pending.set(String(event.toolCallId), request.id);
+          }
+          return undefined;
+        }
+        if (mode !== "review") return { block: true, reason: `${name}: this pass works only through MCP tools.` };
         if (!readTools.includes(name)) return { block: true, reason: `AKit review allows only reading tools; ${name} is not one.` };
         const given = typeof event.input?.path === "string" && event.input.path.length > 0 ? event.input.path : ".";
         // Pi expands a leading ~ and @ and reads file:// addresses itself: never let one through,
@@ -194,8 +422,23 @@ public enum ReviewExtension {
         return undefined;
       });
 
+      pi.on("tool_result", async (event: any) => {
+        const name = String(event.toolName ?? "");
+        if (!name.startsWith("mcp__") && !resourceTools.includes(name)) return undefined;
+        const text = (event.content ?? []).filter((c: any) => c?.type === "text").map((c: any) => String(c.text));
+        save(name, event.input, text, event.structuredContent, Boolean(event.isError));
+        const id = String(event.toolCallId);
+        const request = pending.get(id);
+        if (request !== undefined) {
+          pending.delete(id);
+          if (event.isError) claimed.delete(request);
+          append("send/log.jsonl", JSON.stringify({ request, tool: name, isError: Boolean(event.isError), text: text.join("\n").slice(0, 4000) }));
+        }
+        return undefined;
+      });
+
       pi.on("session_start", async () => {
-        pi.appendEntry("akit-review", { run: process.env.AKIT_REVIEW_RUN_ID ?? "", pass, scenario: process.env.AKIT_REVIEW_SCENARIO ?? "",
+        pi.appendEntry("akit-review", { run: process.env.AKIT_REVIEW_RUN_ID ?? "", pass, mode, scenario: process.env.AKIT_REVIEW_SCENARIO ?? "",
           head: process.env.AKIT_REVIEW_HEAD ?? "" });
       });
     }

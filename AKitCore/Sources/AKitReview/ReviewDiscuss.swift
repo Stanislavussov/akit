@@ -48,12 +48,22 @@ public enum ReviewDiscuss {
         var arguments = ["--fork", session, "--session-dir", folder.appending(path: "sessions").path]
         if !model.model.isEmpty { arguments += ["--model", model.model] }
         if !model.thinking.isEmpty { arguments += ["--thinking", model.thinking] }
-        arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-mcp", "--no-extensions"]
+        arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-extensions"]
+        var tools = ReviewPasses.tools
+        if run.spec.access.inPasses {
+            // Pi's own MCP servers, reading only, as in the passes.
+            arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode"]
+            tools += ",codemode" + run.spec.access.toolPatterns.map { "," + $0 }.joined()
+        } else {
+            arguments += ["--no-mcp"]
+        }
         arguments += run.spec.roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
         arguments += ["--append-system-prompt", folder.appending(path: "prompts/discuss.md").path,
-                      "-e", folder.appending(path: "akit-review.ts").path, "--tools", ReviewPasses.tools]
+                      "-e", folder.appending(path: "akit-review.ts").path, "--tools", tools]
         let variables: [(String, String)] = [
-            ("AKIT_REVIEW_RUN", folder.path), ("AKIT_REVIEW_RUN_ID", run.id), ("AKIT_REVIEW_PASS", "discuss"), ("AKIT_REVIEW_ROLE", "discuss"),
+            ("AKIT_REVIEW_RUN", folder.path), ("AKIT_REVIEW_RUN_ID", run.id), ("AKIT_REVIEW_MODE", "review"), ("AKIT_REVIEW_PASS", "discuss"),
+            ("AKIT_REVIEW_ROLE", "discuss"),
+            ("AKIT_REVIEW_MCP", String(decoding: (try? JSONEncoder().encode(run.spec.access)) ?? Data("{}".utf8), as: UTF8.self)),
             ("AKIT_REVIEW_MAX", "50"), ("AKIT_REVIEW_ROOTS", ReviewPasses.readRoots(folder: folder, worktree: worktree)),
             ("AKIT_REVIEW_SCENARIO", run.spec.scenario.value), ("AKIT_REVIEW_HEAD", run.spec.headSHA ?? ""),
         ]
@@ -61,8 +71,6 @@ public enum ReviewDiscuss {
         #!/bin/sh
         # Discuss in Pi… for AKit review run \(run.id). Written by AKit; it writes it again each time.
         cd \(shellQuoted(cwd.path)) || exit 1
-        # No GitLab or Azure DevOps token from your shell reaches Pi.
-        for v in $(env | cut -d= -f1 | grep -iE '^(GITLAB|GL_|GLAB|AZURE_DEVOPS|ADO_|SYSTEM_ACCESSTOKEN)'); do unset "$v"; done
         \(variables.map { "export \($0.0)=\(shellQuoted($0.1))" }.joined(separator: "\n"))
         echo "AKit review \(run.spec.mergeRequest.label): Pi has the whole review. Ask about a finding, or ask it to look again."
         echo "Changes come back to AKit through akit_submit_findings; nothing reaches GitLab without your approval."

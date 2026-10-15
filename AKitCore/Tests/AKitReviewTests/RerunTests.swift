@@ -14,8 +14,8 @@ extension ReviewProcessTests {
             let text = try String(contentsOf: script, encoding: .utf8)
             #expect(text.contains("'--fork'") && text.contains("fork-0001"))
             #expect(text.contains("export AKIT_REVIEW_PASS='discuss'"))
-            #expect(text.contains("'fake/strong'") && text.contains("'--no-extensions'"))
-            #expect(!text.contains("glpat-secret") && !text.contains("ado-secret"))
+            #expect(text.contains("'fake/strong'") && text.contains("'--no-extensions'") && text.contains("'builtin:mcp'"))
+            #expect(text.contains("export AKIT_REVIEW_MODE='review'"))
             #expect(FileManager.default.isExecutableFile(atPath: script.path))
             let syntax = ProcessRunner.runAndWait(URL(filePath: "/bin/sh"), arguments: ["-n", script.path], environment: [:], timeout: 10)
             #expect(syntax?.succeeded == true, "\(syntax?.output ?? "")")
@@ -57,25 +57,22 @@ extension ReviewProcessTests {
             try await ReviewPasses.run(folder: run.folder, env: run.home.env)
             let first = try #require(ReviewWorkflow.load(run.folder).plan?.requests.first { $0.kind == .create })
             try ReviewWorkflow.decide(run.folder, request: first.id, decision: .approved)
-            let draftsPath = FakeMergeRequest.base + "/draft_notes"
-            run.server.on(draftsPath, method: "POST", json: ["id": 501, "note": "x"])
-            let client = GitLabClient(host: "https://gitlab.test", token: "t", fetch: run.server.fetch)
-            _ = try await ReviewWorkflow.send(run.folder, gitlab: client)
-            let posted = try #require(run.server.calls.last { $0.method == "POST" })
-            // GitLab now holds that draft (as the user's own, pending).
-            run.server.on(draftsPath, json: [["id": 501, "note": posted.body?["note"] as Any, "position": [
-                "position_type": "text", "base_sha": "b1", "start_sha": "s1", "head_sha": run.head,
-                "old_path": "src/Auth.swift", "new_path": "src/Auth.swift", "new_line": 3]]])
+            run.home.write("fake/send-log.jsonl", #"{"request":"\#(first.id)","tool":"mcp__gitlab__create_draft_note","isError":false,"text":"{\"id\": 501}"}"# + "\n")
+            _ = try await ReviewWorkflow.send(run.folder, env: run.home.env)
+            let sent = try Data(contentsOf: run.home.url.appending(path: "fake/approved-send-1.json"))
+            let body = try #require((try JSONSerialization.jsonObject(with: sent) as? [[String: Any]])?.first?["body"] as? String)
+            // GitLab now holds that draft (as the user's own, pending): the next fetch reads it.
+            let draft: [String: Any] = ["id": 501, "note": body, "author_id": 5, "position": [
+                "position_type": "text", "base_sha": "b1b1b1b1", "start_sha": "c1c1c1c1", "head_sha": run.head,
+                "old_path": "src/Auth.swift", "new_path": "src/Auth.swift", "new_line": 3]]
+            FakeMergeRequest.serve(run.home, head: run.head, diff: "@@ -1,3 +1,4 @@\n import Foundation\n func auth(header: String) {\n+    log(\"Auth: \\(header)\")\n }\n",
+                                   drafts: [draft])
+            run.home.write("fake/send-log.jsonl", "")
 
             // The same review again: same finding, same fingerprint, same text → no request for it.
-            let secrets = MemorySecretStore()
-            try secrets.save("t", for: ReviewTokens.account(.gitlab, for: "https://gitlab.test"))
-            var choices = ReviewRunChoices()
-            choices.settings.passes = ReviewModelChoice(model: "fake/m1")
-            choices.settings.verifier = ReviewModelChoice(model: "fake/strong")
+            let choices = ReviewRunFixture.choices
             try await Task.sleep(for: .seconds(1.1))   // a new run id (seconds)
-            let second = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: run.home.env, brain: nil,
-                                                    tokens: { secrets.value($0) }, fetch: run.server.fetch)
+            let second = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: run.home.env, brain: nil)
             let folder = ReviewPaths(home: run.home.url).run(second.spec.id)
             try await ReviewPasses.run(folder: folder, env: run.home.env)
             let again = try ReviewWorkflow.load(folder)
@@ -86,8 +83,7 @@ extension ReviewProcessTests {
             run.home.write("fake/role-bug-hunter.json", #"{"findings":[]}"#)
             run.home.write("fake/role-tests.json", #"{"findings":[]}"#)
             try await Task.sleep(for: .seconds(1.1))
-            let third = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: run.home.env, brain: nil,
-                                                   tokens: { secrets.value($0) }, fetch: run.server.fetch)
+            let third = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: run.home.env, brain: nil)
             let thirdFolder = ReviewPaths(home: run.home.url).run(third.spec.id)
             try await ReviewPasses.run(folder: thirdFolder, env: run.home.env)
             let delete = try #require(ReviewWorkflow.load(thirdFolder).plan?.requests.first { $0.kind == .delete })

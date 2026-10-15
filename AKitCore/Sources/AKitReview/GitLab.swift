@@ -24,6 +24,8 @@ public struct GitLabMergeRequest: Codable, Sendable, Hashable {
     public var labels: [String]
     public var webURL: String
     public var diffRefs: DiffRefs?
+    /// GitLab's number of the project: some MCP tools take it instead of the path.
+    public var projectID: Int?
 }
 
 /// One version of a merge request's diff (`GET …/versions`).
@@ -151,158 +153,37 @@ public struct GitLabDraft: Codable, Sendable, Hashable {
     }
 }
 
-/// GitLab's REST API v4, with the user's token (R2). Reads a merge request and its threads,
-/// and creates, updates and deletes the user's own draft notes. It has no call that publishes
-/// a draft, resolves a thread or touches any other note (R5, R12).
-public struct GitLabClient: Sendable {
-    public let host: String
-    let token: String
-    let fetch: ReviewFetch
-
-    public init(host: String, token: String, fetch: @escaping ReviewFetch = ReviewHTTP.network) {
-        var trimmed = host
-        while trimmed.hasSuffix("/") { trimmed.removeLast() }
-        self.host = trimmed
-        self.token = token
-        self.fetch = fetch
-    }
-
-    /// `/api/v4/version`: step 0's check.
-    public func version() async throws -> String {
-        let object = try await getObject("/version", what: "GitLab version")
-        return object.string("version") ?? "unknown"
-    }
-
-    public func currentUser() async throws -> String {
-        let object = try await getObject("/user", what: "GitLab user")
-        guard let name = object.string("username") else { throw ReviewHTTP.Failure(message: "GitLab /user named no user.") }
-        return name
-    }
-
-    public func mergeRequest(_ ref: MergeRequestRef) async throws -> GitLabMergeRequest {
-        let object = try await getObject(mrPath(ref), what: "the merge request")
+/// Reads GitLab's JSON, as GitLab's REST API and the GitLab MCP servers that pass it on
+/// return it (`docs/design/review.md`, "Gather through MCP").
+public enum GitLabJSON {
+    public static func mergeRequest(_ object: JSONObject) -> GitLabMergeRequest? {
+        guard let iid = object.int("iid"), object["diff_refs"] != nil || object["source_branch"] != nil else { return nil }
         let refs = object.object("diff_refs").flatMap { refs -> GitLabMergeRequest.DiffRefs? in
             guard let base = refs.string("base_sha"), let start = refs.string("start_sha"), let head = refs.string("head_sha") else { return nil }
             return GitLabMergeRequest.DiffRefs(baseSHA: base, startSHA: start, headSHA: head)
         }
-        return GitLabMergeRequest(iid: object.int("iid") ?? ref.iid, title: object.string("title") ?? "",
-                                  description: object.string("description") ?? "", state: object.string("state") ?? "",
-                                  author: object.object("author")?.string("username") ?? "",
+        return GitLabMergeRequest(iid: iid, title: object.string("title") ?? "", description: object.string("description") ?? "",
+                                  state: object.string("state") ?? "", author: object.object("author")?.string("username") ?? "",
                                   sourceBranch: object.string("source_branch") ?? "", targetBranch: object.string("target_branch") ?? "",
-                                  labels: object["labels"] as? [String] ?? [], webURL: object.string("web_url") ?? ref.url, diffRefs: refs)
+                                  labels: object["labels"] as? [String] ?? [], webURL: object.string("web_url") ?? "", diffRefs: refs,
+                                  projectID: object.int("project_id"))
     }
 
-    public func versions(_ ref: MergeRequestRef) async throws -> [GitLabVersion] {
-        try await getList(mrPath(ref) + "/versions", what: "the merge request's versions").compactMap {
-            guard let id = $0.int("id"), let head = $0.string("head_commit_sha") else { return nil }
-            return GitLabVersion(id: id, headSHA: head, baseSHA: $0.string("base_commit_sha") ?? "", startSHA: $0.string("start_commit_sha") ?? "")
-        }
+    public static func version(_ object: JSONObject) -> GitLabVersion? {
+        guard let id = object.int("id"), let head = object.string("head_commit_sha") else { return nil }
+        return GitLabVersion(id: id, headSHA: head, baseSHA: object.string("base_commit_sha") ?? "", startSHA: object.string("start_commit_sha") ?? "")
     }
 
-    public func diffs(_ ref: MergeRequestRef) async throws -> [GitLabFileDiff] {
-        try await getList(mrPath(ref) + "/diffs", what: "the merge request's diffs").map {
-            GitLabFileDiff(oldPath: $0.string("old_path") ?? "", newPath: $0.string("new_path") ?? "", diff: $0.string("diff") ?? "",
-                           newFile: $0.bool("new_file"), renamedFile: $0.bool("renamed_file"), deletedFile: $0.bool("deleted_file"),
-                           tooLarge: $0.bool("too_large") || $0.bool("collapsed"))
-        }
+    public static func fileDiff(_ object: JSONObject) -> GitLabFileDiff? {
+        guard let path = object.string("new_path") ?? object.string("old_path"), object["diff"] != nil || object.bool("too_large") else { return nil }
+        return GitLabFileDiff(oldPath: object.string("old_path") ?? path, newPath: path, diff: object.string("diff") ?? "",
+                              newFile: object.bool("new_file"), renamedFile: object.bool("renamed_file"), deletedFile: object.bool("deleted_file"),
+                              tooLarge: object.bool("too_large") || object.bool("collapsed"))
     }
 
-    public func discussions(_ ref: MergeRequestRef) async throws -> [GitLabDiscussion] {
-        try await getList(mrPath(ref) + "/discussions", what: "the merge request's threads").compactMap { object in
-            guard let id = object.string("id") else { return nil }
-            return GitLabDiscussion(id: id, notes: object.objects("notes").compactMap(Self.note))
-        }
-    }
-
-    public func drafts(_ ref: MergeRequestRef) async throws -> [GitLabDraft] {
-        try await getList(mrPath(ref) + "/draft_notes", what: "your draft notes").compactMap(Self.draft)
-    }
-
-    @discardableResult
-    public func createDraft(_ ref: MergeRequestRef, note: String, position: GitLabPosition?) async throws -> GitLabDraft {
-        var body: JSONObject = ["note": note]
-        if let position { body["position"] = position.json }
-        let data = try await send("POST", mrPath(ref) + "/draft_notes", body: body)
-        guard let object = try ReviewHTTP.json(data, what: "the new draft") as? JSONObject, let draft = Self.draft(object) else {
-            throw ReviewHTTP.Failure(message: "GitLab didn't return the new draft.")
-        }
-        return draft
-    }
-
-    public func updateDraft(_ ref: MergeRequestRef, id: Int, note: String, position: GitLabPosition?) async throws {
-        var body: JSONObject = ["note": note]
-        if let position { body["position"] = position.json }
-        _ = try await send("PUT", mrPath(ref) + "/draft_notes/\(id)", body: body)
-    }
-
-    public func deleteDraft(_ ref: MergeRequestRef, id: Int) async throws {
-        _ = try await send("DELETE", mrPath(ref) + "/draft_notes/\(id)", body: nil)
-    }
-
-    /// A reply in one of AKit's own published threads ("looks fixed in <sha>"), as a draft.
-    @discardableResult
-    public func createDraftReply(_ ref: MergeRequestRef, discussionID: String, note: String) async throws -> GitLabDraft {
-        let data = try await send("POST", mrPath(ref) + "/draft_notes", body: ["note": note, "in_reply_to_discussion_id": discussionID])
-        guard let object = try ReviewHTTP.json(data, what: "the new draft") as? JSONObject, let draft = Self.draft(object) else {
-            throw ReviewHTTP.Failure(message: "GitLab didn't return the new draft.")
-        }
-        return draft
-    }
-
-    // MARK: - Requests
-
-    func mrPath(_ ref: MergeRequestRef) -> String {
-        let project = ref.projectPath.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? ref.projectPath
-        return "/projects/\(project)/merge_requests/\(ref.iid)"
-    }
-
-    func request(_ method: String, _ path: String, query: [URLQueryItem] = []) throws -> URLRequest {
-        guard var components = URLComponents(string: host) else { throw ReviewHTTP.Failure(message: "\(host) is not a web address.") }
-        // The project path is percent-encoded already: set the encoded path, so `%2F` stays.
-        components.percentEncodedPath = (components.percentEncodedPath.hasSuffix("/") ? String(components.percentEncodedPath.dropLast())
-                                         : components.percentEncodedPath) + "/api/v4" + path
-        if !query.isEmpty { components.queryItems = query }
-        guard let url = components.url else { throw ReviewHTTP.Failure(message: "Can't make an address from \(host) and \(path).") }
-        var request = URLRequest(url: url, timeoutInterval: 60)
-        request.httpMethod = method
-        request.setValue(token, forHTTPHeaderField: "PRIVATE-TOKEN")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        return request
-    }
-
-    func getObject(_ path: String, what: String) async throws -> JSONObject {
-        let (data, _) = try await ReviewHTTP.send(request("GET", path), fetch: fetch)
-        guard let object = try ReviewHTTP.json(data, what: what) as? JSONObject else {
-            throw ReviewHTTP.Failure(message: "\(what): GitLab's answer is not an object.")
-        }
-        return object
-    }
-
-    /// Every page (`per_page=100`, the `X-Next-Page` header), at most 50 pages.
-    func getList(_ path: String, what: String) async throws -> [JSONObject] {
-        var result: [JSONObject] = []
-        var page = 1
-        for _ in 0..<50 {
-            let (data, response) = try await ReviewHTTP.send(request("GET", path, query: [URLQueryItem(name: "per_page", value: "100"),
-                                                                                          URLQueryItem(name: "page", value: String(page))]),
-                                                             fetch: fetch)
-            guard let list = try ReviewHTTP.json(data, what: what) as? [JSONObject] else {
-                throw ReviewHTTP.Failure(message: "\(what): GitLab's answer is not a list.")
-            }
-            result += list
-            guard let next = (response.value(forHTTPHeaderField: "X-Next-Page")).flatMap(Int.init), next > page else { break }
-            page = next
-        }
-        return result
-    }
-
-    func send(_ method: String, _ path: String, body: JSONObject?) async throws -> Data {
-        var request = try request(method, path)
-        if let body {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        return try await ReviewHTTP.send(request, fetch: fetch).0
+    public static func discussion(_ object: JSONObject) -> GitLabDiscussion? {
+        guard let id = object.string("id"), let notes = object["notes"] as? [JSONObject] else { return nil }
+        return GitLabDiscussion(id: id, notes: notes.compactMap(note))
     }
 
     static func note(_ object: JSONObject) -> GitLabNote? {
@@ -314,8 +195,19 @@ public struct GitLabClient: Sendable {
     }
 
     static func draft(_ object: JSONObject) -> GitLabDraft? {
-        guard let id = object.int("id") else { return nil }
-        return GitLabDraft(id: id, note: object.string("note") ?? "", position: GitLabPosition.from(object.object("position")),
+        guard let id = object.int("id"), let note = object.string("note") else { return nil }
+        return GitLabDraft(id: id, note: note, position: GitLabPosition.from(object.object("position")),
                            discussionID: object.string("discussion_id"))
     }
+}
+
+/// Reads fields of `JSONSerialization` objects.
+public typealias JSONObject = [String: Any]
+
+extension Dictionary where Key == String, Value == Any {
+    func string(_ key: String) -> String? { self[key] as? String }
+    func int(_ key: String) -> Int? { (self[key] as? NSNumber)?.intValue ?? (self[key] as? String).flatMap { Int($0) } }
+    func bool(_ key: String) -> Bool { (self[key] as? Bool) ?? ((self[key] as? NSNumber)?.boolValue ?? false) }
+    func object(_ key: String) -> JSONObject? { self[key] as? JSONObject }
+    func objects(_ key: String) -> [JSONObject] { self[key] as? [JSONObject] ?? [] }
 }

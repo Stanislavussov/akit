@@ -5,37 +5,51 @@ import Foundation
 import Testing
 
 /// A gathered run of `team/app!7` (bugfix: bug-hunter, requirements, tests) and a fake Pi that
-/// plays each pass from `~/fake/<pass>.json`.
+/// plays each pass from `~/fake/<pass>.json`; its fetch pass copies `~/fake/calls/` (the MCP
+/// answers) into the run, its send pass appends `~/fake/send-log.jsonl` to the run's send log.
 struct ReviewRunFixture {
     let home: TempHome
-    let server: FakeServer
     let head: String
     let folder: URL
 
-    static func make(allowed: Bool = true, cap: Int? = nil) async throws -> ReviewRunFixture {
-        let (home, server, head) = try ReviewProcessTests.GatherTests().setUp()
-        let secrets = MemorySecretStore()
-        try secrets.save("glpat-secret", for: ReviewTokens.account(.gitlab, for: "https://gitlab.test"))
-        try secrets.save("ado-secret", for: ReviewTokens.account(.azureDevOps, for: "corp"))
+    static var choices: ReviewRunChoices {
         var choices = ReviewRunChoices()
         choices.settings.passes = ReviewModelChoice(model: "fake/m1")
         choices.settings.verifier = ReviewModelChoice(model: "fake/strong", thinking: "high")
-        choices.settings.capCredits = cap
-        let result = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: home.env, brain: nil,
-                                                tokens: { secrets.value($0) }, fetch: server.fetch)
+        return choices
+    }
+
+    /// The fake Pi and the sending policy (a merge request may go to provider `fake`).
+    static func prepare(_ home: TempHome, allowed: Bool = true) throws {
         let destination = SendDestination(harness: .pi, provider: "fake", account: "me", org: "corp")
         try LabSettings(allowedDestinations: allowed ? [destination] : [], piAccounts: [PiAccount(provider: "fake", account: "me", org: "corp")])
             .save(env: home.env)
         home.write("bin/pi", fakePi, executable: true)
-        return ReviewRunFixture(home: home, server: server, head: head, folder: ReviewPaths(home: home.url).run(result.spec.id))
+    }
+
+    static func make(allowed: Bool = true, cap: Int? = nil) async throws -> ReviewRunFixture {
+        let (home, head) = try ReviewProcessTests.GatherTests().setUp()
+        var choices = choices
+        choices.settings.capCredits = cap
+        let result = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: home.env, brain: nil)
+        if !allowed { try prepare(home, allowed: false) }
+        return ReviewRunFixture(home: home, head: head, folder: ReviewPaths(home: home.url).run(result.spec.id))
     }
 
     static let fakePi = #"""
     #!/bin/sh
     case "$*" in *"auth check"*) echo '{"status":"ready"}'; exit 0 ;; esac
+    case "$1 $2" in "mcp list") cat "$HOME/fake/mcp-list.json"; exit 0 ;; esac
     mkdir -p "$HOME/fake"
     printf '%s\n' "$@" > "$HOME/fake/args-$AKIT_REVIEW_PASS.txt"
     env > "$HOME/fake/env-$AKIT_REVIEW_PASS.txt"
+    if [ "$AKIT_REVIEW_MODE" = "fetch" ] && [ -d "$HOME/fake/calls" ]; then
+      mkdir -p "$AKIT_REVIEW_RUN/mcp/calls"; cp "$HOME"/fake/calls/*.json "$AKIT_REVIEW_RUN/mcp/calls/"
+    fi
+    if [ "$AKIT_REVIEW_MODE" = "send" ]; then
+      cp "$AKIT_REVIEW_RUN/send/approved.json" "$HOME/fake/approved-$AKIT_REVIEW_PASS.json"
+      [ -f "$HOME/fake/send-log.jsonl" ] && cat "$HOME/fake/send-log.jsonl" >> "$AKIT_REVIEW_RUN/send/log.jsonl"
+    fi
     ID=""; DIR=""; prev=""
     for a in "$@"; do
       case "$prev" in --session-id) ID="$a" ;; --session-dir) DIR="$a" ;; --fork) ID="fork-0001" ;; esac
@@ -105,12 +119,12 @@ extension ReviewProcessTests {
             #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
 
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["brief", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
             #expect(log.passes.allSatisfy { $0.succeeded })
             #expect(log.brief == "Intent: log less.")
             #expect(log.verifierSession == "fork-0001")
-            #expect(log.passes[0].paths == ["context/diff.patch"])
-            #expect(abs(log.credits - 5 * (2.3 + 0.1)) < 1e-9)
+            #expect(log.passes[1].paths == ["context/diff.patch"])
+            #expect(abs(log.credits - 6 * (2.3 + 0.1)) < 1e-9, "the fetch pass counts too")
 
             // One session for brief and roles; the verifier forks it with its own model.
             for pass in ["brief", "role-bug-hunter", "role-tests"] {
@@ -121,20 +135,22 @@ extension ReviewProcessTests {
             let verifier = run.args("verifier")
             #expect(verifier.contains("--fork") && verifier.contains("fake/strong") && verifier.contains("high"))
             let brief = run.args("brief")
-            for flag in ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-mcp", "--no-extensions"] {
+            for flag in ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-extensions", "builtin:mcp", "builtin:codemode"] {
                 #expect(brief.contains(flag), "\(flag)")
             }
-            #expect(brief.contains(ReviewPasses.tools))
+            #expect(!brief.contains("--no-mcp"), "the passes read through Pi's MCP servers by default")
+            #expect(brief.contains(ReviewPasses.tools + ",codemode,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
             #expect(brief.filter { $0 == "--skill" }.count == 3)
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)
-            #expect(env.contains("AKIT_REVIEW_MAX=3") && env.contains("AKIT_REVIEW_ROLE=tests"))
-            #expect(!env.contains("glpat-secret") && !env.contains("ado-secret"), "no token in a pass's environment")
+            #expect(env.contains("AKIT_REVIEW_MAX=3") && env.contains("AKIT_REVIEW_ROLE=tests") && env.contains("AKIT_REVIEW_MODE=review"))
+            #expect(env.contains(#"AKIT_REVIEW_MCP={"#))
 
             // The send log records every pass, with the paths read.
             let sends = SendLog.records(env: run.home.env).filter { $0.runID == run.folder.lastPathComponent }
-            #expect(sends.map(\.purpose) == ["review-brief", "review-role-bug-hunter", "review-role-requirements", "review-role-tests", "review-verifier"])
-            #expect(sends.first?.paths == ["context/diff.patch"] && sends.first?.provider == "fake")
+            #expect(sends.map(\.purpose) == ["review-fetch", "review-brief", "review-role-bug-hunter", "review-role-requirements", "review-role-tests",
+                                              "review-verifier"])
+            #expect(sends[1].paths == ["context/diff.patch"] && sends[1].provider == "fake")
 
             let gaps = try #require(ReviewJSON.read([ContextGap].self, from: run.folder.appending(path: "gaps.json")))
             #expect(gaps.contains { $0.needed == "Test output" && $0.reportedBy == "role-tests" })
@@ -174,7 +190,7 @@ extension ReviewProcessTests {
                 #expect(error.localizedDescription.contains("quota exceeded"))
             }
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["brief", "role-bug-hunter", "role-requirements"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-requirements"])
             #expect(log.passes.last?.error?.contains("quota") == true)
             #expect(SendLog.records(env: run.home.env).last?.error?.contains("quota") == true, "a failed pass's cost still counts")
             #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .failed)
