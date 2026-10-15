@@ -148,7 +148,7 @@
 Нужно, если задачи (work items) лежат в Azure DevOps.
 
 1. В Azure DevOps создайте personal access token с правом **Work Items (Read)**. Других прав не нужно.
-2. В **Review Settings…** в поле **Organization** введите организацию: часть адреса `dev.azure.com/<org>`.
+2. В **Review Settings…** в поле **Organization** введите организацию: часть адреса `dev.azure.com/<org>`. Для Azure DevOps Server введите адрес коллекции с `https://`, тот же, что `url:` в профиле проекта.
 3. В поле **Token** вставьте токен и нажмите **Save Azure DevOps Token**.
 
 Токен работает, только если в профиле проекта есть трекер с той же организацией (см. [профиль](#setup-profile)).

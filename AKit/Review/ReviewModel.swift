@@ -280,6 +280,11 @@ final class ReviewModel {
     }
 
     func saveToken(_ kind: ReviewTokens.Kind, for name: String, value: String) throws {
+        // The same name a review looks the token up by; a token never goes out over plain http.
+        guard ReviewTokens.origin(kind, name) != nil else {
+            throw ReviewWorkflow.Failure(message: kind == .gitlab ? "Enter the GitLab address with https://, as in the merge request's link."
+                                         : "Enter the organization, or the https:// address of your Azure DevOps Server collection.")
+        }
         try ReviewTokens.store().save(value.trimmingCharacters(in: .whitespacesAndNewlines), for: ReviewTokens.account(kind, for: name))
     }
 

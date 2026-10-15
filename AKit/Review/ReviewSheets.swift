@@ -137,7 +137,7 @@ struct ReviewSettingsSheet: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
-                    TextField("Organization", text: $org, prompt: Text("the org in dev.azure.com/<org>"))
+                    TextField("Organization", text: $org, prompt: Text("the org in dev.azure.com/<org>, or your Server's https:// collection address"))
                     SecureField("Token", text: $azureToken, prompt: Text(model.hasToken(.azureDevOps, for: org) ? "Saved; paste to replace" : "personal access token"))
                     HStack {
                         Button("Save Azure DevOps Token") { save(.azureDevOps, org, $azureToken) }
@@ -149,7 +149,7 @@ struct ReviewSettingsSheet: View {
                 } header: {
                     Text("Azure DevOps")
                 } footer: {
-                    Text("Rights: Work Items (Read). AKit never writes to Azure DevOps.").font(.caption).foregroundStyle(.secondary)
+                    Text("Rights: Work Items (Read). AKit never writes to Azure DevOps. For Azure DevOps Server, enter the same address as url: in the project profile.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
                     ForEach(catalog?.profiles ?? [], id: \.slug) { profile in
