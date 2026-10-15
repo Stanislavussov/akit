@@ -1,9 +1,19 @@
 # AKit Review: AI review of merge requests
 
-Status: 2026-10-15, design only, nothing built. Grilled with the user on 2026-10-15 from a
+Status: 2026-10-15, being built on branch `akit-review`. Grilled with the user on 2026-10-15 from a
 research plan (Pi with the `github-copilot` provider, GitLab, Azure DevOps). The decisions
 below are agreed. The user's employer allows both parts: Copilot from a third-party harness
-(Pi) and AI comments in merge requests. Next: step 0 (facts on the work Mac, no code).
+(Pi) and AI comments in merge requests. Step 0 (facts on the work Mac) is still open: the code
+was built against the public GitLab and Azure DevOps REST and Pi 1.0.4 on a personal Mac, and
+`akit review check HOST` is the first fact to collect there.
+
+Built: step 1 (2026-10-15): module `AKitReview` with the project profile, the three levels
+(`ReviewCatalog`, `ReviewResolver`, `run.json`), Gather from GitLab and Azure DevOps REST into a
+scrubbed context pack, the worktree at `head_sha`, `akit review MR-URL`, `akit review config show`,
+`akit review token`, `akit review check`. Two additions to the design: the profile's `checkout:`
+(the local clone the worktree comes from) and the tracker's `url:` (Azure DevOps Server). The
+roles and scenarios of step 5 ship built in (`ReviewBuiltIns`, source `built-in`) and are used
+while the brain has no layer `review`.
 
 ## What and why
 

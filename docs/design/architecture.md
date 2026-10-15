@@ -103,6 +103,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitErrorAnalysis` | Error analysis (added 2026-10-01, `error-analysis.md`): blind notes and the verifier, bootstrap labels, failure modes, checks, batch runs and reports, fixes and control sets. | new |
 | `AKitDoctor` | `akit doctor` and Help → Copy Diagnostics (added 2026-10-09, `machine-setup.md`): a read-only report of what AKit sees on this Mac, never a secret. Also the Help → Report a Bug… / Suggest a Feature… link (`IssueReport`, 2026-10-11). | new |
 | `AKitHelp` | Ask AKit (added 2026-10-14, `ask-akit.md`): the guide sections, prompt and answer of a question about a screen. Pure; the app makes the call. | new |
+| `AKitReview` | AKit Review (added 2026-10-15, `review.md`): project profiles and the three config levels, Gather from GitLab and Azure DevOps REST into a context pack, the review passes in Pi, the requests and the drafts AKit writes after approval. | new |
 | `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
 | `AKit` (app) | SwiftUI shell. | `AKit/*` |
@@ -159,7 +160,8 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
-| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor |
+| `AKitReview` | Foundation, Model, Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Yams |
+| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
 Rules:

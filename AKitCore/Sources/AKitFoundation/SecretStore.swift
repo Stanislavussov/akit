@@ -6,6 +6,10 @@ import Security
 public protocol SecretStore: Sendable {
     func contains(_ account: String) -> Bool
     func save(_ value: String, for account: String) throws
+    /// The stored value; nil when there is none. Only AKit's own requests use it (review's
+    /// GitLab and Azure DevOps tokens); it is never shown or passed to an agent.
+    func value(_ account: String) throws -> String?
+    func delete(_ account: String) throws
 }
 
 /// Generic passwords in the login Keychain, service `AKit MCP`, account = variable name.
@@ -13,8 +17,13 @@ public protocol SecretStore: Sendable {
 /// `security find-generic-password -s "AKit MCP" -a NAME -w` without a Keychain prompt.
 public struct KeychainSecretStore: SecretStore {
     public static let service = "AKit MCP"
+    /// Review's tokens (GitLab, Azure DevOps): AKit's own, never looked up by a harness.
+    public static let reviewService = "AKit Review"
 
-    public init() {}
+    /// The Keychain service of this store's items; MCP secrets by default.
+    public let service: String
+
+    public init(service: String = KeychainSecretStore.service) { self.service = service }
 
     /// Account and env variable names AKit accepts: they end up in shell code
     /// (lookup commands, the sh wrapper, ~/.akit/env.sh).
@@ -97,7 +106,7 @@ public struct KeychainSecretStore: SecretStore {
 
     public func contains(_ account: String) -> Bool {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: Self.service,
+                                    kSecAttrService as String: service,
                                     kSecAttrAccount as String: account]
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
@@ -118,16 +127,29 @@ public struct KeychainSecretStore: SecretStore {
             throw ConfigTextError("Keychain: the value may only contain printable ASCII characters (no line breaks, tabs or letters like ä).")
         }
         let hex = Data(value.utf8).map { String(format: "%02x", $0) }.joined()
-        let add = "add-generic-password -U -a \(account) -s \"\(Self.service)\" -l \"\(Self.service): \(account)\" -T /usr/bin/security -X \(hex)"
+        let add = "add-generic-password -U -a \(account) -s \"\(service)\" -l \"\(service): \(account)\" -T /usr/bin/security -X \(hex)"
         // `security -i` reads a line into a ~4 KB buffer and would cut a longer value silently.
         guard add.utf8.count < 4000 else {
             throw ConfigTextError("Keychain: the value is too long for AKit (more than about 1.9 KB).")
         }
-        _ = try Self.security(["-i"], input: "delete-generic-password -a \(account) -s \"\(Self.service)\"\n\(add)\n")
-        let stored = try Self.security(["find-generic-password", "-s", Self.service, "-a", account, "-w"], input: nil)
+        _ = try Self.security(["-i"], input: "delete-generic-password -a \(account) -s \"\(service)\"\n\(add)\n")
+        let stored = try Self.security(["find-generic-password", "-s", service, "-a", account, "-w"], input: nil)
         guard stored.trimmingCharacters(in: .newlines) == value else {
             throw ConfigTextError("Keychain: \(account) was not saved correctly, and an older value under that name may be gone. Save it again.")
         }
+    }
+
+    /// Read through `/usr/bin/security`, which every item AKit writes trusts, so no prompt.
+    public func value(_ account: String) throws -> String? {
+        guard Self.isVariableName(account), contains(account) else { return nil }
+        let stored = try Self.security(["find-generic-password", "-s", service, "-a", account, "-w"], input: nil)
+            .trimmingCharacters(in: .newlines)
+        return stored.isEmpty ? nil : stored
+    }
+
+    public func delete(_ account: String) throws {
+        guard Self.isVariableName(account) else { return }
+        _ = try Self.security(["-i"], input: "delete-generic-password -a \(account) -s \"\(service)\"\n")
     }
 
     /// Runs /usr/bin/security with optional stdin; returns stdout. Gives up after 20 s
@@ -165,4 +187,5 @@ public final class MemorySecretStore: SecretStore, @unchecked Sendable {
     public func contains(_ account: String) -> Bool { lock.withLock { values[account] != nil } }
     public func save(_ value: String, for account: String) throws { lock.withLock { values[account] = value } }
     public func value(_ account: String) -> String? { lock.withLock { values[account] } }
+    public func delete(_ account: String) { lock.withLock { values[account] = nil } }
 }
