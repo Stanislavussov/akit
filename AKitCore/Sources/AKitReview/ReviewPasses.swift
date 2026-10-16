@@ -166,6 +166,7 @@ public enum ReviewPasses {
                                       usage: SendUsage(), credits: 0, paths: [], error: nil)
         let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: spec.access), directory: setup.cwd,
                                  environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"))
+        ReviewMask.saved(in: folder)
         record.ended = .now
         record.session = output.session
         record.usage = output.usage
@@ -383,7 +384,7 @@ public enum ReviewPasses {
         let collector = Collector()
         let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout) { line in
             collector.add(line)
-            handle?.write(Data((line + "\n").utf8))
+            handle?.write(Data((ReviewMask.jsonLine(line) + "\n").utf8))
         }
         try? handle?.close()
         var output = parse(collector.lines)
