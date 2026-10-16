@@ -113,6 +113,32 @@ Built the same day:
   second send, a published note and bulk publish were blocked, and only the three approved
   calls reached the server.
 
+Local review (2026-10-16, the user's request: review a git workspace of herdr or Orca by its
+path, showing the commit range or saying that only the diff is there):
+
+- `ReviewLocal`: `inspect(path, base?)` reads the workspace's top folder, branch, HEAD, the base
+  (`origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`, never the branch itself; or
+  `--base REF`, checked as a ref name), the commits `merge-base..HEAD` and the
+  `git status --porcelain` lines. It says in one sentence what is there: N commits since the base
+  (with the range), only the uncommitted changes, or nothing to review.
+- Modes: `all` (default when both exist), `commits`, `uncommitted`. Uncommitted changes
+  (untracked too, `.gitignore` honoured) become a snapshot commit on top of HEAD, made with a
+  temporary index (`GIT_INDEX_FILE` + `add -A` + `write-tree` + `commit-tree`): the workspace's
+  index, files and branches never change; the object stays dangling in the repository.
+- The run: `ReviewRunSpec.local` (`ReviewLocalTarget`: path, branch, base ref, mode, base, head,
+  commits, uncommitted files), `MergeRequestRef.local(repo)` (label `repo (local)`, run id
+  `…-local`). Gather skips the fetch pass, makes the worktree from the workspace (Pi reads that
+  copy, never the workspace) and the diff with git; `merge-request.md` holds the branch, the range
+  and the commits. Files that usually hold secrets are left out of the diff in every review, with
+  a gap. Work item numbers in the branch or commits are a gap ("A local review doesn't read the
+  tracker"). The project profile is the one whose GitLab project is the `origin` remote or whose
+  `checkout:` is this repository.
+- No GitLab: no Send Drafts… (the button is hidden, `send` refuses, `post` says so); verdicts
+  still count for quality. Deleting a run removes its worktree from the workspace it came from.
+- `akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]` (PATH: the
+  current folder, so `akit review local .` in an Orca or herdr terminal); New Review… →
+  **Local Workspace** with Choose…, Base, What to review, the commits and the uncommitted files.
+
 Security review of the MCP change (2026-10-15), fixed the same day:
 
 - Servers: without `servers:` a run uses only Pi servers named like `gitlab`, `azure`,

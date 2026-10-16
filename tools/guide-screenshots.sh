@@ -166,5 +166,7 @@ shot review-roles        $MAIN --section review --tab roles --select security
 shot review-scenarios    $MAIN --section review --tab scenarios --select bugfix
 shot review-project-role $MAIN --section review --tab roles --project orders-service --select tests
 shot review-quality      $MAIN --section review --tab quality
+# New Review… in Local Workspace mode: a query starting with "/" is the workspace path.
+shot review-local        $MAIN --section review --query "$DEMO/work/orders-service" --add
 
 exit $FAILED

@@ -1040,7 +1040,7 @@ Friction («трение») — места, где агент спотыкалс
 - **Roles**: страница ролей. Роль — один взгляд на изменение, файл `SKILL.md`. Пример: `security` ищет утечки секретов. Подробнее: [Посмотреть роль](review#config-roles)
 - **Scenarios**: страница сценариев и значений по умолчанию (**Defaults (review.yaml)**). Подробнее: [Сценарии](review#config-scenarios)
 - **Quality**: страница точности: как часто вы одобряете находки каждой роли, сценария и модели. Подробнее: [Качество](review#quality-read)
-- **New Review…** (плюс): начать ревью merge request'а. В окне: адрес MR, **Work items**, сценарий, роли и блок **This run only** (модели и предел кредитов только для этого ревью). Кнопка **Start Review** активна, как только в поле адрес MR. Подробнее: [Начать ревью](review#run-new)
+- **New Review…** (плюс): начать ревью merge request'а или локальной копии. В окне: переключатель **Review**, адрес MR и **Work items** (или папка копии), сценарий, роли и блок **This run only** (модели и предел кредитов только для этого ревью). Для MR кнопка **Start Review** активна, как только в поле адрес MR. Подробнее: [Начать ревью](review#run-new)
 - **Review Settings…** (шестерёнка): MCP-серверы Pi, как их видит ревью (блок **Pi's MCP servers**), и профили проектов (**New Profile…**, **Show Folder**, **Edit…**). AKit не хранит токенов: с GitLab и трекерами говорят серверы Pi. Подробнее: [Настройка](review#setup)
 - **Pi's MCP servers**: блок в **Review Settings…**: серверы из настроек Pi и что ревью может делать с инструментами каждого. Подробнее: [MCP-серверы в Pi](review#setup-mcp)
 - **Rules of**: список в блоке **Pi's MCP servers**. **Default** — правила по умолчанию; имя профиля — правила его блока `mcp:`. Подробнее: [MCP-серверы в Pi](review#setup-mcp)
@@ -1051,6 +1051,29 @@ Friction («трение») — места, где агент спотыкалс
 - **Pi has no MCP servers.**: у Pi нет ни одного MCP-сервера. Добавьте серверы GitLab и трекера (`pi mcp add …` или экран **MCP Servers**). Подробнее: [MCP-серверы в Pi](review#setup-mcp)
 - **Stop**: кнопка в голубой полосе вверху, пока идёт ревью. Завершает текущий проход; сделанное остаётся. Подробнее: [Следить за ревью](review#run-progress)
 - **Over the credit cap**: окно, когда оценка выше предела кредитов. **Run Anyway** продолжает (предел этого ревью станет полторы оценки), **Stop** останавливает ревью до проходов. Подробнее: [Оценка и предел](review#run-credits)
+
+### New Review…: Local Workspace
+<!-- section: terms-review-local -->
+
+- **Review: Merge Request / Local Workspace**: переключатель вверху окна **New Review…**. **Merge Request** — ревью MR из GitLab. **Local Workspace** — ревью копии репозитория на этом Mac (worktree Orca или herdr, любой клон). Подробнее: [Ревью локальной копии](review#local)
+- **Workspace**: поле с путём к папке копии. Подойдёт и папка внутри репозитория. Подробнее: [Начать из окна](review#local-new)
+- **Choose…**: выбрать папку копии в окне Finder. Подробнее: [Начать из окна](review#local-new)
+- **Base**: от чего считать коммиты: ветка, тег или коммит. Пустое поле — главная ветка (`origin/HEAD`, `origin/main`, `origin/master`, `main` или `master`, но не текущая ветка). В терминале — `--base REF`. Подробнее: [Поле Base](review#local-base)
+- **<ветка> at <коммит> · base <база>**: строка под полями: ветка копии, её последний коммит и база. «base none» — AKit не нашёл базу. Подробнее: [Диапазон](review#local-range)
+- **N commits since <база> (…..…) and M uncommitted files.**: что нашлось для ревью: коммиты от merge base до HEAD и незакоммиченные файлы. Подробнее: [Диапазон](review#local-range)
+- **What to review**: что входит в ревью. Все три значения есть, только когда есть и коммиты, и незакоммиченные файлы. В терминале — `--what all|commits|uncommitted`. Подробнее: [Три режима](review#local-modes)
+- **Commits and uncommitted changes**: коммиты диапазона и незакоммиченные файлы вместе. Подробнее: [Три режима](review#local-modes)
+- **Commits only**: только коммиты диапазона, без незакоммиченных файлов. Подробнее: [Три режима](review#local-modes)
+- **Uncommitted changes only**: только незакоммиченные файлы, diff против HEAD. Подробнее: [Три режима](review#local-modes)
+- **Commits (N)**: раскрывающийся список коммитов ревью: хэш, автор, заголовок (на странице ревью ещё и дата). Подробнее: [Диапазон](review#local-range)
+- **Uncommitted files (N)**: раскрывающийся список незакоммиченных файлов, как их пишет `git status`: « M» — изменён, «??» — новый. Файлы из `.gitignore` не входят. Подробнее: [Три режима](review#local-modes)
+- **Nothing to review: no commits since … and no uncommitted changes.**: от базы нет новых коммитов и нет незакоммиченных файлов. **Start Review** неактивна. Впишите другую **Base** или проверьте папку. Подробнее: [Nothing to review](review#local-nothing)
+- **No commits since …: only the uncommitted changes (N files) to review.**: новых коммитов нет, ревью возьмёт только незакоммиченные файлы. Подробнее: [Nothing to review](review#local-nothing)
+- **No project profile for this repository: no project rules.**: AKit не нашёл профиль ни по remote `origin`, ни по полю `checkout:`. Ревью пойдёт без правил проекта. Подробнее: [Что AKit делает с копией](review#local-safety)
+- **Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit.**: нижняя строка окна. AKit делает свой worktree на коммите ревью; ваша папка не меняется. Подробнее: [Что AKit делает с копией](review#local-safety)
+- **A local review stays in AKit: nothing goes to GitLab.**: строка на странице ревью копии, после режима и того, что вошло. **Send Drafts…** у такого ревью нет. Подробнее: [Ревью локальной копии](review#local)
+- **<репозиторий> (local)**: имя ревью копии в списке. Пример: «orders-service (local)». Имя папки ревью кончается на `-local`. Подробнее: [Ревью локальной копии](review#local)
+- **<папка> · <ветка> · <начало>..<конец>**: первая строка страницы ревью копии: путь, ветка и диапазон коммитов. Подробнее: [Диапазон](review#local-range)
 
 ### Метки этапа и источника
 <!-- section: terms-review-badges -->

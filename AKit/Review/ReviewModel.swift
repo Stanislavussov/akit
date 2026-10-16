@@ -90,6 +90,31 @@ final class ReviewModel {
         }
     }
 
+    /// A local workspace: the range is made first (a snapshot of the uncommitted changes when
+    /// the mode takes them), then Gather and the passes, as for a merge request.
+    func startLocal(_ inspection: ReviewLocal.Inspection, mode: ReviewLocalTarget.Mode, project: String?, choices: ReviewRunChoices, brain: URL) {
+        guard task == nil else { return }
+        activity = Activity(title: "Reviewing \(inspection.repository) (local)")
+        let env = env
+        let scope = Cancellation.Scope()
+        self.scope = scope
+        task = Task { [weak self] in
+            await Cancellation.$scope.withValue(scope) {
+            do {
+                let target = try await ReviewLocal.target(inspection, mode: mode, env: env)
+                let options = ReviewPasses.Options(progress: { line in Task { @MainActor in self?.log(line) } })
+                let result = try await ReviewRuns.startLocal(target, project: project, choices: choices, env: env, brain: brain, options: options)
+                self?.activity?.runID = result.spec.id
+                self?.reload(select: result.spec.id)
+                try await self?.passes(ReviewPaths(home: env.homeDirectory).run(result.spec.id))
+            } catch {
+                self?.problem = error.localizedDescription
+            }
+            }
+            self?.finish()
+        }
+    }
+
     /// The passes of a gathered run (again).
     func runPasses(_ id: String) {
         guard task == nil else { return }
@@ -189,7 +214,9 @@ final class ReviewModel {
     /// Moves a run to the Trash, after removing its worktree from the checkout.
     func delete(_ id: String) {
         let folder = ReviewPaths(home: home).run(id)
-        let checkout = run?.id == id ? catalogProfile(for: run?.spec)?.checkout : nil
+        // The worktree leaves the clone it came from: the local workspace, or the profile's checkout.
+        let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json"))
+        let checkout = spec?.local?.path ?? catalogProfile(for: spec)?.checkout
         Task {
             await ReviewGather.removeWorktree(run: folder, checkout: checkout, env: env)
             attempt { _ = try Trash.move(folder) }

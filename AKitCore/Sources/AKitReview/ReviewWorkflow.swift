@@ -149,6 +149,7 @@ public enum ReviewWorkflow {
     public static func send(_ folder: URL, env: HarnessEnvironment, shown: [String: String]? = nil,
                             options: ReviewPasses.Options = .init()) async throws -> SendReport {
         let run = try load(folder)
+        guard run.spec.local == nil else { throw Failure(message: "\(run.id) is a local review: its findings stay in AKit, nothing goes to GitLab.") }
         guard let plan = run.plan else { throw Failure(message: "\(run.id) has no requests; plan it first.") }
         let snapshot = run.snapshot
         var report = SendReport()

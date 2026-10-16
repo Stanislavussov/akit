@@ -43,9 +43,18 @@ public struct MergeRequestRef: Codable, Sendable, Hashable {
         self.iid = iid
     }
 
-    public var url: String { "\(host)/\(projectPath)/-/merge_requests/\(iid)" }
-    /// `team/orders-service!12`.
-    public var label: String { "\(projectPath)!\(iid)" }
+    /// The host of a local workspace review: there is no merge request.
+    public static let localHost = "local"
+
+    /// A local workspace review (`ReviewRunSpec.local` says which).
+    public static func local(_ name: String) -> MergeRequestRef { MergeRequestRef(host: localHost, projectPath: name, iid: 0) }
+
+    public var isLocal: Bool { host == Self.localHost }
+
+    /// The merge request's page; empty for a local review.
+    public var url: String { isLocal ? "" : "\(host)/\(projectPath)/-/merge_requests/\(iid)" }
+    /// `team/orders-service!12`, or `orders-service (local)`.
+    public var label: String { isLocal ? "\(projectPath) (local)" : "\(projectPath)!\(iid)" }
 
     /// `https://host/group/sub/project/-/merge_requests/12[/diffs][#…]`; nil for anything else.
     public static func parse(_ text: String) -> MergeRequestRef? {

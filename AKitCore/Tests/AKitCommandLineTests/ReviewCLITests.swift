@@ -54,4 +54,28 @@ extension AKitCLITests {
         #expect(text.contains("jira: failed · not used by this project") && text.contains("fetch: connected · not used by this project"))
         #expect(!text.contains("glpat-SECRET") && !text.contains("npx"), "never a server's command line")
     }
+
+    /// `akit review local PATH --show`: the range and the commits, nothing started.
+    @Test func reviewLocalShowsTheRange() async throws {
+        let repo = home.appending(path: "work/shop")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        func git(_ arguments: String...) {
+            _ = ProcessRunner.runAndWait(URL(filePath: "/usr/bin/git"), arguments: ["-C", repo.path] + arguments, environment: env.gitVariables, timeout: 60)
+        }
+        git("init", "-q", "-b", "main")
+        try write("work/shop/a.txt", "a\n")
+        git("add", ".")
+        git("commit", "-q", "-m", "First")
+        git("checkout", "-q", "-b", "topic")
+        try write("work/shop/a.txt", "b\n")
+        git("commit", "-q", "-am", "Change a")
+        let shown = await review(["local", repo.path, "--show"])
+        #expect(shown.code == 0, "\(shown)")
+        #expect(shown.out.contains("on topic") && shown.out.contains("Base: main"))
+        #expect(shown.out.contains("1 commit since main (") && shown.out.contains("Change a"))
+        #expect(shown.out.contains("To review: commits only."))
+        #expect(await review(["local", repo.path, "--what", "uncommitted", "--show"]).err.contains("Nothing to review with --what uncommitted"))
+        #expect(await review(["local", repo.path, "--what", "some"]).err.contains("--what is all, commits or uncommitted"))
+        #expect(!FileManager.default.fileExists(atPath: home.appending(path: ".akit/local/review/runs").path), "--show starts nothing")
+    }
 }

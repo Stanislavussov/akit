@@ -18,6 +18,16 @@ extension AKitCLI {
                                         history, commands and knowledge into a context pack. Then the
                                         passes run in Pi (brief, roles, verifier).
                                         --over-cap goes on when the estimate is over the credit cap
+      akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
+                         [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
+                         [--verifier-model M] [--cap CREDITS] [--gather-only] [--over-cap]
+                                        Review a local git workspace (an Orca or herdr worktree; PATH
+                                        defaults to the current folder): the commits since the base
+                                        branch (origin/HEAD, main or master; or --base), the
+                                        uncommitted changes, or both (--what, default: everything
+                                        there is). Prints the range and the commits first; --show
+                                        stops there. Pi reads a copy, never the workspace; nothing
+                                        goes to GitLab
       akit review passes RUN [--over-cap]
                                         Run the passes again on a gathered run
       akit review show RUN              The run: passes, the requests with their decisions, what stays
@@ -77,6 +87,9 @@ extension AKitCLI {
         let fileText = args.value("--file")
         let lineText = args.value("--line")
         let overCap = args.flag("--over-cap")
+        let baseRef = args.value("--base")
+        let whatText = args.value("--what")
+        let showOnly = args.flag("--show")
         var choices = ReviewRunChoices(scenario: scenario, settings: settings, workItems: wis)
         for change in roleChanges {
             guard let sign = change.first, sign == "+" || sign == "-", change.count > 1 else {
@@ -164,6 +177,10 @@ extension AKitCLI {
             let folder = try runFolder(id, env: env)
             let run = try ReviewWorkflow.load(folder)
             out(requestsText(run))
+            if run.spec.local != nil {
+                out("A local review stays in AKit: nothing goes to GitLab. Approve or reject requests to keep your verdicts.")
+                return 0
+            }
             guard yes else {
                 out("Nothing was sent. Approve requests (akit review approve \(id) r1 …), then: akit review post \(id) --yes")
                 return 0
@@ -205,6 +222,35 @@ extension AKitCLI {
             try args.finish()
             out(qualityText(ReviewQuality.entries(home: env.homeDirectory)))
             return 0
+        case "local":
+            let path = args.positional().map { resolve($0, cwd: cwd, env: env) } ?? cwd
+            try args.finish()
+            let mode = try whatText.map { text -> ReviewLocalTarget.Mode in
+                guard let mode = ReviewLocalTarget.Mode(rawValue: text) else { throw Failure(message: "--what is all, commits or uncommitted, not \(text).") }
+                return mode
+            }
+            let inspection = try await ReviewLocal.inspect(path: path, baseRef: baseRef, env: env)
+            out(localText(inspection))
+            guard let chosen = mode ?? inspection.suggestedMode else { return 0 }
+            guard inspection.has(chosen) else { throw Failure(message: "Nothing to review with --what \(chosen.rawValue). " + inspection.summary) }
+            out("To review: \(chosen.title.lowercased()).")
+            if showOnly { return 0 }
+            let catalog = ReviewCatalog.load(home: env.homeDirectory, brain: brain)
+            let slug = project ?? ReviewLocal.profile(for: inspection, in: catalog, env: env)?.slug
+            let target = try await ReviewLocal.target(inspection, mode: chosen, env: env)
+            let lines = LineBox()
+            let result: ReviewGather.Result
+            do {
+                result = try await ReviewRuns.startLocal(target, project: slug, choices: choices, env: env, brain: brain,
+                                                         options: ReviewPasses.Options(progress: { lines.add($0) }))
+            } catch {
+                lines.drain(out)
+                throw error
+            }
+            lines.drain(out)
+            out(gatherSummary(result))
+            if gatherOnly { return 0 }
+            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
         case let text?:
             let mr = try mergeRequest(text)
             try args.finish()
@@ -258,6 +304,26 @@ extension AKitCLI {
         return 0
     }
 
+    /// The workspace before a local review: branch, base, the commits of the range, the
+    /// uncommitted files.
+    static func localText(_ inspection: ReviewLocal.Inspection) -> String {
+        var lines = ["Workspace \(inspection.path) on \(inspection.branch) at \(inspection.head.prefix(10))",
+                     "Base: " + (inspection.baseRef.map { "\($0), merge base \(inspection.mergeBase?.prefix(10) ?? "none")" }
+                        ?? "none found (give one with --base)"),
+                     inspection.summary]
+        if !inspection.commits.isEmpty {
+            lines.append("Commits (newest first):")
+            lines += inspection.commits.prefix(30).map { "  \($0.sha.prefix(10)) \($0.date) \($0.author): \($0.subject)" }
+            if inspection.commits.count > 30 { lines.append("  … and \(inspection.commits.count - 30) more") }
+        }
+        if !inspection.uncommitted.isEmpty {
+            lines.append("Uncommitted:")
+            lines += inspection.uncommitted.prefix(20).map { "  \($0)" }
+            if inspection.uncommitted.count > 20 { lines.append("  … and \(inspection.uncommitted.count - 20) more") }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func mcpCheckText(_ report: ReviewMCPCheck.Report, access: ReviewMCPAccess, project: String?) -> String {
         var lines = ["Pi's MCP servers" + (project.map { " for project \($0)" } ?? "") + " (pi mcp list):"]
         if report.servers.isEmpty { lines.append("  none. Add your GitLab and tracker servers to Pi: pi mcp add …") }
@@ -279,7 +345,7 @@ extension AKitCLI {
     }
 
     static func showText(_ run: ReviewWorkflow.Run) -> String {
-        var lines = ["Run \(run.id): \(run.spec.mergeRequest.url)",
+        var lines = ["Run \(run.id): " + (run.spec.local.map { "\($0.path) (\($0.summary))" } ?? run.spec.mergeRequest.url),
                      "Scenario \(run.spec.scenario.value); roles \(run.spec.roles.map(\.id).joined(separator: ", ")); "
                      + "status \(run.status?.stage.rawValue ?? "?")" + (run.status?.message.map { " (\($0))" } ?? "")]
         if let passes = run.passes {
