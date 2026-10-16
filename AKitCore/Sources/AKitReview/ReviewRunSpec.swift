@@ -70,6 +70,8 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var tracker: ReviewProfile.Tracker?
     /// Pi's MCP servers and tools this run may use; nil in runs made before MCP (2026-10-15).
     public var mcp: ReviewMCPAccess?
+    /// A review of a local workspace instead of a merge request: the range and what it holds.
+    public var local: ReviewLocalTarget?
 
     /// The run's MCP access: the project's, or every server with the default rules.
     public var access: ReviewMCPAccess { mcp ?? ReviewMCPAccess() }

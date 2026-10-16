@@ -3,12 +3,25 @@ import AKitReview
 import AppKit
 import SwiftUI
 
-/// New Review…: the merge request, the scenario and roles, models and the cap for this run.
+/// New Review…: a merge request or a local workspace, the scenario and roles, models and the
+/// cap for this run.
 struct NewReviewSheet: View {
+    enum Source: String, CaseIterable, Identifiable {
+        case mergeRequest = "Merge Request"
+        case local = "Local Workspace"
+        var id: Self { self }
+    }
+
     @Environment(ReviewModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let brain: URL
-    @State private var address = DebugSnapshot.options?.query ?? ""
+    @State private var source: Source = DebugSnapshot.options?.query?.hasPrefix("/") == true ? .local : .mergeRequest
+    @State private var address = DebugSnapshot.options?.query.flatMap { $0.hasPrefix("/") ? nil : $0 } ?? ""
+    @State private var workspace = DebugSnapshot.options?.query.flatMap { $0.hasPrefix("/") ? $0 : nil } ?? ""
+    @State private var baseRef = ""
+    @State private var inspection: ReviewLocal.Inspection?
+    @State private var inspectionProblem: String?
+    @State private var mode: ReviewLocalTarget.Mode = .all
     @State private var workItems = ""
     @State private var scenario = ""
     @State private var rolesOn: Set<String> = []
@@ -19,7 +32,19 @@ struct NewReviewSheet: View {
     @State private var catalog: ReviewCatalog?
 
     private var mr: MergeRequestRef? { MergeRequestRef.parse(address) }
-    private var profile: ReviewProfile? { catalog?.profile(for: mr) }
+    private var profile: ReviewProfile? {
+        switch source {
+        case .mergeRequest: catalog?.profile(for: mr)
+        case .local: inspection.flatMap { inspection in catalog.flatMap { ReviewLocal.profile(for: inspection, in: $0, env: model.env) } }
+        }
+    }
+    private var canStart: Bool {
+        guard !model.isBusy else { return false }
+        return switch source {
+        case .mergeRequest: mr != nil
+        case .local: inspection?.has(mode) == true
+        }
+    }
     private var scenarios: [ReviewScenario] { catalog?.scenarios(for: profile) ?? [] }
     private var chosen: ReviewScenario? { scenarios.first { $0.id == scenario } }
     private var roles: [ReviewRole] { catalog?.roles(for: profile) ?? [] }
@@ -27,6 +52,13 @@ struct NewReviewSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Form {
+                Picker("Review", selection: $source) {
+                    ForEach(Source.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                if source == .local {
+                    localSection
+                } else {
                 Section {
                     TextField("Merge request", text: $address, prompt: Text("https://gitlab.example.com/group/project/-/merge_requests/12"))
                     if !address.isEmpty, mr == nil {
@@ -37,6 +69,7 @@ struct NewReviewSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     TextField("Work items", text: $workItems, prompt: Text("e.g. 4512, 4513 (else found in the title, description and branch)"))
+                }
                 }
                 Section("Scenario and roles") {
                     Picker("Scenario", selection: $scenario) {
@@ -70,13 +103,14 @@ struct NewReviewSheet: View {
             }
             .formStyle(.grouped)
             HStack {
-                Text("Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here.")
+                Text(source == .local ? "Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit."
+                     : "Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Start Review") { start() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(mr == nil || model.isBusy)
+                    .disabled(!canStart)
             }
             .padding()
         }
@@ -88,16 +122,104 @@ struct NewReviewSheet: View {
         .onChange(of: address) {
             if let preset = profile?.defaultScenario { scenario = preset }
         }
+        .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)") { await inspect() }
+    }
+
+    /// Local Workspace: the folder, the base, and what is there to review before anything starts.
+    @ViewBuilder private var localSection: some View {
+        Section {
+            HStack {
+                TextField("Workspace", text: $workspace, prompt: Text("a git worktree of Orca or herdr, or any clone"))
+                Button("Choose…") { chooseWorkspace() }
+            }
+            TextField("Base", text: $baseRef, prompt: Text("empty: the default branch (origin/HEAD, main or master)"))
+            if let problem = inspectionProblem {
+                Text(problem).font(.caption).foregroundStyle(.red)
+            } else if let inspection {
+                Text("\(inspection.branch) at \(inspection.head.prefix(10)) · base \(inspection.baseRef ?? "none")").font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                Text(inspection.summary).font(.callout)
+                if inspection.baseRef == nil {
+                    Text("No base branch found: enter one in Base to count the commits.").font(.caption).foregroundStyle(.orange)
+                }
+                if inspection.suggestedMode != nil {
+                    Picker("What to review", selection: $mode) {
+                        ForEach(modes(inspection)) { Text($0.title).tag($0) }
+                    }
+                }
+                if !inspection.commits.isEmpty {
+                    DisclosureGroup("Commits (\(inspection.commits.count))") {
+                        ForEach(inspection.commits.prefix(50)) { commit in
+                            Text("\(commit.sha.prefix(10))  \(commit.author): \(commit.subject)").font(.caption.monospaced()).lineLimit(1)
+                        }
+                    }
+                }
+                if !inspection.uncommitted.isEmpty {
+                    DisclosureGroup("Uncommitted files (\(inspection.uncommitted.count))") {
+                        ForEach(inspection.uncommitted.prefix(50), id: \.self) { Text($0).font(.caption.monospaced()).lineLimit(1) }
+                    }
+                }
+                Text(profile.map { "Project profile: \($0.project) (\($0.slug).yaml)" } ?? "No project profile for this repository: no project rules.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        } footer: {
+            Text("In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF).")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// The choices that differ: all three with commits and uncommitted changes, else the one there is.
+    private func modes(_ inspection: ReviewLocal.Inspection) -> [ReviewLocalTarget.Mode] {
+        inspection.suggestedMode == .all ? ReviewLocalTarget.Mode.allCases : inspection.suggestedMode.map { [$0] } ?? []
+    }
+
+    private func chooseWorkspace() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url { workspace = url.path }
+    }
+
+    /// Reads the workspace when its path or base changes (after a short pause while typing).
+    private func inspect() async {
+        guard source == .local else { return }
+        let path = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            inspection = nil
+            inspectionProblem = nil
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(400))
+        guard !Task.isCancelled else { return }
+        let base = baseRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let found = try await ReviewLocal.inspect(path: model.env.expand(path), baseRef: base.isEmpty ? nil : base, env: model.env)
+            guard !Task.isCancelled else { return }
+            inspection = found
+            inspectionProblem = nil
+            if !modes(found).contains(mode), let suggested = found.suggestedMode { mode = suggested }
+            if let preset = profile?.defaultScenario { scenario = preset }
+        } catch {
+            guard !Task.isCancelled else { return }
+            inspection = nil
+            inspectionProblem = error.localizedDescription
+        }
     }
 
     private func start() {
-        guard let mr else { return }
         var choices = ReviewRunChoices(scenario: scenario.isEmpty ? nil : scenario, rolesOn: Array(rolesOn), rolesOff: Array(rolesOff))
         choices.workItems = workItems.split(whereSeparator: { ", #".contains($0) }).compactMap { Int($0) }
         if !passesModel.isEmpty { choices.settings.passes = ReviewModelChoice(model: passesModel) }
         if !verifierModel.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifierModel) }
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
-        model.start(mr: mr, project: profile?.slug, choices: choices, brain: brain)
+        if source == .local, let inspection {
+            model.startLocal(inspection, mode: mode, project: profile?.slug, choices: choices, brain: brain)
+        } else if let mr {
+            model.start(mr: mr, project: profile?.slug, choices: choices, brain: brain)
+        } else {
+            return
+        }
         dismiss()
     }
 }

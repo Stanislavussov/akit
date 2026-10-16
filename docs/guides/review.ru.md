@@ -7,17 +7,18 @@
 **Кому это нужно:**
 
 - Вы делаете ревью merge request'ов в GitLab и хотите, чтобы агент прочитал изменение первым.
+- Вы хотите ревью своей работы до push: копии репозитория на этом Mac, например worktree Orca или herdr. Это [Local Workspace](#local): в GitLab не уходит ничего.
 - Вам важно, чтобы ни один комментарий не ушёл без вашей проверки.
 - Вы хотите проверять изменение по задаче: выполнены ли критерии приёмки.
 
 **Когда это не нужно:**
 
-- Ваш код не в GitLab. AKit Review работает только с GitLab merge request'ами.
+- Вам нужны комментарии в MR, а код не в GitLab. Черновики AKit Review пишет только в GitLab. Без GitLab можно сделать только [ревью локальной копии](#local): находки останутся в AKit.
 - У Pi нет MCP-сервера GitLab, и его нельзя добавить. Ревью читает MR только через MCP-серверы Pi.
 - Вы хотите, чтобы агент сам публиковал комментарии. AKit этого не делает и не будет делать.
 - Нужен просмотр diff. В AKit его нет: diff вы смотрите в GitLab.
 
-**Как построено руководство.** Десять частей идут от простого к сложному: что это, настройка, одно ревью, экран, куда идут находки, пробелы контекста, обсуждение в Pi, повторные ревью, настройка ролей, качество. Внутри частей задачи идут от «Просто» к «Сложно». Все надписи экрана собраны в словаре: [AKit Terms → Review](terms#terms-review).
+**Как построено руководство.** Одиннадцать частей идут от простого к сложному: что это, настройка, одно ревью, ревью локальной копии, экран, куда идут находки, пробелы контекста, обсуждение в Pi, повторные ревью, настройка ролей, качество. Внутри частей задачи идут от «Просто» к «Сложно». Все надписи экрана собраны в словаре: [AKit Terms → Review](terms#terms-review).
 
 **Как искать.** Меню Help → **Search Guides and Screens…** (⌥⌘F) открывает окно руководства с курсором в поле поиска. Поиск находит названия кнопок, вкладок и подписи к картинкам. Это руководство открывает кнопка **Guide** на экране Review или Help → **AKit Review Guide**.
 
@@ -33,6 +34,7 @@
 - «Выполнены ли все критерии приёмки задачи?» → роль `requirements` строит матрицу «критерий → где сделан».
 - «Агенту я не доверяю публикацию» → и не нужно: без вашего одобрения в GitLab не уходит ничего.
 - «Автор сделал push после моих комментариев» → новое ревью того же MR обновит или удалит старые черновики.
+- «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
 
 ![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8 и строкой Verifier: confirmed; внизу кнопки Add Missed…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
@@ -425,6 +427,157 @@ default_scenario: bugfix
 - Ревью остаётся на диске после выхода из AKit: это папка. Проходы снова запускает **Run Passes** (он есть у ревью **Gathered**, **Failed**, **Stopped** и у прерванного на **Gathering** или **Passes**) или `akit review passes RUN`.
 - Правый щелчок по ревью в списке: **Show in Finder** открывает папку ревью, **Move to Trash** убирает worktree из вашей копии и перемещает папку в Корзину.
 - Пустая модель brief и ролей — модель Pi по умолчанию. Пустая модель verifier — та же, что у ролей.
+
+## Ревью локальной копии: Local Workspace
+<!-- section: local -->
+
+**Что это:** ревью вашей копии репозитория на этом Mac, а не merge request'а в GitLab. Копия (workspace) — это worktree Orca или herdr или любой клон git. AKit берёт изменение из git: коммиты вашей ветки, незакоммиченные изменения или то и другое. Дальше всё как у MR: brief, роли, verifier, запросы. Но в GitLab не уходит ничего: находки остаются в AKit.
+
+**Когда пригодится:**
+
+- «Я ещё не сделал push, но хочу ревью до MR» → ревью копии.
+- «Агент в Orca закончил задачу в своём worktree» → `akit review local .` в терминале этого worktree.
+- «Хочу проверить только то, что ещё не закоммитил» → **Uncommitted changes only**.
+- «Код не лежит в GitLab» → ревью копии работает с любым репозиторием git.
+
+**Чем отличается от ревью MR:**
+
+- Нет прохода `fetch`. Проходы: brief, роли, verifier.
+- Нет GitLab и нет трекера. AKit не читает MR, треды и задачи.
+- Нет кнопки **Send Drafts…**. Ваши решения **Approve** и **Reject** всё равно идут в [качество](#quality).
+- В списке ревью имя копии с пометкой «(local)». Пример: «orders-service (local)». Имя папки ревью кончается на `-local`.
+
+### Просто: начать из окна New Review…
+<!-- section: local-new -->
+
+1. На экране **Review** нажмите **New Review…** (плюс).
+2. Вверху окна в переключателе **Review** выберите **Local Workspace**. Второе значение, **Merge Request**, — обычное ревью MR.
+3. В поле **Workspace** вставьте путь к папке копии. Или нажмите **Choose…** и выберите папку. Подойдёт и папка внутри репозитория: AKit найдёт его корень.
+4. Поле **Base** оставьте пустым. Тогда базой будет главная ветка (см. [диапазон](#local-range)).
+5. Прочитайте строки под полями: ветка, коммит, база и что AKit нашёл для ревью.
+6. В **What to review** выберите, что смотреть (см. [три режима](#local-modes)).
+7. Выберите **Scenario** и роли, как для MR. Поля **Work items** здесь нет.
+8. Нажмите **Start Review**.
+
+![Окно New Review… в режиме Local Workspace: переключатель Review со значениями Merge Request и Local Workspace; поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service и кнопка Choose…; пустое поле Base с подсказкой empty: the default branch (origin/HEAD, main or master); строка feature/4630-export-csv at <коммит> · base main; строка 2 commits since main (<коммит>..<коммит>) and 2 uncommitted files.; список What to review со значением Commits and uncommitted changes; свёрнутые Commits (2) и Uncommitted files (2); строка Project profile: orders-service (orders-service.yaml); подпись In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF).; ниже блок Scenario and roles со сценарием Bugfix; внизу подпись Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local.png)
+
+Что значат строки под полями:
+
+- «feature/4630-export-csv at 1d5d1f6feb · base main» — ветка копии, её последний коммит и база.
+- «2 commits since main (a08971f8bb..1d5d1f6feb) and 2 uncommitted files.» — есть и коммиты, и незакоммиченные файлы. В скобках диапазон коммитов.
+- «No commits since origin/master: only the uncommitted changes (13 files) to review.» — новых коммитов нет, есть только незакоммиченные файлы.
+- «Nothing to review: no commits since main and no uncommitted changes.» — смотреть нечего. Что делать: [Nothing to review](#local-nothing).
+- **Commits (N)** раскрывает коммиты: короткий хэш, автор и заголовок.
+- **Uncommitted files (N)** раскрывает незакоммиченные файлы, как их пишет `git status`. Пример: « M src/Orders/OrdersController.cs» — файл изменён, «?? docs/export.md» — новый файл.
+- «Project profile: orders-service (orders-service.yaml)» — профиль проекта найден. Ревью возьмёт его правила, сценарий по умолчанию и роли.
+- «No project profile for this repository: no project rules.» — профиля нет. Ревью пойдёт без правил проекта.
+- Красная строка — AKit не смог прочитать папку. Примеры: «… is not a git workspace.» (это не репозиторий git), «… has no commit yet.» (в репозитории нет ни одного коммита), «… is not a branch, tag or commit of …» (в **Base** нет такой ветки).
+
+**Start Review** активна, когда в выбранном режиме есть что смотреть.
+
+Нижняя строка окна говорит главное: Pi читает отдельную копию на коммите ревью, а не вашу папку. Находки остаются в AKit.
+
+### Просто: начать из терминала Orca или herdr
+<!-- section: local-terminal -->
+
+Orca и herdr дают каждой задаче свой worktree и свой терминал. Ревью можно начать прямо там.
+
+1. Откройте терминал в worktree.
+2. Посмотрите, что AKit возьмёт: `akit review local . --show`. Команда только печатает и ничего не запускает.
+3. Начните ревью: `akit review local .`.
+4. Откройте экран **Review** в AKit. Ревью появится в списке с пометкой «(local)».
+
+Точка — это текущая папка. Без пути команда тоже берёт текущую папку.
+
+Пример вывода `--show`:
+
+```
+Workspace /Users/me/work/orders-service on feature/4630-export-csv at 1d5d1f6feb
+Base: main, merge base a08971f8bb
+2 commits since main (a08971f8bb..1d5d1f6feb) and 2 uncommitted files.
+Commits (newest first):
+  1d5d1f6feb 2026-10-16 Alice: Test the CSV header
+  7e30b2c41d 2026-10-16 Alice: Add a CSV export of orders (AB#4630)
+Uncommitted:
+   M src/Orders/OrdersController.cs
+  ?? docs/export.md
+To review: commits and uncommitted changes.
+```
+
+Флаги:
+
+- `--what all|commits|uncommitted` — режим (см. [три режима](#local-modes)). Без флага — всё, что есть.
+- `--base REF` — своя база (см. [поле Base](#local-base)).
+- `--show` — только показать, что будет в ревью.
+- Остальные флаги как у ревью MR: `--scenario`, `--project`, `--role +ID` и `-ID`, `--passes-model`, `--verifier-model`, `--cap`, `--gather-only`, `--over-cap` (см. [ревью из командной строки](#run-cli)).
+
+`akit review post RUN` для ревью копии ничего не отправляет. Команда пишет: «A local review stays in AKit: nothing goes to GitLab. Approve or reject requests to keep your verdicts.».
+
+### Средне: что такое диапазон
+<!-- section: local-range -->
+
+Диапазон — это коммиты, которые смотрит ревью. Он идёт от базы до вашего последнего коммита (HEAD).
+
+1. **База** — главная ветка репозитория. AKit ищет её по порядку: `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`. Он берёт первую, которая есть. Вашу текущую ветку он не берёт.
+2. **Merge base** — коммит, где ваша ветка ушла от базы.
+3. **Коммиты ревью** — от merge base до HEAD. Это те коммиты, которые были бы в MR.
+
+Пример: ветка `feature/4630-export-csv` ушла от `main` и сделала 2 коммита. Пока вы работали, в `main` пришли чужие коммиты. Ревью возьмёт только ваши 2 коммита: чужие коммиты `main` в диапазон не входят.
+
+На странице ревью диапазон стоит в первой строке: «<папка> · <ветка> · <начало>..<конец>», по 10 знаков хэша. Если ревью берёт незакоммиченные файлы, конец — это коммит-снимок (см. [что AKit делает с копией](#local-safety)), а не ваш HEAD. Ниже раскрывается список **Commits (N)**: хэш, дата, автор и заголовок каждого коммита.
+
+### Средне: три режима
+<!-- section: local-modes -->
+
+Список **What to review** выбирает, что входит в ревью:
+
+- **Commits and uncommitted changes** — коммиты диапазона и незакоммиченные файлы вместе. Это как MR, если бы вы закоммитили всё сейчас.
+- **Commits only** — только коммиты диапазона. Незакоммиченные файлы не входят. Пригодится, когда в папке лежат черновики, которые вы не хотите показывать.
+- **Uncommitted changes only** — только незакоммиченные файлы, diff против HEAD. Коммиты не входят. Пригодится перед коммитом.
+
+Все три значения есть, только когда есть и коммиты, и незакоммиченные файлы. Иначе в списке одно значение: то, что есть.
+
+Незакоммиченные — это изменённые, удалённые и новые файлы. Файлы из `.gitignore` не входят.
+
+На странице ревью вторая строка повторяет режим и что вошло. Пример: «Commits and uncommitted changes: 2 commits since main and 2 uncommitted files. A local review stays in AKit: nothing goes to GitLab.».
+
+### Средне: поле Base и --base
+<!-- section: local-base -->
+
+Пустое поле **Base** — база по умолчанию (см. [диапазон](#local-range)). Своя база нужна, когда:
+
+- ветка ушла не от главной ветки, а от другой. Пример: от `release/2.4` — впишите `release/2.4`;
+- вы хотите смотреть только последние коммиты. Пример: `HEAD~3` — три последних коммита;
+- AKit не нашёл главную ветку (строка «base none»).
+
+В **Base** подходит ветка, тег или коммит. В терминале то же делает `--base REF`. Пример: `akit review local . --base origin/develop`.
+
+### Средне: «Nothing to review»
+<!-- section: local-nothing -->
+
+Строка «Nothing to review: no commits since main and no uncommitted changes.» значит: от базы нет новых коммитов и нет незакоммиченных файлов. **Start Review** неактивна.
+
+Частые причины и что делать:
+
+- Вы на самой главной ветке (`main`), и она равна `origin/main`. → Впишите в **Base** более старый коммит. Пример: `HEAD~1`.
+- Ваши коммиты уже в базе: ветку слили. → Смотреть нечего, или выберите другую базу.
+- Ветка ушла не от главной ветки. → Впишите в **Base** ветку, от которой она ушла.
+- Изменены только файлы из `.gitignore`. → Они не входят в ревью.
+- Это не та папка. → Проверьте путь в **Workspace**: первая строка под полями показывает ветку.
+
+Если AKit не нашёл базу, коммиты он не считает. Тогда ревью может взять только незакоммиченные файлы. Для коммитов нужна база: впишите её в **Base**. Команда в этом случае пишет «There is no base to count the commits from: give one with --base (a branch, tag or commit).».
+
+### Сложно: что AKit делает с вашей копией
+<!-- section: local-safety -->
+
+- **Ваша папка не меняется.** Незакоммиченные файлы AKit берёт в отдельный коммит-снимок. Для этого он использует временный индекс git. Ваш индекс, файлы и ветки остаются как были. Снимок — только объект в репозитории, без ветки.
+- **Pi читает копию.** AKit делает свой worktree на коммите ревью, в папке ревью. Pi читает этот worktree, а не вашу папку. Вы можете работать дальше, пока идёт ревью.
+- **Секреты не входят.** Файлы, где обычно лежат секреты (`.env*`, `*.pem`, `*.key` и другие), AKit не кладёт в diff. Вместо них он пишет пробел контекста «Files that usually hold secrets are left out of the review.».
+- **Трекера нет.** Номера задач из имени ветки и из коммитов (пример: `AB#4630`) становятся пробелом «A local review doesn't read the tracker.». Без задачи роль `requirements` не может проверить критерии приёмки. Если в профиле `in_passes: true`, проходы могут дочитать задачу через MCP-серверы, только инструментами чтения.
+- **Профиль проекта.** AKit ищет профиль двумя путями: по remote `origin` (это проект GitLab профиля) или по полю `checkout:` профиля (это та же папка).
+- **Ничего не уходит в GitLab.** Нет прохода `fetch`, нет **Send Drafts…**. Находки и решения остаются в папке ревью на этом Mac.
+
+> **Почему так:** вы смотрите свою работу до MR. Ошибку проще исправить до push, чем после чужого комментария. Копия для Pi защищает вашу папку: агент не видит файлов, которые вы меняете прямо сейчас, и ничего не может в ней изменить.
 
 ## Экран Review: запросы, решения, Send Drafts…
 <!-- section: screen -->

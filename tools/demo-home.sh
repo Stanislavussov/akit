@@ -963,4 +963,44 @@ file "$REVIEWRUN/requests.json" <<EOF
   {"findingID":"f6","place":"onlyInAKit","reason":"Rejected by the verifier: No code path logs Items; speculation without a sink."}]}
 EOF
 
+# Review → New Review… → Local Workspace: a made-up clone of orders-service (its origin is the
+# profile's GitLab project) on a feature branch with 2 commits since main and 2 uncommitted files.
+LOCAL="$DEMO/work/orders-service"
+mkdir -p "$LOCAL"
+git -C "$LOCAL" init -q -b main
+git -C "$LOCAL" remote add origin "https://gitlab.example.com/shop/orders-service.git"
+file "$LOCAL/README.md" <<<"# orders-service"
+file "$LOCAL/src/Orders/OrdersController.cs" <<'EOF'
+namespace Orders;
+
+public sealed class OrdersController(IOrderStore store)
+{
+    public IReadOnlyList<Order> List() => store.All();
+}
+EOF
+git -C "$LOCAL" add -A && git -C "$LOCAL" commit -qm "Start orders-service"
+git -C "$LOCAL" switch -q -c feature/4630-export-csv
+file "$LOCAL/src/Orders/OrderCsv.cs" <<'EOF'
+namespace Orders;
+
+public static class OrderCsv
+{
+    public static string Write(IEnumerable<Order> orders) =>
+        "id,total\n" + string.Join("\n", orders.Select(o => $"{o.Id},{o.Total}"));
+}
+EOF
+git -C "$LOCAL" add -A && GIT_AUTHOR_NAME="Alice" git -C "$LOCAL" commit -qm "Add a CSV export of orders (AB#4630)"
+file "$LOCAL/tests/OrderCsvTests.cs" <<'EOF'
+namespace Orders.Tests;
+
+public class OrderCsvTests
+{
+    [Fact] public void WritesAHeader() => Assert.StartsWith("id,total", OrderCsv.Write([]));
+}
+EOF
+git -C "$LOCAL" add -A && GIT_AUTHOR_NAME="Alice" git -C "$LOCAL" commit -qm "Test the CSV header"
+# Not committed yet: a changed controller and a new file.
+cat >> "$LOCAL/src/Orders/OrdersController.cs" <<<"// GET /orders.csv: OrderCsv.Write(store.All())"
+file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."
+
 echo "Demo home: $DEMO"

@@ -3725,6 +3725,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Выполнены ли критерии приёмки задачи?» → роль `requirements` заполнит матрицу в сводке.
 - «Автор сделал push после моих комментариев» → новое ревью того же MR обновит или удалит старые черновики.
 - «Какая роль чаще ошибается?» → страница **Quality**.
+- «Хочу ревью своей ветки до push» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree.
 
 ![Экран Review, страница Runs: слева ревью shop/orders-service!42 с меткой Ready; справа заголовок Stop logging the Authorization header (AB#4512), строка 62.1 of 150 credits, метки проходов от fetch до verifier, блок Requests с карточкой New comment src/Auth/AuthMiddleware.cs:8 и меткой Approved; внизу кнопки Add Missed…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
@@ -3734,7 +3735,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 Панель инструментов:
 
 - **Runs | Roles | Scenarios | Quality** — страницы экрана. **Runs** — ваши ревью. **Roles** и **Scenarios** — что проверяет ревью. **Quality** — как часто вы одобряете находки.
-- **New Review…** (плюс) — начать ревью по адресу MR.
+- **New Review…** (плюс) — начать ревью. Переключатель **Review** вверху окна: **Merge Request** — ревью по адресу MR, **Local Workspace** — ревью копии репозитория на этом Mac (worktree Orca или herdr). Ревью копии ничего не пишет в GitLab: [ревью локальной копии](review#local).
 - **Review Settings…** (шестерёнка) — MCP-серверы Pi, как их видит ревью (кнопка **Check Servers**), и профили проектов.
 - **Guide** — подробное руководство.
 
@@ -3765,6 +3766,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Ревью — папка в `~/.akit/local/review/runs`. Она не покидает Mac.
 - AKit не хранит токенов. Pi читает GitLab и трекер через свои MCP-серверы, только инструментами чтения. Агент не пишет файлы и не пишет в GitLab; черновики пишет только **Send Drafts…**, слово в слово как вы одобрили.
 - Правый щелчок по ревью: **Show in Finder** и **Move to Trash**.
+- Ревью локальной копии в списке называется «<репозиторий> (local)». У него нет прохода `fetch` и кнопки **Send Drafts…**: находки остаются в AKit.
 
 #### Связи с другими экранами
 <!-- section: review-links -->

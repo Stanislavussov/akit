@@ -34,7 +34,7 @@ public enum ReviewRuns {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let project = mr.projectPath.split(separator: "/").last.map(String.init) ?? "mr"
         let slug = project.lowercased().unicodeScalars.map { CharacterSet.alphanumerics.contains($0) && $0.isASCII ? String($0) : "-" }.joined()
-        return "\(formatter.string(from: now))-\(slug)-\(mr.iid)"
+        return "\(formatter.string(from: now))-\(slug)-\(mr.isLocal ? "local" : String(mr.iid))"
     }
 
     /// The configuration a run would use, without gathering anything (`akit review config show`).
@@ -65,6 +65,33 @@ public enum ReviewRuns {
         do {
             let result = try await ReviewGather.run(spec: spec, profile: profile, roles: roles, folder: folder, scrub: settings.scrub, env: env,
                                                     options: options)
+            try setStatus(.gathered, folder: folder)
+            return result
+        } catch {
+            try? setStatus(.failed, message: error.localizedDescription, folder: folder)
+            throw error
+        }
+    }
+
+    /// A review of a local workspace (Orca, herdr, any clone): the commits since the base, the
+    /// uncommitted changes, or both. No fetch pass and nothing for GitLab: the findings stay in AKit.
+    public static func startLocal(_ target: ReviewLocalTarget, project: String?, choices: ReviewRunChoices, env: HarnessEnvironment,
+                                  brain: URL?, options: ReviewPasses.Options = .init()) async throws -> ReviewGather.Result {
+        let home = env.homeDirectory
+        let catalog = ReviewCatalog.load(home: home, brain: brain)
+        let profile = project.flatMap { name in catalog.profiles.first { $0.slug == name } }
+        if let project, profile == nil { throw Failure(message: "There is no project profile \(project).") }
+        let ref = MergeRequestRef.local(target.repository)
+        let id = newID(for: ref)
+        var (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: ref, id: id)
+        spec.local = target
+        let folder = ReviewPaths(home: home).run(id)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+        try setStatus(.gathering, folder: folder)
+        do {
+            let result = try await ReviewGather.run(spec: spec, profile: profile, roles: roles, folder: folder, scrub: LabSettings.load(env: env).scrub,
+                                                    env: env, options: options)
             try setStatus(.gathered, folder: folder)
             return result
         } catch {

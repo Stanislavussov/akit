@@ -17,11 +17,13 @@ public enum ReviewPrompts {
             You only read: you have `read`, `grep`, `find`, `ls`, and two AKit tools, `akit_submit_findings` and \
             `akit_report_context_gap`. You have no network and no shell.
             """
+        let subject = spec.local.map { "the changes of the local workspace \($0.repository) (\($0.summary))" }
+            ?? "GitLab merge request \(spec.mergeRequest.label)"
         return """
         # AKit review
 
-        You review GitLab merge request \(spec.mergeRequest.label) at commit \(spec.headSHA ?? "?") for a developer who checks every \
-        finding before anything reaches GitLab. \(tools)
+        You review \(subject) at commit \(spec.headSHA ?? "?") for a developer who checks every finding before anything \
+        is done with it. \(tools)
 
         \(hasWorktree ? "Your working folder is the repository at the reviewed commit. The context pack is in the run folder: read `../context/README.md` first." : "There is no checkout: your working folder is the run folder; read `context/README.md` first. Only the diff is available.")
 

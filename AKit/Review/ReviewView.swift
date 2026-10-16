@@ -75,7 +75,7 @@ struct ReviewView: View {
             ToolbarItem {
                 Button("New Review…", systemImage: "plus") { showNew = true }
                     .disabled(model.isBusy)
-                    .help("Review a merge request: Pi reads it through its MCP servers, you approve what goes to GitLab")
+                    .help("Review a merge request (Pi reads it through its MCP servers, you approve what goes to GitLab) or a local workspace")
             }
             ToolbarItem {
                 Button("Review Settings…", systemImage: "gearshape") { showSettings = true }
@@ -137,7 +137,7 @@ struct ReviewView: View {
         .overlay {
             if model.runs.isEmpty {
                 ContentUnavailableView("No reviews yet", systemImage: "checklist",
-                                       description: Text("New Review… with a merge request address, or akit review MR-URL in a terminal."))
+                                       description: Text("New Review… with a merge request address or a local workspace, or akit review MR-URL / akit review local . in a terminal."))
             }
         }
     }
@@ -243,7 +243,22 @@ struct ReviewRunDetail: View {
                 Spacer()
                 ReviewStageBadge(status: run.status)
             }
-            if let url = URL(string: run.spec.mergeRequest.url) {
+            if let local = run.spec.local {
+                Text("\(local.path) · \(local.branch) · \(local.base.prefix(10))..\(local.head.prefix(10))"
+                     + (local.uncommitted.isEmpty ? "" : " (the last commit is a snapshot of the uncommitted changes)")).font(.callout.monospaced())
+                    .foregroundStyle(.secondary).textSelection(.enabled)
+                Text(local.mode.title + ": " + local.summary + ". A local review stays in AKit: nothing goes to GitLab.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if !local.commits.isEmpty {
+                    DisclosureGroup("Commits (\(local.commits.count))") {
+                        ForEach(local.commits) { commit in
+                            Text("\(commit.sha.prefix(10))  \(commit.date)  \(commit.author): \(commit.subject)").font(.callout.monospaced())
+                                .lineLimit(1).textSelection(.enabled)
+                        }
+                    }
+                    .font(.callout)
+                }
+            } else if let url = URL(string: run.spec.mergeRequest.url) {
                 Link(run.spec.mergeRequest.label + (run.spec.headSHA.map { " at \($0.prefix(10))" } ?? ""), destination: url).font(.callout)
             }
             HStack(spacing: 14) {
@@ -362,10 +377,12 @@ struct ReviewRunDetail: View {
             }
             Spacer()
             Text("\(approved.count) approved").foregroundStyle(.secondary)
-            Button("Send Drafts…") { showSend = true }
-                .keyboardShortcut(.defaultAction)
-                .disabled(approved.isEmpty)
-                .help("Add the approved requests to your pending review in GitLab as drafts. You publish them there with Submit review.")
+            if run.spec.local == nil {
+                Button("Send Drafts…") { showSend = true }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(approved.isEmpty)
+                    .help("Add the approved requests to your pending review in GitLab as drafts. You publish them there with Submit review.")
+            }
         }
         .padding(10)
         .background(.regularMaterial)
