@@ -3752,7 +3752,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 <!-- section: review-first -->
 
 1. Добавьте в Pi MCP-сервер GitLab (и сервер трекера). Потом в **Review Settings…** нажмите **Check Servers**: [MCP-серверы в Pi](review#setup-mcp).
-2. В Settings → **Lab** разрешите адресата Pi с вашим провайдером: [политика отправки](review#setup-policy).
+2. Убедитесь, что Pi настроен на нужную модель: ревью отправляет данные только через Pi ([модель выбирает Pi](review#setup-policy)).
 3. Нажмите **New Review…**, вставьте адрес MR, выберите сценарий и нажмите **Start Review**.
 4. Когда метка станет **Ready**, прочитайте карточки. Нажмите **Approve** или **Reject** у каждой.
 5. Нажмите **Send Drafts…**, потом **Submit review** в GitLab.

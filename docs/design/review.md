@@ -25,8 +25,10 @@ Pi in tests and with real Pi 1.0.4 against a fake model server. Decisions made w
 - **Credits** (R14): AKit's own unit, 1 credit = 1,000 tokens as Pi recorded them (input, cache
   writes, output); a cached read counts one tenth. Recorded numbers only. Step 0 checks how it
   lines up with the Copilot plan.
-- **Sending policy**: a new origin `mergeRequest`. It has no same origin, so it goes only to a
-  destination on the allowed list, on any Mac.
+- **Sending policy**: a new origin `mergeRequest`. Revised 2026-10-16 at the user's request
+  ("I only run Pi; Pi already has access to the model"): AKit runs Pi on the merge request as
+  the user would, so any Pi destination may get it, on a work Mac too, without an allowed-list
+  entry. Other harnesses may not. Masking before sending, the cap and the send log stay.
 - **Role text**: every pass gets all of the run's role skills (`--skill`) and the same appended
   system prompt, so the session keeps one prompt cache; each role pass's prompt carries its
   checklist.
@@ -547,8 +549,8 @@ edit of a role, a scenario or a threshold. Later: past MRs with known findings, 
 
 ## Privacy and the work Mac
 
-- The destination goes into the sending policy's allowed list by hand: harness Pi, provider
-  `github-copilot`, the work account. Empty by default on a work machine.
+- No allowed-list entry: Pi sends to the model it is set up with (revised 2026-10-16). Which
+  model and provider Pi may use is the user's Pi setup, as in daily work.
 - What goes to the provider: the context pack files the agent reads (diff, files, threads,
   work items, knowledge notes). The send log records the run id, provider, model, tokens and
   credits, and the paths read (from `tool_call`).
@@ -583,7 +585,7 @@ The in-app guide `docs/guides/review.ru.md` (Russian, like the other guides) des
 review works, from simple tasks to hard ones:
 
 1. What AKit Review does and what it never does (no publishing, no unapproved request).
-2. Setting up: the two tokens, the destination in the sending policy, a project profile.
+2. Setting up: Pi's MCP servers, a project profile.
 3. One review: New Review… or `akit review`, the scenario, the estimate, the passes.
 4. The Review screen: requests, editing, approve and reject with a reason, Send Drafts…,
    then Submit review in GitLab.

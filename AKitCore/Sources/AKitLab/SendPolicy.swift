@@ -72,7 +72,8 @@ public enum SendOrigin: Hashable, Sendable {
     /// to that harness in daily work, so its own signed-in account counts as the origin.
     case code(LabHarness)
     /// A merge request, its threads and work items, with the repository's code (AKit Review).
-    /// No harness produced it, so only a destination on the allowed list may get it.
+    /// AKit only runs Pi on it, as the user would: Pi reads it through its own MCP servers and
+    /// sends it to the model it is set up with, so any Pi destination may get it.
     case mergeRequest
 
     /// The origin of a recorded session; for Pi, the providers its answers came from.
@@ -108,6 +109,9 @@ public enum SendPolicy {
         // Only entries with an account: an old entry with blank fields mustn't let anything through.
         if allowed.contains(where: { $0.isAccountKnown && $0.matches(destination) }) {
             return Decision(allowed: true, reason: "\(destination.label) is on the allowed list.")
+        }
+        if origin == .mergeRequest, destination.harness == .pi {
+            return Decision(allowed: true, reason: "AKit Review runs Pi, and Pi sends the merge request to the model it is set up with.")
         }
         if sameOrigin(origin, destination), !(isWork && origin.isCode) {
             return Decision(allowed: true, reason: "Same origin: \(destination.label) produced this data.")
