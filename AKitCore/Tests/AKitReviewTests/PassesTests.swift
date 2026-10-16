@@ -1,3 +1,4 @@
+import AKitBrain
 import AKitFoundation
 import AKitLab
 @testable import AKitReview
@@ -161,10 +162,16 @@ extension ReviewProcessTests {
             #expect(candidates.contains(">    3      log(\"Auth: \\(header)\")"))
         }
 
-        @Test func aMergeRequestGoesOnlyToAnAllowedDestination() async throws {
+        /// AKit only runs Pi: the merge request goes to Pi's model without an allowed-list entry,
+        /// on a work Mac too.
+        @Test func aMergeRequestGoesToPiWithoutTheAllowedList() async throws {
             let run = try await ReviewRunFixture.make(allowed: false)
-            await #expect(throws: SendAccounts.Failure.self) { try await ReviewPasses.run(folder: run.folder, env: run.home.env) }
-            #expect(run.args("brief").isEmpty, "Pi never started")
+            try MachineProfile(kind: .work).save(home: run.home.url)
+            run.playTypicalRun()
+            let result = try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            #expect(result.findings.count == 2 && !run.args("brief").isEmpty)
+            let claude = SendDestination(harness: .claudeCode, provider: "anthropic", account: "me", org: "corp")
+            #expect(!SendPolicy.decide(origin: .mergeRequest, destination: claude, isWork: true, allowed: []).allowed, "only Pi")
         }
 
         @Test func theCapStopsBeforeThePasses() async throws {
