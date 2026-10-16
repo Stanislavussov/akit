@@ -47,6 +47,7 @@ public enum ReviewWorkflow {
     }
 
     public static func load(_ folder: URL) throws -> Run {
+        ReviewMask.saved(in: folder)
         guard let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")) else {
             throw Failure(message: "\(folder.lastPathComponent) has no readable run.json.")
         }
@@ -225,7 +226,8 @@ public enum ReviewWorkflow {
         try FileManager.default.createDirectory(at: sendFolder, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: approved, options: [.prettyPrinted, .sortedKeys]).write(to: sendFolder.appending(path: "approved.json"))
         let logFile = sendFolder.appending(path: "log.jsonl")
-        let before = (try? Data(contentsOf: logFile))?.count ?? 0
+        // Lines, not bytes: masking may rewrite a line after the pass.
+        let before = ((try? Data(contentsOf: logFile)) ?? Data()).split(separator: 0x0A).count
         var passError: String?
         do {
             try await ReviewPasses.send(folder: folder, spec: run.spec, count: approved.count, env: env, options: options)
@@ -235,7 +237,7 @@ public enum ReviewWorkflow {
         // What the extension saw GitLab answer, for each request this send carried.
         var outcome: [String: (draftID: Int?, error: String?)] = [:]
         let data = (try? Data(contentsOf: logFile)) ?? Data()
-        for line in data.dropFirst(before).split(separator: 0x0A) {
+        for line in data.split(separator: 0x0A).dropFirst(before) {
             guard let object = (try? JSONSerialization.jsonObject(with: Data(line))) as? JSONObject, let id = object.string("request"),
                   bodies[id] != nil else { continue }
             let text = object.string("text") ?? ""

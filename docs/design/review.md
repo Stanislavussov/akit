@@ -82,8 +82,8 @@ Built the same day:
 
 - **Fetch pass** (Gather, R3): Pi (`-ne -e builtin:mcp -e builtin:codemode`, the user's
   `mcp.json`) reads the MR, versions, diffs, threads, the user's drafts, the signed-in user and
-  the work items in codemode scripts. The extension saves every MCP answer word for word in
-  `<run>/mcp/calls/`; AKit sorts them by shape (`ReviewMCPData`: GitLab's and Azure DevOps's
+  the work items in codemode scripts. The extension saves every MCP answer in `<run>/mcp/calls/`
+  (AKit masks secrets in it after the pass); AKit sorts them by shape (`ReviewMCPData`: GitLab's and Azure DevOps's
   JSON) and trusts the servers' answers, never the model's account. `akit_submit_context` takes
   what a server answers in prose. With a `checkout:` AKit makes the worktree and the diff with
   git (`base..head`), so no model carries the diff. Its own session; its credits count toward
@@ -168,6 +168,13 @@ Review round (2026-10-15, code review of the branch), fixed:
   `roles/`, `prompts/` of the run: never `gitlab/` or `tracker/` (raw, unscrubbed).
 - AKit's own reads of worktree files (snippets, anchors, the screen) don't follow a symlink
   out of the worktree and are masked.
+- What a run keeps from MCP servers is masked on disk (`ReviewMask`, 2026-10-16): the saved
+  answers (`mcp/calls/`) and the send log after each pass and when AKit opens a run (Discuss
+  in Pi… saves answers too), the pass streams (`passes/*.jsonl`) line by line as Pi writes
+  them. Only string values change (`SecretFilter.masked`, the Scrubber's token shapes and
+  passwords, plus whole private-key blocks), JSON stays JSON and a text keeps its lines, so
+  diffs keep their line numbers; files without a secret stay byte for byte. Pi's own session
+  files in `sessions/` stay as Pi wrote them.
 - Tokens: one Keychain account per exact `https://host[:port]` (Azure DevOps: per collection
   address), https only, no redirects. They are now written and read in-process
   (`ReviewKeychain`), not through `/usr/bin/security`, so another program gets a Keychain
@@ -240,7 +247,7 @@ akit review <mr-url> [--wi N] [--scenario S]        or  Review → New Review…
    │     position), the user's drafts, the signed-in user
    │     Tracker: the work items (from --wi, the title, the description, the branch),
    │     parents and related items one level deep, comments
-   │     → <run>/mcp/calls/ (every answer word for word); AKit sorts them by shape
+   │     → <run>/mcp/calls/ (every answer, secrets masked); AKit sorts them by shape
    │     AKit: worktree at head_sha and the diff by git (with a checkout)
    │     git log / blame of the changed files; profile commands (tests, linter) if set
    │     knowledge folders from the profile
