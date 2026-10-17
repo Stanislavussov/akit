@@ -62,7 +62,10 @@ public enum SourceUpdate {
 
     private static func git(_ arguments: [String], in folder: URL, env: HarnessEnvironment) async -> String? {
         guard let result = await ProcessRunner.run(env.findExecutable("git") ?? URL(filePath: "/usr/bin/git"),
-                                                   arguments: ["-C", folder.path] + arguments, environment: env.gitVariables,
+                                                   arguments: ["-C", folder.path] + arguments,
+                                                   // No index refresh by `git status`: its index.lock would make an
+                                                   // agent's commit in the same folder fail while AKit checks.
+                                                   environment: env.gitVariables.merging(["GIT_OPTIONAL_LOCKS": "0"]) { $1 },
                                                    timeout: 30),
               result.succeeded else { return nil }
         return result.output.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -12,9 +12,9 @@ import SwiftUI
 @Observable
 final class AppUpdate {
     private(set) var available: SourceUpdate.Available?
-    /// The update waits for a yes: the source folder has uncommitted changes.
-    var confirmingUncommitted = false
     private var lastCheck: Date?
+    /// One check loop for the app, however many windows start it.
+    private var watching = false
 
     /// The time between checks while AKit stays open.
     private static let interval: Duration = .seconds(300)
@@ -23,7 +23,9 @@ final class AppUpdate {
 
     /// Checks now and then every few minutes, until the task is cancelled.
     func watch() async {
-        guard isAvailable else { return }
+        guard isAvailable, !watching else { return }
+        watching = true
+        defer { watching = false }
         while !Task.isCancelled {
             await check()
             try? await Task.sleep(for: Self.interval)
@@ -48,14 +50,26 @@ final class AppUpdate {
         }
     }
 
-    /// Update now, or ask first when the source folder has uncommitted changes.
+    /// Update now, or ask first when the source folder has uncommitted changes. The folder is
+    /// checked again first: an agent may have started editing or switched branches since.
     func start(_ rebuild: SelfRebuild) {
-        guard let available, rebuild.state != .building else { return }
-        if available.hasUncommittedChanges {
-            confirmingUncommitted = true
-        } else {
-            Task { await rebuild.rebuildAndRelaunch(SelfRebuild.updateTarget) }
+        guard available != nil, rebuild.state != .building else { return }
+        Task {
+            await check()
+            guard let available else { return }
+            if available.hasUncommittedChanges, !confirmUncommitted() { return }
+            await rebuild.rebuildAndRelaunch(SelfRebuild.updateTarget)
         }
+    }
+
+    /// An alert, not a sheet: AKit → Update to … works with the main window closed too.
+    private func confirmUncommitted() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Update with uncommitted changes?"
+        alert.informativeText = "\(SelfRebuild.sourceRoot?.tildePath ?? "The source folder") has uncommitted changes. They go into the new build too. If an agent is working there now, wait until it commits."
+        alert.addButton(withTitle: "Update Anyway")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     var title: String {
@@ -98,19 +112,6 @@ struct UpdateButton: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
             .help(update.details)
-        }
-    }
-}
-
-extension View {
-    /// Asks before an update that would build uncommitted changes of the source folder.
-    func updateConfirmation(_ update: AppUpdate, rebuild: SelfRebuild) -> some View {
-        @Bindable var update = update
-        return confirmationDialog("Update with uncommitted changes?", isPresented: $update.confirmingUncommitted) {
-            Button("Update Anyway") { Task { await rebuild.rebuildAndRelaunch(SelfRebuild.updateTarget) } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("\(SelfRebuild.sourceRoot?.tildePath ?? "The source folder") has uncommitted changes. They go into the new build too. If an agent is working there now, wait until it commits.")
         }
     }
 }

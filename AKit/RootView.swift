@@ -209,7 +209,6 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task { await update.checkSoon() }
         }
-        .updateConfirmation(update, rebuild: rebuild)
         // Lab runs start and end outside AKit: keep the badge and the queue current.
         .task { if DebugSnapshot.options == nil { await model.watchLab() } else { await model.reloadLab() } }
         .overlay(alignment: .bottom) {

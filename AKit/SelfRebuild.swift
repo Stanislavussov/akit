@@ -65,6 +65,9 @@ final class SelfRebuild {
         // xcodegen stops with "Couldn't find current username" without these.
         childEnv["USER"] = childEnv["USER"] ?? NSUserName()
         childEnv["LOGNAME"] = childEnv["LOGNAME"] ?? NSUserName()
+        // The build stamp runs `git status`: without this its index.lock can make an agent's
+        // commit in the same folder fail.
+        childEnv["GIT_OPTIONAL_LOCKS"] = "0"
         let command = target == .install ? "install" : "build"
         // A release build of the app and of the akit command takes longer than a Debug build.
         let minutes = target == .install ? 30 : 15
@@ -72,7 +75,9 @@ final class SelfRebuild {
                                              environment: childEnv, timeout: TimeInterval(minutes * 60))
         guard let result, result.succeeded else {
             let output = result?.output.split(whereSeparator: \.isNewline).suffix(20).joined(separator: "\n") ?? ""
-            let reason = result?.timedOut == true ? "The build took longer than \(minutes) minutes." : "make \(command) failed."
+            var reason = result?.timedOut == true ? "The build took longer than \(minutes) minutes." : "make \(command) failed."
+            // make install copies the app before it builds the akit command.
+            if target == .install { reason += " The new app may be in ~/Applications already: quit AKit and open it again to check." }
             state = .failed(output.isEmpty ? reason : "\(reason)\n\n\(output)")
             if Self.requestedAtLaunch { FileHandle.standardError.write(Data("rebuild: \(reason)\n\(output)\n".utf8)) }
             return
