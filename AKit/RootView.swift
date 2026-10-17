@@ -115,6 +115,7 @@ enum SidebarSection: String, Hashable, CaseIterable, Identifiable {
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(SelfRebuild.self) private var rebuild
+    @Environment(AppUpdate.self) private var update
     @Environment(GuideNavigator.self) private var guides
     @Environment(AskAKitModel.self) private var ask
     @Environment(\.openWindow) private var openWindow
@@ -153,7 +154,12 @@ struct RootView: View {
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 280)
             .safeAreaInset(edge: .bottom) {
-                if DebugSnapshot.options?.demo != true { BuildBadge(info: .current) }
+                if DebugSnapshot.options?.demo != true {
+                    VStack(spacing: 0) {
+                        UpdateButton()
+                        BuildBadge(info: .current)
+                    }
+                }
             }
         } detail: {
             switch model.section ?? .overview {
@@ -198,13 +204,19 @@ struct RootView: View {
         .skillInvocationSheet(model)
         // MCP switch changes (MCP Servers, Insights).
         .mcpSwitchSheet(model)
+        // A newer AKit in the source folder: the Update button above the build badge.
+        .task { if DebugSnapshot.options == nil { await update.watch() } else { await update.check() } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await update.checkSoon() }
+        }
         // Lab runs start and end outside AKit: keep the badge and the queue current.
         .task { if DebugSnapshot.options == nil { await model.watchLab() } else { await model.reloadLab() } }
         .overlay(alignment: .bottom) {
             if rebuild.state == .building {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Rebuilding AKit… It restarts when the build is done.")
+                    Text(rebuild.target == .install ? "Updating AKit… It restarts when the new version is installed."
+                                                    : "Rebuilding AKit… It restarts when the build is done.")
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
@@ -218,7 +230,7 @@ struct RootView: View {
                     .padding(.bottom, 16)
             }
         }
-        .alert("Couldn't rebuild AKit", isPresented: Binding(get: { rebuildError != nil },
+        .alert(rebuild.target == .install ? "Couldn't update AKit" : "Couldn't rebuild AKit", isPresented: Binding(get: { rebuildError != nil },
                                                              set: { if !$0 { rebuild.dismissError() } })) {
             Button("OK") { rebuild.dismissError() }
         } message: {

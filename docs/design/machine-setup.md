@@ -4,7 +4,7 @@ Status: designed 2026-10-09 from a day of feedback on a work Mac. `akit doctor` 
 2026-10-09 (`AKitDoctor`, `Doctor.report`), with the worktree links (see `layers.md`,
 "Local-only files and git worktrees"); **Help → Copy Diagnostics** in the app built
 2026-10-10 (the same `Doctor.report`, with the app's settings and its project folders, and a
-short note at the bottom of the window when the report is on the clipboard); **Help → Report a Bug… / Suggest a Feature…** built 2026-10-11 (`IssueReport`). Onboarding in the app is a proposal; the user reviews it
+short note at the bottom of the window when the report is on the clipboard); **Help → Report a Bug… / Suggest a Feature…** built 2026-10-11 (`IssueReport`); the **Update** button built 2026-10-17 (`SourceUpdate`). Onboarding in the app is a proposal; the user reviews it
 before it is built.
 
 ## Problem
@@ -43,6 +43,26 @@ the sections to fill in, the AKit version and the macOS version. AKit sends noth
 no token; the user posts the issue. GitHub applies the label (`bug`, `enhancement`) only for
 people who may label issues in the repository; other issues arrive without one. The diagnostics report is not put into the link: it names
 the user's projects and the issue is public, so the bug template only asks for it.
+
+## Updating AKit from its source folder
+
+Built 2026-10-17 (`AKitDoctor/SourceUpdate.swift`, the app's `AppUpdate.swift`). A copy of
+AKit knows the folder, branch and commit it was built from (`BuildInfo.plist`). When that
+branch in that folder has commits after the build's commit (a feature merged into `master`
+in `~/Projects/akit`), the sidebar shows **Update to <version>** above the build badge, and
+**AKit → Update to …** does the same. It runs `make install` there for the copy in
+`~/Applications` (`make build` for a Debug copy in a worktree's `build/`), starts the new app
+and quits; a failed build leaves the running app open with the reason.
+
+- Only reading git commands (`rev-parse`, `rev-list`, `log`, `describe`, `status`): no fetch or
+  pull, the folder is never changed. Commits pushed elsewhere show up after a pull by hand.
+- Checked at launch, every 5 minutes, when AKit comes to the front (at most every 20 s) and
+  with **AKit → Check for Updates**.
+- Another branch checked out in the folder: no button, a build would be of that branch.
+- Uncommitted changes to tracked files: the update asks first (**Update Anyway**), since
+  another agent session may be working in the main checkout.
+- Not covered: copies installed from a release zip (`install.sh` without a source folder);
+  `install.sh` run again updates them.
 
 ## Onboarding (proposal)
 
