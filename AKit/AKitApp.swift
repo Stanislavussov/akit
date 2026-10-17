@@ -6,6 +6,7 @@ import SwiftUI
 struct AKitApp: App {
     @State private var model: AppModel
     @State private var rebuild = SelfRebuild()
+    @State private var update = AppUpdate()
     @State private var guides = GuideNavigator()
     @State private var ask: AskAKitModel
 
@@ -35,6 +36,7 @@ struct AKitApp: App {
             }
                 .environment(model)
                 .environment(rebuild)
+                .environment(update)
                 .environment(guides)
                 .environment(ask)
                 .frame(minWidth: 820, minHeight: 520)
@@ -57,6 +59,12 @@ struct AKitApp: App {
                         .version: "",
                     ])
                 }
+                Button(rebuild.state == .building ? "Updating…" : update.title) { update.start(rebuild) }
+                    .disabled(update.available == nil || rebuild.state == .building)
+                    .help("Build the newer AKit in its source folder and restart")
+                Button("Check for Updates") { Task { await update.check() } }
+                    .disabled(!update.isAvailable)
+                    .help("Look for new commits on this build's branch in its source folder")
             }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .toolbar) {
