@@ -25,8 +25,10 @@ public enum ReviewBuiltIns {
         "feature": """
         id: feature
         title: Feature
-        roles: { required: [domain, requirements], optional: [tests] }
+        roles: { required: [contracts, architecture, domain, requirements], optional: [tests, security] }
         checks:
+          - "Which contracts does the change add or change, and does every consumer still work?"
+          - "Does the new code sit in the right component and keep its boundaries?"
           - "Do the changes keep the invariants and business rules of the touched components?"
           - "Is each acceptance criterion covered by code and by a test?"
         context_required: [wi, full_files]
@@ -37,9 +39,10 @@ public enum ReviewBuiltIns {
         "bugfix": """
         id: bugfix
         title: Bugfix
-        roles: { required: [bug-hunter, requirements, tests], optional: [security] }
+        roles: { required: [bug-hunter, contracts, requirements, tests], optional: [architecture, security] }
         checks:
           - "Is the cause fixed, not the symptom (from the repro steps)?"
+          - "Does the fix change a contract (behaviour, error, format) that other code relies on?"
           - "Does a regression test reproduce the bug?"
           - "Do nearby code paths have the same defect?"
         context_required: [wi, full_files]
@@ -50,7 +53,7 @@ public enum ReviewBuiltIns {
         "dependency-upgrade": """
         id: dependency-upgrade
         title: Dependency upgrade
-        roles: { required: [upgrade-risk, tests], optional: [security] }
+        roles: { required: [upgrade-risk, tests], optional: [contracts, security] }
         checks:
           - "Which breaking changes does the new version list, and does the code handle them?"
           - "Which transitive dependencies change with it?"
@@ -63,16 +66,48 @@ public enum ReviewBuiltIns {
     ]
 
     public static let roleFiles: [String: String] = [
-        "domain": role("domain", "Review a change against the domain: invariants, business rules, state transitions and boundaries of the touched components.",
+        "contracts": role("contracts", "Review what the change promises to other code: public APIs, DTOs, events, schemas and migrations, config keys, error codes, and whether every consumer still works.",
+                          max: 4, needs: ["diff", "full_files", "history"],
+                          doNotComment: ["style, naming and formatting", "internal code no other component or system uses",
+                                         "breaks that the project's constraints explicitly allow (a new version of a versioned API), when no consumer in the repository breaks"], body: """
+                          A contract is anything another component, service, client or stored data relies on. Find each one the change adds, changes or removes, then find who relies on it.
+
+                          1. List the contracts in the diff: function and type signatures that are public or used across modules, HTTP and RPC endpoints and their request and response shapes, DTOs and serialized formats, events and messages, database schemas and migrations, config keys and environment variables, CLI flags, error types and codes, feature flags.
+                          2. For each changed one, `grep` for its consumers in the repository (callers, implementations, serializers, tests, other services' clients). Name them. A consumer in another repository: read it with your MCP tools if you can, else report a context gap naming the contract.
+                          3. Then ask, with evidence:
+                             - Does any consumer break: a removed or renamed field, a new required field, a changed type, unit, default, order or nullability?
+                             - Does stored data still read: old rows, cached and queued messages, persisted files? Does the migration run on a big table, and can it roll back?
+                             - Does behaviour change behind an unchanged signature: a new error thrown, a different meaning of null or empty, a side effect, a change in idempotency or ordering?
+                             - Is a deploy order needed (server before client, migration before code), and does the code stay safe when the order is wrong?
+                             - Is the contract change versioned or documented where the project wants it?
+
+                          Every finding names the contract, the consumer that breaks and how. A contract change with no consumer at risk is not a finding.
+                          """),
+        "architecture": role("architecture", "Review where the change sits in the system: boundaries and layers, dependency direction, responsibilities, coupling, and fit with the existing design.",
+                             max: 3, needs: ["diff", "full_files", "history"],
+                             doNotComment: ["style, naming and formatting", "taste: a different design that is not clearly better for this codebase",
+                                            "rewrites out of the change's scope"], body: """
+                             Review the design of the change as the owner of the system's structure. Start from the brief's touched components, then open the code around them: how do neighbours solve the same problem?
+
+                             - Boundaries: does logic land in the wrong layer or module (business rules in a controller or a view, SQL or HTTP in the domain, UI state in a service)?
+                             - Dependency direction: does a low-level module now import a high-level one, or does a cycle appear? Does a module reach into another's internals instead of its public interface?
+                             - Responsibility: does one unit now do two jobs, or does the change spread one concept over many places (shotgun surgery)?
+                             - Duplication of a concept: does it build a second way to do what the codebase already does (a second HTTP client, retry loop, config reader, mapper)? Name the existing one.
+                             - State and lifetime: new global or shared mutable state, singletons, caches without an owner or invalidation.
+                             - Failure design: where do errors go, which component decides, does a failure in one part now take down another?
+                             - Fit: does it follow the patterns of project-rules.md and the knowledge notes? A break from them needs a reason the code or the rules give.
+
+                             For each finding say what the design makes hard or risky next (a change that will need touching N places, a cycle that blocks a split, a test that can't be written) and name the place in the codebase that shows the better way. When the design is doubtful but you can't show harm, submit it with `kind: "question"` to the author instead of a claim.
+                             """),
+        "domain": role("domain", "Review a change against the domain: invariants, business rules and state transitions of the touched components.",
                        max: 3, needs: ["diff", "full_files", "wi"],
-                       doNotComment: ["style and naming", "rules the context pack doesn't state or show in code"], body: """
+                       doNotComment: ["style and naming", "rules the context pack doesn't state or show in code",
+                                      "contracts and layering (the contracts and architecture roles own them)"], body: """
                        Check the change as someone who owns the business rules of these components.
 
                        - Which invariants does each touched aggregate, entity or service keep? Can the new code break one (an order with no lines, a negative balance, a state reached from the wrong state)?
                        - Do state changes follow the allowed transitions? Look for a new path that skips a check.
-                       - Does the change move a rule into the wrong layer (domain logic in a controller, infrastructure in the domain)?
-                       - Do the names in code still match the words of the work item and the knowledge notes?
-                       - Does a change to a public contract (DTO, event, API) stay backward-compatible when the project's constraints ask for it?
+                       - Does the code use a domain term with a different meaning than the work item or the knowledge notes, so that a rule gets applied to the wrong thing?
 
                        Name the rule you rely on and where it is written (a knowledge note, the work item, the code). If you can't find the rule, report a context gap instead of guessing.
                        """),
@@ -137,7 +172,7 @@ public enum ReviewBuiltIns {
     ]
 
     /// Ids in the order a new layer lists them.
-    public static let roleIDs = ["domain", "requirements", "tests", "bug-hunter", "upgrade-risk", "security"]
+    public static let roleIDs = ["contracts", "architecture", "domain", "requirements", "tests", "bug-hunter", "upgrade-risk", "security"]
     public static let scenarioIDs = ["feature", "bugfix", "dependency-upgrade"]
 
     public static var roles: [ReviewRole] {

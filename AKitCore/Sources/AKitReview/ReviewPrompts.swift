@@ -3,7 +3,7 @@ import Foundation
 /// The texts of the passes. The system text is the same for the brief and every role, so
 /// the session keeps one prompt cache (R14).
 public enum ReviewPrompts {
-    public static let version = 2
+    public static let version = 3
 
     static func system(spec: ReviewRunSpec, hasWorktree: Bool) -> String {
         let tools = spec.access.inPasses
@@ -27,7 +27,29 @@ public enum ReviewPrompts {
 
         \(hasWorktree ? "Your working folder is the repository at the reviewed commit. The context pack is in the run folder: read `../context/README.md` first." : "There is no checkout: your working folder is the run folder; read `context/README.md` first. Only the diff is available.")
 
+        Focus, in this order:
+        1. Contracts: what other code, services, clients and stored data rely on (public APIs, DTOs, events, schemas and \
+        migrations, config keys, error codes) and whether every consumer still works.
+        2. Architecture: boundaries and layers, dependency direction, responsibilities, duplicated concepts, fit with the \
+        codebase's existing design.
+        3. Behaviour: defects a user or an operator will hit, with the input that triggers them.
+        Spend your effort there. Be critical: hunt as if the change hides a serious problem, where it would hurt most. But \
+        report only what the code proves; finding nothing after a real search is a valid result, and a role's limit is a \
+        maximum, not a quota.
+
+        Never comment on (a linter, the compiler, CI or the author's taste settles these, and they make reviews noise):
+        - formatting, whitespace, import order, brace style: style a formatter or linter settles. A compile, type or test \
+        break in other code caused by this change is a contract finding, not noise;
+        - naming taste, typos in comments, comment wording, missing doc comments on internal code;
+        - the merge request itself: its title, description, labels, commit messages, branch name, size or how it is split;
+        - generic advice without a concrete consequence in this change ("consider adding logging", "could be more readable", \
+        "add error handling" with no failing case);
+        - praise, summaries of the change, or restating what the code does.
+
         Rules:
+        - Every finding states its consequence: what breaks, for whom, and when. If you can't name one, drop the finding. \
+        No hedging ("you might want to consider"): state the problem, or ask with `kind: "question"` when the code can't settle it. \
+        A question names a concrete risk; at most one per role.
         - Precision over recall. Most AI review comments are noise; a finding must be worth a busy reviewer's minute. Fewer, \
         stronger findings are better than many weak ones. An empty list is a good answer when nothing is wrong.
         - Every finding names a file and a line of the change, and quotes the code it relies on in `evidence`, copied exactly \
@@ -39,8 +61,10 @@ public enum ReviewPrompts {
         `akit_report_context_gap` instead of guessing.
         - Don't repeat what a person already raised in `threads.md`, open or resolved.
         - Severity: critical = data loss, security breach or outage; high = a real defect users will hit; medium = a defect \
-        in a rarer case or a clear risk; low = minor; nit = taste. Confidence = how sure you are that the finding is real \
-        and correct (0–1); below 0.6 means you'd ask rather than claim.
+        in a rarer case or a clear risk; low = minor; nit = taste. A broken consumer of a contract (another module, service, \
+        client or stored data) is high, or critical when data is lost. A design flaw that will force wrong or duplicated \
+        changes soon is medium. Confidence = how sure you are that the finding is real and correct (0–1); below 0.8, ask \
+        with `kind: "question"` rather than claim.
         - Scenario: \(spec.scenario.value). \(spec.checks.isEmpty ? "" : "Its checks: " + spec.checks.joined(separator: " "))
         """
     }
@@ -54,7 +78,9 @@ public enum ReviewPrompts {
 
         Then answer with a short brief (at most 300 words) in this shape:
         - Intent: what the change is for, in one or two sentences.
-        - Touched components: the parts of the system it changes.
+        - Touched components: the parts of the system it changes, and the boundaries between them it crosses.
+        - Contracts touched: every public API, DTO, event, schema or migration, config key or error code the diff adds, \
+        changes or removes, with the file. Write "none" if there are none.
         - Already raised: what people said in the threads.
         - Acceptance criteria: the criteria or repro steps the change must meet.
         - First gaps: what is missing to review it well. Report each with akit_report_context_gap too.
@@ -88,11 +114,16 @@ public enum ReviewPrompts {
         """
         Final pass: you are the verifier. Earlier passes proposed the candidate findings below, each with the code around \
         its anchor. Check each one against the code (open the files), the threads and the work items. Be strict: a busy \
-        reviewer will see only what you confirm.
+        reviewer will see only what you confirm. Contract and architecture findings deserve the closest check: confirm \
+        that the consumer or the dependency they name really exists (grep for it). If the consumer is in another repository \
+        and you can't read it, give `question`, not `rejected`.
 
         For every candidate give one verdict:
         - confirmed: the problem is real and the anchor and evidence are right. You may lower or raise severity and confidence.
-        - rejected: wrong, not a problem, already raised by a person in threads.md, or against the role's limits. Say why in the note.
+        - rejected: wrong, not a problem, already raised by a person in threads.md, or against the role's limits. Also reject \
+          what the review never comments on: formatting and style a formatter or linter settles, naming taste, comment \
+          wording, the merge request's title, description or commits, and advice with no concrete consequence. A compile, \
+          type or test break in other code that this change causes is a real finding, not style. Say why in the note.
         - question: it may be real, but the context pack can't settle it: it becomes a question to the author. Say what to ask.
         - merged: the same problem as another candidate; set `into` to that candidate's id.
 
