@@ -20,7 +20,13 @@ struct ConfigTests {
         #expect(security?.doNotComment.contains("attacks without a path from an input to a sink") == true)
         #expect(security?.maxFindings == 3 && security?.minSeverity == .medium)
         let bugfix = ReviewBuiltIns.scenarios.first { $0.id == "bugfix" }
-        #expect(bugfix?.required == ["bug-hunter", "requirements", "tests"] && bugfix?.optional == ["security"])
+        #expect(bugfix?.required == ["bug-hunter", "contracts", "requirements", "tests"] && bugfix?.optional == ["architecture", "security"])
+        let feature = ReviewBuiltIns.scenarios.first { $0.id == "feature" }
+        #expect(feature?.required.prefix(2) == ["contracts", "architecture"], "contracts and architecture come first")
+        for id in ["contracts", "architecture"] {
+            let role = ReviewBuiltIns.roles.first { $0.id == id }
+            #expect(role?.doNotComment.contains { $0.contains("formatting") } == true, "\(id)")
+        }
     }
 
     @Test func rejectsBadRoles() {
@@ -61,7 +67,7 @@ struct ConfigTests {
         let (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: FakeMergeRequest.ref,
                                                        id: "r1")
         #expect(spec.scenario == Sourced("bugfix", .project))
-        #expect(spec.roles.map(\.id) == ["bug-hunter", "requirements", "tests", "orders-integration", "security"])
+        #expect(spec.roles.map(\.id) == ["bug-hunter", "contracts", "requirements", "tests", "orders-integration", "security"])
         #expect(roles.first { $0.id == "security" }?.source == .brain)
         #expect(roles.first { $0.id == "orders-integration" }?.source == .project)
         #expect(spec.roles.first { $0.id == "security" }?.maxFindings == 2)

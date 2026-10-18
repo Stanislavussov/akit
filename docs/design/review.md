@@ -326,7 +326,15 @@ akit-review:
 <the checklist the model reads>
 ```
 
-First roles: `domain`, `requirements`, `tests`, `bug-hunter`, `upgrade-risk`, `security`.
+First roles: `domain`, `requirements`, `tests`, `bug-hunter`, `upgrade-risk`, `security`; added
+2026-10-18 at the user's request ("critical, on architecture and contracts first, not on syntax or
+how the MR is written"): `contracts` (each changed contract and its consumers, found with grep)
+and `architecture` (boundaries, dependency direction, duplicated concepts, fit; doubts go as
+questions). The system text of every pass sets the focus order (contracts → architecture →
+behaviour), a never-comment list (formatting, syntax, naming taste, comment wording, the MR's
+title, description and commits, advice without a consequence, praise) and "every finding
+states its consequence"; the brief lists the contracts touched; the verifier rejects the
+never-comment list (prompts v3).
 `requirements` puts no inline comments: it fills the summary's matrix "acceptance criterion →
 covered by code / by a test / not found / can't check without X".
 
@@ -346,9 +354,9 @@ detect:            # read by the classifier later; ignored in v1
 
 | Scenario | Roles (required / optional) | Checks | Context |
 |---|---|---|---|
-| Feature | domain, requirements / tests | invariants, business rules, AC covered by code and tests | WI with AC |
-| Bugfix | bug-hunter, requirements, tests / security | cause fixed, regression test, nearby paths | repro steps, comments |
-| Dependency upgrade | upgrade-risk, tests / security | breaking changes, transitive upgrades, deprecated APIs, licenses | changelog or migration guide (often a gap) |
+| Feature | contracts, architecture, domain, requirements / tests, security | consumers of changed contracts, boundaries, invariants, business rules, AC covered by code and tests | WI with AC |
+| Bugfix | bug-hunter, contracts, requirements, tests / architecture, security | cause fixed, contract kept, regression test, nearby paths | repro steps, comments |
+| Dependency upgrade | upgrade-risk, tests / contracts, security | breaking changes, transitive upgrades, deprecated APIs, licenses | changelog or migration guide (often a gap) |
 
 ### Project profile (`~/.akit/local/review/projects/<slug>.yaml`)
 

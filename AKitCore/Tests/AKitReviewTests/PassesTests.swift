@@ -5,7 +5,7 @@ import AKitLab
 import Foundation
 import Testing
 
-/// A gathered run of `team/app!7` (bugfix: bug-hunter, requirements, tests) and a fake Pi that
+/// A gathered run of `team/app!7` (bugfix: bug-hunter, contracts, requirements, tests) and a fake Pi that
 /// plays each pass from `~/fake/<pass>.json`; its fetch pass copies `~/fake/calls/` (the MCP
 /// answers) into the run, its send pass appends `~/fake/send-log.jsonl` to the run's send log.
 struct ReviewRunFixture {
@@ -120,12 +120,12 @@ extension ReviewProcessTests {
             #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
 
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-requirements", "role-tests", "verifier"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-contracts", "role-requirements", "role-tests", "verifier"])
             #expect(log.passes.allSatisfy { $0.succeeded })
             #expect(log.brief == "Intent: log less.")
             #expect(log.verifierSession == "fork-0001")
             #expect(log.passes[1].paths == ["context/diff.patch"])
-            #expect(abs(log.credits - 6 * (2.3 + 0.1)) < 1e-9, "the fetch pass counts too")
+            #expect(abs(log.credits - 7 * (2.3 + 0.1)) < 1e-9, "the fetch pass counts too")
 
             // One session for brief and roles; the verifier forks it with its own model.
             for pass in ["brief", "role-bug-hunter", "role-tests"] {
@@ -142,14 +142,24 @@ extension ReviewProcessTests {
             #expect(!brief.contains("--no-mcp"), "the passes read through Pi's MCP servers by default")
             #expect(brief.contains(ReviewPasses.tools + ",codemode,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
-            #expect(brief.filter { $0 == "--skill" }.count == 3)
+            #expect(brief.filter { $0 == "--skill" }.count == 4)
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MAX=3") && env.contains("AKIT_REVIEW_ROLE=tests") && env.contains("AKIT_REVIEW_MODE=review"))
             #expect(env.contains(#"AKIT_REVIEW_MCP={"#))
 
+            // Contracts and architecture first; no comments on formatting or on the merge request itself.
+            func prompt(_ name: String) throws -> String { try String(contentsOf: run.folder.appending(path: "prompts/\(name).md"), encoding: .utf8) }
+            let system = try prompt("system")
+            #expect(system.contains("1. Contracts") && system.contains("2. Architecture") && system.contains("Never comment on"))
+            #expect(system.contains("its title, description, labels, commit messages") && system.contains("formatting, whitespace"))
+            #expect(try prompt("brief").contains("Contracts touched"))
+            #expect(system.contains("is a contract finding, not noise") && system.contains("A broken consumer of a contract"))
+            #expect(try prompt("verifier").contains("the merge request's title") && prompt("verifier").contains("give `question`, not `rejected`"))
+            #expect(try prompt("role-contracts").contains("`grep` for its consumers"))
+
             // The send log records every pass, with the paths read.
             let sends = SendLog.records(env: run.home.env).filter { $0.runID == run.folder.lastPathComponent }
-            #expect(sends.map(\.purpose) == ["review-fetch", "review-brief", "review-role-bug-hunter", "review-role-requirements", "review-role-tests",
+            #expect(sends.map(\.purpose) == ["review-fetch", "review-brief", "review-role-bug-hunter", "review-role-contracts", "review-role-requirements", "review-role-tests",
                                               "review-verifier"])
             #expect(sends[1].paths == ["context/diff.patch"] && sends[1].provider == "fake")
 
@@ -197,7 +207,7 @@ extension ReviewProcessTests {
                 #expect(error.localizedDescription.contains("quota exceeded"))
             }
             let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: run.folder.appending(path: "passes.json")))
-            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-requirements"])
+            #expect(log.passes.map(\.name) == ["fetch", "brief", "role-bug-hunter", "role-contracts", "role-requirements"])
             #expect(log.passes.last?.error?.contains("quota") == true)
             #expect(SendLog.records(env: run.home.env).last?.error?.contains("quota") == true, "a failed pass's cost still counts")
             #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .failed)
