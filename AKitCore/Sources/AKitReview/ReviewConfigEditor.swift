@@ -118,18 +118,38 @@ public enum ReviewConfigEditor {
         let url = file(.profile, id: slug, level: .project(slug), home: home, brain: brain)
         guard let old = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "There is no project profile \(slug).") }
         let text = settingExtraServers(servers, in: old)
-        let parsed = try? ReviewProfile.parse(text, slug: slug)
-        guard let parsed, parsed.mcp.extraServers == servers else {
+        // The edit may change mcp: extra_servers and nothing else.
+        var parsed = try? ReviewProfile.parse(text, slug: slug)
+        let before = try? ReviewProfile.parse(old, slug: slug)
+        parsed?.mcp.extraServers = before?.mcp.extraServers ?? []
+        guard let after = try? ReviewProfile.parse(text, slug: slug), after.mcp.extraServers == servers, let before, parsed == before else {
             throw Failure(message: "AKit couldn't change mcp: in \(url.lastPathComponent) by itself. Edit… the file and set "
                           + "mcp: extra_servers: [\(servers.joined(separator: ", "))].")
         }
         return try plan(.profile, id: slug, text: text, level: .project(slug), home: home, brain: brain)
     }
 
+    /// A line split into its YAML and its trailing ` # comment` (kept as it was).
+    static func comment(_ line: String) -> (code: String, comment: String) {
+        guard var start = line.range(of: " #")?.lowerBound else { return (line, "") }
+        while start > line.startIndex, line[line.index(before: start)] == " " || line[line.index(before: start)] == "\t" {
+            start = line.index(before: start)
+        }
+        return (String(line[..<start]), String(line[start...]))
+    }
+
     /// The YAML text with `mcp: extra_servers: [...]` set: in a block `mcp:` (its own line, or a
     /// one-line `extra_servers:` with a list under it), in a one-line `mcp: { … }`, or a new
-    /// `mcp:` block at the end. Other lines stay byte for byte.
-    static func settingExtraServers(_ servers: [String], in text: String) -> String {
+    /// `mcp:` block at the end. Other lines stay byte for byte; a trailing comment and CRLF
+    /// line ends stay too.
+    static func settingExtraServers(_ servers: [String], in original: String) -> String {
+        let crlf = original.contains("\r\n")
+        let text = crlf ? original.replacingOccurrences(of: "\r\n", with: "\n") : original
+        let result = settingExtraServersLF(servers, in: text)
+        return crlf ? result.replacingOccurrences(of: "\n", with: "\r\n") : result
+    }
+
+    static func settingExtraServersLF(_ servers: [String], in text: String) -> String {
         let list = "[" + servers.joined(separator: ", ") + "]"
         var lines = text.components(separatedBy: "\n")
         guard let start = lines.firstIndex(where: { $0.hasPrefix("mcp:") }) else {
@@ -138,7 +158,7 @@ public enum ReviewConfigEditor {
             if !result.isEmpty, !result.hasSuffix("\n") { result += "\n" }
             return result + "mcp:\n  extra_servers: \(list)\n"
         }
-        let head = lines[start]
+        let (head, headComment) = comment(lines[start])
         let rest = head.dropFirst("mcp:".count).trimmingCharacters(in: .whitespaces)
         if rest.hasPrefix("{") {
             // A flow mapping on one line.
@@ -150,7 +170,7 @@ public enum ReviewConfigEditor {
                 let body = inside.isEmpty ? "extra_servers: \(list)" : inside + ", extra_servers: \(list)"
                 line.replaceSubrange(open...close, with: "{ \(body) }")
             }
-            lines[start] = line
+            lines[start] = line + headComment
             return lines.joined(separator: "\n")
         }
         // A block: the lines after `mcp:` that are indented, blank or comments.
@@ -169,7 +189,7 @@ public enum ReviewConfigEditor {
                   lines[stop].prefix(while: { $0 == " " || $0 == "\t" }).count >= own {
                 stop += 1
             }
-            lines.replaceSubrange(at..<stop, with: [String(lines[at].prefix(own)) + "extra_servers: \(list)"])
+            lines.replaceSubrange(at..<stop, with: [String(lines[at].prefix(own)) + "extra_servers: \(list)" + comment(lines[at]).comment])
         } else {
             lines.insert(indent + "extra_servers: \(list)", at: start + 1)
         }
@@ -179,6 +199,7 @@ public enum ReviewConfigEditor {
     /// Reset to Brain: the project's own copy goes to the Trash; the brain's applies again.
     public static func resetToBrain(_ kind: Kind, id: String, project slug: String, home: URL, brain: URL,
                                     trash: (URL) throws -> URL? = Trash.move) throws {
+        guard kind != .profile else { throw Failure(message: "A project profile has no brain copy to reset to.") }
         let url = file(kind, id: id, level: .project(slug), home: home, brain: brain)
         guard FileManager.default.fileExists(atPath: url.path) else { throw Failure(message: "\(slug) has no own \(kind.rawValue) \(id).") }
         _ = try trash(kind == .role ? url.deletingLastPathComponent() : url)

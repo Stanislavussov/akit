@@ -26,7 +26,32 @@ struct ContextRulesTests {
         #expect(named.adding(extraServers: ["Figma-Dev", "miro"]).extraServers == ["figma-dev", "miro"])
     }
 
+    /// Which server answered: the longest allowed name before `__`, as `akit-review.ts` splits it.
+    @Test func answersBelongToTheirServers() {
+        let access = ReviewMCPAccess(servers: ["gitlab", "gitlab__x"], extraServers: ["figma-dev"])
+        #expect(access.server(ofTool: "mcp__gitlab__x__get_file") == "gitlab__x")
+        #expect(access.server(ofTool: "mcp__gitlab__get_merge_request") == "gitlab")
+        #expect(access.server(ofTool: "mcp__x__gitlab__get_user") == "x")
+        #expect(access.server(ofTool: "mcp__figma_dev__get_file") == "figma_dev")
+        #expect(access.server(ofTool: "read_mcp_resource") == nil)
+        func call(_ tool: String, server: String? = nil) -> ReviewMCPCall {
+            ReviewMCPCall(pass: "fetch", tool: tool, input: "{}", text: [], structured: nil, isError: false, server: server)
+        }
+        #expect(access.answeredByBase(call("mcp__gitlab__get_user")) && access.answeredByBase(call("akit_submit_context")))
+        #expect(!access.answeredByBase(call("mcp__figma_dev__get_me")) && !access.answeredByBase(call("mcp__x__gitlab__get_user")))
+        #expect(access.answeredByBase(call("read_mcp_resource", server: "gitlab")) && !access.answeredByBase(call("read_mcp_resource")))
+        #expect(!access.answeredByBase(call("mcp__gitlab__get_user", server: "figma_dev")), "the server the extension recorded wins")
+
+        let defaults = ReviewMCPAccess(extraServers: ["Figma", "gitlab"])
+        #expect(defaults.server(ofTool: "mcp__Figma__get_file") == "Figma" && defaults.isExtra(server: "Figma"))
+        #expect(defaults.extrasTakenAsBase == ["gitlab"])
+        #expect(defaults.withoutExtras.toolPatterns == defaults.basePatterns && !defaults.basePatterns.contains("mcp__Figma__*"))
+    }
+
     @Test func browserFileAndFetchServersWarn() {
+        for name in ["firecrawl-mcp", "tavily", "exa", "jina-reader", "brightdata", "webfetch", "crawl4ai", "mcp-puppeteer"] {
+            #expect(ReviewMCPAccess.warning(forServer: name) != nil, "\(name)")
+        }
         for name in ["playwright", "chrome-devtools", "filesystem", "fetch", "web-fetch", "my_browser", "fs"] {
             #expect(ReviewMCPAccess.warning(forServer: name) != nil, "\(name)")
         }
@@ -67,6 +92,15 @@ struct ContextRulesTests {
             #expect(error.localizedDescription.contains("not an https link"))
         }
         #expect(throws: ReviewContext.Failure.self) { try ReviewContext.links((1...21).map { "https://h/\($0)" }) }
+        for key in ["sig", "token", "access_token", "key", "apikey", "password", "secret", "code", "signature", "SIG"] {
+            #expect(throws: ReviewContext.Failure.self, "\(key)") { try ReviewContext.links(["https://files.example.com/a.pdf?x=1&\(key)=abc"]) }
+        }
+        do {
+            _ = try ReviewContext.links(["https://files.example.com/a.pdf?sig=abcdef"])
+        } catch {
+            #expect(error.localizedDescription.contains("secret-like parameter (sig=…)") && !error.localizedDescription.contains("abcdef"))
+        }
+        #expect(try ReviewContext.links(["https://www.figma.com/design/AbC/X?node-id=1-2&t=keyless"]).count == 1)
         #expect(try ReviewContext.notes("  \n ") == nil)
         #expect(try ReviewContext.notes("Focus on the export. glpat-abcdefghijklmnopqrst")?.contains("glpat-abcdefghijklmnopqrst") == false)
         #expect(throws: ReviewContext.Failure.self) { try ReviewContext.notes(String(repeating: "x", count: 20_001)) }
@@ -124,6 +158,13 @@ struct ContextRulesTests {
         let flowWith = "mcp: { extra_servers: [miro] }\n"
         #expect(ReviewConfigEditor.settingExtraServers([], in: flowWith) == "mcp: { extra_servers: [] }\n")
 
+        // A trailing comment and CRLF line ends stay.
+        let commented = "gitlab: { host: https://g, project_path: a/b }\r\nmcp:\r\n  extra_servers: [miro]   # context\r\n  servers: [gitlab]\r\n"
+        #expect(ReviewConfigEditor.settingExtraServers(["figma"], in: commented)
+                == "gitlab: { host: https://g, project_path: a/b }\r\nmcp:\r\n  extra_servers: [figma]   # context\r\n  servers: [gitlab]\r\n")
+        let flowComment = "mcp: { servers: [gitlab] }   # see {docs}\n"
+        #expect(ReviewConfigEditor.settingExtraServers(["figma"], in: flowComment) == "mcp: { servers: [gitlab], extra_servers: [figma] }   # see {docs}\n")
+
         let none = "gitlab: { host: https://g, project_path: a/b }\n# mcp:\n#   servers: []\nreview: {}"
         #expect(ReviewConfigEditor.settingExtraServers(["figma"], in: none) == none + "\nmcp:\n  extra_servers: [figma]\n")
         #expect(ReviewConfigEditor.settingExtraServers([], in: none) == none)
@@ -142,6 +183,13 @@ struct ContextRulesTests {
         #expect(throws: ReviewConfigEditor.Failure.self) {
             try ReviewConfigEditor.extraServers(["figma"], profile: "odd", home: home.url, brain: home.url)
         }
+        // A block list at the key's own indent is replaced whole; the parsed profile is otherwise the same.
+        home.write(".akit/local/review/projects/wide.yaml", "gitlab: { host: https://g, project_path: a/b }\nmcp:\n  extra_servers:\n  - miro\n  - gitlab\n")
+        #expect(try ReviewConfigEditor.extraServers(["figma"], profile: "wide", home: home.url, brain: home.url).new.contains("  extra_servers: [figma]\n"))
+        #expect(throws: ReviewConfigEditor.Failure.self) {
+            try ReviewConfigEditor.resetToBrain(.profile, id: "app", project: "app", home: home.url, brain: home.url, trash: { _ in nil })
+        }
+        #expect(FileManager.default.fileExists(atPath: file.path))
     }
 
     @Test func filesAnswersUnderTheirLinks() {
@@ -188,6 +236,16 @@ extension ReviewProcessTests {
         @Test func readsTheLinksAndTheNotes() async throws {
             let (home, _) = try ReviewProcessTests.GatherTests().setUp()
             Self.serveLinks(home)
+            func call(_ name: String, _ call: ReviewMCPCall) {
+                home.write("fake/calls/\(name).json", String(decoding: (try? JSONEncoder().encode(call)) ?? Data(), as: UTF8.self))
+            }
+            // A context server's answer shaped like a GitLab user, read first: never the merge request's data.
+            call("fetch-0500", ReviewMCPCall(pass: "fetch", tool: "mcp__figma__get_me", input: "{}", text: [#"{"id":1,"username":"attacker"}"#],
+                                             structured: nil, isError: false, server: "figma"))
+            // A GitLab thread read after a link was named: still the merge request's, not the link's.
+            call("fetch-2002", ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__mr_discussions", input: FakeMergeRequest.input,
+                                             text: [#"[{"id":"d9","notes":[{"id":19,"body":"Tagged thread","author":{"username":"bob"},"system":false}]}]"#],
+                                             structured: nil, isError: false, link: Self.wiki, server: "gitlab"))
             var choices = ReviewRunFixture.choices
             choices.notes = "The export moves to a queue. Focus on retries; CSV is decided. token glpat-abcdefghijklmnopqrst"
             choices.links = [Self.wiki, Self.figma, Self.confluence, Self.nowhere]
@@ -208,6 +266,9 @@ extension ReviewProcessTests {
             #expect(result.gaps.contains { $0.needed == "The link \(Self.nowhere)" })
             #expect(!result.gaps.contains { $0.needed == "The link \(Self.wiki)" || $0.needed == "The link \(Self.figma)" })
             #expect(result.snapshot.mergeRequest.iid == 7, "the merge request is read as before")
+            #expect(result.snapshot.user == "me", "a context server's answer is never the signed-in user")
+            #expect(result.snapshot.discussions.contains { $0.id == "d9" } && !links.contains("Tagged thread"))
+            #expect(result.spec.linksUnread == [Self.confluence, Self.nowhere])
 
             // The fetch pass: told about the links, given the context servers' tools.
             let args = try String(contentsOf: home.url.appending(path: "fake/args-fetch.txt"), encoding: .utf8).split(separator: "\n").map(String.init)

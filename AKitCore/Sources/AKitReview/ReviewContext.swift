@@ -14,6 +14,8 @@ public enum ReviewContext {
     public static let maxLinks = 20
     static let maxLinkCharacters = 40_000
     static let maxLinksCharacters = 150_000
+    /// Query parameters that carry a credential: a link with one is refused.
+    public static let secretQueryKeys = ["sig", "token", "access_token", "key", "apikey", "api_key", "password", "secret", "code", "signature"]
 
     /// The notes as a run keeps them: trimmed, secrets masked; nil when there are none.
     public static func notes(_ text: String) throws -> String? {
@@ -41,6 +43,11 @@ public enum ReviewContext {
             }
             guard url.user() == nil, url.password() == nil else {
                 throw Failure(message: "\(SecretFilter.masked(text)) carries a user name or password: give the link without it.")
+            }
+            let keys = (URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []).map { $0.name.lowercased() }
+            if let key = keys.first(where: secretQueryKeys.contains) {
+                throw Failure(message: "The link to \(host) carries a secret-like parameter (\(key)=…): give the link without it, "
+                              + "a review sends what it reads to the model.")
             }
             if !result.contains(text) { result.append(text) }
         }
@@ -74,9 +81,12 @@ public enum ReviewContext {
     /// Files each saved answer under its link: the one the pass named with `akit_reading_link`
     /// before the call, or the one the call's arguments carry word for word. The text is the
     /// server's answer, never the model's account of it.
-    static func linkResults(_ links: [String], calls: [ReviewMCPCall], blocked: [Blocked]) -> [LinkResult] {
+    /// `isMergeRequest`: an answer of the merge request (a GitLab thread read after a link was
+    /// named) stays out of the link's text; it is the merge request's data.
+    static func linkResults(_ links: [String], calls: [ReviewMCPCall], blocked: [Blocked],
+                            isMergeRequest: (ReviewMCPCall) -> Bool = { _ in false }) -> [LinkResult] {
         links.map { url in
-            let mine = calls.filter { $0.tool != "akit_submit_context" && ($0.link == url || $0.input.contains(url)) }
+            let mine = calls.filter { $0.tool != "akit_submit_context" && ($0.link == url || $0.input.contains(url)) && !isMergeRequest($0) }
             let answered = mine.filter { !$0.isError }
             var text = ""
             for call in answered {

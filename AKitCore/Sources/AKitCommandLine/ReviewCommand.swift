@@ -368,6 +368,10 @@ extension AKitCLI {
                 if !names.isEmpty, used { lines.append("    \(kind == .read ? "read" : "write"): \(names.joined(separator: ", "))") }
             }
         }
+        for server in access.extrasTakenAsBase {
+            lines.append("  ! extra server \(server) is one of the run's own servers (GitLab or the tracker): it keeps that role, "
+                         + "and Send Drafts may write with it.")
+        }
         for error in report.errors { lines.append("  error: \(error)") }
         if !report.servers.contains(where: { $0.enabled && $0.state == "connected" && $0.count(.read) > 0 }) {
             lines.append("No connected server has a tool review may read with: a review can't start.")
@@ -448,7 +452,7 @@ extension AKitCLI {
                      + "\(result.contextCharacters / 1000)k characters."]
         if spec.notes != nil { lines.append("Your notes: context/notes.md.") }
         if let links = spec.links, !links.isEmpty {
-            let unread = result.gaps.filter { $0.needed.hasPrefix("The link ") }.count
+            let unread = spec.linksUnread?.count ?? 0
             lines.append("Links: \(links.count - unread) of \(links.count) read (context/links.md).")
         }
         let extra = (spec.mcpServers ?? []).filter(\.readOnly).map { "\($0.name) [\($0.source.rawValue)]" }

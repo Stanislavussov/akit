@@ -32,6 +32,9 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
     public static let riskyServerWords = ["browser", "playwright", "puppeteer", "selenium", "chrome", "chromium", "firefox", "safari",
                                           "file", "files", "filesystem", "fs", "fetch", "http", "web", "curl", "shell", "terminal",
                                           "exec", "command", "desktop", "computer"]
+    /// Parts that mark such a server anywhere in its name (`webfetch`, `firecrawl-mcp`, `exa`).
+    public static let riskyServerParts = ["fetch", "web", "crawl", "browser", "puppeteer", "playwright", "firecrawl", "tavily", "exa", "jina",
+                                          "brightdata", "filesystem"]
 
     public init(servers: [String] = [], extraServers: [String] = [], read: [String] = [], write: [String] = ReviewMCPAccess.defaultWrite,
                 inPasses: Bool = true) {
@@ -94,11 +97,44 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
 
     /// `mcp__<server>__*` for `--tools`: Pi then keeps only these servers' tools.
     public var toolPatterns: [String] {
-        let base = servers.isEmpty ? Self.defaultServerWords.map { "mcp__*\($0)*__*" } + ["mcp__ado__*"]
-            : servers.map { "mcp__\(ReviewMCPPolicy.normalized($0))__*" }
         let extra = extraServers.filter { !isBase(server: $0) }.map { "mcp__\(ReviewMCPPolicy.normalized($0))__*" }
         var seen = Set<String>()
-        return (base + extra).filter { seen.insert($0).inserted }
+        return (basePatterns + extra).filter { seen.insert($0).inserted }
+    }
+
+    /// The run's own servers only (GitLab and the tracker): the send pass gets nothing else.
+    public var basePatterns: [String] {
+        servers.isEmpty ? Self.defaultServerWords.map { "mcp__*\($0)*__*" } + ["mcp__ado__*"]
+            : servers.map { "mcp__\(ReviewMCPPolicy.normalized($0))__*" }
+    }
+
+    /// Whether a saved answer came from one of the run's own servers (or is the fetch pass's
+    /// `akit_submit_context`): only those make the merge request's data.
+    public func answeredByBase(_ call: ReviewMCPCall) -> Bool {
+        if call.tool == "akit_submit_context" { return true }
+        guard let server = call.server ?? server(ofTool: call.tool), !server.isEmpty else { return false }
+        return isBase(server: server)
+    }
+
+    /// The same access without context servers (the send pass).
+    public var withoutExtras: ReviewMCPAccess {
+        var access = self
+        access.extraServers = []
+        return access
+    }
+
+    /// Context servers that `servers` (or the defaults) already allow: they keep their role,
+    /// writes in Send Drafts included, so `config show` and `check` warn about them.
+    public var extrasTakenAsBase: [String] { extraServers.filter { isBase(server: $0) } }
+
+    /// The server of `mcp__<server>__<tool>`: the longest allowed name that fits, as the
+    /// extension splits it, else the part before the first `__`.
+    public func server(ofTool name: String) -> String? {
+        guard name.hasPrefix("mcp__") else { return nil }
+        let rest = String(name.dropFirst(5))
+        let known = (servers + extraServers).map(ReviewMCPPolicy.normalized)
+        if let named = known.filter({ rest.hasPrefix($0 + "__") }).max(by: { $0.count < $1.count }) { return named }
+        return rest.components(separatedBy: "__").first
     }
 
     /// The same access with more context servers (a run's choice on top of the profile's).
@@ -115,8 +151,7 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
     public static func warning(forServer name: String) -> String? {
         let lower = name.lowercased()
         let words = lower.split(whereSeparator: { !$0.isLetter }).map(String.init)
-        guard words.contains(where: riskyServerWords.contains) || ["browser", "filesystem", "playwright", "puppeteer"].contains(where: lower.contains)
-        else { return nil }
+        guard words.contains(where: riskyServerWords.contains) || riskyServerParts.contains(where: lower.contains) else { return nil }
         return "\(name) looks like a browser, file system or web fetch server: it can read far more than your links (local files, any web "
             + "page, your signed-in sessions), and what it reads goes to the model. Tick it only if you trust it with this review."
     }
@@ -184,6 +219,8 @@ public struct ReviewMCPCall: Codable, Sendable, Hashable {
     public var isError: Bool
     /// The link the fetch pass named with `akit_reading_link` before this call; nil otherwise.
     public var link: String? = nil
+    /// The server that answered, as the extension split the tool's name; nil in older runs.
+    public var server: String? = nil
 
     /// The JSON values in the answer: the structured content, and each text block that is JSON
     /// (or holds JSON after a line of text).
@@ -299,6 +336,12 @@ public struct ReviewMCPData: Sendable {
         }
         for index in data.workItems.indices { data.workItems[index].comments = comments[data.workItems[index].id] ?? [] }
         return data
+    }
+
+    /// Whether the data holds anything of a merge request (work items aside): an answer like
+    /// this is the merge request's, never a link's.
+    var hasMergeRequestData: Bool {
+        mergeRequest != nil || !versions.isEmpty || !diffs.isEmpty || !discussions.isEmpty || !drafts.isEmpty || user != nil
     }
 
     /// Whether an input names the merge request's number (`merge_request_iid: "7"`, `iid: 7`, …).

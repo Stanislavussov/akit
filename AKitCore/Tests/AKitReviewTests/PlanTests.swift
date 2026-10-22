@@ -248,6 +248,10 @@ extension ReviewProcessTests {
             #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected) }
             try ReviewWorkflow.decide(run.folder, request: create.id, decision: .approved, edited: "Shorter text.")
             run.home.write("fake/send-log.jsonl", #"{"request":"r1","tool":"mcp__gitlab__create_draft_note","isError":false,"text":"{\"id\": 501, \"note\": \"x\"}"}"# + "\n")
+            // A context server of the run never reaches the send pass.
+            var withFigma = try #require(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json")))
+            withFigma.mcp = withFigma.access.adding(extraServers: ["figma"])
+            try ReviewJSON.write(withFigma, to: run.folder.appending(path: "run.json"))
             report = try await ReviewWorkflow.send(run.folder, env: run.home.env)
             #expect(report.sent == [create.id] && report.failed.isEmpty)
 
@@ -267,6 +271,7 @@ extension ReviewProcessTests {
             #expect(args.contains("builtin:mcp") && args.contains("akit_approved_requests,codemode,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-send-1.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MODE=send"))
+            #expect(!args.contains { $0.contains("figma") } && env.contains(#""extraServers":[]"#), "no context server in the send pass")
 
             plan = try #require(ReviewWorkflow.load(run.folder).plan)
             #expect(plan.requests[0].isSent && plan.requests[0].sent?.draftID == 501)

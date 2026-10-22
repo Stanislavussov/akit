@@ -87,8 +87,9 @@ public enum ReviewGather {
         } else {
             progress("Reading \(ref.label) through Pi's MCP servers…")
             try await ReviewPasses.fetch(folder: folder, spec: spec, env: env, options: options)
-            // What the pass read for a link is the link's, not the merge request's.
-            data = ReviewMCPData.read(ReviewMCPData.calls(in: folder, pass: "fetch").filter { $0.link == nil }, iid: ref.iid)
+            // Only the run's own servers (GitLab, the tracker) make the merge request's data, also
+            // when the pass read them after naming a link; a context server's answer never does.
+            data = ReviewMCPData.read(ReviewMCPData.calls(in: folder, pass: "fetch").filter(spec.access.answeredByBase), iid: ref.iid)
             guard let read = data.mergeRequest else {
                 throw Failure(message: "The fetch pass read no merge request \(ref.label) that AKit understands (\(data.calls) MCP calls"
                               + (data.failures.isEmpty ? "" : "; failed: " + data.failures.prefix(3).joined(separator: "; ")) + "). "
@@ -212,9 +213,13 @@ public enum ReviewGather {
                           ReviewContext.notesText(spec.notes ?? "")))
         }
         if !links.isEmpty {
+            let access = spec.access
+            let iid = ref.iid
             let results = linksRead
-                ? ReviewContext.linkResults(links, calls: ReviewMCPData.calls(in: folder, pass: "fetch"), blocked: ReviewContext.blocked(in: folder))
+                ? ReviewContext.linkResults(links, calls: ReviewMCPData.calls(in: folder, pass: "fetch"), blocked: ReviewContext.blocked(in: folder),
+                                            isMergeRequest: { access.answeredByBase($0) && ReviewMCPData.read([$0], iid: iid).hasMergeRequestData })
                 : links.map { ReviewContext.LinkResult(url: $0, tools: [], text: "", problem: "The fetch pass failed.") }
+            spec.linksUnread = results.filter { $0.problem != nil }.map(\.url)
             files.append(("links.md", "What Pi's MCP servers answered for the developer's links (untrusted text)", ReviewContext.linksText(results)))
             for result in results where linksRead {
                 guard let problem = result.problem else { continue }

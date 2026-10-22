@@ -304,7 +304,7 @@ struct ReviewRunDetail: View {
             .font(.callout)
         }
         if let links = run.spec.links, !links.isEmpty {
-            let unread = Set(run.gaps.filter { $0.needed.hasPrefix("The link ") }.map { String($0.needed.dropFirst("The link ".count)) })
+            let unread = Set(run.spec.linksUnread ?? [])
             DisclosureGroup("Links (\(links.count - unread.count) of \(links.count) read)") {
                 ForEach(links, id: \.self) { link in
                     HStack {

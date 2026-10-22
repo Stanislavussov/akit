@@ -45,6 +45,8 @@ extension AKitCLITests {
         #expect(shown.out.contains("context server (read only): playwright  [run]  ! a browser, file or web fetch server"))
         #expect(shown.out.contains("Links [run]:\n  https://www.figma.com/design/AbC/Checkout"))
         #expect(shown.out.contains("Notes [run]: 34 characters"), "both notes, joined: \(shown.out)")
+        let base = await review(["config", "show", "--project", "app", "--brain", none, "--extra-server", "gitlab-corp"])
+        #expect(base.out.contains("! extra server gitlab-corp is one of the run's own servers"), "\(base.out)")
         let http = await review(["config", "show", "--project", "app", "--brain", none, "--link", "http://intranet/spec"])
         #expect(http.code != 0 && http.err.contains("not an https link"))
         #expect(await review(["config", "show", "--brain", none, "--note-file", "missing.md"]).err.contains("Can't read the notes file"))

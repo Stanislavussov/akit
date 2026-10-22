@@ -102,6 +102,8 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var notes: String?
     /// Links the fetch pass reads; what it got is in `context/links.md`.
     public var links: [String]?
+    /// Filled by Gather: the links the fetch pass couldn't read.
+    public var linksUnread: [String]?
     /// The servers of `mcp` with the level that chose each; nil in runs made before 2026-10-22.
     public var mcpServers: [ReviewServerChoice]?
 
@@ -249,6 +251,10 @@ public enum ReviewResolver {
         for server in (spec.mcpServers ?? []).filter(\.readOnly) {
             lines.append("  context server (read only): \(server.name)  [\(server.source.rawValue)]"
                          + (ReviewMCPAccess.warning(forServer: server.name) == nil ? "" : "  ! a browser, file or web fetch server"))
+        }
+        for server in access.extrasTakenAsBase {
+            lines.append("  ! extra server \(server) is one of the run's own servers (GitLab or the tracker): it keeps that role, "
+                         + "and Send Drafts may write with it")
         }
         lines += ["  read: get_/list_/search_/… tools, tools marked read-only" + (access.read.isEmpty ? "" : ", " + access.read.joined(separator: ", ")),
                   "  write (Send Drafts only): " + access.write.joined(separator: ", "),

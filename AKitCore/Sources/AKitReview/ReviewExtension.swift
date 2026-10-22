@@ -9,7 +9,8 @@ import Foundation
 /// `AKIT_REVIEW_LINKS` (the run's links as JSON).
 ///
 /// Context servers (`extraServers`) are allowed like the run's own servers but only read: their
-/// tools never write, in any pass. In the fetch pass `akit_reading_link` names the link the next
+/// tools never write, and the send pass doesn't get them at all. Every saved answer names its
+/// server; every blocked call goes to `<run>/mcp/blocked.jsonl`. In the fetch pass `akit_reading_link` names the link the next
 /// calls read; their saved answers carry it, and calls blocked meanwhile go to
 /// `<run>/mcp/blocked.jsonl`, so AKit can say per link what was read and what wasn't.
 ///
@@ -21,7 +22,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 5
+    public static let version = 6
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -35,7 +36,7 @@ public enum ReviewExtension {
     }
 
     public static let source = #"""
-    // akit-review.ts v5: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v6: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -47,8 +48,8 @@ public enum ReviewExtension {
     const roots = (process.env.AKIT_REVIEW_ROOTS ?? "").split(":").filter((r) => r.length > 0).map((r) => real(r));
     const access = parse(process.env.AKIT_REVIEW_MCP ?? "{}") ?? {};
     const servers: string[] = (access.servers ?? []).map(norm);
-    // Context servers: allowed, read only in every pass.
-    const extras: string[] = (access.extraServers ?? []).map(norm);
+    // Context servers: read only in the fetch pass and the review passes; never in the send pass.
+    const extras: string[] = mode === "send" ? [] : (access.extraServers ?? []).map(norm);
     const links: string[] = parse(process.env.AKIT_REVIEW_LINKS ?? "[]") ?? [];
     let currentLink: string | null = null;
     const readPatterns: string[] = access.read ?? [];
@@ -235,16 +236,26 @@ public enum ReviewExtension {
       fs.appendFileSync(target, line + "\n");
     }
 
-    function save(tool: string, input: any, text: string[], structured: any, isError: boolean) {
-      saved += 1;
-      write(`mcp/calls/${pass}-${Date.now()}-${String(saved).padStart(4, "0")}.json`, JSON.stringify({ pass, tool,
-        input: JSON.stringify(input ?? {}), text, structured: structured === undefined ? null : JSON.stringify(structured), isError,
-        link: tool.startsWith("mcp__") ? currentLink : null }));
+    // Every saved answer names its server (the longest allowed name, as in split), so AKit takes
+    // only the run's own servers' answers as the merge request's data.
+    function serverOf(tool: string, input: any): string | null {
+      if (tool.startsWith("mcp__")) return split(tool)?.server ?? null;
+      if (resourceTools.includes(tool)) return norm(input?.server ?? "");
+      return null;
     }
 
-    // A blocked MCP call: while the fetch pass reads a link, AKit says why the link wasn't read.
+    function save(tool: string, input: any, text: string[], structured: any, isError: boolean) {
+      saved += 1;
+      const server = serverOf(tool, input);
+      write(`mcp/calls/${pass}-${Date.now()}-${String(saved).padStart(4, "0")}.json`, JSON.stringify({ pass, tool,
+        input: JSON.stringify(input ?? {}), text, structured: structured === undefined ? null : JSON.stringify(structured), isError,
+        server, link: server !== null ? currentLink : null }));
+    }
+
+    // Every blocked call goes to mcp/blocked.jsonl: while the fetch pass reads a link, AKit says
+    // why the link wasn't read.
     function refuse(name: string, reason: string): { block: true; reason: string } {
-      if (mode === "fetch" && name.startsWith("mcp__")) append("mcp/blocked.jsonl", JSON.stringify({ link: currentLink, tool: name, reason }));
+      append("mcp/blocked.jsonl", JSON.stringify({ link: currentLink, tool: name, pass, reason }));
       return { block: true, reason };
     }
 
@@ -417,49 +428,49 @@ public enum ReviewExtension {
         if (ownTools.includes(name)) return undefined;
         if (name === "codemode" || name === "tool_search") {
           // Every tool a script or a search reaches comes back through this check.
-          return mcpAllowed ? undefined : { block: true, reason: "AKit review gives this pass no MCP tools." };
+          return mcpAllowed ? undefined : refuse(name, "AKit review gives this pass no MCP tools.");
         }
         if (resourceTools.includes(name)) {
-          if (!mcpAllowed) return { block: true, reason: "AKit review gives this pass no MCP tools." };
+          if (!mcpAllowed) return refuse(name, "AKit review gives this pass no MCP tools.");
           const server = norm(event.input?.server ?? "");
-          if (!serverAllowed(server)) return { block: true, reason: "That server is not one this review may use." };
+          if (!serverAllowed(server)) return refuse(name, "That server is not one this review may use.");
           return undefined;
         }
         const hints = (pi.getAllTools?.() ?? []).find((tool: any) => tool.name === name)?.annotations;
         const kind = mcpKind(name, hints);
         if (kind !== null) {
-          if (!mcpAllowed) return { block: true, reason: "AKit review gives this pass no MCP tools." };
+          if (!mcpAllowed) return refuse(name, "AKit review gives this pass no MCP tools.");
           if (kind === "blocked") {
             return refuse(name, `AKit review doesn't let ${name} run: it isn't a reading tool of the project's servers, `
               + "and review never publishes, approves, merges or resolves.");
           }
           if (kind === "write") {
-            if (mode !== "send") return { block: true, reason: "Only Send Drafts writes, and only what the user approved." };
+            if (mode !== "send") return refuse(name, "Only Send Drafts writes, and only what the user approved.");
             const { request, why } = approvedMatch(name, event.input);
             if (request === null) {
-              return { block: true, reason: `This call carries none of the approved requests exactly (${why}). Pass the project, the `
+              return refuse(name, `This call carries none of the approved requests exactly (${why}). Pass the project, the `
                 + "merge request number, and each request's body, draft_id, discussion_id and position from akit_approved_requests "
-                + "unchanged, and no other argument." };
+                + "unchanged, and no other argument.");
             }
             claimed.add(request.id);
             pending.set(String(event.toolCallId), request.id);
           }
           return undefined;
         }
-        if (mode !== "review") return { block: true, reason: `${name}: this pass works only through MCP tools.` };
-        if (!readTools.includes(name)) return { block: true, reason: `AKit review allows only reading tools; ${name} is not one.` };
+        if (mode !== "review") return refuse(name, `${name}: this pass works only through MCP tools.`);
+        if (!readTools.includes(name)) return refuse(name, `AKit review allows only reading tools; ${name} is not one.`);
         const given = typeof event.input?.path === "string" && event.input.path.length > 0 ? event.input.path : ".";
         // Pi expands a leading ~ and @ and reads file:// addresses itself: never let one through,
         // or the check below would see a different path than Pi reads.
-        if (/^\s*(~|@|file:)/i.test(given)) return { block: true, reason: `AKit review takes plain paths only; ${given} is not one.` };
+        if (/^\s*(~|@|file:)/i.test(given)) return refuse(name, `AKit review takes plain paths only; ${given} is not one.`);
         const target = real(path.resolve(ctx?.cwd ?? process.cwd(), given));
-        if (!inside(target)) return { block: true, reason: `AKit review reads only the worktree and the run's context pack; ${given} is outside.` };
-        if (blocked(target)) return { block: true, reason: `${given} usually holds secrets; AKit review never reads it.` };
+        if (!inside(target)) return refuse(name, `AKit review reads only the worktree and the run's context pack; ${given} is outside.`);
+        if (blocked(target)) return refuse(name, `${given} usually holds secrets; AKit review never reads it.`);
         for (const key of ["glob", "pattern"]) {
           const value = event.input?.[key];
           if (name !== "grep" || key === "glob") {
             if (typeof value === "string" && (blocked(value) || value.includes("..") || /^\s*(\/|~|@|file:)/i.test(value))) {
-              return { block: true, reason: "That pattern leaves the folder or names files that usually hold secrets." };
+              return refuse(name, "That pattern leaves the folder or names files that usually hold secrets.");
             }
           }
         }
