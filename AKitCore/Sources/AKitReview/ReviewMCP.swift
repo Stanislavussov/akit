@@ -10,6 +10,10 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
     /// or Azure DevOps (`gitlab…`, `…azure…`, `…devops…`, `ado`), never a browser, a file system or
     /// a web fetcher by default.
     public var servers: [String]
+    /// Context servers on top of `servers` (a profile's `mcp: extra_servers:` and a run's choice):
+    /// Figma, Confluence, a wiki. Read only in every pass: their tools never write, not even in
+    /// the send pass. A server that `servers` (or the defaults) already allow keeps its own role.
+    public var extraServers: [String]
     /// Tool name patterns (`*` = any characters) that only read, on top of the tools a server
     /// marks `readOnlyHint` and the tools named by a reading verb (`get_…`, `wit_get_…`).
     public var read: [String]
@@ -22,36 +26,99 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
     public static let defaultWrite = ["*draft_note*", "*draft*note*"]
     /// Server names a run uses when the profile names none.
     public static let defaultServerWords = ["gitlab", "azure", "devops"]
+    /// Words in a server's name that say it drives a browser, reads files or fetches any web
+    /// address: such a server reaches far more than one link, so it is never offered by
+    /// default, and ticking one shows a warning.
+    public static let riskyServerWords = ["browser", "playwright", "puppeteer", "selenium", "chrome", "chromium", "firefox", "safari",
+                                          "file", "files", "filesystem", "fs", "fetch", "http", "web", "curl", "shell", "terminal",
+                                          "exec", "command", "desktop", "computer"]
 
-    public init(servers: [String] = [], read: [String] = [], write: [String] = ReviewMCPAccess.defaultWrite, inPasses: Bool = true) {
+    public init(servers: [String] = [], extraServers: [String] = [], read: [String] = [], write: [String] = ReviewMCPAccess.defaultWrite,
+                inPasses: Bool = true) {
         self.servers = servers
+        self.extraServers = extraServers
         self.read = read
         self.write = write
         self.inPasses = inPasses
     }
 
+    enum CodingKeys: String, CodingKey {
+        case servers, extraServers, read, write, inPasses
+    }
+
+    /// Runs made before extra servers (2026-10-22) have none.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        servers = try container.decode([String].self, forKey: .servers)
+        extraServers = try container.decodeIfPresent([String].self, forKey: .extraServers) ?? []
+        read = try container.decode([String].self, forKey: .read)
+        write = try container.decode([String].self, forKey: .write)
+        inPasses = try container.decode(Bool.self, forKey: .inPasses)
+    }
+
+    /// Whether a name is a Pi server name AKit can put into `--tools` and a profile.
+    public static func isServerName(_ name: String) -> Bool {
+        name.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil
+    }
+
     static func parse(_ map: [String: Any]?, where place: String) throws -> ReviewMCPAccess {
         guard let map else { return ReviewMCPAccess() }
         let servers = ReviewYAML.strings(map["servers"])
-        for server in servers where server.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) == nil {
+        let extra = ReviewYAML.strings(map["extra_servers"])
+        for server in servers + extra where !isServerName(server) {
             throw ReviewRole.Failure(message: "\(place): mcp server \(server) is not a Pi server name (letters, digits, _ and -).")
         }
         let write = map["write"] == nil ? defaultWrite : ReviewYAML.strings(map["write"])
-        return ReviewMCPAccess(servers: servers, read: ReviewYAML.strings(map["read"]), write: write,
+        return ReviewMCPAccess(servers: servers, extraServers: extra, read: ReviewYAML.strings(map["read"]), write: write,
                                inPasses: map["in_passes"] as? Bool ?? true)
     }
 
-    /// Whether a run may use this Pi server at all.
-    public func allows(server: String) -> Bool {
+    /// Whether the server is one of the run's own servers (named, or the defaults): GitLab and
+    /// the tracker, the only ones Send Drafts may write with.
+    public func isBase(server: String) -> Bool {
         let name = ReviewMCPPolicy.normalized(server).lowercased()
         if !servers.isEmpty { return servers.map { ReviewMCPPolicy.normalized($0).lowercased() }.contains(name) }
         return Self.defaultServerWords.contains { name.contains($0) } || name == "ado"
     }
 
+    /// Whether the server is only a context server of this run: read only.
+    public func isExtra(server: String) -> Bool {
+        let name = ReviewMCPPolicy.normalized(server).lowercased()
+        return !isBase(server: server) && extraServers.map { ReviewMCPPolicy.normalized($0).lowercased() }.contains(name)
+    }
+
+    /// Whether a run may use this Pi server at all.
+    public func allows(server: String) -> Bool {
+        isBase(server: server) || isExtra(server: server)
+    }
+
     /// `mcp__<server>__*` for `--tools`: Pi then keeps only these servers' tools.
     public var toolPatterns: [String] {
-        servers.isEmpty ? Self.defaultServerWords.map { "mcp__*\($0)*__*" } + ["mcp__ado__*"]
+        let base = servers.isEmpty ? Self.defaultServerWords.map { "mcp__*\($0)*__*" } + ["mcp__ado__*"]
             : servers.map { "mcp__\(ReviewMCPPolicy.normalized($0))__*" }
+        let extra = extraServers.filter { !isBase(server: $0) }.map { "mcp__\(ReviewMCPPolicy.normalized($0))__*" }
+        var seen = Set<String>()
+        return (base + extra).filter { seen.insert($0).inserted }
+    }
+
+    /// The same access with more context servers (a run's choice on top of the profile's).
+    public func adding(extraServers more: [String]) -> ReviewMCPAccess {
+        var access = self
+        for server in more where !access.extraServers.contains(where: { $0.lowercased() == server.lowercased() }) {
+            access.extraServers.append(server)
+        }
+        return access
+    }
+
+    /// Why a server needs a second thought before a review uses it: it looks like a browser, a
+    /// file system or a web fetcher. nil for the others.
+    public static func warning(forServer name: String) -> String? {
+        let lower = name.lowercased()
+        let words = lower.split(whereSeparator: { !$0.isLetter }).map(String.init)
+        guard words.contains(where: riskyServerWords.contains) || ["browser", "filesystem", "playwright", "puppeteer"].contains(where: lower.contains)
+        else { return nil }
+        return "\(name) looks like a browser, file system or web fetch server: it can read far more than your links (local files, any web "
+            + "page, your signed-in sessions), and what it reads goes to the model. Tick it only if you trust it with this review."
     }
 }
 
@@ -97,8 +164,8 @@ public enum ReviewMCPPolicy {
         let lead = lead(tool)
         let writes = lead.contains(where: writeVerbs.contains)
         // A write pattern catches only tools whose verb writes: `*draft_note*` takes
-        // `create_draft_note`, not `list_draft_notes`.
-        if writes { return access.write.contains(where: { matches($0, tool) }) ? .write : .blocked }
+        // `create_draft_note`, not `list_draft_notes`. A context server never writes.
+        if writes { return !access.isExtra(server: server) && access.write.contains(where: { matches($0, tool) }) ? .write : .blocked }
         if let first = lead.first, readVerbs.contains(first) { return .read }
         if lead.count == 2, readVerbs.contains(lead[1]) { return .read }
         if readOnlyHint || (access.read + knownReads).contains(where: { matches($0, tool) }) { return .read }
@@ -115,6 +182,8 @@ public struct ReviewMCPCall: Codable, Sendable, Hashable {
     public var text: [String]
     public var structured: String?
     public var isError: Bool
+    /// The link the fetch pass named with `akit_reading_link` before this call; nil otherwise.
+    public var link: String? = nil
 
     /// The JSON values in the answer: the structured content, and each text block that is JSON
     /// (or holds JSON after a line of text).

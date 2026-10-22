@@ -47,6 +47,9 @@ struct ReviewRunFixture {
     if [ "$AKIT_REVIEW_MODE" = "fetch" ] && [ -d "$HOME/fake/calls" ]; then
       mkdir -p "$AKIT_REVIEW_RUN/mcp/calls"; cp "$HOME"/fake/calls/*.json "$AKIT_REVIEW_RUN/mcp/calls/"
     fi
+    if [ "$AKIT_REVIEW_MODE" = "fetch" ] && [ -f "$HOME/fake/blocked.jsonl" ]; then
+      mkdir -p "$AKIT_REVIEW_RUN/mcp"; cp "$HOME/fake/blocked.jsonl" "$AKIT_REVIEW_RUN/mcp/blocked.jsonl"
+    fi
     if [ "$AKIT_REVIEW_MODE" = "send" ]; then
       cp "$AKIT_REVIEW_RUN/send/approved.json" "$HOME/fake/approved-$AKIT_REVIEW_PASS.json"
       [ -f "$HOME/fake/send-log.jsonl" ] && cat "$HOME/fake/send-log.jsonl" >> "$AKIT_REVIEW_RUN/send/log.jsonl"

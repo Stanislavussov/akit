@@ -13,7 +13,8 @@ public enum ReviewConfigEditor {
     }
 
     public enum Kind: String, Sendable, CaseIterable {
-        case role, scenario, defaults
+        /// `profile`: a project profile (`projects/<slug>.yaml`); its id is the slug.
+        case role, scenario, defaults, profile
     }
 
     /// Where an item is saved: the brain layer `review`, or one project.
@@ -52,6 +53,7 @@ public enum ReviewConfigEditor {
         case .role: root.appending(path: "skills/review-\(id)/SKILL.md")
         case .scenario: root.appending(path: "scenarios/\(id).yaml")
         case .defaults: root.appending(path: "review.yaml")
+        case .profile: ReviewPaths(home: home).profile(id)
         }
     }
 
@@ -71,6 +73,9 @@ public enum ReviewConfigEditor {
             guard scenario.id == id else { throw Failure(message: "The id must be \(id).") }
         case .defaults:
             _ = try ReviewSettingsPatch.parse(ReviewYAML.map(text), where: "review.yaml")
+        case .profile:
+            guard level == .project(id) else { throw Failure(message: "A project profile is saved in its own project.") }
+            _ = try ReviewProfile.parse(text, slug: id)
         }
         let url = file(kind, id: id, level: level, home: home, brain: brain)
         let old = try? String(contentsOf: url, encoding: .utf8)
@@ -98,10 +103,77 @@ public enum ReviewConfigEditor {
         let text: String? = switch kind {
         case .role: catalog.roles.first { $0.id == id }?.text
         case .scenario: catalog.scenarios.first { $0.id == id }?.text
-        case .defaults: nil
+        case .defaults, .profile: nil
         }
         guard let text else { throw Failure(message: "There is no \(kind.rawValue) \(id) in the brain to copy.") }
         return try plan(kind, id: id, text: text, level: .project(slug), home: home, brain: brain)
+    }
+
+    /// Review Settings… → Extra servers: the profile's `mcp: extra_servers:` set to `servers`,
+    /// the rest of the file (comments too) as it was. Nothing is written; the save shows its diff.
+    public static func extraServers(_ servers: [String], profile slug: String, home: URL, brain: URL) throws -> Save {
+        for server in servers where !ReviewMCPAccess.isServerName(server) {
+            throw Failure(message: "\(server) is not a Pi MCP server name (letters, digits, _ and -).")
+        }
+        let url = file(.profile, id: slug, level: .project(slug), home: home, brain: brain)
+        guard let old = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "There is no project profile \(slug).") }
+        let text = settingExtraServers(servers, in: old)
+        let parsed = try? ReviewProfile.parse(text, slug: slug)
+        guard let parsed, parsed.mcp.extraServers == servers else {
+            throw Failure(message: "AKit couldn't change mcp: in \(url.lastPathComponent) by itself. Edit… the file and set "
+                          + "mcp: extra_servers: [\(servers.joined(separator: ", "))].")
+        }
+        return try plan(.profile, id: slug, text: text, level: .project(slug), home: home, brain: brain)
+    }
+
+    /// The YAML text with `mcp: extra_servers: [...]` set: in a block `mcp:` (its own line, or a
+    /// one-line `extra_servers:` with a list under it), in a one-line `mcp: { … }`, or a new
+    /// `mcp:` block at the end. Other lines stay byte for byte.
+    static func settingExtraServers(_ servers: [String], in text: String) -> String {
+        let list = "[" + servers.joined(separator: ", ") + "]"
+        var lines = text.components(separatedBy: "\n")
+        guard let start = lines.firstIndex(where: { $0.hasPrefix("mcp:") }) else {
+            guard !servers.isEmpty else { return text }
+            var result = text
+            if !result.isEmpty, !result.hasSuffix("\n") { result += "\n" }
+            return result + "mcp:\n  extra_servers: \(list)\n"
+        }
+        let head = lines[start]
+        let rest = head.dropFirst("mcp:".count).trimmingCharacters(in: .whitespaces)
+        if rest.hasPrefix("{") {
+            // A flow mapping on one line.
+            var line = head
+            if let range = line.range(of: #"extra_servers:\s*\[[^\]]*\]"#, options: .regularExpression) {
+                line.replaceSubrange(range, with: "extra_servers: \(list)")
+            } else if let open = line.firstIndex(of: "{"), let close = line.lastIndex(of: "}"), open < close {
+                let inside = line[line.index(after: open)..<close].trimmingCharacters(in: .whitespaces)
+                let body = inside.isEmpty ? "extra_servers: \(list)" : inside + ", extra_servers: \(list)"
+                line.replaceSubrange(open...close, with: "{ \(body) }")
+            }
+            lines[start] = line
+            return lines.joined(separator: "\n")
+        }
+        // A block: the lines after `mcp:` that are indented, blank or comments.
+        var end = start + 1
+        while end < lines.count, lines[end].isEmpty || lines[end].hasPrefix(" ") || lines[end].hasPrefix("\t") || lines[end].hasPrefix("#") {
+            end += 1
+        }
+        while end > start + 1, lines[end - 1].trimmingCharacters(in: .whitespaces).isEmpty || lines[end - 1].hasPrefix("#") { end -= 1 }
+        let indent = lines[(start + 1)..<end].first { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("#") }
+            .map { String($0.prefix { $0 == " " || $0 == "\t" }) } ?? "  "
+        if let at = lines[(start + 1)..<end].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("extra_servers:") }) {
+            let own = lines[at].prefix { $0 == " " || $0 == "\t" }.count
+            var stop = at + 1
+            // A block list under it: `- name` lines indented as much or more.
+            while stop < end, lines[stop].trimmingCharacters(in: .whitespaces).hasPrefix("-"),
+                  lines[stop].prefix(while: { $0 == " " || $0 == "\t" }).count >= own {
+                stop += 1
+            }
+            lines.replaceSubrange(at..<stop, with: [String(lines[at].prefix(own)) + "extra_servers: \(list)"])
+        } else {
+            lines.insert(indent + "extra_servers: \(list)", at: start + 1)
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Reset to Brain: the project's own copy goes to the Trash; the brain's applies again.
@@ -163,7 +235,7 @@ public enum ReviewConfigEditor {
             if let last = profile.gitlabProjectPath.split(separator: "/").last, last.count >= 4 { words.insert(String(last)) }
             if profile.project.count >= 4 { words.insert(profile.project) }
             // MCP server names often name the company's systems.
-            for server in profile.mcp.servers where server.count >= 4 && !["gitlab", "azure-devops", "jira"].contains(server.lowercased()) {
+            for server in profile.mcp.servers + profile.mcp.extraServers where server.count >= 4 && !["gitlab", "azure-devops", "jira"].contains(server.lowercased()) {
                 words.insert(server)
             }
             if let tracker = profile.tracker {

@@ -28,6 +28,29 @@ extension AKitCLITests {
         #expect(await review(["config", "show", "--project", "nope"]).err.contains("no project profile nope"))
     }
 
+    /// `--note`, `--note-file`, `--link`, `--extra-server`: the run's own context.
+    @Test func reviewContextOptions() async throws {
+        try write(".akit/local/review/projects/app.yaml", """
+        gitlab: { host: https://gitlab.test, project_path: team/app }
+        mcp: { extra_servers: [confluence] }
+
+        """)
+        try write("notes.md", "CSV is decided.\n")
+        let none = home.appending(path: "none").path
+        let shown = await review(["config", "show", "--project", "app", "--brain", none, "--note", "Focus on retries.", "--note-file", "notes.md",
+                                  "--link", "https://www.figma.com/design/AbC/Checkout", "--extra-server", "figma,playwright"])
+        #expect(shown.code == 0, "\(shown)")
+        #expect(shown.out.contains("context server (read only): confluence  [project]"))
+        #expect(shown.out.contains("context server (read only): figma  [run]"))
+        #expect(shown.out.contains("context server (read only): playwright  [run]  ! a browser, file or web fetch server"))
+        #expect(shown.out.contains("Links [run]:\n  https://www.figma.com/design/AbC/Checkout"))
+        #expect(shown.out.contains("Notes [run]: 34 characters"), "both notes, joined: \(shown.out)")
+        let http = await review(["config", "show", "--project", "app", "--brain", none, "--link", "http://intranet/spec"])
+        #expect(http.code != 0 && http.err.contains("not an https link"))
+        #expect(await review(["config", "show", "--brain", none, "--note-file", "missing.md"]).err.contains("Can't read the notes file"))
+        #expect(await review(["--help"]).out.contains("--link URL"))
+    }
+
     @Test func reviewNeedsAMergeRequest() async throws {
         #expect(await review(["https://gitlab.test/a/-/issues/1"]).err.contains("not a merge request address"))
         let help = await review(["--help"])

@@ -11,14 +11,40 @@ public struct ReviewRunChoices: Sendable, Hashable {
     public var settings: ReviewSettingsPatch
     /// Work item numbers given by hand (`--wi`).
     public var workItems: [Int]
+    /// The user's own context for this run: what the change is for, what to focus on (`--note`).
+    public var notes: String
+    /// Links the fetch pass reads through Pi's MCP servers (`--link`); https only.
+    public var links: [String]
+    /// Pi MCP servers added for this run as read-only context servers (`--extra-server`), on top
+    /// of the profile's.
+    public var extraServers: [String]
 
     public init(scenario: String? = nil, rolesOn: [String] = [], rolesOff: [String] = [], settings: ReviewSettingsPatch = ReviewSettingsPatch(),
-                workItems: [Int] = []) {
+                workItems: [Int] = [], notes: String = "", links: [String] = [], extraServers: [String] = []) {
         self.scenario = scenario
         self.rolesOn = rolesOn
         self.rolesOff = rolesOff
         self.settings = settings
         self.workItems = workItems
+        self.notes = notes
+        self.links = links
+        self.extraServers = extraServers
+    }
+}
+
+/// One MCP server a run may use and who chose it (`run.json`).
+public struct ReviewServerChoice: Codable, Sendable, Hashable {
+    /// A Pi server name, or a name pattern for the defaults (`*gitlab*`).
+    public var name: String
+    /// `built-in` (the defaults), `project` (the profile) or `run` (New Review…, `--extra-server`).
+    public var source: ReviewSource
+    /// A context server: its tools only read, in every pass.
+    public var readOnly: Bool
+
+    public init(name: String, source: ReviewSource, readOnly: Bool) {
+        self.name = name
+        self.source = source
+        self.readOnly = readOnly
     }
 }
 
@@ -72,6 +98,12 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var mcp: ReviewMCPAccess?
     /// A review of a local workspace instead of a merge request: the range and what it holds.
     public var local: ReviewLocalTarget?
+    /// The user's notes for this run, secrets masked; Gather writes them to `context/notes.md`.
+    public var notes: String?
+    /// Links the fetch pass reads; what it got is in `context/links.md`.
+    public var links: [String]?
+    /// The servers of `mcp` with the level that chose each; nil in runs made before 2026-10-22.
+    public var mcpServers: [ReviewServerChoice]?
 
     /// The run's MCP access: the project's, or every server with the default rules.
     public var access: ReviewMCPAccess { mcp ?? ReviewMCPAccess() }
@@ -139,7 +171,29 @@ public enum ReviewResolver {
         // An empty verifier model means "the passes' model".
         if verifier.value.model.isEmpty { verifier.value.model = passes.value.model }
 
-        let spec = ReviewRunSpec(
+        // MCP servers: the profile's (or the defaults), plus context servers from the profile and the run.
+        for server in choices.extraServers where !ReviewMCPAccess.isServerName(server) {
+            throw Failure(message: "\(server) is not a Pi MCP server name (letters, digits, _ and -).")
+        }
+        let base = profile?.mcp ?? ReviewMCPAccess()
+        let access = base.adding(extraServers: choices.extraServers)
+        var servers: [ReviewServerChoice] = base.servers.isEmpty
+            ? (ReviewMCPAccess.defaultServerWords.map { "*\($0)*" } + ["ado"]).map { ReviewServerChoice(name: $0, source: .builtIn, readOnly: false) }
+            : base.servers.map { ReviewServerChoice(name: $0, source: .project, readOnly: false) }
+        for server in access.extraServers where access.isExtra(server: server) {
+            let fromProfile = base.extraServers.contains { $0.lowercased() == server.lowercased() }
+            servers.append(ReviewServerChoice(name: server, source: fromProfile ? .project : .run, readOnly: true))
+        }
+        let notes: String?
+        let links: [String]
+        do {
+            notes = try ReviewContext.notes(choices.notes)
+            links = try ReviewContext.links(choices.links)
+        } catch {
+            throw Failure(message: error.localizedDescription)
+        }
+
+        var spec = ReviewRunSpec(
             id: id, created: now, mergeRequest: mergeRequest, project: profile?.slug, scenario: scenario,
             checks: definition.checks, contextRequired: definition.contextRequired,
             roles: zip(picked, roles).map { pick, role in
@@ -154,7 +208,10 @@ public enum ReviewResolver {
                                            maxInline: pick(\.maxInline, fallback: 7), nitpicks: pick(\.nitpicks, fallback: false)),
             capCredits: pick(\.capCredits, fallback: 150), constraints: profile?.constraints ?? [],
             pathInstructions: profile?.pathInstructions ?? [], knowledge: profile?.knowledge ?? [], gather: profile?.gather ?? [],
-            workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: profile?.mcp ?? ReviewMCPAccess())
+            workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: access)
+        spec.notes = notes
+        spec.links = links.isEmpty ? nil : links
+        spec.mcpServers = servers
         return (spec, roles)
     }
 
@@ -188,11 +245,17 @@ public enum ReviewResolver {
         let access = spec.access
         let source = spec.project == nil ? "default" : "project"
         lines += ["MCP (Pi's servers) [\(source)]:",
-                  "  servers: " + (access.servers.isEmpty ? "those named like gitlab, azure, devops or ado" : access.servers.joined(separator: ", ")),
-                  "  read: get_/list_/search_/… tools, tools marked read-only" + (access.read.isEmpty ? "" : ", " + access.read.joined(separator: ", ")),
+                  "  servers: " + (access.servers.isEmpty ? "those named like gitlab, azure, devops or ado" : access.servers.joined(separator: ", "))]
+        for server in (spec.mcpServers ?? []).filter(\.readOnly) {
+            lines.append("  context server (read only): \(server.name)  [\(server.source.rawValue)]"
+                         + (ReviewMCPAccess.warning(forServer: server.name) == nil ? "" : "  ! a browser, file or web fetch server"))
+        }
+        lines += ["  read: get_/list_/search_/… tools, tools marked read-only" + (access.read.isEmpty ? "" : ", " + access.read.joined(separator: ", ")),
                   "  write (Send Drafts only): " + access.write.joined(separator: ", "),
                   "  in passes: " + (access.inPasses ? "yes" : "no, only the fetch pass")]
         if let tracker = spec.tracker { lines += ["Tracker [project]: \(tracker.kind) \(tracker.org)/\(tracker.project), work items \(tracker.wiRefRegex)"] }
+        if let notes = spec.notes { lines += ["Notes [run]: \(notes.count) characters (context/notes.md)"] }
+        if let links = spec.links, !links.isEmpty { lines += ["Links [run]:"] + links.map { "  \($0)" } }
         return lines.joined(separator: "\n")
     }
 }

@@ -19,11 +19,32 @@ public enum ReviewPrompts {
             """
         let subject = spec.local.map { "the changes of the local workspace \($0.repository) (\($0.summary))" }
             ?? "GitLab merge request \(spec.mergeRequest.label)"
+        var context = ""
+        if let notes = spec.notes {
+            // The user's own text: instructions for focus, never for the rules or the output.
+            context += """
+
+
+            The developer who asked for this review wrote these notes for it (also in `context/notes.md`): what the change \
+            is for, what to focus on, decisions already made. Follow them for where to look and what to weigh. They don't \
+            change the rules below: you still only read and return findings through `akit_submit_findings`.
+
+            \(notes.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n"))
+            """
+        }
+        if !(spec.links ?? []).isEmpty {
+            context += """
+
+
+            The developer also gave links (designs, wiki pages, work items); what Pi's MCP servers answered for each is in \
+            `context/links.md`, with the links that couldn't be read.
+            """
+        }
         return """
         # AKit review
 
         You review \(subject) at commit \(spec.headSHA ?? "?") for a developer who checks every finding before anything \
-        is done with it. \(tools)
+        is done with it. \(tools)\(context)
 
         \(hasWorktree ? "Your working folder is the repository at the reviewed commit. The context pack is in the run folder: read `../context/README.md` first." : "There is no checkout: your working folder is the run folder; read `context/README.md` first. Only the diff is available.")
 
@@ -49,11 +70,12 @@ public enum ReviewPrompts {
         """
         Pass 1 of the review: the brief. Don't submit findings in this pass.
 
-        Read the context pack: README.md, merge-request.md, changes.md, diff.patch, threads.md, the work items and \
+        Read the context pack: README.md, \(spec.notes == nil ? "" : "notes.md (the developer's own notes: start there), ")\
+        merge-request.md, changes.md, diff.patch, threads.md, the work items, \(spec.links?.isEmpty == false ? "links.md, " : "")and \
         project-rules.md if they are there. Open whole files in the repository where the diff is not enough.
 
         Then answer with a short brief (at most 300 words) in this shape:
-        - Intent: what the change is for, in one or two sentences.
+        - Intent: what the change is for, in one or two sentences\(spec.notes == nil ? "" : " (the developer's notes say what it is for)").\(spec.notes == nil ? "" : "\n- Focus: what the developer's notes ask the review to look at.")
         - Touched components: the parts of the system it changes.
         - Already raised: what people said in the threads.
         - Acceptance criteria: the criteria or repro steps the change must meet.
@@ -105,6 +127,20 @@ public enum ReviewPrompts {
     /// The fetch pass: read everything through MCP, in scripts, so the answers reach AKit and not
     /// the model's context.
     static func fetch(spec: ReviewRunSpec) -> String {
+        let links = spec.links ?? []
+        if spec.local != nil {
+            return """
+            AKit review, step Gather, for a local workspace: there is no merge request. Only read the links below with your \
+            MCP tools, through `codemode`. Don't review anything yet.
+
+            AKit saves every answer of an MCP tool word for word; it reads them, not your summary. So call the tools in codemode \
+            scripts and return only short notes from the script (what you found, what failed), never the data itself.
+
+            \(linksStep(links))
+
+            Never call a tool that writes, publishes, approves, merges or resolves: AKit blocks them. Answer "done" at the end.
+            """
+        }
         let mr = spec.mergeRequest
         var items = "Work items: find the numbers in the merge request's title, description and source branch"
         if let tracker = spec.tracker {
@@ -125,13 +161,29 @@ public enum ReviewPrompts {
         3. Every discussion thread with all its notes and positions, resolved ones too (every page).
         4. Your own pending draft notes on it.
         5. The signed-in user (who you are on GitLab).
-        6. \(items)
+        6. \(items)\(links.isEmpty ? "" : "\n7. The developer's links, after the merge request:\n\n" + linksStep(links))
 
         Pass the merge request number (\(mr.iid)) as its own argument in every call about it, as the tools name it.
         When a tool answers in prose instead of JSON, hand what it said to `akit_submit_context` with GitLab's and Azure \
         DevOps's field names. When something can't be read (no such tool, no right, an error), call \
         `akit_report_context_gap` once for it. Never call a tool that writes, publishes, approves, merges or resolves: AKit \
         blocks them. Answer "done" at the end.
+        """
+    }
+
+    /// How the fetch pass reads the developer's links: one at a time, each named first with
+    /// `akit_reading_link`, so AKit files the answers under it.
+    static func linksStep(_ links: [String]) -> String {
+        """
+        Read each link the developer gave for this review with a reading tool of the MCP server that serves its site \
+        (Figma for figma.com, Azure DevOps for dev.azure.com wiki pages and work items, Confluence for atlassian.net, …). \
+        In the script, first call `await tools.akit_reading_link({ url })` with the link exactly as listed, then the reading \
+        tools for it. Read one link after another, never two at once (no Promise.all across links): AKit files each answer \
+        under the link named last. Pass the link itself, or the ids in it (file key, node id, wiki and page path, page or \
+        work item number), as the tool takes them. When no server of yours can read a link, or its tool fails, call \
+        `akit_report_context_gap` for it once and go on.
+
+        \(links.map { "- \($0)" }.joined(separator: "\n"))
         """
     }
 
