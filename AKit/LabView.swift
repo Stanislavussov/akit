@@ -258,6 +258,8 @@ private struct LabRunDetail: View {
     @State private var showRecheck = DebugSnapshot.options?.tab == "recheck"
     /// The reviewed session whose Overview sheet is open.
     @State private var overviewOf: SessionSummary?
+    /// Translate of the run's own paragraph and improvements.
+    @State private var translator = Translator()
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -439,8 +441,17 @@ private struct LabRunDetail: View {
     /// The paragraph and the improvements as the run wrote them: agent-mode reviews, and
     /// reviews whose notes a later one replaced.
     @ViewBuilder private var legacyReview: some View {
+        if run.summary != nil || run.review?.findings.isEmpty == false {
+            HStack(alignment: .firstTextBaseline) {
+                TranslationNote(translator: translator)
+                Spacer()
+                let run = run
+                TranslateMenu(translator: translator, id: run.id) { OutputTranslation.Source.labReview(run) }
+                    .controlSize(.small)
+            }
+        }
         if let summary = run.summary {
-            MarkdownLines(text: summary.trimmingCharacters(in: .whitespacesAndNewlines))
+            MarkdownLines(text: translator.text("summary", summary).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         if let review = run.review {
             VStack(alignment: .leading, spacing: 10) {
@@ -450,11 +461,11 @@ private struct LabRunDetail: View {
                 }
                 ForEach(Array(review.findings.enumerated()), id: \.offset) { index, finding in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("\(index + 1). \(finding.title)").fontWeight(.semibold)
+                        Text("\(index + 1). \(translator.text("finding:\(index):title", finding.title))").fontWeight(.semibold)
                         if let evidence = finding.evidence {
                             Text("Evidence: \(evidence)").foregroundStyle(.secondary)
                         }
-                        Text(finding.detail).foregroundStyle(.secondary)
+                        Text(translator.text("finding:\(index):detail", finding.detail)).foregroundStyle(.secondary)
                     }
                     .textSelection(.enabled)
                 }

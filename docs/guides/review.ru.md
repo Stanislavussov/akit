@@ -605,7 +605,7 @@ To review: commits and uncommitted changes.
 - Строка: сценарий, роли, кредиты («62.1 of 150 credits»).
 - Метки проходов: **fetch**, **brief**, **role-…**, **verifier**, после отправок **send-1** ….
 - **Brief** — раскрывающийся текст brief.
-- **Requests** с подписью «Nothing goes to GitLab until you approve it.» — карточки запросов.
+- **Requests** с подписью «Nothing goes to GitLab until you approve it.» — карточки запросов. Справа от заголовка кнопка **Translate** (глобус): см. [перевод ревью](#screen-translate).
 - **Only in AKit (N)** — находки, которые не идут в GitLab (см. [Only in AKit](#noise-move)).
 - **Context gaps (N)** — пробелы контекста (см. [пробелы](#gaps)).
 - **Missed by the reviewer (N)** — что вы добавили через **Add Missed…** (см. [Add Missed…](#quality-missed)).
@@ -642,6 +642,21 @@ To review: commits and uncommitted changes.
 Текст комментария выглядит так: метка «🤖 AKit review», роль, серьёзность и уверенность; заголовок находки; почему это проблема. Если роль предложила исправление, ниже идёт блок `suggestion`: GitLab покажет кнопку применить его. В конце строка «AKit is an AI reviewer; check before applying.».
 
 Серьёзность (от слабой к сильной): `nit`, `low`, `medium`, `high`, `critical`. Уверенность — от 0 до 1.
+
+### Просто: прочитать ревью на другом языке
+<!-- section: screen-translate -->
+
+Пример: роли пишут по-английски, а вы хотите быстро прочитать запросы по-русски.
+
+1. Нажмите **Translate** (глобус) справа от заголовка **Requests** и выберите **Russian**.
+2. Если это ревью ещё не переводили, появится окно «Translate to Russian?»: сколько символов уйдёт, какой модели и примерная цена. Нажмите **Translate**.
+3. Brief и тексты всех запросов заменятся переводом. Над карточками строка «Translated to Russian · …».
+4. **Show Original** возвращает оригинал.
+
+- В GitLab уходит только оригинал. Перевод не меняет запросы, а **Edit** правит оригинальный текст.
+- Всё ревью переводится одним вызовом модели и сохраняется в папке ревью (`translations/`). Повторно на тот же язык перевод показывается сразу.
+- Модель перевода задаётся в Settings → **Translation model** (по умолчанию Claude Code · haiku). Данные MR по правилам отправки можно отдавать Pi; для Claude Code нужен адресат в **Sending policy**. Иначе рядом с кнопкой появится причина отказа.
+- В терминале: `akit translate --to ru --review RUN`.
 
 ### Просто: одобрить и отправить
 <!-- section: screen-approve -->

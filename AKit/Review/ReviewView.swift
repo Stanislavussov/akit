@@ -171,6 +171,8 @@ struct ReviewRunDetail: View {
     let run: ReviewWorkflow.Run
     @State private var showSend = false
     @State private var showMissed = false
+    /// Translate of the brief and the requests; what goes to GitLab stays the original.
+    @State private var translator = Translator()
 
     private var requests: [ReviewRequest] { run.plan?.requests ?? [] }
     private var approved: [ReviewRequest] { requests.filter { $0.decision == .approved && !$0.isSent } }
@@ -184,7 +186,9 @@ struct ReviewRunDetail: View {
                     Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
                 }
                 if let brief = run.passes?.brief {
-                    DisclosureGroup("Brief") { Text(brief).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                    DisclosureGroup("Brief") {
+                        Text(translator.text(ReviewWorkflow.Run.TranslationKey.brief, brief)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
                 requestsSection
                 onlyInAKit
@@ -293,7 +297,12 @@ struct ReviewRunDetail: View {
             HStack {
                 Text("Requests").font(.headline)
                 Text("Nothing goes to GitLab until you approve it.").font(.callout).foregroundStyle(.secondary)
+                Spacer()
+                let run = run
+                TranslateMenu(translator: translator, id: run.id) { run.translationSource }
+                    .controlSize(.small)
             }
+            TranslationNote(translator: translator)
             if run.plan == nil {
                 Text(run.status?.stage == .planned || run.findings != nil ? "No plan yet." : "The requests appear when the passes are done.")
                     .foregroundStyle(.secondary)
@@ -301,7 +310,8 @@ struct ReviewRunDetail: View {
                 Text("No requests: GitLab already has everything AKit would write.").foregroundStyle(.secondary)
             }
             ForEach(requests) { request in
-                ReviewRequestCard(run: run, request: request)
+                ReviewRequestCard(run: run, request: request,
+                                  shownText: translator.text(ReviewWorkflow.Run.TranslationKey.request(request.id), request.text))
             }
         }
     }
@@ -395,6 +405,8 @@ struct ReviewRequestCard: View {
     @Environment(ReviewModel.self) private var model
     let run: ReviewWorkflow.Run
     let request: ReviewRequest
+    /// The text as shown: translated or the original. Edit and GitLab use the original.
+    var shownText: String? = nil
     @State private var text = ""
     @State private var editing = false
     @State private var reason: ReviewRequest.Reason?
@@ -436,7 +448,7 @@ struct ReviewRequestCard: View {
                     .frame(minHeight: 120)
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
             } else {
-                Text(request.text).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                Text(shownText ?? request.text).font(.callout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             }
             if let verdict = finding?.verifier {
                 Text("Verifier: \(verdict.verdict.rawValue)" + (verdict.note.isEmpty ? "" : " — \(verdict.note)"))

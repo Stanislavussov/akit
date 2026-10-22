@@ -3129,6 +3129,7 @@ Lab выполняет запуски по одному: остальные жд
 2. Прочитайте карточку итога: исход, число проблем и заключение.
 3. Прочитайте **What to Change**: до трёх советов.
 4. Если нужно доказательство, раскройте **Evidence** у совета или **Quote** у заметки.
+5. Хотите читать на другом языке — нажмите **Translate** (глобус) над карточкой итога и выберите язык. Заключение, советы, абзац **What Happened**, требования и заметки модели заменятся переводом, над ними будет строка «Translated to … · модель». **Show Original** возвращает оригинал. Цитаты и ваши заметки не переводятся. Та же кнопка есть в окне заметок сессии, которое открывается со страницы режима, из матрицы переходов и со страницы пакета в Lab. Подробно: [перевести разбор](screens#lab-translate).
 
 ![Страница разбора одной сессии в Lab: строки Kind, Agent, Opens in, Queued, Started, Ended, Cost, Folder, кнопки Re-check with Another Model…, Show in Finder, Remove…, строка «Reviewed session: Add a 5-day forecast screen» с кнопками Show Session и Overview…. Ниже оранжевая карточка итога «Partly done · 1 high · 1 medium» с подсказкой «No conclusion yet», блок What to Change с советом и раскрывающейся строкой Evidence (n1, n2), блок Problems by Type с режимом «Explicit user constraint violated · 1» и заметкой n1 с метками Edit, High, Agent и строками Quote и The verifier's case against it.](images/lab-review.png)
 
@@ -3307,7 +3308,7 @@ Lab выполняет запуски по одному: остальные жд
 - **Sessions** — размер выборки: от 1 до 200, по умолчанию 20.
 - **Notes by** — кто пишет заметки: **Automatic** или **Choose…**. При **Choose…** появляются поля **Harness**, **Model**, **Effort**.
 - **Matching model** — модель для сопоставления и кластеризации. Пусто («same as the notes») — та же, что для заметок.
-- **Language** — язык абзаца и советов: **English**, **Russian** или **Czech**. По умолчанию берётся из [Settings → Lab](#settings-language).
+- **Language** — язык абзаца и советов, например **English**, **Russian** или **Czech** (всего 17 языков). По умолчанию берётся из [Settings → Lab](#settings-language).
 - **Open in** — под формой: **Automatic**, **Orca**, **herdr** или **Background**.
 
 Как **Automatic** выбирает модель заметок:
@@ -3607,7 +3608,7 @@ Lab выполняет запуски по одному: остальные жд
 
 Блок **Lab**:
 
-- **Review language** — язык абзаца и советов новых разборов и пакетов: **English**, **Russian** или **Czech**.
+- **Review language** — язык абзаца и советов новых разборов и пакетов, например **English**, **Russian** или **Czech** (всего 17 языков). Готовый разбор можно перевести кнопкой **Translate** (см. [Просто: прочитать заметки разобранной сессии](#lab-read-notes)).
 
 Блок **Sending policy** (политика отправки):
 
