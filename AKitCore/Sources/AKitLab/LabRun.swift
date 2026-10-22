@@ -210,19 +210,51 @@ public struct LabAgent: Codable, Sendable, Hashable {
     }
 }
 
-/// The language a review is written in. AKit's own text stays English.
+/// The language a review is written in, and the languages Translate offers. AKit's own text
+/// stays English. The raw values are ISO 639-1 codes, stored in run specs and settings.
 public enum LabLanguage: String, Codable, Sendable, CaseIterable {
     case english = "en"
     case russian = "ru"
     case czech = "cs"
+    case german = "de"
+    case french = "fr"
+    case spanish = "es"
+    case italian = "it"
+    case portuguese = "pt"
+    case polish = "pl"
+    case ukrainian = "uk"
+    case dutch = "nl"
+    case turkish = "tr"
+    case chineseSimplified = "zh"
+    case japanese = "ja"
+    case korean = "ko"
+    case hindi = "hi"
+    case arabic = "ar"
 
     public var name: String {
         switch self {
         case .english: "English"
         case .russian: "Russian"
         case .czech: "Czech"
+        case .german: "German"
+        case .french: "French"
+        case .spanish: "Spanish"
+        case .italian: "Italian"
+        case .portuguese: "Portuguese"
+        case .polish: "Polish"
+        case .ukrainian: "Ukrainian"
+        case .dutch: "Dutch"
+        case .turkish: "Turkish"
+        case .chineseSimplified: "Chinese (Simplified)"
+        case .japanese: "Japanese"
+        case .korean: "Korean"
+        case .hindi: "Hindi"
+        case .arabic: "Arabic"
         }
     }
+
+    /// "en, ru, cs, …": the codes `--language` and `--to` take.
+    public static var codes: String { allCases.map(\.rawValue).joined(separator: ", ") }
 
     /// Added to the review instructions.
     public var instruction: String {
@@ -244,14 +276,17 @@ public struct LabSettings: Codable, Sendable, Hashable {
     /// Recorded cost per calendar month, in US dollars, shared by everything that calls a
     /// model here; nil = no limit.
     public var monthlyLimit: Double?
+    /// The model Translate uses (Settings → Translation model); nil = `OutputTranslation.defaultAgent`.
+    public var translationAgent: LabAgent?
 
     public init(reportLanguage: LabLanguage = .english, allowedDestinations: [SendDestination] = [], piAccounts: [PiAccount] = [],
-                scrub: Scrubber.OwnPatterns = Scrubber.OwnPatterns(), monthlyLimit: Double? = nil) {
+                scrub: Scrubber.OwnPatterns = Scrubber.OwnPatterns(), monthlyLimit: Double? = nil, translationAgent: LabAgent? = nil) {
         self.reportLanguage = reportLanguage
         self.allowedDestinations = allowedDestinations
         self.piAccounts = piAccounts
         self.scrub = scrub
         self.monthlyLimit = monthlyLimit
+        self.translationAgent = translationAgent
     }
 
     /// Fields missing in older files take their defaults; a broken field doesn't lose the others.
@@ -262,6 +297,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
         piAccounts = (try? container.decodeIfPresent([PiAccount].self, forKey: .piAccounts)) ?? []
         scrub = (try? container.decodeIfPresent(Scrubber.OwnPatterns.self, forKey: .scrub)) ?? Scrubber.OwnPatterns()
         monthlyLimit = try? container.decodeIfPresent(Double.self, forKey: .monthlyLimit)
+        translationAgent = try? container.decodeIfPresent(LabAgent.self, forKey: .translationAgent)
     }
 
     static func file(env: HarnessEnvironment) -> URL { LabPaths(env: env).folder.appending(path: "settings.json") }
@@ -347,6 +383,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
     public mutating func apply(from old: LabSettings, to new: LabSettings) {
         if new.reportLanguage != old.reportLanguage { reportLanguage = new.reportLanguage }
         if new.monthlyLimit != old.monthlyLimit { monthlyLimit = new.monthlyLimit }
+        if new.translationAgent != old.translationAgent { translationAgent = new.translationAgent }
         if new.scrub.maskEmails != old.scrub.maskEmails { scrub.maskEmails = new.scrub.maskEmails }
         if new.scrub.hosts != old.scrub.hosts { scrub.hosts = new.scrub.hosts }
         if new.scrub.extra != old.scrub.extra { scrub.extra = new.scrub.extra }
