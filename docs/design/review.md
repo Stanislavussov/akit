@@ -18,7 +18,9 @@ Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run
 
 Added 2026-10-22 (branch `review-audit-2`): checks without a model (the quote in the file, a
 person's open thread, inline only on changed lines, a secret scan, the size of the change; section
-"Checks without a model"), and Pi steps and Pi flags (section "Pi steps", below).
+"Checks without a model"); four optional roles, `performance`, `concurrency`, `data-migrations`
+and `observability`, with `architecture` optional in Feature (a role per pass costs credits; turn
+it on when the change has a design question); and Pi steps and Pi flags (section "Pi steps", below).
 A run can add the user's pi-subagents agents (`/run reviewer …`), prompt templates and skills
 as passes after the roles, and extra Pi flags for the passes; `akit review pi` and New Review…
 suggest what the user's Pi has. Checked on a real Pi 1.0.4: an extension command such as
@@ -482,9 +484,9 @@ detect:            # read by the classifier later; ignored in v1
 
 | Scenario | Roles (required / optional) | Checks | Context |
 |---|---|---|---|
-| Feature | contracts, architecture, domain, bug-hunter, requirements / tests, security | consumers of changed contracts, boundaries, invariants, business rules, edge cases and errors, AC covered by code and tests | WI with AC |
-| Bugfix | bug-hunter, contracts, requirements, tests / architecture, security | cause fixed, contract kept, regression test, nearby paths | repro steps, comments |
-| Dependency upgrade | upgrade-risk, tests / contracts, security | breaking changes, transitive upgrades, deprecated APIs, licenses | changelog or migration guide (often a gap) |
+| Feature | contracts, domain, bug-hunter, requirements / architecture, tests, security, performance, concurrency, data-migrations, observability | consumers of changed contracts, boundaries, invariants, business rules, edge cases and errors, AC covered by code and tests | WI with AC |
+| Bugfix | bug-hunter, contracts, requirements, tests / architecture, security, concurrency, performance, observability | cause fixed, contract kept, regression test, nearby paths | repro steps, comments |
+| Dependency upgrade | upgrade-risk, tests / contracts, security, performance | breaking changes, transitive upgrades, deprecated APIs, licenses | changelog or migration guide (often a gap) |
 
 ### Project profile (`~/.akit/local/review/projects/<slug>.yaml`)
 

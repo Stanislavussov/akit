@@ -305,11 +305,11 @@ default_scenario: bugfix
 
 Сценарий выбирает роли. Встроенных сценариев три:
 
-- **Feature** — роли `contracts`, `architecture`, `domain`, `bug-hunter`, `requirements`; по желанию `tests`, `security`. Проверяет контракты и их потребителей, границы компонентов, инварианты, бизнес-правила, поведение на краевых случаях и покрытие критериев кодом и тестами.
-- **Bugfix** — роли `bug-hunter`, `contracts`, `requirements`, `tests`; по желанию `architecture`, `security`. Проверяет, исправлена ли причина, не сломал ли фикс контракт, есть ли регрессионный тест, нет ли той же ошибки рядом.
-- **Dependency upgrade** — роли `upgrade-risk`, `tests`; по желанию `contracts`, `security`. Проверяет ломающие изменения, транзитивные зависимости, устаревшие API и лицензии.
+- **Feature** — роли `contracts`, `domain`, `bug-hunter`, `requirements`; по желанию `architecture`, `tests`, `security`, `performance`, `concurrency`, `data-migrations`, `observability`. Проверяет контракты и их потребителей, границы компонентов, инварианты, бизнес-правила, поведение на краевых случаях и покрытие критериев кодом и тестами.
+- **Bugfix** — роли `bug-hunter`, `contracts`, `requirements`, `tests`; по желанию `architecture`, `security`, `concurrency`, `performance`, `observability`. Проверяет, исправлена ли причина, не сломал ли фикс контракт, есть ли регрессионный тест, нет ли той же ошибки рядом.
+- **Dependency upgrade** — роли `upgrade-risk`, `tests`; по желанию `contracts`, `security`, `performance`. Проверяет ломающие изменения, транзитивные зависимости, устаревшие API и лицензии.
 
-Восемь встроенных ролей:
+Двенадцать встроенных ролей:
 
 - `contracts` — то, на что опирается другой код: публичные API, DTO, события, схемы и миграции, ключи конфигурации, коды ошибок. Роль ищет потребителей каждого изменённого контракта через `grep` и называет того, кто сломается.
 - `architecture` — границы и слои, направление зависимостей, ответственность, второй способ сделать то, что в коде уже есть, общее состояние, соответствие правилам проекта. Сомнение без доказанного вреда идёт вопросом автору.
@@ -319,6 +319,12 @@ default_scenario: bugfix
 - `bug-hunter` — ошибки логики, крайние случаи, null, ошибки, гонки, утечки ресурсов.
 - `upgrade-risk` — риски обновления зависимостей.
 - `security` — проверка доступа, проверка ввода, инъекции, секреты, SSRF, личные данные в логах.
+- `performance` — цена изменения на горячих путях: запрос в цикле (N+1), запрос без индекса, вызов на каждый элемент вместо пакета, кэш без предела. Находка называет путь, как часто он работает и как растёт с данными.
+- `concurrency` — общее состояние и параллельная работа: гонки, блокировки, `await`, повторы неидемпотентных вызовов, два экземпляра одной задачи. Находка называет двух участников и порядок шагов, который ломается.
+- `data-migrations` — миграции схемы и данных: блокировки больших таблиц, откат, потеря данных, порядок выкладки кода и схемы.
+- `observability` — увидит ли дежурный сбой этого изменения: ошибка без причины в логе, новый внешний вызов без метрики, переименованная метрика, которую читают дашборды, лог на каждый запрос.
+
+`architecture` в **Feature** теперь по желанию: включайте её, когда в изменении есть вопрос дизайна. Новые четыре роли тоже по желанию. Пример: MR добавляет миграцию — включите `data-migrations`; новый фоновый обработчик очереди — `concurrency` и `observability`.
 
 **Чего ревью не комментирует.** Сначала идут контракты, потом архитектура, потом поведение. Все проходы получают общий список запретов, и verifier отклоняет такие находки:
 
@@ -1280,7 +1286,7 @@ AKit проверяет папку ревью каждые несколько с
 2. **Level** = **Brain**.
 3. Выберите роль в списке. Справа откроется её `SKILL.md`.
 
-![Страница Roles: Level = Brain; список ролей domain, requirements, tests, bug-hunter, upgrade-risk, security, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity medium, max_findings 3, needs и do_not_comment, ниже список проверок; кнопки New Role…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
+![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity medium, max_findings 3, needs и do_not_comment, ниже список проверок; кнопки New Role…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
 
 Как читать роль:
 
