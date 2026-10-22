@@ -49,6 +49,52 @@ struct ReviewFixTests {
         #expect(forged?.why.contains("<!--") == false)
         let body = "Text <!-- akit-review:v1 kind=summary -->\n" + ReviewNotes.meta(fingerprint: "fp1", role: "r", severity: nil, run: "x")
         #expect(ReviewNotes.parseMeta(body)?["kind"] == "finding")
+        #expect(ReviewNotes.meta(fingerprint: "fp1", role: "r", severity: nil, run: "x").hasPrefix("<!-- ai-review:v1 "))
+        let legacy = "Text\n<!-- akit-review:v1 kind=finding fp=old role=r run=x -->"
+        #expect(ReviewNotes.parseMeta(legacy)?["fp"] == "old" && ReviewNotes.withoutMeta(legacy) == "Text")
+    }
+
+    @Test func theFingerprintOfALineIgnoresTheTitle() throws {
+        let home = TempHome()
+        home.write("wt/a.swift", "let a = 1\nlog(token)\nlet b = 2\n")
+        let worktree = home.url.appending(path: "wt")
+        func fps(_ title: String, kind: ReviewFinding.Kind = .finding, file: String? = "a.swift") -> (current: String, previous: String?) {
+            ReviewCandidates.fingerprints(ReviewFinding(id: "f", kind: kind, role: "r", file: file, line: 2, title: title, evidence: "log(token)",
+                                                        why: "w", severity: .high, confidence: 0.9), worktree: worktree)
+        }
+        #expect(fps("Token is logged").current == fps("The bearer token leaks into logs").current)
+        #expect(fps("Token is logged").previous != fps("The bearer token leaks into logs").previous)
+        #expect(fps("AC 1", kind: .ac, file: nil).current != fps("AC 2", kind: .ac, file: nil).current, "matrix rows keep their title")
+        #expect(fps("x", file: nil).previous == nil)
+    }
+
+    @Test func aFoldedFindingKeepsItsOldThreadsFound() throws {
+        let home = TempHome()
+        home.write("wt/a.swift", "let a = 1\nlog(token)\nlet b = 2\n")
+        home.write("run/passes/role-bug-hunter.json", #"{"findings":[{"file":"a.swift","line":2,"title":"Token is logged","evidence":"log(token)","why":"w","severity":"high","confidence":0.9},{"file":"a.swift","line":2,"title":"Log has no level","evidence":"log(token)","why":"w","severity":"high","confidence":0.9}]}"#)
+        let found = ReviewCandidates.collect(folder: home.url.appending(path: "run"), spec: try PlanTests.spec(), worktree: home.url.appending(path: "wt"))
+        #expect(found.count == 1)
+        let second = ReviewCandidates.fingerprints(ReviewFinding(id: "x", role: "r", file: "a.swift", line: 2, title: "Log has no level",
+                                                                 evidence: "log(token)", why: "w", severity: .high, confidence: 0.9),
+                                                   worktree: home.url.appending(path: "wt"))
+        #expect(found[0].fingerprints.contains(try #require(second.previous)), "the folded finding's old thread still counts as found")
+    }
+
+    @Test func matrixRowsDontCountAgainstTheRoleLimit() throws {
+        let home = TempHome()
+        let spec = try PlanTests.spec()
+        let requirements = try #require(spec.roles.first { $0.id == "requirements" })
+        let rows: [[String: Any]] = (1...requirements.maxFindings + 2).map {
+            ["kind": "ac", "title": "AC \($0)", "why": "code", "evidence": "", "severity": "medium", "confidence": 1]
+        }
+        let extra: [[String: Any]] = (1...requirements.maxFindings + 1).map {
+            ["title": "Missing \($0)", "why": "w", "evidence": "", "severity": "high", "confidence": 0.9]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["findings": rows + extra])
+        home.write("run/passes/role-requirements.json", String(decoding: data, as: UTF8.self))
+        let found = ReviewCandidates.collect(folder: home.url.appending(path: "run"), spec: spec, worktree: nil)
+        #expect(found.filter { $0.kind == .ac }.count == rows.count)
+        #expect(found.filter { $0.kind == .finding }.count == requirements.maxFindings)
     }
 
     @Test func aSymlinkOutOfTheWorktreeIsNotRead() throws {
@@ -126,7 +172,8 @@ struct PlanTests {
         let create = try #require(plan.requests.first)
         #expect(create.position == GitLabPosition(baseSHA: "b", startSHA: "s", headSHA: "h", oldPath: "src/A.swift", newPath: "src/A.swift",
                                                   oldLine: nil, newLine: 2))
-        #expect(create.proposed.hasPrefix("🤖 AKit review · `bug-hunter` · **high** · confidence 0.90"))
+        #expect(create.proposed.hasPrefix("🤖 · `bug-hunter` · **high** · confidence 0.90"))
+        #expect(!plan.requests.contains { $0.proposed.contains("AKit") }, "posted text names no tool, only 🤖")
         #expect(!create.proposed.contains("akit-review:v1"), "the meta line is added at sending")
         let summary = plan.requests[1].proposed
         #expect(summary.contains("### More findings") && summary.contains("`big.json:1`"))
@@ -196,6 +243,25 @@ struct PlanTests {
         #expect(plan.requests.first { $0.kind == .summary }?.proposed.contains("### Already dismissed") == true)
     }
 
+    @Test func draftsAndThreadsFromBeforeTheRenameStillMatch() throws {
+        // Written by an earlier AKit: the old hidden prefix and a fingerprint with the title.
+        func legacy(_ fp: String) -> String { "old text\n<!-- akit-review:v1 kind=finding fp=\(fp) role=bug-hunter sev=high run=old -->" }
+        var reworded = Self.finding("f1", title: "Worded another way")
+        reworded.fingerprint = "fp-new1"
+        reworded.previousFingerprint = "fp-f1"
+        var published = Self.finding("f2")
+        published.fingerprint = "fp-new2"
+        published.previousFingerprint = "fp-f2"
+        let draft = GitLabDraft(id: 10, note: legacy("fp-f1"),
+                                position: GitLabPosition(baseSHA: "b", startSHA: "s", headSHA: "h", oldPath: "src/A.swift", newPath: "src/A.swift",
+                                                         oldLine: nil, newLine: 2))
+        let thread = GitLabDiscussion(id: "t2", notes: [GitLabNote(id: 1, body: legacy("fp-f2"), author: "me", resolvable: true)])
+        let plan = try Self.plan([reworded, published], drafts: [draft], discussions: [thread])
+        let kinds = plan.requests.map { "\($0.kind.rawValue):\($0.findingID ?? $0.fingerprint ?? "")" }
+        #expect(kinds.contains("update:f1") && !kinds.contains { $0.hasPrefix("delete") }, "the old draft is updated, not replaced")
+        #expect(!kinds.contains { $0.hasSuffix(":f2") || $0.hasPrefix("reply") }, "the open thread still says it")
+    }
+
     @Test func aThreadIsAKitsOnlyWhenTheUserWroteIt() throws {
         func thread(_ id: String, fp: String, author: String, resolved: Bool = false, replied: Bool = false) -> GitLabDiscussion {
             var notes = [GitLabNote(id: 1, body: "x\n" + ReviewNotes.meta(fingerprint: fp, role: "security", severity: .high, run: "old"),
@@ -260,7 +326,7 @@ extension ReviewProcessTests {
             let approved = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
             #expect(approved.count == 1 && approved[0]["id"] as? String == create.id && approved[0]["action"] as? String == "create")
             let body = try #require(approved[0]["body"] as? String)
-            #expect(body.hasPrefix("Shorter text.\n<!-- akit-review:v1 kind=finding fp="))
+            #expect(body.hasPrefix("Shorter text.\n<!-- ai-review:v1 kind=finding fp="))
             #expect(body.contains("th=\(ReviewNotes.textHash(create.proposed))"))
             let position = try #require(approved[0]["position"] as? [String: Any])
             #expect(position["new_line"] as? Int == 3 && position["old_line"] == nil && position["head_sha"] as? String == run.head)

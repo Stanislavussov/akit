@@ -9,6 +9,13 @@ was built against the public GitLab and Azure DevOps REST and Pi 1.0.4 on a pers
 `akit review check HOST` is the first fact to collect there. Context for a run (notes, links,
 read-only context servers; GitHub issue #1) built 2026-10-22 on branch `review-context`, below.
 
+Revised 2026-10-22 (branch `review-cleanup`, after an audit of the review): posted text names
+no tool, only 🤖 (marker default `🤖`, no "AKit is an AI reviewer" line, the "looks fixed"
+reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and the old
+`akit-review:v1` is still read. The fingerprint drops the title (Findings, below). AC rows
+don't count against a role's `max_findings`, so the matrix has a row per criterion. The
+Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
+
 Built: step 1 (2026-10-15): module `AKitReview` with the project profile, the three levels
 (`ReviewCatalog`, `ReviewResolver`, `run.json`), Gather from GitLab and Azure DevOps REST into a
 scrubbed context pack, the worktree at `head_sha`, `akit review MR-URL`, `akit review config show`,
@@ -341,6 +348,47 @@ akit review <mr-url> [--wi N] [--scenario S]        or  Review → New Review…
 
 The run folder is `~/.akit/local/review/runs/<run-id>/`. Nothing of it leaves the Mac.
 
+The same run as a diagram, with where each finding ends up:
+
+```mermaid
+flowchart TD
+    A["akit review MR-URL<br/>or New Review…"] --> F["fetch pass<br/>Pi + MCP, read-only tools"]
+    F --> C["context pack<br/>diff, threads, work items, notes, links"]
+    C --> S{"scenario<br/>feature · bugfix · dependency-upgrade"}
+    S --> E{"estimate<br/>over the credit cap?"}
+    E -- "yes" --> Q["ask the user"]
+    E -- "no" --> B
+    Q --> B
+    subgraph P ["one Pi session"]
+        B["brief"] --> R1["role 1"] --> R2["role 2"] --> RN["role N"]
+    end
+    RN --> K["candidates<br/>role limit (AC rows exempt), min severity,<br/>anchor by evidence, fingerprint, fold duplicates"]
+    K --> V["verifier<br/>fork of the session, strong model"]
+    V --> PL["plan: noise rules + rerun rules"]
+    PL --> UI["Review screen<br/>edit · approve · reject"]
+    UI --> SD["send pass<br/>approved drafts only, word for word"]
+    SD --> GL["GitLab drafts<br/>the user submits the review"]
+```
+
+```mermaid
+flowchart LR
+    X["finding"] --> AC{"AC row?"}
+    AC -- "yes" --> M["summary: matrix"]
+    AC -- "no" --> RJ{"verifier: rejected or merged?"}
+    RJ -- "yes" --> O["only in AKit"]
+    RJ -- "no" --> RS{"thread resolved<br/>by a person?"}
+    RS -- "yes" --> D["summary: already dismissed"]
+    RS -- "no" --> QU{"question?"}
+    QU -- "yes" --> QS["summary: questions"]
+    QU -- "no" --> TH{"confirmed, ≥ severity,<br/>≥ confidence, path not ignored?"}
+    TH -- "no" --> O
+    TH -- "yes" --> POS{"GitLab can hold<br/>a comment there?"}
+    POS -- "no" --> MF["summary: more findings"]
+    POS -- "yes" --> CAP{"within max_inline<br/>(strongest first)?"}
+    CAP -- "yes" --> IN["inline draft 🤖"]
+    CAP -- "no" --> MF
+```
+
 ## Configuration
 
 ### Levels
@@ -418,7 +466,7 @@ detect:            # read by the classifier later; ignored in v1
 
 | Scenario | Roles (required / optional) | Checks | Context |
 |---|---|---|---|
-| Feature | contracts, architecture, domain, requirements / tests, security | consumers of changed contracts, boundaries, invariants, business rules, AC covered by code and tests | WI with AC |
+| Feature | contracts, architecture, domain, bug-hunter, requirements / tests, security | consumers of changed contracts, boundaries, invariants, business rules, edge cases and errors, AC covered by code and tests | WI with AC |
 | Bugfix | bug-hunter, contracts, requirements, tests / architecture, security | cause fixed, contract kept, regression test, nearby paths | repro steps, comments |
 | Dependency upgrade | upgrade-risk, tests / contracts, security | breaking changes, transitive upgrades, deprecated APIs, licenses | changelog or migration guide (often a gap) |
 
@@ -529,9 +577,15 @@ the path policy.
 A verifier verdict is `confirmed`, `rejected` (with the reason), `question` (not enough
 context: goes to the summary as a question to the author) or `merged` (into another finding).
 
-**Fingerprint** = hash of the path, the anchor snippet (±2 lines, whitespace normalized) and
-the normalized title. Not the line number, so it survives shifts; not the role, so one problem
-from two roles is one finding.
+**Fingerprint** = hash of the path and the anchor snippet (±2 lines, whitespace normalized).
+Not the line number, so it survives shifts; not the role, so one problem from two roles is one
+finding; not the title (revised 2026-10-22), because a model words it differently on each run,
+which made a rerun delete and recreate drafts and reply "looks fixed" to a thread that wasn't.
+Two problems on the same lines become one finding with the other in `related`; its
+fingerprints stay in `foldedFingerprints`, so its drafts and threads still count as found. A finding
+without lines of the file (an AC row, no checkout) keeps the normalized title in it. The
+first rule's fingerprint (with the title) is kept as `previousFingerprint`, so drafts and
+threads from before still match.
 
 ## Requests and posting
 
@@ -551,15 +605,14 @@ The user can move any finding into an inline draft by hand.
 ### Inline draft
 
 ```markdown
-🤖 **AKit review** · `security` · **high** · confidence 0.86
+🤖 · `security` · **high** · confidence 0.86
 
 The token from the header is logged in full in `AuthMiddleware.cs:42` and reaches Kibana.
 
 ```suggestion
 _logger.LogDebug("Auth header present: {Present}", header is not null);
 ```
-<sub>AKit is an AI reviewer; check before applying.</sub>
-<!-- akit-review:v1 fp=7c1e9a… role=security sev=high run=<run-id> -->
+<!-- ai-review:v1 kind=finding fp=7c1e9a… role=security sev=high run=<run-id> th=… -->
 ```
 
 A finding that quotes a secret is posted as "a secret in `X:42`", without the value. Every

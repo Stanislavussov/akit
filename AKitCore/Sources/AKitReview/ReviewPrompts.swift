@@ -115,7 +115,7 @@ public enum ReviewPrompts {
 
         \(body)
 
-        Limits of this role: at most \(role.maxFindings) findings, severity \(role.minSeverity.rawValue) or higher.
+        Limits of this role: at most \(role.maxFindings) findings (rows of the acceptance-criteria matrix don't count), severity \(role.minSeverity.rawValue) or higher.
         """
         if !role.doNotComment.isEmpty {
             text += "\nDo not comment on:\n" + role.doNotComment.map { "- \($0)" }.joined(separator: "\n")

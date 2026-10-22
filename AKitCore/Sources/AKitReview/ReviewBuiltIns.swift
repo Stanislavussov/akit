@@ -12,7 +12,7 @@ public enum ReviewBuiltIns {
       passes: ""
       verifier: high
     posting:
-      marker: "🤖 AKit review"
+      marker: "🤖"
       severity_threshold: medium
       confidence_threshold: 0.8
       max_inline: 7
@@ -25,11 +25,12 @@ public enum ReviewBuiltIns {
         "feature": """
         id: feature
         title: Feature
-        roles: { required: [contracts, architecture, domain, requirements], optional: [tests, security] }
+        roles: { required: [contracts, architecture, domain, bug-hunter, requirements], optional: [tests, security] }
         checks:
           - "Which contracts does the change add or change, and does every consumer still work?"
           - "Does the new code sit in the right component and keep its boundaries?"
           - "Do the changes keep the invariants and business rules of the touched components?"
+          - "Does the new code behave right on edge cases, errors and concurrent calls?"
           - "Is each acceptance criterion covered by code and by a test?"
         context_required: [wi, full_files]
         detect:            # read by the classifier later; ignored now

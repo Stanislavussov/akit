@@ -43,8 +43,15 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
     public var suggestion: String?
     public var related: [String]
     public var verifier: Verdict?
-    /// Hash of the path, the anchor snippet and the title (`ReviewFingerprint`); set by AKit.
+    /// Hash of the path and the anchor snippet, plus the title when there is no line to anchor
+    /// to (`ReviewFingerprint`); set by AKit.
     public var fingerprint: String?
+    /// The fingerprint by the first rule (always with the title), so drafts and threads written
+    /// before the change still match. Nil when it is the same as `fingerprint`.
+    public var previousFingerprint: String?
+    /// Fingerprints of findings folded into this one (the same lines), so their drafts and
+    /// threads still count as found.
+    public var foldedFingerprints: [String]?
 
     public init(id: String, kind: Kind = .finding, role: String, file: String?, side: Side = .new, line: Int?, title: String,
                 evidence: String, why: String, severity: ReviewSeverity, confidence: Double, suggestion: String? = nil,
@@ -65,6 +72,9 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
         self.verifier = verifier
         self.fingerprint = fingerprint
     }
+
+    /// Every fingerprint a draft or a thread of this finding may carry.
+    public var fingerprints: [String] { [fingerprint, previousFingerprint].compactMap { $0 } + (foldedFingerprints ?? []) }
 
     /// The severity and confidence after the verifier.
     public var finalSeverity: ReviewSeverity { verifier?.severity ?? severity }
@@ -96,12 +106,13 @@ public struct ContextGap: Codable, Sendable, Hashable, Identifiable {
     }
 }
 
-/// Fingerprint = hash of the path, the anchor snippet (±2 lines, whitespace normalized) and
-/// the normalized title. Not the line number, so it survives shifts; not the role, so one
-/// problem from two roles is one finding (R12).
+/// Fingerprint = hash of the path and the anchor snippet (±2 lines, whitespace normalized).
+/// Not the line number, so it survives shifts; not the role, so one problem from two roles is
+/// one finding (R12); not the title, which a model words differently on each run. Without lines
+/// of the file (no checkout, an acceptance criterion) the normalized title is part of it.
 public enum ReviewFingerprint {
-    public static func make(path: String, snippet: String, title: String) -> String {
-        let text = "\(path)\n\(normalize(snippet))\n\(normalizeTitle(title))"
+    public static func make(path: String, snippet: String, title: String?) -> String {
+        let text = "\(path)\n\(normalize(snippet))" + (title.map { "\n\(normalizeTitle($0))" } ?? "")
         return String(Checksum.sha256(Data(text.utf8)).prefix(16))
     }
 

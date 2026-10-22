@@ -104,23 +104,26 @@ public enum ReviewDiscuss {
         var next = (current.findings.compactMap { Int($0.id.dropFirst()) }.max() ?? 0) + 1
         for file in files {
             guard let object = (try? Data(contentsOf: file)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { continue }
+            // Verdicts first: a finding the discussion rejects no longer holds its place. So a verdict
+            // can only name a finding of an earlier version, not one this file adds.
+            let before = current.findings
+            current.findings = ReviewCandidates.apply(verdictsFile: file, to: current.findings, keepingUnmentioned: true)
+            for (old, new) in zip(before, current.findings) where old.verifier != new.verifier {
+                changes.changed.append("\(new.id): \(old.verifier?.verdict.rawValue ?? "unverified") → \(new.verifier?.verdict.rawValue ?? "unverified")")
+            }
             for raw in object["findings"] as? [[String: Any]] ?? [] {
                 // Only a role of the run: the role goes into the hidden line of a draft.
                 let role = (raw["role"] as? String).flatMap { name in run.spec.roles.contains { $0.id == name } ? name : nil } ?? "discuss"
                 guard var finding = ReviewCandidates.finding(raw, role: role, id: "f\(next)") else { continue }
                 ReviewCandidates.anchor(&finding, worktree: run.worktree)
-                finding.fingerprint = ReviewCandidates.fingerprint(finding, worktree: run.worktree)
-                guard !current.findings.contains(where: { $0.fingerprint == finding.fingerprint }) else { continue }
+                (finding.fingerprint, finding.previousFingerprint) = ReviewCandidates.fingerprints(finding, worktree: run.worktree)
+                guard !current.findings.contains(where: { !Set($0.fingerprints).isDisjoint(with: finding.fingerprints)
+                    && $0.verifier?.verdict != .rejected && $0.verifier?.verdict != .merged }) else { continue }
                 // Found in the discussion, with the developer: it counts as confirmed.
                 finding.verifier = ReviewFinding.Verdict(verdict: .confirmed, note: "Added in Discuss in Pi…")
                 next += 1
                 current.findings.append(finding)
                 changes.added.append("\(finding.id): \(finding.title)")
-            }
-            let before = current.findings
-            current.findings = ReviewCandidates.apply(verdictsFile: file, to: current.findings, keepingUnmentioned: true)
-            for (old, new) in zip(before, current.findings) where old.verifier != new.verifier {
-                changes.changed.append("\(new.id): \(old.verifier?.verdict.rawValue ?? "unverified") → \(new.verifier?.verdict.rawValue ?? "unverified")")
             }
             current.appliedDiscuss = (current.appliedDiscuss ?? []) + [file.lastPathComponent]
         }

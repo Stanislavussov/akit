@@ -887,7 +887,7 @@ file "$REVIEWRUN/run.json" <<EOF
   {"id":"security","source":"brain","reason":"optional, turned on","minSeverity":"medium","maxFindings":3,"needs":["diff"],"doNotComment":[],"sha256":"0"}],
  "passes":{"value":{"model":"github-copilot/gpt-5.4-mini","thinking":""},"source":"brain"},
  "verifier":{"value":{"model":"github-copilot/claude-opus-5-5","thinking":"high"},"source":"brain"},
- "posting":{"marker":{"value":"🤖 AKit review","source":"built-in"},"severityThreshold":{"value":"medium","source":"built-in"},
+ "posting":{"marker":{"value":"🤖","source":"built-in"},"severityThreshold":{"value":"medium","source":"built-in"},
   "confidenceThreshold":{"value":0.8,"source":"built-in"},"maxInline":{"value":5,"source":"project"},"nitpicks":{"value":false,"source":"built-in"}},
  "capCredits":{"value":150,"source":"built-in"},
  "constraints":["Public DTOs in Contracts/ change only in backward-compatible ways"],
@@ -942,17 +942,17 @@ file "$REVIEWRUN/gitlab/snapshot.json" <<EOF
  "diffs":[{"oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs","diff":"@@ -5,10 +5,13 @@\n     public async Task InvokeAsync(HttpContext context)\n     {\n         var header = context.Request.Headers.Authorization.ToString();\n+        logger.LogInformation(\"Auth: {Header}\", header);\n         if (string.IsNullOrEmpty(header))\n         {\n             context.Response.StatusCode = 401;\n             return;\n         }\n+        var token = header[\"Bearer \".Length..];\n+        context.Items[\"token\"] = token;\n         await next(context);\n     }\n }\n","newFile":false,"renamedFile":false,"deletedFile":false,"tooLarge":false}],
  "discussions":[],"drafts":[],"user":"demo","gathered":"$(rago 179M)"}
 EOF
-SUMMARY='🤖 AKit review · summary · scenario **bugfix** · roles `bug-hunter`, `requirements`, `tests`, `security`\n\n2 inline comments on the diff.\n\n### Questions to the author\n\n- `src/Auth/AuthMiddleware.cs:11`: Should a missing header answer 401 or pass through to anonymous endpoints? — Ask whether /health and /metrics must stay anonymous.\n\n### Acceptance criteria\n\n| Criterion | Status |\n|---|---|\n| No secret reaches a log | code: AuthMiddleware.cs:8 still logs the header (f1) |\n\n### What was missing\n\n- Output of tests: dotnet test failed to build in the worktree.\n- Which endpoints stay anonymous: Work item #4512 doesn'"'"'t list them.\n\n<sub>AKit is an AI reviewer; check before applying. Reviewed commit 4f2c9e1b7a.</sub>'
+SUMMARY='🤖 · summary · scenario **bugfix** · roles `bug-hunter`, `requirements`, `tests`, `security`\n\n2 inline comments on the diff.\n\n### Questions to the author\n\n- `src/Auth/AuthMiddleware.cs:11`: Should a missing header answer 401 or pass through to anonymous endpoints? — Ask whether /health and /metrics must stay anonymous.\n\n### Acceptance criteria\n\n| Criterion | Status |\n|---|---|\n| No secret reaches a log | code: AuthMiddleware.cs:8 still logs the header (f1) |\n\n### What was missing\n\n- Output of tests: dotnet test failed to build in the worktree.\n- Which endpoints stay anonymous: Work item #4512 doesn'"'"'t list them.\n\n<sub>Reviewed commit 4f2c9e1b7a.</sub>'
 POS='"baseSHA":"1a2b3c4d","startSHA":"1a2b3c4d","headSHA":"'"$HEADSHA"'","oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs"'
 file "$REVIEWRUN/requests.json" <<EOF
 {"created":"$(rago 170M)","findingsVersion":1,"requests":[
  {"id":"r1","kind":"create","findingID":"f1","fingerprint":"7c1e9a04b2d6f318","role":"security","severity":"high","confidence":0.93,
   "file":"src/Auth/AuthMiddleware.cs","line":8,"position":{$POS,"newLine":8},
-  "proposed":"🤖 AKit review · \`security\` · **high** · confidence 0.93\n\n**The Authorization header is logged in full**\n\nThe log goes to the shared log store; anyone who reads it gets a valid bearer token.\n\n\`\`\`suggestion\nlogger.LogDebug(\"Auth header present: {Present}\", header.Length > 0);\n\`\`\`\n\n<sub>AKit is an AI reviewer; check before applying.</sub>",
+  "proposed":"🤖 · \`security\` · **high** · confidence 0.93\n\n**The Authorization header is logged in full**\n\nThe log goes to the shared log store; anyone who reads it gets a valid bearer token.\n\n\`\`\`suggestion\nlogger.LogDebug(\"Auth header present: {Present}\", header.Length > 0);\n\`\`\`",
   "decision":"approved","movedByUser":false},
  {"id":"r2","kind":"create","findingID":"f2","fingerprint":"a91f2c7d0e3b5a66","role":"bug-hunter","severity":"medium","confidence":0.84,
   "file":"src/Auth/AuthMiddleware.cs","line":14,"position":{$POS,"newLine":14},
-  "proposed":"🤖 AKit review · \`bug-hunter\` · **medium** · confidence 0.84\n\n**A header without the Bearer prefix crashes the request**\n\nBasic credentials or a short header throw ArgumentOutOfRangeException: a 500 instead of 401.\n\n<sub>AKit is an AI reviewer; check before applying.</sub>",
+  "proposed":"🤖 · \`bug-hunter\` · **medium** · confidence 0.84\n\n**A header without the Bearer prefix crashes the request**\n\nBasic credentials or a short header throw ArgumentOutOfRangeException: a 500 instead of 401.",
   "decision":"pending","movedByUser":false},
  {"id":"r3","kind":"summary","proposed":"$SUMMARY","decision":"pending","movedByUser":false}],
  "placements":[{"findingID":"f1","place":"inline","reason":"Confirmed and over the thresholds."},
