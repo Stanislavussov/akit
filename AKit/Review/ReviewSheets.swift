@@ -29,10 +29,16 @@ struct NewReviewSheet: View {
     @State private var passesModel = ""
     @State private var verifierModel = ""
     @State private var cap = ""
+    @State private var maxChangedLines = ""
     @State private var notes = ""
     @State private var links = ""
     @State private var extraServers: Set<String> = []
     @State private var catalog: ReviewCatalog?
+    @State private var steps: [String] = []
+    @State private var newStep = ""
+    @State private var piFlags = ""
+    @State private var piLibrary = ReviewPiLibrary()
+    @State private var flagSuggestions: [(flag: String, help: String)] = []
 
     private var mr: MergeRequestRef? { MergeRequestRef.parse(address) }
     private var profile: ReviewProfile? {
@@ -41,12 +47,14 @@ struct NewReviewSheet: View {
         case .local: inspection.flatMap { inspection in catalog.flatMap { ReviewLocal.profile(for: inspection, in: $0, env: model.env) } }
         }
     }
+    /// The Pi flags of this run, or why not.
+    private var flagsProblem: String? { ReviewPiFlags.problem(ReviewPiFlags.split(piFlags)) }
     /// The links as a run takes them, or why not.
     private var checkedLinks: Result<[String], Error> { Result { try ReviewContext.links([links]) } }
     /// The project's MCP rules (or the defaults): its own servers and its context servers.
     private var access: ReviewMCPAccess { profile?.mcp ?? ReviewMCPAccess() }
     private var canStart: Bool {
-        guard !model.isBusy, (try? checkedLinks.get()) != nil else { return false }
+        guard !model.isBusy, (try? checkedLinks.get()) != nil, flagsProblem == nil else { return false }
         return switch source {
         case .mergeRequest: mr != nil
         case .local: inspection?.has(mode) == true
@@ -104,10 +112,12 @@ struct NewReviewSheet: View {
                     }
                 }
                 extraServersSection
+                piSection
                 Section("This run only") {
                     TextField("Model for the brief and roles", text: $passesModel, prompt: Text("provider/model, e.g. github-copilot/… (empty: from the configuration)"))
                     TextField("Verifier model", text: $verifierModel, prompt: Text("a strong model (empty: from the configuration)"))
                     TextField("Credit cap", text: $cap, prompt: Text("empty: from the configuration"))
+                    TextField("Max changed lines", text: $maxChangedLines, prompt: Text("over it the review asks first (empty: from the configuration)"))
                 }
             }
             .formStyle(.grouped)
@@ -132,6 +142,104 @@ struct NewReviewSheet: View {
             if let preset = profile?.defaultScenario { scenario = preset }
         }
         .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)") { await inspect() }
+        .task { await loadPi() }
+    }
+
+    /// Pi steps after the roles and extra Pi flags: suggested from the user's Pi set-up, or typed.
+    @ViewBuilder private var piSection: some View {
+        Section {
+            let configured = (catalog?.brainPi.steps ?? []) + (profile?.pi.steps ?? [])
+            if !configured.isEmpty {
+                Text("From the configuration: " + configured.map(\.command).joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                HStack {
+                    Text(step).font(.callout.monospaced()).lineLimit(2)
+                    Spacer()
+                    Button { steps.remove(at: index) } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless)
+                        .help("Remove this step")
+                }
+            }
+            HStack {
+                TextField("Step", text: $newStep, prompt: Text("/run agent task, /template, /skill:name or text"))
+                    .font(.callout.monospaced())
+                    .onSubmit(addStep)
+                Menu("Suggest") {
+                    ForEach([ReviewPiLibrary.Item.Kind.agent, .template, .skill], id: \.self) { kind in
+                        let items = piLibrary.items.filter { $0.kind == kind }
+                        if !items.isEmpty {
+                            Section(kind == .agent ? "Subagents" : kind == .template ? "Prompt templates" : "Skills") {
+                                ForEach(items) { item in
+                                    Button("\(item.command) — \(item.description.prefix(70))") { newStep = item.command + " " }
+                                }
+                            }
+                        }
+                    }
+                }
+                .fixedSize()
+                .disabled(piLibrary.items.isEmpty)
+                Button("Add", action: addStep).disabled(newStep.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            let matches = stepMatches
+            if !matches.isEmpty {
+                ForEach(matches) { item in
+                    Button { newStep = item.command + " " } label: {
+                        HStack {
+                            Text(item.command + (item.argumentHint.map { " " + $0 } ?? "")).font(.caption.monospaced())
+                            Text(item.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            HStack {
+                TextField("Pi flags", text: $piFlags, prompt: Text("e.g. --exclude-tools find"))
+                    .font(.callout.monospaced())
+                Menu("Suggest") {
+                    ForEach(flagSuggestions, id: \.flag) { suggestion in
+                        Button("\(suggestion.flag) — \(suggestion.help.prefix(70))") {
+                            let flag = suggestion.flag.split(separator: " ").first.map(String.init) ?? suggestion.flag
+                            piFlags += (piFlags.isEmpty || piFlags.hasSuffix(" ") ? "" : " ") + flag + " "
+                        }
+                    }
+                }
+                .fixedSize()
+                .disabled(flagSuggestions.isEmpty)
+            }
+            if let flagsProblem {
+                Text(flagsProblem).font(.caption).foregroundStyle(.red)
+            }
+        } header: {
+            Text("Pi steps")
+        } footer: {
+            Text("Steps run after the roles, each as its own pass: your subagent's prompt and model, a prompt template or a skill. They get only the review's reading tools, so an agent's bash, edit or write tools are left out, and their findings go through the verifier. Extension commands don't run here. The flags go to every pass but the fetch and send ones.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Items whose command starts with what is typed (after a /), at most six.
+    private var stepMatches: [ReviewPiLibrary.Item] {
+        let typed = newStep.trimmingCharacters(in: .whitespaces).lowercased()
+        guard typed.hasPrefix("/"), !typed.contains(" ") else { return [] }
+        return Array(piLibrary.items.filter { $0.command.lowercased().hasPrefix(typed) || $0.command.lowercased().contains(" " + typed.dropFirst()) }
+            .filter { $0.command.lowercased() != typed }.prefix(6))
+    }
+
+    private func addStep() {
+        let step = newStep.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !step.isEmpty, !steps.contains(step) else { return }
+        steps.append(step)
+        newStep = ""
+    }
+
+    private func loadPi() async {
+        let env = model.env
+        piLibrary = await Task.detached { ReviewPiLibrary.load(env: env) }.value
+        if let pi = env.findExecutable("pi"), let help = await ReviewPiCommands.help(pi: pi, env: env) {
+            flagSuggestions = ReviewPiFlags.suggestions(help: help)
+        }
     }
 
     /// The developer's own context: notes every pass reads, links the fetch pass reads.
@@ -296,9 +404,11 @@ struct NewReviewSheet: View {
         if !passesModel.isEmpty { choices.settings.passes = ReviewModelChoice(model: passesModel) }
         if !verifierModel.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifierModel) }
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
+        if let value = Int(maxChangedLines), value > 0 { choices.settings.maxChangedLines = value }
         choices.notes = notes
         choices.links = (try? checkedLinks.get()) ?? []
         choices.extraServers = extraServers.sorted()
+        choices.pi = ReviewPiExtras(flags: ReviewPiFlags.split(piFlags), steps: steps.map { ReviewStepConfig(command: $0) })
         if source == .local, let inspection {
             model.startLocal(inspection, mode: mode, project: profile?.slug, choices: choices, brain: brain)
         } else if let mr {
@@ -524,6 +634,9 @@ enum ReviewProfileTemplate {
     path_instructions: []                  # e.g. - { paths: ["**/*.generated.ts"], ignore: true }
     roles: { off: [], add: [] }            # project roles live in projects/<id>/skills/review-<role>/SKILL.md
     review: {}                             # e.g. { max_inline: 5, confidence_threshold: 0.85 }
+    # pi:                                  # your Pi set-up in every run of this project (akit review pi lists it)
+    #   flags: ["--exclude-tools", "find"]
+    #   steps: ["/run reviewer", { run: "/skill:security-audit", max_findings: 3 }]
 
     """
 }

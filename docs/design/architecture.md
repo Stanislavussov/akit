@@ -160,7 +160,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Brain, ProjectSetup |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
-| `AKitReview` | Foundation, Model, Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Yams |
+| `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Yams |
 | `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 

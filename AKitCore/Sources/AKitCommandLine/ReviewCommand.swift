@@ -19,6 +19,8 @@ extension AKitCLI {
                                         history, commands and knowledge into a context pack. Then the
                                         passes run in Pi (brief, roles, verifier).
                                         --over-cap goes on when the estimate is over the credit cap
+                                        or the change over max_changed_lines (default 1500;
+                                        --max-changed-lines N sets it for this run)
       akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
@@ -39,6 +41,13 @@ extension AKitCLI {
                                         server's reading tools (context/links.md; a gap when it can't)
       --extra-server NAME               A Pi MCP server added for this run as a read-only context
                                         server, on top of the profile's mcp: servers and extra_servers
+      --step COMMAND                    A Pi step after the roles: /run AGENT [TASK] (a pi-subagents
+                                        agent), /TEMPLATE [ARGS], /skill:NAME [REQUEST] or plain text.
+                                        AKit runs it as its own pass with the review's reading tools
+      --pi-flags="FLAGS"                Extra Pi flags of the brief, roles, steps and verifier (only
+                                        --name, --exclude-tools, --no-approve, --verbose)
+      akit review pi                    Your Pi subagents, prompt templates and skills a step can run,
+                                        and the flags a pass may take (from pi --help)
       akit review passes RUN [--over-cap]
                                         Run the passes again on a gathered run
       akit review show RUN              The run: passes, the requests with their decisions, what stays
@@ -72,7 +81,9 @@ extension AKitCLI {
 
     static func review(_ arguments: [String], env: HarnessEnvironment, cwd: URL, out: (String) -> Void, err: (String) -> Void,
                        input: () -> Data) async throws -> Int32 {
-        var args = Arguments(arguments)
+        // `--pi-flags=…` carries flags, so it can't be a value Arguments reads.
+        let piFlags = arguments.filter { $0.hasPrefix("--pi-flags=") }.flatMap { ReviewPiFlags.split(String($0.dropFirst("--pi-flags=".count))) }
+        var args = Arguments(arguments.filter { !$0.hasPrefix("--pi-flags=") })
         if args.flag("--help") || args.flag("-h") || args.isEmpty {
             out(reviewUsage)
             return 0
@@ -91,6 +102,7 @@ extension AKitCLI {
         if let model = args.value("--passes-model") { settings.passes = ReviewModelChoice(model: model) }
         if let model = args.value("--verifier-model") { settings.verifier = ReviewModelChoice(model: model) }
         if let cap = try positiveNumber(args.value("--cap"), "--cap") { settings.capCredits = cap }
+        if let lines = try positiveNumber(args.value("--max-changed-lines"), "--max-changed-lines") { settings.maxChangedLines = lines }
         let mrText = args.value("--mr")
         let gatherOnly = args.flag("--gather-only")
         let yes = args.flag("--yes")
@@ -117,6 +129,8 @@ extension AKitCLI {
         } catch {
             throw Failure(message: error.localizedDescription)
         }
+        choices.pi = ReviewPiExtras(flags: piFlags, steps: args.values("--step").map { ReviewStepConfig(command: $0) })
+        if let problem = ReviewPiFlags.problem(piFlags) { throw Failure(message: "--pi-flags: \(problem)") }
         choices.extraServers = args.values("--extra-server").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
             .filter { !$0.isEmpty }
         for change in roleChanges {
@@ -141,7 +155,7 @@ extension AKitCLI {
             let mr = try mrText.map(mergeRequest)
             let catalog = ReviewCatalog.load(home: env.homeDirectory, brain: brain)
             for problem in catalog.problems { err("akit: \(problem)") }
-            out(ReviewResolver.describe(try ReviewRuns.plan(mr: mr, project: project, choices: choices, home: env.homeDirectory, brain: brain)))
+            out(ReviewResolver.describe(try ReviewRuns.plan(mr: mr, project: project, choices: choices, env: env, brain: brain)))
             return 0
         case "check":
             try args.finish()
@@ -279,6 +293,26 @@ extension AKitCLI {
             out(gatherSummary(result))
             if gatherOnly { return 0 }
             return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
+        case "pi":
+            try args.finish()
+            let library = ReviewPiLibrary.load(env: env)
+            for (kind, title) in [(ReviewPiLibrary.Item.Kind.agent, "Subagents (pi-subagents)"), (.template, "Prompt templates"), (.skill, "Skills")] {
+                let items = library.items.filter { $0.kind == kind }
+                out("\(title):" + (items.isEmpty ? " none" : ""))
+                for item in items {
+                    out("  \(item.command)\(item.argumentHint.map { " " + $0 } ?? "")  [\(item.origin)]  \(item.description.prefix(100))")
+                }
+            }
+            if let pi = env.findExecutable("pi"), let help = await ReviewPiCommands.help(pi: pi, env: env) {
+                out("Flags a pass may take (--pi-flags=…):")
+                for suggestion in ReviewPiFlags.suggestions(help: help) { out("  \(suggestion.flag)  \(suggestion.help)") }
+            }
+            for problem in library.problems { err(problem) }
+            return 0
+        case "passes":
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review passes RUN.") }
+            try args.finish()
+            return try await runPasses(folder: try runFolder(id, env: env), overCap: overCap, env: env, out: out)
         case let text?:
             let mr = try mergeRequest(text)
             try args.finish()
@@ -295,10 +329,6 @@ extension AKitCLI {
             out(gatherSummary(result))
             if gatherOnly { return 0 }
             return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
-        case "passes":
-            guard let id = args.positional() else { throw Failure(message: "Which run? akit review passes RUN.") }
-            try args.finish()
-            return try await runPasses(folder: try runFolder(id, env: env), overCap: overCap, env: env, out: out)
         case nil:
             throw Failure(message: "Which merge request? akit review MR-URL.")
         }
@@ -315,13 +345,14 @@ extension AKitCLI {
 
     static func runPasses(folder: URL, overCap: Bool, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
         let lines = LineBox()
-        let options = ReviewPasses.Options(confirmOverCap: overCap ? { @Sendable _, _ in true } : nil, progress: { lines.add($0) })
+        let options = ReviewPasses.Options(confirmOverCap: overCap ? { @Sendable _, _ in true } : nil,
+                                           confirmLarge: overCap ? { @Sendable _, _ in true } : nil, progress: { lines.add($0) })
         let findings: ReviewFindingsFile
         do {
             findings = try await ReviewPasses.run(folder: folder, env: env, options: options)
         } catch {
             lines.drain(out)
-            throw Failure(message: error.localizedDescription + (error.localizedDescription.contains("over the cap") ? " Add --over-cap to go on." : ""))
+            throw Failure(message: error.localizedDescription + (error.localizedDescription.contains("over the cap") || error.localizedDescription.contains("over the limit of") ? " Add --over-cap to go on." : ""))
         }
         lines.drain(out)
         let log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))

@@ -107,19 +107,19 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var severityThreshold: ReviewSeverity?
     public var confidenceThreshold: Double?
     public var maxInline: Int?
-    public var nitpicks: Bool?
     public var capCredits: Int?
+    /// Over this many changed lines the passes ask first (`cost: max_changed_lines`).
+    public var maxChangedLines: Int?
 
     public init(passes: ReviewModelChoice? = nil, verifier: ReviewModelChoice? = nil, marker: String? = nil,
                 severityThreshold: ReviewSeverity? = nil, confidenceThreshold: Double? = nil, maxInline: Int? = nil,
-                nitpicks: Bool? = nil, capCredits: Int? = nil) {
+                capCredits: Int? = nil) {
         self.passes = passes
         self.verifier = verifier
         self.marker = marker
         self.severityThreshold = severityThreshold
         self.confidenceThreshold = confidenceThreshold
         self.maxInline = maxInline
-        self.nitpicks = nitpicks
         self.capCredits = capCredits
     }
 
@@ -153,10 +153,13 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
             guard (0...50).contains(value) else { throw ReviewRole.Failure(message: "\(where_): max_inline must be 0–50.") }
             patch.maxInline = value
         }
-        patch.nitpicks = posting["nitpicks"] as? Bool
         if let value = (cost["cap_credits_per_run"] ?? map["cap_credits_per_run"]) as? Int {
             guard value > 0 else { throw ReviewRole.Failure(message: "\(where_): cap_credits_per_run must be above 0.") }
             patch.capCredits = value
+        }
+        if let value = (cost["max_changed_lines"] ?? map["max_changed_lines"]) as? Int {
+            guard value > 0 else { throw ReviewRole.Failure(message: "\(where_): max_changed_lines must be above 0.") }
+            patch.maxChangedLines = value
         }
         return patch
     }
@@ -224,6 +227,8 @@ public struct ReviewProfile: Sendable, Hashable {
     public var rolesOff: [String]
     public var rolesAdd: [String]
     public var settings: ReviewSettingsPatch
+    /// `pi:`: extra flags of the passes and Pi steps after the roles, for every run of the project.
+    public var pi = ReviewPiExtras()
     public var file: URL?
 
     public init(slug: String, project: String, gitlabHost: String, gitlabProjectPath: String, checkout: String? = nil,
@@ -293,13 +298,15 @@ public struct ReviewProfile: Sendable, Hashable {
                             ignore: $0["ignore"] as? Bool ?? false)
         }
         let roles = map["roles"] as? [String: Any] ?? [:]
-        return ReviewProfile(slug: slug, project: map["project"] as? String ?? slug, gitlabHost: host, gitlabProjectPath: path,
+        var profile = ReviewProfile(slug: slug, project: map["project"] as? String ?? slug, gitlabHost: host, gitlabProjectPath: path,
                              checkout: map["checkout"] as? String, tracker: tracker,
                              mcp: try ReviewMCPAccess.parse(map["mcp"] as? [String: Any], where: where_), defaultScenario: map["default_scenario"] as? String,
                              knowledge: ReviewYAML.strings(map["knowledge"]), gather: gather,
                              constraints: ReviewYAML.strings(map["constraints"]), pathInstructions: instructions,
                              rolesOff: ReviewYAML.strings(roles["off"]), rolesAdd: ReviewYAML.strings(roles["add"]),
                              settings: try ReviewSettingsPatch.parse(map["review"] as? [String: Any] ?? [:], where: where_), file: file)
+        profile.pi = try ReviewPiExtras.parse(map["pi"], where: where_)
+        return profile
     }
 }
 

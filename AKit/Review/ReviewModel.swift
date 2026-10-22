@@ -22,10 +22,20 @@ final class ReviewModel {
     }
 
     /// An estimate over the cap waits for the user's answer.
+    /// Over the credit cap, or (with `changedLines`) over `max_changed_lines`.
     struct CapQuestion: Identifiable {
         let id = UUID()
         let estimate: Double
         let cap: Int
+        var changedLines: Int?
+
+        var title: String { changedLines == nil ? "Over the credit cap" : "A big change" }
+        var message: String {
+            if let changedLines {
+                return "This change has \(changedLines) changed lines; the limit is \(cap). Reviews of big changes miss more: review it anyway, or stop and split it."
+            }
+            return String(format: "This review needs about %.0f credits; the cap is %d. A big merge request costs more: run it anyway, or stop and narrow the roles.", estimate, cap)
+        }
     }
 
     private(set) var runs: [Summary] = []
@@ -136,7 +146,9 @@ final class ReviewModel {
 
     private func passes(_ folder: URL) async throws {
         let options = ReviewPasses.Options(confirmOverCap: { [weak self] estimate, cap in
-            await self?.askOverCap(estimate: estimate, cap: cap) ?? false
+            await self?.ask(CapQuestion(estimate: estimate, cap: cap)) ?? false
+        }, confirmLarge: { [weak self] lines, limit in
+            await self?.ask(CapQuestion(estimate: 0, cap: limit, changedLines: lines)) ?? false
         }, progress: { [weak self] line in Task { @MainActor in self?.log(line) } })
         try await ReviewPasses.run(folder: folder, env: env, options: options)
     }
@@ -158,10 +170,10 @@ final class ReviewModel {
         if let id = activity?.runID, run?.id == id { open(id) }
     }
 
-    private func askOverCap(estimate: Double, cap: Int) async -> Bool {
+    private func ask(_ question: CapQuestion) async -> Bool {
         await withCheckedContinuation { continuation in
             capAnswer = continuation
-            capQuestion = CapQuestion(estimate: estimate, cap: cap)
+            capQuestion = question
         }
     }
 

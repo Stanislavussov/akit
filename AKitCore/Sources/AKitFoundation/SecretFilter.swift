@@ -77,6 +77,16 @@ public enum SecretFilter {
         return maskedNamedValues(current as String)
     }
 
+    /// `masked` without the password rules: token shapes, keys and values after a secret's
+    /// name. What is left for the password rules alone is a weaker sign (a test fixture's password).
+    public static func maskedTokens(_ text: String) -> String {
+        var counts: [String: Int] = [:]
+        var current = text as NSString
+        let present = Scrubber.presentHints(in: text)
+        for rule in Scrubber.rules { current = Scrubber.apply(rule, to: current, present: present, counts: &counts) }
+        return maskedNamedValues(current as String)
+    }
+
     /// Values after a secret's name in environment and JSON style, which the Scrubber's own
     /// keyword rule leaves to entropy.
     static func maskedNamedValues(_ text: String) -> String {

@@ -16,16 +16,18 @@ public enum ReviewBuiltIns {
       severity_threshold: medium
       confidence_threshold: 0.8
       max_inline: 7
-      nitpicks: false
     cost:
       cap_credits_per_run: 150
+      max_changed_lines: 1500
     """
 
     public static let scenarioFiles: [String: String] = [
         "feature": """
         id: feature
         title: Feature
-        roles: { required: [contracts, architecture, domain, bug-hunter, requirements], optional: [tests, security] }
+        roles:
+          required: [contracts, domain, bug-hunter, requirements]
+          optional: [architecture, tests, security, performance, concurrency, data-migrations, observability]
         checks:
           - "Which contracts does the change add or change, and does every consumer still work?"
           - "Does the new code sit in the right component and keep its boundaries?"
@@ -40,7 +42,9 @@ public enum ReviewBuiltIns {
         "bugfix": """
         id: bugfix
         title: Bugfix
-        roles: { required: [bug-hunter, contracts, requirements, tests], optional: [architecture, security] }
+        roles:
+          required: [bug-hunter, contracts, requirements, tests]
+          optional: [architecture, security, concurrency, performance, observability]
         checks:
           - "Is the cause fixed, not the symptom (from the repro steps)?"
           - "Does the fix change a contract (behaviour, error, format) that other code relies on?"
@@ -54,7 +58,7 @@ public enum ReviewBuiltIns {
         "dependency-upgrade": """
         id: dependency-upgrade
         title: Dependency upgrade
-        roles: { required: [upgrade-risk, tests], optional: [contracts, security] }
+        roles: { required: [upgrade-risk, tests], optional: [contracts, security, performance] }
         checks:
           - "Which breaking changes does the new version list, and does the code handle them?"
           - "Which transitive dependencies change with it?"
@@ -170,10 +174,64 @@ public enum ReviewBuiltIns {
                          - Personal data in logs, errors or analytics.
                          - Crypto: home-made crypto, weak algorithms, missing certificate checks.
                          """),
+        "performance": role("performance", "Review the cost of the change on hot paths: queries, loops, allocations, network calls, caching, and how they grow with data.",
+                            max: 3, needs: ["diff", "full_files", "history"],
+                            doNotComment: ["micro-optimisations without a measured or obvious hot path", "style and naming",
+                                           "code that runs once at start-up or in tests"], body: """
+                            Find where the change makes something slower or heavier in a way users or operators will notice. For each finding name the path, how often it runs, and how its cost grows (with rows, items, users, payload size).
+
+                            - Database: a query inside a loop (N+1), a query without the index its filter or sort needs, a full-table read or count, a new query on every request that could be read once.
+                            - Network and I/O: a call per item instead of a batch, a synchronous call on a request path or the main thread, a missing timeout, a large payload read fully into memory.
+                            - Algorithms: a nested loop over two collections that grow, repeated sorting or parsing, a linear search in a hot loop.
+                            - Memory: unbounded caches, lists or buffers; loading a whole file, table or response when a stream would do.
+                            - Caching: a cache without an expiry or a bound, a cache key that misses on every call, invalidation that serves stale data.
+
+                            Evidence is the line that runs per item or per request. If you can't tell how often a path runs or how big the data is, ask with `kind: "question"`.
+                            """),
+        "concurrency": role("concurrency", "Review shared state and parallel work: races, locks, async calls, retries and idempotency.",
+                            max: 3, needs: ["diff", "full_files"],
+                            doNotComment: ["style and naming", "races without two concrete callers or tasks that can overlap"], body: """
+                            Find what goes wrong when two things happen at once. For each finding name the two actors (threads, tasks, requests, instances, consumers) and the order of steps that breaks.
+
+                            - Shared mutable state without a lock, an actor or a transaction; check-then-act and read-modify-write on a shared value or row.
+                            - Locks: taken in different orders (deadlock), held across a slow call or an `await`, never released on an error path.
+                            - Async: a call not awaited, a task that outlives its owner, cancellation that leaves state half-changed, work on the wrong thread or queue.
+                            - Distributed: two instances running the same job, a message handled twice, an event out of order. Is the handler idempotent?
+                            - Retries: a retry of a call that isn't idempotent (double charge, double send), retries without backoff or a limit.
+
+                            Quote the line where the shared state is read or written.
+                            """),
+        "data-migrations": role("data-migrations", "Review schema and data migrations: locks on big tables, rollbacks, data loss, and the deploy order with the code.",
+                                max: 3, needs: ["diff", "full_files", "history"],
+                                doNotComment: ["migration file naming and formatting", "changes with no migration, schema or stored data in them",
+                                               "consumers in other code of a changed API or DTO (the contracts role owns them)"], body: """
+                                Review every change to a schema or to stored data (SQL and ORM migrations, schema files, data backfills, changes to serialized formats in a store or a queue).
+
+                                - Locks and duration: an `ALTER` that rewrites or locks a big table, an index built without the online or concurrent option, a backfill in one transaction.
+                                - Data loss: a dropped or renamed column or table still read by running code, a type change that truncates, a `NOT NULL` without a default on existing rows.
+                                - Rollback: can the migration go back? Does the down step lose data? Is a one-way step marked as one?
+                                - Deploy order: old code running against the new schema, and new code against the old schema, during the rollout. A column the old code writes must stay until no old code runs.
+                                - Data meaning: a backfill that guesses values, defaults that change what old rows mean, time zones and units.
+
+                                Name the table and the step. If the size of a table matters and you can't know it, ask with `kind: "question"`.
+                                """),
+        "observability": role("observability", "Review whether operators can see and diagnose the change in production: errors, logs, metrics, traces and alerts.",
+                              max: 2, needs: ["diff", "full_files"],
+                              doNotComment: ["advice to add logging without a failure that would stay invisible", "log wording and levels as taste",
+                                             "secrets and personal data in logs (the security role owns them)"], body: """
+                              Ask: when this change fails in production, will anyone know, and can they tell why? A finding names the failure and what an operator would see (nothing, a wrong number, a log without the cause).
+
+                              - Errors swallowed or logged without the cause, the ID of the request or the entity, or the input that failed.
+                              - A new failure mode (a call to a new service, a queue, a job) with no metric, alert or health check where its neighbours have one.
+                              - Metrics or traces the change breaks: a renamed metric or label dashboards and alerts use, a span not closed, a label with unbounded values (user ids, URLs).
+                              - Log volume: a log line per item or per request on a hot path that will flood the logs.
+                              - A background job or retry loop that can fail forever without a signal.
+                              """),
     ]
 
     /// Ids in the order a new layer lists them.
-    public static let roleIDs = ["contracts", "architecture", "domain", "requirements", "tests", "bug-hunter", "upgrade-risk", "security"]
+    public static let roleIDs = ["contracts", "architecture", "domain", "requirements", "tests", "bug-hunter", "upgrade-risk", "security",
+                                 "performance", "concurrency", "data-migrations", "observability"]
     public static let scenarioIDs = ["feature", "bugfix", "dependency-upgrade"]
 
     public static var roles: [ReviewRole] {

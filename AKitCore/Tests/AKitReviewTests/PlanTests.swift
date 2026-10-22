@@ -117,11 +117,10 @@ struct PlanTests {
         GitLabFileDiff(oldPath: "gen/X.generated.swift", newPath: "gen/X.generated.swift", diff: "@@ -1 +1 @@\n-a\n+b\n"),
     ]
 
-    static func spec(maxInline: Int = 7, nitpicks: Bool = false) throws -> ReviewRunSpec {
+    static func spec(maxInline: Int = 7) throws -> ReviewRunSpec {
         let catalog = ReviewCatalog.load(home: FileManager.default.temporaryDirectory.appending(path: "none-\(UUID())"), brain: nil)
         var choices = ReviewRunChoices(scenario: "bugfix")
         choices.settings.maxInline = maxInline
-        choices.settings.nitpicks = nitpicks
         var spec = try ReviewResolver.resolve(catalog: catalog, profile: nil, choices: choices, mergeRequest: FakeMergeRequest.ref, id: "run1").spec
         spec.headSHA = "h1234567890"
         spec.pathInstructions = [.init(paths: ["**/*.generated.swift"], ignore: true)]

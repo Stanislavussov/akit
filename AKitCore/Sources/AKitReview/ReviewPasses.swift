@@ -24,7 +24,7 @@ public struct ReviewPassRecord: Codable, Sendable, Hashable {
 public struct ReviewPassLog: Codable, Sendable, Hashable {
     /// The Pi session of the brief and the role passes.
     public var mainSession: String
-    /// The verifier's fork; Discuss in Pi… forks it again.
+    /// The verifier's own session; Discuss in Pi… forks it.
     public var verifierSession: String?
     public var verifierSessionFile: String?
     public var estimate: Double?
@@ -75,7 +75,8 @@ public enum ReviewCredits {
     }
 }
 
-/// Step 4 of a run: brief → roles → verifier, one after another in one Pi session (R6).
+/// Step 4 of a run: brief → roles → Pi steps in one Pi session (R6), then the verifier in a
+/// session of its own.
 public enum ReviewPasses {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -85,12 +86,16 @@ public enum ReviewPasses {
     public struct Options: Sendable {
         /// Asked when the estimate is over the cap: true goes on. nil = never ask, stop.
         public var confirmOverCap: (@Sendable (_ estimate: Double, _ cap: Int) async -> Bool)?
+        /// Asked when the change has more changed lines than `max_changed_lines`: true goes on.
+        /// nil = never ask, stop.
+        public var confirmLarge: (@Sendable (_ lines: Int, _ limit: Int) async -> Bool)?
         public var timeout: TimeInterval
         public var progress: @Sendable (String) -> Void
 
-        public init(confirmOverCap: (@Sendable (Double, Int) async -> Bool)? = nil, timeout: TimeInterval = 30 * 60,
-                    progress: @escaping @Sendable (String) -> Void = { _ in }) {
+        public init(confirmOverCap: (@Sendable (Double, Int) async -> Bool)? = nil, confirmLarge: (@Sendable (Int, Int) async -> Bool)? = nil,
+                    timeout: TimeInterval = 30 * 60, progress: @escaping @Sendable (String) -> Void = { _ in }) {
             self.confirmOverCap = confirmOverCap
+            self.confirmLarge = confirmLarge
             self.timeout = timeout
             self.progress = progress
         }
@@ -115,6 +120,8 @@ public enum ReviewPasses {
         var cwd: URL
         var systemPrompt: URL?
         var roots: String
+        /// The run's extra Pi flags (brief, roles, steps, verifier).
+        var flags: [String] = []
     }
 
     /// The Pi arguments of a pass. Pi's own MCP support (`builtin:mcp`, with `builtin:codemode`
@@ -135,6 +142,7 @@ public enum ReviewPasses {
         }
         arguments += setup.skills
         if let system = setup.systemPrompt { arguments += ["--append-system-prompt", system.path] }
+        arguments += setup.flags
         arguments += ["-e", folder.appending(path: "akit-review.ts").path, "--tools", tools, "--", setup.prompt]
         return arguments
     }
@@ -252,8 +260,19 @@ public enum ReviewPasses {
         try write(system, to: systemFile)
 
         let contextSize = directorySize(context)
-        let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count, roles: roles.count)
+        let steps = spec.steps ?? []
+        let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count, roles: roles.count + steps.count)
         try ReviewRuns.setStatus(.estimating, message: String(format: "≈ %.0f credits (cap %d)", estimate, spec.capCredits.value), folder: folder)
+        // A change too big to review well: the passes ask first (`max_changed_lines`).
+        let scan = ReviewJSON.read(ReviewScan.self, from: folder.appending(path: "scan.json"))
+        if let scan, let limit = spec.maxChangedLines?.value, scan.changedLines > limit {
+            guard let confirm = options.confirmLarge, await confirm(scan.changedLines, limit) else {
+                let message = "Stopped before the passes: the change has \(scan.changedLines) changed lines, over the limit of \(limit). "
+                    + "Reviews of big changes miss more: split it, or review it anyway."
+                try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
+                throw Failure(message: message)
+            }
+        }
         // The fetch pass counts against the cap too.
         let previous = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
         let fetched = previous?.passes.filter { $0.name == "fetch" } ?? []
@@ -271,7 +290,7 @@ public enum ReviewPasses {
         }
         // The monthly limit (US dollars, Settings → Lab) counts review passes too.
         let records = SendLog.records(env: env)
-        let dollars = SendLog.estimate(characters: contextSize * (roles.count + 2), harness: .pi, model: spec.passes.value.model, records: records)
+        let dollars = SendLog.estimate(characters: contextSize * (roles.count + steps.count + 2), harness: .pi, model: spec.passes.value.model, records: records)
         try SendLog.checkLimit(estimate: dollars, settings: passesGate.settings, env: env)
 
         var log = ReviewPassLog(mainSession: UUID().uuidString.lowercased(), estimate: estimate)
@@ -282,10 +301,17 @@ public enum ReviewPasses {
         let skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
         let roots = readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)
 
+        // A subagent step with its own model goes where that model goes: the policy checks it too.
+        var stepGates: [String: SendGate] = [:]
+        for step in steps where step.model.model != spec.passes.value.model && stepGates[step.model.model] == nil {
+            stepGates[step.model.model] = step.model.model == spec.verifier.value.model ? verifierGate : try await gate(model: step.model.model, env: env)
+        }
+
         func pass(_ name: String, role: ReviewRunSpec.Role?, prompt: String, model: ReviewModelChoice, gate: SendGate,
                   session: [String]) async throws -> PassOutput {
-            let setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
+            var setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
                                   skills: skills, tools: tools, mcp: spec.access.inPasses, cwd: cwd, systemPrompt: systemFile, roots: roots)
+            setup.flags = spec.extraFlags
             return try await runPass(setup, spec: spec, folder: folder, log: &log, limit: limit, env: env, options: options, pi: pi)
         }
 
@@ -301,20 +327,27 @@ public enum ReviewPasses {
                                    prompt: ReviewPrompts.role(role, body: definition.map(ReviewYAML.body) ?? "", spec: spec),
                                    model: spec.passes.value, gate: passesGate, session: main)
             }
+            for step in steps {
+                try write(step.instructions, to: folder.appending(path: "steps/\(step.id).md"))
+                _ = try await pass("step-\(step.id)", role: step.role, prompt: ReviewPrompts.step(step, spec: spec), model: step.model,
+                                   gate: stepGates[step.model.model] ?? passesGate, session: main)
+            }
             var candidates = ReviewCandidates.collect(folder: folder, spec: spec, worktree: hasWorktree ? worktree : nil)
             try ReviewJSON.write(candidates, to: folder.appending(path: "candidates.json"))
             if !candidates.isEmpty {
                 let input = ReviewCandidates.verifierInput(candidates, worktree: hasWorktree ? worktree : nil)
                 try write(input, to: folder.appending(path: "prompts/candidates.md"))
-                guard let mainFile = sessionFile(id: log.mainSession, in: folder.appending(path: "sessions")) else {
-                    throw Failure(message: "Pi saved no session for the passes, so the verifier can't fork it.")
-                }
-                let verified = try await pass("verifier", role: nil, prompt: ReviewPrompts.verifier(candidates: input), model: spec.verifier.value,
-                                              gate: verifierGate, session: ["--fork", mainFile.path])
+                // A session of its own: the verifier doesn't inherit the roles' reasoning.
+                let verified = try await pass("verifier", role: nil, prompt: ReviewPrompts.verifier(candidates: input, brief: log.brief, spec: spec),
+                                              model: spec.verifier.value, gate: verifierGate,
+                                              session: ["--session-id", UUID().uuidString.lowercased()])
                 log.verifierSession = verified.session
                 log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
                 try ReviewJSON.write(log, to: logFile)
                 candidates = ReviewCandidates.apply(verdictsFile: folder.appending(path: "passes/verifier.json"), to: candidates)
+            }
+            if let scan, !scan.secrets.isEmpty {
+                candidates = ReviewScan.addSecrets(scan, to: candidates, worktree: hasWorktree ? worktree : nil)
             }
             let findings = ReviewFindingsFile(version: 1, findings: candidates, source: "passes")
             try ReviewJSON.write(findings, to: folder.appending(path: "findings.json"))

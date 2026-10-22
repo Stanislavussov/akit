@@ -4,7 +4,8 @@ import AKitSessions
 import Foundation
 
 /// Discuss in Pi… (R7): an interactive Pi that forks the verifier's session, so it has the
-/// whole context while the run's own session stays as it was. What it hands back through
+/// brief, the candidates and the verifier's checks while the run's own sessions stay as they
+/// were. Since 2026-10-22 the verifier has a session of its own: the roles' reasoning isn't in it. What it hands back through
 /// `akit_submit_findings` becomes a new version of the findings.
 public enum ReviewDiscuss {
     public struct Failure: Error, LocalizedError {
@@ -72,7 +73,7 @@ public enum ReviewDiscuss {
         # Discuss in Pi… for AKit review run \(run.id). Written by AKit; it writes it again each time.
         cd \(shellQuoted(cwd.path)) || exit 1
         \(variables.map { "export \($0.0)=\(shellQuoted($0.1))" }.joined(separator: "\n"))
-        echo "AKit review \(run.spec.mergeRequest.label): Pi has the whole review. Ask about a finding, or ask it to look again."
+        echo "AKit review \(run.spec.mergeRequest.label): Pi has the brief, the findings and the verifier's checks. Ask about a finding, or ask it to look again."
         echo "Changes come back to AKit through akit_submit_findings; nothing reaches GitLab without your approval."
         exec \(shellQuoted(pi.path)) \(arguments.map(shellQuoted).joined(separator: " "))
 
@@ -113,9 +114,11 @@ public enum ReviewDiscuss {
             }
             for raw in object["findings"] as? [[String: Any]] ?? [] {
                 // Only a role of the run: the role goes into the hidden line of a draft.
-                let role = (raw["role"] as? String).flatMap { name in run.spec.roles.contains { $0.id == name } ? name : nil } ?? "discuss"
+                let role = (raw["role"] as? String).flatMap { name in (run.spec.roles.map(\.id) + (run.spec.steps ?? []).map(\.id)).contains(name) ? name : nil } ?? "discuss"
                 guard var finding = ReviewCandidates.finding(raw, role: role, id: "f\(next)") else { continue }
                 ReviewCandidates.anchor(&finding, worktree: run.worktree)
+                // Found with the developer: the quote check is the verifier's tool, not a gate on this.
+                finding.evidenceFound = nil
                 (finding.fingerprint, finding.previousFingerprint) = ReviewCandidates.fingerprints(finding, worktree: run.worktree)
                 guard !current.findings.contains(where: { !Set($0.fingerprints).isDisjoint(with: finding.fingerprints)
                     && $0.verifier?.verdict != .rejected && $0.verifier?.verdict != .merged }) else { continue }

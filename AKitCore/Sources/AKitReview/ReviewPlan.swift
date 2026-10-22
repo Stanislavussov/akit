@@ -197,10 +197,6 @@ public enum ReviewPlanner {
                     place(.onlyInAKit, "Not confirmed by the verifier.")
                     continue
                 }
-                guard posting.nitpicks.value || finding.finalSeverity != .nit else {
-                    place(.onlyInAKit, "A nitpick; nitpicks are off.")
-                    continue
-                }
                 guard finding.finalSeverity >= posting.severityThreshold.value else {
                     place(.onlyInAKit, "Severity \(finding.finalSeverity.rawValue) is below \(posting.severityThreshold.value.rawValue).")
                     continue
@@ -210,7 +206,19 @@ public enum ReviewPlanner {
                     continue
                 }
             }
-            if let file = finding.file, ignored.contains(where: { ReviewGlob.matches($0, file) }) {
+            // Checks without a model: the quote must be in the file, and a person's thread on the
+            // same lines already says something there.
+            if !forced, finding.evidenceFound == false {
+                place(.onlyInAKit, "The quoted code isn't in \(finding.file ?? "the file") at the reviewed commit, so the finding can't be tied to the code.")
+                continue
+            }
+            // A secret is reported whatever else is said on those lines or about the path.
+            let secret = finding.role == ReviewScan.role
+            if !forced, !secret, let author = personThread(near: finding, in: input.discussions, head: spec.headSHA) {
+                place(.onlyInAKit, "\(author) already has an open thread on these lines: not raised again. Move it inline to post it anyway.")
+                continue
+            }
+            if !secret, let file = finding.file, ignored.contains(where: { ReviewGlob.matches($0, file) }) {
                 place(.onlyInAKit, "\(file) is ignored by the project's path instructions.")
                 continue
             }
@@ -218,6 +226,12 @@ public enum ReviewPlanner {
                 overCap.append(finding)
                 place(.summary, finding.file == nil ? "Not tied to a line: in the summary."
                                 : "GitLab can't hold a comment there (outside the diff or over its limits): in the summary.")
+                continue
+            }
+            // Inline only on lines the change touches (added, removed, or the context GitLab shows).
+            if !forced, !onChangedLine(finding, diffs: input.diffs) {
+                overCap.append(finding)
+                place(.summary, "Not on a line the change touches: in the summary.")
                 continue
             }
             inlineCandidates.append((finding, position))
@@ -309,6 +323,26 @@ public enum ReviewPlanner {
 
     // MARK: - Positions
 
+    /// The author of a person's open thread (not one of AKit's) within two lines of the finding:
+    /// the talk there is still going on. Resolved threads are the prompt's and the verifier's.
+    /// Only threads on the reviewed commit: an older version's line numbers point elsewhere.
+    static func personThread(near finding: ReviewFinding, in discussions: [GitLabDiscussion], head: String?) -> String? {
+        guard let file = finding.file, let line = finding.line else { return nil }
+        for discussion in discussions {
+            guard !discussion.isResolved, let first = discussion.notes.first(where: { !$0.system }), !ReviewNotes.hasMeta(first.body),
+                  let position = first.position, head == nil || position.headSHA == head else { continue }
+            let (path, near) = finding.side == .old ? (position.oldPath, position.oldLine) : (position.newPath, position.newLine)
+            if path == file, let near, abs(near - line) <= 2 { return first.author }
+        }
+        return nil
+    }
+
+    static func onChangedLine(_ finding: ReviewFinding, diffs: [GitLabFileDiff]) -> Bool {
+        guard let file = finding.file, let line = finding.line,
+              let diff = diffs.first(where: { $0.newPath == file || $0.oldPath == file }) else { return false }
+        return DiffPositions(diff: diff.diff).isInDiff(line, side: finding.side)
+    }
+
     static func position(for finding: ReviewFinding, diffs: [GitLabFileDiff], refs: GitLabMergeRequest.DiffRefs) -> GitLabPosition? {
         guard let file = finding.file, let line = finding.line else { return nil }
         guard let diff = diffs.first(where: { $0.newPath == file || $0.oldPath == file }), !diff.tooLarge else { return nil }
@@ -350,7 +384,7 @@ public enum ReviewPlanner {
             finding.file.map { "`\($0)" + (finding.line.map { ":\($0)" } ?? "") + "`" } ?? "the merge request"
         }
         var text = "\(spec.posting.marker.value) · summary · scenario **\(spec.scenario.value)** · roles "
-            + spec.roles.map { "`\($0.id)`" }.joined(separator: ", ") + "\n\n"
+            + (spec.roles.map(\.id) + (spec.steps ?? []).map(\.id)).map { "`\($0)`" }.joined(separator: ", ") + "\n\n"
         text += inline.isEmpty ? "No inline comments." : "\(inline.count) inline comment\(inline.count == 1 ? "" : "s") on the diff."
         if !overCap.isEmpty {
             text += "\n\n### More findings\n\n" + overCap.map { "- \(place($0)): \($0.title) (`\($0.role)`, \($0.finalSeverity.rawValue))" }

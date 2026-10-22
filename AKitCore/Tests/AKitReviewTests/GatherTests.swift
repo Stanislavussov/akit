@@ -20,9 +20,19 @@ struct ConfigTests {
         #expect(security?.doNotComment.contains("attacks without a path from an input to a sink") == true)
         #expect(security?.maxFindings == 3 && security?.minSeverity == .medium)
         let bugfix = ReviewBuiltIns.scenarios.first { $0.id == "bugfix" }
-        #expect(bugfix?.required == ["bug-hunter", "contracts", "requirements", "tests"] && bugfix?.optional == ["architecture", "security"])
+        #expect(bugfix?.required == ["bug-hunter", "contracts", "requirements", "tests"])
+        #expect(bugfix?.optional == ["architecture", "security", "concurrency", "performance", "observability"])
         let feature = ReviewBuiltIns.scenarios.first { $0.id == "feature" }
-        #expect(feature?.required.prefix(2) == ["contracts", "architecture"], "contracts and architecture come first")
+        #expect(feature?.required == ["contracts", "domain", "bug-hunter", "requirements"], "contracts first; architecture is optional")
+        #expect(feature?.optional.first == "architecture")
+        // Every role a scenario names exists.
+        for scenario in ReviewBuiltIns.scenarios {
+            for id in scenario.required + scenario.optional { #expect(ReviewBuiltIns.roleIDs.contains(id), "\(scenario.id): \(id)") }
+        }
+        for id in ["performance", "concurrency", "data-migrations", "observability"] {
+            let role = ReviewBuiltIns.roles.first { $0.id == id }
+            #expect(role?.minSeverity == .medium && role?.doNotComment.isEmpty == false, "\(id)")
+        }
         for id in ["contracts", "architecture"] {
             let role = ReviewBuiltIns.roles.first { $0.id == id }
             #expect(role?.doNotComment.contains { $0.contains("formatting") } == true, "\(id)")

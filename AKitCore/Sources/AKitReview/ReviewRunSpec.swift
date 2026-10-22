@@ -18,6 +18,8 @@ public struct ReviewRunChoices: Sendable, Hashable {
     /// Pi MCP servers added for this run as read-only context servers (`--extra-server`), on top
     /// of the profile's.
     public var extraServers: [String]
+    /// Pi flags and steps for this run (`--pi-flag`, `--step`), on top of the brain's and the profile's.
+    public var pi = ReviewPiExtras()
 
     public init(scenario: String? = nil, rolesOn: [String] = [], rolesOff: [String] = [], settings: ReviewSettingsPatch = ReviewSettingsPatch(),
                 workItems: [Int] = [], notes: String = "", links: [String] = [], extraServers: [String] = []) {
@@ -63,12 +65,42 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
         public var sha256: String
     }
 
+    /// A Pi step after the roles (`docs/design/review.md`, "Pi steps"): a subagent, a prompt
+    /// template, a skill or a plain instruction, run as AKit's own pass with the review's tools.
+    public struct Step: Codable, Sendable, Hashable {
+        /// `pi-reviewer`, `pi-review-api`, `pi-step-2`: the findings' role, the pass `step-<id>`.
+        public var id: String
+        /// nil: a plain instruction.
+        public var kind: ReviewPiLibrary.Item.Kind?
+        /// The agent, template or skill; empty for a plain instruction.
+        public var name: String
+        /// As configured: `/run reviewer check the retries`.
+        public var command: String
+        /// `user`, or the package it came from.
+        public var origin: String?
+        public var source: ReviewSource
+        /// What the pass reads: the agent's prompt, the expanded template, the skill; secrets masked.
+        public var instructions: String
+        /// The task after the name, or the request after a skill.
+        public var task: String
+        public var model: ReviewModelChoice
+        public var minSeverity: ReviewSeverity
+        public var maxFindings: Int
+        /// An agent's tools the pass doesn't get: a review pass only reads.
+        public var toolsLeftOut: [String]
+
+        /// The step as a role: its limits for the findings tool and the candidates.
+        public var role: Role {
+            Role(id: id, source: source, reason: "Pi step \(command)", minSeverity: minSeverity, maxFindings: maxFindings, needs: [],
+                 doNotComment: [], sha256: ReviewHash.sha256(instructions))
+        }
+    }
+
     public struct Posting: Codable, Sendable, Hashable {
         public var marker: Sourced<String>
         public var severityThreshold: Sourced<ReviewSeverity>
         public var confidenceThreshold: Sourced<Double>
         public var maxInline: Sourced<Int>
-        public var nitpicks: Sourced<Bool>
     }
 
     public var version = 1
@@ -106,6 +138,16 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var linksUnread: [String]?
     /// The servers of `mcp` with the level that chose each; nil in runs made before 2026-10-22.
     public var mcpServers: [ReviewServerChoice]?
+    /// Pi steps after the roles; nil in runs made before 2026-10-22.
+    public var steps: [Step]?
+    /// Extra Pi flags of the brief, the roles, the steps and the verifier, by the level that added them.
+    public var piFlags: [Sourced<[String]>]?
+
+    /// Over this many changed lines the passes ask first; nil in runs made before 2026-10-22.
+    public var maxChangedLines: Sourced<Int>?
+
+    /// Every extra flag, in level order.
+    public var extraFlags: [String] { (piFlags ?? []).flatMap(\.value) }
 
     /// The run's MCP access: the project's, or every server with the default rules.
     public var access: ReviewMCPAccess { mcp ?? ReviewMCPAccess() }
@@ -119,7 +161,7 @@ public enum ReviewResolver {
     }
 
     public static func resolve(catalog: ReviewCatalog, profile: ReviewProfile?, choices: ReviewRunChoices, mergeRequest: MergeRequestRef,
-                               id: String, now: Date = .now) throws -> (spec: ReviewRunSpec, roles: [ReviewRole]) {
+                               id: String, now: Date = .now, pi: ReviewPiLibrary = ReviewPiLibrary()) throws -> (spec: ReviewRunSpec, roles: [ReviewRole]) {
         let scenarios = catalog.scenarios(for: profile)
         let scenario: Sourced<String>
         if let chosen = choices.scenario {
@@ -207,14 +249,80 @@ public enum ReviewResolver {
             posting: ReviewRunSpec.Posting(marker: pick(\.marker, fallback: "🤖"),
                                            severityThreshold: pick(\.severityThreshold, fallback: .medium),
                                            confidenceThreshold: pick(\.confidenceThreshold, fallback: 0.8),
-                                           maxInline: pick(\.maxInline, fallback: 7), nitpicks: pick(\.nitpicks, fallback: false)),
+                                           maxInline: pick(\.maxInline, fallback: 7)),
             capCredits: pick(\.capCredits, fallback: 150), constraints: profile?.constraints ?? [],
             pathInstructions: profile?.pathInstructions ?? [], knowledge: profile?.knowledge ?? [], gather: profile?.gather ?? [],
             workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: access)
         spec.notes = notes
         spec.links = links.isEmpty ? nil : links
         spec.mcpServers = servers
+        spec.maxChangedLines = pick(\.maxChangedLines, fallback: 1500)
+        let levels: [(ReviewPiExtras, ReviewSource)] = [(catalog.brainPi, .brain), (profile?.pi ?? ReviewPiExtras(), .project), (choices.pi, .run)]
+        for (extras, _) in levels {
+            if let problem = ReviewPiFlags.problem(extras.flags) { throw Failure(message: "Pi flags: \(problem)") }
+        }
+        let flags = levels.filter { !$0.0.flags.isEmpty }.map { Sourced($0.0.flags, $0.1) }
+        spec.piFlags = flags.isEmpty ? nil : flags
+        var steps: [ReviewRunSpec.Step] = []
+        for (extras, source) in levels {
+            for config in extras.steps where !steps.contains(where: { $0.command == config.command }) {
+                steps.append(try step(config, number: steps.count + 1, source: source, library: pi, passes: passes.value,
+                                      taken: Set(spec.roles.map(\.id) + steps.map(\.id))))
+            }
+        }
+        spec.steps = steps.isEmpty ? nil : steps
         return (spec, roles)
+    }
+
+    /// A configured step resolved against the user's Pi set-up. Throws when the agent, template
+    /// or skill isn't there.
+    static func step(_ config: ReviewStepConfig, number: Int, source: ReviewSource, library: ReviewPiLibrary, passes: ReviewModelChoice,
+                     taken: Set<String>) throws -> ReviewRunSpec.Step {
+        let (kind, name, arguments) = config.parsed
+        var instructions = arguments
+        var task = ""
+        var model = passes
+        var origin: String?
+        var leftOut: [String] = []
+        if let kind {
+            guard !name.isEmpty else { throw Failure(message: "Pi step \(config.command): name the \(kind.rawValue) after the command.") }
+            guard let item = library.item(kind, name) else {
+                let known = library.items.filter { $0.kind == kind }.map(\.name)
+                let what = kind == .agent ? "subagent" : kind == .template ? "prompt template" : "skill"
+                throw Failure(message: "Pi step \(config.command): there is no \(what) \(name) in your Pi set-up"
+                              + (known.isEmpty ? "." : ". Known: \(known.joined(separator: ", ")).")
+                              + (kind == .template && name != "run" ? " Extension commands don't run in a review pass; only prompt templates, /skill:… and /run <subagent>." : ""))
+            }
+            origin = item.origin
+            switch kind {
+            case .agent:
+                instructions = item.body
+                task = arguments
+                model = library.model(of: item, passes: passes)
+                let reading: Set<String> = ["read", "grep", "find", "ls"]
+                leftOut = item.tools.isEmpty ? ["bash", "edit", "write"] : item.tools.filter { !reading.contains($0) }
+            case .template:
+                instructions = ReviewPiTemplate.expand(item.body, arguments: arguments)
+            case .skill:
+                instructions = item.body
+                task = arguments
+            }
+        }
+        guard !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw Failure(message: "Pi step \(config.command) has no instructions.")
+        }
+        var id = String(("pi-" + (name.isEmpty ? "step-\(number)" : name.lowercased().map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined())).prefix(50))
+        if !ReviewYAML.isID(id) { id = "pi-step-\(number)" }
+        // Every step has its own pass file: an id a role or an earlier step has gets a suffix.
+        let base = id
+        var suffix = 2
+        while taken.contains(id) {
+            id = "\(base)-\(suffix)"
+            suffix += 1
+        }
+        return ReviewRunSpec.Step(id: id, kind: kind, name: name, command: SecretFilter.masked(config.command), origin: origin, source: source,
+                                  instructions: SecretFilter.masked(instructions), task: SecretFilter.masked(task), model: model,
+                                  minSeverity: config.minSeverity ?? .medium, maxFindings: config.maxFindings ?? 5, toolsLeftOut: leftOut)
     }
 
     /// `akit review config show`: every resolved value with its source.
@@ -234,8 +342,9 @@ public enum ReviewResolver {
                   line("severity_threshold", spec.posting.severityThreshold.value.rawValue, spec.posting.severityThreshold.source),
                   line("confidence_threshold", String(spec.posting.confidenceThreshold.value), spec.posting.confidenceThreshold.source),
                   line("max_inline", String(spec.posting.maxInline.value), spec.posting.maxInline.source),
-                  line("nitpicks", String(spec.posting.nitpicks.value), spec.posting.nitpicks.source), "Cost:",
+                  "Cost:",
                   line("cap_credits_per_run", String(spec.capCredits.value), spec.capCredits.source)]
+        if let size = spec.maxChangedLines { lines.append(line("max_changed_lines", String(size.value), size.source)) }
         if !spec.constraints.isEmpty { lines += ["Constraints [project]:"] + spec.constraints.map { "  - \($0)" } }
         if !spec.pathInstructions.isEmpty {
             lines += ["Path instructions [project]:"] + spec.pathInstructions.map {
@@ -260,6 +369,20 @@ public enum ReviewResolver {
                   "  write (Send Drafts only): " + access.write.joined(separator: ", "),
                   "  in passes: " + (access.inPasses ? "yes" : "no, only the fetch pass")]
         if let tracker = spec.tracker { lines += ["Tracker [project]: \(tracker.kind) \(tracker.org)/\(tracker.project), work items \(tracker.wiRefRegex)"] }
+        if let flags = spec.piFlags {
+            lines += ["Pi flags:"] + flags.map { "  \($0.value.joined(separator: " "))  [\($0.source.rawValue)]" }
+        }
+        if let steps = spec.steps {
+            lines += ["Pi steps (after the roles, with the review's reading tools):"]
+            for step in steps {
+                var line = "  \(step.id): \(step.command)  [\(step.source.rawValue)]"
+                if let origin = step.origin { line += " from \(origin)" }
+                if step.kind == .agent { line += "; model \(step.model.model.isEmpty ? "Pi's default" : step.model.model)" }
+                line += "; at most \(step.maxFindings) findings, min \(step.minSeverity.rawValue)"
+                lines.append(line)
+                if !step.toolsLeftOut.isEmpty { lines.append("    without its tools \(step.toolsLeftOut.joined(separator: ", ")): a review pass only reads") }
+            }
+        }
         if let notes = spec.notes { lines += ["Notes [run]: \(notes.count) characters (context/notes.md)"] }
         if let links = spec.links, !links.isEmpty { lines += ["Links [run]:"] + links.map { "  \($0)" } }
         return lines.joined(separator: "\n")

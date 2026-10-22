@@ -54,12 +54,12 @@ struct ReviewView: View {
                 }
             }
         }
-        .alert("Over the credit cap", isPresented: Binding(get: { model.capQuestion != nil }, set: { if !$0 { model.answerCap(false) } }),
+        .alert(model.capQuestion?.title ?? "Over the credit cap", isPresented: Binding(get: { model.capQuestion != nil }, set: { if !$0 { model.answerCap(false) } }),
                presenting: model.capQuestion) { question in
             Button("Run Anyway") { model.answerCap(true) }
             Button("Stop", role: .cancel) { model.answerCap(false) }
         } message: { question in
-            Text(String(format: "This review needs about %.0f credits; the cap is %d. A big merge request costs more: run it anyway, or stop and narrow the roles.", question.estimate, question.cap))
+            Text(question.message)
         }
         .navigationTitle("Review")
         .navigationSubtitle(page == .runs ? (model.runs.count == 1 ? "1 run" : "\(model.runs.count) runs") : page.title)
