@@ -16,9 +16,9 @@ GitLab or answer is overwritten.
 
 | Screen | What is translated | Origin of the call | Cache |
 |---|---|---|---|
-| Lab → a session review, Error Analysis → a session's notes (`ReviewNotesView`) | conclusion, What Happened, requirements, What to Change (title, detail), the model's notes, the verifier's reasons | the session's (`SessionNotes.origin`) | `~/.akit/lab/analysis/translations/` |
+| Lab → a session review, Error Analysis → a session's notes (`ReviewNotesView`) | conclusion, What Happened, requirements, What to Change (title, detail), the model's notes, the verifier's reason and case only where the screen shows them (a rejected note; a high-severity accepted one) | the session's (`SessionNotes.origin`) | `~/.akit/lab/analysis/translations/` |
 | Lab → a review whose notes a later one replaced, or an agent-mode review | the run's paragraph and improvements (title, detail) | the reviewed session's (`SendOrigin.of`) | the run's folder, `translations/` |
-| Review → a run (`ReviewRunDetail`) | the brief and every request's text | `.mergeRequest`; a local review `.code(.pi)` | the run's folder, `translations/` |
+| Review → a run (`ReviewRunDetail`) | the brief and every request's text | `.mergeRequest`; a local review `.code(.pi)`; own model: the review's Pi model | the run's folder, `translations/` |
 | Ask AKit → an answer | the answer | `.code(harness of the answer)`, as Ask AKit's own call | none: the chat isn't saved |
 
 Quotes from sessions, evidence, the user's own notes, code and AKit's own labels are never
@@ -37,10 +37,26 @@ sent for translation.
   as they are; the text is data, not instructions.
 - **Policy:** `ModelCall.run` with the purpose `translate` and the origins of the output: the
   allowed list, the same-origin rule, the scrub, the monthly limit and the send log apply as
-  for every other call. A refusal shows its reason under the menu.
+  for every other call.
+- **The output's own model** (review round, 2026-10-22): before the confirmation,
+  `OutputTranslation.plan` runs the account check and the policy for the translation model.
+  When the policy refuses it and the output names its own model (`Source.ownAgent`), the
+  same check runs for that model, which got the data already. A Review run's own model is the
+  Pi model of its brief and role passes (`spec.passes`; empty = Pi's default, thinking or
+  `low`): a merge request may always go to Pi, so Review translations work with the default
+  Claude Code · haiku setting. The label says so: "Translated to Russian · Pi · zai/glm-5 (the
+  review's model)". When both are refused, the confirmation shows both reasons and what to do
+  (Add Destination…, or another translation model) and has only OK. `akit translate --review`
+  does the same and fails with that message.
 - **Confirmation:** a translation not in the cache asks first ("Translate to Russian?"): how
-  many characters go to which model and the "≈" cost from the send log. A cached one shows at
-  once and sends nothing.
+  many characters go to which model and the "≈" cost from the send log. A cached one (by the
+  translation model or the output's own model) shows at once and sends nothing.
+- **Stop:** the account check and the call run in a `Cancellation.Scope` of their own, as Ask
+  AKit's do; **Stop** next to "Translating to …", another run or another notes file ends the
+  harness's process and drops the answer.
+- **Answers:** one string per part, none empty; otherwise an error, nothing cached.
+- **CLI origin:** `akit translate FILE|-` needs `--origin` (code, claude, pi:PROVIDER,
+  merge-request): AKit can't tell where a file's text came from.
 
 ## Cache
 
@@ -68,3 +84,12 @@ only lists its texts, so the allowed dependencies don't change.
 - Error Analysis mode names and definitions, reports and fix drafts: they are short, and
   mode text is session data that other calls match against.
 - Translating while a review is written: the Review language already does that.
+- **Cache cleanup.** Nothing removes old files from `translations/`: an edited request, a new
+  notes version or another model leaves the earlier translation behind. A run's folder goes to
+  the Trash with the run; `~/.akit/lab/analysis/translations/` only grows (small JSON files).
+  A cleanup would drop files no current source hashes to.
+- **Older builds.** A build before this one doesn't know the 14 new `LabLanguage` codes: a run
+  spec or `settings.json` with `"reportLanguage": "de"` makes the old build fall back to English
+  for the settings (lenient decoding) and may not read such a run spec. An old build ignores
+  `translationAgent`, and any settings edit it saves drops the field (its `LabSettings` has no
+  such field and writes the whole file): the translation model goes back to the default.

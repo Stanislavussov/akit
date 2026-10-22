@@ -32,13 +32,21 @@ public enum OutputTranslation {
         public var parts: [Part]
         public var origins: [SendOrigin]
         public var cacheFolder: URL?
+        /// The model that wrote the output, when the policy refuses the translation model:
+        /// it got this data already (a review's Pi model). nil: none.
+        public var ownAgent: LabAgent?
+        /// How the label names it: "the review's model".
+        public var ownAgentName: String
 
-        public init(parts: [Part], origins: [SendOrigin], cacheFolder: URL?) {
+        public init(parts: [Part], origins: [SendOrigin], cacheFolder: URL?, ownAgent: LabAgent? = nil,
+                    ownAgentName: String = "the output's model") {
             // Empty texts go nowhere; a key appears once.
             var seen = Set<String>()
             self.parts = parts.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && seen.insert($0.key).inserted }
             self.origins = origins
             self.cacheFolder = cacheFolder
+            self.ownAgent = ownAgent
+            self.ownAgentName = ownAgentName
         }
 
         /// What goes out before scrubbing, for the "≈" cost.
@@ -149,17 +157,76 @@ public enum OutputTranslation {
         guard parsed.parts.count == source.parts.count else {
             throw Failure(message: "The model translated \(parsed.parts.count) parts of \(source.parts.count); try again or pick another translation model.")
         }
+        // Every part has text (the inputs do): an empty one is a dropped part, not a translation.
+        if let empty = parsed.parts.firstIndex(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            throw Failure(message: "The model left part \(empty + 1) of \(source.parts.count) empty; try again or pick another translation model.")
+        }
         return Dictionary(zip(source.parts.map(\.key), parsed.parts), uniquingKeysWith: { first, _ in first })
+    }
+
+    // MARK: Model
+
+    /// Which model a translation goes to, decided before the confirmation: the translation
+    /// model when the policy lets the output's data go there, else the output's own model
+    /// (`Source.ownAgent`), which got the data already. `gate` nil: both are refused, and
+    /// `refusal` says why and what to do.
+    public struct Plan: Sendable {
+        public let agent: LabAgent
+        public let gate: SendGate?
+        public let isOwnModel: Bool
+        public let refusal: String?
+    }
+
+    /// "Pi · zai/glm-5 (the review's model)" for the output's own model.
+    public static func label(_ agent: LabAgent, own: Bool, source: Source) -> String {
+        modelLabel(agent) + (own ? " (\(source.ownAgentName))" : "")
+    }
+
+    /// Opens a gate (the account check) for the translation model and checks every origin;
+    /// on a refusal does the same for the output's own model. Sends nothing.
+    public static func plan(_ source: Source, configured: LabAgent, env: HarnessEnvironment,
+                            open given: (@Sendable (LabAgent) async throws -> SendGate)? = nil) async throws -> Plan {
+        let open = given ?? { try await SendGate.open(agent: $0, env: env) }
+        func attempt(_ agent: LabAgent) async throws -> (gate: SendGate?, reason: String) {
+            do {
+                let gate = try await open(agent)
+                for origin in Set(source.origins) {
+                    let decision = gate.decide(origin)
+                    if !decision.allowed { return (nil, decision.reason) }
+                }
+                return (gate, "")
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                return (nil, error.localizedDescription)
+            }
+        }
+        let first = try await attempt(configured)
+        if let gate = first.gate { return Plan(agent: configured, gate: gate, isOwnModel: false, refusal: nil) }
+        guard let own = source.ownAgent, own != configured else {
+            return Plan(agent: configured, gate: nil, isOwnModel: false, refusal: "Not sent: \(first.reason)")
+        }
+        let second = try await attempt(own)
+        if let gate = second.gate { return Plan(agent: own, gate: gate, isOwnModel: true, refusal: nil) }
+        return Plan(agent: configured, gate: nil, isOwnModel: false,
+                    refusal: "Not sent. The translation model (\(modelLabel(configured))): \(first.reason) "
+                        + "\(source.ownAgentName.prefix(1).uppercased() + source.ownAgentName.dropFirst()) (\(modelLabel(own))): \(second.reason)")
+    }
+
+    /// The cached translation by the translation model, else by the output's own model.
+    public static func cached(_ source: Source, to language: LabLanguage, configured: LabAgent) -> Result? {
+        cached(source, to: language, agent: configured) ?? source.ownAgent.flatMap { cached(source, to: language, agent: $0) }
     }
 
     // MARK: Call
 
     /// The cached translation, else one call through `ModelCall.run`; a new one is cached when
-    /// the source has a cache folder. `onSend` as in `ModelCall.run`.
-    public static func translate(_ source: Source, to language: LabLanguage, agent: LabAgent, gate: SendGate, env: HarnessEnvironment,
-                                 onSend: (@Sendable (String) -> Void)? = nil) async throws -> Result {
+    /// the source has a cache folder. `own`: the agent is the output's own model (the label
+    /// says so). `onSend` as in `ModelCall.run`.
+    public static func translate(_ source: Source, to language: LabLanguage, agent: LabAgent, own: Bool = false, gate: SendGate,
+                                 env: HarnessEnvironment, onSend: (@Sendable (String) -> Void)? = nil) async throws -> Result {
         if let cached = cached(source, to: language, agent: agent) { return cached }
-        let model = modelLabel(agent)
+        let model = label(agent, own: own, source: source)
         guard !source.isEmpty else { return Result(language: language, model: model, texts: [:]) }
         let folder = FileManager.default.temporaryDirectory.appending(path: "akit-translate-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: folder) }

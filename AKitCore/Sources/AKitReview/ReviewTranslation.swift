@@ -12,10 +12,21 @@ extension ReviewWorkflow.Run {
     /// The whole review in one Translate call: the brief and every request's text as it would
     /// go to GitLab. Translating never changes them: the drafts AKit sends stay the originals.
     /// A merge request's origin (Pi got it through its MCP servers); a local review's is the
-    /// repository's code, which Pi read. Cached in the run's folder.
+    /// repository's code, which Pi read. Cached in the run's folder. When the policy refuses
+    /// the translation model, the review's own Pi model (`reviewAgent`) translates it: the
+    /// passes sent this data there already.
     public var translationSource: OutputTranslation.Source {
         var parts = [OutputTranslation.Part(TranslationKey.brief, passes?.brief ?? "")]
         parts += (plan?.requests ?? []).map { OutputTranslation.Part(TranslationKey.request($0.id), $0.text) }
-        return OutputTranslation.Source(parts: parts, origins: [spec.local == nil ? .mergeRequest : .code(.pi)], cacheFolder: folder)
+        return OutputTranslation.Source(parts: parts, origins: [spec.local == nil ? .mergeRequest : .code(.pi)], cacheFolder: folder,
+                                        ownAgent: reviewAgent, ownAgentName: "the review's model")
+    }
+
+    /// The model of the brief and role passes, as one Pi call: its model (empty = Pi's
+    /// default) and its thinking level, or `low` when it has none.
+    public var reviewAgent: LabAgent {
+        let choice = spec.passes.value
+        return LabAgent(harness: .pi, model: choice.model, effort: LabHarness.pi.efforts.contains(choice.thinking) ? choice.thinking : "low",
+                        mode: .call)
     }
 }

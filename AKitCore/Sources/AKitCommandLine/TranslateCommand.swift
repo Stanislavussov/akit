@@ -11,10 +11,12 @@ extension AKitCLI {
         akit translate — model-written output in another language, with the translation model
         (Settings → Translation model). The original is never changed.
 
-          akit translate --to LANG FILE|-  [--origin code|claude|pi:PROVIDER|merge-request] [--json]
-                                          Translate a file or stdin. --origin: where its text came
-                                          from, for the sending policy (default code: the harness's
-                                          own account; on a work Mac only the allowed list)
+          akit translate --to LANG FILE|- --origin code|claude|pi:PROVIDER|merge-request [--json]
+                                          Translate a file or stdin. --origin (required): where its
+                                          text came from, for the sending policy. code: repository
+                                          code or your setup (the harness's own account; on a work
+                                          Mac only the allowed list); claude: a Claude Code session;
+                                          pi:PROVIDER: a Pi session; merge-request: an AKit Review
           akit translate --to LANG --notes SESSION [--json]
                                           A reviewed session's notes: conclusion, paragraph,
                                           improvements, the model's notes and the verifier's reasons
@@ -22,7 +24,9 @@ extension AKitCLI {
                                           A Lab review run's own paragraph and improvements
           akit translate --to LANG --review RUN [--json]
                                           An AKit Review run's brief and requests (the drafts AKit
-                                          sends to GitLab stay the originals)
+                                          sends to GitLab stay the originals). When the policy
+                                          refuses the translation model, the review's own Pi model
+                                          translates it: the passes sent it there already
           akit translate model [HARNESS [MODEL [EFFORT]]]
                                           Show the translation model, or set it (claude-code|pi;
                                           default: Claude Code · haiku · low)
@@ -90,11 +94,13 @@ extension AKitCLI {
         guard !source.isEmpty else { throw Failure(message: "There is no text to translate.") }
 
         let result: OutputTranslation.Result
-        if let cached = OutputTranslation.cached(source, to: language, agent: agent) {
+        if let cached = OutputTranslation.cached(source, to: language, configured: agent) {
             result = cached
         } else {
-            let gate = try await SendGate.open(agent: agent, env: env)
-            result = try await OutputTranslation.translate(source, to: language, agent: agent, gate: gate, env: env)
+            // A review the translation model may not get goes to the review's own Pi model.
+            let plan = try await OutputTranslation.plan(source, configured: agent, env: env)
+            guard let gate = plan.gate else { throw Failure(message: plan.refusal ?? "Not sent.") }
+            result = try await OutputTranslation.translate(source, to: language, agent: plan.agent, own: plan.isOwnModel, gate: gate, env: env)
         }
         if json {
             out(try labJSON(result))
@@ -109,14 +115,18 @@ extension AKitCLI {
         return 0
     }
 
-    /// `--origin` of a file or stdin; default: the translation harness's own account.
+    static let originChoices = "code (repository code or your setup), claude (a Claude Code session), pi:PROVIDER (a Pi session "
+        + "answered by PROVIDER) or merge-request (an AKit Review)"
+
+    /// `--origin` of a file or stdin: required, AKit can't tell where a file's text came from.
     static func origin(_ text: String?, agent: LabAgent) throws -> SendOrigin {
         switch text {
-        case nil, "code": return .code(agent.harness)
+        case nil: throw Failure(message: "Where does the text come from? --origin is required for FILE and -: \(originChoices).")
+        case "code": return .code(agent.harness)
         case "claude", "claude-code": return .claudeSession
         case "merge-request": return .mergeRequest
         case let text? where text.hasPrefix("pi:") && text.count > 3: return .piSession(providers: [String(text.dropFirst(3))])
-        case let text?: throw Failure(message: "--origin is code, claude, pi:PROVIDER or merge-request, not \(text).")
+        case let text?: throw Failure(message: "--origin is \(originChoices), not \(text).")
         }
     }
 

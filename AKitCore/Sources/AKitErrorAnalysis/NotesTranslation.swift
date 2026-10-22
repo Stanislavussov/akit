@@ -29,10 +29,13 @@ extension SessionNotes {
         }
         for note in notes where note.source == .model {
             parts.append(OutputTranslation.Part(Key.note(note.id), note.description))
-            if let verdict = note.verdict, verdict.by == .model {
-                parts.append(OutputTranslation.Part(Key.verdict(note.id), verdict.reason))
-                parts.append(OutputTranslation.Part(Key.steelman(note.id), verdict.steelman ?? ""))
-            }
+            // The verifier's texts only where the screen shows them: the reason of a rejected
+            // note, the case against a high-severity accepted one with its verdict.
+            guard let verdict = note.verdict, verdict.by == .model else { continue }
+            let steelman = verdict.steelman ?? ""
+            let showsCase = verdict.accepted && note.severity == .high && !steelman.isEmpty
+            if !verdict.accepted || showsCase { parts.append(OutputTranslation.Part(Key.verdict(note.id), verdict.reason)) }
+            if showsCase { parts.append(OutputTranslation.Part(Key.steelman(note.id), steelman)) }
         }
         return OutputTranslation.Source(parts: parts, origins: [origin], cacheFolder: AnalysisPaths(env: env).folder)
     }

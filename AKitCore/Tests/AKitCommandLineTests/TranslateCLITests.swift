@@ -40,7 +40,7 @@ struct TranslateCLITests {
     }
 
     @Test func translatesStdinWithTheTranslationModel() async throws {
-        let result = await akit("translate", "--to", "ru", "-", stdin: "Hello, `run()`")
+        let result = await akit("translate", "--to", "ru", "-", "--origin", "code", stdin: "Hello, `run()`")
         #expect(result.code == 0, "\(result.err)")
         #expect(result.out == "Привет, `run()`")
         #expect(try String(contentsOf: home.appending(path: "stdin.txt"), encoding: .utf8).contains("Hello, `run()`"))
@@ -58,6 +58,11 @@ struct TranslateCLITests {
 
     @Test func checksItsArguments() async {
         #expect(await akit("translate", "-").err.contains("--to LANG"))
+        // A file's origin can't be known: it must be given, and the error names the choices.
+        let noOrigin = await akit("translate", "--to", "ru", "-", stdin: "Text")
+        #expect(noOrigin.code != 0 && noOrigin.err.contains("--origin is required") && noOrigin.err.contains("merge-request"))
+        #expect(!fm.fileExists(atPath: home.appending(path: "stdin.txt").path))
+        #expect(await akit("translate", "--to", "ru", "-", "--origin", "mail", stdin: "Text").err.contains("pi:PROVIDER"))
         #expect(await akit("translate", "--to", "xx", "-").err.contains("en, ru, cs"))
         #expect(await akit("translate", "--to", "ru").err.contains("Translate one thing"))
         #expect(await akit("translate", "--to", "ru", "--lab-run", "nope").err.contains("no Lab run"))

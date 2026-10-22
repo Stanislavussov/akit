@@ -272,6 +272,9 @@ private struct LabRunDetail: View {
                 }
         }
         .task(id: run) { await loadNotes() }
+        // Here and not only on the menu: another run may have no menu, and a waiting
+        // confirmation or call of this one must not carry over.
+        .onChange(of: run.id) { translator.reset() }
         .sheet(isPresented: $showRecheck) {
             RecheckSheet(run: run) { select($0) }
         }

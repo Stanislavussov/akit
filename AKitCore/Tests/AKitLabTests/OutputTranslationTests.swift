@@ -139,6 +139,58 @@ struct TranslationTests {
         #expect(OutputTranslation.cached(source, to: .russian, agent: OutputTranslation.defaultAgent) == nil)
     }
 
+    /// An empty translated part is a dropped part: an error, not cached.
+    @Test func anEmptyPartIsAFailure() throws {
+        let source = OutputTranslation.Source(parts: [.init("a", "One"), .init("b", "Two")], origins: [.claudeSession], cacheFolder: nil)
+        #expect(throws: OutputTranslation.Failure.self) { try OutputTranslation.texts(fromAnswer: #"{"parts":["Один"," "]}"#, source: source) }
+    }
+
+    /// A review's data may go to its own Pi model, not to Claude Code · haiku: the plan picks
+    /// the review's model and says so in the label; when both are refused, the reason of each.
+    @Test func aRefusedTranslationModelFallsBackToTheOutputsOwnModel() async throws {
+        let piModel = LabAgent(harness: .pi, model: "zai/glm-5", effort: "low", mode: .call)
+        let piAccount = SendDestination(harness: .pi, provider: "zai", account: "", org: "")
+        let claude = claudeAccount
+        func gates(work: Bool) -> @Sendable (LabAgent) async throws -> SendGate {
+            { agent in SendGate(destination: agent.harness == .pi ? piAccount : claude, isWork: work, settings: LabSettings()) }
+        }
+        let review = OutputTranslation.Source(parts: [.init("request:r1", "Fix it")], origins: [.mergeRequest], cacheFolder: nil,
+                                              ownAgent: piModel, ownAgentName: "the review's model")
+        let plan = try await OutputTranslation.plan(review, configured: OutputTranslation.defaultAgent, env: env, open: gates(work: false))
+        #expect(plan.agent == piModel && plan.isOwnModel && plan.gate != nil && plan.refusal == nil)
+        #expect(OutputTranslation.label(plan.agent, own: plan.isOwnModel, source: review) == "Pi · zai/glm-5 (the review's model)")
+        // Allowed for the translation model: no fallback.
+        let session = OutputTranslation.Source(parts: [.init("a", "Hi")], origins: [.claudeSession], cacheFolder: nil, ownAgent: piModel)
+        let direct = try await OutputTranslation.plan(session, configured: OutputTranslation.defaultAgent, env: env, open: gates(work: false))
+        #expect(direct.agent == OutputTranslation.defaultAgent && !direct.isOwnModel)
+        // A local review on a work Mac: repository code goes only to the (empty) allowed list.
+        let local = OutputTranslation.Source(parts: [.init("a", "Hi")], origins: [.code(.pi)], cacheFolder: nil, ownAgent: piModel,
+                                             ownAgentName: "the review's model")
+        let refused = try await OutputTranslation.plan(local, configured: OutputTranslation.defaultAgent, env: env, open: gates(work: true))
+        #expect(refused.gate == nil)
+        #expect(refused.refusal?.contains("The translation model (Claude Code · haiku)") == true)
+        #expect(refused.refusal?.contains("The review's model (Pi · zai/glm-5)") == true)
+        #expect(refused.refusal?.contains("Add Destination") == true)
+        // An account check that fails is a refusal too, not a crash.
+        let failing = try await OutputTranslation.plan(session, configured: OutputTranslation.defaultAgent, env: env, open: { _ in
+            throw SendAccounts.Failure(message: "Couldn't check the account.")
+        })
+        #expect(failing.gate == nil && failing.refusal?.contains("Couldn't check the account.") == true)
+    }
+
+    /// The label of a translation by the output's own model says so, and the cache finds it.
+    @Test func theOwnModelsTranslationIsLabelledAndCached() async throws {
+        try fakeClaude(parts: ["Привет"])
+        let own = LabAgent(harness: .claudeCode, model: "sonnet", effort: "low", mode: .call)
+        let source = OutputTranslation.Source(parts: [.init("a", "Hello")], origins: [.claudeSession], cacheFolder: home.appending(path: "out"),
+                                              ownAgent: own, ownAgentName: "the review's model")
+        let gate = SendGate(destination: claudeAccount, isWork: false, settings: LabSettings())
+        let result = try await OutputTranslation.translate(source, to: .russian, agent: own, own: true, gate: gate, env: env)
+        #expect(result.label == "Translated to Russian · Claude Code · sonnet (the review's model)")
+        let cached = OutputTranslation.cached(source, to: .russian, configured: OutputTranslation.defaultAgent)
+        #expect(cached?.label == result.label && cached?.texts == result.texts)
+    }
+
     /// Old settings files have no translation model, and old run specs keep their language.
     @Test func settingsWithoutATranslationModelStillDecode() throws {
         let old = try JSONDecoder().decode(LabSettings.self, from: Data(#"{"reportLanguage":"cs","monthlyLimit":5}"#.utf8))

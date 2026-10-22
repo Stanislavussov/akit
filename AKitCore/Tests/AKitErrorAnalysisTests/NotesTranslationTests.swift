@@ -14,10 +14,15 @@ struct NotesTranslationTests {
             sessionKey: "claude-code:s1", transcript: "/t/s1.jsonl", title: "Fix the build", project: nil,
             requirements: ["Build passes"], outcome: .partly,
             notes: [
-                Note(id: "n1", source: .model, description: "The agent skipped the tests", step: 3, quote: "QUOTE-n1",
+                Note(id: "n1", source: .model, description: "The agent skipped the tests", step: 3, quote: "QUOTE-n1", severity: .high,
                      verdict: Verdict(accepted: true, reason: "Seen at step 3", by: .model, steelman: "Tests were optional")),
                 Note(id: "n2", source: .model, description: "Wrong file", step: 4, quote: "QUOTE-n2",
                      verdict: Verdict(accepted: false, reason: "Not at that step", by: .code)),
+                // Accepted, not high: the screen shows no verifier text, so none is sent.
+                Note(id: "n3", source: .model, description: "Slow start", step: 1, quote: "QUOTE-n3", severity: .low,
+                     verdict: Verdict(accepted: true, reason: "HIDDEN-REASON", by: .model, steelman: "HIDDEN-CASE")),
+                Note(id: "n4", source: .model, description: "Made up", step: 2, quote: "QUOTE-n4",
+                     verdict: Verdict(accepted: false, reason: "Not in the session", by: .model)),
                 Note(id: "h1", source: .human, description: "My own note", step: 5, quote: "QUOTE-h1"),
             ],
             deviation: Deviation(), paragraph: "It went partly well.",
@@ -26,9 +31,10 @@ struct NotesTranslationTests {
         let source = notes.translationSource(env: env)
         typealias Key = SessionNotes.TranslationKey
         #expect(source.parts.map(\.key) == [Key.paragraph, Key.requirement(0), Key.adviceTitle(0), Key.adviceDetail(0),
-                                            Key.note("n1"), Key.verdict("n1"), Key.steelman("n1"), Key.note("n2")])
+                                            Key.note("n1"), Key.verdict("n1"), Key.steelman("n1"), Key.note("n2"), Key.note("n3"),
+                                            Key.note("n4"), Key.verdict("n4")])
         let texts = source.parts.map(\.text).joined(separator: "\n")
-        #expect(!texts.contains("QUOTE") && !texts.contains("EVIDENCE") && !texts.contains("My own note"))
+        #expect(!texts.contains("QUOTE") && !texts.contains("EVIDENCE") && !texts.contains("My own note") && !texts.contains("HIDDEN"))
         #expect(source.origins == [.claudeSession])
         #expect(source.cacheFolder == AnalysisPaths(env: env).folder)
     }
