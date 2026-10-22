@@ -227,7 +227,8 @@ struct LabRunTests {
         #expect(started?.id == first.id && started?.launch?.pid != nil)
         // Launched but not yet running: the queue waits for it.
         #expect(try await LabQueue.startNext(env: env) == nil)
-        for _ in 0..<50 where read(home.appending(path: "launched.txt")).isEmpty { try await Task.sleep(for: .milliseconds(100)) }
+        // Up to 15 s: a full parallel test run on a busy Mac starts processes slowly.
+        for _ in 0..<150 where read(home.appending(path: "launched.txt")).isEmpty { try await Task.sleep(for: .milliseconds(100)) }
         #expect(read(home.appending(path: "launched.txt")) == "lab run \(first.id)\n")
 
         // A worker that died without a word shows as an error and frees the queue.
