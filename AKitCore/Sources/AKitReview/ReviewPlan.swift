@@ -350,7 +350,7 @@ public enum ReviewPlanner {
             finding.file.map { "`\($0)" + (finding.line.map { ":\($0)" } ?? "") + "`" } ?? "the merge request"
         }
         var text = "\(spec.posting.marker.value) · summary · scenario **\(spec.scenario.value)** · roles "
-            + spec.roles.map { "`\($0.id)`" }.joined(separator: ", ") + "\n\n"
+            + (spec.roles.map(\.id) + (spec.steps ?? []).map(\.id)).map { "`\($0)`" }.joined(separator: ", ") + "\n\n"
         text += inline.isEmpty ? "No inline comments." : "\(inline.count) inline comment\(inline.count == 1 ? "" : "s") on the diff."
         if !overCap.isEmpty {
             text += "\n\n### More findings\n\n" + overCap.map { "- \(place($0)): \($0.title) (`\($0.role)`, \($0.finalSeverity.rawValue))" }

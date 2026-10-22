@@ -5,11 +5,12 @@ import Foundation
 /// the model's side; this one is the trusted one), puts the anchor on the line the evidence
 /// is really on, adds the fingerprint and folds duplicates.
 public enum ReviewCandidates {
-    /// Every role pass's findings, in role order, numbered `f1`, `f2`, ….
+    /// Every role pass's findings, in role order, then the Pi steps', numbered `f1`, `f2`, ….
     static func collect(folder: URL, spec: ReviewRunSpec, worktree: URL?) -> [ReviewFinding] {
         var result: [ReviewFinding] = []
-        for role in spec.roles {
-            let file = folder.appending(path: "passes/role-\(role.id).json")
+        let passes = spec.roles.map { ($0, "role-\($0.id)") } + (spec.steps ?? []).map { ($0.role, "step-\($0.id)") }
+        for (role, pass) in passes {
+            let file = folder.appending(path: "passes/\(pass).json")
             guard let object = (try? Data(contentsOf: file)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { continue }
             var counted = 0
             for raw in object["findings"] as? [[String: Any]] ?? [] {

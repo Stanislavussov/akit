@@ -224,6 +224,8 @@ public struct ReviewProfile: Sendable, Hashable {
     public var rolesOff: [String]
     public var rolesAdd: [String]
     public var settings: ReviewSettingsPatch
+    /// `pi:`: extra flags of the passes and Pi steps after the roles, for every run of the project.
+    public var pi = ReviewPiExtras()
     public var file: URL?
 
     public init(slug: String, project: String, gitlabHost: String, gitlabProjectPath: String, checkout: String? = nil,
@@ -293,13 +295,15 @@ public struct ReviewProfile: Sendable, Hashable {
                             ignore: $0["ignore"] as? Bool ?? false)
         }
         let roles = map["roles"] as? [String: Any] ?? [:]
-        return ReviewProfile(slug: slug, project: map["project"] as? String ?? slug, gitlabHost: host, gitlabProjectPath: path,
+        var profile = ReviewProfile(slug: slug, project: map["project"] as? String ?? slug, gitlabHost: host, gitlabProjectPath: path,
                              checkout: map["checkout"] as? String, tracker: tracker,
                              mcp: try ReviewMCPAccess.parse(map["mcp"] as? [String: Any], where: where_), defaultScenario: map["default_scenario"] as? String,
                              knowledge: ReviewYAML.strings(map["knowledge"]), gather: gather,
                              constraints: ReviewYAML.strings(map["constraints"]), pathInstructions: instructions,
                              rolesOff: ReviewYAML.strings(roles["off"]), rolesAdd: ReviewYAML.strings(roles["add"]),
                              settings: try ReviewSettingsPatch.parse(map["review"] as? [String: Any] ?? [:], where: where_), file: file)
+        profile.pi = try ReviewPiExtras.parse(map["pi"], where: where_)
+        return profile
     }
 }
 

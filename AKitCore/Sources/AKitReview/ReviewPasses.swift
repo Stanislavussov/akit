@@ -115,6 +115,8 @@ public enum ReviewPasses {
         var cwd: URL
         var systemPrompt: URL?
         var roots: String
+        /// The run's extra Pi flags (brief, roles, steps, verifier).
+        var flags: [String] = []
     }
 
     /// The Pi arguments of a pass. Pi's own MCP support (`builtin:mcp`, with `builtin:codemode`
@@ -135,6 +137,7 @@ public enum ReviewPasses {
         }
         arguments += setup.skills
         if let system = setup.systemPrompt { arguments += ["--append-system-prompt", system.path] }
+        arguments += setup.flags
         arguments += ["-e", folder.appending(path: "akit-review.ts").path, "--tools", tools, "--", setup.prompt]
         return arguments
     }
@@ -252,7 +255,8 @@ public enum ReviewPasses {
         try write(system, to: systemFile)
 
         let contextSize = directorySize(context)
-        let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count, roles: roles.count)
+        let steps = spec.steps ?? []
+        let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count, roles: roles.count + steps.count)
         try ReviewRuns.setStatus(.estimating, message: String(format: "≈ %.0f credits (cap %d)", estimate, spec.capCredits.value), folder: folder)
         // The fetch pass counts against the cap too.
         let previous = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
@@ -271,7 +275,7 @@ public enum ReviewPasses {
         }
         // The monthly limit (US dollars, Settings → Lab) counts review passes too.
         let records = SendLog.records(env: env)
-        let dollars = SendLog.estimate(characters: contextSize * (roles.count + 2), harness: .pi, model: spec.passes.value.model, records: records)
+        let dollars = SendLog.estimate(characters: contextSize * (roles.count + steps.count + 2), harness: .pi, model: spec.passes.value.model, records: records)
         try SendLog.checkLimit(estimate: dollars, settings: passesGate.settings, env: env)
 
         var log = ReviewPassLog(mainSession: UUID().uuidString.lowercased(), estimate: estimate)
@@ -282,10 +286,17 @@ public enum ReviewPasses {
         let skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
         let roots = readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)
 
+        // A subagent step with its own model goes where that model goes: the policy checks it too.
+        var stepGates: [String: SendGate] = [:]
+        for step in steps where step.model.model != spec.passes.value.model && stepGates[step.model.model] == nil {
+            stepGates[step.model.model] = step.model.model == spec.verifier.value.model ? verifierGate : try await gate(model: step.model.model, env: env)
+        }
+
         func pass(_ name: String, role: ReviewRunSpec.Role?, prompt: String, model: ReviewModelChoice, gate: SendGate,
                   session: [String]) async throws -> PassOutput {
-            let setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
+            var setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
                                   skills: skills, tools: tools, mcp: spec.access.inPasses, cwd: cwd, systemPrompt: systemFile, roots: roots)
+            setup.flags = spec.extraFlags
             return try await runPass(setup, spec: spec, folder: folder, log: &log, limit: limit, env: env, options: options, pi: pi)
         }
 
@@ -300,6 +311,11 @@ public enum ReviewPasses {
                 _ = try await pass("role-\(role.id)", role: role,
                                    prompt: ReviewPrompts.role(role, body: definition.map(ReviewYAML.body) ?? "", spec: spec),
                                    model: spec.passes.value, gate: passesGate, session: main)
+            }
+            for step in steps {
+                try write(step.instructions, to: folder.appending(path: "steps/\(step.id).md"))
+                _ = try await pass("step-\(step.id)", role: step.role, prompt: ReviewPrompts.step(step, spec: spec), model: step.model,
+                                   gate: stepGates[step.model.model] ?? passesGate, session: main)
             }
             var candidates = ReviewCandidates.collect(folder: folder, spec: spec, worktree: hasWorktree ? worktree : nil)
             try ReviewJSON.write(candidates, to: folder.appending(path: "candidates.json"))

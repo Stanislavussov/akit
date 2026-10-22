@@ -16,6 +16,15 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-22 (branch `review-audit-2`): Pi steps and Pi flags (section "Pi steps", below).
+A run can add the user's pi-subagents agents (`/run reviewer …`), prompt templates and skills
+as passes after the roles, and extra Pi flags for the passes; `akit review pi` and New Review…
+suggest what the user's Pi has. Checked on a real Pi 1.0.4: an extension command such as
+`/run` doesn't finish in `pi -p` (Pi exits before the subagent; the extension's context goes
+stale), and the `subagent` tool can run scripts, change agent settings and start agents with
+bash and edit outside AKit's checks. So AKit runs a step itself: the agent's prompt and model,
+the review's reading tools.
+
 Built: step 1 (2026-10-15): module `AKitReview` with the project profile, the three levels
 (`ReviewCatalog`, `ReviewResolver`, `run.json`), Gather from GitLab and Azure DevOps REST into a
 scrubbed context pack, the worktree at `head_sha`, `akit review MR-URL`, `akit review config show`,
@@ -361,8 +370,9 @@ flowchart TD
     Q --> B
     subgraph P ["one Pi session"]
         B["brief"] --> R1["role 1"] --> R2["role 2"] --> RN["role N"]
+        RN --> ST["Pi steps<br/>subagent · template · skill"]
     end
-    RN --> K["candidates<br/>role limit (AC rows exempt), min severity,<br/>anchor by evidence, fingerprint, fold duplicates"]
+    ST --> K["candidates<br/>role limit (AC rows exempt), min severity,<br/>anchor by evidence, fingerprint, fold duplicates"]
     K --> V["verifier<br/>fork of the session, strong model"]
     V --> PL["plan: noise rules + rerun rules"]
     PL --> UI["Review screen<br/>edit · approve · reject"]
@@ -495,7 +505,7 @@ review: { max_inline: 5 }                                  # overrides review.ya
 ```yaml
 models: { passes: <from pi --list-models>, verifier: <strong model> }
 posting:
-  marker: "🤖 AKit review"
+  marker: "🤖"
   severity_threshold: medium
   confidence_threshold: 0.8
   max_inline: 7
@@ -555,6 +565,55 @@ user sees before anything is sent.
 For Claude Code later the same pipeline runs `claude -p --resume`, the role skill as a
 subagent body, and the `akit_*` tools as a small local MCP server with PreToolUse hooks for
 the path policy.
+
+## Pi steps
+
+The user's own Pi set-up can add passes after the roles (the user's request, 2026-10-22: run
+their subagents, slash commands and extra Pi parameters from AKit, with suggestions).
+
+```yaml
+pi:                                    # review.yaml, a profile, or one run (New Review… → Pi steps)
+  flags: ["--exclude-tools", "find"]
+  steps:
+    - "/run reviewer check the retries"          # a pi-subagents agent, with a task
+    - "/review-migrations orders"                 # a prompt template, with arguments
+    - { run: "/skill:security-audit", max_findings: 3, min_severity: high }
+    - "Check every new SQL query for an index"   # plain text
+```
+
+| Step | What AKit reads | The pass gets |
+|---|---|---|
+| `/run AGENT [TASK]` | The agent's `.md`: `~/.pi/agent/agents/**`, then the agents of installed packages (pi-subagents' builtins, `pi-subagents.agents` / `pi.subagents.agents` of a manifest) | Its prompt and the task; its model in pi-subagents' order (a custom agent's frontmatter, then `subagents.agentOverrides`; for a builtin the override first; then `subagents.defaultModel`, else the passes' model; a `:high` suffix is the thinking level), checked by the sending policy like every pass |
+| `/TEMPLATE [ARGS]` | `~/.pi/agent/prompts/*.md` and the packages' prompts | The template expanded by AKit with Pi's own rules (`$1`, `$@`, `$ARGUMENTS`, `${1:-default}`, `${@:N}`, `${@:N:L}`; Pi's argument split) |
+| `/skill:NAME [REQUEST]` | `~/.pi/agent/skills`, `~/.agents/skills`, the packages' skills | The skill's text and the request |
+| text | | The text |
+
+- Each step is one pass `step-<id>` in the main session after the roles (id `pi-<name>`, or
+  `pi-step-<n>`), with the role prompt's rules: findings through `akit_submit_findings`, at most
+  `max_findings` (default 5) at `min_severity` (default medium). Its findings are candidates like
+  a role's, so the verifier checks them.
+- Only the review's reading tools: an agent's `bash`, `edit`, `write` and other tools are left
+  out, and the prompt says so. AKit never loads the package's code into a pass.
+- Never from the reviewed repository: `.pi/agents`, `.pi/prompts` and the project's settings are
+  not read, because a merge request could bring them.
+- Extension commands (`/subagents-doctor`, `/council` with tools) don't run: in `pi -p` Pi ends
+  before an async command finishes, and their code would run outside the checks. A step naming
+  one stops the run with the list of what can run.
+- The instructions (secrets masked) are in `run.json` (`steps`) and `<run>/steps/<id>.md`.
+- Levels add up: brain, then profile, then run; a repeated command runs once.
+- Flags go to the brief, the roles, the steps and the verifier, not to the fetch and send
+  passes. Only an allowlist: `--name`/`-n`, `--exclude-tools`/`-xt` (not AKit's own tools, no
+  patterns), `--no-approve`/`-na`, `--verbose`; every other item, a value that starts with `-`
+  or `@`, a flag without its value, or a value that looks like a secret stops the run. Found in
+  the review round: Pi takes the next argument as a flag's value even when it starts with `-`
+  (a trailing `--name` would swallow AKit's `-e akit-review.ts` and with it every check), a
+  loose `@file` puts any file into the prompt, and `--provider` / `--models` send the merge
+  request to a provider the sending policy didn't check. The provider goes in the model
+  (`provider/model`). Suggestions come from `pi --no-extensions --offline --help`, limited to
+  the allowlist.
+- `akit review pi` lists the agents, templates, skills and flags; `--step` and
+  `--pi-flags="…"` add them to one run; `config show` prints the steps with their models and
+  the tools left out.
 
 ## Findings
 

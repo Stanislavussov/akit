@@ -32,6 +32,8 @@ public struct ReviewCatalog: Sendable {
     public var builtInDefaults: ReviewSettingsPatch
     /// The brain's `review.yaml`; empty when it has none.
     public var brainDefaults: ReviewSettingsPatch
+    /// `pi:` of the brain's `review.yaml`: flags and steps for every run.
+    public var brainPi = ReviewPiExtras()
     public var profiles: [ReviewProfile]
     /// Project roles and scenarios by profile slug.
     public var projectRoles: [String: [ReviewRole]]
@@ -45,6 +47,7 @@ public struct ReviewCatalog: Sendable {
         var scenarios = Dictionary(uniqueKeysWithValues: ReviewBuiltIns.scenarios.map { ($0.id, $0) })
         let builtInDefaults = (try? ReviewSettingsPatch.parse(ReviewYAML.map(ReviewBuiltIns.defaultsYAML), where: "built-in")) ?? ReviewSettingsPatch()
         var brainDefaults = ReviewSettingsPatch()
+        var brainPi = ReviewPiExtras()
         if let brain {
             let layer = ReviewPaths.brainLayer(brain: brain)
             for role in readRoles(in: layer.appending(path: "skills"), source: .brain, problems: &problems) { roles[role.id] = role }
@@ -55,6 +58,7 @@ public struct ReviewCatalog: Sendable {
             if let text = try? String(contentsOf: file, encoding: .utf8) {
                 do {
                     brainDefaults = try ReviewSettingsPatch.parse(ReviewYAML.map(text), where: file.path)
+                    brainPi = try ReviewPiExtras.parse(ReviewYAML.map(text)["pi"], where: file.path)
                 } catch {
                     problems.append(error.localizedDescription)
                 }
@@ -80,11 +84,13 @@ public struct ReviewCatalog: Sendable {
             projectRoles[slug] = readRoles(in: folder.appending(path: "skills"), source: .project, problems: &problems)
             projectScenarios[slug] = readScenarios(in: folder.appending(path: "scenarios"), source: .project, problems: &problems)
         }
-        return ReviewCatalog(roles: ReviewCatalog.ordered(Array(roles.values), ReviewBuiltIns.roleIDs),
-                             scenarios: ReviewCatalog.ordered(Array(scenarios.values), ReviewBuiltIns.scenarioIDs),
-                             builtInDefaults: builtInDefaults, brainDefaults: brainDefaults,
-                             profiles: profiles.sorted { $0.slug < $1.slug }, projectRoles: projectRoles,
-                             projectScenarios: projectScenarios, problems: problems)
+        var catalog = ReviewCatalog(roles: ReviewCatalog.ordered(Array(roles.values), ReviewBuiltIns.roleIDs),
+                                    scenarios: ReviewCatalog.ordered(Array(scenarios.values), ReviewBuiltIns.scenarioIDs),
+                                    builtInDefaults: builtInDefaults, brainDefaults: brainDefaults,
+                                    profiles: profiles.sorted { $0.slug < $1.slug }, projectRoles: projectRoles,
+                                    projectScenarios: projectScenarios, problems: problems)
+        catalog.brainPi = brainPi
+        return catalog
     }
 
     /// The profile for a merge request: the one named, else the one whose GitLab project matches.

@@ -113,7 +113,7 @@ public enum ReviewDiscuss {
             }
             for raw in object["findings"] as? [[String: Any]] ?? [] {
                 // Only a role of the run: the role goes into the hidden line of a draft.
-                let role = (raw["role"] as? String).flatMap { name in run.spec.roles.contains { $0.id == name } ? name : nil } ?? "discuss"
+                let role = (raw["role"] as? String).flatMap { name in (run.spec.roles.map(\.id) + (run.spec.steps ?? []).map(\.id)).contains(name) ? name : nil } ?? "discuss"
                 guard var finding = ReviewCandidates.finding(raw, role: role, id: "f\(next)") else { continue }
                 ReviewCandidates.anchor(&finding, worktree: run.worktree)
                 (finding.fingerprint, finding.previousFingerprint) = ReviewCandidates.fingerprints(finding, worktree: run.worktree)

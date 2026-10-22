@@ -38,13 +38,15 @@ public enum ReviewRuns {
     }
 
     /// The configuration a run would use, without gathering anything (`akit review config show`).
-    public static func plan(mr: MergeRequestRef?, project: String?, choices: ReviewRunChoices, home: URL, brain: URL?) throws -> ReviewRunSpec {
+    public static func plan(mr: MergeRequestRef?, project: String?, choices: ReviewRunChoices, env: HarnessEnvironment, brain: URL?) throws -> ReviewRunSpec {
+        let home = env.homeDirectory
         let catalog = ReviewCatalog.load(home: home, brain: brain)
         let profile = catalog.profile(for: mr, named: project)
         if let project, profile == nil { throw Failure(message: "There is no project profile \(project) in \(ReviewPaths(home: home).projects.path).") }
         let ref = mr ?? profile.map { MergeRequestRef(host: $0.gitlabHost, projectPath: $0.gitlabProjectPath, iid: 1) }
             ?? MergeRequestRef(host: "https://gitlab.example.com", projectPath: "group/project", iid: 1)
-        return try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: ref, id: "preview").spec
+        return try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: ref, id: "preview",
+                                          pi: ReviewPiLibrary.load(env: env)).spec
     }
 
     /// Resolves the configuration, makes the run folder and gathers the context pack (steps 1–2):
@@ -56,7 +58,8 @@ public enum ReviewRuns {
         let profile = catalog.profile(for: mr, named: project)
         if let project, profile == nil { throw Failure(message: "There is no project profile \(project).") }
         let id = newID(for: mr)
-        let (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: mr, id: id)
+        let (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: mr, id: id,
+                                                       pi: ReviewPiLibrary.load(env: env))
         let folder = ReviewPaths(home: home).run(id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
@@ -83,7 +86,8 @@ public enum ReviewRuns {
         if let project, profile == nil { throw Failure(message: "There is no project profile \(project).") }
         let ref = MergeRequestRef.local(target.repository)
         let id = newID(for: ref)
-        var (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: ref, id: id)
+        var (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: ref, id: id,
+                                                       pi: ReviewPiLibrary.load(env: env))
         spec.local = target
         let folder = ReviewPaths(home: home).run(id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

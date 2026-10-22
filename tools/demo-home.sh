@@ -224,6 +224,24 @@ file "$DEMO/.claude.json" <<EOF
   }
 }
 EOF
+# A Pi subagent and a prompt template that a review can run as Pi steps (New Review… → Pi steps).
+file "$DEMO/.pi/agent/agents/api-reviewer.md" <<'EOF'
+---
+name: api-reviewer
+description: Checks public API changes for breaking changes and missing versioning
+tools: read, grep, find, ls, bash
+---
+You review changes to public APIs. For every changed endpoint, DTO or event, find its consumers
+and say whether they still work. Name the consumer and the field that breaks.
+EOF
+file "$DEMO/.pi/agent/prompts/review-migrations.md" <<'EOF'
+---
+description: Check database migrations for locks and rollbacks
+argument-hint: "[table]"
+---
+Check every database migration in the change (focus: ${1:-all tables}): long locks on big
+tables, a missing rollback, data a rollback would lose.
+EOF
 file "$DEMO/.codex/config.toml" <<'EOF'
 [mcp_servers.context7]
 command = "npx"
