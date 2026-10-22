@@ -11,15 +11,23 @@ public enum ReviewCandidates {
         for role in spec.roles {
             let file = folder.appending(path: "passes/role-\(role.id).json")
             guard let object = (try? Data(contentsOf: file)).flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) else { continue }
-            for raw in (object["findings"] as? [[String: Any]] ?? []).prefix(role.maxFindings) {
+            var counted = 0
+            for raw in object["findings"] as? [[String: Any]] ?? [] {
+                // Matrix rows (one per acceptance criterion) don't count against the role's limit.
+                if raw["kind"] as? String != "ac" {
+                    guard counted < role.maxFindings else { continue }
+                    counted += 1
+                }
                 guard var finding = finding(raw, role: role.id, id: "f\(result.count + 1)") else { continue }
                 // Below the role's own floor: the role said it shouldn't comment on it.
                 if finding.kind == .finding, finding.severity < role.minSeverity { continue }
                 anchor(&finding, worktree: worktree)
-                finding.fingerprint = fingerprint(finding, worktree: worktree)
+                (finding.fingerprint, finding.previousFingerprint) = fingerprints(finding, worktree: worktree)
                 if let same = result.firstIndex(where: { $0.fingerprint == finding.fingerprint && $0.kind == finding.kind }) {
                     let note = "\(finding.role):\(finding.title)"
                     if !result[same].related.contains(note) { result[same].related.append(note) }
+                    let folded = finding.fingerprints.filter { !result[same].fingerprints.contains($0) }
+                    if !folded.isEmpty { result[same].foldedFingerprints = (result[same].foldedFingerprints ?? []) + folded }
                     continue
                 }
                 result.append(finding)
@@ -62,13 +70,18 @@ public enum ReviewCandidates {
     }
 
     static func fingerprint(_ finding: ReviewFinding, worktree: URL?) -> String {
+        fingerprints(finding, worktree: worktree).current
+    }
+
+    /// The fingerprint, and the one the first rule gave (with the title) when it differs.
+    static func fingerprints(_ finding: ReviewFinding, worktree: URL?) -> (current: String, previous: String?) {
         let path = finding.file ?? ""
-        var snippet = finding.evidence
-        if finding.side == .new, let line = finding.line, let lines = fileLines(path, worktree: worktree),
+        if finding.kind != .ac, finding.side == .new, let line = finding.line, let lines = fileLines(path, worktree: worktree),
            let around = ReviewFingerprint.snippet(lines, line: line) {
-            snippet = around
+            return (ReviewFingerprint.make(path: path, snippet: around, title: nil),
+                    ReviewFingerprint.make(path: path, snippet: around, title: finding.title))
         }
-        return ReviewFingerprint.make(path: path, snippet: snippet, title: finding.title)
+        return (ReviewFingerprint.make(path: path, snippet: finding.evidence, title: finding.title), nil)
     }
 
     /// A file of the worktree, its lines masked. A merge request can add a symlink that points out

@@ -261,7 +261,7 @@ public enum ReviewExtension {
 
     function problems(findings: any[], verdictList: any[]): string[] {
       const out: string[] = [];
-      if (findings.length > max) out.push(`at most ${max} findings for this role; send the strongest ones`);
+      if (findings.filter((f) => f?.kind !== "ac").length > max) out.push(`at most ${max} findings for this role; send the strongest ones`);
       findings.forEach((f, i) => {
         const at = `findings[${i}]`;
         if (typeof f !== "object" || f === null) { out.push(`${at} is not an object`); return; }

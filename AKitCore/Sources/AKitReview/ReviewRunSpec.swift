@@ -204,7 +204,7 @@ public enum ReviewResolver {
                                    sha256: ReviewHash.sha256(role.text))
             },
             passes: passes, verifier: verifier,
-            posting: ReviewRunSpec.Posting(marker: pick(\.marker, fallback: "🤖 AKit review"),
+            posting: ReviewRunSpec.Posting(marker: pick(\.marker, fallback: "🤖"),
                                            severityThreshold: pick(\.severityThreshold, fallback: .medium),
                                            confidenceThreshold: pick(\.confidenceThreshold, fallback: 0.8),
                                            maxInline: pick(\.maxInline, fallback: 7), nitpicks: pick(\.nitpicks, fallback: false)),

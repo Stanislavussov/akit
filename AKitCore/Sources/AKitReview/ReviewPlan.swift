@@ -181,7 +181,7 @@ public enum ReviewPlanner {
                 place(.onlyInAKit, "Merged into \(finding.verifier?.into ?? "another finding").")
                 continue
             }
-            if let fp = finding.fingerprint, let thread = published[fp], thread.isResolved {
+            if let thread = finding.fingerprints.lazy.compactMap({ published[$0] }).first, thread.isResolved {
                 dismissed.append(finding)
                 place(.dismissed, "Already raised by AKit and resolved by a person: never raised again.")
                 continue
@@ -261,7 +261,7 @@ public enum ReviewPlanner {
                                         severity: finding.finalSeverity, confidence: finding.finalConfidence, file: finding.file,
                                         line: finding.line, position: position, proposed: body,
                                         movedByUser: input.forcedInline.contains(finding.id))
-            if let fp = finding.fingerprint, let draft = ourDrafts[fp] {
+            if let fp = finding.fingerprints.first(where: { ourDrafts[$0] != nil }), let draft = ourDrafts[fp] {
                 kept.insert(fp)
                 // AKit would propose the same text (the user may have edited the draft since) at the
                 // same place: nothing to do.
@@ -270,7 +270,7 @@ public enum ReviewPlanner {
                 guard !same || draft.position?.newLine != position.newLine || draft.position?.oldLine != position.oldLine else { continue }
                 request.kind = .update
                 request.draftID = draft.id
-            } else if let fp = finding.fingerprint, published[fp] != nil {
+            } else if finding.fingerprints.contains(where: { published[$0] != nil }) {
                 // An open published thread already says it.
                 continue
             }
@@ -284,15 +284,15 @@ public enum ReviewPlanner {
         }
         // Gone means no finding of this run has it, whatever its place: one held back by a threshold
         // is still there. A thread that has AKit's reply already gets no second one.
-        let current = Set(input.findings.compactMap(\.fingerprint))
+        let current = Set(input.findings.flatMap(\.fingerprints))
         for (fp, discussion) in published.sorted(by: { $0.key < $1.key }) where !discussion.isResolved && !current.contains(fp) {
             let replied = discussion.notes.contains { $0.author == input.user && ReviewNotes.parseMeta($0.body)?["kind"] == "reply" }
             if replied { continue }
             let first = discussion.notes.first { !$0.system }
             add(ReviewRequest(id: "", kind: .reply, fingerprint: fp, role: first.flatMap { ReviewNotes.parseMeta($0.body)?["role"] },
                               file: first?.position?.newPath, line: first?.position?.newLine,
-                              proposed: scrubbed("🤖 Looks fixed in \(spec.headSHA.map { String($0.prefix(10)) } ?? "the latest commit"): "
-                                                 + "AKit review no longer finds this.", scrub: input.scrub),
+                              proposed: scrubbed("🤖 Looks fixed in \(spec.headSHA.map { String($0.prefix(10)) } ?? "the latest commit").",
+                                                 scrub: input.scrub),
                               discussionID: discussion.id))
         }
         let summary = scrubbed(summaryBody(spec: spec, inline: inline.map(\.finding), overCap: overCap, questions: questions,
@@ -329,7 +329,7 @@ public enum ReviewPlanner {
            let end = text.range(of: "\n```", range: start.upperBound..<text.endIndex) {
             let code = String(text[start.upperBound..<end.lowerBound])
             if Scrubber.scrub(SecretFilter.masked(code), own: scrub).text != code {
-                text.replaceSubrange(start.lowerBound..<end.upperBound, with: "_(The suggestion held a secret; AKit left it out.)_")
+                text.replaceSubrange(start.lowerBound..<end.upperBound, with: "_(The suggestion held a secret and was left out.)_")
             }
         }
         return Scrubber.scrub(SecretFilter.masked(text), own: scrub).text
@@ -341,7 +341,6 @@ public enum ReviewPlanner {
         if let suggestion = finding.suggestion, finding.side == .new, !suggestion.contains("```") {
             text += "\n\n```suggestion\n\(suggestion)\n```"
         }
-        text += "\n\n<sub>AKit is an AI reviewer; check before applying.</sub>"
         return text
     }
 
@@ -373,7 +372,7 @@ public enum ReviewPlanner {
         if !gaps.isEmpty {
             text += "\n\n### What was missing\n\n" + gaps.map { "- \($0.needed): \($0.why)" }.joined(separator: "\n")
         }
-        text += "\n\n<sub>AKit is an AI reviewer; check before applying. Reviewed commit \(spec.headSHA.map { String($0.prefix(10)) } ?? "?").</sub>"
+        text += "\n\n<sub>Reviewed commit \(spec.headSHA.map { String($0.prefix(10)) } ?? "?").</sub>"
         return text
     }
 }
