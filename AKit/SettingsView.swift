@@ -167,6 +167,7 @@ struct SettingsView: View {
                     labError = "Couldn't save ~/.akit/lab/settings.json: \(error.localizedDescription)"
                 }
             }
+            TranslationModelSection(lab: $lab)
             SendingPolicySections(lab: $lab)
             Section {
                 Toggle("Ask before Ask AKit sends", isOn: Binding(get: { askConfirms }, set: { on in

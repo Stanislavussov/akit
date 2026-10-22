@@ -22,6 +22,8 @@ final class AskAKitModel {
         var failed = false
         /// A question: what went out for it (What Was Sent), once the call has started.
         var sent: Sent?
+        /// An answer: the harness that wrote it, the origin of its Translate.
+        var harness: LabHarness?
     }
 
     /// What one question sent, as it left the Mac: the scrubbed input, the guide sections in
@@ -307,7 +309,7 @@ final class AskAKitModel {
                 let raw = answer.text
                 reply = await Task.detached {
                     let text = AskAKit.answer(from: raw)
-                    return Message(role: .assistant, text: text, sources: AskAKit.sources(in: text, guides: guides))
+                    return Message(role: .assistant, text: text, sources: AskAKit.sources(in: text, guides: guides), harness: agent.harness)
                 }.value
             } catch is CancellationError {
                 reply = Message(role: .assistant, text: "Stopped.", failed: true)
@@ -675,6 +677,8 @@ struct AskAKitPanel: View {
 private struct AskMessageView: View {
     let message: AskAKitModel.Message
     let open: (Guide, String) -> Void
+    /// Translate of an answer; the chat isn't saved, so neither is its translation.
+    @State private var translator = Translator()
 
     var body: some View {
         switch message.role {
@@ -701,8 +705,21 @@ private struct AskMessageView: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    GuideBlocks(blocks: Self.blocks(message.text), highlight: nil)
+                    GuideBlocks(blocks: Self.blocks(translator.text("answer", message.text)), highlight: nil)
                         .textSelection(.enabled)
+                    if let harness = message.harness {
+                        HStack(alignment: .firstTextBaseline) {
+                            TranslationNote(translator: translator)
+                            Spacer()
+                            let text = message.text
+                            // The answer is made of the screen's setup data: the origin of Ask
+                            // AKit's own call, so a work Mac sends it only to an allowed destination.
+                            TranslateMenu(translator: translator, id: message.id.uuidString) {
+                                OutputTranslation.Source(parts: [OutputTranslation.Part("answer", text)], origins: [.code(harness)], cacheFolder: nil)
+                            }
+                            .controlSize(.small)
+                        }
+                    }
                     if !message.sources.isEmpty {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Sources").font(.caption.bold()).foregroundStyle(.secondary)

@@ -237,6 +237,11 @@ public enum AKitCLI {
                                           Gather the context, run the review passes, plan the drafts.
                                           akit review --help lists the rest
 
+        Translate (model-written output in another language; the original stays):
+          akit translate --to LANG FILE|-|--notes SESSION|--lab-run ID|--review RUN
+                                          One call with the translation model, cached next to the
+                                          output. akit translate --help lists the rest
+
         Instructions (AGENTS.md, CLAUDE.md; only reads):
           akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
                                           The instruction files each harness loads for a session in
@@ -306,6 +311,9 @@ public enum AKitCLI {
             }
             if arguments.first == "review" {
                 return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input)
+            }
+            if arguments.first == "translate" {
+                return try await translate(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, input: input)
             }
             if arguments.first == "analysis" {
                 return try await analysis(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, err: err,

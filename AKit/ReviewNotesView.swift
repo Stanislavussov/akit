@@ -18,14 +18,26 @@ struct ReviewNotesView: View {
     /// Snapshots: `--tab notes` opens the disclosures.
     @State private var showDetails = DebugSnapshot.options?.tab == "notes"
     @State private var showRejected = DebugSnapshot.options?.tab == "notes"
+    @State private var translator = Translator()
+
+    private typealias Key = SessionNotes.TranslationKey
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            ConclusionCard(notes: notes, metrics: metrics, inLabRun: inLabRun)
+            HStack(alignment: .firstTextBaseline) {
+                TranslationNote(translator: translator)
+                Spacer()
+                let notes = notes
+                TranslateMenu(translator: translator, id: notes.sessionKey) { notes.translationSource(env: .current) }
+                    .controlSize(.small)
+            }
+            ConclusionCard(notes: notes, metrics: metrics, inLabRun: inLabRun, translator: translator)
             if !notes.advice.isEmpty {
                 section("What to Change") {
                     ForEach(Array(notes.advice.prefix(Review.limit).enumerated()), id: \.offset) { index, advice in
-                        AdviceView(number: index + 1, advice: advice)
+                        AdviceView(number: index + 1, advice: advice,
+                                   title: translator.text(Key.adviceTitle(index), advice.title),
+                                   detail: translator.text(Key.adviceDetail(index), advice.detail))
                     }
                 }
             }
@@ -40,7 +52,7 @@ struct ReviewNotesView: View {
                             .help(group.help)
                         ForEach(group.notes) { note in
                             NoteView(note: note, collapsesQuote: true,
-                                     unconfirmed: !group.id.isEmpty && types[note.id]?.confirmed == false)
+                                     unconfirmed: !group.id.isEmpty && types[note.id]?.confirmed == false, translator: translator)
                         }
                             .padding(.leading, 22)
                     }
@@ -59,7 +71,7 @@ struct ReviewNotesView: View {
             Text(authors).foregroundStyle(.secondary).textSelection(.enabled)
             if !notes.paragraph.isEmpty {
                 section("What Happened", spacing: 3) {
-                    MarkdownLines(text: notes.paragraph.trimmingCharacters(in: .whitespacesAndNewlines))
+                    MarkdownLines(text: translator.text(Key.paragraph, notes.paragraph).trimmingCharacters(in: .whitespacesAndNewlines))
                     Text("Written before the verifier: it may mention a rejected note.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -67,8 +79,8 @@ struct ReviewNotesView: View {
             }
             if !notes.requirements.isEmpty {
                 section("Requirements", spacing: 3) {
-                    ForEach(Array(notes.requirements.enumerated()), id: \.offset) { _, requirement in
-                        Text("• \(requirement)").fixedSize(horizontal: false, vertical: true)
+                    ForEach(Array(notes.requirements.enumerated()), id: \.offset) { index, requirement in
+                        Text("• \(translator.text(Key.requirement(index), requirement))").fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -83,7 +95,7 @@ struct ReviewNotesView: View {
             if !notes.rejected.isEmpty {
                 DisclosureGroup("Rejected by the verifier (\(notes.rejected.count))", isExpanded: $showRejected) {
                     VStack(alignment: .leading, spacing: 12) {
-                        ForEach(notes.rejected) { NoteView(note: $0) }
+                        ForEach(notes.rejected) { NoteView(note: $0, translator: translator) }
                     }
                     .padding(.top, 6)
                 }
@@ -142,12 +154,13 @@ private struct ConclusionCard: View {
     let notes: SessionNotes
     let metrics: SessionMetrics?
     let inLabRun: Bool
+    let translator: Translator
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(headline).font(.title3.bold())
             if let conclusion = notes.conclusion {
-                Text(conclusion).font(.title3).fixedSize(horizontal: false, vertical: true)
+                Text(translator.text(SessionNotes.TranslationKey.conclusion, conclusion)).font(.title3).fixedSize(horizontal: false, vertical: true)
             } else if !notes.notes.isEmpty, notes.verifierConfig?.promptVersion ?? 0 < 3 {
                 // From verifier prompt 3 a missing conclusion means no note reached the
                 // verifier (or it left the conclusion blank), and the headline says it all.
@@ -216,12 +229,15 @@ private struct ConclusionCard: View {
 private struct AdviceView: View {
     let number: Int
     let advice: Advice
+    /// The title and detail as shown: translated or the originals.
+    let title: String
+    let detail: String
     @State private var showEvidence = DebugSnapshot.options?.tab == "notes"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("👉 \(advice.title)").fontWeight(.semibold)
-            Text(advice.detail).foregroundStyle(.secondary)
+            Text("👉 \(title)").fontWeight(.semibold)
+            Text(detail).foregroundStyle(.secondary)
             if !advice.evidence.isEmpty {
                 DisclosureGroup("Evidence" + (advice.noteIDs.isEmpty ? "" : " (\(advice.noteIDs.joined(separator: ", ")))"),
                                 isExpanded: $showEvidence) {
@@ -276,6 +292,11 @@ struct NoteView: View {
     var collapsesQuote = false
     /// Its mode is a low-confidence route you haven't reviewed.
     var unconfirmed = false
+    /// Translate of the notes it is shown with: the description and the verifier's reasons.
+    var translator: Translator? = nil
+
+    private func shown(_ key: String, _ original: String) -> String { translator?.text(key, original) ?? original }
+
     @State private var showSteelman = DebugSnapshot.options?.tab == "notes"
     @State private var showQuote = DebugSnapshot.options?.tab == "notes"
 
@@ -296,7 +317,7 @@ struct NoteView: View {
                     Text("symptom of \(root)").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Text(note.description).fixedSize(horizontal: false, vertical: true)
+            Text(shown(SessionNotes.TranslationKey.note(note.id), note.description)).fixedSize(horizontal: false, vertical: true)
             if collapsesQuote, !note.quote.isEmpty {
                 DisclosureGroup("Quote", isExpanded: $showQuote) {
                     QuoteText(text: note.quote).padding(.top, 2)
@@ -307,7 +328,7 @@ struct NoteView: View {
             }
             if let verdict = note.verdict {
                 if !verdict.accepted {
-                    Label("\(verdict.by == .code ? "Rejected by code" : "Rejected by the verifier model"): \(verdict.reason)",
+                    Label("\(verdict.by == .code ? "Rejected by code" : "Rejected by the verifier model"): \(shown(SessionNotes.TranslationKey.verdict(note.id), verdict.reason))",
                           systemImage: "xmark.circle")
                         .font(.callout)
                         .foregroundStyle(.orange)
@@ -315,8 +336,8 @@ struct NoteView: View {
                 } else if note.severity == .high, let steelman = verdict.steelman, !steelman.isEmpty {
                     DisclosureGroup("The verifier's case against it", isExpanded: $showSteelman) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(steelman)
-                            if !verdict.reason.isEmpty { Text("Verdict: \(verdict.reason)").foregroundStyle(.secondary) }
+                            Text(shown(SessionNotes.TranslationKey.steelman(note.id), steelman))
+                            if !verdict.reason.isEmpty { Text("Verdict: \(shown(SessionNotes.TranslationKey.verdict(note.id), verdict.reason))").foregroundStyle(.secondary) }
                         }
                         .font(.callout)
                         .fixedSize(horizontal: false, vertical: true)

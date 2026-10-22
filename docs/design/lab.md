@@ -149,7 +149,9 @@ phase change:
   review.json     { "findings": [ { "title", "evidence", "detail" } ] }: 0 to 3 improvements
                   (AKit shows at most 3); written by AKit from the model's answer, or by
                   the agent
-  settings.json   (in ~/.akit/lab itself) Lab defaults: { "reportLanguage": "en|ru|cs" }
+  settings.json   (in ~/.akit/lab itself) Lab defaults: { "reportLanguage": "en|ru|cs|…",
+                  "translationAgent": … } (translate.md)
+  translations/   cached translations of the run's review (translate.md)
   summary.md      by the review skill only: one paragraph
   agent.jsonl     raw stream-json of a headless run; the tab shows a readable version
   check.log       hidden-test output, watchdog kills

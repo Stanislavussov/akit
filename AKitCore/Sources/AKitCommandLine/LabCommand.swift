@@ -17,7 +17,7 @@ extension AKitCLI {
 
         Runs (one at a time; each opens a tab that runs `akit lab run ID`):
           akit lab new review SESSION [--harness claude-code|pi] [--model M] [--effort E]
-                              [--mode call|agent] [--language en|ru|cs] [--env orca|herdr|background]
+                              [--mode call|agent] [--language LANG] [--env orca|herdr|background]
                               [--no-start]
                                           A model reads the session (masked) and AKit's numbers and
                                           writes one paragraph and up to 3 improvements (a Pi session:
@@ -29,7 +29,8 @@ extension AKitCLI {
                                           its thinking level). call (default): one model call on a
                                           digest, no tools; agent: an agent reads the whole
                                           transcript with file tools. --language: the language of the
-                                          review (default: Lab settings in AKit, else English)
+                                          review, a code such as en, ru or cs (akit translate --help
+                                          lists them; default: Lab settings in AKit, else English)
           akit lab new replay COMMIT [--repo DIR] [--setups full,lean] [--model M] [--effort E]
                               [--repeats N] [--env orca|herdr|background] [--keep] [--no-start]
                                           Redo a commit from its parent in an isolated clone (no refs,
@@ -40,7 +41,7 @@ extension AKitCLI {
                                           --keep keeps the clone; otherwise it goes to the Trash
           akit lab new analysis [--project ID|DIR] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--size N]
                               [--session-harness claude-code|pi] [--harness claude-code|pi] [--model M]
-                              [--effort E] [--matching-model M] [--language en|ru|cs]
+                              [--effort E] [--matching-model M] [--language LANG]
                               [--env orca|herdr|background] [--no-start] [--yes]
                                           Error analysis over a sample of N (20) sessions of the index
                                           (5+ requests each; --session-harness: only those that harness
@@ -170,7 +171,7 @@ extension AKitCLI {
                 matching?.mode = .call
             }
             let language = try languageText.map { text in
-                guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is en, ru or cs.") }
+                guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is one of \(LabLanguage.codes).") }
                 return language
             }
             let projectFilter = project.map { text -> String in
@@ -274,7 +275,7 @@ extension AKitCLI {
             }
             guard harness == .pi || !agent.model.isEmpty else { throw Failure(message: "Which model? --model.") }
             let language = try languageText.map { text in
-                guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is en, ru or cs.") }
+                guard let language = LabLanguage(rawValue: text) else { throw Failure(message: "--language is one of \(LabLanguage.codes).") }
                 return language
             }
             let run = try await LabRuns.newReview(transcript: file, harness: reviewed, title: nil, agent: agent, language: language,
