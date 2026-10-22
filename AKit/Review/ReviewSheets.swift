@@ -29,6 +29,9 @@ struct NewReviewSheet: View {
     @State private var passesModel = ""
     @State private var verifierModel = ""
     @State private var cap = ""
+    @State private var notes = ""
+    @State private var links = ""
+    @State private var extraServers: Set<String> = []
     @State private var catalog: ReviewCatalog?
 
     private var mr: MergeRequestRef? { MergeRequestRef.parse(address) }
@@ -38,8 +41,12 @@ struct NewReviewSheet: View {
         case .local: inspection.flatMap { inspection in catalog.flatMap { ReviewLocal.profile(for: inspection, in: $0, env: model.env) } }
         }
     }
+    /// The links as a run takes them, or why not.
+    private var checkedLinks: Result<[String], Error> { Result { try ReviewContext.links([links]) } }
+    /// The project's MCP rules (or the defaults): its own servers and its context servers.
+    private var access: ReviewMCPAccess { profile?.mcp ?? ReviewMCPAccess() }
     private var canStart: Bool {
-        guard !model.isBusy else { return false }
+        guard !model.isBusy, (try? checkedLinks.get()) != nil else { return false }
         return switch source {
         case .mergeRequest: mr != nil
         case .local: inspection?.has(mode) == true
@@ -71,6 +78,7 @@ struct NewReviewSheet: View {
                     TextField("Work items", text: $workItems, prompt: Text("e.g. 4512, 4513 (else found in the title, description and branch)"))
                 }
                 }
+                contextSection
                 Section("Scenario and roles") {
                     Picker("Scenario", selection: $scenario) {
                         ForEach(scenarios) { Text($0.title).tag($0.id) }
@@ -95,6 +103,7 @@ struct NewReviewSheet: View {
                         }
                     }
                 }
+                extraServersSection
                 Section("This run only") {
                     TextField("Model for the brief and roles", text: $passesModel, prompt: Text("provider/model, e.g. github-copilot/… (empty: from the configuration)"))
                     TextField("Verifier model", text: $verifierModel, prompt: Text("a strong model (empty: from the configuration)"))
@@ -114,7 +123,7 @@ struct NewReviewSheet: View {
             }
             .padding()
         }
-        .frame(width: 620, height: 640)
+        .frame(width: 620, height: 720)
         .task {
             catalog = model.catalog(brain: brain)
             scenario = scenario.isEmpty ? (profile?.defaultScenario ?? "feature") : scenario
@@ -123,6 +132,80 @@ struct NewReviewSheet: View {
             if let preset = profile?.defaultScenario { scenario = preset }
         }
         .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)") { await inspect() }
+    }
+
+    /// The developer's own context: notes every pass reads, links the fetch pass reads.
+    @ViewBuilder private var contextSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Context for this review")
+                TextEditor(text: $notes)
+                    .font(.callout)
+                    .frame(height: 70)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+                Text("What the change is for, what to focus on, decisions already made. Every pass reads it as your instructions for focus; the model still only returns findings.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Links")
+                TextEditor(text: $links)
+                    .font(.callout.monospaced())
+                    .frame(height: 50)
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
+                if case .failure(let error) = checkedLinks {
+                    Text(error.localizedDescription).font(.caption).foregroundStyle(.red)
+                } else {
+                    Text("One https link per line: Figma frames, Azure DevOps wiki pages or work items, Confluence pages. Pi reads each with a matching MCP server's reading tools; what it can't read becomes a context gap.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Context")
+        }
+    }
+
+    /// Pi's other MCP servers, to add as read-only context servers for this run.
+    @ViewBuilder private var extraServersSection: some View {
+        Section {
+            HStack {
+                Text(access.extraServers.isEmpty ? "Add context servers for this run" : "Context servers of the profile: " + access.extraServers.joined(separator: ", "))
+                    .font(.callout)
+                Spacer()
+                Button(model.checkingMCP ? "Listing…" : "List Servers") { model.checkMCP(access: access) }
+                    .disabled(model.checkingMCP)
+            }
+            if let report = model.mcpReport {
+                let others = report.servers.filter { !access.isBase(server: $0.name) }
+                if others.isEmpty {
+                    Text("Pi has no other MCP servers.").font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(others) { server in
+                    let fromProfile = access.isExtra(server: server.name)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Toggle(isOn: Binding(get: { fromProfile || extraServers.contains(server.name) },
+                                             set: { on in if on { extraServers.insert(server.name) } else { extraServers.remove(server.name) } })) {
+                            HStack {
+                                Text(server.name)
+                                Text(fromProfile ? "from the profile" : server.enabled ? server.state : "disabled")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .disabled(fromProfile)
+                        if let warning = ReviewMCPAccess.warning(forServer: server.name), fromProfile || extraServers.contains(server.name) {
+                            Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
+            if let problem = model.mcpProblem {
+                Label(problem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            }
+        } header: {
+            Text("Extra servers")
+        } footer: {
+            Text("Context servers only read, in every pass: their tools never write, not even in Send Drafts. GitLab and the tracker are always there. The profile's mcp: extra_servers are on for every run.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     /// Local Workspace: the folder, the base, and what is there to review before anything starts.
@@ -213,6 +296,9 @@ struct NewReviewSheet: View {
         if !passesModel.isEmpty { choices.settings.passes = ReviewModelChoice(model: passesModel) }
         if !verifierModel.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifierModel) }
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
+        choices.notes = notes
+        choices.links = (try? checkedLinks.get()) ?? []
+        choices.extraServers = extraServers.sorted()
         if source == .local, let inspection {
             model.startLocal(inspection, mode: mode, project: profile?.slug, choices: choices, brain: brain)
         } else if let mr {
@@ -234,7 +320,18 @@ struct ReviewSettingsSheet: View {
     @State private var message: String?
     @State private var catalog: ReviewCatalog?
 
-    private var access: ReviewMCPAccess { catalog?.profiles.first { $0.slug == rules }?.mcp ?? ReviewMCPAccess() }
+    /// The profile's context servers as ticked here, saved with Save Extra Servers….
+    @State private var extras: [String] = []
+    @State private var save: ReviewConfigEditor.Save?
+
+    private var profile: ReviewProfile? { catalog?.profiles.first { $0.slug == rules } }
+    private var access: ReviewMCPAccess { profile?.mcp ?? ReviewMCPAccess() }
+    /// The rules with the ticked context servers: what a run of this project would use.
+    private var effective: ReviewMCPAccess {
+        var access = access
+        access.extraServers = extras
+        return access
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -245,7 +342,7 @@ struct ReviewSettingsSheet: View {
                             Text("Default").tag("")
                             ForEach(catalog?.profiles ?? [], id: \.slug) { Text($0.project).tag($0.slug) }
                         }
-                        Button(model.checkingMCP ? "Checking…" : "Check Servers") { model.checkMCP(access: access) }
+                        Button(model.checkingMCP ? "Checking…" : "Check Servers") { model.checkMCP(access: effective) }
                             .disabled(model.checkingMCP)
                     }
                     if let report = model.mcpReport {
@@ -254,36 +351,27 @@ struct ReviewSettingsSheet: View {
                                 .font(.callout).foregroundStyle(.orange)
                         }
                         ForEach(report.servers) { server in
-                            let used = access.allows(server: server.name)
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Image(systemName: server.state == "connected" && server.enabled ? "circle.fill" : "circle")
-                                        .foregroundStyle(server.state == "connected" && server.enabled ? .green : .secondary).font(.caption2)
-                                    Text(server.name)
-                                    Text(server.enabled ? server.state : "disabled").font(.caption).foregroundStyle(.secondary)
-                                    Spacer()
-                                    if used {
-                                        Text("\(server.count(.read)) read · \(server.count(.write)) write drafts · \(server.count(.blocked)) blocked")
-                                            .font(.caption).foregroundStyle(.secondary)
-                                    } else {
-                                        Text("not used by this project").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                let writes = server.tools.filter { $0.kind == .write }.map(\.name)
-                                if used, !writes.isEmpty {
-                                    Text("Send Drafts may call: " + writes.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
+                            serverRow(server)
                         }
                         ForEach(report.errors, id: \.self) { Label($0, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
                     }
                     if let problem = model.mcpProblem {
                         Label(problem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
                     }
+                    if profile == nil {
+                        Text("Pick a project profile in Rules of to add context servers to it (mcp: extra_servers).")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if extras != access.extraServers {
+                        HStack {
+                            Text("Context servers: " + (extras.isEmpty ? "none" : extras.joined(separator: ", "))).font(.caption)
+                            Spacer()
+                            Button("Save Extra Servers…") { planExtras() }
+                        }
+                    }
                 } header: {
                     Text("Pi's MCP servers")
                 } footer: {
-                    Text("Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens. A review reads with their reading tools, writes only the drafts you approved, word for word, and never publishes, approves, merges or resolves. A profile's mcp: names the servers and tools it may use.")
+                    Text("Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens. A review reads with their reading tools, writes only the drafts you approved, word for word, and never publishes, approves, merges or resolves. A profile's mcp: names the servers and tools it may use; a Context server (Figma, Confluence, a wiki) is added on top and only reads.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
@@ -292,7 +380,8 @@ struct ReviewSettingsSheet: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(profile.project)
                                 Text("\(profile.gitlabHost)/\(profile.gitlabProjectPath)"
-                                     + (profile.mcp.servers.isEmpty ? "" : " · MCP: " + profile.mcp.servers.joined(separator: ", ")))
+                                     + (profile.mcp.servers.isEmpty ? "" : " · MCP: " + profile.mcp.servers.joined(separator: ", "))
+                                     + (profile.mcp.extraServers.isEmpty ? "" : " · context: " + profile.mcp.extraServers.joined(separator: ", ")))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -329,6 +418,70 @@ struct ReviewSettingsSheet: View {
         }
         .frame(width: 600, height: 640)
         .task { catalog = model.catalog(brain: brain) }
+        .onChange(of: rules) { extras = access.extraServers }
+        .sheet(item: Binding(get: { save.map(SaveBox.init) }, set: { save = $0?.save })) { box in
+            ReviewSaveSheet(save: box.save, brain: brain) { saved in
+                save = nil
+                if saved {
+                    catalog = model.catalog(brain: brain)
+                    extras = access.extraServers
+                    message = "Saved the context servers in \(box.save.file.lastPathComponent)."
+                }
+            }
+        }
+    }
+
+    private struct SaveBox: Identifiable {
+        let save: ReviewConfigEditor.Save
+        var id: String { save.file.path }
+    }
+
+    /// One of Pi's servers as this profile's review sees it; a server that isn't GitLab or the
+    /// tracker can be ticked as a context server.
+    @ViewBuilder private func serverRow(_ server: ReviewMCPCheck.Server) -> some View {
+        let kinds = server.tools.map { (name: $0.name, kind: ReviewMCPPolicy.kind(server: server.name, tool: $0.name, access: effective)) }
+        let base = effective.isBase(server: server.name)
+        let context = effective.isExtra(server: server.name)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Image(systemName: server.state == "connected" && server.enabled ? "circle.fill" : "circle")
+                    .foregroundStyle(server.state == "connected" && server.enabled ? .green : .secondary).font(.caption2)
+                Text(server.name)
+                Text(server.enabled ? server.state : "disabled").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if base || context {
+                    Text((context ? "context · " : "") + "\(kinds.filter { $0.kind == .read }.count) read"
+                         + (context ? "" : " · \(kinds.filter { $0.kind == .write }.count) write drafts")
+                         + " · \(kinds.filter { $0.kind == .blocked }.count) blocked")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("not used by this project").font(.caption).foregroundStyle(.secondary)
+                }
+                if profile != nil, !base {
+                    Toggle("Context server", isOn: Binding(get: { context }, set: { on in
+                        if on { extras.append(server.name) } else { extras.removeAll { $0.lowercased() == server.name.lowercased() } }
+                    }))
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                }
+            }
+            let writes = kinds.filter { $0.kind == .write }.map(\.name)
+            if base, !writes.isEmpty {
+                Text("Send Drafts may call: " + writes.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
+            }
+            if context, let warning = ReviewMCPAccess.warning(forServer: server.name) {
+                Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    /// Save Extra Servers…: the profile's mcp: extra_servers, shown as a diff first.
+    private func planExtras() {
+        do {
+            save = try ReviewConfigEditor.extraServers(extras, profile: rules, home: model.home, brain: brain)
+        } catch {
+            message = error.localizedDescription
+        }
     }
 
     /// A commented template, opened in the editor.
@@ -363,6 +516,7 @@ enum ReviewProfileTemplate {
     #   read: []                           # more reading tools, e.g. ["wit_get_*"]; get_/list_/search_… read anyway
     #   write: ["*draft_note*"]            # the tools Send Drafts may call; only approved text passes
     #   in_passes: true                    # the brief, roles and verifier may read through MCP too
+    #   extra_servers: [figma]             # context servers on top (Figma, Confluence, a wiki): read only, in every run
     default_scenario: feature              # feature, bugfix, dependency-upgrade
     knowledge: []                          # markdown folders, e.g. [~/notes/my-service]
     gather: []                             # e.g. - { name: tests, run: "npm test", timeout_s: 600 }; runs the MR's own code

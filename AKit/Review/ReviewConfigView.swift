@@ -44,6 +44,8 @@ struct ReviewConfigView: View {
                                  source: brainText == nil ? .builtIn : .brain, text: brainText ?? ReviewBuiltIns.defaultsYAML + "\n"))
             }
             return list
+        case .profile:
+            return []
         }
     }
 

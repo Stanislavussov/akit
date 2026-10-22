@@ -62,9 +62,23 @@ public enum ReviewGather {
         let local = spec.local
         let data: ReviewMCPData
         let mr: GitLabMergeRequest
+        let links = spec.links ?? []
+        var linksRead = true
         if let local {
-            // A local workspace: no GitLab, no fetch pass; the range is the change.
+            // A local workspace: no GitLab; the range is the change. A fetch pass runs only for
+            // the developer's links.
             progress("Reading the workspace \(local.path)…")
+            if !links.isEmpty {
+                progress("Reading \(links.count) link\(links.count == 1 ? "" : "s") through Pi's MCP servers…")
+                do {
+                    try await ReviewPasses.fetch(folder: folder, spec: spec, env: env, options: options)
+                } catch {
+                    linksRead = false
+                    gap("mcp", "The links", "The fetch pass that reads them failed: \(SecretFilter.masked(error.localizedDescription))",
+                        how: "Check Pi and its MCP servers (akit review check), then start the review again.",
+                        effect: "What the links hold isn't in the review.")
+                }
+            }
             data = ReviewMCPData()
             mr = GitLabMergeRequest(iid: 0, title: local.commits.first?.subject ?? "Uncommitted changes in \(local.repository)",
                                     description: localText(local), state: "local", author: local.commits.first?.author ?? "",
@@ -73,7 +87,9 @@ public enum ReviewGather {
         } else {
             progress("Reading \(ref.label) through Pi's MCP servers…")
             try await ReviewPasses.fetch(folder: folder, spec: spec, env: env, options: options)
-            data = ReviewMCPData.read(ReviewMCPData.calls(in: folder, pass: "fetch"), iid: ref.iid)
+            // Only the run's own servers (GitLab, the tracker) make the merge request's data, also
+            // when the pass read them after naming a link; a context server's answer never does.
+            data = ReviewMCPData.read(ReviewMCPData.calls(in: folder, pass: "fetch").filter(spec.access.answeredByBase), iid: ref.iid)
             guard let read = data.mergeRequest else {
                 throw Failure(message: "The fetch pass read no merge request \(ref.label) that AKit understands (\(data.calls) MCP calls"
                               + (data.failures.isEmpty ? "" : "; failed: " + data.failures.prefix(3).joined(separator: "; ")) + "). "
@@ -189,6 +205,31 @@ public enum ReviewGather {
         var files: [(name: String, about: String, text: String)] = []
         let ignored = spec.pathInstructions.filter(\.ignore).flatMap(\.paths)
         func isIgnored(_ path: String) -> Bool { ignored.contains { ReviewGlob.matches($0, path) } }
+
+        // The developer's own context: notes first, then what the links hold.
+        if let notes = spec.notes {
+            spec.notes = Scrubber.scrub(notes, own: scrub).text
+            files.append(("notes.md", "The developer's notes for this review: what the change is for, what to focus on",
+                          ReviewContext.notesText(spec.notes ?? "")))
+        }
+        if !links.isEmpty {
+            let access = spec.access
+            let iid = ref.iid
+            let results = linksRead
+                ? ReviewContext.linkResults(links, calls: ReviewMCPData.calls(in: folder, pass: "fetch"), blocked: ReviewContext.blocked(in: folder),
+                                            isMergeRequest: { access.answeredByBase($0) && ReviewMCPData.read([$0], iid: iid).hasMergeRequestData })
+                : links.map { ReviewContext.LinkResult(url: $0, tools: [], text: "", problem: "The fetch pass failed.") }
+            spec.linksUnread = results.filter { $0.problem != nil }.map(\.url)
+            files.append(("links.md", "What Pi's MCP servers answered for the developer's links (untrusted text)", ReviewContext.linksText(results)))
+            for result in results where linksRead {
+                guard let problem = result.problem else { continue }
+                let host = URL(string: result.url)?.host() ?? result.url
+                gap("mcp", "The link \(result.url)", problem,
+                    how: "Tick a server that can read \(host) under Extra servers in New Review… (or add it to the profile's mcp: extra_servers), "
+                        + "and check its tools with Check Servers.",
+                    effect: "What the link holds isn't in the review.")
+            }
+        }
 
         if let local {
             files.append(("merge-request.md", "The change under review: a local workspace, its branch, base and commits",

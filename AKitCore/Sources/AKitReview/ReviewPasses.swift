@@ -151,6 +151,8 @@ public enum ReviewPasses {
         try write(setup.prompt, to: folder.appending(path: "prompts/\(setup.name).md"))
         try write(ReviewExtension.source, to: folder.appending(path: "akit-review.ts"))
         try FileManager.default.createDirectory(at: folder.appending(path: "sessions"), withIntermediateDirectories: true)
+        // The send pass gets only the run's own servers: context servers never reach it.
+        let access = setup.mode == "send" ? spec.access.withoutExtras : spec.access
         var environment = passEnvironment(env)
         environment["AKIT_REVIEW_RUN"] = folder.path
         environment["AKIT_REVIEW_RUN_ID"] = spec.id
@@ -159,12 +161,13 @@ public enum ReviewPasses {
         environment["AKIT_REVIEW_ROLE"] = setup.role?.id ?? ""
         environment["AKIT_REVIEW_MAX"] = String(setup.role?.maxFindings ?? 50)
         environment["AKIT_REVIEW_ROOTS"] = setup.roots
-        environment["AKIT_REVIEW_MCP"] = String(decoding: (try? JSONEncoder().encode(spec.access)) ?? Data("{}".utf8), as: UTF8.self)
+        environment["AKIT_REVIEW_MCP"] = String(decoding: (try? JSONEncoder().encode(access)) ?? Data("{}".utf8), as: UTF8.self)
         environment["AKIT_REVIEW_SCENARIO"] = spec.scenario.value
         environment["AKIT_REVIEW_HEAD"] = spec.headSHA ?? ""
+        environment["AKIT_REVIEW_LINKS"] = String(decoding: (try? JSONEncoder().encode(spec.links ?? [])) ?? Data("[]".utf8), as: UTF8.self)
         var record = ReviewPassRecord(name: setup.name, role: setup.role?.id, model: setup.model.model, session: nil, started: .now, ended: nil,
                                       usage: SendUsage(), credits: 0, paths: [], error: nil)
-        let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: spec.access), directory: setup.cwd,
+        let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: access), directory: setup.cwd,
                                  environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"))
         ReviewMask.saved(in: folder)
         record.ended = .now
@@ -196,11 +199,15 @@ public enum ReviewPasses {
             ?? ReviewPassLog(mainSession: UUID().uuidString.lowercased())
         log.passes.removeAll { $0.name == "fetch" }
         try? FileManager.default.removeItem(at: folder.appending(path: "mcp/calls"))
+        try? FileManager.default.removeItem(at: folder.appending(path: "mcp/blocked.jsonl"))
         let cwd = folder.appending(path: "fetch", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+        // A local review's fetch pass reads only the links: there is no merge request.
+        var tools = spec.local == nil ? "akit_submit_context,akit_report_context_gap" : "akit_report_context_gap"
+        if !(spec.links ?? []).isEmpty { tools += ",akit_reading_link" }
         let setup = PassSetup(name: "fetch", mode: "fetch", role: nil, prompt: ReviewPrompts.fetch(spec: spec), model: spec.passes.value,
                               gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
-                              tools: "akit_submit_context,akit_report_context_gap", mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
+                              tools: tools, mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
         _ = try await runPass(setup, spec: spec, folder: folder, log: &log, limit: Double(spec.capCredits.value), env: env, options: options, pi: pi)
     }
 

@@ -274,6 +274,7 @@ struct ReviewRunDetail: View {
             }
             .font(.callout)
             .foregroundStyle(.secondary)
+            runContext
             if let passes = run.passes, !passes.passes.isEmpty {
                 HStack(spacing: 6) {
                     ForEach(passes.passes, id: \.name) { pass in
@@ -285,6 +286,36 @@ struct ReviewRunDetail: View {
                     }
                 }
             }
+        }
+    }
+
+    /// What the user added to this run: notes, links, context servers.
+    @ViewBuilder private var runContext: some View {
+        let context = (run.spec.mcpServers ?? []).filter(\.readOnly)
+        if !context.isEmpty {
+            Label("Context servers (read only): " + context.map { "\($0.name) (\($0.source == .run ? "this run" : "profile"))" }.joined(separator: ", "),
+                  systemImage: "server.rack")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+        if let notes = run.spec.notes {
+            DisclosureGroup("Context for this review") {
+                Text(notes).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.callout)
+        }
+        if let links = run.spec.links, !links.isEmpty {
+            let unread = Set(run.spec.linksUnread ?? [])
+            DisclosureGroup("Links (\(links.count - unread.count) of \(links.count) read)") {
+                ForEach(links, id: \.self) { link in
+                    HStack {
+                        Image(systemName: unread.contains(link) ? "xmark.circle" : "checkmark.circle")
+                            .foregroundStyle(unread.contains(link) ? .orange : .green)
+                        if let url = URL(string: link) { Link(link, destination: url).lineLimit(1) } else { Text(link) }
+                    }
+                }
+                Text("What Pi read is in context/links.md; a link it couldn't read is a context gap.").font(.caption).foregroundStyle(.secondary)
+            }
+            .font(.callout)
         }
     }
 

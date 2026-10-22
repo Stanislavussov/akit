@@ -18,7 +18,7 @@
 - Вы хотите, чтобы агент сам публиковал комментарии. AKit этого не делает и не будет делать.
 - Нужен просмотр diff. В AKit его нет: diff вы смотрите в GitLab.
 
-**Как построено руководство.** Одиннадцать частей идут от простого к сложному: что это, настройка, одно ревью, ревью локальной копии, экран, куда идут находки, пробелы контекста, обсуждение в Pi, повторные ревью, настройка ролей, качество. Внутри частей задачи идут от «Просто» к «Сложно». Все надписи экрана собраны в словаре: [AKit Terms → Review](terms#terms-review).
+**Как построено руководство.** Двенадцать частей идут от простого к сложному: что это, настройка, одно ревью, контекст ревью (заметки, ссылки, дополнительные серверы), ревью локальной копии, экран, куда идут находки, пробелы контекста, обсуждение в Pi, повторные ревью, настройка ролей, качество. Внутри частей задачи идут от «Просто» к «Сложно». Все надписи экрана собраны в словаре: [AKit Terms → Review](terms#terms-review).
 
 **Как искать.** Меню Help → **Search Guides and Screens…** (⌥⌘F) открывает окно руководства с курсором в поле поиска. Поиск находит названия кнопок, вкладок и подписи к картинкам. Это руководство открывает кнопка **Guide** на экране Review или Help → **AKit Review Guide**.
 
@@ -35,6 +35,7 @@
 - «Агенту я не доверяю публикацию» → и не нужно: без вашего одобрения в GitLab не уходит ничего.
 - «Автор сделал push после моих комментариев» → новое ревью того же MR обновит или удалит старые черновики.
 - «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
+- «Агенту нужен макет из Figma или страница вики» → поля **Context for this review**, **Links** и блок **Extra servers** в **New Review…** (см. [контекст ревью](#context)).
 
 ![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8 и строкой Verifier: confirmed; внизу кнопки Add Missed…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
@@ -129,7 +130,7 @@
 - «Ревью остановилось с Not allowed» → [разрешите адресата](#setup-policy).
 - «Агент видит только diff, а не весь файл» → в профиле нет `checkout`: [профиль проекта](#setup-profile).
 
-![Окно Review Settings…: блок Pi's MCP servers со списком Rules of (Default) и кнопкой Check Servers, подпись: Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens, а ревью пишет только одобренные черновики слово в слово и никогда не публикует; блок Project profiles со строкой orders-service, адресом https://gitlab.example.com/shop/orders-service · MCP: gitlab, azure-devops и кнопкой Edit…, кнопками New Profile… и Show Folder и подписью о папке ~/.akit/local/review/projects; кнопка Done](images/review-settings.png)
+![Окно Review Settings…: блок Pi's MCP servers со списком Rules of (Default) и кнопкой Check Servers, строка Pick a project profile in Rules of to add context servers to it (mcp: extra_servers)., подпись: Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens, а ревью пишет только одобренные черновики слово в слово, никогда не публикует, а Context server (Figma, Confluence, вики) добавляется сверху и только читает; блок Project profiles со строкой orders-service, адресом https://gitlab.example.com/shop/orders-service · MCP: gitlab, azure-devops и кнопкой Edit…, кнопками New Profile… и Show Folder и подписью о папке ~/.akit/local/review/projects; кнопка Done](images/review-settings.png)
 
 ### Просто: MCP-серверы GitLab и трекера в Pi
 <!-- section: setup-mcp -->
@@ -148,6 +149,8 @@ AKit не хранит токены. С GitLab, Azure DevOps и другими �
 - Имя сервера и его состояние. Пример: `gitlab connected`.
 - «N read · M write drafts · K blocked» — сколько инструментов ревью может читать, сколько может писать черновики (только при **Send Drafts…**) и сколько закрыто.
 - «not used by this project» — профиль проекта не называет этот сервер в `mcp: servers`. Ревью этого проекта его не трогает.
+- «context · N read · K blocked» — дополнительный сервер проекта: только читает (см. [контекст ревью](#context-settings)).
+- Флажок **Context server** — сделать сервер дополнительным для профиля из **Rules of**. Есть только у серверов, которые не GitLab и не трекер, и только когда выбран профиль.
 - «Send Drafts may call: …» — имена инструментов записи. Пример: `create_draft_note, update_draft_note, delete_draft_note`.
 
 Список **Rules of** выбирает, по чьим правилам считать: **Default** (правила по умолчанию) или профиль проекта с его блоком `mcp:`.
@@ -162,7 +165,7 @@ AKit не хранит токены. С GitLab, Azure DevOps и другими �
 - **write drafts** — инструменты из `mcp: write` профиля, у которых глагол пишет (`create`, `update`, `delete` и т. п.). По умолчанию шаблоны `*draft_note*` и `*draft*note*`: `create_draft_note` пишет, а `list_draft_notes` читает.
 - **read** — инструменты с глаголом чтения первым словом (`get_merge_request`) или вторым после имени области (`wit_get_work_item`): `get`, `list`, `search`, `read`, `show`, `view`, `fetch`, `find`, `query`, `describe`, `download`. Ещё — инструменты, которые сервер сам пометил «только чтение», `mr_discussions` и инструменты из `mcp: read` профиля.
 - Всё остальное — **blocked**. Пример: `merge_merge_request`, `create_note` (это опубликованный комментарий, а не черновик).
-- Серверы: без `servers:` в профиле ревью видит только серверы, в имени которых есть `gitlab`, `azure`, `devops`, или сервер `ado`. Браузер, файлы или загрузчик страниц ревью не получит, даже если они есть в Pi.
+- Серверы: без `servers:` в профиле ревью видит только серверы, в имени которых есть `gitlab`, `azure`, `devops`, или сервер `ado`. Браузер, файлы или загрузчик страниц ревью не получит, даже если они есть в Pi. Другие серверы добавляют как дополнительные (`mcp: extra_servers` или **Extra servers** в **New Review…**): они только читают.
 
 > **Почему так:** Pi уже умеет говорить с GitLab и трекерами. Второй набор токенов в AKit был бы ещё одним местом, где лежит секрет. AKit только решает, какие инструменты можно звать, и проверяет каждый вызов.
 
@@ -221,6 +224,7 @@ default_scenario: bugfix
   - `read: []` — ещё шаблоны инструментов чтения. Инструменты с пометкой «только чтение» и с глаголом чтения (`get_…`, `wit_get_…`) читают и без этого.
   - `write: ["*draft_note*"]` — инструменты, которые может звать **Send Drafts…**. По умолчанию `*draft_note*` и `*draft*note*`.
   - `in_passes: true` — brief, роли и verifier тоже могут читать через MCP. `false` — читает только проход `fetch`. По умолчанию `true`.
+  - `extra_servers: [figma, confluence]` — дополнительные серверы для каждого ревью проекта: Figma, Confluence, вики. Добавляются к `servers` (или к серверам по умолчанию) и только читают, даже в **Send Drafts…**. Проще всего задать их флажками **Context server** (см. [контекст ревью](#context-settings)).
 - `default_scenario` — сценарий по умолчанию: `feature`, `bugfix` или `dependency-upgrade`.
 - `knowledge` — папки с заметками в Markdown. Пример: `[~/notes/orders]`. Агент читает их как знания о проекте.
 - `gather` — команды, вывод которых нужен агенту. Пример: `- { name: tests, run: "dotnet test --no-build", timeout_s: 600 }`. Команда идёт в worktree до проходов. Помните: она запускает код из MR. Поэтому AKit даёт ей только PATH, HOME, язык и временную папку, без остальных переменных вашей оболочки.
@@ -238,7 +242,7 @@ default_scenario: bugfix
 
 Проверить то же самое можно в терминале:
 
-- `akit review check [--project P]` — запускает `pi mcp list --json` и печатает каждый сервер: состояние, сколько инструментов ревью может читать, сколько писать черновики, сколько закрыто, и имена инструментов чтения и записи. С `--project` считает по правилам профиля. Команда никогда не печатает командную строку сервера, его переменные и заголовки.
+- `akit review check [--project P] [--extra-server NAME]` — запускает `pi mcp list --json` и печатает каждый сервер: состояние, сколько инструментов ревью может читать, сколько писать черновики, сколько закрыто, и имена инструментов чтения и записи. С `--project` считает по правилам профиля, с `--extra-server` добавляет дополнительный сервер. Команда никогда не печатает командную строку сервера, его переменные и заголовки.
 - `akit review config show [--project P]` — какие настройки получит ревью и откуда каждая, вместе с блоком MCP (см. [config show](#config-show)).
 
 Если ни у одного подключённого сервера нет инструмента чтения, `akit review check` пишет «No connected server has a tool review may read with: a review can't start.» и выходит с кодом 1.
@@ -262,10 +266,11 @@ default_scenario: bugfix
 2. В поле **Merge request** вставьте адрес MR из GitLab. Пример: `https://gitlab.example.com/shop/orders-service/-/merge_requests/42`.
 3. Под полем проверьте строку **Project profile**. Пример: «Project profile: orders-service (orders-service.yaml)».
 4. Если номер задачи не указан в MR, впишите его в **Work items**. Пример: `4512`.
-5. Выберите **Scenario**. Проверьте переключатели ролей.
-6. Нажмите **Start Review**.
+5. По желанию: в блоке **Context** напишите заметку в **Context for this review** и вставьте ссылки в **Links** (см. [контекст ревью](#context)).
+6. Выберите **Scenario**. Проверьте переключатели ролей.
+7. Нажмите **Start Review**.
 
-![Окно New Review…: поле Merge request с адресом MR !42, строка Project profile: orders-service (orders-service.yaml), поле Work items; блок Scenario and roles: Scenario = Bugfix, переключатели domain (not in this scenario) выключен, requirements, tests и bug-hunter включены, upgrade-risk (not in this scenario) и security (optional) выключены, у каждой роли описание; внизу подпись Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here. и кнопки Cancel и Start Review](images/review-new.png)
+![Окно New Review…: поле Merge request с адресом MR !42, строка Project profile: orders-service (orders-service.yaml), поле Work items; блок Context с пустыми полями Context for this review и Links и подсказками под ними (What the change is for, what to focus on, decisions already made…; One https link per line: Figma frames, Azure DevOps wiki pages or work items, Confluence pages…); блок Scenario and roles: Scenario = Bugfix, переключатели domain (not in this scenario) выключен, requirements, tests и bug-hunter включены, upgrade-risk (not in this scenario) и security (optional) выключены, у каждой роли описание; внизу подпись Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here. и кнопки Cancel и Start Review](images/review-new.png)
 
 Что значат строки под адресом:
 
@@ -422,6 +427,7 @@ default_scenario: bugfix
 - `--passes-model M`, `--verifier-model M`, `--cap CREDITS` — модели и предел для этого ревью.
 - `--gather-only` — только сбор (проход `fetch` и пакет), без остальных проходов.
 - `--over-cap` — продолжать, если оценка выше предела.
+- `--note TEXT`, `--note-file PATH`, `--link URL`, `--extra-server NAME` — контекст ревью (см. [из командной строки](#context-cli)).
 - `akit review passes RUN [--over-cap]` — проходы снова на собранном ревью.
 - `akit review runs` — все ревью на этом Mac.
 
@@ -435,6 +441,120 @@ default_scenario: bugfix
 - Ревью остаётся на диске после выхода из AKit: это папка. Проходы снова запускает **Run Passes** (он есть у ревью **Gathered**, **Failed**, **Stopped** и у прерванного на **Gathering** или **Passes**) или `akit review passes RUN`.
 - Правый щелчок по ревью в списке: **Show in Finder** открывает папку ревью, **Move to Trash** убирает worktree из вашей копии и перемещает папку в Корзину.
 - Пустая модель brief и ролей — модель Pi по умолчанию. Пустая модель verifier — та же, что у ролей.
+
+## Контекст ревью: заметки, ссылки, дополнительные серверы
+<!-- section: context -->
+
+**Что это:** агент знает только то, что ему дали. В окне **New Review…** вы можете дать ему больше: свои заметки, ссылки на макеты и вики и дополнительные MCP-серверы Pi для чтения. Это всё — контекст одного ревью. Его видит каждый проход.
+
+**Когда пригодится:**
+
+- «Агент не понимает, зачем это изменение» → напишите это в **Context for this review** ([заметки](#context-notes)).
+- «Смотри только на повторные попытки, формат CSV уже решён» → тоже заметка: агент возьмёт её как фокус.
+- «Изменение делает экран из Figma» или «правила лежат на вики Azure DevOps» → вставьте ссылку в **Links** ([ссылки](#context-links)).
+- «Pi умеет читать Figma и Confluence, но ревью их не видит» → отметьте сервер в **Extra servers** ([дополнительные серверы](#context-servers)).
+
+### Просто: заметки к ревью
+<!-- section: context-notes -->
+
+1. На экране **Review** нажмите **New Review…** (плюс).
+2. Вставьте адрес MR (или выберите копию в **Local Workspace**).
+3. В блоке **Context** напишите в поле **Context for this review**, зачем это изменение и на что смотреть. Пример: «Экспорт уходит в очередь. Главное — повторные попытки. Формат CSV уже согласован, его не обсуждать.».
+4. Нажмите **Start Review**.
+
+Что происходит с заметкой:
+
+- AKit кладёт её в пакет контекста как `context/notes.md` и в системный текст каждого прохода: brief, ролей и verifier.
+- Brief начинает с неё. В ответе brief появляется пункт «Focus»: на что просят смотреть заметки.
+- Секреты в заметке AKit маскирует, как и остальной пакет.
+- На странице ревью заметка видна в раскрывающемся блоке **Context for this review**.
+
+> **Почему так:** заметка — ваш текст, поэтому агент берёт её как указание, куда смотреть. Но она не меняет правил: агент по-прежнему только читает и сдаёт находки. Текст MR, треды и задачи остаются для агента данными, а не указаниями.
+
+> **Важно:** заметка — не больше 20 000 символов.
+
+### Просто: ссылки на макеты, вики и задачи
+<!-- section: context-links -->
+
+1. В окне **New Review…** в поле **Links** вставьте ссылки, по одной на строку. Примеры: кадр Figma `https://www.figma.com/design/…`, страница вики Azure DevOps `https://dev.azure.com/<org>/<project>/_wiki/…`, задача `https://dev.azure.com/<org>/<project>/_workitems/edit/4512`, страница Confluence.
+2. Если ссылку читает сервер, которого нет среди серверов ревью (например, Figma), отметьте его в **Extra servers** (см. [дальше](#context-servers)).
+3. Нажмите **Start Review**.
+
+Что делает AKit:
+
+- Проход `fetch` читает каждую ссылку инструментом чтения подходящего сервера Pi. Пример: вики Azure DevOps — инструментом `wiki_get_page_content` сервера Azure DevOps.
+- Ответы серверов AKit сохраняет, как все ответы MCP (`<run>/mcp/calls`, секреты замаскированы), и собирает в `context/links.md`: по разделу на ссылку.
+- Если ссылку прочитать не удалось, в `links.md` будет «Not read: …» с причиной, а в **Context gaps** — пробел «The link …». Причины: «No MCP call of the fetch pass read it» (ни у одного сервера ревью нет инструмента для неё), «AKit blocked …» (инструмент не читает) или «… failed» (ошибка сервера).
+- На странице ревью блок **Links (N of M read)**: зелёная галочка — прочитана, оранжевый крестик — нет.
+
+Ограничения:
+
+- Только `https`. Другие адреса окно не принимает: «… is not an https link: review reads only https links …». **Start Review** тогда неактивна.
+- Ссылка с именем пользователя или паролем внутри не принимается. Ссылка с секретным параметром (`sig`, `token`, `access_token`, `key`, `apikey`, `password`, `secret`, `code`, `signature`) тоже: «The link to … carries a secret-like parameter …».
+- `akit_reading_link` только подписывает вызовы: какая ссылка сейчас читается. Что Pi может читать, решают правила MCP, а не этот инструмент.
+- Не больше 20 ссылок на ревью.
+
+> **Совет:** у ревью локальной копии нет прохода `fetch`. Если вы дали ссылки, AKit запускает его только для ссылок: GitLab он не читает.
+
+### Средне: дополнительные серверы для одного ревью
+<!-- section: context-servers -->
+
+По умолчанию ревью видит только серверы GitLab и трекера (см. [MCP-серверы в Pi](#setup-mcp)). Дополнительный сервер (context server) добавляется сверху и только читает.
+
+1. В окне **New Review…** найдите блок **Extra servers**.
+2. Нажмите **List Servers**. Пока AKit спрашивает Pi (`pi mcp list`), кнопка пишет **Listing…**.
+3. Блок покажет серверы Pi, кроме серверов GitLab и трекера. Отметьте нужные. Пример: `figma`.
+4. Серверы из профиля проекта (`mcp: extra_servers`) уже отмечены, рядом надпись «from the profile». Снять их здесь нельзя.
+5. Нажмите **Start Review**.
+
+Что значит «только читает»:
+
+- Инструменты дополнительного сервера проходят те же правила чтения: глагол чтения, пометка сервера «только чтение» или шаблон из `mcp: read`. Всё со словами `publish`, `submit`, `approve` и т. п. закрыто.
+- Писать дополнительный сервер не может ни в одном проходе, даже если его инструмент подходит под `mcp: write`. Проходу **Send Drafts…** дополнительные серверы не даются совсем.
+- Ответы дополнительного сервера идут только в контекст (например, в `links.md`). Данными MR (треды, черновики, кто вы в GitLab) считаются только ответы серверов GitLab и трекера.
+- Pi получает инструменты сервера через `--tools mcp__<server>__*`, а `akit-review.ts` проверяет каждый вызов по тем же правилам.
+
+> **Важно:** серверы браузера, файлов и загрузки страниц (`playwright`, `chrome`, `filesystem`, `fetch` и подобные) AKit сам не предлагает. Если вы отметите такой, под ним появится оранжевое предупреждение: такой сервер может прочитать гораздо больше ваших ссылок (локальные файлы, любую страницу, ваши открытые сессии), и всё прочитанное уйдёт модели. Отмечайте его, только если доверяете ему это ревью.
+
+На странице ревью строка **Context servers (read only): …** называет дополнительные серверы и откуда каждый: «this run» или «profile». В `run.json` у каждого сервера записан источник: `built-in`, `project` или `run`.
+
+### Средне: дополнительные серверы в профиле проекта
+<!-- section: context-settings -->
+
+Если сервер нужен каждому ревью проекта, запишите его в профиль.
+
+1. Откройте **Review Settings…** (шестерёнка).
+2. В списке **Rules of** выберите профиль проекта. С **Default** окно пишет «Pick a project profile in Rules of to add context servers to it (mcp: extra_servers).».
+3. Нажмите **Check Servers**.
+4. У серверов, которые не GitLab и не трекер, есть флажок **Context server**. Отметьте нужные. Строка сервера покажет «context · N read · K blocked».
+5. Нажмите **Save Extra Servers…**. AKit покажет изменения файла профиля (diff). Нажмите **Save**.
+
+AKit меняет в файле только строку `extra_servers` в блоке `mcp:`; остальное, комментарии тоже, остаётся как было. Если блок `mcp:` записан необычно и AKit не может его поменять сам, он скажет об этом: тогда нажмите **Edit…** у профиля и впишите строку сами.
+
+Пример профиля:
+
+```yaml
+mcp:
+  servers: [gitlab, azure-devops]
+  extra_servers: [figma, confluence]
+```
+
+В блоке **Project profiles** строка профиля покажет «· context: figma, confluence».
+
+### Сложно: из командной строки
+<!-- section: context-cli -->
+
+Те же параметры работают и для MR, и для `akit review local`:
+
+- `--note TEXT` — заметка (можно несколько раз). `--note-file PATH` — заметка из файла. Все заметки собираются в одну.
+- `--link URL` — ссылка (можно несколько раз). Не `https` — команда остановится с ошибкой.
+- `--extra-server NAME` — дополнительный сервер для этого ревью (можно несколько раз или через запятую). Серверы профиля добавляются сами.
+- `akit review config show … --extra-server figma` — покажет каждый дополнительный сервер с источником (`[project]` или `[run]`) и пометкой «! a browser, file or web fetch server» для опасных.
+- `akit review check --project P --extra-server figma` — что ревью может делать с инструментами сервера; у дополнительного сервера пишет «context server, read only».
+
+Пример: `akit review https://gitlab.example.com/shop/orders-service/-/merge_requests/42 --note "Фокус на повторных попытках" --link https://www.figma.com/design/AbC/Checkout --extra-server figma`.
+
+После сбора команда печатает «Your notes: context/notes.md.», «Links: N of M read (context/links.md).» и «Context servers (read only): …».
 
 ## Ревью локальной копии: Local Workspace
 <!-- section: local -->

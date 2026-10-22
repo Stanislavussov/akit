@@ -6,7 +6,8 @@ research plan (Pi with the `github-copilot` provider, GitLab, Azure DevOps). The
 below are agreed. The user's employer allows both parts: Copilot from a third-party harness
 (Pi) and AI comments in merge requests. Step 0 (facts on the work Mac) is still open: the code
 was built against the public GitLab and Azure DevOps REST and Pi 1.0.4 on a personal Mac, and
-`akit review check HOST` is the first fact to collect there.
+`akit review check HOST` is the first fact to collect there. Context for a run (notes, links,
+read-only context servers; GitHub issue #1) built 2026-10-22 on branch `review-context`, below.
 
 Built: step 1 (2026-10-15): module `AKitReview` with the project profile, the three levels
 (`ReviewCatalog`, `ReviewResolver`, `run.json`), Gather from GitLab and Azure DevOps REST into a
@@ -140,6 +141,67 @@ path, showing the commit range or saying that only the diff is there):
 - `akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]` (PATH: the
   current folder, so `akit review local .` in an Orca or herdr terminal); New Review… →
   **Local Workspace** with Choose…, Base, What to review, the commits and the uncommitted files.
+
+Context and extra servers (2026-10-22, GitHub issue #1 "Code review improvement - context for
+review"; the user chose the three parts below):
+
+- **Notes** (New Review… → **Context for this review**, `--note TEXT`, `--note-file PATH`): the
+  user's own text for one run: what the change is for, what to focus on, decisions made. Kept in
+  `run.json` (`notes`, secrets masked, at most 20,000 characters), written scrubbed to
+  `context/notes.md`, and quoted in the system prompt of every pass (so the verifier's fork and
+  Discuss in Pi… have it too). It is trusted as instructions for focus only: the prompt says it
+  doesn't change the rules, and the model still only returns findings. The brief starts from it
+  and adds a "Focus" line.
+- **Links** (New Review… → **Links**, one per line; `--link URL`, repeatable): https only, with a
+  host, no user name or password, no secret-like query parameter (`sig`, `token`, `access_token`,
+  `key`, `apikey`, `password`, `secret`, `code`, `signature`), at most 20 (`ReviewContext.links`).
+  The fetch pass is told to
+  read each link with a reading tool of the server that serves it, one link at a time, naming it
+  first with `akit_reading_link` (a fetch-pass tool; it accepts only the run's links). The
+  extension tags every MCP answer saved after it with that link (`ReviewMCPCall.link`) and its
+  server (`ReviewMCPCall.server`, the longest-name split), and logs every call it blocks in
+  `mcp/blocked.jsonl`. **`akit_reading_link` only labels the calls that follow it: it doesn't
+  gate which pages or tools the model reads.** What may be read is decided by the MCP policy
+  alone (the run's servers, the read allowlist). AKit files an answer under a link when the
+  tag or the call's arguments name it, and writes `context/links.md`: the servers' answers per
+  link (masked, 40k characters per link, 150k in all) or "Not read: <why>"; each unread link is a
+  gap ("No MCP call of the fetch pass read it", "AKit blocked <tool>: <reason>", "<tool> failed")
+  and is listed in `run.json` (`linksUnread`). The merge request's data (`ReviewMCPData`) comes
+  only from the run's own servers (`ReviewMCPAccess.answeredByBase`), tagged or not: a GitLab
+  thread read after a link was named still counts, and an answer of the merge request's shape
+  stays out of the link's text; a context server's answer is never the merge request's data.
+  Base-server calls stay tagged on purpose: Azure DevOps wiki pages and work items are read by
+  the tracker's own (base) server. A local review runs a
+  fetch pass only when it has links, with a links-only prompt (no GitLab reading, no
+  `akit_submit_context`); if that pass fails, the links become one gap and the review goes on.
+  Checked in tests with a fake Azure DevOps wiki answer (`wiki_get_page_content` reads by its
+  second word), a Figma answer named by its arguments, a blocked Confluence write and a link no
+  server read.
+- **Context servers** (`ReviewMCPAccess.extraServers`): the profile's `mcp: extra_servers:` plus
+  the run's choice (New Review… → **Extra servers**, the servers of `pi mcp list` that aren't the
+  run's own, ticked per run; `--extra-server NAME`). They are added on top of `servers:` (or the
+  default GitLab and tracker names), never replace them. A context server is there in the fetch
+  pass, the brief, role and verifier passes and Discuss in Pi…, and only reads: its tools pass the
+  same read allowlist (reading verb, `readOnlyHint`, `read:` patterns, the forbidden words), and a
+  writing verb is blocked even when it matches `write:` (`ReviewMCPPolicy.kind` and
+  `akit-review.ts` v6, the same rule). The send pass never gets one: its `--tools` has only the
+  base patterns and its `AKIT_REVIEW_MCP` has no `extraServers`. A server the defaults or
+  `servers:` already allow keeps its role (writes in Send Drafts included); `config show` and
+  `check` warn about such an `extra_servers` entry. `--tools` gets `mcp__<server>__*` for each
+  context server (`toolPatterns`) in the other passes. `run.json` records
+  `mcpServers`: each server (or default name pattern) with its source (`built-in`, `project`,
+  `run`) and whether it is read only. Browser, file-system and fetch-type servers (names with the
+  words `browser`, `chrome`, `file`, `fs`, `http`, … or the parts `fetch`, `web`, `crawl`,
+  `browser`, `puppeteer`, `playwright`, `firecrawl`, `tavily`, `exa`, `jina`, `brightdata`,
+  `filesystem` anywhere) are never ticked by default;
+  ticking one shows a warning (`ReviewMCPAccess.warning`), `config show` marks it with "!".
+  Review Settings… → **Check Servers** with a profile in **Rules of** shows a **Context server**
+  checkbox for each other server; **Save Extra Servers…** changes only the `extra_servers` line of
+  the profile's `mcp:` (block, one-line flow, or a new block; a trailing comment and CRLF line
+  ends stay; the parsed profile must stay the same except `extra_servers`), shows the diff, then writes
+  (`ReviewConfigEditor.extraServers`, kind `profile`). Not done: a context server per link
+  (the model picks the server by the link's site); a fetch pass for a local review with context
+  servers but no links (the passes read through them anyway when `in_passes`).
 
 Security review of the MCP change (2026-10-15), fixed the same day:
 
@@ -305,6 +367,8 @@ ReviewRunSpec (JSON)        <run>/run.json: exactly what this run used, with the
 | Constraints, path instructions, knowledge folders, Gather commands | — | ✓ | — |
 | GitLab host and project, Azure DevOps org and project, WI pattern | — | ✓ | — |
 | Pi MCP servers, read and write tool patterns, MCP in passes (`mcp:`) | — | ✓ | — |
+| Context servers, read only (`mcp: extra_servers`, Extra servers) | — | ✓ | ✓ (added) |
+| Notes and links (Context for this review, Links) | — | — | ✓ |
 
 Roles that name work systems, hosts or team rules live only in the project profile.
 

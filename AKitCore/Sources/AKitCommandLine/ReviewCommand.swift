@@ -12,6 +12,7 @@ extension AKitCLI {
     Usage:
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
+                         [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
                          [--gather-only] [--over-cap]
                                         Gather: Pi reads the merge request and its work items through
                                         its MCP servers; AKit adds the worktree at head_sha, the diff,
@@ -20,14 +21,24 @@ extension AKitCLI {
                                         --over-cap goes on when the estimate is over the credit cap
       akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
-                         [--verifier-model M] [--cap CREDITS] [--gather-only] [--over-cap]
+                         [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
+                         [--link URL]… [--extra-server NAME]… [--gather-only] [--over-cap]
                                         Review a local git workspace (an Orca or herdr worktree; PATH
                                         defaults to the current folder): the commits since the base
                                         branch (origin/HEAD, main or master; or --base), the
                                         uncommitted changes, or both (--what, default: everything
                                         there is). Prints the range and the commits first; --show
                                         stops there. Pi reads a copy, never the workspace; nothing
-                                        goes to GitLab
+                                        goes to GitLab. With --link, a fetch pass reads the links
+
+    Context for a run (both forms):
+      --note TEXT, --note-file PATH     Your notes: what the change is for, what to focus on, decisions
+                                        made. Every pass reads them (context/notes.md)
+      --link URL                        An https link (Figma, an Azure DevOps wiki page or work item,
+                                        Confluence, …): the fetch pass reads it with a matching MCP
+                                        server's reading tools (context/links.md; a gap when it can't)
+      --extra-server NAME               A Pi MCP server added for this run as a read-only context
+                                        server, on top of the profile's mcp: servers and extra_servers
       akit review passes RUN [--over-cap]
                                         Run the passes again on a gathered run
       akit review show RUN              The run: passes, the requests with their decisions, what stays
@@ -51,8 +62,10 @@ extension AKitCLI {
       akit review runs                  Every run on this Mac, newest first
       akit review config show [--project P] [--mr MR-URL] [--scenario S] [--brain DIR]
                                         The resolved configuration with the source of each value
-      akit review check [--project P]   Pi's MCP servers (pi mcp list) and what review may do with
-                                        each tool: read, write drafts (Send Drafts only) or blocked
+      akit review check [--project P] [--extra-server NAME]…
+                                        Pi's MCP servers (pi mcp list) and what review may do with
+                                        each tool: read, write drafts (Send Drafts only) or blocked;
+                                        context servers only read
 
     Files: ~/.akit/local/review/projects/<slug>.yaml (project profiles), runs/<run-id>/.
     """
@@ -91,6 +104,21 @@ extension AKitCLI {
         let whatText = args.value("--what")
         let showOnly = args.flag("--show")
         var choices = ReviewRunChoices(scenario: scenario, settings: settings, workItems: wis)
+        // The developer's context for this run: notes, links, context servers.
+        var notes = args.values("--note")
+        for path in args.values("--note-file") {
+            let url = resolve(path, cwd: cwd, env: env)
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "Can't read the notes file \(path).") }
+            notes.append(text)
+        }
+        choices.notes = notes.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        do {
+            choices.links = try ReviewContext.links(args.values("--link"))
+        } catch {
+            throw Failure(message: error.localizedDescription)
+        }
+        choices.extraServers = args.values("--extra-server").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+            .filter { !$0.isEmpty }
         for change in roleChanges {
             guard let sign = change.first, sign == "+" || sign == "-", change.count > 1 else {
                 throw Failure(message: "--role takes +ID (turn a role on) or -ID (turn it off), not \(change).")
@@ -122,7 +150,7 @@ extension AKitCLI {
                 guard let profile = catalog.profiles.first(where: { $0.slug == name }) else { throw Failure(message: "There is no project profile \(name).") }
                 return profile
             }
-            let access = profile?.mcp ?? ReviewMCPAccess()
+            let access = (profile?.mcp ?? ReviewMCPAccess()).adding(extraServers: choices.extraServers)
             let report = try await ReviewMCPCheck.run(env: env, access: access)
             out(mcpCheckText(report, access: access, project: profile?.slug))
             let connected = report.servers.filter { $0.enabled && $0.state == "connected" }
@@ -329,12 +357,20 @@ extension AKitCLI {
         if report.servers.isEmpty { lines.append("  none. Add your GitLab and tracker servers to Pi: pi mcp add …") }
         for server in report.servers {
             let used = access.allows(server: server.name)
-            lines.append("  \(server.name): \(server.enabled ? server.state : "disabled")" + (used ? "" : " · not used by this project")
+            let role = access.isExtra(server: server.name) ? " · context server, read only" : used ? "" : " · not used by this project"
+            lines.append("  \(server.name): \(server.enabled ? server.state : "disabled")" + role
                          + " · \(server.tools.count) tools: \(server.count(.read)) read, \(server.count(.write)) write drafts, \(server.count(.blocked)) blocked")
+            if let warning = ReviewMCPAccess.warning(forServer: server.name), !access.isBase(server: server.name) {
+                lines.append("    ! \(warning)")
+            }
             for kind in [ReviewMCPPolicy.Kind.read, .write] {
                 let names = server.tools.filter { $0.kind == kind }.map(\.name)
                 if !names.isEmpty, used { lines.append("    \(kind == .read ? "read" : "write"): \(names.joined(separator: ", "))") }
             }
+        }
+        for server in access.extrasTakenAsBase {
+            lines.append("  ! extra server \(server) is one of the run's own servers (GitLab or the tracker): it keeps that role, "
+                         + "and Send Drafts may write with it.")
         }
         for error in report.errors { lines.append("  error: \(error)") }
         if !report.servers.contains(where: { $0.enabled && $0.state == "connected" && $0.count(.read) > 0 }) {
@@ -414,6 +450,13 @@ extension AKitCLI {
                      + "roles \(spec.roles.map(\.id).joined(separator: ", ")).",
                      "Context pack: \(result.snapshot.diffs.count) changed files, \(result.workItems.count) work items, "
                      + "\(result.contextCharacters / 1000)k characters."]
+        if spec.notes != nil { lines.append("Your notes: context/notes.md.") }
+        if let links = spec.links, !links.isEmpty {
+            let unread = spec.linksUnread?.count ?? 0
+            lines.append("Links: \(links.count - unread) of \(links.count) read (context/links.md).")
+        }
+        let extra = (spec.mcpServers ?? []).filter(\.readOnly).map { "\($0.name) [\($0.source.rawValue)]" }
+        if !extra.isEmpty { lines.append("Context servers (read only): " + extra.joined(separator: ", ") + ".") }
         if !result.scrubbed.isEmpty {
             lines.append("Masked before the agent sees it: " + result.scrubbed.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", "))
         }
