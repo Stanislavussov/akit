@@ -187,6 +187,7 @@ public enum ReviewGather {
         // Files that usually hold secrets never go into the pack, even when the change touches
         // them (an uncommitted .env of a workspace).
         let secret = snapshot.diffs.filter { ReviewExtension.isBlocked($0.newPath) || SecretFilter.isSecretFile($0.newPath) }
+        let secretFiles = secret.filter { !$0.deletedFile }.map(\.newPath)
         if !secret.isEmpty {
             snapshot.diffs.removeAll { diff in secret.contains(diff) }
             gap("repository", "The diff of \(secret.map(\.newPath).joined(separator: ", "))", "Files that usually hold secrets are left out of the review.")
@@ -252,6 +253,8 @@ public enum ReviewGather {
                 effect: "Files after the cut were read only from the worktree.")
         }
         files.append(("diff.patch", "The unified diff of the latest version", patch))
+        // AKit's own checks of the diff: its size and the secrets in added lines (positions and masked lines only).
+        try ReviewJSON.write(ReviewScan.make(diffs: diffs, secretFiles: secretFiles, isIgnored: isIgnored), to: folder.appending(path: "scan.json"))
         for diff in diffs where diff.tooLarge {
             gap("gitlab", "The diff of \(diff.newPath)", "It is over GitLab's diff limits, so GitLab sent no diff and can't keep a comment on it.",
                 how: hasWorktree ? "Read the file in the worktree." : "", effect: "Its findings go to the summary only.")

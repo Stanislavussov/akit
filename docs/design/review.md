@@ -16,7 +16,9 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
-Added 2026-10-22 (branch `review-audit-2`): Pi steps and Pi flags (section "Pi steps", below).
+Added 2026-10-22 (branch `review-audit-2`): checks without a model (the quote in the file, a
+person's open thread, inline only on changed lines, a secret scan, the size of the change; section
+"Checks without a model"), and Pi steps and Pi flags (section "Pi steps", below).
 A run can add the user's pi-subagents agents (`/run reviewer …`), prompt templates and skills
 as passes after the roles, and extra Pi flags for the passes; `akit review pi` and New Review…
 suggest what the user's Pi has. Checked on a real Pi 1.0.4: an extension command such as
@@ -390,9 +392,13 @@ flowchart LR
     RS -- "yes" --> D["summary: already dismissed"]
     RS -- "no" --> QU{"question?"}
     QU -- "yes" --> QS["summary: questions"]
-    QU -- "no" --> TH{"confirmed, ≥ severity,<br/>≥ confidence, path not ignored?"}
+    QU -- "no" --> TH{"confirmed, ≥ severity,<br/>≥ confidence?"}
     TH -- "no" --> O
-    TH -- "yes" --> POS{"GitLab can hold<br/>a comment there?"}
+    TH -- "yes" --> EV{"quote in the file,<br/>no person's open thread<br/>on these lines?"}
+    EV -- "no" --> O
+    EV -- "yes" --> IG{"path not ignored?"}
+    IG -- "no" --> O
+    IG -- "yes" --> POS{"GitLab can hold a comment there,<br/>on a line the change touches?"}
     POS -- "no" --> MF["summary: more findings"]
     POS -- "yes" --> CAP{"within max_inline<br/>(strongest first)?"}
     CAP -- "yes" --> IN["inline draft 🤖"]
@@ -510,7 +516,7 @@ posting:
   confidence_threshold: 0.8
   max_inline: 7
   nitpicks: false
-cost: { cap_credits_per_run: 150 }
+cost: { cap_credits_per_run: 150, max_changed_lines: 1500 }
 ```
 
 ### Screens for configuration
@@ -565,6 +571,21 @@ user sees before anything is sent.
 For Claude Code later the same pipeline runs `claude -p --resume`, the role skill as a
 subagent body, and the `akit_*` tools as a small local MCP server with PreToolUse hooks for
 the path policy.
+
+## Checks without a model
+
+Added 2026-10-22 (branch `review-audit-2`). The code decides these, not a pass:
+
+| Check | Where | Result |
+|---|---|---|
+| The quote is in the file | `ReviewCandidates.anchor` sets `evidenceFound`: any quoted line, without a diff marker or a line number, split at `...`, spaces collapsed, after the same masking and defusing as the file's lines (nil without a worktree, a quote or for a removed line, and for findings added in Discuss in Pi…); the verifier's input says when it isn't | Plan: only in AKit, "The quoted code isn't in … at the reviewed commit" |
+| A person's open thread on the same lines (±2, not AKit's, on the reviewed commit: an older version's line numbers point elsewhere) | `ReviewPlanner.personThread` | Plan: only in AKit, "… already has an open thread on these lines". Resolved threads stay with the prompt and the verifier |
+| Inline only on lines the change touches | `DiffPositions.isInDiff` (added, removed, or a context line GitLab shows) | Plan: a line in the summary |
+| Secrets in added lines | Gather writes `<run>/scan.json` (`ReviewScan`): the file, the line and the masked line cut to ±80 characters around the mask, never the value; ignored files and diffs over GitLab's limits (when git made them) are scanned too, at most 20; a file that usually holds secrets (`.env`, credentials) is one secret by path, unread; a match of only the password rules is weaker (`high`) and skipped in test, fixture and example paths | After the verifier: a finding of role `secret-scan`, `critical` (`high` for a password), confirmed by AKit. A role's finding on the same lines is merged into it, so the secret keeps its own text. The person's-thread and ignored-path rules don't hold it back |
+| The size of the change | `scan.json` `changedLines` (added + removed lines of files not ignored; a local rename counts as removed and added); `cost: max_changed_lines`, default 1500, per run in New Review… → This run only or `--max-changed-lines` | Before the passes, before the credit question: **A big change** (Run Anyway / Stop); the command line goes on with `--over-cap` |
+
+The first three don't apply to a finding the user moved inline. Existing runs without
+`scan.json` skip the last two.
 
 ## Pi steps
 

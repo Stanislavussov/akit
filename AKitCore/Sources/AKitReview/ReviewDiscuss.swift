@@ -116,6 +116,8 @@ public enum ReviewDiscuss {
                 let role = (raw["role"] as? String).flatMap { name in (run.spec.roles.map(\.id) + (run.spec.steps ?? []).map(\.id)).contains(name) ? name : nil } ?? "discuss"
                 guard var finding = ReviewCandidates.finding(raw, role: role, id: "f\(next)") else { continue }
                 ReviewCandidates.anchor(&finding, worktree: run.worktree)
+                // Found with the developer: the quote check is the verifier's tool, not a gate on this.
+                finding.evidenceFound = nil
                 (finding.fingerprint, finding.previousFingerprint) = ReviewCandidates.fingerprints(finding, worktree: run.worktree)
                 guard !current.findings.contains(where: { !Set($0.fingerprints).isDisjoint(with: finding.fingerprints)
                     && $0.verifier?.verdict != .rejected && $0.verifier?.verdict != .merged }) else { continue }

@@ -19,6 +19,8 @@ extension AKitCLI {
                                         history, commands and knowledge into a context pack. Then the
                                         passes run in Pi (brief, roles, verifier).
                                         --over-cap goes on when the estimate is over the credit cap
+                                        or the change over max_changed_lines (default 1500;
+                                        --max-changed-lines N sets it for this run)
       akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
@@ -100,6 +102,7 @@ extension AKitCLI {
         if let model = args.value("--passes-model") { settings.passes = ReviewModelChoice(model: model) }
         if let model = args.value("--verifier-model") { settings.verifier = ReviewModelChoice(model: model) }
         if let cap = try positiveNumber(args.value("--cap"), "--cap") { settings.capCredits = cap }
+        if let lines = try positiveNumber(args.value("--max-changed-lines"), "--max-changed-lines") { settings.maxChangedLines = lines }
         let mrText = args.value("--mr")
         let gatherOnly = args.flag("--gather-only")
         let yes = args.flag("--yes")
@@ -342,13 +345,14 @@ extension AKitCLI {
 
     static func runPasses(folder: URL, overCap: Bool, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
         let lines = LineBox()
-        let options = ReviewPasses.Options(confirmOverCap: overCap ? { @Sendable _, _ in true } : nil, progress: { lines.add($0) })
+        let options = ReviewPasses.Options(confirmOverCap: overCap ? { @Sendable _, _ in true } : nil,
+                                           confirmLarge: overCap ? { @Sendable _, _ in true } : nil, progress: { lines.add($0) })
         let findings: ReviewFindingsFile
         do {
             findings = try await ReviewPasses.run(folder: folder, env: env, options: options)
         } catch {
             lines.drain(out)
-            throw Failure(message: error.localizedDescription + (error.localizedDescription.contains("over the cap") ? " Add --over-cap to go on." : ""))
+            throw Failure(message: error.localizedDescription + (error.localizedDescription.contains("over the cap") || error.localizedDescription.contains("over the limit of") ? " Add --over-cap to go on." : ""))
         }
         lines.drain(out)
         let log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))

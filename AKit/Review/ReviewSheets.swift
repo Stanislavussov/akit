@@ -29,6 +29,7 @@ struct NewReviewSheet: View {
     @State private var passesModel = ""
     @State private var verifierModel = ""
     @State private var cap = ""
+    @State private var maxChangedLines = ""
     @State private var notes = ""
     @State private var links = ""
     @State private var extraServers: Set<String> = []
@@ -116,6 +117,7 @@ struct NewReviewSheet: View {
                     TextField("Model for the brief and roles", text: $passesModel, prompt: Text("provider/model, e.g. github-copilot/… (empty: from the configuration)"))
                     TextField("Verifier model", text: $verifierModel, prompt: Text("a strong model (empty: from the configuration)"))
                     TextField("Credit cap", text: $cap, prompt: Text("empty: from the configuration"))
+                    TextField("Max changed lines", text: $maxChangedLines, prompt: Text("over it the review asks first (empty: from the configuration)"))
                 }
             }
             .formStyle(.grouped)
@@ -402,6 +404,7 @@ struct NewReviewSheet: View {
         if !passesModel.isEmpty { choices.settings.passes = ReviewModelChoice(model: passesModel) }
         if !verifierModel.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifierModel) }
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
+        if let value = Int(maxChangedLines), value > 0 { choices.settings.maxChangedLines = value }
         choices.notes = notes
         choices.links = (try? checkedLinks.get()) ?? []
         choices.extraServers = extraServers.sorted()

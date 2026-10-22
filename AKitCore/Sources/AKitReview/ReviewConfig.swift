@@ -109,6 +109,8 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var maxInline: Int?
     public var nitpicks: Bool?
     public var capCredits: Int?
+    /// Over this many changed lines the passes ask first (`cost: max_changed_lines`).
+    public var maxChangedLines: Int?
 
     public init(passes: ReviewModelChoice? = nil, verifier: ReviewModelChoice? = nil, marker: String? = nil,
                 severityThreshold: ReviewSeverity? = nil, confidenceThreshold: Double? = nil, maxInline: Int? = nil,
@@ -157,6 +159,10 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
         if let value = (cost["cap_credits_per_run"] ?? map["cap_credits_per_run"]) as? Int {
             guard value > 0 else { throw ReviewRole.Failure(message: "\(where_): cap_credits_per_run must be above 0.") }
             patch.capCredits = value
+        }
+        if let value = (cost["max_changed_lines"] ?? map["max_changed_lines"]) as? Int {
+            guard value > 0 else { throw ReviewRole.Failure(message: "\(where_): max_changed_lines must be above 0.") }
+            patch.maxChangedLines = value
         }
         return patch
     }

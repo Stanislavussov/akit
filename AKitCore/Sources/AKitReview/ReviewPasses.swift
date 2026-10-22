@@ -85,12 +85,16 @@ public enum ReviewPasses {
     public struct Options: Sendable {
         /// Asked when the estimate is over the cap: true goes on. nil = never ask, stop.
         public var confirmOverCap: (@Sendable (_ estimate: Double, _ cap: Int) async -> Bool)?
+        /// Asked when the change has more changed lines than `max_changed_lines`: true goes on.
+        /// nil = never ask, stop.
+        public var confirmLarge: (@Sendable (_ lines: Int, _ limit: Int) async -> Bool)?
         public var timeout: TimeInterval
         public var progress: @Sendable (String) -> Void
 
-        public init(confirmOverCap: (@Sendable (Double, Int) async -> Bool)? = nil, timeout: TimeInterval = 30 * 60,
-                    progress: @escaping @Sendable (String) -> Void = { _ in }) {
+        public init(confirmOverCap: (@Sendable (Double, Int) async -> Bool)? = nil, confirmLarge: (@Sendable (Int, Int) async -> Bool)? = nil,
+                    timeout: TimeInterval = 30 * 60, progress: @escaping @Sendable (String) -> Void = { _ in }) {
             self.confirmOverCap = confirmOverCap
+            self.confirmLarge = confirmLarge
             self.timeout = timeout
             self.progress = progress
         }
@@ -258,6 +262,16 @@ public enum ReviewPasses {
         let steps = spec.steps ?? []
         let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count, roles: roles.count + steps.count)
         try ReviewRuns.setStatus(.estimating, message: String(format: "≈ %.0f credits (cap %d)", estimate, spec.capCredits.value), folder: folder)
+        // A change too big to review well: the passes ask first (`max_changed_lines`).
+        let scan = ReviewJSON.read(ReviewScan.self, from: folder.appending(path: "scan.json"))
+        if let scan, let limit = spec.maxChangedLines?.value, scan.changedLines > limit {
+            guard let confirm = options.confirmLarge, await confirm(scan.changedLines, limit) else {
+                let message = "Stopped before the passes: the change has \(scan.changedLines) changed lines, over the limit of \(limit). "
+                    + "Reviews of big changes miss more: split it, or review it anyway."
+                try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
+                throw Failure(message: message)
+            }
+        }
         // The fetch pass counts against the cap too.
         let previous = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
         let fetched = previous?.passes.filter { $0.name == "fetch" } ?? []
@@ -331,6 +345,9 @@ public enum ReviewPasses {
                 log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
                 try ReviewJSON.write(log, to: logFile)
                 candidates = ReviewCandidates.apply(verdictsFile: folder.appending(path: "passes/verifier.json"), to: candidates)
+            }
+            if let scan, !scan.secrets.isEmpty {
+                candidates = ReviewScan.addSecrets(scan, to: candidates, worktree: hasWorktree ? worktree : nil)
             }
             let findings = ReviewFindingsFile(version: 1, findings: candidates, source: "passes")
             try ReviewJSON.write(findings, to: folder.appending(path: "findings.json"))

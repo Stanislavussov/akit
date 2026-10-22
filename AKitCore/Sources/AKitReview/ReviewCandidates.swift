@@ -62,12 +62,32 @@ public enum ReviewCandidates {
         let needle = finding.evidence.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
             .first { $0.count >= 4 }
         guard let needle else { return }
+        // The model's quote went through the same masking and defusing as the file's lines. Any
+        // quoted line counts, without a diff marker, a line number or `...`, spaces collapsed.
+        let quoted = finding.evidence.split(whereSeparator: \.isNewline).flatMap { evidencePieces(String($0)) }
+        if !quoted.isEmpty {
+            let file = lines.map { collapsed(ReviewNotes.defused($0)) }
+            finding.evidenceFound = quoted.contains { piece in file.contains { $0.contains(piece) } }
+        }
         if let line = finding.line, line >= 1, line <= lines.count {
             let window = lines[max(0, line - 4)..<min(lines.count, line + 3)]
             if window.contains(where: { $0.contains(needle) }) { return }
         }
         let hits = lines.indices.filter { lines[$0].contains(needle) }
         if hits.count == 1 { finding.line = hits[0] + 1 }
+    }
+
+    /// The parts of a quoted line worth looking for: no diff marker or line number, split at
+    /// `...` and `…`, spaces collapsed, at least 4 characters.
+    static func evidencePieces(_ line: String) -> [String] {
+        var text = line.trimmingCharacters(in: .whitespaces)
+        if let marker = text.first, "+-".contains(marker), text.count > 1 { text = String(text.dropFirst()) }
+        if let range = text.range(of: #"^\s*\d+\s*[:|]\s"#, options: .regularExpression) { text = String(text[range.upperBound...]) }
+        return text.replacingOccurrences(of: "…", with: "...").components(separatedBy: "...").map(collapsed).filter { $0.count >= 4 }
+    }
+
+    static func collapsed(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     static func fingerprint(_ finding: ReviewFinding, worktree: URL?) -> String {
@@ -106,6 +126,7 @@ public enum ReviewCandidates {
                 + String(format: "%.2f", finding.confidence) + "\n\n"
             text += "- Where: \(place)\n- Title: \(finding.title)\n- Why: \(finding.why)\n"
             if !finding.evidence.isEmpty { text += "- Evidence: `\(finding.evidence.replacingOccurrences(of: "`", with: "'"))`\n" }
+            if finding.evidenceFound == false { text += "- AKit: this quote is not in the file at the reviewed commit.\n" }
             if let suggestion = finding.suggestion { text += "- Suggestion: `\(suggestion.replacingOccurrences(of: "`", with: "'"))`\n" }
             if let path = finding.file, let line = finding.line, finding.side == .new, let lines = fileLines(path, worktree: worktree) {
                 let start = max(1, line - 5)

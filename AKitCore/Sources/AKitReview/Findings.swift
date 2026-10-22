@@ -52,6 +52,9 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
     /// Fingerprints of findings folded into this one (the same lines), so their drafts and
     /// threads still count as found.
     public var foldedFingerprints: [String]?
+    /// Whether the quoted evidence is in the file at the reviewed commit; nil when AKit can't
+    /// tell (a removed line, no worktree, no quote). Set by AKit.
+    public var evidenceFound: Bool?
 
     public init(id: String, kind: Kind = .finding, role: String, file: String?, side: Side = .new, line: Int?, title: String,
                 evidence: String, why: String, severity: ReviewSeverity, confidence: Double, suggestion: String? = nil,
