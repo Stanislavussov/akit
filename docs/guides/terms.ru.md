@@ -1175,7 +1175,7 @@ Friction («трение») — места, где агент спотыкалс
 - **Duplicate to Project…**: сделать копию роли или сценария только для этого проекта, на этом Mac. Подробнее: [Копия для проекта](review#config-project)
 - **Reset to Brain**: переместить копию проекта в Корзину; снова действует роль из brain. Подробнее: [Копия для проекта](review#config-project)
 - **New Role… / New Scenario…**: новая роль или сценарий из шаблона, на выбранном уровне. Подробнее: [Новая роль](review#config-new)
-- **Defaults (review.yaml)**: модели, уровень рассуждения, пороги (`severity_threshold`, `confidence_threshold`, `max_inline`, `nitpicks`) и предел кредитов. Подробнее: [Где менять пороги](review#noise-thresholds)
+- **Defaults (review.yaml)**: модели, уровень рассуждения, пороги (`severity_threshold`, `confidence_threshold`, `max_inline`), предел кредитов и `max_changed_lines`. Подробнее: [Где менять пороги](review#noise-thresholds)
 - **By role / By scenario / By model**: точность = одобрено / (одобрено + отклонено). Пример: «security 100% 1 approved, 0 rejected». Подробнее: [Качество](review#quality-read)
 - **Why findings were rejected / Missed (added by you)**: причины отклонений с числом и ваши записи **Add Missed…**. Подробнее: [Что считается](review#quality-labels)
 

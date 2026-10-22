@@ -169,7 +169,7 @@ extension ReviewSettingsPatch {
         var patch = ReviewSettingsPatch(passes: model(passes, other.passes), verifier: model(verifier, other.verifier),
                                         marker: other.marker ?? marker, severityThreshold: other.severityThreshold ?? severityThreshold,
                                         confidenceThreshold: other.confidenceThreshold ?? confidenceThreshold,
-                                        maxInline: other.maxInline ?? maxInline, nitpicks: other.nitpicks ?? nitpicks,
+                                        maxInline: other.maxInline ?? maxInline,
                                         capCredits: other.capCredits ?? capCredits)
         patch.maxChangedLines = other.maxChangedLines ?? maxChangedLines
         return patch

@@ -16,7 +16,6 @@ public enum ReviewBuiltIns {
       severity_threshold: medium
       confidence_threshold: 0.8
       max_inline: 7
-      nitpicks: false
     cost:
       cap_credits_per_run: 150
       max_changed_lines: 1500
@@ -204,7 +203,8 @@ public enum ReviewBuiltIns {
                             """),
         "data-migrations": role("data-migrations", "Review schema and data migrations: locks on big tables, rollbacks, data loss, and the deploy order with the code.",
                                 max: 3, needs: ["diff", "full_files", "history"],
-                                doNotComment: ["migration file naming and formatting", "changes with no migration, schema or stored data in them"], body: """
+                                doNotComment: ["migration file naming and formatting", "changes with no migration, schema or stored data in them",
+                                               "consumers in other code of a changed API or DTO (the contracts role owns them)"], body: """
                                 Review every change to a schema or to stored data (SQL and ORM migrations, schema files, data backfills, changes to serialized formats in a store or a queue).
 
                                 - Locks and duration: an `ALTER` that rewrites or locks a big table, an index built without the online or concurrent option, a backfill in one transaction.

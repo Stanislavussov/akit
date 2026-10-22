@@ -101,7 +101,6 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
         public var severityThreshold: Sourced<ReviewSeverity>
         public var confidenceThreshold: Sourced<Double>
         public var maxInline: Sourced<Int>
-        public var nitpicks: Sourced<Bool>
     }
 
     public var version = 1
@@ -250,7 +249,7 @@ public enum ReviewResolver {
             posting: ReviewRunSpec.Posting(marker: pick(\.marker, fallback: "🤖"),
                                            severityThreshold: pick(\.severityThreshold, fallback: .medium),
                                            confidenceThreshold: pick(\.confidenceThreshold, fallback: 0.8),
-                                           maxInline: pick(\.maxInline, fallback: 7), nitpicks: pick(\.nitpicks, fallback: false)),
+                                           maxInline: pick(\.maxInline, fallback: 7)),
             capCredits: pick(\.capCredits, fallback: 150), constraints: profile?.constraints ?? [],
             pathInstructions: profile?.pathInstructions ?? [], knowledge: profile?.knowledge ?? [], gather: profile?.gather ?? [],
             workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: access)
@@ -343,7 +342,7 @@ public enum ReviewResolver {
                   line("severity_threshold", spec.posting.severityThreshold.value.rawValue, spec.posting.severityThreshold.source),
                   line("confidence_threshold", String(spec.posting.confidenceThreshold.value), spec.posting.confidenceThreshold.source),
                   line("max_inline", String(spec.posting.maxInline.value), spec.posting.maxInline.source),
-                  line("nitpicks", String(spec.posting.nitpicks.value), spec.posting.nitpicks.source), "Cost:",
+                  "Cost:",
                   line("cap_credits_per_run", String(spec.capCredits.value), spec.capCredits.source)]
         if let size = spec.maxChangedLines { lines.append(line("max_changed_lines", String(size.value), size.source)) }
         if !spec.constraints.isEmpty { lines += ["Constraints [project]:"] + spec.constraints.map { "  - \($0)" } }

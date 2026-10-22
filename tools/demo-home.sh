@@ -906,7 +906,7 @@ file "$REVIEWRUN/run.json" <<EOF
  "passes":{"value":{"model":"github-copilot/gpt-5.4-mini","thinking":""},"source":"brain"},
  "verifier":{"value":{"model":"github-copilot/claude-opus-5-5","thinking":"high"},"source":"brain"},
  "posting":{"marker":{"value":"🤖","source":"built-in"},"severityThreshold":{"value":"medium","source":"built-in"},
-  "confidenceThreshold":{"value":0.8,"source":"built-in"},"maxInline":{"value":5,"source":"project"},"nitpicks":{"value":false,"source":"built-in"}},
+  "confidenceThreshold":{"value":0.8,"source":"built-in"},"maxInline":{"value":5,"source":"project"}},
  "capCredits":{"value":150,"source":"built-in"},
  "constraints":["Public DTOs in Contracts/ change only in backward-compatible ways"],
  "pathInstructions":[{"paths":["**/*.generated.cs"],"ignore":true}],"knowledge":["~/notes/orders"],

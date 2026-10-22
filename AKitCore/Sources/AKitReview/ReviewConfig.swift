@@ -107,21 +107,19 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var severityThreshold: ReviewSeverity?
     public var confidenceThreshold: Double?
     public var maxInline: Int?
-    public var nitpicks: Bool?
     public var capCredits: Int?
     /// Over this many changed lines the passes ask first (`cost: max_changed_lines`).
     public var maxChangedLines: Int?
 
     public init(passes: ReviewModelChoice? = nil, verifier: ReviewModelChoice? = nil, marker: String? = nil,
                 severityThreshold: ReviewSeverity? = nil, confidenceThreshold: Double? = nil, maxInline: Int? = nil,
-                nitpicks: Bool? = nil, capCredits: Int? = nil) {
+                capCredits: Int? = nil) {
         self.passes = passes
         self.verifier = verifier
         self.marker = marker
         self.severityThreshold = severityThreshold
         self.confidenceThreshold = confidenceThreshold
         self.maxInline = maxInline
-        self.nitpicks = nitpicks
         self.capCredits = capCredits
     }
 
@@ -155,7 +153,6 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
             guard (0...50).contains(value) else { throw ReviewRole.Failure(message: "\(where_): max_inline must be 0–50.") }
             patch.maxInline = value
         }
-        patch.nitpicks = posting["nitpicks"] as? Bool
         if let value = (cost["cap_credits_per_run"] ?? map["cap_credits_per_run"]) as? Int {
             guard value > 0 else { throw ReviewRole.Failure(message: "\(where_): cap_credits_per_run must be above 0.") }
             patch.capCredits = value

@@ -4,7 +4,8 @@ import AKitSessions
 import Foundation
 
 /// Discuss in Pi… (R7): an interactive Pi that forks the verifier's session, so it has the
-/// whole context while the run's own session stays as it was. What it hands back through
+/// brief, the candidates and the verifier's checks while the run's own sessions stay as they
+/// were. Since 2026-10-22 the verifier has a session of its own: the roles' reasoning isn't in it. What it hands back through
 /// `akit_submit_findings` becomes a new version of the findings.
 public enum ReviewDiscuss {
     public struct Failure: Error, LocalizedError {
@@ -72,7 +73,7 @@ public enum ReviewDiscuss {
         # Discuss in Pi… for AKit review run \(run.id). Written by AKit; it writes it again each time.
         cd \(shellQuoted(cwd.path)) || exit 1
         \(variables.map { "export \($0.0)=\(shellQuoted($0.1))" }.joined(separator: "\n"))
-        echo "AKit review \(run.spec.mergeRequest.label): Pi has the whole review. Ask about a finding, or ask it to look again."
+        echo "AKit review \(run.spec.mergeRequest.label): Pi has the brief, the findings and the verifier's checks. Ask about a finding, or ask it to look again."
         echo "Changes come back to AKit through akit_submit_findings; nothing reaches GitLab without your approval."
         exec \(shellQuoted(pi.path)) \(arguments.map(shellQuoted).joined(separator: " "))
 

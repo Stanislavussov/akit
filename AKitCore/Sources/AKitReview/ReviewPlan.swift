@@ -197,10 +197,6 @@ public enum ReviewPlanner {
                     place(.onlyInAKit, "Not confirmed by the verifier.")
                     continue
                 }
-                guard posting.nitpicks.value || finding.finalSeverity != .nit else {
-                    place(.onlyInAKit, "A nitpick; nitpicks are off.")
-                    continue
-                }
                 guard finding.finalSeverity >= posting.severityThreshold.value else {
                     place(.onlyInAKit, "Severity \(finding.finalSeverity.rawValue) is below \(posting.severityThreshold.value.rawValue).")
                     continue

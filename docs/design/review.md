@@ -20,7 +20,10 @@ Added 2026-10-22 (branch `review-audit-2`): checks without a model (the quote in
 person's open thread, inline only on changed lines, a secret scan, the size of the change; section
 "Checks without a model"); four optional roles, `performance`, `concurrency`, `data-migrations`
 and `observability`, with `architecture` optional in Feature (a role per pass costs credits; turn
-it on when the change has a design question); and Pi steps and Pi flags (section "Pi steps", below).
+it on when the change has a design question); the `nitpicks` switch is gone (`severity_threshold`
+already keeps `nit` out; set it to `nit` to post them); the verifier runs in a session of its
+own with the brief, not as a fork of the passes' session, so the roles' reasoning doesn't sway
+it; and Pi steps and Pi flags (section "Pi steps", below).
 A run can add the user's pi-subagents agents (`/run reviewer …`), prompt templates and skills
 as passes after the roles, and extra Pi flags for the passes; `akit review pi` and New Review…
 suggest what the user's Pi has. Checked on a real Pi 1.0.4: an extension command such as
@@ -38,7 +41,8 @@ roles and scenarios of step 5 ship built in (`ReviewBuiltIns`, source `built-in`
 while the brain has no layer `review`.
 
 Built: step 2 (2026-10-15): `ReviewPasses` runs brief → roles → verifier in one Pi session
-(`--session-id`, the verifier as `--fork` of it with its own model), `akit-review.ts`
+(`--session-id`, the verifier as `--fork` of it with its own model; since 2026-10-22 the verifier
+has a session of its own), `akit-review.ts`
 (`ReviewExtension`) with the two tools and the `tool_call` policy, the estimate and the cap, the
 send log (purpose `review-<pass>`, the paths read), `akit review passes RUN`. Checked with a fake
 Pi in tests and with real Pi 1.0.4 against a fake model server. Decisions made while building:
@@ -53,8 +57,9 @@ Pi in tests and with real Pi 1.0.4 against a fake model server. Decisions made w
 - **Role text**: every pass gets all of the run's role skills (`--skill`) and the same appended
   system prompt, so the session keeps one prompt cache; each role pass's prompt carries its
   checklist.
-- **Verifier**: a fork of the session (it sees the brief and the roles), prompted with only the
-  candidates and their snippets (`prompts/candidates.md`); one tool, `akit_submit_findings`, takes
+- **Verifier**: a session of its own since 2026-10-22 (before: a fork of the passes' session),
+  so it doesn't inherit the roles' reasoning; prompted with the brief, the candidates and their
+  snippets (`prompts/candidates.md`); one tool, `akit_submit_findings`, takes
   `findings` or `verdicts`.
 - **Secret files**: Gather deletes them from AKit's own worktree, because `grep` and `find` read
   folders and the policy sees only the folder.
@@ -168,7 +173,7 @@ review"; the user chose the three parts below):
 - **Notes** (New Review… → **Context for this review**, `--note TEXT`, `--note-file PATH`): the
   user's own text for one run: what the change is for, what to focus on, decisions made. Kept in
   `run.json` (`notes`, secrets masked, at most 20,000 characters), written scrubbed to
-  `context/notes.md`, and quoted in the system prompt of every pass (so the verifier's fork and
+  `context/notes.md`, and quoted in the system prompt of every pass (so the verifier and
   Discuss in Pi… have it too). It is trusted as instructions for focus only: the prompt says it
   doesn't change the rules, and the model still only returns findings. The brief starts from it
   and adds a "Focus" line.
@@ -298,8 +303,8 @@ the harness replaceable (Pi now, Claude Code later).
 | R3 | How does the agent read GitLab and Azure DevOps? | (revised 2026-10-15) Through the MCP servers configured in Pi, reading tools only: the fetch pass reads the MR and work items, and AKit builds the context pack from the servers' saved answers; the passes may read more (`in_passes`). (Was: it doesn't; AKit fetched everything by REST) |
 | R4 | When does AKit write? | Only after the user approves each request on the Review screen (or `akit review post RUN --yes`). Not one request goes out unapproved, deletes and updates included |
 | R5 | What does AKit write? | Draft notes. The user publishes them in GitLab with **Submit review**, together with their own comments. AKit never calls `bulk_publish` or publishes a draft |
-| R6 | Who orchestrates the passes? | AKit (Swift). Brief → roles → verifier, one after another **in one Pi session**, so later passes see the earlier ones and findings stay linked. Parallel fan-out only later, for big MRs |
-| R7 | Interactive work | After a run, **Discuss in Pi…** opens an interactive Pi in a terminal (herdr, Orca) as `pi --fork <verifier session>`: the whole context, the run's session unchanged |
+| R6 | Who orchestrates the passes? | AKit (Swift). Brief → roles → verifier, one after another **in one Pi session**, so later passes see the earlier ones and findings stay linked. Parallel fan-out only later, for big MRs. Revised 2026-10-22: the verifier has a session of its own with the brief and every role's limits in its prompt, so the roles' reasoning doesn't sway it |
+| R7 | Interactive work | After a run, **Discuss in Pi…** opens an interactive Pi in a terminal (herdr, Orca) as `pi --fork <verifier session>`: the brief, the candidates and the verifier's checks (since 2026-10-22 not the roles' reasoning), the run's sessions unchanged |
 | R8 | First scenarios | Feature, Bugfix, Dependency upgrade. The user picks the scenario; the classifier comes later |
 | R9 | What is a role? | One `SKILL.md` in the brain layer `review`, with review fields in its frontmatter. Scenarios are YAML in the same layer. These skills are not installed into the harnesses' skill folders; AKit passes them to review passes only |
 | R10 | How configurable? | Everything, on three levels: brain → project profile → one run. The resolved `ReviewRunSpec` is saved in the run folder |
@@ -342,10 +347,10 @@ akit review <mr-url> [--wi N] [--scenario S]        or  Review → New Review…
    │
    ├─ 3 Estimate: credits from the context size; over the cap → ask
    │
-   ├─ 4 Passes, one Pi session, in order:
+   ├─ 4 Passes, in order (brief, roles and Pi steps in one Pi session):
    │     brief      intent, touched components, what people already raised, AC, first gaps
    │     role × N   candidates (≤ max_findings each) through akit_submit_findings
-   │     verifier   strong model, fork of the session with only the candidates + snippets:
+   │     verifier   strong model, a fresh session with the brief, the candidates + snippets:
    │                confirms or rejects each, links and merges duplicates, turns a finding
    │                without enough context into a question or a gap, checks human threads
    │     → <run>/findings.json, <run>/gaps.json, sessions in <run>/sessions/
@@ -377,7 +382,7 @@ flowchart TD
         RN --> ST["Pi steps<br/>subagent · template · skill"]
     end
     ST --> K["candidates<br/>role limit (AC rows exempt), min severity,<br/>anchor by evidence, fingerprint, fold duplicates"]
-    K --> V["verifier<br/>fork of the session, strong model"]
+    K --> V["verifier<br/>own session, strong model,<br/>brief + candidates"]
     V --> PL["plan: noise rules + rerun rules"]
     PL --> UI["Review screen<br/>edit · approve · reject"]
     UI --> SD["send pass<br/>approved drafts only, word for word"]
@@ -428,7 +433,7 @@ ReviewRunSpec (JSON)        <run>/run.json: exactly what this run used, with the
 | A new role | ✓ | ✓ (work-only roles) | — |
 | Roles of a scenario | ✓ | ✓ | ✓ |
 | Model and thinking per pass | ✓ | ✓ | ✓ |
-| Severity, confidence, inline cap, nitpicks | ✓ | ✓ | ✓ |
+| Severity, confidence, inline cap | ✓ | ✓ | ✓ |
 | Credit cap per run | ✓ | ✓ | ✓ |
 | Constraints, path instructions, knowledge folders, Gather commands | — | ✓ | — |
 | GitLab host and project, Azure DevOps org and project, WI pattern | — | ✓ | — |
@@ -517,7 +522,6 @@ posting:
   severity_threshold: medium
   confidence_threshold: 0.8
   max_inline: 7
-  nitpicks: false
 cost: { cap_credits_per_run: 150, max_changed_lines: 1500 }
 ```
 
@@ -680,7 +684,7 @@ threads from before still match.
 | Question (not enough context) | — | "Questions to the author" | ✓ |
 | Context gaps | — | "What was missing" | ✓ |
 | Acceptance criteria matrix | — | ✓ | ✓ |
-| Below the thresholds, nitpicks, rejected by the verifier | — | — | ✓, with the reason |
+| Below the thresholds, rejected by the verifier | — | — | ✓, with the reason |
 
 The user can move any finding into an inline draft by hand.
 

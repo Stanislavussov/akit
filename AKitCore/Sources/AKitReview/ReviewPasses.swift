@@ -24,7 +24,7 @@ public struct ReviewPassRecord: Codable, Sendable, Hashable {
 public struct ReviewPassLog: Codable, Sendable, Hashable {
     /// The Pi session of the brief and the role passes.
     public var mainSession: String
-    /// The verifier's fork; Discuss in Pi… forks it again.
+    /// The verifier's own session; Discuss in Pi… forks it.
     public var verifierSession: String?
     public var verifierSessionFile: String?
     public var estimate: Double?
@@ -75,7 +75,8 @@ public enum ReviewCredits {
     }
 }
 
-/// Step 4 of a run: brief → roles → verifier, one after another in one Pi session (R6).
+/// Step 4 of a run: brief → roles → Pi steps in one Pi session (R6), then the verifier in a
+/// session of its own.
 public enum ReviewPasses {
     public struct Failure: Error, LocalizedError {
         public let message: String
@@ -336,11 +337,10 @@ public enum ReviewPasses {
             if !candidates.isEmpty {
                 let input = ReviewCandidates.verifierInput(candidates, worktree: hasWorktree ? worktree : nil)
                 try write(input, to: folder.appending(path: "prompts/candidates.md"))
-                guard let mainFile = sessionFile(id: log.mainSession, in: folder.appending(path: "sessions")) else {
-                    throw Failure(message: "Pi saved no session for the passes, so the verifier can't fork it.")
-                }
-                let verified = try await pass("verifier", role: nil, prompt: ReviewPrompts.verifier(candidates: input), model: spec.verifier.value,
-                                              gate: verifierGate, session: ["--fork", mainFile.path])
+                // A session of its own: the verifier doesn't inherit the roles' reasoning.
+                let verified = try await pass("verifier", role: nil, prompt: ReviewPrompts.verifier(candidates: input, brief: log.brief, spec: spec),
+                                              model: spec.verifier.value, gate: verifierGate,
+                                              session: ["--session-id", UUID().uuidString.lowercased()])
                 log.verifierSession = verified.session
                 log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
                 try ReviewJSON.write(log, to: logFile)
