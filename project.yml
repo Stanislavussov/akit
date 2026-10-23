@@ -67,7 +67,10 @@ targets:
           stamp() { /usr/bin/plutil -replace "$1" -string "$2" "$plist"; }
           # Not in release zips (make release): the maintainer's source folder means nothing elsewhere.
           [ "${AKIT_DIST:-}" = 1 ] || stamp AKitSourcePath "$SRCROOT"
-          stamp AKitGitBranch "$(git -C "$SRCROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+          branch="$(git -C "$SRCROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+          # A release zip built at a tag (a detached HEAD) is still the production build.
+          [ "${AKIT_DIST:-}" = 1 ] && [ "$branch" = HEAD ] && branch=master
+          stamp AKitGitBranch "$branch"
           stamp AKitGitCommit "$(git -C "$SRCROOT" rev-parse --short HEAD 2>/dev/null)"
           # The version is the latest date tag (vYYYY.MM.DD, see CLAUDE.md) and how many commits came after it.
           tag="$(git -C "$SRCROOT" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null)"

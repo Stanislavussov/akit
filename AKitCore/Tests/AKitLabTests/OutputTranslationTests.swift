@@ -41,6 +41,26 @@ struct TranslationTests {
         ((try? String(contentsOf: home.appending(path: "calls.txt"), encoding: .utf8)) ?? "").split(separator: "\n").count
     }
 
+    /// Unset, Translate uses Claude Code · haiku, or Pi on a Mac with Pi and no Claude Code.
+    @Test func theDefaultModelIsAHarnessThisMacHas() throws {
+        // Only this test's bin: no claude or pi of the machine running the tests.
+        let only = HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path], executableSearchPaths: [home.appending(path: "bin")])
+        func tool(_ name: String) throws {
+            let url = home.appending(path: "bin/\(name)")
+            try Data("#!/bin/sh\n".utf8).write(to: url)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        #expect(OutputTranslation.agent(settings: LabSettings(), env: only) == OutputTranslation.defaultAgent, "neither: the documented default")
+        try tool("pi")
+        #expect(OutputTranslation.agent(settings: LabSettings(), env: only) == OutputTranslation.piAgent)
+        try tool("claude")
+        #expect(OutputTranslation.agent(settings: LabSettings(), env: only) == OutputTranslation.defaultAgent)
+        var chosen = LabSettings()
+        chosen.translationAgent = LabAgent(harness: .claudeCode, model: "sonnet", effort: "low", mode: .call)
+        try fm.removeItem(at: home.appending(path: "bin/claude"))
+        #expect(OutputTranslation.agent(settings: chosen, env: only).model == "sonnet", "the user's choice stays")
+    }
+
     @Test func aSourceDropsEmptyTextsAndRepeatedKeys() {
         let source = OutputTranslation.Source(parts: [.init("a", "One"), .init("b", "  \n"), .init("a", "Again"), .init("c", "Two")],
                                         origins: [.claudeSession], cacheFolder: nil)

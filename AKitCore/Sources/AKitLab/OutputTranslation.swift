@@ -81,9 +81,16 @@ public enum OutputTranslation {
         public var errorDescription: String? { message }
     }
 
+    /// Pi with its default model, at low thinking: the default when Claude Code isn't installed.
+    public static let piAgent = LabAgent(harness: .pi, model: "", effort: "low", mode: .call)
+
     /// The model Translate uses now; Claude Code with no model (it needs one) uses the default's.
-    public static func agent(settings: LabSettings) -> LabAgent {
-        guard var agent = settings.translationAgent else { return defaultAgent }
+    /// Unset, it is Claude Code · haiku, or Pi when this Mac has Pi and no Claude Code (`env`).
+    public static func agent(settings: LabSettings, env: HarnessEnvironment? = nil) -> LabAgent {
+        guard var agent = settings.translationAgent else {
+            if let env, env.findExecutable("claude") == nil, env.findExecutable("pi") != nil { return piAgent }
+            return defaultAgent
+        }
         if agent.harness == .claudeCode, agent.model.isEmpty { agent.model = defaultAgent.model }
         return agent
     }

@@ -331,7 +331,7 @@
 - **Brain repo**: путь к вашему brain, по умолчанию `~/.akit/registry`. Ни один агент эту папку не читает: AKit собирает из неё файлы. Подробнее: [Указать, где лежит brain](screens#settings-brain)
 - **Commit name / Commit email**: имя и почта в коммитах, которые AKit делает в brain. Хранятся в `.git/config` самого brain, только на этом Mac. На рабочем Mac без них AKit не меняет brain («This work Mac can't commit in the brain until both are set.»): иначе в личный brain попала бы рабочая почта. Подробнее: [Имя и почта для коммитов](screens#settings-brain-identity)
 - **Review language**: язык новых разборов сессий, один из 17 (например **English**, **Russian** или **Czech**). Тексты самого AKit остаются английскими. После смены языка уже разобранные сессии при следующем разборе в Error Analysis перепишутся, а это стоит денег; готовый разбор дешевле [перевести](screens#lab-translate). Подробнее: [Выбрать язык разборов](screens#settings-language)
-- **Translation model**: агент, модель и усилие, которыми переводит кнопка **Translate**. По умолчанию Claude Code · haiku · low: маленькой модели хватает. **Reset to Default** возвращает это значение. Хранится в `~/.akit/lab/settings.json`; в терминале `akit translate model`. Подробнее: [Выбрать модель перевода](screens#settings-translation)
+- **Translation model**: агент, модель и усилие, которыми переводит кнопка **Translate**. По умолчанию Claude Code · haiku · low, а на Mac без Claude Code — Pi с моделью по умолчанию: маленькой модели хватает. **Reset to Default** возвращает это значение. Хранится в `~/.akit/lab/settings.json`; в терминале `akit translate model`. Подробнее: [Выбрать модель перевода](screens#settings-translation)
 
 ### Отправка данных и деньги
 <!-- section: terms-settings-sending -->

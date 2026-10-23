@@ -62,7 +62,7 @@ final class Translator {
                     try await Cancellation.$scope.withValue(scope) { () -> Found in
                         guard let source = source(), !source.isEmpty else { return .nothing }
                         let env = HarnessEnvironment.current
-                        let agent = OutputTranslation.agent(settings: LabSettings.load(env: env))
+                        let agent = OutputTranslation.agent(settings: LabSettings.load(env: env), env: env)
                         if let cached = OutputTranslation.cached(source, to: language, configured: agent) { return .cached(source, cached) }
                         let plan = try await OutputTranslation.plan(source, configured: agent, env: env)
                         if scope.isCancelled { throw CancellationError() }
@@ -150,6 +150,7 @@ final class Translator {
 /// The Translate menu: the languages and Show Original, with the confirmation before a send.
 /// `id` names the output: when it changes, the translation of the last one goes.
 struct TranslateMenu: View {
+    @Environment(\.openSettings) private var openSettings
     let translator: Translator
     let id: String
     let source: @Sendable () -> OutputTranslation.Source?
@@ -174,6 +175,11 @@ struct TranslateMenu: View {
                 Button("Translate") { translator.send() }
                 Button("Cancel", role: .cancel) { translator.pending = nil }
             } else {
+                // Settings has Translation model and Sending policy side by side.
+                Button("Choose Translation Model…") {
+                    translator.pending = nil
+                    openSettings()
+                }
                 Button("OK", role: .cancel) { translator.pending = nil }
             }
         } message: {
@@ -210,8 +216,9 @@ struct TranslationModelSection: View {
     @Binding var lab: LabSettings
     @State private var models: [String] = []
 
-    /// As stored: an empty Claude Code model shows the prompt (haiku) while typing.
-    private var agent: LabAgent { lab.translationAgent ?? OutputTranslation.defaultAgent }
+    /// As stored: an empty Claude Code model shows the prompt (haiku) while typing. Unset, the
+    /// default Translate uses here: Pi when this Mac has no Claude Code.
+    private var agent: LabAgent { lab.translationAgent ?? OutputTranslation.agent(settings: lab, env: .current) }
 
     var body: some View {
         Section {
@@ -250,13 +257,13 @@ struct TranslationModelSection: View {
             })) {
                 ForEach(agent.harness.efforts, id: \.self) { Text($0).tag($0) }
             }
-            if agent != OutputTranslation.defaultAgent {
+            if lab.translationAgent != nil {
                 Button("Reset to Default") { lab.translationAgent = nil }
             }
         } header: {
             Text("Translation model")
         } footer: {
-            Text("Translate on reviews, notes and Ask AKit answers sends the text to this model: a small one is enough. Each translation is one call under the sending policy and the monthly limit, and is kept next to the output.")
+            Text("Translate on reviews, notes and Ask AKit answers sends the text to this model: a small one is enough. Unset, it is Claude Code · haiku, or Pi's default model when Claude Code isn't installed. On a work Mac the model must be on the Sending policy's list. Each translation is one call under the sending policy and the monthly limit, and is kept next to the output.")
                 .foregroundStyle(.secondary)
         }
         .task(id: agent.harness) {
