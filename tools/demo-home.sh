@@ -929,28 +929,28 @@ file "$REVIEWRUN/passes.json" <<EOF
 EOF
 file "$REVIEWRUN/findings.json" <<EOF
 {"version":1,"created":"$(rago 170M)","source":"passes","findings":[
- {"id":"f1","kind":"finding","role":"security","file":"src/Auth/AuthMiddleware.cs","side":"new","line":8,"title":"The Authorization header is logged in full",
-  "evidence":"logger.LogInformation(\"Auth: {Header}\", header);","why":"The log goes to the shared log store; anyone who reads it gets a valid bearer token.",
+ {"id":"f1","kind":"finding","role":"security","file":"src/Auth/AuthMiddleware.cs","side":"new","line":8,"title":"Hlavička Authorization se celá zapisuje do logu",
+  "evidence":"logger.LogInformation(\"Auth: {Header}\", header);","why":"Log jde do sdíleného úložiště logů; kdo ho čte, získá platný bearer token.",
   "severity":"high","confidence":0.88,"suggestion":"logger.LogDebug(\"Auth header present: {Present}\", header.Length > 0);","related":["bug-hunter:Header reaches the log"],
-  "verifier":{"verdict":"confirmed","note":"Line 8 logs the raw header; the bug's repro steps show the same line.","confidence":0.93},"fingerprint":"7c1e9a04b2d6f318"},
- {"id":"f2","kind":"finding","role":"bug-hunter","file":"src/Auth/AuthMiddleware.cs","side":"new","line":14,"title":"A header without the Bearer prefix crashes the request",
-  "evidence":"var token = header[\"Bearer \".Length..];","why":"Basic credentials or a short header throw ArgumentOutOfRangeException: a 500 instead of 401.",
-  "severity":"medium","confidence":0.84,"related":[],"verifier":{"verdict":"confirmed","note":"Any header shorter than 7 characters throws."},"fingerprint":"a91f2c7d0e3b5a66"},
- {"id":"f3","kind":"finding","role":"tests","file":"src/Auth/AuthMiddleware.cs","side":"new","line":8,"title":"No test checks what is logged",
-  "evidence":"logger.LogInformation","why":"A regression test with a fake logger would keep the token out of the log.","severity":"medium","confidence":0.72,"related":[],
-  "verifier":{"verdict":"confirmed","note":"Fair, but the cause is fixed by f1."},"fingerprint":"5d0c13e8a2f47b90"},
- {"id":"f4","kind":"ac","role":"requirements","side":"new","title":"No secret reaches a log","evidence":"","why":"code: AuthMiddleware.cs:8 still logs the header (f1)",
+  "verifier":{"verdict":"confirmed","note":"Řádek 8 zapisuje celou hlavičku; kroky k reprodukci chyby ukazují stejný řádek.","confidence":0.93},"fingerprint":"7c1e9a04b2d6f318"},
+ {"id":"f2","kind":"finding","role":"bug-hunter","file":"src/Auth/AuthMiddleware.cs","side":"new","line":14,"title":"Hlavička bez prefixu Bearer shodí požadavek",
+  "evidence":"var token = header[\"Bearer \".Length..];","why":"Přihlášení Basic nebo krátká hlavička vyhodí ArgumentOutOfRangeException: 500 místo 401.",
+  "severity":"medium","confidence":0.84,"related":[],"verifier":{"verdict":"confirmed","note":"Každá hlavička kratší než 7 znaků vyhodí výjimku."},"fingerprint":"a91f2c7d0e3b5a66"},
+ {"id":"f3","kind":"finding","role":"tests","file":"src/Auth/AuthMiddleware.cs","side":"new","line":8,"title":"Žádný test nekontroluje, co se zapisuje do logu",
+  "evidence":"logger.LogInformation","why":"Regresní test s falešným loggerem by token z logu udržel venku.","severity":"medium","confidence":0.72,"related":[],
+  "verifier":{"verdict":"confirmed","note":"Oprávněné, ale příčinu opraví f1."},"fingerprint":"5d0c13e8a2f47b90"},
+ {"id":"f4","kind":"ac","role":"requirements","side":"new","title":"Žádný tajný údaj se nedostane do logu","evidence":"","why":"kód: AuthMiddleware.cs:8 stále zapisuje hlavičku (f1)",
   "severity":"high","confidence":0.9,"related":[],"verifier":{"verdict":"confirmed","note":""},"fingerprint":"0e44c1d2b3a59f71"},
- {"id":"f5","kind":"finding","role":"requirements","file":"src/Auth/AuthMiddleware.cs","side":"new","line":11,"title":"Should a missing header answer 401 or pass through to anonymous endpoints?",
-  "evidence":"context.Response.StatusCode = 401;","why":"The work item doesn't say whether /health stays open.","severity":"medium","confidence":0.6,"related":[],
-  "verifier":{"verdict":"question","note":"Ask whether /health and /metrics must stay anonymous."},"fingerprint":"c3b7e2a1d9f04e88"},
- {"id":"f6","kind":"finding","role":"bug-hunter","file":"src/Auth/AuthMiddleware.cs","side":"new","line":15,"title":"Token stored in HttpContext.Items",
-  "evidence":"context.Items[\"token\"] = token;","why":"Items may be logged by diagnostics.","severity":"medium","confidence":0.65,"related":[],
-  "verifier":{"verdict":"rejected","note":"No code path logs Items; speculation without a sink."},"fingerprint":"9e8d7c6b5a4f3e21"}]}
+ {"id":"f5","kind":"finding","role":"requirements","file":"src/Auth/AuthMiddleware.cs","side":"new","line":11,"title":"Má chybějící hlavička vrátit 401, nebo projít k anonymním endpointům?",
+  "evidence":"context.Response.StatusCode = 401;","why":"Work item neříká, zda /health zůstane otevřený.","severity":"medium","confidence":0.6,"related":[],
+  "verifier":{"verdict":"question","note":"Zeptejte se, zda /health a /metrics musí zůstat anonymní."},"fingerprint":"c3b7e2a1d9f04e88"},
+ {"id":"f6","kind":"finding","role":"bug-hunter","file":"src/Auth/AuthMiddleware.cs","side":"new","line":15,"title":"Token uložený v HttpContext.Items",
+  "evidence":"context.Items[\"token\"] = token;","why":"Diagnostika může Items zapisovat do logu.","severity":"medium","confidence":0.65,"related":[],
+  "verifier":{"verdict":"rejected","note":"Žádná cesta v kódu Items nezapisuje; spekulace bez místa úniku."},"fingerprint":"9e8d7c6b5a4f3e21"}]}
 EOF
 file "$REVIEWRUN/gaps.json" <<'EOF'
 [{"id":"g1","system":"tests","needed":"Output of tests","why":"dotnet test failed to build in the worktree.","howToGet":"Check the command in the profile.","effect":"","reportedBy":"gather"},
- {"id":"g2","system":"azure-devops","needed":"Which endpoints stay anonymous","why":"Work item #4512 doesn't list them.","howToGet":"Ask the author.","effect":"f5 is a question, not a finding.","reportedBy":"role-requirements"}]
+ {"id":"g2","system":"azure-devops","needed":"Které endpointy zůstanou anonymní","why":"Work item #4512 je neuvádí.","howToGet":"Zeptejte se autora.","effect":"f5 je otázka, ne nález.","reportedBy":"role-requirements"}]
 EOF
 file "$REVIEWRUN/gitlab/snapshot.json" <<EOF
 {"mergeRequest":{"iid":42,"title":"Stop logging the Authorization header (AB#4512)","description":"Fixes AB#4512.","state":"opened","author":"alice",
@@ -960,17 +960,17 @@ file "$REVIEWRUN/gitlab/snapshot.json" <<EOF
  "diffs":[{"oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs","diff":"@@ -5,10 +5,13 @@\n     public async Task InvokeAsync(HttpContext context)\n     {\n         var header = context.Request.Headers.Authorization.ToString();\n+        logger.LogInformation(\"Auth: {Header}\", header);\n         if (string.IsNullOrEmpty(header))\n         {\n             context.Response.StatusCode = 401;\n             return;\n         }\n+        var token = header[\"Bearer \".Length..];\n+        context.Items[\"token\"] = token;\n         await next(context);\n     }\n }\n","newFile":false,"renamedFile":false,"deletedFile":false,"tooLarge":false}],
  "discussions":[],"drafts":[],"user":"demo","gathered":"$(rago 179M)"}
 EOF
-SUMMARY='🤖 · summary · scenario **bugfix** · roles `bug-hunter`, `requirements`, `tests`, `security`\n\n2 inline comments on the diff.\n\n### Questions to the author\n\n- `src/Auth/AuthMiddleware.cs:11`: Should a missing header answer 401 or pass through to anonymous endpoints? — Ask whether /health and /metrics must stay anonymous.\n\n### Acceptance criteria\n\n| Criterion | Status |\n|---|---|\n| No secret reaches a log | code: AuthMiddleware.cs:8 still logs the header (f1) |\n\n### What was missing\n\n- Output of tests: dotnet test failed to build in the worktree.\n- Which endpoints stay anonymous: Work item #4512 doesn'"'"'t list them.\n\n<sub>Reviewed commit 4f2c9e1b7a.</sub>'
+SUMMARY='🤖 · souhrn · scénář **bugfix** · role `bug-hunter`, `requirements`, `tests`, `security`\n\n2 komentáře k řádkům diffu.\n\n### Otázky pro autora\n\n- `src/Auth/AuthMiddleware.cs:11`: Má chybějící hlavička vrátit 401, nebo projít k anonymním endpointům? — Zeptejte se, zda /health a /metrics musí zůstat anonymní.\n\n### Akceptační kritéria\n\n| Kritérium | Stav |\n|---|---|\n| Žádný tajný údaj se nedostane do logu | kód: AuthMiddleware.cs:8 stále zapisuje hlavičku (f1) |\n\n### Co chybělo\n\n- Které endpointy zůstanou anonymní: Work item #4512 je neuvádí.\n\n<sub>Zkontrolovaný commit 4f2c9e1b7a.</sub>'
 POS='"baseSHA":"1a2b3c4d","startSHA":"1a2b3c4d","headSHA":"'"$HEADSHA"'","oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs"'
 file "$REVIEWRUN/requests.json" <<EOF
 {"created":"$(rago 170M)","findingsVersion":1,"requests":[
  {"id":"r1","kind":"create","findingID":"f1","fingerprint":"7c1e9a04b2d6f318","role":"security","severity":"high","confidence":0.93,
   "file":"src/Auth/AuthMiddleware.cs","line":8,"position":{$POS,"newLine":8},
-  "proposed":"🤖 · \`security\` · **high** · confidence 0.93\n\n**The Authorization header is logged in full**\n\nThe log goes to the shared log store; anyone who reads it gets a valid bearer token.\n\n\`\`\`suggestion\nlogger.LogDebug(\"Auth header present: {Present}\", header.Length > 0);\n\`\`\`",
+  "proposed":"🤖 · \`security\` · **vysoká** · jistota 0,93\n\n**Hlavička Authorization se celá zapisuje do logu**\n\nLog jde do sdíleného úložiště logů; kdo ho čte, získá platný bearer token.\n\n\`\`\`suggestion\nlogger.LogDebug(\"Auth header present: {Present}\", header.Length > 0);\n\`\`\`",
   "decision":"approved","movedByUser":false},
  {"id":"r2","kind":"create","findingID":"f2","fingerprint":"a91f2c7d0e3b5a66","role":"bug-hunter","severity":"medium","confidence":0.84,
   "file":"src/Auth/AuthMiddleware.cs","line":14,"position":{$POS,"newLine":14},
-  "proposed":"🤖 · \`bug-hunter\` · **medium** · confidence 0.84\n\n**A header without the Bearer prefix crashes the request**\n\nBasic credentials or a short header throw ArgumentOutOfRangeException: a 500 instead of 401.",
+  "proposed":"🤖 · \`bug-hunter\` · **střední** · jistota 0,84\n\n**Hlavička bez prefixu Bearer shodí požadavek**\n\nPřihlášení Basic nebo krátká hlavička vyhodí ArgumentOutOfRangeException: 500 místo 401.",
   "decision":"pending","movedByUser":false},
  {"id":"r3","kind":"summary","proposed":"$SUMMARY","decision":"pending","movedByUser":false}],
  "placements":[{"findingID":"f1","place":"inline","reason":"Confirmed and over the thresholds."},
@@ -978,7 +978,7 @@ file "$REVIEWRUN/requests.json" <<EOF
   {"findingID":"f3","place":"onlyInAKit","reason":"Confidence 0.72 is below 0.80."},
   {"findingID":"f4","place":"matrix","reason":"A row of the acceptance-criteria matrix."},
   {"findingID":"f5","place":"question","reason":"Not enough context: a question to the author."},
-  {"findingID":"f6","place":"onlyInAKit","reason":"Rejected by the verifier: No code path logs Items; speculation without a sink."}]}
+  {"findingID":"f6","place":"onlyInAKit","reason":"Rejected by the verifier: Žádná cesta v kódu Items nezapisuje; spekulace bez místa úniku."}]}
 EOF
 
 # Review → New Review… → Local Workspace: a made-up clone of orders-service (its origin is the

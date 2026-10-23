@@ -13,6 +13,7 @@ public enum ReviewBuiltIns {
       verifier: high
     posting:
       marker: "🤖"
+      language: cs      # the comments' language; Send lets only Czech (cs) go to GitLab
       severity_threshold: medium
       confidence_threshold: 0.8
       max_inline: 5

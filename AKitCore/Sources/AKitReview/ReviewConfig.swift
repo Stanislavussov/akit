@@ -109,6 +109,8 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var maxInline: Int?
     /// At most this many of the inline drafts are `medium` or lower (`posting: max_inline_medium`).
     public var maxInlineMedium: Int?
+    /// The language of the comments, a code such as `cs` (`posting: language`).
+    public var language: String?
     public var capCredits: Int?
     /// Over this many changed lines the passes ask first (`cost: max_changed_lines`).
     public var maxChangedLines: Int?
@@ -154,6 +156,12 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
         if let value = posting["max_inline"] as? Int {
             guard (0...50).contains(value) else { throw ReviewRole.Failure(message: "\(where_): max_inline must be 0–50.") }
             patch.maxInline = value
+        }
+        if let value = posting["language"] as? String {
+            guard ReviewLanguage.isKnown(value) else {
+                throw ReviewRole.Failure(message: "\(where_): language \(value) is not a language code such as cs.")
+            }
+            patch.language = value
         }
         if let value = posting["max_inline_medium"] as? Int {
             guard (0...50).contains(value) else { throw ReviewRole.Failure(message: "\(where_): max_inline_medium must be 0–50.") }

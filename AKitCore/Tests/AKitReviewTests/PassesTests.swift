@@ -85,24 +85,24 @@ struct ReviewRunFixture {
     func playTypicalRun() {
         fake("role-bug-hunter", """
         {"findings":[
-          {"file":"src/Auth.swift","line":9,"side":"new","title":"Header is logged in full","evidence":"log(\\"Auth: \\\\(header)\\")",
-           "why":"The token reaches the log","severity":"high","confidence":0.9,"suggestion":"log(\\"Auth header present\\")"},
-          {"file":"src/Auth.swift","line":2,"title":"Rename auth","evidence":"func auth","why":"Naming","severity":"low","confidence":0.9}
+          {"file":"src/Auth.swift","line":9,"side":"new","title":"Hlavička se celá zapisuje do logu","evidence":"log(\\"Auth: \\\\(header)\\")",
+           "why":"Token se dostane do logu, kde ho přečte každý, kdo má k logům přístup","severity":"high","confidence":0.9,"suggestion":"log(\\"Auth header present\\")"},
+          {"file":"src/Auth.swift","line":2,"title":"Přejmenovat auth","evidence":"func auth","why":"Pojmenování","severity":"low","confidence":0.9}
         ]}
         """)
         fake("role-tests", """
-        {"findings":[{"file":"src/Auth.swift","line":3,"title":"header is LOGGED in full!","evidence":"log(\\"Auth: \\\\(header)\\")",
-          "why":"Same","severity":"medium","confidence":0.7}]}
+        {"findings":[{"file":"src/Auth.swift","line":3,"title":"hlavička se CELÁ zapisuje do logu!","evidence":"log(\\"Auth: \\\\(header)\\")",
+          "why":"Totéž","severity":"medium","confidence":0.7}]}
         """)
         fake("role-requirements", """
-        {"findings":[{"kind":"ac","file":null,"line":null,"title":"No secret reaches a log","evidence":"","why":"not found: the header is logged",
+        {"findings":[{"kind":"ac","file":null,"line":null,"title":"Žádný tajný údaj se nedostane do logu","evidence":"","why":"nesplněno: hlavička se zapisuje do logu",
           "severity":"high","confidence":0.85}]}
         """)
         fake("verifier", """
-        {"verdicts":[{"id":"f1","verdict":"confirmed","note":"Real: line 3 logs the header","confidence":0.95},
-                     {"id":"f2","verdict":"confirmed","note":"AC row checked"}]}
+        {"verdicts":[{"id":"f1","verdict":"confirmed","note":"Skutečné: řádek 3 zapisuje hlavičku do logu","confidence":0.95},
+                     {"id":"f2","verdict":"confirmed","note":"Řádek kritérií ověřen"}]}
         """)
-        home.write("fake/gaps-role-tests.jsonl", #"{"system":"tests","needed":"Test output","why":"No test command ran","reportedBy":"role-tests"}"# + "\n")
+        home.write("fake/gaps-role-tests.jsonl", #"{"system":"tests","needed":"Výstup testů","why":"Žádný testovací příkaz neběžel","reportedBy":"role-tests"}"# + "\n")
     }
 }
 
@@ -117,7 +117,7 @@ extension ReviewProcessTests {
             #expect(result.findings.map(\.id) == ["f1", "f2"])
             let logged = try #require(result.findings.first)
             #expect(logged.line == 3)
-            #expect(logged.related == ["tests:header is LOGGED in full!"])
+            #expect(logged.related == ["tests:hlavička se CELÁ zapisuje do logu!"])
             #expect(logged.fingerprint?.count == 16)
             #expect(logged.verifier?.verdict == .confirmed && logged.finalConfidence == 0.95)
             #expect(result.findings[1].kind == .ac && result.findings[1].verifier?.verdict == .confirmed)
@@ -172,7 +172,7 @@ extension ReviewProcessTests {
             #expect(sends[1].paths == ["context/diff.patch"] && sends[1].provider == "fake")
 
             let gaps = try #require(ReviewJSON.read([ContextGap].self, from: run.folder.appending(path: "gaps.json")))
-            #expect(gaps.contains { $0.needed == "Test output" && $0.reportedBy == "role-tests" })
+            #expect(gaps.contains { $0.needed == "Výstup testů" && $0.reportedBy == "role-tests" })
             #expect(gaps.contains { $0.reportedBy == "gather" })
             #expect(Set(gaps.map(\.id)).count == gaps.count)
             #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .planned)

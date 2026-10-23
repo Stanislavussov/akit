@@ -20,39 +20,40 @@ struct ReviewView: View {
 
     var body: some View {
         @Bindable var model = model
-        Group {
-            switch page {
-            case .runs: runs
-            case .roles: ReviewConfigView(kind: .role, brain: app.brainRoot)
-            case .scenarios: ReviewConfigView(kind: .scenario, brain: app.brainRoot)
-            case .quality: ReviewQualityView()
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                if let activity = model.activity {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text(activity.lines.last ?? activity.title).lineLimit(1)
-                        Spacer()
-                        Button("Stop") { model.stop() }
-                            .help("End the running pass. What is done so far stays in the run.")
-                    }
-                    .font(.callout)
-                    .padding(8)
-                    .background(.blue.opacity(0.08))
+        // The bars stand above the page, not in a safe-area inset: the runs page's HSplitView
+        // ignores the inset, and the bar covered the top of the run list.
+        VStack(spacing: 0) {
+            if let activity = model.activity {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(activity.lines.last ?? activity.title).lineLimit(1)
+                    Spacer()
+                    Button("Stop") { model.stop() }
+                        .help("End the running pass. What is done so far stays in the run.")
                 }
-                if let problem = model.problem {
-                    HStack {
-                        Label(problem, systemImage: "exclamationmark.triangle").textSelection(.enabled)
-                        Spacer()
-                        Button("Dismiss") { model.problem = nil }
-                    }
-                    .font(.callout)
-                    .padding(8)
-                    .background(.orange.opacity(0.15))
+                .font(.callout)
+                .padding(8)
+                .background(.blue.opacity(0.08))
+            }
+            if let problem = model.problem {
+                HStack {
+                    Label(problem, systemImage: "exclamationmark.triangle").textSelection(.enabled)
+                    Spacer()
+                    Button("Dismiss") { model.problem = nil }
+                }
+                .font(.callout)
+                .padding(8)
+                .background(.orange.opacity(0.15))
+            }
+            Group {
+                switch page {
+                case .runs: runs
+                case .roles: ReviewConfigView(kind: .role, brain: app.brainRoot)
+                case .scenarios: ReviewConfigView(kind: .scenario, brain: app.brainRoot)
+                case .quality: ReviewQualityView()
                 }
             }
+            .frame(maxHeight: .infinity)
         }
         .alert(model.capQuestion?.title ?? "Over the credit cap", isPresented: Binding(get: { model.capQuestion != nil }, set: { if !$0 { model.answerCap(false) } }),
                presenting: model.capQuestion) { question in
@@ -514,6 +515,11 @@ struct ReviewRequestCard: View {
             if let verdict = finding?.verifier {
                 Text("Verifier: \(verdict.verdict.rawValue)" + (verdict.note.isEmpty ? "" : " — \(verdict.note)"))
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if !request.isSent, request.sent?.error == nil, request.kind != .delete,
+               !ReviewLanguage.isCzech(request.text, marker: run.spec.posting.marker.value) {
+                Label("Not in Czech: Send won't send it. AKit sends only Czech comments to GitLab; edit it into Czech.",
+                      systemImage: "character.bubble").font(.caption).foregroundStyle(.orange)
             }
             if let error = request.sent?.error {
                 Label("GitLab: \(error)", systemImage: "xmark.octagon").font(.caption).foregroundStyle(.red).textSelection(.enabled)

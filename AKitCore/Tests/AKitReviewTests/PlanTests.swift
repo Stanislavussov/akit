@@ -158,7 +158,8 @@ struct PlanTests {
             Self.finding("f9", kind: .ac, title: "AC 1"),
             Self.finding("f10", severity: .nit),
             Self.finding("f11", verdict: .merged),
-        ], gaps: [ContextGap(id: "g1", system: "tests", needed: "Test output", why: "none", reportedBy: "gather")])
+        ], gaps: [ContextGap(id: "g1", system: "tests", needed: "Test output", why: "none", reportedBy: "role-tests"),
+                 ContextGap(id: "g2", system: "repository", needed: "Worktree", why: "git failed", reportedBy: "gather")])
         #expect(place(plan, "f1") == .inline)
         #expect(place(plan, "f2") == .onlyInAKit && place(plan, "f3") == .onlyInAKit)
         #expect(place(plan, "f4") == .onlyInAKit && place(plan, "f6") == .onlyInAKit && place(plan, "f10") == .onlyInAKit)
@@ -171,14 +172,15 @@ struct PlanTests {
         let create = try #require(plan.requests.first)
         #expect(create.position == GitLabPosition(baseSHA: "b", startSHA: "s", headSHA: "h", oldPath: "src/A.swift", newPath: "src/A.swift",
                                                   oldLine: nil, newLine: 2))
-        #expect(create.proposed.hasPrefix("🤖 · `bug-hunter` · **high** · confidence 0.90"))
+        #expect(create.proposed.hasPrefix("🤖 · `bug-hunter` · **vysoká** · jistota 0,90"))
         #expect(!plan.requests.contains { $0.proposed.contains("AKit") }, "posted text names no tool, only 🤖")
         #expect(!create.proposed.contains("akit-review:v1"), "the meta line is added at sending")
         let summary = plan.requests[1].proposed
-        #expect(summary.contains("### More findings") && summary.contains("`big.json:1`"))
-        #expect(summary.contains("### Questions to the author") && summary.contains("note f5"))
+        #expect(summary.contains("### Další nálezy") && summary.contains("`big.json:1`"))
+        #expect(summary.contains("### Otázky pro autora") && summary.contains("note f5"))
         #expect(summary.contains("| AC 1 | Because f9 |"))
-        #expect(summary.contains("### What was missing") && summary.contains("Test output: none"))
+        #expect(summary.contains("### Co chybělo") && summary.contains("Test output: none"))
+        #expect(!summary.contains("Worktree"), "Gather's own gaps stay in AKit")
     }
 
     @Test func theInlineCapKeepsTheStrongest() throws {
@@ -239,7 +241,7 @@ struct PlanTests {
         #expect(kinds.contains("reply:fp-old"))
         #expect(plan.requests.first { $0.kind == .summary }?.draftID == 90)
         #expect(!plan.requests.contains { $0.draftID == 91 || $0.discussionID == "p" }, "never another person's draft or thread")
-        #expect(plan.requests.first { $0.kind == .summary }?.proposed.contains("### Already dismissed") == true)
+        #expect(plan.requests.first { $0.kind == .summary }?.proposed.contains("### Už zamítnuté") == true)
     }
 
     @Test func draftsAndThreadsFromBeforeTheRenameStillMatch() throws {
@@ -311,7 +313,7 @@ extension ReviewProcessTests {
             #expect(report.sent.isEmpty && run.args("send-1").isEmpty)
 
             #expect(throws: ReviewWorkflow.Failure.self) { try ReviewWorkflow.decide(run.folder, request: create.id, decision: .rejected) }
-            try ReviewWorkflow.decide(run.folder, request: create.id, decision: .approved, edited: "Shorter text.")
+            try ReviewWorkflow.decide(run.folder, request: create.id, decision: .approved, edited: "Kratší text komentáře pro autora.")
             run.home.write("fake/send-log.jsonl", #"{"request":"r1","tool":"mcp__gitlab__create_draft_note","isError":false,"text":"{\"id\": 501, \"note\": \"x\"}"}"# + "\n")
             // A context server of the run never reaches the send pass.
             var withFigma = try #require(ReviewJSON.read(ReviewRunSpec.self, from: run.folder.appending(path: "run.json")))
@@ -325,7 +327,7 @@ extension ReviewProcessTests {
             let approved = try #require(try JSONSerialization.jsonObject(with: data) as? [[String: Any]])
             #expect(approved.count == 1 && approved[0]["id"] as? String == create.id && approved[0]["action"] as? String == "create")
             let body = try #require(approved[0]["body"] as? String)
-            #expect(body.hasPrefix("Shorter text.\n<!-- ai-review:v1 kind=finding fp="))
+            #expect(body.hasPrefix("Kratší text komentáře pro autora.\n<!-- ai-review:v1 kind=finding fp="))
             #expect(body.contains("th=\(ReviewNotes.textHash(create.proposed))"))
             let position = try #require(approved[0]["position"] as? [String: Any])
             #expect(position["new_line"] as? Int == 3 && position["old_line"] == nil && position["head_sha"] as? String == run.head)

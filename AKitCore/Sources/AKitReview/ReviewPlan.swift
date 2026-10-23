@@ -334,7 +334,7 @@ public enum ReviewPlanner {
             let first = discussion.notes.first { !$0.system }
             add(ReviewRequest(id: "", kind: .reply, fingerprint: fp, role: first.flatMap { ReviewNotes.parseMeta($0.body)?["role"] },
                               file: first?.position?.newPath, line: first?.position?.newLine,
-                              proposed: scrubbed("🤖 Looks fixed in \(spec.headSHA.map { String($0.prefix(10)) } ?? "the latest commit").",
+                              proposed: scrubbed("🤖 Zdá se, že je to opraveno v \(spec.headSHA.map { "commitu " + String($0.prefix(10)) } ?? "posledním commitu").",
                                                  scrub: input.scrub),
                               discussionID: discussion.id))
         }
@@ -384,6 +384,18 @@ public enum ReviewPlanner {
 
     // MARK: - Texts
 
+    // The drafts' own words are Czech: Send lets only Czech go to GitLab (`ReviewLanguage`).
+
+    static func czech(_ severity: ReviewSeverity) -> String {
+        switch severity {
+        case .critical: "kritická"
+        case .high: "vysoká"
+        case .medium: "střední"
+        case .low: "nízká"
+        case .nit: "drobnost"
+        }
+    }
+
     /// Every draft passes the scrubber before the Review screen shows it. A scrubbed
     /// suggestion would post a mask as code, so a block that changed loses its code.
     static func scrubbed(_ text: String, scrub: Scrubber.OwnPatterns) -> String {
@@ -392,15 +404,15 @@ public enum ReviewPlanner {
            let end = text.range(of: "\n```", range: start.upperBound..<text.endIndex) {
             let code = String(text[start.upperBound..<end.lowerBound])
             if Scrubber.scrub(SecretFilter.masked(code), own: scrub).text != code {
-                text.replaceSubrange(start.lowerBound..<end.upperBound, with: "_(The suggestion held a secret and was left out.)_")
+                text.replaceSubrange(start.lowerBound..<end.upperBound, with: "_(Návrh obsahoval tajný údaj, proto byl vynechán.)_")
             }
         }
         return Scrubber.scrub(SecretFilter.masked(text), own: scrub).text
     }
 
     static func inlineBody(_ finding: ReviewFinding, spec: ReviewRunSpec) -> String {
-        var text = "\(spec.posting.marker.value) · `\(finding.role)` · **\(finding.finalSeverity.rawValue)** · confidence "
-            + String(format: "%.2f", finding.finalConfidence) + "\n\n**\(finding.title)**\n\n\(finding.why)"
+        var text = "\(spec.posting.marker.value) · `\(finding.role)` · **\(czech(finding.finalSeverity))** · jistota "
+            + String(format: "%.2f", finding.finalConfidence).replacingOccurrences(of: ".", with: ",") + "\n\n**\(finding.title)**\n\n\(finding.why)"
         if let suggestion = finding.suggestion, finding.side == .new, !suggestion.contains("```") {
             text += "\n\n```suggestion\n\(suggestion)\n```"
         }
@@ -410,32 +422,36 @@ public enum ReviewPlanner {
     static func summaryBody(spec: ReviewRunSpec, inline: [ReviewFinding], overCap: [ReviewFinding], questions: [ReviewFinding],
                             matrix: [ReviewFinding], dismissed: [ReviewFinding], gaps: [ContextGap]) -> String {
         func place(_ finding: ReviewFinding) -> String {
-            finding.file.map { "`\($0)" + (finding.line.map { ":\($0)" } ?? "") + "`" } ?? "the merge request"
+            finding.file.map { "`\($0)" + (finding.line.map { ":\($0)" } ?? "") + "`" } ?? "merge request"
         }
-        var text = "\(spec.posting.marker.value) · summary · scenario **\(spec.scenario.value)** · roles "
+        var text = "\(spec.posting.marker.value) · souhrn · scénář **\(spec.scenario.value)** · role "
             + (spec.roles.map(\.id) + (spec.steps ?? []).map(\.id)).map { "`\($0)`" }.joined(separator: ", ") + "\n\n"
-        text += inline.isEmpty ? "No inline comments." : "\(inline.count) inline comment\(inline.count == 1 ? "" : "s") on the diff."
+        let count = inline.count
+        text += count == 0 ? "Žádné komentáře k řádkům diffu."
+            : "\(count) \(count == 1 ? "komentář" : (2...4).contains(count) ? "komentáře" : "komentářů") k řádkům diffu."
         if !overCap.isEmpty {
-            text += "\n\n### More findings\n\n" + overCap.map { "- \(place($0)): \($0.title) (`\($0.role)`, \($0.finalSeverity.rawValue))" }
+            text += "\n\n### Další nálezy\n\n" + overCap.map { "- \(place($0)): \($0.title) (`\($0.role)`, \(czech($0.finalSeverity)))" }
                 .joined(separator: "\n")
         }
         if !questions.isEmpty {
-            text += "\n\n### Questions to the author\n\n" + questions.map { finding in
+            text += "\n\n### Otázky pro autora\n\n" + questions.map { finding in
                 "- \(place(finding)): \(finding.title)" + (finding.verifier?.note.isEmpty == false ? " — \(finding.verifier!.note)" : "")
             }.joined(separator: "\n")
         }
         if !matrix.isEmpty {
-            text += "\n\n### Acceptance criteria\n\n| Criterion | Status |\n|---|---|\n" + matrix.map {
+            text += "\n\n### Akceptační kritéria\n\n| Kritérium | Stav |\n|---|---|\n" + matrix.map {
                 "| \($0.title.replacingOccurrences(of: "|", with: "\\|")) | \($0.why.replacingOccurrences(of: "|", with: "\\|").replacingOccurrences(of: "\n", with: " ")) |"
             }.joined(separator: "\n")
         }
         if !dismissed.isEmpty {
-            text += "\n\n### Already dismissed\n\n" + dismissed.map { "- \(place($0)): \($0.title)" }.joined(separator: "\n")
+            text += "\n\n### Už zamítnuté\n\n" + dismissed.map { "- \(place($0)): \($0.title)" }.joined(separator: "\n")
         }
+        // Gaps AKit's own Gather found are about this Mac's setup, in English: they stay in AKit.
+        let gaps = gaps.filter { $0.reportedBy != "gather" }
         if !gaps.isEmpty {
-            text += "\n\n### What was missing\n\n" + gaps.map { "- \($0.needed): \($0.why)" }.joined(separator: "\n")
+            text += "\n\n### Co chybělo\n\n" + gaps.map { "- \($0.needed): \($0.why)" }.joined(separator: "\n")
         }
-        text += "\n\n<sub>Reviewed commit \(spec.headSHA.map { String($0.prefix(10)) } ?? "?").</sub>"
+        text += "\n\n<sub>Zkontrolovaný commit \(spec.headSHA.map { String($0.prefix(10)) } ?? "?").</sub>"
         return text
     }
 }

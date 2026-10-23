@@ -173,6 +173,7 @@ extension ReviewSettingsPatch {
                                         capCredits: other.capCredits ?? capCredits)
         patch.maxChangedLines = other.maxChangedLines ?? maxChangedLines
         patch.maxInlineMedium = other.maxInlineMedium ?? maxInlineMedium
+        patch.language = other.language ?? language
         return patch
     }
 }

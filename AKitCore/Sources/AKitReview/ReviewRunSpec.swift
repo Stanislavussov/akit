@@ -105,6 +105,10 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
         public var maxInline: Sourced<Int>
         /// nil in runs made before 2026-10-23: no limit of its own.
         public var maxInlineMedium: Sourced<Int>?
+        /// The comments' language (`ReviewLanguage`); nil in runs made before 2026-10-23.
+        public var language: Sourced<String>?
+
+        public var languageCode: String { language?.value ?? ReviewLanguage.czech }
     }
 
     /// 2 since 2026-10-23: the verifier's model is the user's choice (R25).
@@ -290,7 +294,8 @@ public enum ReviewResolver {
                                            severityThreshold: pick(\.severityThreshold, fallback: .medium),
                                            confidenceThreshold: pick(\.confidenceThreshold, fallback: 0.8),
                                            maxInline: pick(\.maxInline, fallback: 5),
-                                           maxInlineMedium: pick(\.maxInlineMedium, fallback: 3)),
+                                           maxInlineMedium: pick(\.maxInlineMedium, fallback: 3),
+                                           language: pick(\.language, fallback: ReviewLanguage.czech)),
             capCredits: pick(\.capCredits, fallback: 150), constraints: profile?.constraints ?? [],
             pathInstructions: profile?.pathInstructions ?? [], knowledge: profile?.knowledge ?? [], gather: profile?.gather ?? [],
             workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: access)
@@ -390,6 +395,7 @@ public enum ReviewResolver {
                   line("confidence_threshold", String(spec.posting.confidenceThreshold.value), spec.posting.confidenceThreshold.source),
                   line("max_inline", String(spec.posting.maxInline.value), spec.posting.maxInline.source)]
         if let medium = spec.posting.maxInlineMedium { lines.append(line("max_inline_medium", String(medium.value), medium.source)) }
+        if let language = spec.posting.language { lines.append(line("language", language.value, language.source)) }
         lines += [
                   "Cost:",
                   line("cap_credits_per_run", String(spec.capCredits.value), spec.capCredits.source)]
