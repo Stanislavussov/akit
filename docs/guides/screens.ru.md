@@ -3898,7 +3898,8 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 4. В **Effort** (у Pi — **Thinking**) хватит самого низкого значения.
 
 - Для перевода хватает маленькой модели: она дешевле и быстрее.
-- **Reset to Default** возвращает Claude Code · haiku · low.
+- **Reset to Default** возвращает значение по умолчанию: Claude Code · haiku · low, а на Mac без Claude Code — Pi с моделью по умолчанию · low.
+- Если перевод не прошёл (модели нет на Mac или её нет в **Sending policy**), окно отказа предлагает **Choose Translation Model…**: оно открывает Settings. На рабочем Mac модель перевода должна быть в списке **Sending policy**.
 - Значение хранится в `~/.akit/lab/settings.json`. В терминале: `akit translate model` показывает модель, `akit translate model pi ПРОВАЙДЕР/МОДЕЛЬ minimal` задаёт её.
 - Переводы, сделанные другой моделью, не пропадают. Но новая модель переводит заново: сохранённый перевод привязан к модели.
 

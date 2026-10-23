@@ -65,7 +65,7 @@ extension AKitCLI {
         }
         if originText != nil, path == nil { throw Failure(message: "--origin is only for FILE or -; the others know their origin.") }
         let settings = try LabSettings.loadForSending(env: env)
-        let agent = OutputTranslation.agent(settings: settings)
+        let agent = OutputTranslation.agent(settings: settings, env: env)
 
         let source: OutputTranslation.Source
         if let notesText {
@@ -134,7 +134,7 @@ extension AKitCLI {
     static func translationModel(_ args: inout Arguments, env: HarnessEnvironment, out: (String) -> Void) throws -> Int32 {
         guard let harnessText = args.positional() else {
             try args.finish()
-            let agent = OutputTranslation.agent(settings: LabSettings.load(env: env))
+            let agent = OutputTranslation.agent(settings: LabSettings.load(env: env), env: env)
             out("\(OutputTranslation.modelLabel(agent)) · \(agent.effort)")
             return 0
         }

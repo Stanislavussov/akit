@@ -1,3 +1,4 @@
+import AKitLab
 import AKitFoundation
 @testable import AKitReview
 import Foundation
@@ -472,5 +473,19 @@ extension ReviewProcessTests {
             #expect(throws: (any Error).self) { try ReviewEvalSet.add(run: run.folder, clean: true, home: home) }
             #expect(try String(contentsOf: home.appending(path: ".akit/local/review/eval-set.json"), encoding: .utf8) == "not json")
         }
+    }
+}
+
+/// Translate of a review goes where the review's passes went: Pi, also on a work Mac.
+struct ReviewTranslationOriginTests {
+    @Test func aLocalReviewTranslatesWithPiOnAWorkMac() throws {
+        var spec = try PlanTests.spec()
+        spec.local = ReviewLocalTarget(path: "/tmp/x", repository: "x", branch: "main", baseRef: "main", mode: .all, base: "b", head: "h",
+                                       commits: [], uncommitted: [])
+        let run = ReviewWorkflow.Run(folder: URL(filePath: "/tmp/r"), spec: spec, status: nil, passes: nil, findings: nil, gaps: [], plan: nil,
+                                     snapshot: nil, missed: [])
+        #expect(run.translationSource.origins == [.mergeRequest], "the origin the passes were checked under")
+        let pi = SendDestination(harness: .pi, provider: "github-copilot", account: "", org: "")
+        #expect(SendPolicy.decide(origin: .mergeRequest, destination: pi, isWork: true, allowed: []).allowed)
     }
 }
