@@ -28,9 +28,12 @@ final class ReviewModel {
         let estimate: Double
         let cap: Int
         var changedLines: Int?
+        /// Reasons not to review now: a draft, a failed pipeline, this commit already reviewed.
+        var concerns: [String]?
 
-        var title: String { changedLines == nil ? "Over the credit cap" : "A big change" }
+        var title: String { concerns != nil ? "Review it now?" : changedLines == nil ? "Over the credit cap" : "A big change" }
         var message: String {
+            if let concerns { return concerns.joined(separator: "\n") + "\n\nReview it anyway, or stop and come back later." }
             if let changedLines {
                 return "This change has \(changedLines) changed lines; the limit is \(cap). Reviews of big changes miss more: review it anyway, or stop and split it."
             }
@@ -47,6 +50,8 @@ final class ReviewModel {
     private(set) var mcpProblem: String?
     private(set) var checkingMCP = false
     var capQuestion: CapQuestion?
+    /// What the last Add to Eval Set did, under the run's actions.
+    var evalNotice: String?
     private var capAnswer: CheckedContinuation<Bool, Never>?
     private var task: Task<Void, Never>?
     /// Stop ends this review's Pi process, nothing else (Ask AKit has its own scope).
@@ -62,6 +67,7 @@ final class ReviewModel {
     }
 
     func open(_ id: String?) {
+        if id != run?.id { evalNotice = nil }
         guard let id else {
             run = nil
             return
@@ -126,6 +132,42 @@ final class ReviewModel {
     }
 
     /// The passes of a gathered run (again).
+    /// Add to Eval Set (R32): the run pinned at its head, with findings it must report or as clean.
+    func addToEvalSet(findings: [String]? = nil, clean: Bool = false) {
+        guard let run else { return }
+        evalNotice = nil
+        do {
+            let item = try ReviewEvalSet.add(run: run.folder, findings: findings, clean: clean, home: home)
+            log(clean ? "Added \(item.id) to the eval set as clean." : "Added \(item.id) to the eval set with \(item.expected.count) finding(s).")
+            evalNotice = clean ? "Added to the eval set as clean." : "Added to the eval set with \(item.expected.count) expected finding(s)."
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    /// Sync Outcomes (R31): one small pass reads the threads again.
+    func syncOutcomes(_ id: String) {
+        guard task == nil else { return }
+        activity = Activity(runID: id, title: "Reading the outcomes of the comments")
+        let scope = Cancellation.Scope()
+        self.scope = scope
+        let folder = ReviewPaths(home: home).run(id)
+        let env = env
+        task = Task { [weak self] in
+            await Cancellation.$scope.withValue(scope) {
+                do {
+                    let options = ReviewPasses.Options(progress: { line in Task { @MainActor in self?.log(line) } })
+                    let outcomes = try await ReviewOutcomes.sync(folder: folder, env: env, options: options)
+                    self?.log("Outcomes: " + ReviewOutcome.Kind.allCases.map { kind in "\(outcomes.filter { $0.kind == kind }.count) \(kind.rawValue)" }
+                        .joined(separator: ", "))
+                } catch {
+                    self?.problem = error.localizedDescription
+                }
+            }
+            self?.finish()
+        }
+    }
+
     func runPasses(_ id: String) {
         guard task == nil else { return }
         activity = Activity(runID: id, title: "Running the passes")
@@ -149,6 +191,8 @@ final class ReviewModel {
             await self?.ask(CapQuestion(estimate: estimate, cap: cap)) ?? false
         }, confirmLarge: { [weak self] lines, limit in
             await self?.ask(CapQuestion(estimate: 0, cap: limit, changedLines: lines)) ?? false
+        }, confirmConcerns: { [weak self] concerns in
+            await self?.ask(CapQuestion(estimate: 0, cap: 0, concerns: concerns)) ?? false
         }, progress: { [weak self] line in Task { @MainActor in self?.log(line) } })
         try await ReviewPasses.run(folder: folder, env: env, options: options)
     }

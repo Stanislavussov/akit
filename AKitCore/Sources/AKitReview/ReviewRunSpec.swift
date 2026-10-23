@@ -20,6 +20,8 @@ public struct ReviewRunChoices: Sendable, Hashable {
     public var extraServers: [String]
     /// Pi flags and steps for this run (`--pi-flag`, `--step`), on top of the brain's and the profile's.
     public var pi = ReviewPiExtras()
+    /// Review the whole merge request again, not only what changed since the last review (R28).
+    public var fullReview = false
 
     public init(scenario: String? = nil, rolesOn: [String] = [], rolesOff: [String] = [], settings: ReviewSettingsPatch = ReviewSettingsPatch(),
                 workItems: [Int] = [], notes: String = "", links: [String] = [], extraServers: [String] = []) {
@@ -101,9 +103,18 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
         public var severityThreshold: Sourced<ReviewSeverity>
         public var confidenceThreshold: Sourced<Double>
         public var maxInline: Sourced<Int>
+        /// nil in runs made before 2026-10-23: no limit of its own.
+        public var maxInlineMedium: Sourced<Int>?
     }
 
-    public var version = 1
+    /// 2 since 2026-10-23: the verifier's model is the user's choice (R25).
+    public var version = 2
+    /// The developer's own change (R33), set by Gather; nil before Gather and in older runs.
+    public var ownChange: Bool?
+    /// The user asked for the whole merge request again (Full review, `--full`).
+    public var fullReview: Bool?
+    /// A rerun after a push (R28), set by Gather: what changed since the last reviewed head.
+    public var rerun: ReviewRerunInfo?
     public var id: String
     public var created: Date
     public var mergeRequest: MergeRequestRef
@@ -151,6 +162,36 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
 
     /// The run's MCP access: the project's, or every server with the default rules.
     public var access: ReviewMCPAccess { mcp ?? ReviewMCPAccess() }
+}
+
+extension ReviewRunSpec {
+    /// The limits of a self-review: `low` findings too, and more of them inline.
+    public static let ownSeverity = ReviewSeverity.low
+    public static let ownMaxInline = 10
+
+    /// R33: a review of the developer's own change also lists `low` findings and has a higher
+    /// inline limit. Only built-in values change: what a brain, a profile or the run set stays.
+    public mutating func applyMode(own: Bool) {
+        ownChange = own
+        guard own else { return }
+        // A brain's review.yaml starts as a copy of the defaults: a default value there is no choice.
+        func untouched<T: Equatable>(_ value: Sourced<T>?, _ fallback: T) -> Bool {
+            guard let value else { return false }
+            return value.source == .builtIn || (value.source == .brain && value.value == fallback)
+        }
+        if untouched(posting.severityThreshold, .medium) { posting.severityThreshold = Sourced(Self.ownSeverity, .builtIn) }
+        if untouched(posting.maxInline, 5) { posting.maxInline = Sourced(Self.ownMaxInline, .builtIn) }
+        if untouched(posting.maxInlineMedium, 3) { posting.maxInlineMedium = Sourced(Self.ownMaxInline, .builtIn) }
+    }
+
+    /// Why the run can't start: the verifier's model is the user's choice (R25), so a run
+    /// without one stops before anything is spent. nil when it is set.
+    public var verifierProblem: String? {
+        // A run made before R25 had the passes' model (or Pi's default) as its verifier.
+        guard verifier.value.model.isEmpty, version >= 2 else { return nil }
+        return "No verifier model: set one for this run (Verifier model in New Review…, --verifier-model), in the project profile "
+            + "(review: { models: { verifier: … } }) or in review.yaml (models: verifier). Best a strong model of another family than the passes'."
+    }
 }
 
 /// Brain → project profile → one run (`docs/design/review.md`, "Levels").
@@ -210,10 +251,9 @@ public enum ReviewResolver {
             }
             return Sourced(value, source)
         }
-        var verifier = model(\.verifier)
+        let verifier = model(\.verifier)
         let passes = model(\.passes)
-        // An empty verifier model means "the passes' model".
-        if verifier.value.model.isEmpty { verifier.value.model = passes.value.model }
+        // The verifier's model is the user's choice (R25): an empty one stops the passes.
 
         // MCP servers: the profile's (or the defaults), plus context servers from the profile and the run.
         for server in choices.extraServers where !ReviewMCPAccess.isServerName(server) {
@@ -249,13 +289,15 @@ public enum ReviewResolver {
             posting: ReviewRunSpec.Posting(marker: pick(\.marker, fallback: "🤖"),
                                            severityThreshold: pick(\.severityThreshold, fallback: .medium),
                                            confidenceThreshold: pick(\.confidenceThreshold, fallback: 0.8),
-                                           maxInline: pick(\.maxInline, fallback: 7)),
+                                           maxInline: pick(\.maxInline, fallback: 5),
+                                           maxInlineMedium: pick(\.maxInlineMedium, fallback: 3)),
             capCredits: pick(\.capCredits, fallback: 150), constraints: profile?.constraints ?? [],
             pathInstructions: profile?.pathInstructions ?? [], knowledge: profile?.knowledge ?? [], gather: profile?.gather ?? [],
             workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: access)
         spec.notes = notes
         spec.links = links.isEmpty ? nil : links
         spec.mcpServers = servers
+        spec.fullReview = choices.fullReview ? true : nil
         spec.maxChangedLines = pick(\.maxChangedLines, fallback: 1500)
         let levels: [(ReviewPiExtras, ReviewSource)] = [(catalog.brainPi, .brain), (profile?.pi ?? ReviewPiExtras(), .project), (choices.pi, .run)]
         for (extras, _) in levels {
@@ -332,16 +374,23 @@ public enum ReviewResolver {
             (choice.model.isEmpty ? "Pi's default model" : choice.model) + (choice.thinking.isEmpty ? "" : " · thinking \(choice.thinking)")
         }
         var lines = ["Project profile: \(spec.project ?? "none")",
-                     line("scenario", spec.scenario.value, spec.scenario.source), "Roles:"]
+                     line("scenario", spec.scenario.value, spec.scenario.source)]
+        if let own = spec.ownChange {
+            lines.append(own ? "  mode: your own change (low findings too, up to \(ReviewRunSpec.ownMaxInline) inline)" : "  mode: a colleague's merge request")
+        }
+        lines.append("Roles:")
         lines += spec.roles.map {
             "  \($0.id) [\($0.source.rawValue)] \($0.reason); min \($0.minSeverity.rawValue), at most \($0.maxFindings) findings"
         }
         lines += ["Models:", line("passes", model(spec.passes.value), spec.passes.source),
-                  line("verifier", model(spec.verifier.value), spec.verifier.source), "Posting:",
+                  spec.verifier.value.model.isEmpty ? "  verifier: not set (required: --verifier-model or models.verifier)"
+                    : line("verifier", model(spec.verifier.value), spec.verifier.source), "Posting:",
                   line("marker", spec.posting.marker.value, spec.posting.marker.source),
                   line("severity_threshold", spec.posting.severityThreshold.value.rawValue, spec.posting.severityThreshold.source),
                   line("confidence_threshold", String(spec.posting.confidenceThreshold.value), spec.posting.confidenceThreshold.source),
-                  line("max_inline", String(spec.posting.maxInline.value), spec.posting.maxInline.source),
+                  line("max_inline", String(spec.posting.maxInline.value), spec.posting.maxInline.source)]
+        if let medium = spec.posting.maxInlineMedium { lines.append(line("max_inline_medium", String(medium.value), medium.source)) }
+        lines += [
                   "Cost:",
                   line("cap_credits_per_run", String(spec.capCredits.value), spec.capCredits.source)]
         if let size = spec.maxChangedLines { lines.append(line("max_changed_lines", String(size.value), size.source)) }
@@ -367,7 +416,8 @@ public enum ReviewResolver {
         }
         lines += ["  read: get_/list_/search_/… tools, tools marked read-only" + (access.read.isEmpty ? "" : ", " + access.read.joined(separator: ", ")),
                   "  write (Send Drafts only): " + access.write.joined(separator: ", "),
-                  "  in passes: " + (access.inPasses ? "yes" : "no, only the fetch pass")]
+                  "  in passes: " + (!access.inPasses ? "no, only the fetch pass"
+                    : access.allServers ? "every server of your Pi, reading tools only (browser, file and web fetch servers only when named)" : "yes")]
         if let tracker = spec.tracker { lines += ["Tracker [project]: \(tracker.kind) \(tracker.org)/\(tracker.project), work items \(tracker.wiRefRegex)"] }
         if let flags = spec.piFlags {
             lines += ["Pi flags:"] + flags.map { "  \($0.value.joined(separator: " "))  [\($0.source.rawValue)]" }

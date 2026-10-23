@@ -13,14 +13,18 @@ extension AKitCLI {
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
-                         [--gather-only] [--over-cap]
+                         [--gather-only] [--over-cap] [--anyway] [--full]
                                         Gather: Pi reads the merge request and its work items through
                                         its MCP servers; AKit adds the worktree at head_sha, the diff,
                                         history, commands and knowledge into a context pack. Then the
                                         passes run in Pi (brief, roles, verifier).
                                         --over-cap goes on when the estimate is over the credit cap
                                         or the change over max_changed_lines (default 1500;
-                                        --max-changed-lines N sets it for this run)
+                                        --max-changed-lines N sets it for this run). --anyway goes on
+                                        when the merge request is a draft, its pipeline failed, or AKit
+                                        already reviewed this commit. A rerun after a push reviews
+                                        only what changed since the last review; --full reads the
+                                        whole merge request again
       akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
@@ -48,7 +52,7 @@ extension AKitCLI {
                                         --name, --exclude-tools, --no-approve, --verbose)
       akit review pi                    Your Pi subagents, prompt templates and skills a step can run,
                                         and the flags a pass may take (from pi --help)
-      akit review passes RUN [--over-cap]
+      akit review passes RUN [--over-cap] [--anyway]
                                         Run the passes again on a gathered run
       akit review show RUN              The run: passes, the requests with their decisions, what stays
                                         in AKit, the context gaps
@@ -67,6 +71,15 @@ extension AKitCLI {
                                         session) and print how to start it
       akit review apply RUN             Make a new version of the findings from what Pi submitted in
                                         the discussion; the requests are planned again
+      akit review eval [list]           The eval set: merge requests pinned at a commit, with the
+                                        findings a good review must report, or clean
+      akit review eval add RUN [--clean] [--finding ID]… [--note TEXT]
+                                        Add a run: its approved findings, the named ones, or clean
+      akit review eval remove ID        Take a case out of the eval set
+      akit review outcomes [RUN] [--sync]
+                                        What became of the 🤖 threads in GitLab (fixed, dismissed,
+                                        ignored, open) and the share accepted by role and model;
+                                        --sync reads RUN's threads again first (one small pass)
       akit review quality               Precision by role, scenario and model from your verdicts
       akit review runs                  Every run on this Mac, newest first
       akit review config show [--project P] [--mr MR-URL] [--scenario S] [--brain DIR]
@@ -112,6 +125,7 @@ extension AKitCLI {
         let fileText = args.value("--file")
         let lineText = args.value("--line")
         let overCap = args.flag("--over-cap")
+        let anyway = args.flag("--anyway")
         let baseRef = args.value("--base")
         let whatText = args.value("--what")
         let showOnly = args.flag("--show")
@@ -131,6 +145,7 @@ extension AKitCLI {
         }
         choices.pi = ReviewPiExtras(flags: piFlags, steps: args.values("--step").map { ReviewStepConfig(command: $0) })
         if let problem = ReviewPiFlags.problem(piFlags) { throw Failure(message: "--pi-flags: \(problem)") }
+        choices.fullReview = args.flag("--full")
         choices.extraServers = args.values("--extra-server").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
             .filter { !$0.isEmpty }
         for change in roleChanges {
@@ -168,7 +183,7 @@ extension AKitCLI {
             let report = try await ReviewMCPCheck.run(env: env, access: access)
             out(mcpCheckText(report, access: access, project: profile?.slug))
             let connected = report.servers.filter { $0.enabled && $0.state == "connected" }
-            return connected.contains(where: { $0.count(.read) > 0 }) ? 0 : 1
+            return connected.contains(where: { $0.count(.read) > 0 && access.isBase(server: $0.name) }) ? 0 : 1
         case "show":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review show RUN.") }
             try args.finish()
@@ -264,6 +279,49 @@ extension AKitCLI {
             try args.finish()
             out(qualityText(ReviewQuality.entries(home: env.homeDirectory)))
             return 0
+        case "eval":
+            switch args.positional() {
+            case nil, "list":
+                try args.finish()
+                out(evalText(ReviewEvalSet.load(home: env.homeDirectory)))
+            case "add":
+                let clean = args.flag("--clean")
+                let findings = args.values("--finding")
+                let note = args.value("--note") ?? ""
+                guard let id = args.positional() else { throw Failure(message: "Which run? akit review eval add RUN [--clean | --finding ID…].") }
+                if clean, !findings.isEmpty { throw Failure(message: "--clean expects nothing: drop --finding, or drop --clean.") }
+                try args.finish()
+                let item = try ReviewEvalSet.add(run: try runFolder(id, env: env), findings: findings.isEmpty ? nil : findings, clean: clean,
+                                                 note: note, home: env.homeDirectory)
+                out(item.clean ? "Added \(item.id) as clean." : "Added \(item.id) with \(item.expected.count) expected finding(s).")
+            case "remove":
+                guard let id = args.positional() else { throw Failure(message: "Which case? akit review eval remove ID.") }
+                try args.finish()
+                try ReviewEvalSet.remove(id, home: env.homeDirectory)
+                out("Removed \(id).")
+            case let other?:
+                throw Failure(message: "akit review eval: unknown \(other) (list, add, remove).")
+            }
+            return 0
+        case "outcomes":
+            let sync = args.flag("--sync")
+            let id = args.positional()
+            try args.finish()
+            if sync {
+                guard let id else { throw Failure(message: "Which run? akit review outcomes RUN --sync.") }
+                let lines = LineBox()
+                do {
+                    _ = try await ReviewOutcomes.sync(folder: try runFolder(id, env: env), env: env, options: .init(progress: { lines.add($0) }))
+                } catch {
+                    lines.drain(out)
+                    throw Failure(message: error.localizedDescription)
+                }
+                lines.drain(out)
+            }
+            // With a run: the threads of its merge request.
+            let url = try id.map { try ReviewWorkflow.load(try runFolder($0, env: env)).spec.mergeRequest.url }
+            out(outcomesText(ReviewOutcomes.all(home: env.homeDirectory).filter { url == nil || $0.mergeRequest == url }))
+            return 0
         case "local":
             let path = args.positional().map { resolve($0, cwd: cwd, env: env) } ?? cwd
             try args.finish()
@@ -292,7 +350,7 @@ extension AKitCLI {
             lines.drain(out)
             out(gatherSummary(result))
             if gatherOnly { return 0 }
-            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
+            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, anyway: anyway, env: env, out: out)
         case "pi":
             try args.finish()
             let library = ReviewPiLibrary.load(env: env)
@@ -312,7 +370,7 @@ extension AKitCLI {
         case "passes":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review passes RUN.") }
             try args.finish()
-            return try await runPasses(folder: try runFolder(id, env: env), overCap: overCap, env: env, out: out)
+            return try await runPasses(folder: try runFolder(id, env: env), overCap: overCap, anyway: anyway, env: env, out: out)
         case let text?:
             let mr = try mergeRequest(text)
             try args.finish()
@@ -328,7 +386,7 @@ extension AKitCLI {
             lines.drain(out)
             out(gatherSummary(result))
             if gatherOnly { return 0 }
-            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
+            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, anyway: anyway, env: env, out: out)
         case nil:
             throw Failure(message: "Which merge request? akit review MR-URL.")
         }
@@ -343,16 +401,20 @@ extension AKitCLI {
         return folder
     }
 
-    static func runPasses(folder: URL, overCap: Bool, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+    static func runPasses(folder: URL, overCap: Bool, anyway: Bool = false, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
         let lines = LineBox()
         let options = ReviewPasses.Options(confirmOverCap: overCap ? { @Sendable _, _ in true } : nil,
-                                           confirmLarge: overCap ? { @Sendable _, _ in true } : nil, progress: { lines.add($0) })
+                                           confirmLarge: overCap ? { @Sendable _, _ in true } : nil,
+                                           confirmConcerns: anyway ? { @Sendable _ in true } : nil, progress: { lines.add($0) })
         let findings: ReviewFindingsFile
         do {
             findings = try await ReviewPasses.run(folder: folder, env: env, options: options)
         } catch {
             lines.drain(out)
-            throw Failure(message: error.localizedDescription + (error.localizedDescription.contains("over the cap") || error.localizedDescription.contains("over the limit of") ? " Add --over-cap to go on." : ""))
+            let text = error.localizedDescription
+            let hint = text.contains("over the cap") || text.contains("over the limit of") ? " Add --over-cap to go on."
+                : text.contains("is a draft") || text.contains("Its pipeline") || text.contains("already reviewed this commit") ? " Add --anyway to go on." : ""
+            throw Failure(message: text + hint)
         }
         lines.drain(out)
         let log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
@@ -387,8 +449,12 @@ extension AKitCLI {
         var lines = ["Pi's MCP servers" + (project.map { " for project \($0)" } ?? "") + " (pi mcp list):"]
         if report.servers.isEmpty { lines.append("  none. Add your GitLab and tracker servers to Pi: pi mcp add …") }
         for server in report.servers {
-            let used = access.allows(server: server.name)
-            let role = access.isExtra(server: server.name) ? " · context server, read only" : used ? "" : " · not used by this project"
+            let used = access.allows(server: server.name, inPasses: access.inPasses)
+            let role = access.isExtra(server: server.name) ? " · context server, read only"
+                : access.isBase(server: server.name) ? ""
+                : used ? " · read only, in the brief, roles and verifier (all_servers)"
+                : ReviewMCPAccess.isRisky(server: server.name) && access.allServers ? " · not used: name it as a context server to use it"
+                : " · not used by this project"
             lines.append("  \(server.name): \(server.enabled ? server.state : "disabled")" + role
                          + " · \(server.tools.count) tools: \(server.count(.read)) read, \(server.count(.write)) write drafts, \(server.count(.blocked)) blocked")
             if let warning = ReviewMCPAccess.warning(forServer: server.name), !access.isBase(server: server.name) {
@@ -404,8 +470,8 @@ extension AKitCLI {
                          + "and Send Drafts may write with it.")
         }
         for error in report.errors { lines.append("  error: \(error)") }
-        if !report.servers.contains(where: { $0.enabled && $0.state == "connected" && $0.count(.read) > 0 }) {
-            lines.append("No connected server has a tool review may read with: a review can't start.")
+        if !report.servers.contains(where: { $0.enabled && $0.state == "connected" && $0.count(.read) > 0 && access.isBase(server: $0.name) }) {
+            lines.append("No connected GitLab or tracker server has a tool review may read with: a review can't start.")
         }
         lines.append("A tool its server marks read-only also reads in a run, whatever its name.")
         return lines.joined(separator: "\n")
@@ -420,9 +486,10 @@ extension AKitCLI {
             lines += passes.passes.map { "  \($0.name): " + ($0.error.map { "failed: \($0)" } ?? String(format: "%.1f credits", $0.credits)) }
         }
         lines.append(requestsText(run))
-        let hidden = run.plan?.placements.filter { $0.place == .onlyInAKit } ?? []
-        if !hidden.isEmpty {
-            lines.append("Only in AKit:")
+        for (place, title) in [(ReviewPlacement.Place.onlyInAKit, "Only in AKit:"), (.preExisting, "Before this MR (never posted):")] {
+            let hidden = run.plan?.placements.filter { $0.place == place } ?? []
+            guard !hidden.isEmpty else { continue }
+            lines.append(title)
             lines += hidden.map { placement in
                 let finding = run.finding(placement.findingID)
                 return "  \(placement.findingID) \(finding.map { "\($0.title) (\($0.role), \($0.finalSeverity.rawValue))" } ?? ""): \(placement.reason)"
@@ -465,6 +532,30 @@ extension AKitCLI {
         }
         let missed = entries.filter { $0.label == .missed }.count
         if missed > 0 { lines.append("Missed (added by you): \(missed)") }
+        return lines.joined(separator: "\n")
+    }
+
+    static func evalText(_ cases: [ReviewEvalCase]) -> String {
+        guard !cases.isEmpty else { return "The eval set is empty: akit review eval add RUN, or Add to Eval Set on a run." }
+        return (["Eval set (\(cases.count)):"] + cases.map { item in
+            "  \(item.id): \(item.mergeRequest) at \(item.headSHA.prefix(10)), \(item.scenario); "
+                + (item.clean ? "clean" : item.expected.map { "\($0.file ?? "-")\($0.line.map { ":\($0)" } ?? "") \($0.title)" }.joined(separator: "; "))
+        }).joined(separator: "\n")
+    }
+
+    static func outcomesText(_ outcomes: [ReviewOutcome]) -> String {
+        guard !outcomes.isEmpty else { return "No outcomes yet: a rerun of a merge request, or akit review outcomes RUN --sync, reads them." }
+        let rates = ReviewOutcomes.rates(outcomes)
+        func table(_ title: String, _ rows: [ReviewOutcomes.Rate]) -> [String] {
+            [title] + rows.map { row in
+                "  \(row.key): " + (row.accepted.map { String(format: "%.0f%%", $0 * 100) } ?? "–")
+                    + " accepted (\(row.fixed) fixed, \(row.dismissed) dismissed, \(row.ignored) ignored, \(row.open) open)"
+            }
+        }
+        var lines = table("Outcomes in GitLab by role:", rates.roles) + table("By model:", rates.models)
+        for outcome in outcomes where !outcome.replies.isEmpty {
+            lines.append("  \(outcome.kind.rawValue) \(outcome.file ?? "")\(outcome.line.map { ":\($0)" } ?? ""): " + outcome.replies.joined(separator: " / "))
+        }
         return lines.joined(separator: "\n")
     }
 

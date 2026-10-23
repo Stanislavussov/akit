@@ -92,6 +92,9 @@ public struct ReviewPlacement: Codable, Sendable, Hashable {
         case dismissed
         /// Stays in AKit with the reason.
         case onlyInAKit
+        /// The problem was there before the merge request (R23): never in GitLab, listed under
+        /// "Before this MR" for a task of its own.
+        case preExisting
     }
 
     public var findingID: String
@@ -126,10 +129,14 @@ public enum ReviewPlanner {
         public var scrub: Scrubber.OwnPatterns
         /// Findings the user moved inline by hand, by id.
         public var forcedInline: Set<String> = []
+        /// A rerun's fingerprints of earlier findings it didn't carry, on lines the push didn't
+        /// touch (`rerun-kept.json`): their threads aren't fixed.
+        public var keptFingerprints: Set<String> = []
 
         public init(spec: ReviewRunSpec, findings: [ReviewFinding], gaps: [ContextGap], diffs: [GitLabFileDiff],
                     refs: GitLabMergeRequest.DiffRefs, drafts: [GitLabDraft], discussions: [GitLabDiscussion], user: String,
-                    scrub: Scrubber.OwnPatterns, forcedInline: Set<String> = []) {
+                    scrub: Scrubber.OwnPatterns, forcedInline: Set<String> = [], keptFingerprints: Set<String> = []) {
+            self.keptFingerprints = keptFingerprints
             self.spec = spec
             self.findings = findings
             self.gaps = gaps
@@ -184,6 +191,17 @@ public enum ReviewPlanner {
             if let thread = finding.fingerprints.lazy.compactMap({ published[$0] }).first, thread.isResolved {
                 dismissed.append(finding)
                 place(.dismissed, "Already raised by AKit and resolved by a person: never raised again.")
+                continue
+            }
+            if finding.isPreExisting, !input.forcedInline.contains(finding.id) {
+                place(.preExisting, "Already there before this merge request: not the author's change. Move it inline to post it anyway.")
+                continue
+            }
+            // A rerun (R28) reviews only what changed since the last review; earlier findings carry over.
+            if let rerun = spec.rerun, finding.carriedFrom == nil, finding.role != ReviewScan.role, !input.forcedInline.contains(finding.id),
+               finding.verifier?.note != ReviewDiscuss.addedNote, !rerun.touches(file: finding.file, line: finding.line) {
+                place(.onlyInAKit, "Not on a line changed since the last review (\(rerun.previousHead.prefix(10))): a rerun raises only "
+                      + "what the push changed. Move it inline to post it anyway.")
                 continue
             }
             if finding.kind == .question || verdict == .question {
@@ -243,15 +261,25 @@ public enum ReviewPlanner {
             if a.0.finalSeverity != b.0.finalSeverity { return a.0.finalSeverity > b.0.finalSeverity }
             return a.0.finalConfidence > b.0.finalConfidence
         }
-        for (index, candidate) in inlineCandidates.enumerated() {
-            if index < posting.maxInline.value || input.forcedInline.contains(candidate.0.id) {
+        // `medium` has a cap of its own inside the inline cap (R26).
+        var taken = 0, takenMedium = 0
+        for candidate in inlineCandidates {
+            let forced = input.forcedInline.contains(candidate.0.id)
+            let medium = candidate.0.finalSeverity <= .medium
+            let mediumCap = posting.maxInlineMedium?.value
+            if forced || (taken < posting.maxInline.value && !(medium && mediumCap.map { takenMedium >= $0 } == true)) {
+                // The user's own picks go inline over the caps, and still take their places in them.
+                taken += 1
+                if medium { takenMedium += 1 }
                 inline.append((candidate.0, candidate.1))
                 placements.append(ReviewPlacement(findingID: candidate.0.id, place: .inline,
-                                                  reason: input.forcedInline.contains(candidate.0.id) ? "Moved inline by you." : "Confirmed and over the thresholds."))
+                                                  reason: forced ? "Moved inline by you." : "Confirmed and over the thresholds."))
             } else {
                 overCap.append(candidate.0)
-                placements.append(ReviewPlacement(findingID: candidate.0.id, place: .summary,
-                                                  reason: "Over the cap of \(posting.maxInline.value) inline comments: one line in the summary."))
+                let reason = taken >= posting.maxInline.value
+                    ? "Over the cap of \(posting.maxInline.value) inline comments: one line in the summary."
+                    : "Over the cap of \(mediumCap ?? 0) inline comments of medium severity or lower: one line in the summary."
+                placements.append(ReviewPlacement(findingID: candidate.0.id, place: .summary, reason: reason))
             }
         }
 
@@ -298,7 +326,8 @@ public enum ReviewPlanner {
         }
         // Gone means no finding of this run has it, whatever its place: one held back by a threshold
         // is still there. A thread that has AKit's reply already gets no second one.
-        let current = Set(input.findings.flatMap(\.fingerprints))
+        // An earlier finding the verifier checked again and rejected (R28) is fixed: gone too.
+        let current = Set(input.findings.filter { !$0.isFixed(on: spec.rerun) }.flatMap(\.fingerprints)).union(input.keptFingerprints)
         for (fp, discussion) in published.sorted(by: { $0.key < $1.key }) where !discussion.isResolved && !current.contains(fp) {
             let replied = discussion.notes.contains { $0.author == input.user && ReviewNotes.parseMeta($0.body)?["kind"] == "reply" }
             if replied { continue }

@@ -192,6 +192,8 @@ struct ReviewRunDetail: View {
                 }
                 requestsSection
                 onlyInAKit
+                hiddenFindings(.preExisting, title: "Before this MR",
+                               help: "Problems already there before this merge request: not the author's change. Make a task of its own for them.")
                 gaps
                 missed
             }
@@ -237,6 +239,9 @@ struct ReviewRunDetail: View {
         }
         if let place = model.discussOpenedIn {
             Text("Discuss in Pi… opened in \(place). Changes Pi submits there show up here.").font(.caption).foregroundStyle(.secondary)
+        }
+        if let notice = model.evalNotice {
+            Text(notice).font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -348,9 +353,14 @@ struct ReviewRunDetail: View {
     }
 
     @ViewBuilder private var onlyInAKit: some View {
-        let hidden = (run.plan?.placements ?? []).filter { $0.place == .onlyInAKit }
+        hiddenFindings(.onlyInAKit, title: "Only in AKit", help: nil)
+    }
+
+    /// Findings of one place that don't go to GitLab, each with its reason and Move Inline.
+    @ViewBuilder private func hiddenFindings(_ place: ReviewPlacement.Place, title: String, help: String?) -> some View {
+        let hidden = (run.plan?.placements ?? []).filter { $0.place == place }
         if !hidden.isEmpty {
-            DisclosureGroup("Only in AKit (\(hidden.count))") {
+            DisclosureGroup("\(title) (\(hidden.count))") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(hidden, id: \.findingID) { placement in
                         if let finding = run.finding(placement.findingID) {
@@ -363,6 +373,10 @@ struct ReviewRunDetail: View {
                                     Text(placement.reason).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                                if run.spec.local == nil {
+                                    Button("Expect in Eval Set") { model.addToEvalSet(findings: [finding.id]) }
+                                        .help("Add this run to the eval set with this finding as one a good review must report (the filter missed it here)")
+                                }
                                 Button("Move Inline") { model.moveInline(finding) }
                                     .help("Make it an inline draft anyway; AKit learns that its filter missed it (missed-by-filter)")
                                     .disabled(finding.file == nil)
@@ -372,6 +386,7 @@ struct ReviewRunDetail: View {
                 }
                 .padding(.top, 4)
             }
+            .help(help ?? "")
         }
     }
 
@@ -406,6 +421,21 @@ struct ReviewRunDetail: View {
         HStack {
             Button("Add Missed…") { showMissed = true }
                 .help("Something the reviewer should have found: it improves the roles, never goes to GitLab")
+            if run.spec.local == nil, run.findings != nil, run.spec.headSHA != nil {
+                let approved = (run.plan?.requests ?? []).filter { $0.decision == .approved && $0.findingID != nil }.count
+                Menu("Add to Eval Set") {
+                    Button("With the Approved Findings (\(approved))") { model.addToEvalSet() }
+                        .disabled(approved == 0)
+                    Button("As Clean: Nothing to Find") { model.addToEvalSet(clean: true) }
+                }
+                .fixedSize()
+                .help("Keep this merge request, pinned at its commit, to check later reviews against: the findings a good review must report, or none. Review → Quality lists the set.")
+            }
+            if run.spec.local == nil, run.snapshot != nil {
+                Button("Sync Outcomes") { model.syncOutcomes(run.id) }
+                    .disabled(model.isBusy)
+                    .help("Read this merge request's threads again (one small pass) and record what became of each 🤖 comment: fixed, dismissed, ignored or open. Review → Quality shows the numbers.")
+            }
             Button("Discuss in Pi…") { model.discuss() }
                 .help("Open Pi in a terminal with the whole review (a fork of the verifier's session). What it submits becomes a new version here.")
                 .disabled(run.passes?.verifierSession == nil && run.passes == nil)

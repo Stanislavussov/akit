@@ -71,7 +71,8 @@ public enum ReviewWorkflow {
         let forced = Set(ReviewJSON.read([String].self, from: folder.appending(path: "forced-inline.json")) ?? [])
         var plan = ReviewPlanner.plan(.init(spec: run.spec, findings: findings.findings, gaps: run.gaps, diffs: snapshot.diffs, refs: refs,
                                             drafts: snapshot.drafts, discussions: snapshot.discussions, user: snapshot.user,
-                                            scrub: LabSettings.load(env: env).scrub, forcedInline: forced),
+                                            scrub: LabSettings.load(env: env).scrub, forcedInline: forced,
+                                            keptFingerprints: Set(ReviewJSON.read([String].self, from: folder.appending(path: "rerun-kept.json")) ?? [])),
                                       findingsVersion: findings.version)
         if let old = run.plan {
             for index in plan.requests.indices {
@@ -92,6 +93,11 @@ public enum ReviewWorkflow {
         for index in plan.requests.indices { plan.requests[index].id = "r\(start + index + 1)" }
         plan.requests = sent + plan.requests
         try ReviewJSON.write(plan, to: folder.appending(path: "requests.json"))
+        // What became of AKit's published threads, as this run's fetch read them (R31).
+        if run.spec.local == nil {
+            try? ReviewOutcomes.write(folder: folder, run: try load(folder), discussions: snapshot.discussions, mergeRequest: snapshot.mergeRequest,
+                                      head: refs.headSHA, user: snapshot.user, home: env.homeDirectory, checked: snapshot.gathered)
+        }
         return plan
     }
 

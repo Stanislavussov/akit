@@ -30,6 +30,7 @@ struct NewReviewSheet: View {
     @State private var verifierModel = ""
     @State private var cap = ""
     @State private var maxChangedLines = ""
+    @State private var fullReview = false
     @State private var notes = ""
     @State private var links = ""
     @State private var extraServers: Set<String> = []
@@ -53,8 +54,15 @@ struct NewReviewSheet: View {
     private var checkedLinks: Result<[String], Error> { Result { try ReviewContext.links([links]) } }
     /// The project's MCP rules (or the defaults): its own servers and its context servers.
     private var access: ReviewMCPAccess { profile?.mcp ?? ReviewMCPAccess() }
+    /// The verifier's model from the configuration (brain, then the project profile); empty when none.
+    private var configuredVerifier: String {
+        [profile?.settings.verifier?.model, catalog?.brainDefaults.verifier?.model, catalog?.builtInDefaults.verifier?.model]
+            .compactMap { $0 }.first { !$0.isEmpty } ?? ""
+    }
     private var canStart: Bool {
         guard !model.isBusy, (try? checkedLinks.get()) != nil, flagsProblem == nil else { return false }
+        // The verifier's model is the user's choice (R25).
+        guard !verifierModel.trimmingCharacters(in: .whitespaces).isEmpty || !configuredVerifier.isEmpty else { return false }
         return switch source {
         case .mergeRequest: mr != nil
         case .local: inspection?.has(mode) == true
@@ -115,9 +123,20 @@ struct NewReviewSheet: View {
                 piSection
                 Section("This run only") {
                     TextField("Model for the brief and roles", text: $passesModel, prompt: Text("provider/model, e.g. github-copilot/… (empty: from the configuration)"))
-                    TextField("Verifier model", text: $verifierModel, prompt: Text("a strong model (empty: from the configuration)"))
+                    TextField("Verifier model", text: $verifierModel,
+                              prompt: Text(configuredVerifier.isEmpty ? "required: a strong model, best of another family" : "empty: \(configuredVerifier)"))
+                    if verifierModel.trimmingCharacters(in: .whitespaces).isEmpty, configuredVerifier.isEmpty {
+                        Text("No verifier model is configured: name one here, or in Review Settings… (models: verifier). A model of another "
+                             + "family than the roles' checks their findings best.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     TextField("Credit cap", text: $cap, prompt: Text("empty: from the configuration"))
                     TextField("Max changed lines", text: $maxChangedLines, prompt: Text("over it the review asks first (empty: from the configuration)"))
+                    if source == .mergeRequest {
+                        Toggle("Full review", isOn: $fullReview)
+                            .help("A rerun after a push reviews only what changed since the last review and carries the earlier findings. "
+                                  + "On: read the whole merge request again.")
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -402,9 +421,11 @@ struct NewReviewSheet: View {
         var choices = ReviewRunChoices(scenario: scenario.isEmpty ? nil : scenario, rolesOn: Array(rolesOn), rolesOff: Array(rolesOff))
         choices.workItems = workItems.split(whereSeparator: { ", #".contains($0) }).compactMap { Int($0) }
         if !passesModel.isEmpty { choices.settings.passes = ReviewModelChoice(model: passesModel) }
-        if !verifierModel.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifierModel) }
+        let verifier = verifierModel.trimmingCharacters(in: .whitespaces)
+        if !verifier.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifier) }
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
         if let value = Int(maxChangedLines), value > 0 { choices.settings.maxChangedLines = value }
+        choices.fullReview = fullReview
         choices.notes = notes
         choices.links = (try? checkedLinks.get()) ?? []
         choices.extraServers = extraServers.sorted()
@@ -478,6 +499,18 @@ struct ReviewSettingsSheet: View {
                             Button("Save Extra Servers…") { planExtras() }
                         }
                     }
+                    if profile != nil {
+                        Toggle("Every Pi server in the review passes", isOn: Binding(get: { access.allServers }, set: { on in
+                            do {
+                                save = try ReviewConfigEditor.allServers(on, profile: rules, home: model.home, brain: brain)
+                            } catch {
+                                message = error.localizedDescription
+                            }
+                        }))
+                        .help("mcp: all_servers. On: the brief, roles and verifier also read through your other Pi servers (context7 for docs, a wiki), "
+                              + "only with tools named or marked as reading and only short queries; browser, file, fetch, secret and database servers "
+                              + "only when ticked as Context server. Off: only GitLab, the tracker and context servers.")
+                    }
                 } header: {
                     Text("Pi's MCP servers")
                 } footer: {
@@ -549,9 +582,11 @@ struct ReviewSettingsSheet: View {
     /// One of Pi's servers as this profile's review sees it; a server that isn't GitLab or the
     /// tracker can be ticked as a context server.
     @ViewBuilder private func serverRow(_ server: ReviewMCPCheck.Server) -> some View {
-        let kinds = server.tools.map { (name: $0.name, kind: ReviewMCPPolicy.kind(server: server.name, tool: $0.name, access: effective)) }
+        let kinds = server.tools.map { (name: $0.name, kind: ReviewMCPPolicy.kind(server: server.name, tool: $0.name, access: effective,
+                                                                                  inPasses: effective.inPasses)) }
         let base = effective.isBase(server: server.name)
         let context = effective.isExtra(server: server.name)
+        let open = !base && !context && effective.allows(server: server.name, inPasses: effective.inPasses)
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Image(systemName: server.state == "connected" && server.enabled ? "circle.fill" : "circle")
@@ -564,8 +599,14 @@ struct ReviewSettingsSheet: View {
                          + (context ? "" : " · \(kinds.filter { $0.kind == .write }.count) write drafts")
                          + " · \(kinds.filter { $0.kind == .blocked }.count) blocked")
                         .font(.caption).foregroundStyle(.secondary)
+                } else if open {
+                    Text("read in the brief, roles and verifier · \(kinds.filter { $0.kind == .read }.count) read · "
+                         + "\(kinds.filter { $0.kind == .blocked }.count) blocked")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .help("Every server of your Pi reads in the review passes (all_servers), only with tools named or marked as reading, and only short queries.")
                 } else {
-                    Text("not used by this project").font(.caption).foregroundStyle(.secondary)
+                    Text(ReviewMCPAccess.isRisky(server: server.name) ? "not used: tick Context server to use it" : "not used by this project")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 if profile != nil, !base {
                     Toggle("Context server", isOn: Binding(get: { context }, set: { on in
@@ -626,6 +667,7 @@ enum ReviewProfileTemplate {
     #   read: []                           # more reading tools, e.g. ["wit_get_*"]; get_/list_/search_… read anyway
     #   write: ["*draft_note*"]            # the tools Send Drafts may call; only approved text passes
     #   in_passes: true                    # the brief, roles and verifier may read through MCP too
+    #   all_servers: true                  # …through every server of your Pi (browser, file and fetch servers only when named)
     #   extra_servers: [figma]             # context servers on top (Figma, Confluence, a wiki): read only, in every run
     default_scenario: feature              # feature, bugfix, dependency-upgrade
     knowledge: []                          # markdown folders, e.g. [~/notes/my-service]
@@ -633,7 +675,7 @@ enum ReviewProfileTemplate {
     constraints: []                        # e.g. - "Public DTOs change only in backward-compatible ways"
     path_instructions: []                  # e.g. - { paths: ["**/*.generated.ts"], ignore: true }
     roles: { off: [], add: [] }            # project roles live in projects/<id>/skills/review-<role>/SKILL.md
-    review: {}                             # e.g. { max_inline: 5, confidence_threshold: 0.85 }
+    review: {}                             # e.g. { max_inline: 5, max_inline_medium: 3, models: { verifier: provider/model } }
     # pi:                                  # your Pi set-up in every run of this project (akit review pi lists it)
     #   flags: ["--exclude-tools", "find"]
     #   steps: ["/run reviewer", { run: "/skill:security-audit", max_findings: 3 }]

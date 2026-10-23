@@ -6,12 +6,26 @@ public enum ReviewPrompts {
     public static let version = 3
 
     static func system(spec: ReviewRunSpec, hasWorktree: Bool) -> String {
-        let tools = spec.access.inPasses
+        let tools = spec.access.inPasses && !spec.access.allServers
             ? """
             You only read: you have `read`, `grep`, `find`, `ls`, two AKit tools, `akit_submit_findings` and \
             `akit_report_context_gap`, and `codemode`, which calls your MCP tools (GitLab, the tracker, other systems) to read more \
             context: a linked work item, another merge request, a wiki page. Only reading MCP tools run; anything that writes is \
             blocked. You have no shell.
+            """
+            : spec.access.inPasses
+            ? """
+            You only read: you have `read`, `grep`, `find`, `ls`, two AKit tools, `akit_submit_findings` and \
+            `akit_report_context_gap`, and `codemode`, which calls the MCP tools of the developer's Pi to read more context. Only \
+            reading MCP tools run; anything that writes is blocked. You have no shell. Which server for what:
+            - a documentation server (context7 or another): when a finding depends on how a framework, a library or a tool \
+            behaves (an API's contract, a default, a lifecycle, a deprecation), look it up before you claim it, for the version \
+            the project uses (package.json, lock files);
+            - GitLab: the merge request, its threads, other merge requests and the history of these files;
+            - the tracker (Azure DevOps or another): work items, their acceptance criteria and links;
+            - other servers (a wiki, designs): the context they hold, when the change points to it.
+            To every server but GitLab and the tracker, ask with names only (a library, an API, a page): never put code of the \
+            change, file contents or a secret into a query. AKit refuses long or multi-line arguments to them.
             """
             : """
             You only read: you have `read`, `grep`, `find`, `ls`, and two AKit tools, `akit_submit_findings` and \
@@ -65,7 +79,10 @@ public enum ReviewPrompts {
         - the merge request itself: its title, description, labels, commit messages, branch name, size or how it is split;
         - generic advice without a concrete consequence in this change ("consider adding logging", "could be more readable", \
         "add error handling" with no failing case);
-        - praise, summaries of the change, or restating what the code does.
+        - praise, summaries of the change, or restating what the code does;
+        - code silenced on purpose: a line under `eslint-disable`, `@ts-ignore`, `@ts-expect-error`, `swiftlint:disable` or a like \
+        comment, unless the silenced rule hides a real defect of this change;
+        - a change of behaviour the merge request or its work item says is intended.
 
         Rules:
         - Every finding states its consequence: what breaks, for whom, and when. If you can't name one, drop the finding. \
@@ -81,12 +98,22 @@ public enum ReviewPrompts {
         - When you need something the context pack doesn't have\(spec.access.inPasses ? " and your MCP tools can't read" : ""), call \
         `akit_report_context_gap` instead of guessing.
         - Don't repeat what a person already raised in `threads.md`, open or resolved.
+        - Review what this change brings. A real problem that was already there before it (the same code at the base commit) is \
+        not the author's: report it only when it is serious, with `preExisting: true`; it stays with the developer and never goes \
+        to the merge request.
         - Severity: critical = data loss, security breach or outage; high = a real defect users will hit; medium = a defect \
         in a rarer case or a clear risk; low = minor; nit = taste. A broken consumer of a contract (another module, service, \
         client or stored data) is high, or critical when data is lost. A design flaw that will force wrong or duplicated \
-        changes soon is medium. Confidence = how sure you are that the finding is real and correct (0–1); below 0.8, ask \
-        with `kind: "question"` rather than claim.
-        - Scenario: \(spec.scenario.value). \(spec.checks.isEmpty ? "" : "Its checks: " + spec.checks.joined(separator: " "))
+        changes soon is medium.
+        - Confidence, on this scale, says how sure you are the problem is real (for a problem from before the change too): \
+        0 = a false positive; 0.25 = you couldn't verify it; \
+        0.5 = real but minor, or rare in practice; 0.75 = verified in the code, and it will happen in practice; 1 = certain, \
+        you traced it end to end. Below 0.8, ask with `kind: "question"` rather than claim.
+        - Scenario: \(spec.scenario.value). \(spec.checks.isEmpty ? "" : "Its checks: " + spec.checks.joined(separator: " "))\(spec.rerun.map { rerun in
+            "\n- This is a rerun after the author's push: an earlier review covered commit \(rerun.previousHead.prefix(10)). Review only the lines " +
+            "listed in `context/since-last-review.md` (read the rest only to understand them). AKit carries the earlier findings on the " +
+            "other lines; never report them again."
+        } ?? "")
         """
     }
 
@@ -98,7 +125,7 @@ public enum ReviewPrompts {
         merge-request.md, changes.md, diff.patch, threads.md, the work items, \(spec.links?.isEmpty == false ? "links.md, " : "")and \
         project-rules.md if they are there. Open whole files in the repository where the diff is not enough.
 
-        Then answer with a short brief (at most 300 words) in this shape:
+        Then answer with a short brief (at most 400 words) in this shape:
         - Intent: what the change is for, in one or two sentences\(spec.notes == nil ? "" : " (the developer's notes say what it is for)").\(spec.notes == nil ? "" : "\n- Focus: what the developer's notes ask the review to look at.")
         - Touched components: the parts of the system it changes, and the boundaries between them it crosses.
         - Contracts touched: every public API, DTO, event, schema or migration, config key or error code the diff adds, \
@@ -106,6 +133,12 @@ public enum ReviewPrompts {
         - Already raised: what people said in the threads.
         - Acceptance criteria: the criteria or repro steps the change must meet.
         - First gaps: what is missing to review it well. Report each with akit_report_context_gap too.
+        - Risk map, for the developer only (never posted): the risky areas the change touches (authentication, payments, \
+        migrations and stored data, public APIs, concurrency, deletion); whether the merge request shows proof it was tested \
+        (a test that fails without the change, command output, screenshots) or none; and signs of a careless, maybe \
+        generated change: unrelated refactors, a helper that duplicates an existing one, calls to APIs that don't exist, tests \
+        that only test mocks, errors swallowed, a description that promises more than the diff does. Write "none seen" for \
+        each part with nothing.
         """
     }
 
@@ -204,11 +237,23 @@ public enum ReviewPrompts {
         that the consumer or the dependency they name really exists (grep for it). If the consumer is in another repository \
         and you can't read it, give `question`, not `rejected`.
 
+        Score each candidate's confidence on this scale and give it in the verdict. It says whether the problem is real, also \
+        for one that was already there before the change (that one gets `preExisting: true`, not a low score):
+        - 0: a false positive;
+        - 0.25: you couldn't verify it;
+        - 0.5: real but minor, or rare in practice;
+        - 0.75: verified in the code, and it will happen in practice;
+        - 1: certain: you traced it end to end.
+
         For every candidate give one verdict:
-        - confirmed: the problem is real and the anchor and evidence are right. You may lower or raise severity and confidence.
+        - confirmed: the problem is real (confidence 0.75 or more) and the anchor and evidence are right. You may lower or \
+          raise severity. If it was already there at the base commit, add `preExisting: true`: it stays with the developer and \
+          never goes to the merge request.
         - rejected: wrong, not a problem, already raised by a person in threads.md, or against the role's limits. Also reject \
           what the review never comments on: formatting and style a formatter or linter settles, naming taste, comment \
-          wording, the merge request's title, description or commits, and advice with no concrete consequence. A compile, \
+          wording, the merge request's title, description or commits, advice with no concrete consequence, code silenced on \
+          purpose (`eslint-disable`, `@ts-ignore`, `swiftlint:disable`) and changes of behaviour the merge request or its work \
+          item says are intended. A compile, \
           type or test break in other code that this change causes is a real finding, not style. Say why in the note.
         - question: it may be real, but the context pack can't settle it: it becomes a question to the author. Say what to ask.
         - merged: the same problem as another candidate; set `into` to that candidate's id.
@@ -256,12 +301,17 @@ public enum ReviewPrompts {
         scripts and return only short notes from the script (what you found, what failed), never the data itself.
 
         Read, with the tools your servers have (find them with searchTools() or describeNamespace()):
-        1. The merge request itself, with its diff refs (base, start and head commit).
+        1. The merge request itself, with its diff refs (base, start and head commit), whether it is a draft, and its head \
+        pipeline (status and commit).
         2. Its diff versions, and the changed files with their diffs (every page).
         3. Every discussion thread with all its notes and positions, resolved ones too (every page).
         4. Your own pending draft notes on it.
         5. The signed-in user (who you are on GitLab).
-        6. \(items)\(links.isEmpty ? "" : "\n7. The developer's links, after the merge request:\n\n" + linksStep(links))
+        6. \(items)
+        7. The history of the changed files, after everything above: for up to 10 changed files, the merge requests merged \
+        before this one that changed them (for example the file's recent commits, then each commit's merge requests), at most \
+        3 per file and 10 in all, each with its discussion threads. Pass each merge request's own number in every call about \
+        it. Spend at most 25 calls on this step, and skip it when your tools can't do it.\(links.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(links))
 
         Pass the merge request number (\(mr.iid)) as its own argument in every call about it, as the tools name it.
         When a tool answers in prose instead of JSON, hand what it said to `akit_submit_context` with GitLab's and Azure \
@@ -288,6 +338,22 @@ public enum ReviewPrompts {
     }
 
     /// The send pass: carry out the approved requests, word for word, as draft notes.
+    /// Sync Outcomes (R31): read the merge request and its threads again, nothing else.
+    static func sync(spec: ReviewRunSpec) -> String {
+        let mr = spec.mergeRequest
+        return """
+        AKit review, step Sync Outcomes. Read GitLab merge request \(mr.url) (project `\(mr.projectPath)`, merge request number \(mr.iid)) \
+        with your MCP tools, through `codemode`, in scripts that return only short notes: AKit saves every answer word for word.
+
+        1. The merge request itself (its state and diff refs).
+        2. Every discussion thread with all its notes, resolved ones too (every page).
+        3. The signed-in user.
+
+        Pass the merge request number (\(mr.iid)) as its own argument in every call. Never call a tool that writes, publishes, \
+        approves, merges or resolves: AKit blocks them. Answer "done" at the end.
+        """
+    }
+
     static func send(spec: ReviewRunSpec, count: Int) -> String {
         let mr = spec.mergeRequest
         return """

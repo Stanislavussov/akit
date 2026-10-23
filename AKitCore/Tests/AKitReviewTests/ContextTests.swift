@@ -61,7 +61,7 @@ struct ContextRulesTests {
     @Test func oldRunsDecodeWithoutContextServers() throws {
         let old = #"{"servers":["gitlab"],"read":[],"write":["*draft_note*"],"inPasses":true}"#
         let access = try JSONDecoder().decode(ReviewMCPAccess.self, from: Data(old.utf8))
-        #expect(access == ReviewMCPAccess(servers: ["gitlab"], write: ["*draft_note*"]))
+        #expect(access == ReviewMCPAccess(servers: ["gitlab"], write: ["*draft_note*"], allServers: false), "an old run reads only its own servers")
         let round = try JSONDecoder().decode(ReviewMCPAccess.self, from: JSONEncoder().encode(ReviewMCPAccess(extraServers: ["figma"])))
         #expect(round.extraServers == ["figma"])
     }
@@ -275,7 +275,7 @@ extension ReviewProcessTests {
             #expect(args.contains("akit_submit_context,akit_report_context_gap,akit_reading_link,codemode,mcp__*gitlab*__*,mcp__*azure*__*,"
                                   + "mcp__*devops*__*,mcp__ado__*,mcp__figma__*,mcp__confluence__*"))
             let prompt = try String(contentsOf: folder.appending(path: "prompts/fetch.md"), encoding: .utf8)
-            #expect(prompt.contains("7. The developer's links") && prompt.contains("- \(Self.nowhere)") && prompt.contains("akit_reading_link"))
+            #expect(prompt.contains("8. The developer's links") && prompt.contains("- \(Self.nowhere)") && prompt.contains("akit_reading_link"))
             let env = try String(contentsOf: home.url.appending(path: "fake/env-fetch.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_LINKS=") && env.contains(#""extraServers":["figma","confluence"]"#))
 

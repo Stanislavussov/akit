@@ -353,6 +353,9 @@ enum ReviewConfigTemplates {
 struct ReviewQualityView: View {
     @Environment(ReviewModel.self) private var model
     @State private var entries: [ReviewQuality.Entry] = []
+    @State private var outcomes: [ReviewOutcome] = []
+    @State private var evalSet: [ReviewEvalCase] = []
+    @State private var evalProblem: String?
 
     var body: some View {
         let precision = ReviewQuality.precision(entries)
@@ -360,6 +363,8 @@ struct ReviewQualityView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Precision = approved / (approved + rejected), from your verdicts on the Review screen. A finding you moved inline counts as approved: the filter, not the reviewer, was wrong.")
                     .foregroundStyle(.secondary)
+                outcomesSection
+                evalSection
                 if entries.isEmpty {
                     ContentUnavailableView("No verdicts yet", systemImage: "chart.bar",
                                            description: Text("Approve or reject findings on a run; the numbers appear here."))
@@ -388,7 +393,86 @@ struct ReviewQualityView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task { entries = ReviewQuality.entries(home: model.home) }
+        .task {
+            entries = ReviewQuality.entries(home: model.home)
+            outcomes = ReviewOutcomes.all(home: model.home)
+            evalSet = ReviewEvalSet.load(home: model.home)
+        }
+    }
+
+    /// R32: the merge requests kept to check reviews against.
+    @ViewBuilder private var evalSection: some View {
+        Group {
+            DisclosureGroup("Eval set (\(evalSet.count))") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Merge requests pinned at a commit, with the findings a good review must report, or clean. Add them with Add to Eval Set on a review. Running the set through Lab comes later.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let evalProblem {
+                        Label(evalProblem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                    }
+                    ForEach(evalSet) { item in
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.mergeRequest).font(.callout).textSelection(.enabled)
+                                Text("\(item.headSHA.prefix(10)) · \(item.scenario) · " + (item.clean ? "clean" : item.expected.map(\.title).joined(separator: "; ")))
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            Spacer()
+                            Button("Remove") {
+                                do {
+                                    try ReviewEvalSet.remove(item.id, home: model.home)
+                                    evalProblem = nil
+                                } catch {
+                                    evalProblem = error.localizedDescription
+                                }
+                                evalSet = ReviewEvalSet.load(home: model.home)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    /// R31: what became of the published comments in GitLab.
+    @ViewBuilder private var outcomesSection: some View {
+        if !outcomes.isEmpty {
+            let rates = ReviewOutcomes.rates(outcomes)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Outcomes in GitLab").font(.headline)
+                Text("Accepted = fixed / (fixed + dismissed + ignored), from the 🤖 threads each rerun or Sync Outcomes reads. Below about 40% the comments are noise; 50–65% is good.")
+                    .font(.caption).foregroundStyle(.secondary)
+                outcomeTable("By role", rates.roles)
+                outcomeTable("By model", rates.models)
+                let replies = outcomes.filter { !$0.replies.isEmpty }
+                if !replies.isEmpty {
+                    DisclosureGroup("Authors' replies (\(replies.count))") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(replies, id: \.discussionID) { outcome in
+                                Text("\(outcome.kind.rawValue) · \(outcome.role ?? "?") · \(outcome.file ?? "") — " + outcome.replies.joined(separator: " / "))
+                                    .font(.callout).lineLimit(3).textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func outcomeTable(_ title: String, _ rows: [ReviewOutcomes.Rate]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 4) {
+                ForEach(rows, id: \.key) { row in
+                    GridRow {
+                        Text(row.key)
+                        Text(row.accepted.map { String(format: "%.0f%%", $0 * 100) } ?? "–").monospacedDigit().fontWeight(.medium)
+                        Text("\(row.fixed) fixed, \(row.dismissed) dismissed, \(row.ignored) ignored, \(row.open) open").foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
     }
 
     private func table(_ title: String, _ rows: [ReviewQuality.Precision]) -> some View {

@@ -89,19 +89,52 @@ public enum ReviewPasses {
         /// Asked when the change has more changed lines than `max_changed_lines`: true goes on.
         /// nil = never ask, stop.
         public var confirmLarge: (@Sendable (_ lines: Int, _ limit: Int) async -> Bool)?
+        /// Asked when the merge request is a draft, its pipeline failed, or AKit already reviewed
+        /// this commit (R27): true goes on. nil = never ask, stop.
+        public var confirmConcerns: (@Sendable (_ concerns: [String]) async -> Bool)?
         public var timeout: TimeInterval
         public var progress: @Sendable (String) -> Void
 
         public init(confirmOverCap: (@Sendable (Double, Int) async -> Bool)? = nil, confirmLarge: (@Sendable (Int, Int) async -> Bool)? = nil,
+                    confirmConcerns: (@Sendable ([String]) async -> Bool)? = nil,
                     timeout: TimeInterval = 30 * 60, progress: @escaping @Sendable (String) -> Void = { _ in }) {
             self.confirmOverCap = confirmOverCap
             self.confirmLarge = confirmLarge
+            self.confirmConcerns = confirmConcerns
             self.timeout = timeout
             self.progress = progress
         }
     }
 
     public static let tools = "read,grep,find,ls,akit_submit_findings,akit_report_context_gap"
+
+    /// Why a review may not be worth its credits now (R27): a draft, a pipeline that failed on
+    /// the reviewed commit, or an earlier run of AKit with passes on the same commit. Triviality
+    /// isn't judged. A local review has none of these.
+    public static func concerns(folder: URL, spec: ReviewRunSpec, home: URL) -> [String] {
+        guard spec.local == nil, let head = spec.headSHA else { return [] }
+        var result: [String] = []
+        if let mr = ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json"))?.mergeRequest {
+            if mr.draft == true { result.append("The merge request is a draft: its author may not be done.") }
+            if let status = mr.pipelineStatus, ["failed", "canceled"].contains(status), mr.pipelineSHA == head {
+                result.append("Its pipeline \(status == "failed" ? "failed" : "was canceled"): CI finds what it checks for less.")
+            }
+        }
+        let earlier = ReviewRuns.list(home: home).filter { run in
+            run.id != folder.lastPathComponent && run.spec.mergeRequest.url == spec.mergeRequest.url && run.spec.headSHA == head
+                && FileManager.default.fileExists(atPath: ReviewPaths(home: home).run(run.id).appending(path: "findings.json").path)
+        }
+        if let last = earlier.first {
+            result.append("AKit already reviewed this commit (\(head.prefix(10))) in run \(last.id).")
+        }
+        // R28: after three rounds another one rarely helps; the approach needs a talk.
+        let round = ReviewRerun.round(folder: folder, spec: spec, home: home)
+        if round > ReviewRerun.maxRounds {
+            result.append("This is review round \(round) of this merge request: after \(ReviewRerun.maxRounds), talk with the author about the "
+                          + "approach instead of another round.")
+        }
+        return result
+    }
 
     /// What one Pi process of a run is: its mode for the extension and what it may reach.
     struct PassSetup: Sendable {
@@ -136,7 +169,8 @@ public enum ReviewPasses {
         var tools = setup.tools
         if setup.mcp {
             arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode"]
-            tools += ",codemode" + access.toolPatterns.map { "," + $0 }.joined()
+            let patterns = setup.mode == "review" ? access.passPatterns : access.toolPatterns
+            tools += ",codemode" + patterns.map { "," + $0 }.joined()
         } else {
             arguments += ["--no-mcp"]
         }
@@ -219,6 +253,28 @@ public enum ReviewPasses {
         _ = try await runPass(setup, spec: spec, folder: folder, log: &log, limit: Double(spec.capCredits.value), env: env, options: options, pi: pi)
     }
 
+    /// Sync Outcomes (R31): a fetch-mode pass that reads only the merge request and its threads;
+    /// its answers are saved as `mcp/calls/sync-*.json`, the run's earlier answers stay.
+    static func sync(folder: URL, spec: ReviewRunSpec, env: HarnessEnvironment, options: Options) async throws {
+        guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
+        let gate = try await gate(model: spec.passes.value.model, env: env)
+        var log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
+            ?? ReviewPassLog(mainSession: UUID().uuidString.lowercased())
+        for file in FileWalk.children(of: folder.appending(path: "mcp/calls")) where file.lastPathComponent.hasPrefix("sync-") {
+            try? FileManager.default.removeItem(at: file)
+        }
+        let cwd = folder.appending(path: "fetch", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+        // GitLab only, as in Send Drafts. The run's cap doesn't stop a sync: it is one small pass.
+        var syncSpec = spec
+        syncSpec.mcp = spec.access.withoutExtras
+        let name = "sync-\(log.passes.filter { $0.name.hasPrefix("sync") }.count + 1)"
+        let setup = PassSetup(name: name, mode: "fetch", role: nil, prompt: ReviewPrompts.sync(spec: spec), model: spec.passes.value,
+                              gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
+                              tools: "akit_report_context_gap", mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
+        _ = try await runPass(setup, spec: syncSpec, folder: folder, log: &log, limit: log.credits + 30, env: env, options: options, pi: pi)
+    }
+
     /// The send pass (Send Drafts…, R4–R5): Pi writes the approved requests of
     /// `<run>/send/approved.json` as draft notes through the user's GitLab MCP server. The
     /// extension lets through only calls that carry an approved request word for word and logs
@@ -240,10 +296,25 @@ public enum ReviewPasses {
     /// Runs every pass of a gathered run and writes `findings.json` and `gaps.json`.
     @discardableResult
     public static func run(folder: URL, env: HarnessEnvironment, options: Options = Options()) async throws -> ReviewFindingsFile {
-        guard let spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")), spec.headSHA != nil else {
+        guard var spec = ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json")), spec.headSHA != nil else {
             throw Failure(message: "\(folder.lastPathComponent) has no gathered run.json; gather it first.")
         }
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
+        if let problem = spec.verifierProblem { throw Failure(message: problem) }
+        // A rerun needs the earlier run's findings (R28); without them (moved to the Trash) the
+        // run reviews the whole merge request, so no earlier thread is taken for fixed.
+        let previousFindings = spec.rerun.flatMap { rerun in
+            ReviewJSON.read(ReviewFindingsFile.self, from: ReviewPaths(home: env.homeDirectory).run(rerun.previousRun).appending(path: "findings.json"))
+        }
+        if let rerun = spec.rerun, previousFindings == nil {
+            spec.rerun = nil
+            try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+            var gaps = ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json")) ?? []
+            gaps.append(ContextGap(id: "g\(gaps.count + 1)", system: "repository", needed: "The findings of the earlier run \(rerun.previousRun)",
+                                   why: "They are gone, so this run reviews the whole merge request.", reportedBy: "gather"))
+            try ReviewJSON.write(gaps, to: folder.appending(path: "gaps.json"))
+            try? FileManager.default.removeItem(at: folder.appending(path: "context/since-last-review.md"))
+        }
         let roles = spec.roles
         // Every send checks the policy first: a merge request goes only to a destination on
         // the allowed list (a work Mac's list is the company's).
@@ -269,6 +340,15 @@ public enum ReviewPasses {
             guard let confirm = options.confirmLarge, await confirm(scan.changedLines, limit) else {
                 let message = "Stopped before the passes: the change has \(scan.changedLines) changed lines, over the limit of \(limit). "
                     + "Reviews of big changes miss more: split it, or review it anyway."
+                try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
+                throw Failure(message: message)
+            }
+        }
+        // Reasons not to review now (R27): one question for all of them.
+        let concerns = Self.concerns(folder: folder, spec: spec, home: env.homeDirectory)
+        if !concerns.isEmpty {
+            guard let confirm = options.confirmConcerns, await confirm(concerns) else {
+                let message = "Stopped before the passes: " + concerns.joined(separator: " ")
                 try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
                 throw Failure(message: message)
             }
@@ -333,6 +413,29 @@ public enum ReviewPasses {
                                    gate: stepGates[step.model.model] ?? passesGate, session: main)
             }
             var candidates = ReviewCandidates.collect(folder: folder, spec: spec, worktree: hasWorktree ? worktree : nil)
+            // A rerun (R28): the earlier findings on unchanged lines carry over; those whose code
+            // changed go to the verifier again, which says whether they are fixed.
+            var carried: [ReviewFinding] = []
+            var earlierIDs: [String: String] = [:]
+            if let rerun = spec.rerun, let previous = previousFindings {
+                let split = ReviewRerun.split(previous.findings, rerun: rerun, candidates: candidates, worktree: hasWorktree ? worktree : nil)
+                // A role that found an earlier problem again: it is the earlier finding, with all its fingerprints.
+                for (index, prints) in split.refound {
+                    candidates[index].carriedFrom = rerun.previousRun
+                    let extra = prints.filter { !candidates[index].fingerprints.contains($0) }
+                    if !extra.isEmpty { candidates[index].foldedFingerprints = (candidates[index].foldedFingerprints ?? []) + extra }
+                }
+                for var finding in split.recheck {
+                    finding.id = "f\(candidates.count + 1)"
+                    candidates.append(finding)
+                }
+                carried = split.carried
+                earlierIDs = split.earlierIDs
+                // What the earlier rerun kept stays kept: the chain of runs never loses a thread.
+                let earlierKept = ReviewJSON.read([String].self, from: ReviewPaths(home: env.homeDirectory).run(rerun.previousRun)
+                    .appending(path: "rerun-kept.json")) ?? []
+                try ReviewJSON.write(split.kept.union(earlierKept).sorted(), to: folder.appending(path: "rerun-kept.json"))
+            }
             try ReviewJSON.write(candidates, to: folder.appending(path: "candidates.json"))
             if !candidates.isEmpty {
                 let input = ReviewCandidates.verifierInput(candidates, worktree: hasWorktree ? worktree : nil)
@@ -345,6 +448,21 @@ public enum ReviewPasses {
                 log.verifierSessionFile = verified.session.flatMap { sessionFile(id: $0, in: folder.appending(path: "sessions")) }?.path
                 try ReviewJSON.write(log, to: logFile)
                 candidates = ReviewCandidates.apply(verdictsFile: folder.appending(path: "passes/verifier.json"), to: candidates)
+            }
+            for var finding in carried {
+                finding.id = "f\(candidates.count + 1)"
+                candidates.append(finding)
+            }
+            // What the user moved inline in the earlier run stays inline (its draft stays).
+            if let rerun = spec.rerun {
+                let paths = ReviewPaths(home: env.homeDirectory)
+                let earlierForced = Set(ReviewJSON.read([String].self, from: paths.run(rerun.previousRun).appending(path: "forced-inline.json")) ?? [])
+                let forced = candidates.filter { finding in earlierIDs[finding.fingerprint ?? ""].map(earlierForced.contains) == true }.map(\.id)
+                if !forced.isEmpty {
+                    let file = folder.appending(path: "forced-inline.json")
+                    let own = ReviewJSON.read([String].self, from: file) ?? []
+                    try ReviewJSON.write(own + forced.filter { !own.contains($0) }, to: file)
+                }
             }
             if let scan, !scan.secrets.isEmpty {
                 candidates = ReviewScan.addSecrets(scan, to: candidates, worktree: hasWorktree ? worktree : nil)

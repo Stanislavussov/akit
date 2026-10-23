@@ -60,6 +60,15 @@ extension AKitCLITests {
         #expect(await review(["token", "gitlab", "https://gitlab.test"]).code != 0, "tokens are gone: Pi's MCP servers connect")
     }
 
+    /// `akit review eval`: the set, and its errors.
+    @Test func reviewEvalListsTheSet() async {
+        let empty = await review(["eval"])
+        #expect(empty.code == 0 && empty.out.contains("The eval set is empty"))
+        #expect(await review(["eval", "add"]).code != 0)
+        #expect(await review(["eval", "remove", "nope"]).code != 0)
+        #expect(await review(["eval", "frobnicate"]).code != 0)
+    }
+
     /// `akit review check`: Pi's servers and what review may do with each tool; never a command line.
     @Test func reviewCheckListsPiServers() async throws {
         try write("bin/pi", """
@@ -76,7 +85,8 @@ extension AKitCLITests {
         #expect(code == 0, "\(text) \(err)")
         #expect(text.contains("gitlab: connected · 4 tools: 2 read, 1 write drafts, 1 blocked"))
         #expect(text.contains("read: get_merge_request, mr_discussions") && text.contains("write: create_draft_note"))
-        #expect(text.contains("jira: failed · not used by this project") && text.contains("fetch: connected · not used by this project"))
+        #expect(text.contains("jira: failed · read only, in the brief, roles and verifier (all_servers)"))
+        #expect(text.contains("fetch: connected · not used: name it as a context server to use it"), "a risky server only when named")
         #expect(!text.contains("glpat-SECRET") && !text.contains("npx"), "never a server's command line")
     }
 

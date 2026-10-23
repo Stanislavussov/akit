@@ -47,11 +47,13 @@ public enum ReviewCandidates {
         let file = (raw["file"] as? String).map { $0.hasPrefix("./") ? String($0.dropFirst(2)) : $0 }.flatMap { $0.isEmpty ? nil : $0 }
         let line = (raw["line"] as? NSNumber).flatMap { $0.intValue >= 1 ? $0.intValue : nil }
         func text(_ key: String) -> String { ReviewNotes.defused(SecretFilter.masked(raw[key] as? String ?? "")) }
-        return ReviewFinding(id: id, kind: kind, role: role, file: file, side: (raw["side"] as? String) == "old" ? .old : .new,
+        var finding = ReviewFinding(id: id, kind: kind, role: role, file: file, side: (raw["side"] as? String) == "old" ? .old : .new,
                              line: file == nil ? nil : line, title: ReviewNotes.defused(SecretFilter.masked(title)), evidence: text("evidence"), why: text("why"),
                              severity: severity, confidence: confidence,
                              suggestion: (raw["suggestion"] as? String).map { ReviewNotes.defused(SecretFilter.masked($0)) }.flatMap { $0.isEmpty ? nil : $0 },
                              related: (raw["related"] as? [String]) ?? [])
+        if raw["preExisting"] as? Bool == true { finding.preExisting = true }
+        return finding
     }
 
     /// Models misnumber lines. When the evidence isn't within ±3 lines of the anchor but is on
@@ -125,6 +127,11 @@ public enum ReviewCandidates {
             text += "\n### \(finding.id) · \(finding.role) · \(finding.kind.rawValue) · \(finding.severity.rawValue) · confidence "
                 + String(format: "%.2f", finding.confidence) + "\n\n"
             text += "- Where: \(place)\n- Title: \(finding.title)\n- Why: \(finding.why)\n"
+            if finding.preExisting == true { text += "- The role says: already there before this change.\n" }
+            if let run = finding.carriedFrom {
+                text += "- Also found by the last review (run \(run)). If the code changed since and the change fixed it, reject it with "
+                    + "the note \"fixed\"; otherwise judge it as usual.\n"
+            }
             if !finding.evidence.isEmpty { text += "- Evidence: `\(finding.evidence.replacingOccurrences(of: "`", with: "'"))`\n" }
             if finding.evidenceFound == false { text += "- AKit: this quote is not in the file at the reviewed commit.\n" }
             if let suggestion = finding.suggestion { text += "- Suggestion: `\(suggestion.replacingOccurrences(of: "`", with: "'"))`\n" }
@@ -156,11 +163,16 @@ public enum ReviewCandidates {
             if value == .merged, into == nil || into == id || !candidates.contains(where: { $0.id == into }) { continue }
             byID[id] = ReviewFinding.Verdict(verdict: value, note: ReviewNotes.defused(SecretFilter.masked(raw["note"] as? String ?? "")), into: into,
                                              severity: (raw["severity"] as? String).flatMap(ReviewSeverity.init),
-                                             confidence: (raw["confidence"] as? NSNumber).flatMap { (0...1).contains($0.doubleValue) ? $0.doubleValue : nil })
+                                             confidence: (raw["confidence"] as? NSNumber).flatMap { (0...1).contains($0.doubleValue) ? $0.doubleValue : nil },
+                                             preExisting: raw["preExisting"] as? Bool)
         }
         return candidates.map { finding in
             var finding = finding
-            if let verdict = byID[finding.id] { finding.verifier = verdict } else if !keepingUnmentioned { finding.verifier = nil }
+            if var verdict = byID[finding.id] {
+                // A discussion that only changes a severity keeps the earlier say on "before this change".
+                if keepingUnmentioned, verdict.preExisting == nil { verdict.preExisting = finding.verifier?.preExisting }
+                finding.verifier = verdict
+            } else if !keepingUnmentioned { finding.verifier = nil }
             if let verdict = byID[finding.id], verdict.verdict == .merged, let into = verdict.into, !finding.related.contains(into) {
                 finding.related.append(into)
             }
