@@ -128,6 +128,22 @@ struct ConfigTests {
         #expect(ReviewNotes.parseMeta("plain") == nil)
     }
 
+    /// A code-only run drops the passes' gaps about a work item; other gaps stay.
+    @Test func aCodeOnlyRunDropsWorkItemGaps() throws {
+        let home = TempHome()
+        let folder = home.url.appending(path: "run")
+        home.write("run/passes/gaps-role-requirements.jsonl", [
+            #"{"system":"other","needed":"Work item for COL-317494 with acceptance criteria","why":"none attached","reportedBy":"role-requirements"}"#,
+            #"{"system":"azure-devops","needed":"Úkol","why":"chybí","reportedBy":"brief"}"#,
+            #"{"system":"other","needed":"Akceptační kritéria","why":"chybí","reportedBy":"brief"}"#,
+            #"{"system":"repository","needed":"Testy modulu Orders","why":"nejsou v balíčku","reportedBy":"role-tests"}"#,
+        ].joined(separator: "\n"))
+        try ReviewPasses.mergeGaps(folder: folder, codeOnly: true)
+        #expect(ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json"))?.map(\.needed) == ["Testy modulu Orders"])
+        try ReviewPasses.mergeGaps(folder: folder)
+        #expect(ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json"))?.count == 4)
+    }
+
     @Test func workItemReferences() {
         #expect(AzureDevOpsJSON.references(in: ["AB#41 fix", "see WI-7 and AB#41", "feature/AB#9"], pattern: "(?:AB#|WI-)(\\d+)") == [41, 7, 9])
         let pattern = ReviewProfile.Tracker.defaultRegex

@@ -44,6 +44,28 @@ struct NewReviewSheet: View {
     /// Models Pi has credentials for (`pi --list-models`).
     @State private var piModels: [String] = []
 
+    /// `again`: Review Again… on a run fills in its change, scenario, context and models, and
+    /// reads the whole change again (a rerun on the same commit would only carry the findings).
+    init(brain: URL, again: ReviewRunSpec? = nil) {
+        self.brain = brain
+        guard let again else { return }
+        if let local = again.local {
+            _source = State(initialValue: .local)
+            _workspace = State(initialValue: local.path)
+            _baseRef = State(initialValue: local.baseRef)
+            _mode = State(initialValue: local.mode)
+        } else {
+            _address = State(initialValue: again.mergeRequest.url)
+        }
+        _scenario = State(initialValue: again.scenario.value)
+        _notes = State(initialValue: again.notes ?? "")
+        _links = State(initialValue: (again.links ?? []).joined(separator: "\n"))
+        _extraServers = State(initialValue: Set((again.mcpServers ?? []).filter { $0.source == .run }.map(\.name)))
+        if again.passes.source == .run { _passesModel = State(initialValue: again.passes.value.model) }
+        if again.verifier.source == .run { _verifierModel = State(initialValue: again.verifier.value.model) }
+        _fullReview = State(initialValue: true)
+    }
+
     private var mr: MergeRequestRef? { MergeRequestRef.parse(address) }
     private var profile: ReviewProfile? {
         switch source {
@@ -101,7 +123,7 @@ struct NewReviewSheet: View {
                              ?? "No project profile for \(mr.projectPath): no checkout, tracker or project rules. Review Settings… adds one.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    TextField("Work items", text: $workItems, prompt: Text("e.g. 4512, 4513 (else found in the title, description and branch)"))
+                    TextField("Work items", text: $workItems, prompt: Text("e.g. 4512 (else the number in the branch: COL-4512)"))
                 }
                 }
                 contextSection
