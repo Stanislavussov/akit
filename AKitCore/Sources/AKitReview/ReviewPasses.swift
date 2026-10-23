@@ -481,12 +481,12 @@ public enum ReviewPasses {
             }
             let findings = ReviewFindingsFile(version: 1, findings: candidates, source: "passes")
             try ReviewJSON.write(findings, to: folder.appending(path: "findings.json"))
-            try mergeGaps(folder: folder)
+            try mergeGaps(folder: folder, codeOnly: spec.workItems.isEmpty)
             try await ReviewWorkflow.plan(folder, env: env)
             try ReviewRuns.setStatus(.planned, folder: folder)
             return findings
         } catch {
-            try? mergeGaps(folder: folder)
+            try? mergeGaps(folder: folder, codeOnly: spec.workItems.isEmpty)
             try? ReviewRuns.setStatus(error is CancellationError ? .stopped : .failed, message: error.localizedDescription, folder: folder)
             throw error
         }
@@ -514,8 +514,9 @@ public enum ReviewPasses {
         ChildProcess.harnessEnvironment(env).filter { key, _ in !key.uppercased().hasPrefix("AKIT_REVIEW") }
     }
 
-    /// Gaps of Gather and of every pass, numbered again: `gaps.json`.
-    static func mergeGaps(folder: URL) throws {
+    /// Gaps of Gather and of every pass, numbered again: `gaps.json`. A code-only run (no work
+    /// item in the branch) drops the passes' gaps about a work item: the review didn't need one.
+    static func mergeGaps(folder: URL, codeOnly: Bool = false) throws {
         var gaps = (ReviewJSON.read([ContextGap].self, from: folder.appending(path: "gaps.json")) ?? []).filter { $0.reportedBy == "gather" }
         for file in FileWalk.children(of: folder.appending(path: "passes")).sorted(by: { $0.path < $1.path })
         where file.lastPathComponent.hasPrefix("gaps-") && file.pathExtension == "jsonl" {
@@ -526,12 +527,20 @@ public enum ReviewPasses {
                 func text(_ key: String) -> String { SecretFilter.masked(object[key] as? String ?? "") }
                 let gap = ContextGap(id: "", system: text("system"), needed: SecretFilter.masked(needed), why: SecretFilter.masked(why),
                                      howToGet: text("howToGet"), effect: text("effect"), reportedBy: text("reportedBy"))
+                if codeOnly && isWorkItemGap(gap) { continue }
                 // The same gap from two passes is one gap.
                 if !gaps.contains(where: { $0.needed.lowercased() == gap.needed.lowercased() }) { gaps.append(gap) }
             }
         }
         for index in gaps.indices { gaps[index].id = "g\(index + 1)" }
         try ReviewJSON.write(gaps, to: folder.appending(path: "gaps.json"))
+    }
+
+    /// A gap that asks for the work item, its acceptance criteria or repro steps (English or Czech).
+    static func isWorkItemGap(_ gap: ContextGap) -> Bool {
+        if ["azure-devops", "tracker", "jira"].contains(gap.system.lowercased()) { return true }
+        let text = (gap.needed + " " + gap.why).lowercased()
+        return ["work item", "acceptance", "repro", "pracovní polož", "akceptační", "reprodukc", "zadání"].contains { text.contains($0) }
     }
 
     // MARK: - Pi

@@ -126,7 +126,9 @@ struct ReviewView: View {
                 GuideButton(guide: .review)
             }
         }
-        .sheet(isPresented: $showNew) { NewReviewSheet(brain: app.brainRoot) }
+        .sheet(isPresented: Binding(get: { showNew || model.again != nil }, set: { if !$0 { showNew = false; model.again = nil } })) {
+            NewReviewSheet(brain: app.brainRoot, again: model.again)
+        }
         .sheet(isPresented: $showSettings) { ReviewSettingsSheet(brain: app.brainRoot) }
     }
 
@@ -170,6 +172,8 @@ struct ReviewView: View {
             .padding(.vertical, 2)
             .tag(run.id)
             .contextMenu {
+                Button("Review Again…") { model.again = run.spec }
+                    .disabled(model.isBusy)
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([ReviewPaths(home: model.home).run(run.id)]) }
                 Button("Move to Trash", role: .destructive) { model.delete(run.id) }
                     .disabled(model.activity?.runID == run.id)
@@ -345,6 +349,11 @@ struct ReviewRunDetail: View {
                         .buttonStyle(.link)
                         .font(.caption)
                         .help("What the run did: each pass's model, thinking, time, tokens and credits, the MCP calls, and what each role's findings became")
+                    Button("Review Again…") { model.again = run.spec }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .disabled(model.isBusy)
+                        .help("Start a new review of the same change with this run's scenario, notes, links and models. It reads the whole change again.")
                 }
             }
         }

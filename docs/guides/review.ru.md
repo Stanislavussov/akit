@@ -37,7 +37,7 @@
 - «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
 - «Агенту нужен макет из Figma или страница вики» → поля **Context for this review**, **Links** и блок **Extra servers** в **New Review…** (см. [контекст ревью](#context)).
 
-![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) и строкой Verifier: confirmed; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
+![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) и строкой Verifier: confirmed; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
 ### Зачем это нужно
 <!-- section: overview-why -->
@@ -1275,8 +1275,8 @@ AKit проверяет папку ревью каждые несколько с
 ### Просто: новое ревью того же MR
 <!-- section: reruns-new -->
 
-1. Нажмите **New Review…** и вставьте адрес того же MR.
-2. Нажмите **Start Review**. AKit соберёт новый пакет на новом коммите.
+1. Откройте прошлое ревью и нажмите **Review Again…** рядом с **Log…** (или правый щелчок по ревью в списке → **Review Again…**). Откроется **New Review…** с тем же MR, сценарием, заметками, ссылками и моделями. **Full review** уже включён: ревью прочитает весь MR заново. Можно и так: **New Review…** → вставьте адрес того же MR.
+2. Нажмите **Start Review**. AKit соберёт новый пакет на текущем коммите.
 3. Проход `fetch` заново читает ваши черновики и треды MR. После проходов AKit сравнивает находки с ними по отпечаткам.
 4. Решите по запросам как обычно.
 

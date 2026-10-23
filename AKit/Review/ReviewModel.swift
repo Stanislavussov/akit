@@ -37,6 +37,8 @@ final class ReviewModel {
     private(set) var run: ReviewWorkflow.Run?
     private(set) var activity: Activity?
     var problem: String?
+    /// The run Review Again… starts New Review… from.
+    var again: ReviewRunSpec?
     /// The running review went over a limit (the credit cap, `max_changed_lines`); it goes on.
     var alerts: [String] = []
     /// Review Settings…: the last `pi mcp list`, or why it failed.
