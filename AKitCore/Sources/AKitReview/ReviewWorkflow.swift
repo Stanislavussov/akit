@@ -175,6 +175,11 @@ public enum ReviewWorkflow {
         }
         for request in plan.requests where request.decision == .approved && !request.isSent {
             if let shown, shown[request.id] != ReviewNotes.textHash(request.text) { continue }
+            // Only Czech goes to GitLab, whatever the run's language or an edit (Translate never changes the text).
+            if request.kind != .delete, !ReviewLanguage.isCzech(request.text, marker: run.spec.posting.marker.value) {
+                try fail(request.id, "Not in Czech: AKit sends only Czech comments to GitLab. Edit it into Czech, then send it again.")
+                continue
+            }
             let finding = run.finding(request.findingID)
             let meta: String = switch request.kind {
             case .summary: ReviewNotes.meta(fingerprint: "summary", role: "summary", severity: nil, run: run.id, kind: "summary",

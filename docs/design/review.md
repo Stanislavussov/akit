@@ -16,6 +16,9 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-23 (branch `review-czech`): R35, Czech comments only (section "Decisions
+(2026-10-23)").
+
 Added 2026-10-23 (branch `review-practices`): decisions R20–R34 from a research note on agentic code
 review (section "Decisions (2026-10-23)"), built in four parts with a reviewer round each.
 
@@ -353,6 +356,7 @@ CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R
 | R32 | Eval set | **Add to Eval Set** on a run or a finding records the MR, its head SHA and the expected findings (or "clean"). Running the set through Lab is a later step. Built: `~/.akit/local/review/eval-set.json` (`ReviewEvalSet`), one case per merge request and head; the run menu Add to Eval Set (approved findings, or clean), Expect in Eval Set on a held-back finding, the list with Remove on the Quality page, `akit review eval [list|add|remove]` |
 | R33 | Modes | Chosen by the kind of run, no new choice: a colleague's MR uses the posting rules above; the user's own MR or a local review also posts `low` and has a higher limit. A built-in scenario `security` next to Feature and Bugfix |
 | R34 | AI-written merge requests | The brief writes a personal risk map for the user, never posted: risk areas, whether the MR shows proof that it was tested, signs of slop. Slop in the code (a duplicated helper, a test of a mock, a swallowed error) is an ordinary finding of `tests` or `bug-hunter` |
+| R35 | The comments' language | Asked by the user later on 2026-10-23: only Czech goes to GitLab. `posting: language` (default `cs`) tells the passes, the verifier and Discuss to write titles, reasons, notes and gaps in it; AKit's own words in a draft (the header, the summary, "Looks fixed") are Czech; Gather's own gaps stay out of the summary (they are English and about this Mac). Send checks each draft's text with Apple's language recognizer (code, links, markup and AKit's header line left out; Slovak counts only with letters only Czech has) and refuses one that isn't Czech; the Review screen warns on its card. Translate only shows a translation: Send always takes the original |
 
 Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are the team's
 repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the
@@ -555,6 +559,7 @@ posting:
   confidence_threshold: 0.8
   max_inline: 5
   max_inline_medium: 3
+  language: cs        # Send lets only Czech go to GitLab (R35)
 cost: { cap_credits_per_run: 150, max_changed_lines: 1500 }
 ```
 
