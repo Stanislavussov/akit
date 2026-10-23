@@ -79,7 +79,7 @@ to hard ones, with examples and screenshots (`docs/guides/images`, taken from a 
 | Forget a project and trash the files AKit wrote there | Brain → the project → Forget Project… |
 | Keep AKit's files out of a project's git and give them to its git worktrees | Brain → Set Up Project… → Project files: Local only (hidden from git); Brain → the project → Worktrees → Sync Worktrees (also on each refresh and when a worktree is added); `akit worktrees sync` |
 | Report what AKit sees on this Mac, for an agent or a bug report | Help → Copy Diagnostics, or `akit doctor` |
-| Install the newer AKit after a merge into master | the Update to … button at the bottom of the sidebar, or AKit → Update to … |
+| Install the newer AKit after a merge into master, here or pushed from another Mac | the Update to … button at the bottom of the sidebar, or AKit → Update to … (it fetches the upstream branch, pulls fast-forward only); a copy from a release zip: run `install.sh` again |
 | Report a bug in AKit or suggest a feature | Help → Report a Bug…, Help → Suggest a Feature… (a new GitHub issue in the browser, with a template and the AKit and macOS versions) |
 | Turn a skill on or off in Claude Code or Pi without editing it | Skills → the skill → the Claude / Pi picker (or right-click in the list, or in Insights → Skills); `akit skills set NAME --harness claude\|pi --state on\|name-only\|manual\|off`, `akit skills state` |
 | See which skills cost context and are never called | Insights (Apply… makes a layer skill manual; the Skills table lists every skill; the line above it says how often Claude Code dropped descriptions) |

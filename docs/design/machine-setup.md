@@ -54,8 +54,18 @@ in `~/Projects/akit`), the sidebar shows **Update to <version>** above the build
 `~/Applications` (`make build` for a Debug copy in a worktree's `build/`), starts the new app
 and quits; a failed build leaves the running app open with the reason.
 
-- Only reading git commands (`rev-parse`, `rev-list`, `log`, `describe`, `status`): no fetch or
-  pull, the folder is never changed. Commits pushed elsewhere show up after a pull by hand.
+- Revised 2026-10-23 (the user: a release pushed from one Mac never showed on the other): the
+  check runs `git fetch --tags <remote> <branch>` of the branch's upstream first (no password
+  prompt, `GIT_TERMINAL_PROMPT=0`, SSH in batch mode added to the user's own SSH command; offline
+  it just finds nothing), and an upstream ahead of the folder is an update too. The fetch writes
+  objects, the remote-tracking ref and tags into the repository (no auto gc, no FETCH_HEAD); the
+  working files don't change. Update then runs `git pull --ff-only` before `make install`; a
+  folder with commits of its own on top isn't pulled (its own commits are the update, and the
+  tooltip says how many upstream commits to merge by hand), and a failed pull shows git's reason.
+- A copy installed from a release zip (`install.sh` without a checkout) has no source folder
+  and no Update button: it updates by running `install.sh` again, which takes the latest GitHub
+  Release. A new version needs `make release` and `gh release create <tag> dist/AKit.zip`, not
+  only a pushed tag.
 - Checked at launch, every 5 minutes, when AKit comes to the front (at most every 20 s) and
   with **AKit → Check for Updates**.
 - Another branch checked out in the folder: no button, a build would be of that branch.
