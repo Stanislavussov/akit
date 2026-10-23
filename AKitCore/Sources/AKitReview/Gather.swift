@@ -125,10 +125,11 @@ public enum ReviewGather {
         // self-review limits (R33); a colleague's keeps the posting limits.
         spec.applyMode(own: local != nil || (!snapshot.user.isEmpty && snapshot.mergeRequest.author == snapshot.user))
 
-        // Work items: given by hand, plus those the title, description or branch names.
+        // Work items: given by hand, plus the one the source branch names (`COL-317494`). Numbers in
+        // the title or description don't count. With none, the review checks the code alone.
         var ids = spec.workItems
-        let pattern = profile?.tracker?.wiRefRegex ?? ReviewProfile.Tracker(org: "", project: "").wiRefRegex
-        for id in AzureDevOpsJSON.references(in: [mr.title, mr.description, mr.sourceBranch], pattern: pattern) where !ids.contains(id) {
+        let pattern = profile?.tracker?.wiRefRegex ?? ReviewProfile.Tracker.defaultRegex
+        for id in AzureDevOpsJSON.references(in: [mr.sourceBranch], pattern: pattern) where !ids.contains(id) {
             ids.append(id)
         }
         spec.workItems = ids
@@ -138,17 +139,19 @@ public enum ReviewGather {
                 how: "Review the merge request in GitLab instead, or read the item in Discuss in Pi….",
                 effect: "Requirements and acceptance criteria can't be checked.")
         }
-        var workItems = data.workItems
+        // Only the named items and their parents and related items: the fetch pass may have read
+        // items the description names.
+        var workItems = data.workItems.filter { item in
+            ids.contains(item.id) || data.workItems.contains { ids.contains($0.id) && ($0.parents.contains(item.id) || $0.related.contains(item.id)) }
+        }
         for index in workItems.indices {
             let id = workItems[index].id
             workItems[index].reason = ids.contains(id) ? "named by the merge request"
                 : workItems.first(where: { $0.parents.contains(id) }).map { "parent of #\($0.id)" }
                 ?? workItems.first(where: { $0.related.contains(id) }).map { "related to #\($0.id)" } ?? "read by the fetch pass"
         }
-        if ids.isEmpty && workItems.isEmpty && local == nil {
-            gap(tracker, "The work item of this change", "Neither --wi nor the title, description or branch names one.",
-                how: "Run again with --wi N, or name the item in the MR (the profile's wi_ref_regex).",
-                effect: "Requirements and acceptance criteria can't be checked.")
+        if ids.isEmpty {
+            progress("No work item in the branch \(mr.sourceBranch): the review checks the code alone (contracts, regressions).")
         }
         for id in ids where !workItems.contains(where: { $0.id == id }) && local == nil {
             gap(tracker, "Work item #\(id)", "The fetch pass didn't read it.",

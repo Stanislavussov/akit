@@ -212,10 +212,13 @@ public struct ReviewProfile: Sendable, Hashable {
         public var kind: String
         public var org: String
         public var project: String
-        /// Finds work item numbers in a title, description or branch: the first group is the number.
+        /// Finds the work item number in the source branch (`feature/COL-317494-login` → 317494):
+        /// the first group is the number. The title and description don't count.
         public var wiRefRegex: String
 
-        public init(kind: String = "azure-devops", org: String, project: String, wiRefRegex: String = "(?:AB#|WI-)(\\d+)") {
+        public static let defaultRegex = "(?i)(?:COL-|AB#|WI-)(\\d+)"
+
+        public init(kind: String = "azure-devops", org: String, project: String, wiRefRegex: String = Tracker.defaultRegex) {
             self.kind = kind
             self.org = org
             self.project = project

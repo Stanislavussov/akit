@@ -48,6 +48,15 @@ public enum ReviewPrompts {
             \(notes.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n"))
             """
         }
+        if spec.workItems.isEmpty {
+            context += """
+
+
+            This change has no work item: its branch names none. Review the code alone: whether every contract still holds \
+            for its consumers, and whether the change breaks behaviour that worked before (regressions). Don't report the \
+            missing work item or missing acceptance criteria as a gap or a finding.
+            """
+        }
         if !(spec.links ?? []).isEmpty {
             context += """
 
@@ -135,7 +144,7 @@ public enum ReviewPrompts {
         - Contracts touched: every public API, DTO, event, schema or migration, config key or error code the diff adds, \
         changes or removes, with the file. Write "none" if there are none.
         - Already raised: what people said in the threads.
-        - Acceptance criteria: the criteria or repro steps the change must meet.
+        - Acceptance criteria: \(spec.workItems.isEmpty ? "none: there is no work item; write \"none\"" : "the criteria or repro steps the change must meet").
         - First gaps: what is missing to review it well. Report each with akit_report_context_gap too.
         - Risk map, for the developer only (never posted): the risky areas the change touches (authentication, payments, \
         migrations and stored data, public APIs, concurrency, deletion); whether the merge request shows proof it was tested \
@@ -294,12 +303,14 @@ public enum ReviewPrompts {
             """
         }
         let mr = spec.mergeRequest
-        var items = "Work items: find the numbers in the merge request's title, description and source branch"
-        if let tracker = spec.tracker {
-            items += " (pattern `\(tracker.wiRefRegex)`; tracker \(tracker.kind), organization \(tracker.org), project \(tracker.project))"
-        }
-        if !spec.workItems.isEmpty { items += ", and read \(spec.workItems.map { "#\($0)" }.joined(separator: ", ")) in any case" }
-        items += ". Read each item with its relations, its parent and related items one level deep, and its comments."
+        let pattern = spec.tracker?.wiRefRegex ?? ReviewProfile.Tracker.defaultRegex
+        var items = "Work items: take the number from the merge request's source branch only (pattern `\(pattern)`: "
+            + "`feature/COL-317494-login` names item 317494"
+        if let tracker = spec.tracker { items += "; tracker \(tracker.kind), organization \(tracker.org), project \(tracker.project)" }
+        items += "). Numbers in the title, description or commits don't count: don't read those items"
+        if !spec.workItems.isEmpty { items += ". Read \(spec.workItems.map { "#\($0)" }.joined(separator: ", ")) in any case" }
+        items += ". Read each item with its relations, its parent and related items one level deep, and its comments. "
+            + "When the branch names no item, read none: the review then checks the code alone."
         return """
         AKit review, step Gather. Read GitLab merge request \(mr.url) (project `\(mr.projectPath)`, merge request number \(mr.iid)) \
         and its work items with your MCP tools, through `codemode`. Don't review anything yet.
