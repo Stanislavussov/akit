@@ -19,8 +19,8 @@ public enum ReviewBuiltIns {
       max_inline: 5
       max_inline_medium: 3
     cost:
-      cap_credits_per_run: 150
-      max_changed_lines: 1500
+      cap_credits_per_run: 600
+      max_changed_lines: 6000
     """
 
     public static let scenarioFiles: [String: String] = [

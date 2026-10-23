@@ -23,30 +23,22 @@ final class ReviewModel {
         var dropped = 0
     }
 
-    /// An estimate over the cap waits for the user's answer.
-    /// Over the credit cap, or (with `changedLines`) over `max_changed_lines`.
+    /// Reasons not to review now (a draft, a failed pipeline, this commit already reviewed) wait
+    /// for the user's answer. Limits (credits, changed lines) never ask: see `alerts`.
     struct CapQuestion: Identifiable {
         let id = UUID()
-        let estimate: Double
-        let cap: Int
-        var changedLines: Int?
-        /// Reasons not to review now: a draft, a failed pipeline, this commit already reviewed.
-        var concerns: [String]?
+        var concerns: [String]
 
-        var title: String { concerns != nil ? "Review it now?" : changedLines == nil ? "Over the credit cap" : "A big change" }
-        var message: String {
-            if let concerns { return concerns.joined(separator: "\n") + "\n\nReview it anyway, or stop and come back later." }
-            if let changedLines {
-                return "This change has \(changedLines) changed lines; the limit is \(cap). Reviews of big changes miss more: review it anyway, or stop and split it."
-            }
-            return String(format: "This review needs about %.0f credits; the cap is %d. A big merge request costs more: run it anyway, or stop and narrow the roles.", estimate, cap)
-        }
+        var title: String { "Review it now?" }
+        var message: String { concerns.joined(separator: "\n") + "\n\nReview it anyway, or stop and come back later." }
     }
 
     private(set) var runs: [Summary] = []
     private(set) var run: ReviewWorkflow.Run?
     private(set) var activity: Activity?
     var problem: String?
+    /// The running review went over a limit (the credit cap, `max_changed_lines`); it goes on.
+    var alerts: [String] = []
     /// Review Settings…: the last `pi mcp list`, or why it failed.
     private(set) var mcpReport: ReviewMCPCheck.Report?
     private(set) var mcpProblem: String?
@@ -88,6 +80,7 @@ final class ReviewModel {
     /// Gather, then the passes, in the background of the app.
     func start(mr: MergeRequestRef, project: String?, choices: ReviewRunChoices, brain: URL) {
         guard task == nil else { return }
+        alerts = []
         activity = Activity(title: "Reviewing \(mr.label)")
         let env = env
         let scope = Cancellation.Scope()
@@ -112,6 +105,7 @@ final class ReviewModel {
     /// the mode takes them), then Gather and the passes, as for a merge request.
     func startLocal(_ inspection: ReviewLocal.Inspection, mode: ReviewLocalTarget.Mode, project: String?, choices: ReviewRunChoices, brain: URL) {
         guard task == nil else { return }
+        alerts = []
         activity = Activity(title: "Reviewing \(inspection.repository) (local)")
         let env = env
         let scope = Cancellation.Scope()
@@ -172,6 +166,7 @@ final class ReviewModel {
 
     func runPasses(_ id: String) {
         guard task == nil else { return }
+        alerts = []
         activity = Activity(runID: id, title: "Running the passes")
         let scope = Cancellation.Scope()
         self.scope = scope
@@ -189,12 +184,10 @@ final class ReviewModel {
     }
 
     private func passes(_ folder: URL) async throws {
-        let options = ReviewPasses.Options(confirmOverCap: { [weak self] estimate, cap in
-            await self?.ask(CapQuestion(estimate: estimate, cap: cap)) ?? false
-        }, confirmLarge: { [weak self] lines, limit in
-            await self?.ask(CapQuestion(estimate: 0, cap: limit, changedLines: lines)) ?? false
+        let options = ReviewPasses.Options(alert: { [weak self] message in
+            Task { @MainActor in self?.alerts.append(message) }
         }, confirmConcerns: { [weak self] concerns in
-            await self?.ask(CapQuestion(estimate: 0, cap: 0, concerns: concerns)) ?? false
+            await self?.ask(CapQuestion(concerns: concerns)) ?? false
         }, progress: { [weak self] line in Task { @MainActor in self?.log(line) } })
         try await ReviewPasses.run(folder: folder, env: env, options: options)
     }

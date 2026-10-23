@@ -16,6 +16,9 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-23 (branch `review-deferred`): R37, limits only alert and are 4× higher; R38, passes
+reach MCP servers with deferred tools through `tool_search`.
+
 Added 2026-10-23 (branch `review-log`): R36, the run's log for analysis and while it runs, model
 choices from Pi's list, required fields marked, an empty fetch that says why (section "Decisions
 (2026-10-23)").
@@ -321,7 +324,7 @@ the harness replaceable (Pi now, Claude Code later).
 | R11 | Knowledge base | v1 reads markdown folders the project profile lists. A full KB (agent proposals in an inbox, linter) is a separate design, after the context gaps show what is missing |
 | R12 | Reruns | By fingerprint, without the role in it (rules below). Every change to an earlier draft is a request to approve. Threads resolved by a person are never raised again. AKit never touches other people's threads |
 | R13 | Noise | ≤ 7 inline drafts, severity ≥ medium, confidence ≥ 0.8; questions, gaps and the AC matrix go to one summary draft; the rest stays in AKit |
-| R14 | Models | One model for the brief and the roles (one prompt cache), a strong model for the verifier, which gets only the candidates and their snippets. A cap per run, 150 credits by default |
+| R14 | Models | One model for the brief and the roles (one prompt cache), a strong model for the verifier, which gets only the candidates and their snippets. A cap per run, 150 credits by default (600 since R37, and it only alerts) |
 | R15 | Agent tools | `read`, `grep`, `find`, `ls` and the `akit_*` tools. No `bash`, no `write`. Paths limited to the worktree and the run folder; secret patterns blocked. Git history and test output come from Gather |
 | R16 | Quality | v1: the user's verdict on each finding at approval, with a reason tag, goes to Error Analysis. Sync of outcomes from GitLab comes later |
 | R17 | Brain edits from the work Mac | Allowed for the generic review roles and scenarios, after a diff with warnings for work words (hosts, project paths, e-mails from the work profiles) |
@@ -362,6 +365,8 @@ CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R
 | R34 | AI-written merge requests | The brief writes a personal risk map for the user, never posted: risk areas, whether the MR shows proof that it was tested, signs of slop. Slop in the code (a duplicated helper, a test of a mock, a swallowed error) is an ordinary finding of `tests` or `bug-hunter` |
 | R35 | The comments' language | Asked by the user later on 2026-10-23: only Czech goes to GitLab. `posting: language` (default `cs`) tells the passes, the verifier and Discuss to write titles, reasons, notes and gaps in it; AKit's own words in a draft (the header, the summary, "Looks fixed") are Czech; Gather's own gaps stay out of the summary (they are English and about this Mac). Send checks each draft's text with Apple's language recognizer (code, links, markup and AKit's header line left out; Slovak counts only with letters only Czech has) and refuses one that isn't Czech; the Review screen warns on its card. Translate only shows a translation: Send always takes the original |
 | R36 | Seeing what a run does | Asked by the user on 2026-10-23. While a run goes, **Details** under the status bar shows a live log: each pass's start and end (credits, time, tokens) and, indented, what the pass does now from Pi's events (files read, MCP tools by name, the model's answers with tokens, findings submitted, failures); never MCP arguments or answers. In a terminal the CLI prints the same lines to stderr at once; piped, only the steps. After it, **Log…** (`ReviewRunLog`, `akit review log RUN [--json]`) shows each pass's model, thinking, time, tokens, credits, files, MCP calls and blocked calls, its Pi session file, and what each role's findings became; **Copy for Analysis** gives it as Markdown without secrets, MCP arguments (work data) or answers. Model fields of New Review… are lists of `pi --list-models` with **Other…** to type one; Add Missed… picks a file of the change or Other…; required fields have a red asterisk. A fetch pass that read no merge request says which tools Pi called, what AKit blocked, which servers answered that the run doesn't use, and which server names the run looks for |
+| R37 | Limits | Asked by the user on 2026-10-23: "avoid limit for code review just alert me when overlap, and increase limits 4x". `cap_credits_per_run` 600 and `max_changed_lines` 6000 by default; over them the review never stops: an estimate over the cap, a change over the line limit, and the credits passing the cap (once) each make a yellow alert in the Review screen and a progress line ("Over a limit: …"). `--over-cap` is gone. Still asked: Review it now? (draft, red pipeline, same commit, 4th round); still enforced: the monthly dollar limit of Settings → Lab and Sync Outcomes' own small limit. A brain `review.yaml` that holds the old numbers keeps them |
+| R38 | Servers with deferred tools | Found on the work Mac on 2026-10-23: GitLab's own MCP server (`/api/v4/mcp`, 50 tools) runs in Pi with `deferred` exposure, so its tools are in no tool list until `tool_search` loads them, and the fetch pass made no MCP call. Every MCP pass and Discuss now load `builtin:tool-search` and allow `tool_search` (the extension checks each loaded tool as before); the fetch prompt says how to find tools that are in no list. That server has no draft-note tools: Send can't write drafts through it yet |
 
 Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are the team's
 repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the
@@ -565,7 +570,7 @@ posting:
   max_inline: 5
   max_inline_medium: 3
   language: cs        # Send lets only Czech go to GitLab (R35)
-cost: { cap_credits_per_run: 150, max_changed_lines: 1500 }
+cost: { cap_credits_per_run: 600, max_changed_lines: 6000 }   # R37: over them the review alerts and goes on
 ```
 
 ### Screens for configuration
@@ -631,7 +636,7 @@ Added 2026-10-22 (branch `review-audit-2`). The code decides these, not a pass:
 | A person's open thread on the same lines (±2, not AKit's, on the reviewed commit: an older version's line numbers point elsewhere) | `ReviewPlanner.personThread` | Plan: only in AKit, "… already has an open thread on these lines". Resolved threads stay with the prompt and the verifier |
 | Inline only on lines the change touches | `DiffPositions.isInDiff` (added, removed, or a context line GitLab shows) | Plan: a line in the summary |
 | Secrets in added lines | Gather writes `<run>/scan.json` (`ReviewScan`): the file, the line and the masked line cut to ±80 characters around the mask, never the value; ignored files and diffs over GitLab's limits (when git made them) are scanned too, at most 20; a file that usually holds secrets (`.env`, credentials) is one secret by path, unread; a match of only the password rules is weaker (`high`) and skipped in test, fixture and example paths | After the verifier: a finding of role `secret-scan`, `critical` (`high` for a password), confirmed by AKit. A role's finding on the same lines is merged into it, so the secret keeps its own text. The person's-thread and ignored-path rules don't hold it back |
-| The size of the change | `scan.json` `changedLines` (added + removed lines of files not ignored; a local rename counts as removed and added); `cost: max_changed_lines`, default 1500, per run in New Review… → This run only or `--max-changed-lines` | Before the passes, before the credit question: **A big change** (Run Anyway / Stop); the command line goes on with `--over-cap` |
+| The size of the change | `scan.json` `changedLines` (added + removed lines of files not ignored; a local rename counts as removed and added); `cost: max_changed_lines`, default 6000 (1500 before R37; over it the review alerts and goes on), per run in New Review… → This run only or `--max-changed-lines` | Before the passes, before the credit question: **A big change** (Run Anyway / Stop); the command line goes on with `--over-cap` |
 
 The first three don't apply to a finding the user moved inline. Existing runs without
 `scan.json` skip the last two.

@@ -307,7 +307,9 @@ public enum ReviewPrompts {
         AKit saves every answer of an MCP tool word for word; it reads them, not your summary. So call the tools in codemode \
         scripts and return only short notes from the script (what you found, what failed), never the data itself.
 
-        Read, with the tools your servers have (find them with searchTools() or describeNamespace()):
+        Read, with the tools your servers have. They may be in no tool list: find them with searchTools(), \
+        describeNamespace() or ALL_TOOLS in a codemode script, or load them with `tool_search` (a server with deferred tools). \
+        Never answer "done" before you have looked for the GitLab tools that way.
         1. The merge request itself, with its diff refs (base, start and head commit), whether it is a draft, and its head \
         pipeline (status and commit).
         2. Its diff versions, and the changed files with their diffs (every page).

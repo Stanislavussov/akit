@@ -63,6 +63,17 @@ struct ReviewView: View {
                 .background(.blue.opacity(0.08))
                 .overlay(alignment: .bottom) { Divider() }
             }
+            ForEach(Array(model.alerts.enumerated()), id: \.offset) { index, alert in
+                HStack {
+                    Label(alert, systemImage: "exclamationmark.triangle.fill").textSelection(.enabled)
+                    Spacer()
+                    Button("Dismiss") { model.alerts.remove(at: index) }
+                }
+                .font(.callout)
+                .padding(8)
+                .background(.yellow.opacity(0.18))
+                .overlay(alignment: .bottom) { Divider() }
+            }
             if let problem = model.problem {
                 HStack {
                     Label(problem, systemImage: "exclamationmark.triangle").textSelection(.enabled)
@@ -84,7 +95,7 @@ struct ReviewView: View {
             }
             .frame(maxHeight: .infinity)
         }
-        .alert(model.capQuestion?.title ?? "Over the credit cap", isPresented: Binding(get: { model.capQuestion != nil }, set: { if !$0 { model.answerCap(false) } }),
+        .alert(model.capQuestion?.title ?? "Review it now?", isPresented: Binding(get: { model.capQuestion != nil }, set: { if !$0 { model.answerCap(false) } }),
                presenting: model.capQuestion) { question in
             Button("Run Anyway") { model.answerCap(true) }
             Button("Stop", role: .cancel) { model.answerCap(false) }

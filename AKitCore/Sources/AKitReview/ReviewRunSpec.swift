@@ -296,14 +296,14 @@ public enum ReviewResolver {
                                            maxInline: pick(\.maxInline, fallback: 5),
                                            maxInlineMedium: pick(\.maxInlineMedium, fallback: 3),
                                            language: pick(\.language, fallback: ReviewLanguage.czech)),
-            capCredits: pick(\.capCredits, fallback: 150), constraints: profile?.constraints ?? [],
+            capCredits: pick(\.capCredits, fallback: 600), constraints: profile?.constraints ?? [],
             pathInstructions: profile?.pathInstructions ?? [], knowledge: profile?.knowledge ?? [], gather: profile?.gather ?? [],
             workItems: choices.workItems, headSHA: nil, tracker: profile?.tracker, mcp: access)
         spec.notes = notes
         spec.links = links.isEmpty ? nil : links
         spec.mcpServers = servers
         spec.fullReview = choices.fullReview ? true : nil
-        spec.maxChangedLines = pick(\.maxChangedLines, fallback: 1500)
+        spec.maxChangedLines = pick(\.maxChangedLines, fallback: 6000)
         let levels: [(ReviewPiExtras, ReviewSource)] = [(catalog.brainPi, .brain), (profile?.pi ?? ReviewPiExtras(), .project), (choices.pi, .run)]
         for (extras, _) in levels {
             if let problem = ReviewPiFlags.problem(extras.flags) { throw Failure(message: "Pi flags: \(problem)") }
