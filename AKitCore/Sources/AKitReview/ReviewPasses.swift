@@ -210,7 +210,8 @@ public enum ReviewPasses {
         var record = ReviewPassRecord(name: setup.name, role: setup.role?.id, model: setup.model.model, session: nil, started: .now, ended: nil,
                                       usage: SendUsage(), credits: 0, paths: [], error: nil)
         let output = await runPi(pi, arguments: arguments(setup, folder: folder, access: access), directory: setup.cwd,
-                                 environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"))
+                                 environment: environment, timeout: options.timeout, stream: folder.appending(path: "passes/\(setup.name).jsonl"),
+                                 progress: { line in options.progress("  \(setup.name) · \(line)") })
         ReviewMask.saved(in: folder)
         record.ended = .now
         record.session = output.session
@@ -218,6 +219,9 @@ public enum ReviewPasses {
         record.credits = ReviewCredits.of(output.usage)
         record.paths = output.paths.map { relative($0, to: setup.cwd, run: folder) }
         record.error = output.error
+        options.progress(String(format: "Pass %@ %@: %.1f credits, %.0f s, %@ in / %@ cached / %@ out", setup.name,
+                                output.error == nil ? "done" : "failed", record.credits, record.ended!.timeIntervalSince(record.started),
+                                ReviewRunLog.tokens(output.usage.input), ReviewRunLog.tokens(output.usage.cached), ReviewRunLog.tokens(output.usage.output)))
         log.passes.append(record)
         try ReviewJSON.write(log, to: folder.appending(path: "passes.json"))
         let system = setup.systemPrompt.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
@@ -535,7 +539,7 @@ public enum ReviewPasses {
     /// Runs one `pi -p --mode json` and reads its events: the session id, the recorded usage,
     /// the last answer, an error, and the paths of the read tools. The raw stream goes to `stream`.
     static func runPi(_ pi: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
-                      stream: URL) async -> PassOutput {
+                      stream: URL, progress: (@Sendable (String) -> Void)? = nil) async -> PassOutput {
         try? FileManager.default.createDirectory(at: stream.deletingLastPathComponent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: stream.path, contents: nil)
         let handle = try? FileHandle(forWritingTo: stream)
@@ -543,6 +547,7 @@ public enum ReviewPasses {
         let exit = await ChildProcess.run(pi, arguments: arguments, directory: directory, environment: environment, timeout: timeout) { line in
             collector.add(line)
             handle?.write(Data((ReviewMask.jsonLine(line) + "\n").utf8))
+            if let progress, let text = liveLine(line) { progress(text) }
         }
         try? handle?.close()
         var output = parse(collector.lines)
@@ -554,6 +559,55 @@ public enum ReviewPasses {
             output.error = "Pi exited with status \(exit?.status ?? -1)" + (tail.isEmpty ? "." : ": \(SecretFilter.masked(String(tail.suffix(300))))")
         }
         return output
+    }
+
+    /// One Pi event as a line of the live log: what the pass does now. Tool names and file paths
+    /// only, never MCP arguments or answers.
+    static func liveLine(_ line: String) -> String? {
+        // Only these events make a line: never parse the frequent, large message updates.
+        guard line.hasPrefix("{"), line.contains("\"tool_execution_start\"") || line.contains("\"tool_execution_end\"")
+                || line.contains("\"message_end\""),
+              let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { return nil }
+        switch event["type"] as? String {
+        case "tool_execution_start":
+            let name = event["toolName"] as? String ?? "?"
+            let args = event["args"] as? [String: Any] ?? [:]
+            switch name {
+            case "read", "ls", "find", "grep":
+                let target = (args["path"] as? String) ?? "."
+                let pattern = (args["pattern"] as? String).map { " \"\(SecretFilter.masked(String($0.prefix(60))))\"" } ?? ""
+                return "\(name) \(SecretFilter.masked(target))\(pattern)"
+            case "codemode": return "runs a script that calls MCP tools"
+            case "akit_submit_findings":
+                let count = (args["findings"] as? [Any])?.count ?? 0
+                let verdicts = (args["verdicts"] as? [Any])?.count ?? 0
+                return verdicts > 0 ? "submits \(verdicts) verdicts" : "submits \(count) finding\(count == 1 ? "" : "s")"
+            case "akit_report_context_gap": return "reports a context gap: " + SecretFilter.masked(String((args["needed"] as? String ?? "").prefix(80)))
+            case "akit_submit_context": return "hands the merge request's data to AKit"
+            case "akit_reading_link": return "reads a link"
+            default:
+                if name.hasPrefix("mcp__") {
+                    let rest = name.dropFirst(5)
+                    let parts = rest.components(separatedBy: "__")
+                    return "MCP \(parts.first ?? ""): \(parts.dropFirst().joined(separator: "__"))"
+                }
+                return "tool \(name)"
+            }
+        case "tool_execution_end":
+            guard event["isError"] as? Bool == true else { return nil }
+            return "\(event["toolName"] as? String ?? "a tool") failed"
+        case "message_end":
+            guard let message = event["message"] as? [String: Any], message["role"] as? String == "assistant" else { return nil }
+            if message["stopReason"] as? String == "error" {
+                return "model error: " + SecretFilter.masked(String((message["errorMessage"] as? String ?? "").prefix(200)))
+            }
+            let model = message["model"] as? String
+            let usage = (message["usage"] as? [String: Any]).map { PiLogFormat.tokens(fromPiUsage: $0) }
+            return "model answered" + (model.map { " (\($0))" } ?? "")
+                + (usage.map { " · \(ReviewRunLog.tokens($0.input + $0.cacheWrite)) in, \(ReviewRunLog.tokens($0.cacheRead)) cached, \(ReviewRunLog.tokens($0.output)) out" } ?? "")
+        default:
+            return nil
+        }
     }
 
     static func parse(_ lines: [String]) -> PassOutput {
@@ -594,6 +648,38 @@ public enum ReviewPasses {
         var seen = Set<String>()
         output.paths = output.paths.filter { seen.insert($0).inserted }
         return output
+    }
+
+    /// Why a fetch pass read nothing, from its own records: the tools Pi called (from the pass's
+    /// event stream), the calls AKit blocked, answers of servers the run doesn't use, the
+    /// servers the run uses, and the pass's error. Names only, never arguments or answers.
+    static func fetchDiagnosis(folder: URL, access: ReviewMCPAccess) -> String {
+        var lines: [String] = []
+        var tools: [String: Int] = [:]
+        if let text = try? String(contentsOf: folder.appending(path: "passes/fetch.jsonl"), encoding: .utf8) {
+            for line in text.split(separator: "\n") where line.contains("\"tool_execution_start\"") {
+                guard let event = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                      let name = event["toolName"] as? String else { continue }
+                tools[name, default: 0] += 1
+            }
+        }
+        lines.append("Tools Pi called: " + (tools.isEmpty ? "none"
+            : tools.sorted { $0.key < $1.key }.map { "\($0.key) ×\($0.value)" }.joined(separator: ", ")) + ".")
+        let blocked = ReviewRunLog.blocked(in: folder).filter { $0.pass == "fetch" }
+        if !blocked.isEmpty {
+            lines.append("Blocked by AKit: " + blocked.prefix(5).map { "\($0.tool) (\($0.reason))" }.joined(separator: "; ") + ".")
+        }
+        let others = Set(ReviewMCPData.calls(in: folder, pass: "fetch").filter { !access.answeredByBase($0) }
+            .compactMap { $0.server ?? ReviewRunLog.server(of: $0.tool) }.filter { !$0.isEmpty })
+        if !others.isEmpty {
+            lines.append("Answers from servers this run doesn't use as GitLab or the tracker: \(others.sorted().joined(separator: ", ")). "
+                         + "Name your GitLab server in the project profile (mcp: servers: [<name>]).")
+        }
+        lines.append("The run uses Pi servers matching: " + access.basePatterns.joined(separator: ", ") + ".")
+        if let error = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))?.passes.last(where: { $0.name == "fetch" })?.error {
+            lines.append("The pass said: \(SecretFilter.masked(String(error.prefix(300))))")
+        }
+        return "\n" + lines.joined(separator: "\n")
     }
 
     /// `<dir>/<time>_<id>.jsonl`.

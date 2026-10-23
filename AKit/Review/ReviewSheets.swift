@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitLab
 import AKitReview
 import AppKit
 import SwiftUI
@@ -40,6 +41,8 @@ struct NewReviewSheet: View {
     @State private var piFlags = ""
     @State private var piLibrary = ReviewPiLibrary()
     @State private var flagSuggestions: [(flag: String, help: String)] = []
+    /// Models Pi has credentials for (`pi --list-models`).
+    @State private var piModels: [String] = []
 
     private var mr: MergeRequestRef? { MergeRequestRef.parse(address) }
     private var profile: ReviewProfile? {
@@ -57,6 +60,11 @@ struct NewReviewSheet: View {
     /// The verifier's model from the configuration (brain, then the project profile); empty when none.
     private var configuredVerifier: String {
         [profile?.settings.verifier?.model, catalog?.brainDefaults.verifier?.model, catalog?.builtInDefaults.verifier?.model]
+            .compactMap { $0 }.first { !$0.isEmpty } ?? ""
+    }
+    /// The passes' model from the configuration; empty = Pi's default.
+    private var configuredPasses: String {
+        [profile?.settings.passes?.model, catalog?.brainDefaults.passes?.model, catalog?.builtInDefaults.passes?.model]
             .compactMap { $0 }.first { !$0.isEmpty } ?? ""
     }
     private var canStart: Bool {
@@ -83,7 +91,9 @@ struct NewReviewSheet: View {
                     localSection
                 } else {
                 Section {
-                    TextField("Merge request", text: $address, prompt: Text("https://gitlab.example.com/group/project/-/merge_requests/12"))
+                    TextField(text: $address, prompt: Text("https://gitlab.example.com/group/project/-/merge_requests/12")) {
+                        RequiredLabel("Merge request")
+                    }
                     if !address.isEmpty, mr == nil {
                         Text("Paste the merge request's address from GitLab.").font(.caption).foregroundStyle(.red)
                     } else if let mr {
@@ -122,13 +132,21 @@ struct NewReviewSheet: View {
                 extraServersSection
                 piSection
                 Section("This run only") {
-                    TextField("Model for the brief and roles", text: $passesModel, prompt: Text("provider/model, e.g. github-copilot/… (empty: from the configuration)"))
-                    TextField("Verifier model", text: $verifierModel,
-                              prompt: Text(configuredVerifier.isEmpty ? "required: a strong model, best of another family" : "empty: \(configuredVerifier)"))
+                    PiModelPicker(selection: $passesModel, models: piModels,
+                                  empty: "From the configuration (\(configuredPasses.isEmpty ? "Pi's default" : configuredPasses))") {
+                        Text("Model for the brief and roles")
+                    }
+                    PiModelPicker(selection: $verifierModel, models: piModels,
+                                  empty: configuredVerifier.isEmpty ? "Choose a model…" : "From the configuration (\(configuredVerifier))") {
+                        if configuredVerifier.isEmpty { RequiredLabel("Verifier model") } else { Text("Verifier model") }
+                    }
                     if verifierModel.trimmingCharacters(in: .whitespaces).isEmpty, configuredVerifier.isEmpty {
-                        Text("No verifier model is configured: name one here, or in Review Settings… (models: verifier). A model of another "
-                             + "family than the roles' checks their findings best.")
-                            .font(.caption).foregroundStyle(.orange)
+                        Text("Required: no verifier model is configured. Choose one here, or set it in Review Settings… (models: verifier). A model of "
+                             + "another family than the roles' checks their findings best.")
+                            .font(.caption).foregroundStyle(.red)
+                    }
+                    if piModels.isEmpty {
+                        Text("Pi lists no models (pi --list-models): log in to a provider in Pi first.").font(.caption).foregroundStyle(.secondary)
                     }
                     TextField("Credit cap", text: $cap, prompt: Text("empty: from the configuration"))
                     TextField("Max changed lines", text: $maxChangedLines, prompt: Text("over it the review asks first (empty: from the configuration)"))
@@ -141,6 +159,7 @@ struct NewReviewSheet: View {
             }
             .formStyle(.grouped)
             HStack {
+                Text("* Required.").font(.caption).foregroundStyle(.red)
                 Text(source == .local ? "Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit."
                      : "Pi reads the merge request and its work items through its MCP servers, only with reading tools. Nothing is written to GitLab here.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -162,6 +181,7 @@ struct NewReviewSheet: View {
         }
         .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)") { await inspect() }
         .task { await loadPi() }
+        .task { piModels = await LabRuns.models(for: .pi, env: model.env) }
     }
 
     /// Pi steps after the roles and extra Pi flags: suggested from the user's Pi set-up, or typed.
@@ -339,7 +359,7 @@ struct NewReviewSheet: View {
     @ViewBuilder private var localSection: some View {
         Section {
             HStack {
-                TextField("Workspace", text: $workspace, prompt: Text("a git worktree of Orca or herdr, or any clone"))
+                TextField(text: $workspace, prompt: Text("a git worktree of Orca or herdr, or any clone")) { RequiredLabel("Workspace") }
                 Button("Choose…") { chooseWorkspace() }
             }
             TextField("Base", text: $baseRef, prompt: Text("empty: the default branch (origin/HEAD, main or master)"))
@@ -751,7 +771,10 @@ struct SendDraftsSheet: View {
 struct AddMissedSheet: View {
     @Environment(ReviewModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// The files the change touched: the file to choose from.
+    var files: [String] = []
     @State private var file = ""
+    @State private var otherFile = false
     @State private var line = ""
     @State private var text = ""
 
@@ -761,7 +784,19 @@ struct AddMissedSheet: View {
             Text("It stays in AKit: it counts against the roles and helps to fix them. It never goes to GitLab.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
-                TextField("File", text: $file, prompt: Text("src/…"))
+                Picker("File", selection: Binding(get: { otherFile || (!file.isEmpty && !files.contains(file)) ? "\u{1}other" : file },
+                                                  set: { value in
+                                                      otherFile = value == "\u{1}other"
+                                                      if !otherFile { file = value }
+                                                  })) {
+                    Text("The whole change").tag("")
+                    ForEach(Array(Set(files)).sorted(), id: \.self) { Text($0).tag($0) }
+                    Divider()
+                    Text("Other…").tag("\u{1}other")
+                }
+                if otherFile || (!file.isEmpty && !files.contains(file)) {
+                    TextField("Path", text: $file, prompt: Text("src/…"))
+                }
                 TextField("Line", text: $line).frame(width: 70)
             }
             TextEditor(text: $text).frame(minHeight: 100).overlay(RoundedRectangle(cornerRadius: 4).stroke(.separator))
@@ -778,5 +813,204 @@ struct AddMissedSheet: View {
         }
         .padding(20)
         .frame(width: 480)
+    }
+}
+
+/// Log…: what the run did, for analysis (`ReviewRunLog`, `akit review log`): each pass's model,
+/// thinking, time, tokens and credits, what each role's findings became, the MCP calls and the
+/// calls AKit blocked. Copy for Analysis puts it on the clipboard as Markdown.
+struct ReviewRunLogSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let folder: URL
+    @State private var log: ReviewRunLog?
+    @State private var problem: String?
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Run Log").font(.title3.weight(.semibold))
+            if let log {
+                content(log)
+            } else if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            HStack {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+                    .help("The run folder: passes.json, the Pi sessions, mcp/calls, prompts and the context pack")
+                Button(copied ? "Copied" : "Copy for Analysis") {
+                    guard let log else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(log.markdown, forType: .string)
+                    copied = true
+                }
+                .disabled(log == nil)
+                .help("The log as Markdown, without secrets, MCP arguments or the servers' answers: paste it to a model or a note")
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 1000, idealWidth: 1080, minHeight: 560, idealHeight: 680)
+        .task {
+            // Every saved MCP answer is decoded: off the main thread.
+            let folder = folder
+            let result = await Task.detached { Result { try ReviewRunLog.load(folder) } }.value
+            switch result {
+            case .success(let loaded): log = loaded
+            case .failure(let error): problem = error.localizedDescription
+            }
+        }
+    }
+
+    @ViewBuilder private func content(_ log: ReviewRunLog) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(log.target + (log.head.map { " at \($0.prefix(10))" } ?? "") + " · scenario \(log.scenario)")
+            Text("Passes: " + model(log.passesModel, log.passesThinking) + " · verifier: " + model(log.verifierModel, log.verifierThinking))
+            Text(totals(log))
+        }
+        .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        Table(log.passes) {
+            TableColumn("Pass") { pass in
+                Label(pass.name, systemImage: pass.error == nil ? (pass.seconds == nil ? "circle.dotted" : "checkmark.circle") : "xmark.circle")
+                    .foregroundStyle(pass.error == nil ? Color.primary : Color.red)
+                    .help(pass.error ?? pass.name)
+            }
+            .width(min: 110, ideal: 140)
+            TableColumn("Model") { pass in Text(pass.model.isEmpty ? "Pi's default" : pass.model).help(pass.model) }.width(min: 120, ideal: 180)
+            TableColumn("Thinking") { pass in Text(pass.thinking.isEmpty ? "—" : pass.thinking) }.width(60)
+            TableColumn("Time") { pass in Text(ReviewRunLog.duration(pass.seconds)).monospacedDigit() }.width(60)
+            TableColumn("In / cached / out") { pass in
+                Text("\(ReviewRunLog.tokens(pass.usage.input)) / \(ReviewRunLog.tokens(pass.usage.cached)) / \(ReviewRunLog.tokens(pass.usage.output))")
+                    .monospacedDigit()
+            }
+            .width(min: 110, ideal: 125)
+            TableColumn("Credits") { pass in Text(String(format: "%.1f", pass.credits)).monospacedDigit() }.width(55)
+            TableColumn("Files") { pass in Text("\(pass.filesRead)").monospacedDigit() }.width(40)
+            TableColumn("MCP") { pass in
+                Text("\(pass.mcpCalls)" + (pass.mcpErrors > 0 ? " (\(pass.mcpErrors) failed)" : "") + (pass.blocked > 0 ? " · \(pass.blocked) blocked" : ""))
+                    .foregroundStyle(pass.mcpErrors + pass.blocked > 0 ? Color.orange : Color.primary)
+            }
+            .width(min: 50, ideal: 90)
+            TableColumn("Session") { pass in
+                if let session = pass.session {
+                    Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([folder.appending(path: session)]) }
+                        .buttonStyle(.link)
+                        .help("The Pi session file of this pass: every prompt, answer and tool call")
+                }
+            }
+            .width(60)
+        }
+        .frame(minHeight: 200)
+        HStack(alignment: .top, spacing: 16) {
+            if !log.roles.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Findings by role").font(.headline)
+                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 2) {
+                        GridRow {
+                            ForEach(["Role", "Found", "Confirmed", "Rejected", "Questions", "Merged", "Before MR", "Inline"], id: \.self) {
+                                Text($0).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            }
+                        }
+                        ForEach(log.roles, id: \.role) { role in
+                            GridRow {
+                                Text(role.role)
+                                Text("\(role.found)")
+                                Text("\(role.confirmed)")
+                                Text("\(role.rejected)")
+                                Text("\(role.questions)")
+                                Text("\(role.merged)")
+                                Text("\(role.preExisting)")
+                                Text("\(role.inline)")
+                            }
+                        }
+                    }
+                    .font(.callout.monospacedDigit())
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        if !log.calls.isEmpty || !log.blocked.isEmpty {
+            List {
+                if !log.blocked.isEmpty {
+                    Section("Blocked by AKit (\(log.blocked.count))") {
+                        ForEach(Array(log.blocked.enumerated()), id: \.offset) { _, item in
+                            Text("\(item.pass) · \(item.tool): \(item.reason)").font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+                        }
+                    }
+                }
+                if !log.calls.isEmpty {
+                    Section("MCP calls (\(log.calls.count))") {
+                        ForEach(Array(log.calls.enumerated()), id: \.offset) { _, call in
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(call.pass) · \(call.tool)" + (call.isError ? " · failed" : "") + " · answer \(call.answer) chars")
+                                    .foregroundStyle(call.isError ? Color.red : Color.primary)
+                                Text(call.input).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            .font(.callout)
+                            .textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 140)
+        }
+    }
+
+    private func totals(_ log: ReviewRunLog) -> String {
+        var parts = [String(format: "%.1f of %d credits", log.credits, log.cap)]
+        if let estimate = log.estimate { parts[0] += String(format: " (estimated %.0f)", estimate) }
+        parts.append("\(log.passes.count) passes")
+        parts.append(ReviewRunLog.duration(log.seconds))
+        parts.append("MCP: \(log.calls.count) calls" + (log.calls.isEmpty ? "" : " (\(log.callsByServer))"))
+        if !log.blocked.isEmpty { parts.append("\(log.blocked.count) blocked") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func model(_ model: String, _ thinking: String) -> String {
+        (model.isEmpty ? "Pi's default model" : model) + (thinking.isEmpty ? "" : ", thinking \(thinking)")
+    }
+}
+
+/// A field's label with a red asterisk: the form can't go on without it.
+struct RequiredLabel: View {
+    let title: String
+    init(_ title: String) { self.title = title }
+
+    var body: some View {
+        (Text(title) + Text(" *").foregroundColor(.red))
+            .help("Required")
+    }
+}
+
+/// One of Pi's models to choose (`pi --list-models`), with what an empty choice means first. A
+/// model not in Pi's list (the list failed, an offline provider) is typed under **Other…**.
+struct PiModelPicker<Label: View>: View {
+    @Binding var selection: String
+    let models: [String]
+    let empty: String
+    @ViewBuilder let label: () -> Label
+    @State private var other = false
+
+    private static var otherTag: String { "\u{1}other" }
+
+    var body: some View {
+        Picker(selection: Binding(get: { other || (!selection.isEmpty && !models.contains(selection)) ? Self.otherTag : selection },
+                                  set: { value in
+                                      other = value == Self.otherTag
+                                      if !other { selection = value }
+                                  })) {
+            Text(empty).tag("")
+            ForEach(models, id: \.self) { Text($0).tag($0) }
+            Divider()
+            Text("Other…").tag(Self.otherTag)
+        } label: {
+            label()
+        }
+        .help("Models Pi has credentials for (pi --list-models); Other… to type one")
+        if other || (!selection.isEmpty && !models.contains(selection)) {
+            TextField("Model", text: $selection, prompt: Text("provider/model"))
+        }
     }
 }

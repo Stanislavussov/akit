@@ -952,6 +952,22 @@ file "$REVIEWRUN/gaps.json" <<'EOF'
 [{"id":"g1","system":"tests","needed":"Output of tests","why":"dotnet test failed to build in the worktree.","howToGet":"Check the command in the profile.","effect":"","reportedBy":"gather"},
  {"id":"g2","system":"azure-devops","needed":"Které endpointy zůstanou anonymní","why":"Work item #4512 je neuvádí.","howToGet":"Zeptejte se autora.","effect":"f5 je otázka, ne nález.","reportedBy":"role-requirements"}]
 EOF
+# What the passes asked Pi's MCP servers (Log…): made-up calls, no answers worth reading.
+file "$REVIEWRUN/mcp/calls/fetch-1760520000000-0001.json" <<'EOF'
+{"pass":"fetch","tool":"mcp__gitlab__get_merge_request","server":"gitlab","input":"{\"project_id\":\"shop/orders-service\",\"merge_request_iid\":42}","text":["{\"iid\":42}"],"isError":false}
+EOF
+file "$REVIEWRUN/mcp/calls/fetch-1760520001000-0002.json" <<'EOF'
+{"pass":"fetch","tool":"mcp__gitlab__get_merge_request_diffs","server":"gitlab","input":"{\"project_id\":\"shop/orders-service\",\"merge_request_iid\":42}","text":["[]"],"isError":false}
+EOF
+file "$REVIEWRUN/mcp/calls/fetch-1760520002000-0003.json" <<'EOF'
+{"pass":"fetch","tool":"mcp__ado__wit_get_work_item","server":"ado","input":"{\"id\":4512}","text":["{\"id\":4512}"],"isError":false}
+EOF
+file "$REVIEWRUN/mcp/calls/role-security-1760520100000-0001.json" <<'EOF'
+{"pass":"role-security","tool":"mcp__context7__query-docs","server":"context7","input":"{\"libraryId\":\"/dotnet/aspnetcore\",\"query\":\"ILogger structured logging sensitive data\"}","text":["Docs about logging."],"isError":false}
+EOF
+file "$REVIEWRUN/mcp/blocked.jsonl" <<'EOF'
+{"tool":"mcp__gitlab__create_note","pass":"role-bug-hunter","reason":"a review pass only reads"}
+EOF
 file "$REVIEWRUN/gitlab/snapshot.json" <<EOF
 {"mergeRequest":{"iid":42,"title":"Stop logging the Authorization header (AB#4512)","description":"Fixes AB#4512.","state":"opened","author":"alice",
   "sourceBranch":"fix/4512-auth-log","targetBranch":"main","labels":["backend","security"],"webURL":"https://gitlab.example.com/shop/orders-service/-/merge_requests/42",
