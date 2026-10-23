@@ -172,6 +172,7 @@ extension ReviewSettingsPatch {
                                         maxInline: other.maxInline ?? maxInline,
                                         capCredits: other.capCredits ?? capCredits)
         patch.maxChangedLines = other.maxChangedLines ?? maxChangedLines
+        patch.maxInlineMedium = other.maxInlineMedium ?? maxInlineMedium
         return patch
     }
 }

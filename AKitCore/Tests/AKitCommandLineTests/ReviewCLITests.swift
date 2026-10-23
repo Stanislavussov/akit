@@ -76,7 +76,8 @@ extension AKitCLITests {
         #expect(code == 0, "\(text) \(err)")
         #expect(text.contains("gitlab: connected · 4 tools: 2 read, 1 write drafts, 1 blocked"))
         #expect(text.contains("read: get_merge_request, mr_discussions") && text.contains("write: create_draft_note"))
-        #expect(text.contains("jira: failed · not used by this project") && text.contains("fetch: connected · not used by this project"))
+        #expect(text.contains("jira: failed · read only, in the brief, roles and verifier (all_servers)"))
+        #expect(text.contains("fetch: connected · not used: name it as a context server to use it"), "a risky server only when named")
         #expect(!text.contains("glpat-SECRET") && !text.contains("npx"), "never a server's command line")
     }
 

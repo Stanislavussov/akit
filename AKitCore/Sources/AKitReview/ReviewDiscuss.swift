@@ -25,8 +25,9 @@ public enum ReviewDiscuss {
     static let opening = """
     You are in an interactive discussion of this review with the developer. They may ask you to look again at a finding, \
     explain it, or find something that was missed. When you change the findings, call akit_submit_findings: `verdicts` to \
-    change existing findings by id (confirmed, rejected, question, merged), `findings` for new ones. AKit shows the developer \
-    what changed; nothing reaches GitLab without their approval.
+    change existing findings by id (confirmed, rejected, question, merged), `findings` for new ones. Keep or set \
+    `preExisting: true` on a finding whose problem was already there before the change: it never goes to GitLab. AKit shows \
+    the developer what changed; nothing reaches GitLab without their approval.
     """
 
     /// Writes `<run>/discuss.command`: the environment of a pass and `pi --fork <verifier session>`.
@@ -54,7 +55,7 @@ public enum ReviewDiscuss {
         if run.spec.access.inPasses {
             // Pi's own MCP servers, reading only, as in the passes.
             arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode"]
-            tools += ",codemode" + run.spec.access.toolPatterns.map { "," + $0 }.joined()
+            tools += ",codemode" + run.spec.access.passPatterns.map { "," + $0 }.joined()
         } else {
             arguments += ["--no-mcp"]
         }

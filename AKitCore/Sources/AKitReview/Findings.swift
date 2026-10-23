@@ -19,13 +19,17 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
         /// The verifier's own severity and confidence, when it changed them.
         public var severity: ReviewSeverity?
         public var confidence: Double?
+        /// The verifier's say on whether the problem was there before the merge request.
+        public var preExisting: Bool?
 
-        public init(verdict: Value, note: String, into: String? = nil, severity: ReviewSeverity? = nil, confidence: Double? = nil) {
+        public init(verdict: Value, note: String, into: String? = nil, severity: ReviewSeverity? = nil, confidence: Double? = nil,
+                    preExisting: Bool? = nil) {
             self.verdict = verdict
             self.note = note
             self.into = into
             self.severity = severity
             self.confidence = confidence
+            self.preExisting = preExisting
         }
     }
 
@@ -55,6 +59,9 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
     /// Whether the quoted evidence is in the file at the reviewed commit; nil when AKit can't
     /// tell (a removed line, no worktree, no quote). Set by AKit.
     public var evidenceFound: Bool?
+    /// The problem is already there at the base commit: the change didn't bring it (R23). It
+    /// never goes to GitLab; the Review screen lists it under "Before this MR".
+    public var preExisting: Bool?
 
     public init(id: String, kind: Kind = .finding, role: String, file: String?, side: Side = .new, line: Int?, title: String,
                 evidence: String, why: String, severity: ReviewSeverity, confidence: Double, suggestion: String? = nil,
@@ -82,6 +89,8 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
     /// The severity and confidence after the verifier.
     public var finalSeverity: ReviewSeverity { verifier?.severity ?? severity }
     public var finalConfidence: Double { verifier?.confidence ?? confidence }
+    /// Whether the problem was there before the merge request, the verifier's say first.
+    public var isPreExisting: Bool { verifier?.preExisting ?? preExisting ?? false }
 }
 
 /// Something the agent needed and the context pack didn't have (`akit_report_context_gap`),

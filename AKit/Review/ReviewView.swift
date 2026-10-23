@@ -192,6 +192,8 @@ struct ReviewRunDetail: View {
                 }
                 requestsSection
                 onlyInAKit
+                hiddenFindings(.preExisting, title: "Before this MR",
+                               help: "Problems already there before this merge request: not the author's change. Make a task of its own for them.")
                 gaps
                 missed
             }
@@ -348,9 +350,14 @@ struct ReviewRunDetail: View {
     }
 
     @ViewBuilder private var onlyInAKit: some View {
-        let hidden = (run.plan?.placements ?? []).filter { $0.place == .onlyInAKit }
+        hiddenFindings(.onlyInAKit, title: "Only in AKit", help: nil)
+    }
+
+    /// Findings of one place that don't go to GitLab, each with its reason and Move Inline.
+    @ViewBuilder private func hiddenFindings(_ place: ReviewPlacement.Place, title: String, help: String?) -> some View {
+        let hidden = (run.plan?.placements ?? []).filter { $0.place == place }
         if !hidden.isEmpty {
-            DisclosureGroup("Only in AKit (\(hidden.count))") {
+            DisclosureGroup("\(title) (\(hidden.count))") {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(hidden, id: \.findingID) { placement in
                         if let finding = run.finding(placement.findingID) {
@@ -372,6 +379,7 @@ struct ReviewRunDetail: View {
                 }
                 .padding(.top, 4)
             }
+            .help(help ?? "")
         }
     }
 

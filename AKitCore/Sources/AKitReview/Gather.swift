@@ -50,6 +50,8 @@ public enum ReviewGather {
 
     public static func run(spec: ReviewRunSpec, profile: ReviewProfile?, roles: [ReviewRole], folder: URL, scrub: Scrubber.OwnPatterns,
                            env: HarnessEnvironment, options: ReviewPasses.Options = .init()) async throws -> Result {
+        // Nothing is spent before the run can be finished (R25).
+        if let problem = spec.verifierProblem { throw Failure(message: problem) }
         var spec = spec
         let progress = options.progress
         var gaps: [ContextGap] = []
@@ -264,8 +266,11 @@ public enum ReviewGather {
         for item in workItems {
             files.append(("work-items/\(item.id).md", "Work item #\(item.id) (\(item.type)): \(item.reason)", workItemText(item)))
         }
-        if !spec.constraints.isEmpty || !spec.pathInstructions.isEmpty {
-            files.append(("project-rules.md", "The project's constraints and path instructions", rulesText(spec)))
+        // Built-in rules of the languages the change touches (R21), with the profile's own.
+        let languages = ReviewLanguageRules.sets(for: diffs.filter { !$0.deletedFile && !isIgnored($0.newPath) }.map(\.newPath))
+        if !spec.constraints.isEmpty || !spec.pathInstructions.isEmpty || !languages.isEmpty {
+            files.append(("project-rules.md", "The project's constraints and path instructions, and AKit's rules for the change's languages",
+                          rulesText(spec) + ReviewLanguageRules.text(languages)))
         }
         if hasWorktree {
             progress("Reading git history of the changed files…")

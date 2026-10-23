@@ -326,6 +326,35 @@ extension (Pi only, no tests, the budget and send log written again in TypeScrip
 model tiers (switching models in one session loses the prompt cache); the role in the
 fingerprint (one problem from two roles would become two comments).
 
+## Decisions (2026-10-23): practices from Anthropic, OpenAI and Uber
+
+Grilled with the user on 2026-10-23 from a research note on agentic code review in 2025–2026
+(Anthropic's `code-review` plugin and Code Review, OpenAI's Codex review, Uber uReview, the
+CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R20–R26, R29;
+(b) R27, R30, R33, R34; (c) R28, R31; (d) R32.
+
+| # | Question | Decision |
+|---|---|---|
+| R20 | Where do review rules come from? | Built into AKit and generic for any project. A review doesn't read the repository's `AGENTS.md`, `CLAUDE.md` or `REVIEW.md` (Pi keeps `--no-context-files`); the project profile adds its own. Anthropic's false-positive list joins the built-in "never comment on" rules: issues from before the MR, rules silenced with `eslint-disable` / `@ts-ignore` / `swiftlint:disable`, and intended changes of behaviour |
+| R21 | Language rules | One built-in rule set, TS/JS with React, on when the diff has `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs` or `.cjs` files. Each rule has a level and a safe path. No other languages |
+| R22 | MCP servers in the passes | The roles get every MCP server of the user's Pi, reading tools only (the extension's write guard is unchanged). The built-in rules say which server is for what: documentation servers (context7) when the behaviour of a framework, a library or a tool is in doubt, GitLab for merge requests and their history, Azure DevOps for work items. `access.in_passes` can still narrow the list. A server reached only this way (an *open* server; `mcp: all_servers`, default true, a toggle in Review Settings…) is stricter than the run's own: a tool runs only when its server marks it read-only, when it is a known exact read (context7's `resolve-library-id`, `query-docs`), or when its name starts with a reading verb and no word anywhere in it acts (`execute`, `run`, `query`, `create`, `send`, …); its arguments are at most 300 characters each and have no line break, so code of the change can't leave through a search box; secret stores, databases and cloud consoles count as risky (named only). Found by the review of part (a): the reading-verb rule alone let `execute_query` and `get_or_create_*` through |
+| R23 | Issues from before the MR | A finding gets `preExisting: true` when the problem is already there at the base commit. It never goes to GitLab, not even to the summary; the Review screen lists it under "Before this MR". Move Inline still works |
+| R24 | Confidence | Anthropic's rubric, on the 0–1 scale, in the role and verifier prompts: it says whether the problem is real, also for an issue from before the MR (that one gets `preExisting`, not a low score): 0 a false positive, 0.25 couldn't verify, 0.5 real but minor, 0.75 verified and will happen in practice, 1 certain. `confirmed` needs ≥ 0.75; the posting threshold stays 0.8 |
+| R25 | The verifier's model | `models.verifier` is required: without it New Review… keeps Start Review off and `akit review` stops with a hint (`--verifier-model`) before a run folder exists. No automatic choice. Runs made before (spec version 1) keep their old verifier |
+| R26 | How many drafts | `max_inline: 5` and a new `max_inline_medium: 3`; critical and high first. The rest stay one line each in the summary |
+| R27 | Before the passes | Gather reads the draft status, the latest pipeline and earlier AKit runs on the same head SHA. If any of these holds, one question before money is spent, like the size question. Triviality isn't judged |
+| R28 | Reruns | With an earlier run of the MR, the roles look only at the lines changed between the last reviewed head and the new one, and earlier findings are checked for "fixed". The 4th run asks whether to talk about the approach instead. **Full review** reads the whole MR again |
+| R29 | Rules off the changed lines | Unchanged: findings off the changed lines go to the summary; issues from before the MR follow R23 |
+| R30 | History | Gather writes `history.md`: `git log` and `git blame` of the changed lines (local, no network) and people's threads in the last merged MRs that touched the same files (GitLab MCP). A new optional role `history`: an old bug coming back, or what people already asked for in these files |
+| R31 | Outcomes | Each rerun and a **Sync Outcomes** button read the threads with AKit's hidden line: anchor changed → `fixed`; resolved without a change → `dismissed`; the author's reply is shown as text; merged with no reaction → `ignored`. The Review screen shows the share accepted by role and model |
+| R32 | Eval set | **Add to Eval Set** on a run or a finding records the MR, its head SHA and the expected findings (or "clean"). Running the set through Lab is a later step |
+| R33 | Modes | Chosen by the kind of run, no new choice: a colleague's MR uses the posting rules above; the user's own MR or a local review also posts `low` and has a higher limit. A built-in scenario `security` next to Feature and Bugfix |
+| R34 | AI-written merge requests | The brief writes a personal risk map for the user, never posted: risk areas, whether the MR shows proof that it was tested, signs of slop. Slop in the code (a duplicated helper, a test of a mock, a swallowed error) is an ordinary finding of `tests` or `bug-hunter` |
+
+Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are the team's
+repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the
+user's. Automatic choice of a verifier model of another family (R25: the user wants it explicit).
+
 ## One run
 
 ```
@@ -516,12 +545,13 @@ review: { max_inline: 5 }                                  # overrides review.ya
 ### Defaults (`layers/review/review.yaml`)
 
 ```yaml
-models: { passes: <from pi --list-models>, verifier: <strong model> }
+models: { passes: <from pi --list-models>, verifier: <required: a strong model> }
 posting:
   marker: "🤖"
   severity_threshold: medium
   confidence_threshold: 0.8
-  max_inline: 7
+  max_inline: 5
+  max_inline_medium: 3
 cost: { cap_credits_per_run: 150, max_changed_lines: 1500 }
 ```
 

@@ -60,6 +60,8 @@ public enum ReviewRuns {
         let id = newID(for: mr)
         let (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: mr, id: id,
                                                        pi: ReviewPiLibrary.load(env: env))
+        // No run folder for a run that can't finish (R25).
+        if let problem = spec.verifierProblem { throw Failure(message: problem) }
         let folder = ReviewPaths(home: home).run(id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
@@ -89,6 +91,7 @@ public enum ReviewRuns {
         var (spec, roles) = try ReviewResolver.resolve(catalog: catalog, profile: profile, choices: choices, mergeRequest: ref, id: id,
                                                        pi: ReviewPiLibrary.load(env: env))
         spec.local = target
+        if let problem = spec.verifierProblem { throw Failure(message: problem) }
         let folder = ReviewPaths(home: home).run(id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))

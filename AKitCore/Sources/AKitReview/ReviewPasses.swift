@@ -136,7 +136,8 @@ public enum ReviewPasses {
         var tools = setup.tools
         if setup.mcp {
             arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode"]
-            tools += ",codemode" + access.toolPatterns.map { "," + $0 }.joined()
+            let patterns = setup.mode == "review" ? access.passPatterns : access.toolPatterns
+            tools += ",codemode" + patterns.map { "," + $0 }.joined()
         } else {
             arguments += ["--no-mcp"]
         }
@@ -244,6 +245,7 @@ public enum ReviewPasses {
             throw Failure(message: "\(folder.lastPathComponent) has no gathered run.json; gather it first.")
         }
         guard let pi = env.findExecutable("pi") else { throw Failure(message: "Pi (pi) is not installed.") }
+        if let problem = spec.verifierProblem { throw Failure(message: problem) }
         let roles = spec.roles
         // Every send checks the policy first: a merge request goes only to a destination on
         // the allowed list (a work Mac's list is the company's).

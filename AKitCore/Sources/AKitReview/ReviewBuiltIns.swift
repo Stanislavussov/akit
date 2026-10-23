@@ -7,7 +7,7 @@ public enum ReviewBuiltIns {
     # AKit review defaults. A project profile's `review:` block and a single run override them.
     models:
       passes: ""        # provider/model for the brief and the roles; empty = Pi's default model
-      verifier: ""      # a strong model for the verifier; empty = the passes' model
+      verifier: ""      # required: a strong model for the verifier, best of another family than the passes'.
     thinking:
       passes: ""
       verifier: high
@@ -15,7 +15,8 @@ public enum ReviewBuiltIns {
       marker: "🤖"
       severity_threshold: medium
       confidence_threshold: 0.8
-      max_inline: 7
+      max_inline: 5
+      max_inline_medium: 3
     cost:
       cap_credits_per_run: 150
       max_changed_lines: 1500

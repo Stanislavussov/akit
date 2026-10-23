@@ -22,7 +22,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 6
+    public static let version = 7
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -36,7 +36,7 @@ public enum ReviewExtension {
     }
 
     public static let source = #"""
-    // akit-review.ts v6: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v7: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -55,6 +55,21 @@ public enum ReviewExtension {
     const readPatterns: string[] = access.read ?? [];
     const writePatterns: string[] = access.write ?? [];
     const mcpAllowed = mode !== "review" || access.inPasses !== false;
+    // The review passes may read through every server of the user's Pi but the risky ones
+    // (a browser, a file system, a web fetcher), which only a profile or a run names.
+    const everyServer = mode === "review" && access.allServers === true;
+    const riskyWords = ["browser", "playwright", "puppeteer", "selenium", "chrome", "chromium", "firefox", "safari", "file", "files",
+      "filesystem", "fs", "fetch", "http", "web", "curl", "shell", "terminal", "exec", "command", "desktop", "computer",
+      "vault", "secret", "secrets", "keychain", "password", "passwords", "sql", "db", "database", "postgres", "postgresql", "mysql",
+      "sqlite", "mongo", "mongodb", "redis", "kubernetes", "k8s", "kubectl", "aws", "gcloud", "ssh"];
+    const riskyParts = ["fetch", "web", "crawl", "browser", "puppeteer", "playwright", "firecrawl", "tavily", "exa", "jina", "brightdata",
+      "filesystem", "1password", "bitwarden", "lastpass", "keepass", "postgres", "mysql", "sqlite", "mongo", "clickhouse", "snowflake",
+      "bigquery"];
+    const actingWords = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy",
+      "execute", "exec", "run", "send", "merge", "trigger", "cancel", "close", "archive", "set", "complete", "order", "invite", "share",
+      "upload", "sql", "query", "insert", "drop", "move", "rename", "start", "stop", "deploy", "pay", "buy", "checkout", "submit", "reply",
+      "comment"];
+    const openArgumentLimit = 300;
     const severities = ["nit", "low", "medium", "high", "critical"];
     const verdicts = ["confirmed", "rejected", "question", "merged"];
     const kinds = ["finding", "ac", "question"];
@@ -65,6 +80,7 @@ public enum ReviewExtension {
     const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
     const writeVerbs = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy"];
     const knownReads = ["mr_discussions"];
+    const knownExactReads = ["resolve-library-id", "resolve_library_id", "query-docs", "query_docs", "get-library-docs", "get_library_docs"];
     const defaultServerWords = ["gitlab", "azure", "devops"];
     const approved: any[] = mode === "send" ? (parse(readText(path.join(run, "send/approved.json"))) ?? []) : [];
     const claimed = new Set<string>();
@@ -103,8 +119,15 @@ public enum ReviewExtension {
       return !serverBase(server) && extras.map((s) => s.toLowerCase()).includes(norm(server).toLowerCase());
     }
 
+    // The same rules as ReviewMCPAccess.isRisky in AKit.
+    function risky(server: string): boolean {
+      const lower = String(server).toLowerCase();
+      const words = lower.split(/[^a-z]+/).filter((w) => w.length > 0);
+      return words.some((w) => riskyWords.includes(w)) || riskyParts.some((p) => lower.includes(p));
+    }
+
     function serverAllowed(server: string): boolean {
-      return serverBase(server) || serverExtra(server);
+      return serverBase(server) || serverExtra(server) || (everyServer && !risky(server));
     }
 
     // mcp__<server>__<tool>: the server is one the run allows, the longest that fits, so a
@@ -119,6 +142,25 @@ public enum ReviewExtension {
       return at < 0 ? { server: rest, tool: "" } : { server: rest.slice(0, at), tool: rest.slice(at + 2) };
     }
 
+    // Everything after `mcp__`: a server named `docs--fetch` must not pass as `docs`.
+    function match_rest(name: string): string {
+      return name.replace(/^mcp__/, "");
+    }
+
+    // An open server's call: no line break and no long text in its arguments, so code of the
+    // change can't leave through a search box.
+    function tooMuchFor(input: any): boolean {
+      const texts: string[] = [];
+      const walk = (value: any, depth: number) => {
+        if (depth > 4) return;
+        if (typeof value === "string") texts.push(value);
+        else if (Array.isArray(value)) value.forEach((v) => walk(v, depth + 1));
+        else if (value !== null && typeof value === "object") Object.values(value).forEach((v) => walk(v, depth + 1));
+      };
+      walk(input, 0);
+      return texts.some((t) => t.length > openArgumentLimit || /[\r\n]/.test(t));
+    }
+
     function lead(tool: string): string[] {
       return tool.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 0).slice(0, 2);
     }
@@ -129,10 +171,19 @@ public enum ReviewExtension {
       if (parts === null) return null;
       const { server, tool } = parts;
       if (!serverAllowed(server)) return "blocked";
+      if (knownExactReads.includes(tool.toLowerCase())) return "read";
       const words = tool.toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 0);
       if (words.some((w) => forbiddenWords.includes(w))) return "blocked";
+      // An open server (reached only through every-server reading): only a tool its server marks
+      // read-only, or one named like a plain read with no word that acts anywhere in the name.
+      if (!serverBase(server) && !serverExtra(server)) {
+        if (risky(match_rest(name))) return "blocked";
+        if (hints?.readOnlyHint === true) return "read";
+        if (words.some((w) => actingWords.includes(w)) || tool.includes("__")) return "blocked";
+        return readVerbs.includes(words[0] ?? "") ? "read" : "blocked";
+      }
       const verbs = lead(tool);
-      if (verbs.some((w) => writeVerbs.includes(w))) return !serverExtra(server) && writePatterns.some((p) => like(p, tool)) ? "write" : "blocked";
+      if (verbs.some((w) => writeVerbs.includes(w))) return serverBase(server) && writePatterns.some((p) => like(p, tool)) ? "write" : "blocked";
       if (readVerbs.includes(verbs[0] ?? "") || (verbs.length === 2 && readVerbs.includes(verbs[1]))) return "read";
       if (hints?.readOnlyHint === true || [...readPatterns, ...knownReads].some((p) => like(p, tool))) return "read";
       return "blocked";
@@ -274,6 +325,7 @@ public enum ReviewExtension {
         if (typeof f.why !== "string" || f.why.trim() === "") out.push(`${at}.why is missing`);
         if (!severities.includes(f.severity)) out.push(`${at}.severity must be one of ${severities.join(", ")}`);
         if (typeof f.confidence !== "number" || f.confidence < 0 || f.confidence > 1) out.push(`${at}.confidence must be 0–1`);
+        if (f.preExisting !== undefined && typeof f.preExisting !== "boolean") out.push(`${at}.preExisting must be true or false`);
       });
       verdictList.forEach((v, i) => {
         const at = `verdicts[${i}]`;
@@ -281,6 +333,7 @@ public enum ReviewExtension {
         if (!verdicts.includes(v?.verdict)) out.push(`${at}.verdict must be one of ${verdicts.join(", ")}`);
         if (typeof v?.note !== "string") out.push(`${at}.note is missing`);
         if (v?.verdict === "merged" && typeof v?.into !== "string") out.push(`${at}.into names the finding it merges into`);
+        if (v?.preExisting !== undefined && typeof v?.preExisting !== "boolean") out.push(`${at}.preExisting must be true or false`);
       });
       return out;
     }
@@ -311,6 +364,7 @@ public enum ReviewExtension {
                     confidence: { type: "number", minimum: 0, maximum: 1 },
                     suggestion: { type: "string", description: "Replacement code for the anchored line, when there is a clear fix" },
                     related: { type: "array", items: { type: "string" } },
+                    preExisting: { type: "boolean", description: "true: the problem is already there at the base commit; this change didn't bring it" },
                   },
                   required: ["title", "evidence", "why", "severity", "confidence"],
                 },
@@ -326,6 +380,7 @@ public enum ReviewExtension {
                     into: { type: "string" },
                     severity: { type: "string", enum: severities },
                     confidence: { type: "number", minimum: 0, maximum: 1 },
+                    preExisting: { type: "boolean", description: "true: the problem is already there at the base commit" },
                   },
                   required: ["id", "verdict", "note"],
                 },
@@ -443,6 +498,11 @@ public enum ReviewExtension {
           if (kind === "blocked") {
             return refuse(name, `AKit review doesn't let ${name} run: it isn't a reading tool of the project's servers, `
               + "and review never publishes, approves, merges or resolves.");
+          }
+          const parts = split(name);
+          if (parts !== null && !serverBase(parts.server) && !serverExtra(parts.server) && tooMuchFor(event.input)) {
+            return refuse(name, `AKit review sends ${parts.server} only short queries without line breaks (at most ${openArgumentLimit} `
+              + "characters each): ask with names of libraries, APIs or pages, never with code or file contents.");
           }
           if (kind === "write") {
             if (mode !== "send") return refuse(name, "Only Send Drafts writes, and only what the user approved.");

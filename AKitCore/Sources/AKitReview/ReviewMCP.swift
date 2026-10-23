@@ -22,6 +22,10 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
     /// Whether the brief, the role and the verifier passes may read through MCP too (the
     /// fetch pass always does).
     public var inPasses: Bool
+    /// Whether the brief, the roles, the steps and the verifier may read through every server of
+    /// the user's Pi (R22), not only the run's own and context servers. Risky servers (a
+    /// browser, a file system, a web fetcher) still need a name in `servers` or `extraServers`.
+    public var allServers: Bool
 
     public static let defaultWrite = ["*draft_note*", "*draft*note*"]
     /// Server names a run uses when the profile names none.
@@ -31,22 +35,28 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
     /// default, and ticking one shows a warning.
     public static let riskyServerWords = ["browser", "playwright", "puppeteer", "selenium", "chrome", "chromium", "firefox", "safari",
                                           "file", "files", "filesystem", "fs", "fetch", "http", "web", "curl", "shell", "terminal",
-                                          "exec", "command", "desktop", "computer"]
+                                          "exec", "command", "desktop", "computer",
+                                          // Secret stores, databases and cloud consoles: what they read is too much for a review.
+                                          "vault", "secret", "secrets", "keychain", "password", "passwords", "sql", "db", "database",
+                                          "postgres", "postgresql", "mysql", "sqlite", "mongo", "mongodb", "redis", "kubernetes", "k8s",
+                                          "kubectl", "aws", "gcloud", "ssh"]
     /// Parts that mark such a server anywhere in its name (`webfetch`, `firecrawl-mcp`, `exa`).
     public static let riskyServerParts = ["fetch", "web", "crawl", "browser", "puppeteer", "playwright", "firecrawl", "tavily", "exa", "jina",
-                                          "brightdata", "filesystem"]
+                                          "brightdata", "filesystem", "1password", "bitwarden", "lastpass", "keepass", "postgres",
+                                          "mysql", "sqlite", "mongo", "clickhouse", "snowflake", "bigquery"]
 
     public init(servers: [String] = [], extraServers: [String] = [], read: [String] = [], write: [String] = ReviewMCPAccess.defaultWrite,
-                inPasses: Bool = true) {
+                inPasses: Bool = true, allServers: Bool = true) {
         self.servers = servers
         self.extraServers = extraServers
         self.read = read
         self.write = write
         self.inPasses = inPasses
+        self.allServers = allServers
     }
 
     enum CodingKeys: String, CodingKey {
-        case servers, extraServers, read, write, inPasses
+        case servers, extraServers, read, write, inPasses, allServers
     }
 
     /// Runs made before extra servers (2026-10-22) have none.
@@ -57,6 +67,8 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
         read = try container.decode([String].self, forKey: .read)
         write = try container.decode([String].self, forKey: .write)
         inPasses = try container.decode(Bool.self, forKey: .inPasses)
+        // Runs made before 2026-10-23 read only their own servers.
+        allServers = try container.decodeIfPresent(Bool.self, forKey: .allServers) ?? false
     }
 
     /// Whether a name is a Pi server name AKit can put into `--tools` and a profile.
@@ -73,7 +85,7 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
         }
         let write = map["write"] == nil ? defaultWrite : ReviewYAML.strings(map["write"])
         return ReviewMCPAccess(servers: servers, extraServers: extra, read: ReviewYAML.strings(map["read"]), write: write,
-                               inPasses: map["in_passes"] as? Bool ?? true)
+                               inPasses: map["in_passes"] as? Bool ?? true, allServers: map["all_servers"] as? Bool ?? true)
     }
 
     /// Whether the server is one of the run's own servers (named, or the defaults): GitLab and
@@ -90,9 +102,16 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
         return !isBase(server: server) && extraServers.map { ReviewMCPPolicy.normalized($0).lowercased() }.contains(name)
     }
 
-    /// Whether a run may use this Pi server at all.
-    public func allows(server: String) -> Bool {
-        isBase(server: server) || isExtra(server: server)
+    /// Whether a run may use this Pi server at all. `inPasses`: in the brief, a role, a step or
+    /// the verifier, where every server that isn't risky reads (`allServers`).
+    public func allows(server: String, inPasses: Bool = false) -> Bool {
+        isBase(server: server) || isExtra(server: server) || (inPasses && allServers && !Self.isRisky(server: server))
+    }
+
+    /// `--tools` of the brief, the roles, the steps and the verifier: every server's tools when
+    /// they may read through all of them; the extension still checks each call.
+    public var passPatterns: [String] {
+        allServers ? ["mcp__*"] : toolPatterns
     }
 
     /// `mcp__<server>__*` for `--tools`: Pi then keeps only these servers' tools.
@@ -146,12 +165,17 @@ public struct ReviewMCPAccess: Codable, Sendable, Hashable {
         return access
     }
 
+    /// A browser, a file system or a web fetcher by its name (the extension's `risky`).
+    public static func isRisky(server name: String) -> Bool {
+        let lower = name.lowercased()
+        let words = lower.split(whereSeparator: { !$0.isLetter }).map(String.init)
+        return words.contains(where: riskyServerWords.contains) || riskyServerParts.contains(where: lower.contains)
+    }
+
     /// Why a server needs a second thought before a review uses it: it looks like a browser, a
     /// file system or a web fetcher. nil for the others.
     public static func warning(forServer name: String) -> String? {
-        let lower = name.lowercased()
-        let words = lower.split(whereSeparator: { !$0.isLetter }).map(String.init)
-        guard words.contains(where: riskyServerWords.contains) || riskyServerParts.contains(where: lower.contains) else { return nil }
+        guard isRisky(server: name) else { return nil }
         return "\(name) looks like a browser, file system or web fetch server: it can read far more than your links (local files, any web "
             + "page, your signed-in sessions), and what it reads goes to the model. Tick it only if you trust it with this review."
     }
@@ -172,8 +196,20 @@ public enum ReviewMCPPolicy {
     public static let readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"]
     /// The verbs a draft note tool may have in the send pass.
     public static let writeVerbs = ["create", "add", "post", "new", "update", "edit", "modify", "put", "patch", "delete", "remove", "destroy"]
-    /// Reading tools of common GitLab servers whose names carry no verb.
+    /// Reading tools of common servers whose names carry no reading verb: GitLab's
+    /// `mr_discussions`, and context7's `resolve-library-id`, which resolves a library's name,
+    /// not a thread (exact names only, so the forbidden `resolve` still blocks the rest).
     public static let knownReads = ["mr_discussions"]
+    public static let knownExactReads = ["resolve-library-id", "resolve_library_id", "query-docs", "query_docs", "get-library-docs",
+                                         "get_library_docs"]
+    /// Words that run or change something anywhere in a tool's name: an open server's tool with
+    /// one of them never runs (`execute_query`, `get_or_create_issue`).
+    public static let actingWords = writeVerbs + ["execute", "exec", "run", "send", "merge", "trigger", "cancel", "close", "archive", "set",
+                                                  "complete", "order", "invite", "share", "upload", "sql", "query", "insert", "drop", "move",
+                                                  "rename", "start", "stop", "deploy", "pay", "buy", "checkout", "submit", "reply", "comment"]
+    /// The longest argument text an open server's tool may get, and never a line break: code of
+    /// the change doesn't fit, so it can't leave through a search box.
+    public static let openArgumentLimit = 300
 
     /// Pi names a server's tool `mcp__<server>__<tool>`, every character but letters, digits
     /// and `_` turned into `_`.
@@ -192,15 +228,24 @@ public enum ReviewMCPPolicy {
     }
 
     /// What a tool of a server is to a run: read, write (only in the send pass) or blocked.
-    public static func kind(server: String, tool: String, readOnlyHint: Bool = false, access: ReviewMCPAccess) -> Kind {
-        guard access.allows(server: server) else { return .blocked }
+    public static func kind(server: String, tool: String, readOnlyHint: Bool = false, access: ReviewMCPAccess, inPasses: Bool = false) -> Kind {
+        guard access.allows(server: server, inPasses: inPasses) else { return .blocked }
+        if knownExactReads.contains(tool.lowercased()) { return .read }
         let words = tool.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
         if words.contains(where: forbiddenWords.contains) { return .blocked }
+        // An open server (reached only through `allServers`): AKit knows nothing of its tools, so
+        // only a tool its server marks read-only, or one named like a plain read with no word that
+        // acts anywhere in the name.
+        if !access.isBase(server: server), !access.isExtra(server: server) {
+            if readOnlyHint { return .read }
+            if words.contains(where: actingWords.contains) || tool.contains("__") { return .blocked }
+            return words.first.map(readVerbs.contains) == true ? .read : .blocked
+        }
         let lead = lead(tool)
         let writes = lead.contains(where: writeVerbs.contains)
         // A write pattern catches only tools whose verb writes: `*draft_note*` takes
         // `create_draft_note`, not `list_draft_notes`. A context server never writes.
-        if writes { return !access.isExtra(server: server) && access.write.contains(where: { matches($0, tool) }) ? .write : .blocked }
+        if writes { return access.isBase(server: server) && access.write.contains(where: { matches($0, tool) }) ? .write : .blocked }
         if let first = lead.first, readVerbs.contains(first) { return .read }
         if lead.count == 2, readVerbs.contains(lead[1]) { return .read }
         if readOnlyHint || (access.read + knownReads).contains(where: { matches($0, tool) }) { return .read }
@@ -408,7 +453,7 @@ public enum ReviewMCPCheck {
             let name = server.string("name") ?? "?"
             let tools = (server["tools"] as? [Any] ?? []).compactMap { $0 as? String ?? ($0 as? JSONObject)?.string("name") }
             return Server(name: name, enabled: server["enabled"] as? Bool ?? true, state: server.string("state") ?? "",
-                          tools: tools.map { ($0, ReviewMCPPolicy.kind(server: name, tool: $0, access: access)) })
+                          tools: tools.map { ($0, ReviewMCPPolicy.kind(server: name, tool: $0, access: access, inPasses: true)) })
         }
         let errors = (object["errors"] as? [Any] ?? []).map { error -> String in
             let text = error as? String ?? (error as? JSONObject)?.string("message") ?? "\(error)"

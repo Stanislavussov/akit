@@ -143,31 +143,36 @@ public enum ReviewConfigEditor {
     /// `mcp:` block at the end. Other lines stay byte for byte; a trailing comment and CRLF
     /// line ends stay too.
     static func settingExtraServers(_ servers: [String], in original: String) -> String {
+        settingMCP("extra_servers", "[" + servers.joined(separator: ", ") + "]", in: original, addWhenMissing: !servers.isEmpty)
+    }
+
+    /// One key of the profile's `mcp:` set to `value` (YAML), the rest of the file as it was.
+    /// `addWhenMissing`: whether a file without `mcp:` gets one.
+    static func settingMCP(_ key: String, _ value: String, in original: String, addWhenMissing: Bool = true) -> String {
         let crlf = original.contains("\r\n")
         let text = crlf ? original.replacingOccurrences(of: "\r\n", with: "\n") : original
-        let result = settingExtraServersLF(servers, in: text)
+        let result = settingMCPLF(key, value, in: text, addWhenMissing: addWhenMissing)
         return crlf ? result.replacingOccurrences(of: "\n", with: "\r\n") : result
     }
 
-    static func settingExtraServersLF(_ servers: [String], in text: String) -> String {
-        let list = "[" + servers.joined(separator: ", ") + "]"
+    static func settingMCPLF(_ key: String, _ value: String, in text: String, addWhenMissing: Bool) -> String {
         var lines = text.components(separatedBy: "\n")
         guard let start = lines.firstIndex(where: { $0.hasPrefix("mcp:") }) else {
-            guard !servers.isEmpty else { return text }
+            guard addWhenMissing else { return text }
             var result = text
             if !result.isEmpty, !result.hasSuffix("\n") { result += "\n" }
-            return result + "mcp:\n  extra_servers: \(list)\n"
+            return result + "mcp:\n  \(key): \(value)\n"
         }
         let (head, headComment) = comment(lines[start])
         let rest = head.dropFirst("mcp:".count).trimmingCharacters(in: .whitespaces)
         if rest.hasPrefix("{") {
             // A flow mapping on one line.
             var line = head
-            if let range = line.range(of: #"extra_servers:\s*\[[^\]]*\]"#, options: .regularExpression) {
-                line.replaceSubrange(range, with: "extra_servers: \(list)")
+            if let range = line.range(of: key + #":\s*(\[[^\]]*\]|[A-Za-z0-9_]+)"#, options: .regularExpression) {
+                line.replaceSubrange(range, with: "\(key): \(value)")
             } else if let open = line.firstIndex(of: "{"), let close = line.lastIndex(of: "}"), open < close {
                 let inside = line[line.index(after: open)..<close].trimmingCharacters(in: .whitespaces)
-                let body = inside.isEmpty ? "extra_servers: \(list)" : inside + ", extra_servers: \(list)"
+                let body = inside.isEmpty ? "\(key): \(value)" : inside + ", \(key): \(value)"
                 line.replaceSubrange(open...close, with: "{ \(body) }")
             }
             lines[start] = line + headComment
@@ -181,7 +186,7 @@ public enum ReviewConfigEditor {
         while end > start + 1, lines[end - 1].trimmingCharacters(in: .whitespaces).isEmpty || lines[end - 1].hasPrefix("#") { end -= 1 }
         let indent = lines[(start + 1)..<end].first { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !$0.hasPrefix("#") }
             .map { String($0.prefix { $0 == " " || $0 == "\t" }) } ?? "  "
-        if let at = lines[(start + 1)..<end].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("extra_servers:") }) {
+        if let at = lines[(start + 1)..<end].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix(key + ":") }) {
             let own = lines[at].prefix { $0 == " " || $0 == "\t" }.count
             var stop = at + 1
             // A block list under it: `- name` lines indented as much or more.
@@ -189,11 +194,25 @@ public enum ReviewConfigEditor {
                   lines[stop].prefix(while: { $0 == " " || $0 == "\t" }).count >= own {
                 stop += 1
             }
-            lines.replaceSubrange(at..<stop, with: [String(lines[at].prefix(own)) + "extra_servers: \(list)" + comment(lines[at]).comment])
+            lines.replaceSubrange(at..<stop, with: [String(lines[at].prefix(own)) + "\(key): \(value)" + comment(lines[at]).comment])
         } else {
-            lines.insert(indent + "extra_servers: \(list)", at: start + 1)
+            lines.insert(indent + "\(key): \(value)", at: start + 1)
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Review Settings… → Every Pi server in the review passes: the profile's `mcp: all_servers:`.
+    public static func allServers(_ on: Bool, profile slug: String, home: URL, brain: URL) throws -> Save {
+        let url = file(.profile, id: slug, level: .project(slug), home: home, brain: brain)
+        guard let old = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "There is no project profile \(slug).") }
+        let text = settingMCP("all_servers", on ? "true" : "false", in: old)
+        var parsed = try? ReviewProfile.parse(text, slug: slug)
+        let before = try? ReviewProfile.parse(old, slug: slug)
+        parsed?.mcp.allServers = before?.mcp.allServers ?? true
+        guard let after = try? ReviewProfile.parse(text, slug: slug), after.mcp.allServers == on, let before, parsed == before else {
+            throw Failure(message: "AKit couldn't change mcp: in \(url.lastPathComponent) by itself. Edit… the file and set mcp: all_servers: \(on).")
+        }
+        return try plan(.profile, id: slug, text: text, level: .project(slug), home: home, brain: brain)
     }
 
     /// Reset to Brain: the project's own copy goes to the Trash; the brain's applies again.

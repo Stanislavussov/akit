@@ -61,7 +61,7 @@ struct ContextRulesTests {
     @Test func oldRunsDecodeWithoutContextServers() throws {
         let old = #"{"servers":["gitlab"],"read":[],"write":["*draft_note*"],"inPasses":true}"#
         let access = try JSONDecoder().decode(ReviewMCPAccess.self, from: Data(old.utf8))
-        #expect(access == ReviewMCPAccess(servers: ["gitlab"], write: ["*draft_note*"]))
+        #expect(access == ReviewMCPAccess(servers: ["gitlab"], write: ["*draft_note*"], allServers: false), "an old run reads only its own servers")
         let round = try JSONDecoder().decode(ReviewMCPAccess.self, from: JSONEncoder().encode(ReviewMCPAccess(extraServers: ["figma"])))
         #expect(round.extraServers == ["figma"])
     }

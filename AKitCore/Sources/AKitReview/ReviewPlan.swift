@@ -92,6 +92,9 @@ public struct ReviewPlacement: Codable, Sendable, Hashable {
         case dismissed
         /// Stays in AKit with the reason.
         case onlyInAKit
+        /// The problem was there before the merge request (R23): never in GitLab, listed under
+        /// "Before this MR" for a task of its own.
+        case preExisting
     }
 
     public var findingID: String
@@ -186,6 +189,10 @@ public enum ReviewPlanner {
                 place(.dismissed, "Already raised by AKit and resolved by a person: never raised again.")
                 continue
             }
+            if finding.isPreExisting, !input.forcedInline.contains(finding.id) {
+                place(.preExisting, "Already there before this merge request: not the author's change. Move it inline to post it anyway.")
+                continue
+            }
             if finding.kind == .question || verdict == .question {
                 questions.append(finding)
                 place(.question, "Not enough context: a question to the author.")
@@ -243,15 +250,25 @@ public enum ReviewPlanner {
             if a.0.finalSeverity != b.0.finalSeverity { return a.0.finalSeverity > b.0.finalSeverity }
             return a.0.finalConfidence > b.0.finalConfidence
         }
-        for (index, candidate) in inlineCandidates.enumerated() {
-            if index < posting.maxInline.value || input.forcedInline.contains(candidate.0.id) {
+        // `medium` has a cap of its own inside the inline cap (R26).
+        var taken = 0, takenMedium = 0
+        for candidate in inlineCandidates {
+            let forced = input.forcedInline.contains(candidate.0.id)
+            let medium = candidate.0.finalSeverity <= .medium
+            let mediumCap = posting.maxInlineMedium?.value
+            if forced || (taken < posting.maxInline.value && !(medium && mediumCap.map { takenMedium >= $0 } == true)) {
+                // The user's own picks go inline over the caps, and still take their places in them.
+                taken += 1
+                if medium { takenMedium += 1 }
                 inline.append((candidate.0, candidate.1))
                 placements.append(ReviewPlacement(findingID: candidate.0.id, place: .inline,
-                                                  reason: input.forcedInline.contains(candidate.0.id) ? "Moved inline by you." : "Confirmed and over the thresholds."))
+                                                  reason: forced ? "Moved inline by you." : "Confirmed and over the thresholds."))
             } else {
                 overCap.append(candidate.0)
-                placements.append(ReviewPlacement(findingID: candidate.0.id, place: .summary,
-                                                  reason: "Over the cap of \(posting.maxInline.value) inline comments: one line in the summary."))
+                let reason = taken >= posting.maxInline.value
+                    ? "Over the cap of \(posting.maxInline.value) inline comments: one line in the summary."
+                    : "Over the cap of \(mediumCap ?? 0) inline comments of medium severity or lower: one line in the summary."
+                placements.append(ReviewPlacement(findingID: candidate.0.id, place: .summary, reason: reason))
             }
         }
 

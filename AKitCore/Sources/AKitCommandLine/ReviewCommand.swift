@@ -168,7 +168,7 @@ extension AKitCLI {
             let report = try await ReviewMCPCheck.run(env: env, access: access)
             out(mcpCheckText(report, access: access, project: profile?.slug))
             let connected = report.servers.filter { $0.enabled && $0.state == "connected" }
-            return connected.contains(where: { $0.count(.read) > 0 }) ? 0 : 1
+            return connected.contains(where: { $0.count(.read) > 0 && access.isBase(server: $0.name) }) ? 0 : 1
         case "show":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review show RUN.") }
             try args.finish()
@@ -387,8 +387,12 @@ extension AKitCLI {
         var lines = ["Pi's MCP servers" + (project.map { " for project \($0)" } ?? "") + " (pi mcp list):"]
         if report.servers.isEmpty { lines.append("  none. Add your GitLab and tracker servers to Pi: pi mcp add …") }
         for server in report.servers {
-            let used = access.allows(server: server.name)
-            let role = access.isExtra(server: server.name) ? " · context server, read only" : used ? "" : " · not used by this project"
+            let used = access.allows(server: server.name, inPasses: access.inPasses)
+            let role = access.isExtra(server: server.name) ? " · context server, read only"
+                : access.isBase(server: server.name) ? ""
+                : used ? " · read only, in the brief, roles and verifier (all_servers)"
+                : ReviewMCPAccess.isRisky(server: server.name) && access.allServers ? " · not used: name it as a context server to use it"
+                : " · not used by this project"
             lines.append("  \(server.name): \(server.enabled ? server.state : "disabled")" + role
                          + " · \(server.tools.count) tools: \(server.count(.read)) read, \(server.count(.write)) write drafts, \(server.count(.blocked)) blocked")
             if let warning = ReviewMCPAccess.warning(forServer: server.name), !access.isBase(server: server.name) {
@@ -404,8 +408,8 @@ extension AKitCLI {
                          + "and Send Drafts may write with it.")
         }
         for error in report.errors { lines.append("  error: \(error)") }
-        if !report.servers.contains(where: { $0.enabled && $0.state == "connected" && $0.count(.read) > 0 }) {
-            lines.append("No connected server has a tool review may read with: a review can't start.")
+        if !report.servers.contains(where: { $0.enabled && $0.state == "connected" && $0.count(.read) > 0 && access.isBase(server: $0.name) }) {
+            lines.append("No connected GitLab or tracker server has a tool review may read with: a review can't start.")
         }
         lines.append("A tool its server marks read-only also reads in a run, whatever its name.")
         return lines.joined(separator: "\n")
@@ -420,9 +424,10 @@ extension AKitCLI {
             lines += passes.passes.map { "  \($0.name): " + ($0.error.map { "failed: \($0)" } ?? String(format: "%.1f credits", $0.credits)) }
         }
         lines.append(requestsText(run))
-        let hidden = run.plan?.placements.filter { $0.place == .onlyInAKit } ?? []
-        if !hidden.isEmpty {
-            lines.append("Only in AKit:")
+        for (place, title) in [(ReviewPlacement.Place.onlyInAKit, "Only in AKit:"), (.preExisting, "Before this MR (never posted):")] {
+            let hidden = run.plan?.placements.filter { $0.place == place } ?? []
+            guard !hidden.isEmpty else { continue }
+            lines.append(title)
             lines += hidden.map { placement in
                 let finding = run.finding(placement.findingID)
                 return "  \(placement.findingID) \(finding.map { "\($0.title) (\($0.role), \($0.finalSeverity.rawValue))" } ?? ""): \(placement.reason)"

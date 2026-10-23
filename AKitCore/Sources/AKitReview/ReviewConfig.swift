@@ -107,6 +107,8 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var severityThreshold: ReviewSeverity?
     public var confidenceThreshold: Double?
     public var maxInline: Int?
+    /// At most this many of the inline drafts are `medium` or lower (`posting: max_inline_medium`).
+    public var maxInlineMedium: Int?
     public var capCredits: Int?
     /// Over this many changed lines the passes ask first (`cost: max_changed_lines`).
     public var maxChangedLines: Int?
@@ -152,6 +154,10 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
         if let value = posting["max_inline"] as? Int {
             guard (0...50).contains(value) else { throw ReviewRole.Failure(message: "\(where_): max_inline must be 0–50.") }
             patch.maxInline = value
+        }
+        if let value = posting["max_inline_medium"] as? Int {
+            guard (0...50).contains(value) else { throw ReviewRole.Failure(message: "\(where_): max_inline_medium must be 0–50.") }
+            patch.maxInlineMedium = value
         }
         if let value = (cost["cap_credits_per_run"] ?? map["cap_credits_per_run"]) as? Int {
             guard value > 0 else { throw ReviewRole.Failure(message: "\(where_): cap_credits_per_run must be above 0.") }
