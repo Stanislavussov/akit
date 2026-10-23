@@ -71,6 +71,11 @@ extension AKitCLI {
                                         session) and print how to start it
       akit review apply RUN             Make a new version of the findings from what Pi submitted in
                                         the discussion; the requests are planned again
+      akit review eval [list]           The eval set: merge requests pinned at a commit, with the
+                                        findings a good review must report, or clean
+      akit review eval add RUN [--clean] [--finding ID]… [--note TEXT]
+                                        Add a run: its approved findings, the named ones, or clean
+      akit review eval remove ID        Take a case out of the eval set
       akit review outcomes [RUN] [--sync]
                                         What became of the 🤖 threads in GitLab (fixed, dismissed,
                                         ignored, open) and the share accepted by role and model;
@@ -273,6 +278,30 @@ extension AKitCLI {
         case "quality":
             try args.finish()
             out(qualityText(ReviewQuality.entries(home: env.homeDirectory)))
+            return 0
+        case "eval":
+            switch args.positional() {
+            case nil, "list":
+                try args.finish()
+                out(evalText(ReviewEvalSet.load(home: env.homeDirectory)))
+            case "add":
+                let clean = args.flag("--clean")
+                let findings = args.values("--finding")
+                let note = args.value("--note") ?? ""
+                guard let id = args.positional() else { throw Failure(message: "Which run? akit review eval add RUN [--clean | --finding ID…].") }
+                if clean, !findings.isEmpty { throw Failure(message: "--clean expects nothing: drop --finding, or drop --clean.") }
+                try args.finish()
+                let item = try ReviewEvalSet.add(run: try runFolder(id, env: env), findings: findings.isEmpty ? nil : findings, clean: clean,
+                                                 note: note, home: env.homeDirectory)
+                out(item.clean ? "Added \(item.id) as clean." : "Added \(item.id) with \(item.expected.count) expected finding(s).")
+            case "remove":
+                guard let id = args.positional() else { throw Failure(message: "Which case? akit review eval remove ID.") }
+                try args.finish()
+                try ReviewEvalSet.remove(id, home: env.homeDirectory)
+                out("Removed \(id).")
+            case let other?:
+                throw Failure(message: "akit review eval: unknown \(other) (list, add, remove).")
+            }
             return 0
         case "outcomes":
             let sync = args.flag("--sync")
@@ -504,6 +533,14 @@ extension AKitCLI {
         let missed = entries.filter { $0.label == .missed }.count
         if missed > 0 { lines.append("Missed (added by you): \(missed)") }
         return lines.joined(separator: "\n")
+    }
+
+    static func evalText(_ cases: [ReviewEvalCase]) -> String {
+        guard !cases.isEmpty else { return "The eval set is empty: akit review eval add RUN, or Add to Eval Set on a run." }
+        return (["Eval set (\(cases.count)):"] + cases.map { item in
+            "  \(item.id): \(item.mergeRequest) at \(item.headSHA.prefix(10)), \(item.scenario); "
+                + (item.clean ? "clean" : item.expected.map { "\($0.file ?? "-")\($0.line.map { ":\($0)" } ?? "") \($0.title)" }.joined(separator: "; "))
+        }).joined(separator: "\n")
     }
 
     static func outcomesText(_ outcomes: [ReviewOutcome]) -> String {

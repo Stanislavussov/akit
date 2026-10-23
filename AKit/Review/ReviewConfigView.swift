@@ -354,6 +354,8 @@ struct ReviewQualityView: View {
     @Environment(ReviewModel.self) private var model
     @State private var entries: [ReviewQuality.Entry] = []
     @State private var outcomes: [ReviewOutcome] = []
+    @State private var evalSet: [ReviewEvalCase] = []
+    @State private var evalProblem: String?
 
     var body: some View {
         let precision = ReviewQuality.precision(entries)
@@ -362,6 +364,7 @@ struct ReviewQualityView: View {
                 Text("Precision = approved / (approved + rejected), from your verdicts on the Review screen. A finding you moved inline counts as approved: the filter, not the reviewer, was wrong.")
                     .foregroundStyle(.secondary)
                 outcomesSection
+                evalSection
                 if entries.isEmpty {
                     ContentUnavailableView("No verdicts yet", systemImage: "chart.bar",
                                            description: Text("Approve or reject findings on a run; the numbers appear here."))
@@ -393,6 +396,42 @@ struct ReviewQualityView: View {
         .task {
             entries = ReviewQuality.entries(home: model.home)
             outcomes = ReviewOutcomes.all(home: model.home)
+            evalSet = ReviewEvalSet.load(home: model.home)
+        }
+    }
+
+    /// R32: the merge requests kept to check reviews against.
+    @ViewBuilder private var evalSection: some View {
+        Group {
+            DisclosureGroup("Eval set (\(evalSet.count))") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Merge requests pinned at a commit, with the findings a good review must report, or clean. Add them with Add to Eval Set on a review. Running the set through Lab comes later.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let evalProblem {
+                        Label(evalProblem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                    }
+                    ForEach(evalSet) { item in
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(item.mergeRequest).font(.callout).textSelection(.enabled)
+                                Text("\(item.headSHA.prefix(10)) · \(item.scenario) · " + (item.clean ? "clean" : item.expected.map(\.title).joined(separator: "; ")))
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            Spacer()
+                            Button("Remove") {
+                                do {
+                                    try ReviewEvalSet.remove(item.id, home: model.home)
+                                    evalProblem = nil
+                                } catch {
+                                    evalProblem = error.localizedDescription
+                                }
+                                evalSet = ReviewEvalSet.load(home: model.home)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
         }
     }
 

@@ -440,3 +440,37 @@ struct PracticesRerunUnitTests {
                 "this commit again: a full review, not a rerun of nothing")
     }
 }
+
+/// Part (d) of 2026-10-23 (R32): the eval set.
+extension ReviewProcessTests {
+    struct PracticesEvalSetTests {
+        @Test func aRunGoesIntoTheEvalSetPinnedAtItsCommit() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            let home = run.home.url
+            #expect(throws: (any Error).self, "nothing approved yet") { try ReviewEvalSet.add(run: run.folder, home: home) }
+            let finding = try #require(ReviewWorkflow.load(run.folder).findings?.findings.first)
+            let named = try ReviewEvalSet.add(run: run.folder, findings: [finding.id], note: "token glpat-abcdefghijklmnopqrst in the log", home: home)
+            #expect(named.headSHA == run.head && named.expected.first?.fingerprints == finding.fingerprints && !named.clean)
+            #expect(!named.note.contains("glpat-"), "the note is masked")
+            let request = try #require(ReviewWorkflow.load(run.folder).plan?.requests.first { $0.findingID == finding.id })
+            try ReviewWorkflow.decide(run.folder, request: request.id, decision: .approved)
+            let approved = try ReviewEvalSet.add(run: run.folder, home: home)
+            #expect(approved.id == named.id && ReviewEvalSet.load(home: home).count == 1, "one case per merge request and commit")
+            #expect(approved.expected.count == 1, "the same finding isn't expected twice")
+            let other = try #require(ReviewWorkflow.load(run.folder).findings?.findings.last)
+            let both = try ReviewEvalSet.add(run: run.folder, findings: [other.id], home: home)
+            #expect(both.expected.count == 2 && both.note == named.note, "a named finding joins the earlier ones")
+            #expect(throws: (any Error).self, "clean and expected never mix") { try ReviewEvalSet.add(run: run.folder, clean: true, home: home) }
+            #expect(throws: (any Error).self) { try ReviewEvalSet.add(run: run.folder, findings: ["f99"], home: home) }
+            try ReviewEvalSet.remove(both.id, home: home)
+            let clean = try ReviewEvalSet.add(run: run.folder, clean: true, home: home)
+            #expect(clean.clean && clean.expected.isEmpty)
+            // A file AKit can't read is never replaced.
+            try Data("not json".utf8).write(to: home.appending(path: ".akit/local/review/eval-set.json"))
+            #expect(throws: (any Error).self) { try ReviewEvalSet.add(run: run.folder, clean: true, home: home) }
+            #expect(try String(contentsOf: home.appending(path: ".akit/local/review/eval-set.json"), encoding: .utf8) == "not json")
+        }
+    }
+}

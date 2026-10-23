@@ -37,7 +37,7 @@
 - «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
 - «Агенту нужен макет из Figma или страница вики» → поля **Context for this review**, **Links** и блок **Extra servers** в **New Review…** (см. [контекст ревью](#context)).
 
-![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8 и строкой Verifier: confirmed; внизу кнопки Add Missed…, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
+![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8 и строкой Verifier: confirmed; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
 ### Зачем это нужно
 <!-- section: overview-why -->
@@ -1337,7 +1337,7 @@ AKit проверяет папку ревью каждые несколько с
 2. **Level** = **Brain**.
 3. Выберите роль в списке. Справа откроется её `SKILL.md`.
 
-![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity medium, max_findings 3, needs и do_not_comment, ниже список проверок; кнопки New Role…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
+![Страница Roles: Level = Brain; список ролей contracts, architecture, domain, requirements, tests, bug-hunter, upgrade-risk, security, performance, concurrency, data-migrations, observability, history, у каждой метка built-in и описание; выбрана security, справа её SKILL.md: name review-security, блок akit-review с min_severity medium, max_findings 3, needs и do_not_comment, ниже список проверок; кнопки New Role…, Add to Brain, Revert и Save…; подпись Built into AKit. Edit it to save it into the brain, or Add to Brain first.](images/review-roles.png)
 
 Как читать роль:
 
@@ -1358,7 +1358,7 @@ AKit проверяет папку ревью каждые несколько с
 1. Откройте **Review** → **Scenarios**.
 2. Выберите сценарий. Справа его YAML.
 
-![Страница Scenarios: Level = Brain; список Feature, Bugfix, Dependency upgrade с меткой built-in и строка Defaults (review.yaml); выбран bugfix, справа его YAML: roles с required bug-hunter, requirements, tests и optional security, список checks и блок detect](images/review-scenarios.png)
+![Страница Scenarios: Level = Brain; список Feature, Bugfix, Security, Dependency upgrade с меткой built-in и строка Defaults (review.yaml); выбран bugfix, справа его YAML: roles с required bug-hunter, contracts, requirements, tests и optional architecture, security, concurrency, performance, observability, history, список checks и блок detect](images/review-scenarios.png)
 
 Поля сценария:
 
@@ -1496,6 +1496,21 @@ Accepted = fixed / (fixed + dismissed + ignored), по ролям и по мод
 - при каждом повторном ревью того же MR (его проход `fetch` и так читает треды);
 - кнопкой **Sync Outcomes** на экране ревью: один короткий проход читает MR и его треды заново;
 - в терминале: `akit review outcomes [RUN] [--sync]`.
+
+### Средне: набор MR для оценки
+<!-- section: quality-eval-set -->
+
+Чтобы через месяц сравнить ревью с прежними, нужны MR, где вы точно знаете ответ. Это набор для оценки (eval set).
+
+- **Add to Eval Set** → **With the Approved Findings (N)** на экране ревью: MR, закреплённый на его коммите (head SHA), и одобренные вами находки — их хорошее ревью обязано найти. Пока одобренных нет, пункт неактивен.
+- **Add to Eval Set** → **As Clean: Nothing to Find**: MR без проблем, о которых стоит писать. Хорошее ревью не находит здесь ничего.
+- **Expect in Eval Set** у находки в **Only in AKit** или **Before this MR**: эта находка важна, хотя фильтр её не пропустил (даже если verifier её отклонил).
+- Один MR на одном коммите — один случай. Новые находки добавляются к прежним, повторы не дублируются. «Чистый» случай и случай с находками не смешиваются: сначала **Remove**.
+- Добавить можно только ревью MR после сбора (у него есть head SHA). Локальное ревью в набор не идёт.
+- Набор виден на странице **Quality** в блоке «Eval set (N)», там же **Remove**. В терминале: `akit review eval`, `akit review eval add RUN [--clean] [--finding ID]… [--note TEXT]`, `akit review eval remove ID`. Заметку к случаю (`--note`) пока можно задать только в терминале; секреты в ней и в заголовках находок AKit скрывает.
+- Набор лежит только на этом Mac: `~/.akit/local/review/eval-set.json`. Прогон набора через Lab — следующий шаг.
+
+> **Совет:** соберите 10–30 MR, которые потом привели к багу или откату, и несколько заведомо чистых. Так видно и пропуски, и ложные срабатывания.
 
 
 ### Средне: Add Missed…

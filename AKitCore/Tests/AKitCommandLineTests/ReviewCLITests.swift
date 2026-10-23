@@ -60,6 +60,15 @@ extension AKitCLITests {
         #expect(await review(["token", "gitlab", "https://gitlab.test"]).code != 0, "tokens are gone: Pi's MCP servers connect")
     }
 
+    /// `akit review eval`: the set, and its errors.
+    @Test func reviewEvalListsTheSet() async {
+        let empty = await review(["eval"])
+        #expect(empty.code == 0 && empty.out.contains("The eval set is empty"))
+        #expect(await review(["eval", "add"]).code != 0)
+        #expect(await review(["eval", "remove", "nope"]).code != 0)
+        #expect(await review(["eval", "frobnicate"]).code != 0)
+    }
+
     /// `akit review check`: Pi's servers and what review may do with each tool; never a command line.
     @Test func reviewCheckListsPiServers() async throws {
         try write("bin/pi", """

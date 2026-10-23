@@ -240,6 +240,9 @@ struct ReviewRunDetail: View {
         if let place = model.discussOpenedIn {
             Text("Discuss in Pi… opened in \(place). Changes Pi submits there show up here.").font(.caption).foregroundStyle(.secondary)
         }
+        if let notice = model.evalNotice {
+            Text(notice).font(.caption).foregroundStyle(.secondary)
+        }
     }
 
     private var header: some View {
@@ -370,6 +373,10 @@ struct ReviewRunDetail: View {
                                     Text(placement.reason).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                                if run.spec.local == nil {
+                                    Button("Expect in Eval Set") { model.addToEvalSet(findings: [finding.id]) }
+                                        .help("Add this run to the eval set with this finding as one a good review must report (the filter missed it here)")
+                                }
                                 Button("Move Inline") { model.moveInline(finding) }
                                     .help("Make it an inline draft anyway; AKit learns that its filter missed it (missed-by-filter)")
                                     .disabled(finding.file == nil)
@@ -414,6 +421,16 @@ struct ReviewRunDetail: View {
         HStack {
             Button("Add Missed…") { showMissed = true }
                 .help("Something the reviewer should have found: it improves the roles, never goes to GitLab")
+            if run.spec.local == nil, run.findings != nil, run.spec.headSHA != nil {
+                let approved = (run.plan?.requests ?? []).filter { $0.decision == .approved && $0.findingID != nil }.count
+                Menu("Add to Eval Set") {
+                    Button("With the Approved Findings (\(approved))") { model.addToEvalSet() }
+                        .disabled(approved == 0)
+                    Button("As Clean: Nothing to Find") { model.addToEvalSet(clean: true) }
+                }
+                .fixedSize()
+                .help("Keep this merge request, pinned at its commit, to check later reviews against: the findings a good review must report, or none. Review → Quality lists the set.")
+            }
             if run.spec.local == nil, run.snapshot != nil {
                 Button("Sync Outcomes") { model.syncOutcomes(run.id) }
                     .disabled(model.isBusy)

@@ -16,6 +16,9 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-23 (branch `review-practices`): decisions R20–R34 from a research note on agentic code
+review (section "Decisions (2026-10-23)"), built in four parts with a reviewer round each.
+
 Added 2026-10-22 (branch `review-audit-2`): checks without a model (the quote in the file, a
 person's open thread, inline only on changed lines, a secret scan, the size of the change; section
 "Checks without a model"); four optional roles, `performance`, `concurrency`, `data-migrations`
@@ -347,7 +350,7 @@ CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R
 | R29 | Rules off the changed lines | Unchanged: findings off the changed lines go to the summary; issues from before the MR follow R23 |
 | R30 | History | Gather writes `history.md`: `git log` and `git blame` of the changed lines (local, no network) and people's threads in the last merged MRs that touched the same files (GitLab MCP). A new optional role `history`: an old bug coming back, or what people already asked for in these files. After the review of part (b): a past merge request's threads count only when the fetch pass read it as merged in this project; an answer about `!N` of another project, or a past merge request's diff, never becomes this merge request's data; draft and pipeline come only from calls about this merge request, and the pipeline concern only for the head commit; blame runs once per file with `--no-textconv` and a 90 s budget, and notes are quoted |
 | R31 | Outcomes | Each rerun and a **Sync Outcomes** button read the threads with AKit's hidden line: anchor changed → `fixed`; resolved without a change → `dismissed`; the author's reply is shown as text; merged with no reaction → `ignored`. The Review screen shows the share accepted by role and model. After review: a run's own findings say "still there" only for its own head (a sync after a push sees the fix), AKit's "Looks fixed" reply counts as fixed, outcomes keep the time of their data (an older re-plan never overwrites a newer sync), a sync without threads changes nothing, and the sync pass reads GitLab only with a small limit of its own |
-| R32 | Eval set | **Add to Eval Set** on a run or a finding records the MR, its head SHA and the expected findings (or "clean"). Running the set through Lab is a later step |
+| R32 | Eval set | **Add to Eval Set** on a run or a finding records the MR, its head SHA and the expected findings (or "clean"). Running the set through Lab is a later step. Built: `~/.akit/local/review/eval-set.json` (`ReviewEvalSet`), one case per merge request and head; the run menu Add to Eval Set (approved findings, or clean), Expect in Eval Set on a held-back finding, the list with Remove on the Quality page, `akit review eval [list|add|remove]` |
 | R33 | Modes | Chosen by the kind of run, no new choice: a colleague's MR uses the posting rules above; the user's own MR or a local review also posts `low` and has a higher limit. A built-in scenario `security` next to Feature and Bugfix |
 | R34 | AI-written merge requests | The brief writes a personal risk map for the user, never posted: risk areas, whether the MR shows proof that it was tested, signs of slop. Slop in the code (a duplicated helper, a test of a mock, a swallowed error) is an ordinary finding of `tests` or `bug-hunter` |
 

@@ -50,6 +50,8 @@ final class ReviewModel {
     private(set) var mcpProblem: String?
     private(set) var checkingMCP = false
     var capQuestion: CapQuestion?
+    /// What the last Add to Eval Set did, under the run's actions.
+    var evalNotice: String?
     private var capAnswer: CheckedContinuation<Bool, Never>?
     private var task: Task<Void, Never>?
     /// Stop ends this review's Pi process, nothing else (Ask AKit has its own scope).
@@ -65,6 +67,7 @@ final class ReviewModel {
     }
 
     func open(_ id: String?) {
+        if id != run?.id { evalNotice = nil }
         guard let id else {
             run = nil
             return
@@ -129,6 +132,19 @@ final class ReviewModel {
     }
 
     /// The passes of a gathered run (again).
+    /// Add to Eval Set (R32): the run pinned at its head, with findings it must report or as clean.
+    func addToEvalSet(findings: [String]? = nil, clean: Bool = false) {
+        guard let run else { return }
+        evalNotice = nil
+        do {
+            let item = try ReviewEvalSet.add(run: run.folder, findings: findings, clean: clean, home: home)
+            log(clean ? "Added \(item.id) to the eval set as clean." : "Added \(item.id) to the eval set with \(item.expected.count) finding(s).")
+            evalNotice = clean ? "Added to the eval set as clean." : "Added to the eval set with \(item.expected.count) expected finding(s)."
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
     /// Sync Outcomes (R31): one small pass reads the threads again.
     func syncOutcomes(_ id: String) {
         guard task == nil else { return }
