@@ -329,6 +329,13 @@ public enum ReviewPasses {
             try ReviewJSON.write(gaps, to: folder.appending(path: "gaps.json"))
             try? FileManager.default.removeItem(at: folder.appending(path: "context/since-last-review.md"))
         }
+        // No work item (the branch names none): nothing to check requirements against, so the
+        // review checks the code alone.
+        if spec.workItems.isEmpty && spec.roles.contains(where: { $0.id == "requirements" }) {
+            spec.roles.removeAll { $0.id == "requirements" }
+            try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+            options.progress("No work item: the requirements role doesn't run.")
+        }
         let roles = spec.roles
         // Every send checks the policy first: a merge request goes only to a destination on
         // the allowed list (a work Mac's list is the company's).

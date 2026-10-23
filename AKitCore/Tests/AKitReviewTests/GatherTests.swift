@@ -130,6 +130,10 @@ struct ConfigTests {
 
     @Test func workItemReferences() {
         #expect(AzureDevOpsJSON.references(in: ["AB#41 fix", "see WI-7 and AB#41", "feature/AB#9"], pattern: "(?:AB#|WI-)(\\d+)") == [41, 7, 9])
+        let pattern = ReviewProfile.Tracker.defaultRegex
+        #expect(AzureDevOpsJSON.references(in: ["feature/COL-317494-login"], pattern: pattern) == [317494])
+        #expect(AzureDevOpsJSON.references(in: ["fix/col-12_typo"], pattern: pattern) == [12])
+        #expect(AzureDevOpsJSON.references(in: ["feature/login-form"], pattern: pattern).isEmpty)
         #expect(HTMLText.plain("<p>A &amp; B</p><ul><li>one</li><li>two</li></ul>") == "A & B\n\n- one\n- two")
     }
 }
@@ -207,7 +211,7 @@ extension ReviewProcessTests {
             #expect(args.contains("akit_submit_context,akit_report_context_gap,codemode,tool_search,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             #expect(!args.contains("--append-system-prompt") && !args.contains("--skill"))
             let prompt = try String(contentsOf: folder.appending(path: "prompts/fetch.md"), encoding: .utf8)
-            #expect(prompt.contains(FakeMergeRequest.ref.url) && prompt.contains("`(?:AB#|WI-)(\\d+)`"))
+            #expect(prompt.contains(FakeMergeRequest.ref.url) && prompt.contains("`(?i)(?:COL-|AB#|WI-)(\\d+)`") && prompt.contains("source branch only"))
             #expect(args.contains { $0.hasPrefix("AKit review, step Gather.") })
             let env = try String(contentsOf: home.url.appending(path: "fake/env-fetch.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MODE=fetch"))
@@ -269,6 +273,23 @@ extension ReviewProcessTests {
             FakeMergeRequest.serve(home, head: head, diff: "@@ -1 +1 @@\n-a\n+b\n", workItems: false)
             let result = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env, brain: nil)
             #expect(result.gaps.contains { $0.system == "azure-devops" && $0.needed == "Work item #41" && $0.why.contains("didn't read it") })
+        }
+
+        /// Only the branch names the work item: with no number there (the title says AB#41), the
+        /// review checks the code alone: no work item, no gap about it, no requirements role.
+        @Test func noNumberInTheBranchReviewsTheCodeAlone() async throws {
+            let (home, head) = try setUp()
+            FakeMergeRequest.serve(home, head: head, diff: "@@ -1 +1 @@\n-a\n+b\n", branch: "fix/auth-log")
+            let result = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: home.env, brain: nil)
+            #expect(result.spec.workItems.isEmpty && result.workItems.isEmpty, "items the fetch pass read anyway are dropped")
+            #expect(!result.gaps.contains { $0.needed.contains("ork item") || $0.needed.contains("cceptance") })
+            let folder = ReviewPaths(home: home.url).run(result.spec.id)
+            try await ReviewPasses.run(folder: folder, env: home.env)
+            let log = try #require(ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json")))
+            #expect(!log.passes.map(\.name).contains("role-requirements") && log.passes.map(\.name).contains("role-bug-hunter"))
+            #expect(ReviewJSON.read(ReviewRunSpec.self, from: folder.appending(path: "run.json"))?.roles.contains { $0.id == "requirements" } == false)
+            let system = try String(contentsOf: folder.appending(path: "prompts/system.md"), encoding: .utf8)
+            #expect(system.contains("This change has no work item") && system.contains("regressions"))
         }
     }
 

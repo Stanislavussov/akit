@@ -16,6 +16,9 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-23 (branch `review-branch-wi`): R39, the work item comes only from the source branch
+(`COL-317494`); without one the review checks the code alone.
+
 Added 2026-10-23 (branch `review-deferred`): R37, limits only alert and are 4× higher; R38, passes
 reach MCP servers with deferred tools through `tool_search`.
 
@@ -367,6 +370,7 @@ CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R
 | R36 | Seeing what a run does | Asked by the user on 2026-10-23. While a run goes, **Details** under the status bar shows a live log: each pass's start and end (credits, time, tokens) and, indented, what the pass does now from Pi's events (files read, MCP tools by name, the model's answers with tokens, findings submitted, failures); never MCP arguments or answers. In a terminal the CLI prints the same lines to stderr at once; piped, only the steps. After it, **Log…** (`ReviewRunLog`, `akit review log RUN [--json]`) shows each pass's model, thinking, time, tokens, credits, files, MCP calls and blocked calls, its Pi session file, and what each role's findings became; **Copy for Analysis** gives it as Markdown without secrets, MCP arguments (work data) or answers. Model fields of New Review… are lists of `pi --list-models` with **Other…** to type one; Add Missed… picks a file of the change or Other…; required fields have a red asterisk. A fetch pass that read no merge request says which tools Pi called, what AKit blocked, which servers answered that the run doesn't use, and which server names the run looks for |
 | R37 | Limits | Asked by the user on 2026-10-23: "avoid limit for code review just alert me when overlap, and increase limits 4x". `cap_credits_per_run` 600 and `max_changed_lines` 6000 by default; over them the review never stops: an estimate over the cap, a change over the line limit, and the credits passing the cap (once) each make a yellow alert in the Review screen and a progress line ("Over a limit: …"). `--over-cap` is gone. Still asked: Review it now? (draft, red pipeline, same commit, 4th round); still enforced: the monthly dollar limit of Settings → Lab and Sync Outcomes' own small limit. A brain `review.yaml` that holds the old numbers keeps them |
 | R38 | Servers with deferred tools | Found on the work Mac on 2026-10-23: GitLab's own MCP server (`/api/v4/mcp`, 50 tools) runs in Pi with `deferred` exposure, so its tools are in no tool list until `tool_search` loads them, and the fetch pass made no MCP call. Every MCP pass and Discuss now load `builtin:tool-search` and allow `tool_search` (the extension checks each loaded tool as before); the fetch prompt says how to find tools that are in no list. That server has no draft-note tools: Send can't write drafts through it yet |
+| R39 | The work item from the branch only | Found on the work Mac on 2026-10-23: the team names the work item in the branch (`feature/COL-317494-…`); the description names other, older items, and the review read those and reported their missing acceptance criteria as its only output. Gather and the fetch pass now take the number only from the source branch (`wi_ref_regex` default `(?i)(?:COL-|AB#|WI-)(\\d+)`) and drop items the fetch pass read anyway, unless a named item's parent or related item. With no number the run is code-only: no gap about it, no `requirements` role, and the prompts ask for contracts and regressions |
 
 Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are the team's
 repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the
@@ -544,7 +548,7 @@ detect:            # read by the classifier later; ignored in v1
 ```yaml
 project: orders-service
 gitlab: { host: https://gitlab.corp.example, project_path: team/orders-service }
-tracker: { kind: azure-devops, org: corp, project: Orders, wi_ref_regex: "(?:AB#|WI-)(\\d+)" }
+tracker: { kind: azure-devops, org: corp, project: Orders, wi_ref_regex: "(?i)(?:COL-|AB#|WI-)(\\d+)" }
 default_scenario: feature
 knowledge: [~/.akit/local/knowledge/orders]
 gather:

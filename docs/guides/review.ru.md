@@ -198,7 +198,7 @@ AKit не хранит токены. С GitLab, Azure DevOps и другими �
 project: orders-service
 gitlab: { host: https://gitlab.example.com, project_path: shop/orders-service }
 checkout: ~/work/orders-service
-tracker: { kind: azure-devops, org: acme, project: Orders, wi_ref_regex: "(?:AB#|WI-)(\\d+)" }
+tracker: { kind: azure-devops, org: acme, project: Orders, wi_ref_regex: "(?i)(?:COL-|AB#|WI-)(\\d+)" }
 mcp:
   servers: [gitlab, azure-devops]
   write: ["*draft_note*"]
@@ -218,7 +218,7 @@ default_scenario: bugfix
 - `project` — имя проекта на экране.
 - `gitlab: { host, project_path }` — сервер и путь проекта в GitLab.
 - `checkout` — путь к вашей копии репозитория. Если коммита MR в ней нет, AKit сам скачает его из `refs/merge-requests/<iid>/head`.
-- `tracker: { kind: azure-devops, org, project, wi_ref_regex }` — трекер задач. Это подсказка проходу `fetch`: где искать задачи. `wi_ref_regex` находит номера задач в заголовке, описании и ветке MR. Пример: `AB#4512` даёт задачу 4512.
+- `tracker: { kind: azure-devops, org, project, wi_ref_regex }` — трекер задач. Это подсказка проходу `fetch`: где искать задачи. `wi_ref_regex` находит номер задачи только в ветке MR (source branch). Заголовок и описание не считаются. По умолчанию он находит `COL-`, `col-`, `AB#` и `WI-`. Пример: ветка `feature/COL-317494-login` даёт задачу 317494. Если в ветке номера нет, ревью проверяет только код: контракты и регрессии. Роль `requirements` тогда не работает, и пробела про задачу нет.
 - `mcp` — MCP-серверы Pi и инструменты, которые может звать ревью этого проекта:
   - `servers: [gitlab, azure-devops]` — имена серверов в Pi. Нет списка — только серверы с `gitlab`, `azure`, `devops` в имени или `ado`. Трекер с другим именем (например, `jira`) впишите сюда явно.
   - `read: []` — ещё шаблоны инструментов чтения. Инструменты с пометкой «только чтение» и с глаголом чтения (`get_…`, `wit_get_…`) читают и без этого.
@@ -1209,7 +1209,7 @@ AKit при сборе пишет пробел, когда:
 
 - «Full files at …» → добавьте `checkout:` в профиль.
 - «Work item #N» или «Who you are on GitLab» → проверьте серверы в **Review Settings…** → **Check Servers** или `akit review check`.
-- «The work item of this change» → впишите номер в **Work items** или задайте `wi_ref_regex`, чтобы AKit находил `AB#4512` в заголовке.
+- Нет задачи в ветке → ревью проверяет только код. Чтобы проверить и критерии приёмки, впишите номер в **Work items** или назовите ветку с номером: `feature/COL-4512-…`.
 - «Output of tests» → проверьте команду в `gather`.
 - Не хватает знаний о проекте → положите заметки в Markdown в папку и добавьте её в `knowledge`.
 

@@ -681,7 +681,7 @@ enum ReviewProfileTemplate {
     project: my-service
     gitlab: { host: https://gitlab.example.com, project_path: group/my-service }
     checkout: ~/work/my-service            # your clone: the worktree at the reviewed commit comes from it
-    # tracker: { kind: azure-devops, org: my-org, project: MyProject, wi_ref_regex: "(?:AB#|WI-)(\\\\d+)" }
+    # tracker: { kind: azure-devops, org: my-org, project: MyProject, wi_ref_regex: "(?i)(?:COL-|AB#|WI-)(\\\\d+)" }
     # mcp:                                 # Pi's MCP servers review may use (pi mcp list); none = those named gitlab, azure, devops, ado
     #   servers: [gitlab, azure-devops]
     #   read: []                           # more reading tools, e.g. ["wit_get_*"]; get_/list_/search_… read anyway
