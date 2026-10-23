@@ -166,6 +166,7 @@ shot review-roles        $MAIN --section review --tab roles --select security
 shot review-scenarios    $MAIN --section review --tab scenarios --select bugfix
 shot review-project-role $MAIN --section review --tab roles --project orders-service --select tests
 shot review-quality      $MAIN --section review --tab quality
+shot review-log          $MAIN --section review --tab log --select 20261015-091500-orders-service-42
 # New Review… in Local Workspace mode: a query starting with "/" is the workspace path.
 shot review-local        $MAIN --section review --query "$DEMO/work/orders-service" --add
 

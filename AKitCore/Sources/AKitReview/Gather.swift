@@ -96,7 +96,8 @@ public enum ReviewGather {
             guard let read = data.mergeRequest else {
                 throw Failure(message: "The fetch pass read no merge request \(ref.label) that AKit understands (\(data.calls) MCP calls"
                               + (data.failures.isEmpty ? "" : "; failed: " + data.failures.prefix(3).joined(separator: "; ")) + "). "
-                              + "Check that Pi has a GitLab MCP server (pi mcp list, or akit review check) and that it answers in GitLab's JSON.")
+                              + "Check that Pi has a GitLab MCP server (pi mcp list, or akit review check) and that it answers in GitLab's JSON."
+                              + ReviewPasses.fetchDiagnosis(folder: folder, access: spec.access))
             }
             for failure in data.failures.prefix(10) {
                 gap("mcp", "An answer of \(failure.split(separator: ":").first.map(String.init) ?? "an MCP tool")", failure,

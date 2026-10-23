@@ -284,8 +284,16 @@ default_scenario: bugfix
 ### Просто: следить за ревью
 <!-- section: run-progress -->
 
-Пока ревью идёт, вверху экрана голубая полоса. В ней последний шаг, например «Pass role-tests…», и кнопка **Stop**.
+Пока ревью идёт, вверху экрана голубая полоса. В ней последний шаг, например «role-tests · read src/Auth/AuthMiddleware.cs», и кнопки **Details** и **Stop**.
 
+- **Details** раскрывает живой лог всего ревью. Строки без отступа — шаги: «Pass role-tests…», «Pass role-tests done: 5.0 credits, 61 s, 2.6k in / 20.1k cached / 350 out». Строки с отступом — что проход делает сейчас:
+  - `read`, `grep`, `find`, `ls` и путь — проход читает код;
+  - «MCP gitlab: get_merge_request» — вызов инструмента MCP (без аргументов);
+  - «runs a script that calls MCP tools» — скрипт `codemode`;
+  - «model answered (модель) · 14.2k in, 0 cached, 420 out» — ответ модели;
+  - «submits 2 findings», «reports a context gap: …»;
+  - красным — ошибки: «… failed», «model error: …».
+- **Hide Details** сворачивает лог. В терминале (`akit review …`) эти же строки сразу идут в stderr. Если вывод перенаправлен в файл или в другую программу, печатаются только шаги, после их завершения.
 - **Stop** завершает текущий проход. Всё, что сделано до него, остаётся в папке ревью.
 - Ошибка показана оранжевой полосой с кнопкой **Dismiss**.
 
@@ -348,8 +356,9 @@ default_scenario: bugfix
 
 Блок **This run only** меняет настройки только этого ревью:
 
-- **Model for the brief and roles** — модель для brief и ролей, в виде `provider/model`.
-- **Verifier model** — модель verifier. Это поле обязательно, если модель verifier не задана в настройках. Без модели кнопка **Start Review** неактивна. Берите сильную модель другого семейства, чем у ролей: так verifier лучше ловит их ошибки.
+- **Model for the brief and roles** — список моделей, для которых у Pi есть доступ (`pi --list-models`). Первый пункт «From the configuration (…)» берёт модель из настроек. Последний, **Other…**, открывает поле, где модель вводится вручную как `provider/model`. Это нужно, если списка нет (например, Pi не ответил).
+- **Verifier model** — такой же список. Если модель verifier не задана в настройках, поле обязательно: у названия красная звёздочка, первый пункт «Choose a model…», а **Start Review** неактивна. Берите сильную модель другого семейства, чем у ролей: так verifier лучше ловит их ошибки.
+- Красная звёздочка `*` отмечает обязательные поля: **Merge request** или **Workspace**, и **Verifier model**, если её нет в настройках. Внизу окна — «* Required.».
 - **Credit cap** — предел кредитов.
 - **Max changed lines** — выше этого числа изменённых строк ревью сначала спросит (окно **A big change**).
 
@@ -465,7 +474,14 @@ default_scenario: bugfix
 ### Тонкости и редкие случаи
 <!-- section: run-details -->
 
-- Если проход `fetch` не прочитал MR, ревью не начнётся: «The fetch pass read no merge request … that AKit understands …». Проверьте `pi mcp list` или `akit review check`: сервер GitLab должен быть подключён и отвечать в JSON GitLab.
+- Если проход `fetch` не прочитал MR, ревью не начнётся: «The fetch pass read no merge request … that AKit understands …». Под этим текстом AKit пишет, что случилось:
+  - «Tools Pi called: …» — какие инструменты Pi вызвал. «none» — модель не вызвала ни одного;
+  - «Blocked by AKit: …» — что AKit не пропустил и почему;
+  - «Answers from servers this run doesn't use as GitLab or the tracker: …» — Pi читал сервер, который ревью не считает GitLab. Назовите его в профиле: `mcp: servers: [<имя>]`;
+  - «The run uses Pi servers matching: …» — какие имена серверов ревью ищет. Без `servers:` в профиле это `mcp__*gitlab*__*`, `mcp__*azure*__*`, `mcp__*devops*__*`, `mcp__ado__*`. Сервер GitLab с другим именем (например `git-cez`) ревью не видит;
+  - «The pass said: …» — ошибка самого прохода.
+  
+  Проверьте `pi mcp list` или `akit review check`: сервер GitLab должен быть подключён и отвечать в JSON GitLab.
 - Если diff нет ни в ответе GitLab, ни у git (нет `checkout`), ревью не начнётся: «There is no diff of …: the fetch pass read none, and there is no checkout to make it with git.».
 - Ревью остаётся на диске после выхода из AKit: это папка. Проходы снова запускает **Run Passes** (он есть у ревью **Gathered**, **Failed**, **Stopped** и у прерванного на **Gathering** или **Passes**) или `akit review passes RUN`.
 - Правый щелчок по ревью в списке: **Show in Finder** открывает папку ревью, **Move to Trash** убирает worktree из вашей копии и перемещает папку в Корзину.
@@ -859,6 +875,22 @@ To review: commits and uncommitted changes.
 Текст комментария выглядит так: метка «🤖», роль, серьёзность и уверенность; заголовок находки; почему это проблема. Если роль предложила исправление, ниже идёт блок `suggestion`: GitLab покажет кнопку применить его. Названия AKit в тексте нет. В конце сводки стоит коммит, который проверялся.
 
 Серьёзность (от слабой к сильной): `nit`, `low`, `medium`, `high`, `critical`. Уверенность — от 0 до 1.
+
+### Средне: лог ревью для разбора
+<!-- section: run-log -->
+
+Кнопка **Log…** стоит справа от меток проходов в заголовке ревью. Она открывает окно **Run Log**: что ревью сделало и сколько это стоило.
+
+![Окно Run Log: строка shop/orders-service!42 at 4f2c9e1b7a · scenario bugfix, строка Passes: github-copilot/gpt-5.4-mini · verifier: github-copilot/claude-opus-5-5, thinking high, строка 62.1 of 150 credits (estimated 64) · 7 passes · 9m 00s · MCP: 4 calls (gitlab 2, ado 1, context7 1) · 1 blocked; таблица проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier с колонками Model, Thinking, Time, In / cached / out, Credits, Files, MCP, Session; таблица Findings by role; список Blocked by AKit с вызовом mcp__gitlab__create_note; список MCP calls; кнопки Show in Finder, Copy for Analysis и Done](images/review-log.png)
+
+- Вверху: MR и коммит, сценарий, модели проходов и verifier с уровнем thinking, кредиты (и оценка до проходов), число проходов, общее время, вызовы MCP по серверам.
+- Таблица проходов: модель, thinking, время, токены (вход / из кэша / выход), кредиты, сколько файлов прочитано, вызовы MCP (сколько упало и сколько заблокировано) и **Show** — файл сессии Pi этого прохода: все промпты, ответы и вызовы инструментов.
+- **Findings by role** — что стало с находками каждой роли: найдено, подтверждено, отклонено, вопросы, слито, «до этого MR», к строкам.
+- **Blocked by AKit** — вызовы, которые AKit не пропустил, с причиной.
+- **MCP calls** — каждый вызов: проход, инструмент, размер ответа и аргументы (секреты скрыты).
+- **Copy for Analysis** копирует всё это как Markdown, без секретов, без аргументов MCP (в них имена проектов, номера задач и запросы — рабочие данные) и без ответов серверов. Его можно вставить модели или в заметку. Аргументы видны только в окне и в `--json`.
+- **Show in Finder** открывает папку ревью: там `passes.json`, сессии Pi, `mcp/calls`, промпты и контекст.
+- В терминале: `akit review log RUN` (Markdown) или `akit review log RUN --json`.
 
 ### Просто: прочитать ревью на другом языке
 <!-- section: screen-translate -->

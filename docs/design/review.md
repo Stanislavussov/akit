@@ -16,6 +16,10 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-23 (branch `review-log`): R36, the run's log for analysis and while it runs, model
+choices from Pi's list, required fields marked, an empty fetch that says why (section "Decisions
+(2026-10-23)").
+
 Added 2026-10-23 (branch `review-czech`): R35, Czech comments only (section "Decisions
 (2026-10-23)").
 
@@ -357,6 +361,7 @@ CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R
 | R33 | Modes | Chosen by the kind of run, no new choice: a colleague's MR uses the posting rules above; the user's own MR or a local review also posts `low` and has a higher limit. A built-in scenario `security` next to Feature and Bugfix |
 | R34 | AI-written merge requests | The brief writes a personal risk map for the user, never posted: risk areas, whether the MR shows proof that it was tested, signs of slop. Slop in the code (a duplicated helper, a test of a mock, a swallowed error) is an ordinary finding of `tests` or `bug-hunter` |
 | R35 | The comments' language | Asked by the user later on 2026-10-23: only Czech goes to GitLab. `posting: language` (default `cs`) tells the passes, the verifier and Discuss to write titles, reasons, notes and gaps in it; AKit's own words in a draft (the header, the summary, "Looks fixed") are Czech; Gather's own gaps stay out of the summary (they are English and about this Mac). Send checks each draft's text with Apple's language recognizer (code, links, markup and AKit's header line left out; Slovak counts only with letters only Czech has) and refuses one that isn't Czech; the Review screen warns on its card. Translate only shows a translation: Send always takes the original |
+| R36 | Seeing what a run does | Asked by the user on 2026-10-23. While a run goes, **Details** under the status bar shows a live log: each pass's start and end (credits, time, tokens) and, indented, what the pass does now from Pi's events (files read, MCP tools by name, the model's answers with tokens, findings submitted, failures); never MCP arguments or answers. In a terminal the CLI prints the same lines to stderr at once; piped, only the steps. After it, **Log…** (`ReviewRunLog`, `akit review log RUN [--json]`) shows each pass's model, thinking, time, tokens, credits, files, MCP calls and blocked calls, its Pi session file, and what each role's findings became; **Copy for Analysis** gives it as Markdown without secrets, MCP arguments (work data) or answers. Model fields of New Review… are lists of `pi --list-models` with **Other…** to type one; Add Missed… picks a file of the change or Other…; required fields have a red asterisk. A fetch pass that read no merge request says which tools Pi called, what AKit blocked, which servers answered that the run doesn't use, and which server names the run looks for |
 
 Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are the team's
 repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the

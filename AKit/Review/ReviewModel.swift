@@ -19,6 +19,8 @@ final class ReviewModel {
         var runID: String?
         var title: String
         var lines: [String] = []
+        /// Lines dropped from the front: a line's number stays its id in the live log.
+        var dropped = 0
     }
 
     /// An estimate over the cap waits for the user's answer.
@@ -211,7 +213,12 @@ final class ReviewModel {
 
     private func log(_ line: String) {
         activity?.lines.append(line)
-        if let id = activity?.runID, run?.id == id { open(id) }
+        if let count = activity?.lines.count, count > 3000 {
+            activity?.lines.removeFirst(count - 3000)
+            activity?.dropped += count - 3000
+        }
+        // A pass's own events (indented) come often: the run reloads only on the steps between them.
+        if !line.hasPrefix("  "), let id = activity?.runID, run?.id == id { open(id) }
     }
 
     private func ask(_ question: CapQuestion) async -> Bool {

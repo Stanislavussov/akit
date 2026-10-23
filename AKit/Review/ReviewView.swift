@@ -17,6 +17,8 @@ struct ReviewView: View {
     @State private var page = DebugSnapshot.options?.tab.flatMap(Page.init(rawValue:)) ?? .runs
     @State private var showNew = DebugSnapshot.options?.add == true && DebugSnapshot.options?.tab != "settings"
     @State private var showSettings = DebugSnapshot.options?.tab == "settings"
+    /// The running review's live log under its status bar.
+    @State private var showDetails = false
 
     var body: some View {
         @Bindable var model = model
@@ -24,16 +26,42 @@ struct ReviewView: View {
         // ignores the inset, and the bar covered the top of the run list.
         VStack(spacing: 0) {
             if let activity = model.activity {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(activity.lines.last ?? activity.title).lineLimit(1)
-                    Spacer()
-                    Button("Stop") { model.stop() }
-                        .help("End the running pass. What is done so far stays in the run.")
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text((activity.lines.last ?? activity.title).trimmingCharacters(in: .whitespaces)).lineLimit(1)
+                        Spacer()
+                        Button(showDetails ? "Hide Details" : "Details") { showDetails.toggle() }
+                            .help("Everything the review did so far: each pass, the files it reads, the MCP tools it calls, the model's answers")
+                        Button("Stop") { model.stop() }
+                            .help("End the running pass. What is done so far stays in the run.")
+                    }
+                    if showDetails {
+                        ScrollViewReader { proxy in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 1) {
+                                    ForEach(Array(activity.lines.enumerated()), id: \.offset) { offset, line in
+                                        let index = activity.dropped + offset
+                                        Text(line).font(.caption.monospaced())
+                                            .foregroundStyle(line.hasSuffix(" failed") || line.contains(" failed:") || line.contains("model error:")
+                                                             ? Color.red
+                                                             : line.hasPrefix("  ") ? Color.secondary : Color.primary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .id(index)
+                                    }
+                                }
+                                .textSelection(.enabled)
+                            }
+                            .frame(height: 180)
+                            .onChange(of: activity.dropped + activity.lines.count) { proxy.scrollTo(activity.dropped + activity.lines.count - 1, anchor: .bottom) }
+                            .onAppear { proxy.scrollTo(activity.dropped + activity.lines.count - 1, anchor: .bottom) }
+                        }
+                    }
                 }
                 .font(.callout)
                 .padding(8)
                 .background(.blue.opacity(0.08))
+                .overlay(alignment: .bottom) { Divider() }
             }
             if let problem = model.problem {
                 HStack {
@@ -44,6 +72,7 @@ struct ReviewView: View {
                 .font(.callout)
                 .padding(8)
                 .background(.orange.opacity(0.15))
+                .overlay(alignment: .bottom) { Divider() }
             }
             Group {
                 switch page {
@@ -172,6 +201,8 @@ struct ReviewRunDetail: View {
     let run: ReviewWorkflow.Run
     @State private var showSend = false
     @State private var showMissed = false
+    /// Snapshots: `--tab log` opens it.
+    @State private var showLog = DebugSnapshot.options?.tab == "log"
     /// Translate of the brief and the requests; what goes to GitLab stays the original.
     @State private var translator = Translator()
 
@@ -179,30 +210,35 @@ struct ReviewRunDetail: View {
     private var approved: [ReviewRequest] { requests.filter { $0.decision == .approved && !$0.isSent } }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                discussBanner
-                if let message = run.status?.message, run.status?.stage == .failed || run.status?.stage == .stopped {
-                    Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
-                }
-                if let brief = run.passes?.brief {
-                    DisclosureGroup("Brief") {
-                        Text(translator.text(ReviewWorkflow.Run.TranslationKey.brief, brief)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        // The actions stand under the scroll view, not in a safe-area inset: in the HSplitView the
+        // cards scrolled under and below the bar.
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    discussBanner
+                    if let message = run.status?.message, run.status?.stage == .failed || run.status?.stage == .stopped {
+                        Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).textSelection(.enabled)
                     }
+                    if let brief = run.passes?.brief {
+                        DisclosureGroup("Brief") {
+                            Text(translator.text(ReviewWorkflow.Run.TranslationKey.brief, brief)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    requestsSection
+                    onlyInAKit
+                    hiddenFindings(.preExisting, title: "Before this MR",
+                                   help: "Problems already there before this merge request: not the author's change. Make a task of its own for them.")
+                    gaps
+                    missed
                 }
-                requestsSection
-                onlyInAKit
-                hiddenFindings(.preExisting, title: "Before this MR",
-                               help: "Problems already there before this merge request: not the author's change. Make a task of its own for them.")
-                gaps
-                missed
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            actions
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { actions }
         .sheet(isPresented: $showSend) { SendDraftsSheet(run: run, approved: approved) }
+        .sheet(isPresented: $showLog) { ReviewRunLogSheet(folder: run.folder) }
         .task(id: run.id) {
             // Discuss in Pi… writes into the run folder from a terminal: look every few seconds.
             while !Task.isCancelled {
@@ -210,7 +246,7 @@ struct ReviewRunDetail: View {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
-        .sheet(isPresented: $showMissed) { AddMissedSheet() }
+        .sheet(isPresented: $showMissed) { AddMissedSheet(files: run.snapshot?.diffs.map(\.newPath) ?? []) }
     }
 
     @ViewBuilder private var discussBanner: some View {
@@ -294,6 +330,10 @@ struct ReviewRunDetail: View {
                             .help(pass.error ?? String(format: "%@ · %.1f credits · read %d files", pass.model.isEmpty ? "Pi's default model" : pass.model,
                                                        pass.credits, pass.paths.count))
                     }
+                    Button("Log…") { showLog = true }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .help("What the run did: each pass's model, thinking, time, tokens and credits, the MCP calls, and what each role's findings became")
                 }
             }
         }

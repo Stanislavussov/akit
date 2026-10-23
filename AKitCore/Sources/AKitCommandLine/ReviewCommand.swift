@@ -76,6 +76,9 @@ extension AKitCLI {
       akit review eval add RUN [--clean] [--finding ID]… [--note TEXT]
                                         Add a run: its approved findings, the named ones, or clean
       akit review eval remove ID        Take a case out of the eval set
+      akit review log RUN [--json]      What the run did, for analysis: each pass's model, thinking,
+                                        time, usage and credits, the MCP calls and blocked calls,
+                                        and what each role's findings became
       akit review outcomes [RUN] [--sync]
                                         What became of the 🤖 threads in GitLab (fixed, dismissed,
                                         ignored, open) and the share accepted by role and model;
@@ -301,6 +304,20 @@ extension AKitCLI {
                 out("Removed \(id).")
             case let other?:
                 throw Failure(message: "akit review eval: unknown \(other) (list, add, remove).")
+            }
+            return 0
+        case "log":
+            let json = args.flag("--json")
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review log RUN.") }
+            try args.finish()
+            let log = try ReviewRunLog.load(try runFolder(id, env: env))
+            if json {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                encoder.dateEncodingStrategy = .iso8601
+                out(String(decoding: try encoder.encode(log), as: UTF8.self))
+            } else {
+                out(log.markdown)
             }
             return 0
         case "outcomes":
@@ -591,10 +608,20 @@ extension AKitCLI {
 }
 
 /// Progress lines from a pass, which may come from another thread, printed in order.
+/// Progress lines of a long step. In a terminal they go to stderr at once, the live log of the
+/// passes included; otherwise (a pipe, a test) only the steps wait for `drain`, without a pass's
+/// own indented events.
 final class LineBox: @unchecked Sendable {
     private let lock = NSLock()
     private var lines: [String] = []
-    func add(_ line: String) { lock.withLock { lines.append(line) } }
+    private let live = isatty(STDERR_FILENO) == 1
+    func add(_ line: String) {
+        if live {
+            lock.withLock { FileHandle.standardError.write(Data((line + "\n").utf8)) }
+        } else if !line.hasPrefix("  ") {
+            lock.withLock { lines.append(line) }
+        }
+    }
     func drain(_ out: (String) -> Void) {
         for line in lock.withLock({ defer { lines = [] }; return lines }) { out(line) }
     }
