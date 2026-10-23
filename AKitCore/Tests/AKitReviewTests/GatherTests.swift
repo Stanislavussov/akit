@@ -203,8 +203,8 @@ extension ReviewProcessTests {
 
             // The fetch pass: Pi with its own MCP servers, its own session, nothing of the review's rules.
             let args = try String(contentsOf: home.url.appending(path: "fake/args-fetch.txt"), encoding: .utf8).split(separator: "\n").map(String.init)
-            for flag in ["builtin:mcp", "builtin:codemode", "--no-extensions", "--no-skills", "--no-context-files"] { #expect(args.contains(flag), "\(flag)") }
-            #expect(args.contains("akit_submit_context,akit_report_context_gap,codemode,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
+            for flag in ["builtin:mcp", "builtin:codemode", "builtin:tool-search", "--no-extensions", "--no-skills", "--no-context-files"] { #expect(args.contains(flag), "\(flag)") }
+            #expect(args.contains("akit_submit_context,akit_report_context_gap,codemode,tool_search,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             #expect(!args.contains("--append-system-prompt") && !args.contains("--skill"))
             let prompt = try String(contentsOf: folder.appending(path: "prompts/fetch.md"), encoding: .utf8)
             #expect(prompt.contains(FakeMergeRequest.ref.url) && prompt.contains("`(?:AB#|WI-)(\\d+)`"))

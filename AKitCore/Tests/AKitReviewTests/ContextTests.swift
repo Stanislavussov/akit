@@ -272,7 +272,7 @@ extension ReviewProcessTests {
 
             // The fetch pass: told about the links, given the context servers' tools.
             let args = try String(contentsOf: home.url.appending(path: "fake/args-fetch.txt"), encoding: .utf8).split(separator: "\n").map(String.init)
-            #expect(args.contains("akit_submit_context,akit_report_context_gap,akit_reading_link,codemode,mcp__*gitlab*__*,mcp__*azure*__*,"
+            #expect(args.contains("akit_submit_context,akit_report_context_gap,akit_reading_link,codemode,tool_search,mcp__*gitlab*__*,mcp__*azure*__*,"
                                   + "mcp__*devops*__*,mcp__ado__*,mcp__figma__*,mcp__confluence__*"))
             let prompt = try String(contentsOf: folder.appending(path: "prompts/fetch.md"), encoding: .utf8)
             #expect(prompt.contains("8. The developer's links") && prompt.contains("- \(Self.nowhere)") && prompt.contains("akit_reading_link"))

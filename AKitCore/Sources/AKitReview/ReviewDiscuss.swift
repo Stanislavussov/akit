@@ -57,8 +57,8 @@ public enum ReviewDiscuss {
         var tools = ReviewPasses.tools
         if run.spec.access.inPasses {
             // Pi's own MCP servers, reading only, as in the passes.
-            arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode"]
-            tools += ",codemode" + run.spec.access.passPatterns.map { "," + $0 }.joined()
+            arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode", "-e", "builtin:tool-search"]
+            tools += ",codemode,tool_search" + run.spec.access.passPatterns.map { "," + $0 }.joined()
         } else {
             arguments += ["--no-mcp"]
         }

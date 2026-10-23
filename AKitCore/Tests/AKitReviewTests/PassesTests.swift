@@ -144,7 +144,7 @@ extension ReviewProcessTests {
                 #expect(brief.contains(flag), "\(flag)")
             }
             #expect(!brief.contains("--no-mcp"), "the passes read through Pi's MCP servers by default")
-            #expect(brief.contains(ReviewPasses.tools + ",codemode,mcp__*"), "every server of Pi; the extension checks each call")
+            #expect(brief.contains(ReviewPasses.tools + ",codemode,tool_search,mcp__*"), "every server of Pi; the extension checks each call")
             #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
             #expect(brief.filter { $0 == "--skill" }.count == 4)
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)
@@ -192,16 +192,17 @@ extension ReviewProcessTests {
             #expect(!SendPolicy.decide(origin: .mergeRequest, destination: claude, isWork: true, allowed: []).allowed, "only Pi")
         }
 
-        @Test func theCapStopsBeforeThePasses() async throws {
+        /// Over the cap the review alerts, before the passes and once when the credits pass it, and goes on.
+        @Test func theCapOnlyAlerts() async throws {
             let run = try await ReviewRunFixture.make(cap: 1)
-            await #expect(throws: ReviewPasses.Failure.self) { try await ReviewPasses.run(folder: run.folder, env: run.home.env) }
-            #expect(run.args("brief").isEmpty)
-            #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage == .stopped)
-            // Confirmed: the passes run.
             run.playTypicalRun()
+            let alerts = LockedBox<[String]>([])
             let result = try await ReviewPasses.run(folder: run.folder, env: run.home.env,
-                                                    options: .init(confirmOverCap: { @Sendable _, _ in true }))
-            #expect(result.findings.count == 2)
+                                                    options: .init(alert: { message in alerts.update { $0.append(message) } }))
+            #expect(result.findings.count == 2 && !run.args("brief").isEmpty)
+            #expect(alerts.value.contains { $0.hasPrefix("The estimate is ≈") && $0.contains("over the cap of 1") })
+            #expect(alerts.value.filter { $0.contains("credits spent, over the cap of") }.count <= 1, "at most one alert when the credits pass it")
+            #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.stage != .stopped)
         }
 
         @Test func aFailedPassStopsTheRunAndIsLogged() async throws {

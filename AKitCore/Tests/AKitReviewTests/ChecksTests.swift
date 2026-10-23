@@ -126,7 +126,7 @@ struct ChecksTests {
         let catalog = ReviewCatalog.load(home: FileManager.default.temporaryDirectory.appending(path: "none-\(UUID())"), brain: nil)
         var choices = ReviewRunChoices()
         #expect(try ReviewResolver.resolve(catalog: catalog, profile: nil, choices: choices, mergeRequest: FakeMergeRequest.ref, id: "x").spec
-            .maxChangedLines == Sourced(1500, .builtIn))
+            .maxChangedLines == Sourced(6000, .builtIn))
         choices.settings.maxChangedLines = 300
         let spec = try ReviewResolver.resolve(catalog: catalog, profile: nil, choices: choices, mergeRequest: FakeMergeRequest.ref, id: "x").spec
         #expect(spec.maxChangedLines == Sourced(300, .run))
@@ -138,19 +138,18 @@ struct ChecksTests {
 
 extension ReviewProcessTests {
     struct SizeGateTests {
-        @Test func aBigChangeAsksBeforeThePasses() async throws {
+        /// Over `max_changed_lines` (6000 by default) the review only alerts and goes on.
+        @Test func aBigChangeAlertsAndGoesOn() async throws {
             let run = try await ReviewRunFixture.make()
             let scan = try #require(ReviewJSON.read(ReviewScan.self, from: run.folder.appending(path: "scan.json")), "Gather writes the scan")
             #expect(scan.changedLines > 0)
-            try ReviewJSON.write(ReviewScan(changedLines: 5000), to: run.folder.appending(path: "scan.json"))
-            await #expect(throws: (any Error).self) { try await ReviewPasses.run(folder: run.folder, env: run.home.env) }
-            #expect(ReviewJSON.read(ReviewRunStatus.self, from: run.folder.appending(path: "status.json"))?.message?.contains("5000 changed lines") == true)
-            #expect(!FileManager.default.fileExists(atPath: run.home.url.appending(path: "fake/args-brief.txt").path), "no pass ran")
-
-            let asked = LockedBox<[Int]>([])
-            let options = ReviewPasses.Options(confirmLarge: { lines, limit in asked.update { $0 += [lines, limit] }; return true })
+            try ReviewJSON.write(ReviewScan(changedLines: 7000), to: run.folder.appending(path: "scan.json"))
+            run.playTypicalRun()
+            let alerts = LockedBox<[String]>([])
+            let options = ReviewPasses.Options(alert: { message in alerts.update { $0.append(message) } })
             _ = try await ReviewPasses.run(folder: run.folder, env: run.home.env, options: options)
-            #expect(asked.value == [5000, 1500])
+            #expect(alerts.value.contains { $0.contains("7000 changed lines, over max_changed_lines 6000") })
+            #expect(FileManager.default.fileExists(atPath: run.home.url.appending(path: "fake/args-brief.txt").path), "the passes ran")
         }
     }
 }

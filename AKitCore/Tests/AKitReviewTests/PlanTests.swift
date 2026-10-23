@@ -335,7 +335,7 @@ extension ReviewProcessTests {
             let mr = try #require(approved[0]["mr"] as? [String: Any])
             #expect(mr["iid"] as? Int == 7 && (mr["projects"] as? [Any])?.first as? String == "team/app")
             let args = run.args("send-1")
-            #expect(args.contains("builtin:mcp") && args.contains("akit_approved_requests,codemode,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
+            #expect(args.contains("builtin:mcp") && args.contains("akit_approved_requests,codemode,tool_search,mcp__*gitlab*__*,mcp__*azure*__*,mcp__*devops*__*,mcp__ado__*"))
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-send-1.txt"), encoding: .utf8)
             #expect(env.contains("AKIT_REVIEW_MODE=send"))
             #expect(!args.contains { $0.contains("figma") } && env.contains(#""extraServers":[]"#), "no context server in the send pass")

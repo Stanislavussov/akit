@@ -84,25 +84,27 @@ public enum ReviewPasses {
     }
 
     public struct Options: Sendable {
-        /// Asked when the estimate is over the cap: true goes on. nil = never ask, stop.
-        public var confirmOverCap: (@Sendable (_ estimate: Double, _ cap: Int) async -> Bool)?
-        /// Asked when the change has more changed lines than `max_changed_lines`: true goes on.
-        /// nil = never ask, stop.
-        public var confirmLarge: (@Sendable (_ lines: Int, _ limit: Int) async -> Bool)?
+        /// Told when the run goes over a limit (the credit cap, `max_changed_lines`): the review
+        /// goes on, the user only learns it. Also a progress line.
+        public var alert: (@Sendable (String) -> Void)?
         /// Asked when the merge request is a draft, its pipeline failed, or AKit already reviewed
         /// this commit (R27): true goes on. nil = never ask, stop.
         public var confirmConcerns: (@Sendable (_ concerns: [String]) async -> Bool)?
         public var timeout: TimeInterval
         public var progress: @Sendable (String) -> Void
 
-        public init(confirmOverCap: (@Sendable (Double, Int) async -> Bool)? = nil, confirmLarge: (@Sendable (Int, Int) async -> Bool)? = nil,
-                    confirmConcerns: (@Sendable ([String]) async -> Bool)? = nil,
+        public init(alert: (@Sendable (String) -> Void)? = nil, confirmConcerns: (@Sendable ([String]) async -> Bool)? = nil,
                     timeout: TimeInterval = 30 * 60, progress: @escaping @Sendable (String) -> Void = { _ in }) {
-            self.confirmOverCap = confirmOverCap
-            self.confirmLarge = confirmLarge
+            self.alert = alert
             self.confirmConcerns = confirmConcerns
             self.timeout = timeout
             self.progress = progress
+        }
+
+        /// Over a limit: a progress line and the alert.
+        func over(_ message: String) {
+            progress("Over a limit: " + message)
+            alert?(message)
         }
     }
 
@@ -168,9 +170,11 @@ public enum ReviewPasses {
         arguments += ["--no-skills", "--no-context-files", "--no-prompt-templates", "--no-extensions", "--offline"]
         var tools = setup.tools
         if setup.mcp {
-            arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode"]
+            // `tool_search` reaches a server with `deferred` exposure (a large one, such as GitLab's own
+            // MCP server): its tools are in no tool list until a search loads them.
+            arguments += ["-e", "builtin:mcp", "-e", "builtin:codemode", "-e", "builtin:tool-search"]
             let patterns = setup.mode == "review" ? access.passPatterns : access.toolPatterns
-            tools += ",codemode" + patterns.map { "," + $0 }.joined()
+            tools += ",codemode,tool_search" + patterns.map { "," + $0 }.joined()
         } else {
             arguments += ["--no-mcp"]
         }
@@ -183,8 +187,10 @@ public enum ReviewPasses {
 
     /// Runs one pass: checks the sending policy and the run's limit, starts Pi, records the pass
     /// in `passes.json` and the send log. Throws when the pass failed.
-    static func runPass(_ setup: PassSetup, spec: ReviewRunSpec, folder: URL, log: inout ReviewPassLog, limit: Double, env: HarnessEnvironment,
-                        options: Options, pi: URL) async throws -> PassOutput {
+    /// `limit` stops a pass that would start over it (Sync Outcomes' own small one); `cap` only
+    /// alerts once when the run's credits pass it: a review never stops at its cap.
+    static func runPass(_ setup: PassSetup, spec: ReviewRunSpec, folder: URL, log: inout ReviewPassLog, limit: Double = .infinity,
+                        cap: Double? = nil, env: HarnessEnvironment, options: Options, pi: URL) async throws -> PassOutput {
         guard log.credits < limit else {
             throw Failure(message: String(format: "Stopped before %@: %.0f credits used, the run's limit is %.0f.", setup.name, log.credits, limit))
         }
@@ -222,8 +228,12 @@ public enum ReviewPasses {
         options.progress(String(format: "Pass %@ %@: %.1f credits, %.0f s, %@ in / %@ cached / %@ out", setup.name,
                                 output.error == nil ? "done" : "failed", record.credits, record.ended!.timeIntervalSince(record.started),
                                 ReviewRunLog.tokens(output.usage.input), ReviewRunLog.tokens(output.usage.cached), ReviewRunLog.tokens(output.usage.output)))
+        let before = log.credits
         log.passes.append(record)
         try ReviewJSON.write(log, to: folder.appending(path: "passes.json"))
+        if let cap, before <= cap, log.credits > cap {
+            options.over(String(format: "%.0f credits spent, over the cap of %.0f. The review goes on.", log.credits, cap))
+        }
         let system = setup.systemPrompt.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         var send = SendRecord(purpose: "review-\(setup.name)", session: output.session, runID: spec.id, destination: setup.gate.destination,
                               model: setup.model.model, inputCharacters: setup.prompt.count, systemCharacters: system.count, usage: output.usage)
@@ -254,7 +264,7 @@ public enum ReviewPasses {
         let setup = PassSetup(name: "fetch", mode: "fetch", role: nil, prompt: ReviewPrompts.fetch(spec: spec), model: spec.passes.value,
                               gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
                               tools: tools, mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
-        _ = try await runPass(setup, spec: spec, folder: folder, log: &log, limit: Double(spec.capCredits.value), env: env, options: options, pi: pi)
+        _ = try await runPass(setup, spec: spec, folder: folder, log: &log, cap: Double(spec.capCredits.value), env: env, options: options, pi: pi)
     }
 
     /// Sync Outcomes (R31): a fetch-mode pass that reads only the merge request and its threads;
@@ -294,7 +304,7 @@ public enum ReviewPasses {
                               gate: gate, session: ["--session-id", UUID().uuidString.lowercased()], skills: [],
                               tools: "akit_approved_requests", mcp: true, cwd: cwd, systemPrompt: nil, roots: "")
         // Sending is never stopped by the run's credit cap: the user asked for it.
-        _ = try await runPass(setup, spec: spec, folder: folder, log: &log, limit: .infinity, env: env, options: options, pi: pi)
+        _ = try await runPass(setup, spec: spec, folder: folder, log: &log, env: env, options: options, pi: pi)
     }
 
     /// Runs every pass of a gathered run and writes `findings.json` and `gaps.json`.
@@ -341,12 +351,8 @@ public enum ReviewPasses {
         // A change too big to review well: the passes ask first (`max_changed_lines`).
         let scan = ReviewJSON.read(ReviewScan.self, from: folder.appending(path: "scan.json"))
         if let scan, let limit = spec.maxChangedLines?.value, scan.changedLines > limit {
-            guard let confirm = options.confirmLarge, await confirm(scan.changedLines, limit) else {
-                let message = "Stopped before the passes: the change has \(scan.changedLines) changed lines, over the limit of \(limit). "
-                    + "Reviews of big changes miss more: split it, or review it anyway."
-                try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
-                throw Failure(message: message)
-            }
+            options.over("The change has \(scan.changedLines) changed lines, over max_changed_lines \(limit). The review goes on; "
+                         + "reviews of big changes miss more.")
         }
         // Reasons not to review now (R27): one question for all of them.
         let concerns = Self.concerns(folder: folder, spec: spec, home: env.homeDirectory)
@@ -361,16 +367,11 @@ public enum ReviewPasses {
         let previous = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))
         let fetched = previous?.passes.filter { $0.name == "fetch" } ?? []
         let spent = fetched.map(\.credits).reduce(0, +)
-        // A confirmed estimate over the cap raises the run's limit to half again the estimate.
-        var limit = Double(spec.capCredits.value)
-        if estimate + spent > limit {
-            guard let confirm = options.confirmOverCap, await confirm(estimate + spent, spec.capCredits.value) else {
-                let message = String(format: "Stopped before the passes: the estimate is ≈ %.0f credits, over the cap of %d.", estimate + spent,
-                                     spec.capCredits.value)
-                try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
-                throw Failure(message: message)
-            }
-            limit = (estimate + spent) * 1.5
+        // Over the cap only alerts: the review goes on (the passes alert again when they pass it).
+        let cap = Double(spec.capCredits.value)
+        if estimate + spent > cap {
+            options.over(String(format: "The estimate is ≈ %.0f credits, over the cap of %d. The review goes on.", estimate + spent,
+                                spec.capCredits.value))
         }
         // The monthly limit (US dollars, Settings → Lab) counts review passes too.
         let records = SendLog.records(env: env)
@@ -396,7 +397,7 @@ public enum ReviewPasses {
             var setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
                                   skills: skills, tools: tools, mcp: spec.access.inPasses, cwd: cwd, systemPrompt: systemFile, roots: roots)
             setup.flags = spec.extraFlags
-            return try await runPass(setup, spec: spec, folder: folder, log: &log, limit: limit, env: env, options: options, pi: pi)
+            return try await runPass(setup, spec: spec, folder: folder, log: &log, cap: cap, env: env, options: options, pi: pi)
         }
 
         do {

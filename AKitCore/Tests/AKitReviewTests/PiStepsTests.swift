@@ -234,7 +234,7 @@ extension ReviewProcessTests {
             #expect(log.passes.map(\.name).suffix(2) == ["step-pi-api-reviewer", "verifier"])
             let step = run.args("step-pi-api-reviewer")
             #expect(step.contains(log.mainSession) && step.contains("fake/m2"))
-            #expect(step.contains("--no-extensions") && step.contains("--name") && step.contains(ReviewPasses.tools + ",codemode,mcp__*"))
+            #expect(step.contains("--no-extensions") && step.contains("--name") && step.contains(ReviewPasses.tools + ",codemode,tool_search,mcp__*"))
             #expect(!step.contains("bash"))
             #expect(run.args("brief").contains("--name") && run.args("verifier").contains("--name"))
             #expect(!run.args("fetch").contains("--name"), "the fetch pass keeps its own arguments")
