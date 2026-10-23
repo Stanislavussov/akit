@@ -121,7 +121,7 @@ public enum ReviewPrompts {
         merge-request.md, changes.md, diff.patch, threads.md, the work items, \(spec.links?.isEmpty == false ? "links.md, " : "")and \
         project-rules.md if they are there. Open whole files in the repository where the diff is not enough.
 
-        Then answer with a short brief (at most 300 words) in this shape:
+        Then answer with a short brief (at most 400 words) in this shape:
         - Intent: what the change is for, in one or two sentences\(spec.notes == nil ? "" : " (the developer's notes say what it is for)").\(spec.notes == nil ? "" : "\n- Focus: what the developer's notes ask the review to look at.")
         - Touched components: the parts of the system it changes, and the boundaries between them it crosses.
         - Contracts touched: every public API, DTO, event, schema or migration, config key or error code the diff adds, \
@@ -129,6 +129,12 @@ public enum ReviewPrompts {
         - Already raised: what people said in the threads.
         - Acceptance criteria: the criteria or repro steps the change must meet.
         - First gaps: what is missing to review it well. Report each with akit_report_context_gap too.
+        - Risk map, for the developer only (never posted): the risky areas the change touches (authentication, payments, \
+        migrations and stored data, public APIs, concurrency, deletion); whether the merge request shows proof it was tested \
+        (a test that fails without the change, command output, screenshots) or none; and signs of a careless, maybe \
+        generated change: unrelated refactors, a helper that duplicates an existing one, calls to APIs that don't exist, tests \
+        that only test mocks, errors swallowed, a description that promises more than the diff does. Write "none seen" for \
+        each part with nothing.
         """
     }
 
@@ -291,12 +297,17 @@ public enum ReviewPrompts {
         scripts and return only short notes from the script (what you found, what failed), never the data itself.
 
         Read, with the tools your servers have (find them with searchTools() or describeNamespace()):
-        1. The merge request itself, with its diff refs (base, start and head commit).
+        1. The merge request itself, with its diff refs (base, start and head commit), whether it is a draft, and its head \
+        pipeline (status and commit).
         2. Its diff versions, and the changed files with their diffs (every page).
         3. Every discussion thread with all its notes and positions, resolved ones too (every page).
         4. Your own pending draft notes on it.
         5. The signed-in user (who you are on GitLab).
-        6. \(items)\(links.isEmpty ? "" : "\n7. The developer's links, after the merge request:\n\n" + linksStep(links))
+        6. \(items)
+        7. The history of the changed files, after everything above: for up to 10 changed files, the merge requests merged \
+        before this one that changed them (for example the file's recent commits, then each commit's merge requests), at most \
+        3 per file and 10 in all, each with its discussion threads. Pass each merge request's own number in every call about \
+        it. Spend at most 25 calls on this step, and skip it when your tools can't do it.\(links.isEmpty ? "" : "\n8. The developer's links, after the merge request:\n\n" + linksStep(links))
 
         Pass the merge request number (\(mr.iid)) as its own argument in every call about it, as the tools name it.
         When a tool answers in prose instead of JSON, hand what it said to `akit_submit_context` with GitLab's and Azure \

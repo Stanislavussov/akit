@@ -107,6 +107,8 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
 
     /// 2 since 2026-10-23: the verifier's model is the user's choice (R25).
     public var version = 2
+    /// The developer's own change (R33), set by Gather; nil before Gather and in older runs.
+    public var ownChange: Bool?
     public var id: String
     public var created: Date
     public var mergeRequest: MergeRequestRef
@@ -157,6 +159,25 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
 }
 
 extension ReviewRunSpec {
+    /// The limits of a self-review: `low` findings too, and more of them inline.
+    public static let ownSeverity = ReviewSeverity.low
+    public static let ownMaxInline = 10
+
+    /// R33: a review of the developer's own change also lists `low` findings and has a higher
+    /// inline limit. Only built-in values change: what a brain, a profile or the run set stays.
+    public mutating func applyMode(own: Bool) {
+        ownChange = own
+        guard own else { return }
+        // A brain's review.yaml starts as a copy of the defaults: a default value there is no choice.
+        func untouched<T: Equatable>(_ value: Sourced<T>?, _ fallback: T) -> Bool {
+            guard let value else { return false }
+            return value.source == .builtIn || (value.source == .brain && value.value == fallback)
+        }
+        if untouched(posting.severityThreshold, .medium) { posting.severityThreshold = Sourced(Self.ownSeverity, .builtIn) }
+        if untouched(posting.maxInline, 5) { posting.maxInline = Sourced(Self.ownMaxInline, .builtIn) }
+        if untouched(posting.maxInlineMedium, 3) { posting.maxInlineMedium = Sourced(Self.ownMaxInline, .builtIn) }
+    }
+
     /// Why the run can't start: the verifier's model is the user's choice (R25), so a run
     /// without one stops before anything is spent. nil when it is set.
     public var verifierProblem: String? {
@@ -346,7 +367,11 @@ public enum ReviewResolver {
             (choice.model.isEmpty ? "Pi's default model" : choice.model) + (choice.thinking.isEmpty ? "" : " · thinking \(choice.thinking)")
         }
         var lines = ["Project profile: \(spec.project ?? "none")",
-                     line("scenario", spec.scenario.value, spec.scenario.source), "Roles:"]
+                     line("scenario", spec.scenario.value, spec.scenario.source)]
+        if let own = spec.ownChange {
+            lines.append(own ? "  mode: your own change (low findings too, up to \(ReviewRunSpec.ownMaxInline) inline)" : "  mode: a colleague's merge request")
+        }
+        lines.append("Roles:")
         lines += spec.roles.map {
             "  \($0.id) [\($0.source.rawValue)] \($0.reason); min \($0.minSeverity.rawValue), at most \($0.maxFindings) findings"
         }

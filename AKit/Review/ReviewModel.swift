@@ -28,9 +28,12 @@ final class ReviewModel {
         let estimate: Double
         let cap: Int
         var changedLines: Int?
+        /// Reasons not to review now: a draft, a failed pipeline, this commit already reviewed.
+        var concerns: [String]?
 
-        var title: String { changedLines == nil ? "Over the credit cap" : "A big change" }
+        var title: String { concerns != nil ? "Review it now?" : changedLines == nil ? "Over the credit cap" : "A big change" }
         var message: String {
+            if let concerns { return concerns.joined(separator: "\n") + "\n\nReview it anyway, or stop and come back later." }
             if let changedLines {
                 return "This change has \(changedLines) changed lines; the limit is \(cap). Reviews of big changes miss more: review it anyway, or stop and split it."
             }
@@ -149,6 +152,8 @@ final class ReviewModel {
             await self?.ask(CapQuestion(estimate: estimate, cap: cap)) ?? false
         }, confirmLarge: { [weak self] lines, limit in
             await self?.ask(CapQuestion(estimate: 0, cap: limit, changedLines: lines)) ?? false
+        }, confirmConcerns: { [weak self] concerns in
+            await self?.ask(CapQuestion(estimate: 0, cap: 0, concerns: concerns)) ?? false
         }, progress: { [weak self] line in Task { @MainActor in self?.log(line) } })
         try await ReviewPasses.run(folder: folder, env: env, options: options)
     }

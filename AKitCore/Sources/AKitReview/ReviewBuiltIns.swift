@@ -28,7 +28,7 @@ public enum ReviewBuiltIns {
         title: Feature
         roles:
           required: [contracts, domain, bug-hunter, requirements]
-          optional: [architecture, tests, security, performance, concurrency, data-migrations, observability]
+          optional: [architecture, tests, security, performance, concurrency, data-migrations, observability, history]
         checks:
           - "Which contracts does the change add or change, and does every consumer still work?"
           - "Does the new code sit in the right component and keep its boundaries?"
@@ -45,7 +45,7 @@ public enum ReviewBuiltIns {
         title: Bugfix
         roles:
           required: [bug-hunter, contracts, requirements, tests]
-          optional: [architecture, security, concurrency, performance, observability]
+          optional: [architecture, security, concurrency, performance, observability, history]
         checks:
           - "Is the cause fixed, not the symptom (from the repro steps)?"
           - "Does the fix change a contract (behaviour, error, format) that other code relies on?"
@@ -55,6 +55,21 @@ public enum ReviewBuiltIns {
         detect:
           wi_type: [Bug]
           branch_regex: "^(fix|bug|hotfix)/"
+        """,
+        "security": """
+        id: security
+        title: Security
+        roles:
+          required: [security, bug-hunter]
+          optional: [contracts, data-migrations, observability, history]
+        checks:
+          - "Which inputs from users, other services or files does the change read, and where do they end up?"
+          - "Does every new endpoint, handler or job check who may call it, on the right object?"
+          - "Can a secret, a token or personal data reach a log, an error, a URL, the browser's storage or an analytics event?"
+          - "Does the change weaken a check: validation, escaping, an allowlist, a certificate check, a rate limit?"
+        context_required: [full_files]
+        detect:
+          branch_regex: "^(sec|security)/"
         """,
         "dependency-upgrade": """
         id: dependency-upgrade
@@ -228,12 +243,23 @@ public enum ReviewBuiltIns {
                               - Log volume: a log line per item or per request on a hot path that will flood the logs.
                               - A background job or retry loop that can fail forever without a signal.
                               """),
+        "history": role("history", "Review the change against the history of its files: old bugs coming back, fixes undone, and what people already asked for in these files.",
+                        max: 2, needs: ["diff", "full_files", "history"],
+                        doNotComment: ["the history itself: old commits, old merge requests, who wrote what",
+                                       "a rule from an earlier thread that the project's constraints or this change's work item overrule"], body: """
+                        Read `context/history.md`: the commits behind the changed lines (git blame at the base commit), the recent commits of each file, and people's threads in earlier merge requests on these files. Then ask of each hunk:
+
+                        - Does it undo a fix? A line a commit named "fix …" added is removed or changed back: name that commit and the bug it fixed.
+                        - Does an old bug come back? The same pattern a fix removed elsewhere in the history appears again.
+                        - Does it go against what a person asked for in an earlier merge request on this file (a convention, a pitfall, "never call X here")? Quote the request and the merge request number.
+                        - A file that changes often with "fix" commits is fragile: look harder there, but report only a concrete problem of this change.
+                        """),
     ]
 
     /// Ids in the order a new layer lists them.
     public static let roleIDs = ["contracts", "architecture", "domain", "requirements", "tests", "bug-hunter", "upgrade-risk", "security",
-                                 "performance", "concurrency", "data-migrations", "observability"]
-    public static let scenarioIDs = ["feature", "bugfix", "dependency-upgrade"]
+                                 "performance", "concurrency", "data-migrations", "observability", "history"]
+    public static let scenarioIDs = ["feature", "bugfix", "security", "dependency-upgrade"]
 
     public static var roles: [ReviewRole] {
         roleIDs.compactMap { id in roleFiles[id].flatMap { try? ReviewRole.parse($0, source: .builtIn) } }

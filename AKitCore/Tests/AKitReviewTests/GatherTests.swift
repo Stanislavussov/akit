@@ -21,7 +21,7 @@ struct ConfigTests {
         #expect(security?.maxFindings == 3 && security?.minSeverity == .medium)
         let bugfix = ReviewBuiltIns.scenarios.first { $0.id == "bugfix" }
         #expect(bugfix?.required == ["bug-hunter", "contracts", "requirements", "tests"])
-        #expect(bugfix?.optional == ["architecture", "security", "concurrency", "performance", "observability"])
+        #expect(bugfix?.optional == ["architecture", "security", "concurrency", "performance", "observability", "history"])
         let feature = ReviewBuiltIns.scenarios.first { $0.id == "feature" }
         #expect(feature?.required == ["contracts", "domain", "bug-hunter", "requirements"], "contracts first; architecture is optional")
         #expect(feature?.optional.first == "architecture")

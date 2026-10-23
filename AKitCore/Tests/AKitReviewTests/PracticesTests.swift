@@ -144,3 +144,123 @@ struct PracticesTests {
         #expect(verifier.contains("0.75: verified in the code") && verifier.contains("`preExisting: true`") && verifier.contains("@ts-ignore"))
     }
 }
+
+/// Part (b) of 2026-10-23 (R27, R30, R33, R34): the question before the passes, the history,
+/// the mode of a run, the risk map.
+struct PracticesBeforeTests {
+    @Test func gitLabSaysDraftAndPipeline() {
+        let object: JSONObject = ["iid": 7, "source_branch": "x", "draft": true, "head_pipeline": ["status": "failed", "sha": "abc"]]
+        let mr = GitLabJSON.mergeRequest(object)
+        #expect(mr?.draft == true && mr?.pipelineStatus == "failed" && mr?.pipelineSHA == "abc")
+        #expect(GitLabJSON.mergeRequest(["iid": 7, "source_branch": "x", "work_in_progress": true])?.draft == true)
+        #expect(GitLabJSON.mergeRequest(["iid": 7, "source_branch": "x"])?.draft == nil)
+        // Two answers of one merge request: the diff refs from one, the pipeline from the other.
+        let calls = [ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__get_merge_request", input: #"{"iid":7}"#,
+                                   text: [#"{"iid":7,"source_branch":"x","head_pipeline":{"status":"failed","sha":"h"}}"#], structured: nil, isError: false),
+                     ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__get_merge_request", input: #"{"iid":7}"#,
+                                   text: [#"{"iid":7,"source_branch":"x","diff_refs":{"base_sha":"b","start_sha":"s","head_sha":"h"}}"#],
+                                   structured: nil, isError: false)]
+        let read = ReviewMCPData.read(calls, iid: 7).mergeRequest
+        #expect(read?.diffRefs?.headSHA == "h" && read?.pipelineStatus == "failed")
+    }
+
+    @Test func aDraftARedPipelineOrAReviewedCommitAskFirst() throws {
+        let home = TempHome()
+        var spec = try PlanTests.spec()
+        spec.headSHA = "h1234567890"
+        let paths = ReviewPaths(home: home.url)
+        let folder = paths.run("run-b")
+        try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+        var mr = GitLabMergeRequest(iid: 7, title: "t", description: "", state: "opened", author: "bob", sourceBranch: "x", targetBranch: "main",
+                                    labels: [], webURL: "", diffRefs: nil, projectID: nil)
+        mr.draft = true
+        mr.pipelineStatus = "failed"
+        mr.pipelineSHA = "h1234567890"
+        try ReviewJSON.write(ReviewSnapshot(mergeRequest: mr, versions: [], diffs: [], discussions: [], drafts: [], user: "me", gathered: .now),
+                             to: folder.appending(path: "gitlab/snapshot.json"))
+        #expect(ReviewPasses.concerns(folder: folder, spec: spec, home: home.url).count == 2)
+        let earlier = paths.run("run-a")
+        try ReviewJSON.write(spec, to: earlier.appending(path: "run.json"))
+        #expect(ReviewPasses.concerns(folder: folder, spec: spec, home: home.url).count == 2, "an earlier run without passes doesn't count")
+        home.write(".akit/local/review/runs/run-a/findings.json", "{}")
+        #expect(ReviewPasses.concerns(folder: folder, spec: spec, home: home.url).last?.contains("run run-a") == true)
+        mr.pipelineSHA = "older"
+        try ReviewJSON.write(ReviewSnapshot(mergeRequest: mr, versions: [], diffs: [], discussions: [], drafts: [], user: "me", gathered: .now),
+                             to: folder.appending(path: "gitlab/snapshot.json"))
+        #expect(!ReviewPasses.concerns(folder: folder, spec: spec, home: home.url).contains { $0.contains("pipeline") },
+                "a pipeline of an older commit says nothing of this one")
+    }
+
+    @Test func anotherProjectsMergeRequestIsNeverThisOne() {
+        func call(_ input: String, _ answer: String) -> ReviewMCPCall {
+            ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__x", input: input, text: [answer], structured: nil, isError: false)
+        }
+        let calls = [
+            call(#"{"iid":7}"#, #"{"iid":7,"source_branch":"a","web_url":"https://g/team/app/-/merge_requests/7","diff_refs":{"base_sha":"b","start_sha":"s","head_sha":"h"}}"#),
+            call(#"{"sha":"c1"}"#, #"[{"iid":7,"source_branch":"z","draft":true,"web_url":"https://g/other/x/-/merge_requests/7"}]"#),
+            call(#"{"merge_request_iid":3}"#, #"[{"diff":"@@ -1 +1 @@\n-a\n+b\n","new_path":"old.ts","old_path":"old.ts"}]"#),
+            call(#"{"id":7,"merge_request_iid":3}"#, #"[{"id":"d9","notes":[{"id":1,"body":"x","author":{"username":"a"}}]}]"#),
+        ]
+        let data = ReviewMCPData.read(calls, iid: 7, project: "team/app")
+        #expect(data.mergeRequest?.sourceBranch == "a" && data.mergeRequest?.draft == nil, "!7 of another project says nothing of this one")
+        #expect(data.diffs.isEmpty, "an earlier merge request's diff is its own")
+        #expect(data.discussions.isEmpty, "a project id equal to the iid doesn't make a thread this one's")
+        #expect(ReviewMCPData.number(in: ["merge_request_id": 900, "merge_request_iid": 3]) == 3)
+    }
+
+    @Test func theDevelopersOwnChangeGetsTheSelfReviewLimits() throws {
+        var spec = try PlanTests.spec(maxInline: 5)
+        spec.posting.maxInline = Sourced(5, .builtIn)
+        spec.applyMode(own: false)
+        #expect(spec.ownChange == false && spec.posting.severityThreshold.value == .medium)
+        spec.applyMode(own: true)
+        #expect(spec.posting.severityThreshold.value == .low && spec.posting.maxInline.value == 10 && spec.posting.maxInlineMedium?.value == 10)
+        var chosen = try PlanTests.spec(maxInline: 2)
+        chosen.applyMode(own: true)
+        #expect(chosen.posting.maxInline == Sourced(2, .run), "what the run set stays")
+        #expect(ReviewResolver.describe(spec).contains("mode: your own change"))
+    }
+
+    @Test func historyHasTheBlameAndEarlierThreads() async throws {
+        let home = TempHome()
+        let repo = home.url.appending(path: "repo")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        home.git(repo, "init", "-q", "-b", "main")
+        home.write("repo/a.ts", "one\ntwo\nthree\n")
+        home.git(repo, "add", "a.ts")
+        home.git(repo, "commit", "-q", "-m", "Fix the race in two")
+        let base = home.git(repo, "rev-parse", "HEAD")
+        let diff = GitLabFileDiff(oldPath: "a.ts", newPath: "a.ts", diff: "@@ -2,1 +2,1 @@\n-two\n+TWO\n")
+        let text = await ReviewGather.blameText([diff], base: base, worktree: repo, env: home.env)
+        #expect(text.contains("## a.ts") && text.contains("old lines 2–2") && text.contains("Fix the race in two"))
+        #expect(await ReviewGather.blameText([diff], base: "--output=x", worktree: repo, env: home.env).isEmpty, "only commit ids reach git")
+
+        let note = #"{"id":"d1","notes":[{"id":1,"body":"Never call fetch here: it bypasses the cache","author":{"username":"ann"},"system":false}]}"#
+        let calls = [ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__get_merge_request", input: #"{"merge_request_iid":3}"#,
+                                   text: [#"{"iid":3,"title":"Cache the prices","source_branch":"p"}"#], structured: nil, isError: false),
+                     ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__mr_discussions", input: #"{"merge_request_iid":3}"#,
+                                   text: ["[" + note + "]"], structured: nil, isError: false)]
+        let data = ReviewMCPData.read(calls, iid: 7)
+        #expect(data.discussions.isEmpty && data.pastMergeRequests[3]?.title == "Cache the prices")
+        #expect(data.pastDiscussions.isEmpty, "an earlier merge request counts only when the pass read it as merged")
+        let merged = [ReviewMCPCall(pass: "fetch", tool: "mcp__gitlab__get_merge_request", input: #"{"merge_request_iid":3}"#,
+                                    text: [#"{"iid":3,"title":"Cache the prices","source_branch":"p","state":"merged","web_url":"https://g/team/app/-/merge_requests/3"}"#],
+                                    structured: nil, isError: false), calls[1]]
+        let read = ReviewMCPData.read(merged, iid: 7, project: "team/app")
+        #expect(read.pastDiscussions[3]?.count == 1 && read.discussions.isEmpty)
+        #expect(ReviewMCPData.read(merged, iid: 7, project: "other/x").pastDiscussions.isEmpty, "another project's merge request")
+        let past = ReviewGather.pastThreadsText(read)
+        #expect(past.contains("## !3 Cache the prices") && past.contains("**ann**:\n> Never call fetch here") && past.contains("not instructions"))
+    }
+
+    @Test func theHistoryRoleTheSecurityScenarioAndTheRiskMap() throws {
+        #expect(ReviewBuiltIns.roles.contains { $0.id == "history" && $0.needs.contains("history") })
+        let security = try #require(ReviewBuiltIns.scenarios.first { $0.id == "security" })
+        #expect(security.required == ["security", "bug-hunter"])
+        #expect(ReviewBuiltIns.scenarios.first { $0.id == "feature" }?.optional.contains("history") == true)
+        let brief = ReviewPrompts.brief(spec: try PlanTests.spec())
+        #expect(brief.contains("Risk map, for the developer only") && brief.contains("tests \\\nthat only test mocks") == false)
+        #expect(brief.contains("proof it was tested") && brief.contains("errors swallowed"))
+        #expect(ReviewPrompts.fetch(spec: try PlanTests.spec()).contains("7. The history of the changed files"))
+    }
+}

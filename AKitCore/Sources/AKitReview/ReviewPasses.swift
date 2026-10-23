@@ -89,19 +89,46 @@ public enum ReviewPasses {
         /// Asked when the change has more changed lines than `max_changed_lines`: true goes on.
         /// nil = never ask, stop.
         public var confirmLarge: (@Sendable (_ lines: Int, _ limit: Int) async -> Bool)?
+        /// Asked when the merge request is a draft, its pipeline failed, or AKit already reviewed
+        /// this commit (R27): true goes on. nil = never ask, stop.
+        public var confirmConcerns: (@Sendable (_ concerns: [String]) async -> Bool)?
         public var timeout: TimeInterval
         public var progress: @Sendable (String) -> Void
 
         public init(confirmOverCap: (@Sendable (Double, Int) async -> Bool)? = nil, confirmLarge: (@Sendable (Int, Int) async -> Bool)? = nil,
+                    confirmConcerns: (@Sendable ([String]) async -> Bool)? = nil,
                     timeout: TimeInterval = 30 * 60, progress: @escaping @Sendable (String) -> Void = { _ in }) {
             self.confirmOverCap = confirmOverCap
             self.confirmLarge = confirmLarge
+            self.confirmConcerns = confirmConcerns
             self.timeout = timeout
             self.progress = progress
         }
     }
 
     public static let tools = "read,grep,find,ls,akit_submit_findings,akit_report_context_gap"
+
+    /// Why a review may not be worth its credits now (R27): a draft, a pipeline that failed on
+    /// the reviewed commit, or an earlier run of AKit with passes on the same commit. Triviality
+    /// isn't judged. A local review has none of these.
+    public static func concerns(folder: URL, spec: ReviewRunSpec, home: URL) -> [String] {
+        guard spec.local == nil, let head = spec.headSHA else { return [] }
+        var result: [String] = []
+        if let mr = ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json"))?.mergeRequest {
+            if mr.draft == true { result.append("The merge request is a draft: its author may not be done.") }
+            if let status = mr.pipelineStatus, ["failed", "canceled"].contains(status), mr.pipelineSHA == head {
+                result.append("Its pipeline \(status == "failed" ? "failed" : "was canceled"): CI finds what it checks for less.")
+            }
+        }
+        let earlier = ReviewRuns.list(home: home).filter { run in
+            run.id != folder.lastPathComponent && run.spec.mergeRequest.url == spec.mergeRequest.url && run.spec.headSHA == head
+                && FileManager.default.fileExists(atPath: ReviewPaths(home: home).run(run.id).appending(path: "findings.json").path)
+        }
+        if let last = earlier.first {
+            result.append("AKit already reviewed this commit (\(head.prefix(10))) in run \(last.id).")
+        }
+        return result
+    }
 
     /// What one Pi process of a run is: its mode for the extension and what it may reach.
     struct PassSetup: Sendable {
@@ -271,6 +298,15 @@ public enum ReviewPasses {
             guard let confirm = options.confirmLarge, await confirm(scan.changedLines, limit) else {
                 let message = "Stopped before the passes: the change has \(scan.changedLines) changed lines, over the limit of \(limit). "
                     + "Reviews of big changes miss more: split it, or review it anyway."
+                try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
+                throw Failure(message: message)
+            }
+        }
+        // Reasons not to review now (R27): one question for all of them.
+        let concerns = Self.concerns(folder: folder, spec: spec, home: env.homeDirectory)
+        if !concerns.isEmpty {
+            guard let confirm = options.confirmConcerns, await confirm(concerns) else {
+                let message = "Stopped before the passes: " + concerns.joined(separator: " ")
                 try ReviewRuns.setStatus(.stopped, message: message, folder: folder)
                 throw Failure(message: message)
             }

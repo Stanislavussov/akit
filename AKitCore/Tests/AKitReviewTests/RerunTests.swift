@@ -76,7 +76,13 @@ extension ReviewProcessTests {
             try await Task.sleep(for: .seconds(1.1))   // a new run id (seconds)
             let second = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: run.home.env, brain: nil)
             let folder = ReviewPaths(home: run.home.url).run(second.spec.id)
-            try await ReviewPasses.run(folder: folder, env: run.home.env)
+            await #expect(throws: (any Error).self, "the same commit again: AKit asks first") {
+                try await ReviewPasses.run(folder: folder, env: run.home.env)
+            }
+            let asked = LockedBox<[String]>([])
+            try await ReviewPasses.run(folder: folder, env: run.home.env,
+                                       options: .init(confirmConcerns: { concerns in asked.update { $0 += concerns }; return true }))
+            #expect(asked.value.count == 1 && asked.value[0].contains("already reviewed this commit"))
             let again = try ReviewWorkflow.load(folder)
             #expect(again.finding("f1")?.fingerprint == first.fingerprint)
             #expect(!(again.plan?.requests ?? []).contains { $0.kind == .create || $0.kind == .update }, "\(again.plan?.requests.map(\.kind) ?? [])")
@@ -87,7 +93,8 @@ extension ReviewProcessTests {
             try await Task.sleep(for: .seconds(1.1))
             let third = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: run.home.env, brain: nil)
             let thirdFolder = ReviewPaths(home: run.home.url).run(third.spec.id)
-            try await ReviewPasses.run(folder: thirdFolder, env: run.home.env)
+            // The fake serves the same commit: the question about it is answered.
+            try await ReviewPasses.run(folder: thirdFolder, env: run.home.env, options: .init(confirmConcerns: { _ in true }))
             let delete = try #require(ReviewWorkflow.load(thirdFolder).plan?.requests.first { $0.kind == .delete })
             #expect(delete.draftID == 501 && delete.decision == .pending)
         }

@@ -26,6 +26,11 @@ public struct GitLabMergeRequest: Codable, Sendable, Hashable {
     public var diffRefs: DiffRefs?
     /// GitLab's number of the project: some MCP tools take it instead of the path.
     public var projectID: Int?
+    /// Draft (or "work in progress"); nil when the answer didn't say.
+    public var draft: Bool? = nil
+    /// The head pipeline's status (`success`, `failed`, `running`, …) and commit; nil when unknown.
+    public var pipelineStatus: String? = nil
+    public var pipelineSHA: String? = nil
 }
 
 /// One version of a merge request's diff (`GET …/versions`).
@@ -162,11 +167,19 @@ public enum GitLabJSON {
             guard let base = refs.string("base_sha"), let start = refs.string("start_sha"), let head = refs.string("head_sha") else { return nil }
             return GitLabMergeRequest.DiffRefs(baseSHA: base, startSHA: start, headSHA: head)
         }
-        return GitLabMergeRequest(iid: iid, title: object.string("title") ?? "", description: object.string("description") ?? "",
-                                  state: object.string("state") ?? "", author: object.object("author")?.string("username") ?? "",
-                                  sourceBranch: object.string("source_branch") ?? "", targetBranch: object.string("target_branch") ?? "",
-                                  labels: object["labels"] as? [String] ?? [], webURL: object.string("web_url") ?? "", diffRefs: refs,
-                                  projectID: object.int("project_id"))
+        var mr = GitLabMergeRequest(iid: iid, title: object.string("title") ?? "", description: object.string("description") ?? "",
+                                    state: object.string("state") ?? "", author: object.object("author")?.string("username") ?? "",
+                                    sourceBranch: object.string("source_branch") ?? "", targetBranch: object.string("target_branch") ?? "",
+                                    labels: object["labels"] as? [String] ?? [], webURL: object.string("web_url") ?? "", diffRefs: refs,
+                                    projectID: object.int("project_id"))
+        if object["draft"] != nil || object["work_in_progress"] != nil {
+            mr.draft = object.bool("draft") || object.bool("work_in_progress")
+        }
+        if let pipeline = object.object("head_pipeline") ?? object.object("pipeline") {
+            mr.pipelineStatus = pipeline.string("status")
+            mr.pipelineSHA = pipeline.string("sha")
+        }
+        return mr
     }
 
     public static func version(_ object: JSONObject) -> GitLabVersion? {

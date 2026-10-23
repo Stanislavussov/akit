@@ -13,14 +13,16 @@ extension AKitCLI {
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
-                         [--gather-only] [--over-cap]
+                         [--gather-only] [--over-cap] [--anyway]
                                         Gather: Pi reads the merge request and its work items through
                                         its MCP servers; AKit adds the worktree at head_sha, the diff,
                                         history, commands and knowledge into a context pack. Then the
                                         passes run in Pi (brief, roles, verifier).
                                         --over-cap goes on when the estimate is over the credit cap
                                         or the change over max_changed_lines (default 1500;
-                                        --max-changed-lines N sets it for this run)
+                                        --max-changed-lines N sets it for this run). --anyway goes on
+                                        when the merge request is a draft, its pipeline failed, or AKit
+                                        already reviewed this commit
       akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
@@ -48,7 +50,7 @@ extension AKitCLI {
                                         --name, --exclude-tools, --no-approve, --verbose)
       akit review pi                    Your Pi subagents, prompt templates and skills a step can run,
                                         and the flags a pass may take (from pi --help)
-      akit review passes RUN [--over-cap]
+      akit review passes RUN [--over-cap] [--anyway]
                                         Run the passes again on a gathered run
       akit review show RUN              The run: passes, the requests with their decisions, what stays
                                         in AKit, the context gaps
@@ -112,6 +114,7 @@ extension AKitCLI {
         let fileText = args.value("--file")
         let lineText = args.value("--line")
         let overCap = args.flag("--over-cap")
+        let anyway = args.flag("--anyway")
         let baseRef = args.value("--base")
         let whatText = args.value("--what")
         let showOnly = args.flag("--show")
@@ -292,7 +295,7 @@ extension AKitCLI {
             lines.drain(out)
             out(gatherSummary(result))
             if gatherOnly { return 0 }
-            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
+            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, anyway: anyway, env: env, out: out)
         case "pi":
             try args.finish()
             let library = ReviewPiLibrary.load(env: env)
@@ -312,7 +315,7 @@ extension AKitCLI {
         case "passes":
             guard let id = args.positional() else { throw Failure(message: "Which run? akit review passes RUN.") }
             try args.finish()
-            return try await runPasses(folder: try runFolder(id, env: env), overCap: overCap, env: env, out: out)
+            return try await runPasses(folder: try runFolder(id, env: env), overCap: overCap, anyway: anyway, env: env, out: out)
         case let text?:
             let mr = try mergeRequest(text)
             try args.finish()
@@ -328,7 +331,7 @@ extension AKitCLI {
             lines.drain(out)
             out(gatherSummary(result))
             if gatherOnly { return 0 }
-            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, env: env, out: out)
+            return try await runPasses(folder: ReviewPaths(home: env.homeDirectory).run(result.spec.id), overCap: overCap, anyway: anyway, env: env, out: out)
         case nil:
             throw Failure(message: "Which merge request? akit review MR-URL.")
         }
@@ -343,16 +346,20 @@ extension AKitCLI {
         return folder
     }
 
-    static func runPasses(folder: URL, overCap: Bool, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+    static func runPasses(folder: URL, overCap: Bool, anyway: Bool = false, env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
         let lines = LineBox()
         let options = ReviewPasses.Options(confirmOverCap: overCap ? { @Sendable _, _ in true } : nil,
-                                           confirmLarge: overCap ? { @Sendable _, _ in true } : nil, progress: { lines.add($0) })
+                                           confirmLarge: overCap ? { @Sendable _, _ in true } : nil,
+                                           confirmConcerns: anyway ? { @Sendable _ in true } : nil, progress: { lines.add($0) })
         let findings: ReviewFindingsFile
         do {
             findings = try await ReviewPasses.run(folder: folder, env: env, options: options)
         } catch {
             lines.drain(out)
-            throw Failure(message: error.localizedDescription + (error.localizedDescription.contains("over the cap") || error.localizedDescription.contains("over the limit of") ? " Add --over-cap to go on." : ""))
+            let text = error.localizedDescription
+            let hint = text.contains("over the cap") || text.contains("over the limit of") ? " Add --over-cap to go on."
+                : text.contains("is a draft") || text.contains("Its pipeline") || text.contains("already reviewed this commit") ? " Add --anyway to go on." : ""
+            throw Failure(message: text + hint)
         }
         lines.drain(out)
         let log = ReviewJSON.read(ReviewPassLog.self, from: folder.appending(path: "passes.json"))

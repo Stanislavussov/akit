@@ -299,6 +299,10 @@ public struct ReviewMCPData: Sendable {
     public var drafts: [GitLabDraft] = []
     public var user: String?
     public var workItems: [WorkItem] = []
+    /// Earlier merge requests the fetch pass read for the history of the changed files (R30):
+    /// their titles and their threads, by number.
+    public var pastMergeRequests: [Int: GitLabMergeRequest] = [:]
+    public var pastDiscussions: [Int: [GitLabDiscussion]] = [:]
     /// Calls that failed: `tool: message`.
     public var failures: [String] = []
     public var calls = 0
@@ -312,8 +316,15 @@ public struct ReviewMCPData: Sendable {
 
     /// Sorts the calls of the fetch pass. Threads and drafts count only from calls whose input
     /// names the merge request's number (they carry no project of their own).
-    public static func read(_ calls: [ReviewMCPCall], iid: Int) -> ReviewMCPData {
+    /// `project`: the merge request's project path. iids count per project, so an answer about
+    /// `!7` of another project (step 7 reads lists of merge requests) is never this one.
+    public static func read(_ calls: [ReviewMCPCall], iid: Int, project: String? = nil) -> ReviewMCPData {
         var data = ReviewMCPData()
+        func sameProject(_ mr: GitLabMergeRequest, about: Bool) -> Bool {
+            guard let project, !project.isEmpty else { return true }
+            guard !mr.webURL.isEmpty else { return about }
+            return mr.webURL.lowercased().contains("/\(project.lowercased())/-/merge_requests/")
+        }
         var comments: [Int: [WorkItem.Comment]] = [:]
         for call in calls {
             data.calls += 1
@@ -325,22 +336,44 @@ public struct ReviewMCPData: Sendable {
             // threads, drafts or user that decide what AKit may change in GitLab.
             let trusted = call.tool != "akit_submit_context"
             let aboutThis = trusted && mentions(call.inputObject, iid)
-            for value in call.values { visit(value, depth: 0, aboutThis: aboutThis, trusted: trusted) }
+            // A call about another merge request (its number in the input): the history of the files.
+            let other = trusted && !aboutThis ? number(in: call.inputObject).flatMap { $0 == iid ? nil : $0 } : nil
+            for value in call.values { visit(value, depth: 0, aboutThis: aboutThis, trusted: trusted, other: other) }
         }
-        func visit(_ value: Any, depth: Int, aboutThis: Bool, trusted: Bool) {
+        func visit(_ value: Any, depth: Int, aboutThis: Bool, trusted: Bool, other: Int? = nil) {
             guard depth < 5 else { return }
             if let list = value as? [Any] {
-                for item in list { visit(item, depth: depth + 1, aboutThis: aboutThis, trusted: trusted) }
+                for item in list { visit(item, depth: depth + 1, aboutThis: aboutThis, trusted: trusted, other: other) }
                 return
             }
             guard let object = value as? JSONObject else { return }
             if let mr = GitLabJSON.mergeRequest(object) {
-                guard mr.iid == iid else { return }
+                guard mr.iid == iid, other == nil, sameProject(mr, about: aboutThis) else {
+                    if trusted, mr.iid != iid, data.pastMergeRequests.count < 50 { data.pastMergeRequests[mr.iid] = mr }
+                    return
+                }
+                let earlier = data.mergeRequest
                 if data.mergeRequest == nil || (data.mergeRequest?.diffRefs == nil && mr.diffRefs != nil) { data.mergeRequest = mr }
+                // One answer may carry the pipeline or the draft flag and another the diff refs: they
+                // count only from a call about this merge request, the status with its own commit.
+                if data.mergeRequest != earlier {
+                    data.mergeRequest?.draft = earlier?.draft
+                    data.mergeRequest?.pipelineStatus = earlier?.pipelineStatus
+                    data.mergeRequest?.pipelineSHA = earlier?.pipelineSHA
+                }
+                if aboutThis {
+                    if let draft = mr.draft { data.mergeRequest?.draft = draft }
+                    if mr.pipelineStatus != nil {
+                        data.mergeRequest?.pipelineStatus = mr.pipelineStatus
+                        data.mergeRequest?.pipelineSHA = mr.pipelineSHA
+                    }
+                }
                 // `GET …/changes` and some servers carry the diffs in the merge request.
                 for change in object.objects("changes") { add(GitLabJSON.fileDiff(change)) }
                 return
             }
+            // Versions and diffs of an earlier merge request are its own, not this one's.
+            if other != nil, GitLabJSON.version(object) != nil || GitLabJSON.fileDiff(object) != nil { return }
             if let version = GitLabJSON.version(object) {
                 if !data.versions.contains(where: { $0.id == version.id }) { data.versions.append(version) }
                 return
@@ -351,6 +384,9 @@ public struct ReviewMCPData: Sendable {
             }
             if let discussion = GitLabJSON.discussion(object) {
                 if aboutThis, !data.discussions.contains(where: { $0.id == discussion.id }) { data.discussions.append(discussion) }
+                if let other, !(data.pastDiscussions[other] ?? []).contains(where: { $0.id == discussion.id }) {
+                    data.pastDiscussions[other, default: []].append(discussion)
+                }
                 return
             }
             if let draft = GitLabJSON.draft(object), object["merge_request_id"] != nil || object["author_id"] != nil || object["position"] != nil
@@ -372,7 +408,7 @@ public struct ReviewMCPData: Sendable {
                 return
             }
             for (key, child) in object where key != "author" && key != "assignee" && key != "assignees" && key != "reviewers" {
-                if child is [Any] || child is JSONObject { visit(child, depth: depth + 1, aboutThis: aboutThis, trusted: trusted) }
+                if child is [Any] || child is JSONObject { visit(child, depth: depth + 1, aboutThis: aboutThis, trusted: trusted, other: other) }
             }
         }
         func add(_ diff: GitLabFileDiff?) {
@@ -380,6 +416,12 @@ public struct ReviewMCPData: Sendable {
             data.diffs.append(diff)
         }
         for index in data.workItems.indices { data.workItems[index].comments = comments[data.workItems[index].id] ?? [] }
+        // Threads of earlier merge requests count only for one the pass read as merged, in this
+        // project: never a thread of any number a prompt-injected model asked for.
+        data.pastDiscussions = data.pastDiscussions.filter { number, _ in
+            guard let mr = data.pastMergeRequests[number] else { return false }
+            return mr.state == "merged" && sameProject(mr, about: false)
+        }
         return data
     }
 
@@ -389,13 +431,27 @@ public struct ReviewMCPData: Sendable {
         mergeRequest != nil || !versions.isEmpty || !diffs.isEmpty || !discussions.isEmpty || !drafts.isEmpty || user != nil
     }
 
-    /// Whether an input names the merge request's number (`merge_request_iid: "7"`, `iid: 7`, …).
-    static func mentions(_ input: JSONObject, _ iid: Int) -> Bool {
-        input.contains { key, value in
-            let lower = key.lowercased()
-            guard lower.contains("iid") || lower.contains("merge_request") || lower == "id" || lower == "mr" else { return false }
-            return (value as? NSNumber)?.intValue == iid || (value as? String) == String(iid)
+    /// The merge request number an input names (`merge_request_iid: 7`, `iid: "7"`), if one.
+    /// Keys with `iid` first, then `mr` and other `merge_request…` keys (never `merge_request_id`,
+    /// GitLab's global id), in a fixed order.
+    static func number(in input: JSONObject) -> Int? {
+        let keys = input.keys.sorted()
+        let ranked = keys.filter { $0.lowercased().contains("iid") }
+            + keys.filter { let k = $0.lowercased(); return !k.contains("iid") && k != "merge_request_id" && (k.contains("merge_request") || k == "mr") }
+        for key in ranked {
+            let value = input[key]
+            if let number = (value as? NSNumber)?.intValue ?? (value as? String).flatMap(Int.init) { return number }
         }
+        return nil
+    }
+
+    /// Whether an input names the merge request's number (`merge_request_iid: "7"`, `iid: 7`, …).
+    /// A key that names a merge request decides; a bare `id` (some servers' project id) counts
+    /// only when no such key is there.
+    static func mentions(_ input: JSONObject, _ iid: Int) -> Bool {
+        if let number = number(in: input) { return number == iid }
+        guard let value = input.first(where: { $0.key.lowercased() == "id" })?.value else { return false }
+        return (value as? NSNumber)?.intValue == iid || (value as? String) == String(iid)
     }
 }
 
