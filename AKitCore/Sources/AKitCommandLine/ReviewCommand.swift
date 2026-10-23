@@ -13,7 +13,7 @@ extension AKitCLI {
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
-                         [--gather-only] [--over-cap] [--anyway]
+                         [--gather-only] [--over-cap] [--anyway] [--full]
                                         Gather: Pi reads the merge request and its work items through
                                         its MCP servers; AKit adds the worktree at head_sha, the diff,
                                         history, commands and knowledge into a context pack. Then the
@@ -22,7 +22,9 @@ extension AKitCLI {
                                         or the change over max_changed_lines (default 1500;
                                         --max-changed-lines N sets it for this run). --anyway goes on
                                         when the merge request is a draft, its pipeline failed, or AKit
-                                        already reviewed this commit
+                                        already reviewed this commit. A rerun after a push reviews
+                                        only what changed since the last review; --full reads the
+                                        whole merge request again
       akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
@@ -69,6 +71,10 @@ extension AKitCLI {
                                         session) and print how to start it
       akit review apply RUN             Make a new version of the findings from what Pi submitted in
                                         the discussion; the requests are planned again
+      akit review outcomes [RUN] [--sync]
+                                        What became of the 🤖 threads in GitLab (fixed, dismissed,
+                                        ignored, open) and the share accepted by role and model;
+                                        --sync reads RUN's threads again first (one small pass)
       akit review quality               Precision by role, scenario and model from your verdicts
       akit review runs                  Every run on this Mac, newest first
       akit review config show [--project P] [--mr MR-URL] [--scenario S] [--brain DIR]
@@ -134,6 +140,7 @@ extension AKitCLI {
         }
         choices.pi = ReviewPiExtras(flags: piFlags, steps: args.values("--step").map { ReviewStepConfig(command: $0) })
         if let problem = ReviewPiFlags.problem(piFlags) { throw Failure(message: "--pi-flags: \(problem)") }
+        choices.fullReview = args.flag("--full")
         choices.extraServers = args.values("--extra-server").flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
             .filter { !$0.isEmpty }
         for change in roleChanges {
@@ -266,6 +273,25 @@ extension AKitCLI {
         case "quality":
             try args.finish()
             out(qualityText(ReviewQuality.entries(home: env.homeDirectory)))
+            return 0
+        case "outcomes":
+            let sync = args.flag("--sync")
+            let id = args.positional()
+            try args.finish()
+            if sync {
+                guard let id else { throw Failure(message: "Which run? akit review outcomes RUN --sync.") }
+                let lines = LineBox()
+                do {
+                    _ = try await ReviewOutcomes.sync(folder: try runFolder(id, env: env), env: env, options: .init(progress: { lines.add($0) }))
+                } catch {
+                    lines.drain(out)
+                    throw Failure(message: error.localizedDescription)
+                }
+                lines.drain(out)
+            }
+            // With a run: the threads of its merge request.
+            let url = try id.map { try ReviewWorkflow.load(try runFolder($0, env: env)).spec.mergeRequest.url }
+            out(outcomesText(ReviewOutcomes.all(home: env.homeDirectory).filter { url == nil || $0.mergeRequest == url }))
             return 0
         case "local":
             let path = args.positional().map { resolve($0, cwd: cwd, env: env) } ?? cwd
@@ -477,6 +503,22 @@ extension AKitCLI {
         }
         let missed = entries.filter { $0.label == .missed }.count
         if missed > 0 { lines.append("Missed (added by you): \(missed)") }
+        return lines.joined(separator: "\n")
+    }
+
+    static func outcomesText(_ outcomes: [ReviewOutcome]) -> String {
+        guard !outcomes.isEmpty else { return "No outcomes yet: a rerun of a merge request, or akit review outcomes RUN --sync, reads them." }
+        let rates = ReviewOutcomes.rates(outcomes)
+        func table(_ title: String, _ rows: [ReviewOutcomes.Rate]) -> [String] {
+            [title] + rows.map { row in
+                "  \(row.key): " + (row.accepted.map { String(format: "%.0f%%", $0 * 100) } ?? "–")
+                    + " accepted (\(row.fixed) fixed, \(row.dismissed) dismissed, \(row.ignored) ignored, \(row.open) open)"
+            }
+        }
+        var lines = table("Outcomes in GitLab by role:", rates.roles) + table("By model:", rates.models)
+        for outcome in outcomes where !outcome.replies.isEmpty {
+            lines.append("  \(outcome.kind.rawValue) \(outcome.file ?? "")\(outcome.line.map { ":\($0)" } ?? ""): " + outcome.replies.joined(separator: " / "))
+        }
         return lines.joined(separator: "\n")
     }
 

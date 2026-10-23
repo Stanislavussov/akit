@@ -128,6 +128,10 @@ public enum ReviewCandidates {
                 + String(format: "%.2f", finding.confidence) + "\n\n"
             text += "- Where: \(place)\n- Title: \(finding.title)\n- Why: \(finding.why)\n"
             if finding.preExisting == true { text += "- The role says: already there before this change.\n" }
+            if let run = finding.carriedFrom {
+                text += "- Also found by the last review (run \(run)). If the code changed since and the change fixed it, reject it with "
+                    + "the note \"fixed\"; otherwise judge it as usual.\n"
+            }
             if !finding.evidence.isEmpty { text += "- Evidence: `\(finding.evidence.replacingOccurrences(of: "`", with: "'"))`\n" }
             if finding.evidenceFound == false { text += "- AKit: this quote is not in the file at the reviewed commit.\n" }
             if let suggestion = finding.suggestion { text += "- Suggestion: `\(suggestion.replacingOccurrences(of: "`", with: "'"))`\n" }

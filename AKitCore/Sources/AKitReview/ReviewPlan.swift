@@ -129,10 +129,14 @@ public enum ReviewPlanner {
         public var scrub: Scrubber.OwnPatterns
         /// Findings the user moved inline by hand, by id.
         public var forcedInline: Set<String> = []
+        /// A rerun's fingerprints of earlier findings it didn't carry, on lines the push didn't
+        /// touch (`rerun-kept.json`): their threads aren't fixed.
+        public var keptFingerprints: Set<String> = []
 
         public init(spec: ReviewRunSpec, findings: [ReviewFinding], gaps: [ContextGap], diffs: [GitLabFileDiff],
                     refs: GitLabMergeRequest.DiffRefs, drafts: [GitLabDraft], discussions: [GitLabDiscussion], user: String,
-                    scrub: Scrubber.OwnPatterns, forcedInline: Set<String> = []) {
+                    scrub: Scrubber.OwnPatterns, forcedInline: Set<String> = [], keptFingerprints: Set<String> = []) {
+            self.keptFingerprints = keptFingerprints
             self.spec = spec
             self.findings = findings
             self.gaps = gaps
@@ -191,6 +195,13 @@ public enum ReviewPlanner {
             }
             if finding.isPreExisting, !input.forcedInline.contains(finding.id) {
                 place(.preExisting, "Already there before this merge request: not the author's change. Move it inline to post it anyway.")
+                continue
+            }
+            // A rerun (R28) reviews only what changed since the last review; earlier findings carry over.
+            if let rerun = spec.rerun, finding.carriedFrom == nil, finding.role != ReviewScan.role, !input.forcedInline.contains(finding.id),
+               finding.verifier?.note != ReviewDiscuss.addedNote, !rerun.touches(file: finding.file, line: finding.line) {
+                place(.onlyInAKit, "Not on a line changed since the last review (\(rerun.previousHead.prefix(10))): a rerun raises only "
+                      + "what the push changed. Move it inline to post it anyway.")
                 continue
             }
             if finding.kind == .question || verdict == .question {
@@ -315,7 +326,8 @@ public enum ReviewPlanner {
         }
         // Gone means no finding of this run has it, whatever its place: one held back by a threshold
         // is still there. A thread that has AKit's reply already gets no second one.
-        let current = Set(input.findings.flatMap(\.fingerprints))
+        // An earlier finding the verifier checked again and rejected (R28) is fixed: gone too.
+        let current = Set(input.findings.filter { !$0.isFixed(on: spec.rerun) }.flatMap(\.fingerprints)).union(input.keptFingerprints)
         for (fp, discussion) in published.sorted(by: { $0.key < $1.key }) where !discussion.isResolved && !current.contains(fp) {
             let replied = discussion.notes.contains { $0.author == input.user && ReviewNotes.parseMeta($0.body)?["kind"] == "reply" }
             if replied { continue }

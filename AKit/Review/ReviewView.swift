@@ -414,6 +414,11 @@ struct ReviewRunDetail: View {
         HStack {
             Button("Add Missed…") { showMissed = true }
                 .help("Something the reviewer should have found: it improves the roles, never goes to GitLab")
+            if run.spec.local == nil, run.snapshot != nil {
+                Button("Sync Outcomes") { model.syncOutcomes(run.id) }
+                    .disabled(model.isBusy)
+                    .help("Read this merge request's threads again (one small pass) and record what became of each 🤖 comment: fixed, dismissed, ignored or open. Review → Quality shows the numbers.")
+            }
             Button("Discuss in Pi…") { model.discuss() }
                 .help("Open Pi in a terminal with the whole review (a fork of the verifier's session). What it submits becomes a new version here.")
                 .disabled(run.passes?.verifierSession == nil && run.passes == nil)

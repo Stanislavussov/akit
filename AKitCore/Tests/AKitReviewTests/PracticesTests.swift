@@ -264,3 +264,179 @@ struct PracticesBeforeTests {
         #expect(ReviewPrompts.fetch(spec: try PlanTests.spec()).contains("7. The history of the changed files"))
     }
 }
+
+/// Part (c) of 2026-10-23 (R28, R31): reruns on what changed, and the outcomes of the threads.
+extension ReviewProcessTests {
+    struct PracticesRerunTests {
+        /// After a push: only the new lines are reviewed; the earlier finding carries over.
+        @Test func aRerunReviewsOnlyWhatThePushChanged() async throws {
+            let run = try await ReviewRunFixture.make()
+            run.playTypicalRun()
+            try await ReviewPasses.run(folder: run.folder, env: run.home.env)
+            let first = try #require(ReviewWorkflow.load(run.folder).findings?.findings.first)
+
+            // The author pushes a new file; the rest stays.
+            let repo = run.home.url.appending(path: "work/app")
+            run.home.write("work/app/src/Other.swift", "func other() {}\n")
+            run.home.git(repo, "add", "src")
+            run.home.git(repo, "commit", "-q", "-m", "Add other")
+            let head = run.home.git(repo, "rev-parse", "HEAD")
+            FakeMergeRequest.serve(run.home, head: head, diff: "@@ -1,3 +1,4 @@\n import Foundation\n func auth(header: String) {\n+    log(\"Auth: \\(header)\")\n }\n")
+            // The same role finds the earlier problem again, and something new on an unchanged line.
+            run.fake("role-tests", """
+            {"findings":[{"file":"src/Auth.swift","line":1,"title":"Foundation import unused","evidence":"import Foundation",
+              "why":"Unused","severity":"high","confidence":0.9}]}
+            """)
+            run.fake("verifier", """
+            {"verdicts":[{"id":"f1","verdict":"confirmed","note":"still there","confidence":0.95},
+                         {"id":"f2","verdict":"confirmed","note":"ok","confidence":0.9},
+                         {"id":"f3","verdict":"confirmed","note":"AC"}]}
+            """)
+            try await Task.sleep(for: .seconds(1.1))
+            let second = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: ReviewRunFixture.choices, env: run.home.env, brain: nil)
+            let rerun = try #require(second.spec.rerun)
+            #expect(rerun.previousRun == run.folder.lastPathComponent && rerun.changed.keys.sorted() == ["src/Other.swift"])
+            let folder = ReviewPaths(home: run.home.url).run(second.spec.id)
+            #expect(FileManager.default.fileExists(atPath: folder.appending(path: "context/since-last-review.md").path))
+            try await ReviewPasses.run(folder: folder, env: run.home.env)
+            #expect(try String(contentsOf: folder.appending(path: "prompts/system.md"), encoding: .utf8).contains("This is a rerun"))
+            let loaded = try ReviewWorkflow.load(folder)
+            let again = try #require(loaded.findings?.findings.first { $0.fingerprints.contains(first.fingerprint ?? "") })
+            #expect(again.carriedFrom == run.folder.lastPathComponent, "the earlier problem, found again")
+            let fresh = try #require(loaded.findings?.findings.first { $0.title == "Foundation import unused" })
+            #expect(loaded.placement(fresh.id)?.reason.hasPrefix("Not on a line changed since the last review") == true)
+            #expect(loaded.placement(again.id)?.place == .inline)
+
+            // With Full review there is no rerun.
+            var full = ReviewRunFixture.choices
+            full.fullReview = true
+            try await Task.sleep(for: .seconds(1.1))
+            let whole = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: full, env: run.home.env, brain: nil)
+            #expect(whole.spec.rerun == nil && whole.spec.fullReview == true)
+        }
+    }
+}
+
+struct PracticesOutcomeTests {
+    func thread(_ id: String, fp: String, resolved: Bool, head: String, replies: [GitLabNote] = []) -> GitLabDiscussion {
+        let position = GitLabPosition(baseSHA: "b", startSHA: "s", headSHA: head, oldPath: "a.ts", newPath: "a.ts", oldLine: nil, newLine: 4)
+        let body = "🤖 text\n" + ReviewNotes.meta(fingerprint: fp, role: "bug-hunter", severity: .high, run: "run-1")
+        return GitLabDiscussion(id: id, notes: [GitLabNote(id: 1, body: body, author: "me", resolvable: true, resolved: resolved, position: position)] + replies)
+    }
+
+    @Test func eachThreadGetsItsOutcome() {
+        var mr = GitLabMergeRequest(iid: 7, title: "t", description: "", state: "opened", author: "bob", sourceBranch: "x", targetBranch: "main",
+                                    labels: [], webURL: "", diffRefs: nil, projectID: nil)
+        let reply = GitLabNote(id: 2, body: "Intended: the cache is per user", author: "bob")
+        let threads = [thread("d1", fp: "a", resolved: true, head: "old"), thread("d2", fp: "b", resolved: true, head: "new"),
+                       thread("d3", fp: "c", resolved: true, head: "old"), thread("d4", fp: "d", resolved: false, head: "new", replies: [reply]),
+                       GitLabDiscussion(id: "d5", notes: [GitLabNote(id: 3, body: "a person's thread", author: "bob")])]
+        let outcomes = ReviewOutcomes.compute(discussions: threads, user: "me", mergeRequest: mr, url: "u", head: "new", stillFound: ["c"],
+                                              models: ["run-1": "m1"])
+        #expect(outcomes.map(\.kind) == [.fixed, .dismissed, .dismissed, .open])
+        #expect(outcomes[3].replies == ["bob: Intended: the cache is per user"] && outcomes[0].model == "m1" && outcomes[0].role == "bug-hunter")
+        mr.state = "merged"
+        #expect(ReviewOutcomes.compute(discussions: threads, user: "me", mergeRequest: mr, url: "u", head: "new", stillFound: [], models: [:])
+            .last?.kind == .ignored)
+        // A sync after a push: the run's own findings are of the older head, so they don't say "still there".
+        let synced = ReviewOutcomes.compute(discussions: [thread("d3", fp: "c", resolved: true, head: "old")], user: "me", mergeRequest: mr,
+                                            url: "u", head: "new", stillFound: ["c"], reviewedHead: "old", models: [:])
+        #expect(synced.first?.kind == .fixed)
+        // AKit's own "Looks fixed" reply on an open thread: fixed.
+        let replied = GitLabNote(id: 9, body: "🤖 Looks fixed in abc.\n" + ReviewNotes.meta(fingerprint: "e", role: "bug-hunter", severity: nil,
+                                                                                         run: "run-2", kind: "reply"), author: "me")
+        mr.state = "opened"
+        #expect(ReviewOutcomes.compute(discussions: [thread("d6", fp: "e", resolved: false, head: "new", replies: [replied])], user: "me",
+                                       mergeRequest: mr, url: "u", head: "new", stillFound: [], models: [:]).first?.kind == .fixed)
+        let rates = ReviewOutcomes.rates(outcomes)
+        #expect(rates.roles.first?.accepted == 1.0 / 3.0 && rates.models.first?.key == "m1")
+    }
+}
+
+struct PracticesRerunUnitTests {
+    @Test func earlierFindingsCarryOrGoToTheVerifier() throws {
+        let home = TempHome()
+        home.write("wt/a.ts", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
+        let worktree = home.url.appending(path: "wt")
+        func old(_ id: String, line: Int, evidence: String, verdict: ReviewFinding.Verdict.Value = .confirmed) -> ReviewFinding {
+            var finding = ReviewFinding(id: id, role: "bug-hunter", file: "a.ts", line: line, title: id, evidence: evidence, why: "w",
+                                        severity: .high, confidence: 0.9, verifier: .init(verdict: verdict, note: "n"))
+            finding.fingerprint = "old-\(id)"
+            return finding
+        }
+        let rerun = ReviewRerunInfo(previousRun: "run-1", previousHead: "h1", changed: ["a.ts": [.init(start: 9, end: 10)]])
+        let split = ReviewRerun.split([old("f1", line: 2, evidence: "two"), old("f2", line: 9, evidence: "nine"),
+                                               old("f3", line: 4, evidence: "four", verdict: .rejected)],
+                                        rerun: rerun, candidates: [], worktree: worktree)
+        #expect(split.carried.map(\.title) == ["f1"] && split.carried[0].verifier?.verdict == .confirmed)
+        #expect(split.carried[0].fingerprints.contains("old-f1"), "its drafts and threads still match")
+        #expect(split.recheck.map(\.title) == ["f2"] && split.recheck[0].verifier == nil && split.recheck[0].carriedFrom == "run-1")
+        #expect(split.kept.contains("old-f3"), "a rejected finding on untouched lines keeps its thread from \"Looks fixed\"")
+        var fixed = split.recheck[0]
+        fixed.verifier = .init(verdict: .rejected, note: "fixed")
+        #expect(fixed.isFixed(on: rerun) && !split.carried[0].isFixed(on: rerun))
+        fixed.verifier = .init(verdict: .rejected, note: "not fixed, a false positive")
+        #expect(!fixed.isFixed(on: rerun), "only a rejection as fixed says the push fixed it")
+
+        // Three heads: the first fingerprint is never lost.
+        let again = ReviewRerun.split(split.carried, rerun: ReviewRerunInfo(previousRun: "run-2", previousHead: "h2", changed: [:]),
+                                      candidates: [], worktree: worktree)
+        #expect(again.carried.first?.fingerprints.contains("old-f1") == true)
+        // A role that finds it again takes its fingerprints over.
+        var role = ReviewFinding(id: "f1", role: "tests", file: "a.ts", line: 2, title: "x", evidence: "two", why: "w", severity: .high, confidence: 0.9)
+        (role.fingerprint, role.previousFingerprint) = ReviewCandidates.fingerprints(role, worktree: worktree)
+        let refound = ReviewRerun.split([old("f1", line: 2, evidence: "two")], rerun: rerun, candidates: [role], worktree: worktree)
+        #expect(refound.carried.isEmpty && refound.refound.first?.fingerprints.contains("old-f1") == true)
+        // A file gone since: checked again.
+        let gone = ReviewRerun.split([old("f9", line: 2, evidence: "two")].map { var f = $0; f.file = "gone.ts"; return f },
+                                     rerun: rerun, candidates: [], worktree: worktree)
+        #expect(gone.recheck.count == 1)
+    }
+
+    @Test func theDiffMarksDeletedAndRenamedFilesWhole() {
+        let diff = """
+        diff --git a/old.ts b/old.ts
+        deleted file mode 100644
+        --- a/old.ts
+        +++ /dev/null
+        @@ -1,2 +0,0 @@
+        -a
+        -b
+        diff --git a/x.ts b/y.ts
+        similarity index 100%
+        rename from x.ts
+        rename to y.ts
+        diff --git a/k.ts b/k.ts
+        --- a/k.ts
+        +++ b/k.ts
+        @@ -3,0 +4,2 @@
+        +++ not a header
+        +b
+        """
+        let ranges = ReviewRerun.parse(diff)
+        #expect(ranges["old.ts"] == [.wholeFile] && ranges["x.ts"] == [.wholeFile])
+        #expect(ranges["k.ts"] == [.init(start: 4, end: 5)] && ranges["not a header"] == nil)
+    }
+
+    @Test func theFourthRoundAsksFirst() throws {
+        let home = TempHome()
+        var spec = try PlanTests.spec()
+        let paths = ReviewPaths(home: home.url)
+        for (index, head) in ["h1", "h2", "h3"].enumerated() {
+            spec.headSHA = head
+            spec.created = Date(timeIntervalSince1970: 1_000 + Double(index))
+            try ReviewJSON.write(spec, to: paths.run("run-\(index)").appending(path: "run.json"))
+            try ReviewJSON.write(ReviewFindingsFile(version: 1, findings: [], source: "passes"), to: paths.run("run-\(index)").appending(path: "findings.json"))
+        }
+        spec.headSHA = "h4"
+        let folder = paths.run("run-9")
+        try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+        #expect(ReviewRerun.round(folder: folder, spec: spec, home: home.url) == 4)
+        #expect(ReviewPasses.concerns(folder: folder, spec: spec, home: home.url).contains { $0.contains("review round 4") })
+        #expect(ReviewRerun.previous(folder: folder, spec: spec, home: home.url)?.id == "run-2", "the newest run, of another head")
+        spec.headSHA = "h3"
+        #expect(ReviewRerun.round(folder: folder, spec: spec, home: home.url) == 3)
+        #expect(ReviewRerun.previous(folder: folder, spec: spec, home: home.url) == nil,
+                "this commit again: a full review, not a rerun of nothing")
+    }
+}

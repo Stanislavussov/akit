@@ -22,6 +22,9 @@ public enum ReviewDiscuss {
         public var isEmpty: Bool { added.isEmpty && changed.isEmpty }
     }
 
+    /// The verdict note of a finding added in a discussion: the user's own, not a role's.
+    public static let addedNote = "Added in Discuss in Pi…"
+
     static let opening = """
     You are in an interactive discussion of this review with the developer. They may ask you to look again at a finding, \
     explain it, or find something that was missed. When you change the findings, call akit_submit_findings: `verdicts` to \
@@ -124,7 +127,7 @@ public enum ReviewDiscuss {
                 guard !current.findings.contains(where: { !Set($0.fingerprints).isDisjoint(with: finding.fingerprints)
                     && $0.verifier?.verdict != .rejected && $0.verifier?.verdict != .merged }) else { continue }
                 // Found in the discussion, with the developer: it counts as confirmed.
-                finding.verifier = ReviewFinding.Verdict(verdict: .confirmed, note: "Added in Discuss in Pi…")
+                finding.verifier = ReviewFinding.Verdict(verdict: .confirmed, note: addedNote)
                 next += 1
                 current.findings.append(finding)
                 changes.added.append("\(finding.id): \(finding.title)")

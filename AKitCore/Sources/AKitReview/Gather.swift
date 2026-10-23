@@ -259,6 +259,21 @@ public enum ReviewGather {
                 effect: "Files after the cut were read only from the worktree.")
         }
         files.append(("diff.patch", "The unified diff of the latest version", patch))
+        // A rerun after a push (R28): only what changed since the last reviewed head.
+        if spec.fullReview != true, let previous = ReviewRerun.previous(folder: folder, spec: spec, home: env.homeDirectory),
+           let previousHead = previous.spec.headSHA {
+            if hasWorktree, let since = await ReviewRerun.changedLines(from: previousHead, to: head, worktree: worktree, env: env) {
+                let rerun = ReviewRerunInfo(previousRun: previous.id, previousHead: previousHead,
+                                            changed: since.ranges.filter { !isIgnored($0.key) })
+                spec.rerun = rerun
+                files.append(("since-last-review.md", "What changed since the last review: the only lines this rerun reviews",
+                              ReviewRerun.text(rerun, patch: since.patch)))
+            } else {
+                gap("repository", "The changes since the last review (\(previousHead.prefix(10)))",
+                    "git couldn't compare the last reviewed commit with this one, so this run reviews the whole merge request.",
+                    how: "Fetch the merge request's earlier commits into the checkout.")
+            }
+        }
         // AKit's own checks of the diff: its size and the secrets in added lines (positions and masked lines only).
         try ReviewJSON.write(ReviewScan.make(diffs: diffs, secretFiles: secretFiles, isIgnored: isIgnored), to: folder.appending(path: "scan.json"))
         for diff in diffs where diff.tooLarge {

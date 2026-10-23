@@ -30,6 +30,7 @@ struct NewReviewSheet: View {
     @State private var verifierModel = ""
     @State private var cap = ""
     @State private var maxChangedLines = ""
+    @State private var fullReview = false
     @State private var notes = ""
     @State private var links = ""
     @State private var extraServers: Set<String> = []
@@ -131,6 +132,11 @@ struct NewReviewSheet: View {
                     }
                     TextField("Credit cap", text: $cap, prompt: Text("empty: from the configuration"))
                     TextField("Max changed lines", text: $maxChangedLines, prompt: Text("over it the review asks first (empty: from the configuration)"))
+                    if source == .mergeRequest {
+                        Toggle("Full review", isOn: $fullReview)
+                            .help("A rerun after a push reviews only what changed since the last review and carries the earlier findings. "
+                                  + "On: read the whole merge request again.")
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -419,6 +425,7 @@ struct NewReviewSheet: View {
         if !verifier.isEmpty { choices.settings.verifier = ReviewModelChoice(model: verifier) }
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
         if let value = Int(maxChangedLines), value > 0 { choices.settings.maxChangedLines = value }
+        choices.fullReview = fullReview
         choices.notes = notes
         choices.links = (try? checkedLinks.get()) ?? []
         choices.extraServers = extraServers.sorted()

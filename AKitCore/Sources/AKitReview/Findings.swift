@@ -62,6 +62,9 @@ public struct ReviewFinding: Codable, Sendable, Hashable, Identifiable {
     /// The problem is already there at the base commit: the change didn't bring it (R23). It
     /// never goes to GitLab; the Review screen lists it under "Before this MR".
     public var preExisting: Bool?
+    /// The earlier run this finding comes from in a rerun (R28): carried over, or checked again
+    /// by the verifier. nil for a finding of this run's roles.
+    public var carriedFrom: String?
 
     public init(id: String, kind: Kind = .finding, role: String, file: String?, side: Side = .new, line: Int?, title: String,
                 evidence: String, why: String, severity: ReviewSeverity, confidence: Double, suggestion: String? = nil,

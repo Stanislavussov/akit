@@ -353,6 +353,7 @@ enum ReviewConfigTemplates {
 struct ReviewQualityView: View {
     @Environment(ReviewModel.self) private var model
     @State private var entries: [ReviewQuality.Entry] = []
+    @State private var outcomes: [ReviewOutcome] = []
 
     var body: some View {
         let precision = ReviewQuality.precision(entries)
@@ -360,6 +361,7 @@ struct ReviewQualityView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text("Precision = approved / (approved + rejected), from your verdicts on the Review screen. A finding you moved inline counts as approved: the filter, not the reviewer, was wrong.")
                     .foregroundStyle(.secondary)
+                outcomesSection
                 if entries.isEmpty {
                     ContentUnavailableView("No verdicts yet", systemImage: "chart.bar",
                                            description: Text("Approve or reject findings on a run; the numbers appear here."))
@@ -388,7 +390,50 @@ struct ReviewQualityView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task { entries = ReviewQuality.entries(home: model.home) }
+        .task {
+            entries = ReviewQuality.entries(home: model.home)
+            outcomes = ReviewOutcomes.all(home: model.home)
+        }
+    }
+
+    /// R31: what became of the published comments in GitLab.
+    @ViewBuilder private var outcomesSection: some View {
+        if !outcomes.isEmpty {
+            let rates = ReviewOutcomes.rates(outcomes)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Outcomes in GitLab").font(.headline)
+                Text("Accepted = fixed / (fixed + dismissed + ignored), from the 🤖 threads each rerun or Sync Outcomes reads. Below about 40% the comments are noise; 50–65% is good.")
+                    .font(.caption).foregroundStyle(.secondary)
+                outcomeTable("By role", rates.roles)
+                outcomeTable("By model", rates.models)
+                let replies = outcomes.filter { !$0.replies.isEmpty }
+                if !replies.isEmpty {
+                    DisclosureGroup("Authors' replies (\(replies.count))") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(replies, id: \.discussionID) { outcome in
+                                Text("\(outcome.kind.rawValue) · \(outcome.role ?? "?") · \(outcome.file ?? "") — " + outcome.replies.joined(separator: " / "))
+                                    .font(.callout).lineLimit(3).textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func outcomeTable(_ title: String, _ rows: [ReviewOutcomes.Rate]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 4) {
+                ForEach(rows, id: \.key) { row in
+                    GridRow {
+                        Text(row.key)
+                        Text(row.accepted.map { String(format: "%.0f%%", $0 * 100) } ?? "–").monospacedDigit().fontWeight(.medium)
+                        Text("\(row.fixed) fixed, \(row.dismissed) dismissed, \(row.ignored) ignored, \(row.open) open").foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
     }
 
     private func table(_ title: String, _ rows: [ReviewQuality.Precision]) -> some View {

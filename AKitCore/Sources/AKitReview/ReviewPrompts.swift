@@ -109,7 +109,11 @@ public enum ReviewPrompts {
         0 = a false positive; 0.25 = you couldn't verify it; \
         0.5 = real but minor, or rare in practice; 0.75 = verified in the code, and it will happen in practice; 1 = certain, \
         you traced it end to end. Below 0.8, ask with `kind: "question"` rather than claim.
-        - Scenario: \(spec.scenario.value). \(spec.checks.isEmpty ? "" : "Its checks: " + spec.checks.joined(separator: " "))
+        - Scenario: \(spec.scenario.value). \(spec.checks.isEmpty ? "" : "Its checks: " + spec.checks.joined(separator: " "))\(spec.rerun.map { rerun in
+            "\n- This is a rerun after the author's push: an earlier review covered commit \(rerun.previousHead.prefix(10)). Review only the lines " +
+            "listed in `context/since-last-review.md` (read the rest only to understand them). AKit carries the earlier findings on the " +
+            "other lines; never report them again."
+        } ?? "")
         """
     }
 
@@ -334,6 +338,22 @@ public enum ReviewPrompts {
     }
 
     /// The send pass: carry out the approved requests, word for word, as draft notes.
+    /// Sync Outcomes (R31): read the merge request and its threads again, nothing else.
+    static func sync(spec: ReviewRunSpec) -> String {
+        let mr = spec.mergeRequest
+        return """
+        AKit review, step Sync Outcomes. Read GitLab merge request \(mr.url) (project `\(mr.projectPath)`, merge request number \(mr.iid)) \
+        with your MCP tools, through `codemode`, in scripts that return only short notes: AKit saves every answer word for word.
+
+        1. The merge request itself (its state and diff refs).
+        2. Every discussion thread with all its notes, resolved ones too (every page).
+        3. The signed-in user.
+
+        Pass the merge request number (\(mr.iid)) as its own argument in every call. Never call a tool that writes, publishes, \
+        approves, merges or resolves: AKit blocks them. Answer "done" at the end.
+        """
+    }
+
     static func send(spec: ReviewRunSpec, count: Int) -> String {
         let mr = spec.mergeRequest
         return """

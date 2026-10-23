@@ -91,7 +91,10 @@ extension ReviewProcessTests {
             run.home.write("fake/role-bug-hunter.json", #"{"findings":[]}"#)
             run.home.write("fake/role-tests.json", #"{"findings":[]}"#)
             try await Task.sleep(for: .seconds(1.1))
-            let third = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: choices, env: run.home.env, brain: nil)
+            // The fake serves the same commit: a rerun on it would carry the earlier finding, so the whole MR is read again.
+            var full = choices
+            full.fullReview = true
+            let third = try await ReviewRuns.start(mr: FakeMergeRequest.ref, project: nil, choices: full, env: run.home.env, brain: nil)
             let thirdFolder = ReviewPaths(home: run.home.url).run(third.spec.id)
             // The fake serves the same commit: the question about it is answered.
             try await ReviewPasses.run(folder: thirdFolder, env: run.home.env, options: .init(confirmConcerns: { _ in true }))

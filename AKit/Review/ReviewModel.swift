@@ -129,6 +129,29 @@ final class ReviewModel {
     }
 
     /// The passes of a gathered run (again).
+    /// Sync Outcomes (R31): one small pass reads the threads again.
+    func syncOutcomes(_ id: String) {
+        guard task == nil else { return }
+        activity = Activity(runID: id, title: "Reading the outcomes of the comments")
+        let scope = Cancellation.Scope()
+        self.scope = scope
+        let folder = ReviewPaths(home: home).run(id)
+        let env = env
+        task = Task { [weak self] in
+            await Cancellation.$scope.withValue(scope) {
+                do {
+                    let options = ReviewPasses.Options(progress: { line in Task { @MainActor in self?.log(line) } })
+                    let outcomes = try await ReviewOutcomes.sync(folder: folder, env: env, options: options)
+                    self?.log("Outcomes: " + ReviewOutcome.Kind.allCases.map { kind in "\(outcomes.filter { $0.kind == kind }.count) \(kind.rawValue)" }
+                        .joined(separator: ", "))
+                } catch {
+                    self?.problem = error.localizedDescription
+                }
+            }
+            self?.finish()
+        }
+    }
+
     func runPasses(_ id: String) {
         guard task == nil else { return }
         activity = Activity(runID: id, title: "Running the passes")

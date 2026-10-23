@@ -20,6 +20,8 @@ public struct ReviewRunChoices: Sendable, Hashable {
     public var extraServers: [String]
     /// Pi flags and steps for this run (`--pi-flag`, `--step`), on top of the brain's and the profile's.
     public var pi = ReviewPiExtras()
+    /// Review the whole merge request again, not only what changed since the last review (R28).
+    public var fullReview = false
 
     public init(scenario: String? = nil, rolesOn: [String] = [], rolesOff: [String] = [], settings: ReviewSettingsPatch = ReviewSettingsPatch(),
                 workItems: [Int] = [], notes: String = "", links: [String] = [], extraServers: [String] = []) {
@@ -109,6 +111,10 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
     public var version = 2
     /// The developer's own change (R33), set by Gather; nil before Gather and in older runs.
     public var ownChange: Bool?
+    /// The user asked for the whole merge request again (Full review, `--full`).
+    public var fullReview: Bool?
+    /// A rerun after a push (R28), set by Gather: what changed since the last reviewed head.
+    public var rerun: ReviewRerunInfo?
     public var id: String
     public var created: Date
     public var mergeRequest: MergeRequestRef
@@ -291,6 +297,7 @@ public enum ReviewResolver {
         spec.notes = notes
         spec.links = links.isEmpty ? nil : links
         spec.mcpServers = servers
+        spec.fullReview = choices.fullReview ? true : nil
         spec.maxChangedLines = pick(\.maxChangedLines, fallback: 1500)
         let levels: [(ReviewPiExtras, ReviewSource)] = [(catalog.brainPi, .brain), (profile?.pi ?? ReviewPiExtras(), .project), (choices.pi, .run)]
         for (extras, _) in levels {
