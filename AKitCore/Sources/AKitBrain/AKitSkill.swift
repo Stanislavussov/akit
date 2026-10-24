@@ -215,18 +215,38 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 
 Notes and maps of the systems around a repository: which service sends what to whom, which
 repo owns what. A base is a folder per world (`~/.akit/local/knowledge/<world>`, git without
-a remote); `areas/<area>/` holds the notes. Read it when a task is about systems:
+a remote); `areas/<area>/` holds the notes, one area per project, system or unrelated entity.
+Read it when a task is about systems:
 
 ```
-akit kb areas [--json] [--base PATH|WORLD]         # the areas, with note and map counts
+akit kb areas [--json] [--base PATH|WORLD]         # the areas: note and map counts, and their
+                                                   # settings (title, description, projects)
 akit kb notes [AREA] [--json] [--base PATH|WORLD]  # notes: id (payments/orders-api), kind, title
+akit kb kinds [--json] [--base PATH|WORLD]         # the kinds of notes and each kind's fields (kb.yaml)
+akit kb area AREA [--json] [--base PATH|WORLD]     # one area's settings: projects = git remotes,
+                                                   # ~/ paths or globs the area is about
 ```
 
 `--base` picks a base (a world name or a folder); without it akit takes the project's choice,
 the only base, or the one named like this Mac's kind. No base: `{"base": null, "reason":
-"no base"}`, exit 0; then there is nothing to read. Never run `akit kb accept`, `reject`,
-`init`, `new-note` or any other command `akit kb --help` marks "for a person only"; ask the
-user to do it.
+"no base"}`, exit 0; then there is nothing to read. Kinds and fields are data in the base's
+`kb.yaml`, never a fixed list: read `akit kb kinds` before you name a kind or a field.
+
+Commands marked "for a person only" in `akit kb --help` change the base: run them only when
+the user asked for that action in this session; otherwise propose (`akit kb propose`, coming
+soon) or ask. Never accept or reject a proposal on your own. They commit at once, one commit
+per command:
+
+```
+akit kb init [--world NAME]                        # create a base
+akit kb new-note AREA NAME [--kind K]              # a new note
+akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
+                                                   # note properties (kind=flow, owner=team-a,
+                                                   # files=[a.ts, b.ts]); one frontmatter line each
+akit kb kinds add NAME [--fields a,b] | fields NAME a,b | remove NAME | rename OLD NEW [--json]
+                                                   # rename rewrites kind: in every note, all or nothing
+akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]… [--json]
+```
 
 ## Rules
 

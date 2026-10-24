@@ -1,7 +1,8 @@
 # Knowledge base: maps of systems and notes an agent can search
 
 Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (base, notes, links,
-`akit kb`, the Knowledge screen, the commit queue, guide `knowledge.ru.md`); spike 2.0 (Excalidraw
+`akit kb`, the Knowledge screen, the commit queue, guide `knowledge.ru.md`; 1.3, K24: kinds in
+`kb.yaml`, Properties and `akit kb set`, Kinds…, `area.yaml` and Area Settings…); spike 2.0 (Excalidraw
 bundle, results below) done 2026-10-24. Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 

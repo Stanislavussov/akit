@@ -9,12 +9,12 @@ import SwiftUI
 /// without a remote; AKit commits your edits in batches.
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
-    /// Snapshots: `--tab new-area|new-note|create-base`.
+    /// Snapshots: `--tab new-area|new-note|create-base|kinds|area-settings`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
 
     enum Sheet: String, Identifiable {
-        case createBase = "create-base", newArea = "new-area", newNote = "new-note"
+        case createBase = "create-base", newArea = "new-area", newNote = "new-note", kinds, areaSettings = "area-settings"
         var id: Self { self }
     }
 
@@ -80,6 +80,11 @@ struct KnowledgeView: View {
                     .help("Write a new note in a space; it is committed at once")
             }
             ToolbarItem {
+                Button("Kinds…", systemImage: "tag") { sheet = .kinds }
+                    .disabled(model.base == nil)
+                    .help("The kinds of notes in this base (service, flow, team…) and the fields of each, kept in kb.yaml")
+            }
+            ToolbarItem {
                 GuideButton(guide: .knowledge)
             }
         }
@@ -88,6 +93,8 @@ struct KnowledgeView: View {
             case .createBase: CreateBaseSheet()
             case .newArea: NewAreaSheet()
             case .newNote: NewNoteSheet()
+            case .kinds: KindsSheet()
+            case .areaSettings: AreaSettingsSheet(area: model.area ?? "")
             }
         }
         .confirmationDialog("Move the space \(areaToDelete ?? "") and all its notes to the Trash?",
@@ -111,8 +118,12 @@ struct KnowledgeView: View {
                         Text("\(area.notes)").foregroundStyle(.secondary).monospacedDigit()
                     }
                     .tag(Optional(area.name))
-                    .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")")
+                    .help("areas/\(area.name): \(area.notes) note\(area.notes == 1 ? "" : "s")" + (area.title.map { " · \($0)" } ?? ""))
                     .contextMenu {
+                        Button("Area Settings…") {
+                            model.choose(area: area.name)
+                            sheet = .areaSettings
+                        }
                         Button("Show in Finder") {
                             if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: area.name)]) }
                         }
@@ -261,5 +272,187 @@ struct NewNoteSheet: View {
         .padding(20)
         .frame(width: 420)
         .onAppear { area = model.area ?? model.areas.first?.name ?? "" }
+    }
+}
+
+/// Kinds…: the kinds of notes in `kb.yaml` and the fields of each. Save writes the file (its commit
+/// waits in the queue); Rename… renames a kind in every note at once, in one commit.
+struct KindsSheet: View {
+    @Environment(KnowledgeModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = KnowledgeKinds(kinds: [])
+    @State private var fields: [String: String] = [:]
+    @State private var newName = ""
+    @State private var newFields = ""
+    @State private var renaming: String?
+    @State private var newKindName = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Kinds").font(.title3.bold())
+            Text("What a note can be about, and the fields its Properties show. Kept in kb.yaml in the base; a note with a kind that isn't listed still works.")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 6) {
+                GridRow {
+                    Text("Kind").font(.caption).foregroundStyle(.secondary)
+                    Text("Fields").font(.caption).foregroundStyle(.secondary)
+                    Color.clear.frame(width: 1, height: 1)
+                }
+                ForEach(draft.kinds, id: \.name) { kind in
+                    GridRow {
+                        Text(kind.name).fontWeight(.medium)
+                        TextField("Fields of \(kind.name)", text: binding(kind.name), prompt: Text("repo, owner"))
+                            .labelsHidden()
+                            .help("The fields, separated by commas")
+                        HStack(spacing: 4) {
+                            Button("Rename…") { (renaming, newKindName) = (kind.name, kind.name) }
+                                .disabled(changed)
+                                .help(changed ? "Save or cancel your other changes first" : "Rename the kind here and in every note of this kind, committed at once")
+                            Button("Remove", systemImage: "minus.circle") { draft = (try? draft.removing(kind.name)) ?? draft }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .help("Remove the kind from kb.yaml; its notes keep their kind: line")
+                        }
+                    }
+                }
+            }
+            HStack {
+                TextField("New kind", text: $newName, prompt: Text("library"))
+                    .frame(width: 140)
+                TextField("Its fields", text: $newFields, prompt: Text("repo, owner"))
+                Button("Add Kind") {
+                    do {
+                        draft = try draft.adding(newName.trimmingCharacters(in: .whitespaces), fields: Self.split(newFields))
+                        fields[newName.trimmingCharacters(in: .whitespaces)] = newFields
+                        (newName, newFields) = ("", "")
+                    } catch {
+                        model.problem = error.localizedDescription
+                    }
+                }
+                .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save") {
+                    if let kinds = edited(), model.save(kinds: kinds) { dismiss() }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!changed)
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+        .onChange(of: model.kindsFile, initial: true) { reset() }
+        .alert("Rename the kind \(renaming ?? "")", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("New name", text: $newKindName)
+            Button("Rename") {
+                guard let old = renaming else { return }
+                Task {
+                    if await model.renameKind(old, to: newKindName) { reset() }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every note with kind: \(renaming ?? "") gets the new name, and kb.yaml too: all or nothing, in one commit made now.")
+        }
+    }
+
+    private func reset() {
+        draft = model.kindsFile
+        fields = Dictionary(uniqueKeysWithValues: draft.kinds.map { ($0.name, $0.fields.joined(separator: ", ")) })
+    }
+
+    private func binding(_ name: String) -> Binding<String> {
+        Binding(get: { fields[name] ?? "" }, set: { fields[name] = $0 })
+    }
+
+    /// The draft with the typed fields; nil (and a problem shown) when a field name can't be used.
+    private func edited() -> KnowledgeKinds? {
+        var kinds = draft
+        do {
+            for kind in draft.kinds { kinds = try kinds.settingFields(of: kind.name, to: Self.split(fields[kind.name] ?? "")) }
+        } catch {
+            model.problem = error.message
+            return nil
+        }
+        return kinds
+    }
+
+    private var changed: Bool {
+        draft.names != model.kindsFile.names
+            || draft.kinds.contains { kind in Self.split(fields[kind.name] ?? "") != model.kindsFile.kind(kind.name)?.fields }
+    }
+
+    static func split(_ text: String) -> [String] {
+        text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+}
+
+/// Area Settings…: the space's `area.yaml`: a title, a description and the projects it is about
+/// (git remotes, `~/` paths, globs). Save writes the file; its commit waits in the queue.
+struct AreaSettingsSheet: View {
+    @Environment(KnowledgeModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let area: String
+    @State private var title = ""
+    @State private var description = ""
+    @State private var projects: [String] = []
+    @State private var newProject = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Area Settings").font(.title3.bold())
+            Text("Settings of the space \(area), kept in areas/\(area)/area.yaml. Projects tell AKit and agents which repositories and folders this space is about.")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Form {
+                TextField("Title", text: $title, prompt: Text("Payments"))
+                TextField("Description", text: $description, prompt: Text("Orders, billing and refunds"), axis: .vertical)
+                    .lineLimit(2...4)
+                LabeledContent("Projects") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(projects, id: \.self) { project in
+                            HStack {
+                                Text(project).textSelection(.enabled).lineLimit(1)
+                                Spacer()
+                                Button("Remove \(project)", systemImage: "minus.circle") { projects.removeAll { $0 == project } }
+                                    .labelStyle(.iconOnly)
+                                    .buttonStyle(.borderless)
+                            }
+                        }
+                        HStack {
+                            TextField("Project", text: $newProject, prompt: Text("git@example.com:shop/orders-api.git or ~/Projects/billing"))
+                                .labelsHidden()
+                                .onSubmit(addProject)
+                            Button("Add Project", action: addProject)
+                                .disabled(newProject.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                        .help("A git remote, a ~/ path or a glob like ~/work/pay-*")
+                    }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Save") {
+                    if model.save(area: area, settings: KnowledgeArea(title: title, description: description, projects: projects)) { dismiss() }
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 520)
+        .onChange(of: area, initial: true) {
+            guard !area.isEmpty else { return }
+            let settings = model.settings(area: area)
+            (title, description, projects) = (settings.title ?? "", settings.description ?? "", settings.projects)
+        }
+    }
+
+    private func addProject() {
+        let project = newProject.trimmingCharacters(in: .whitespaces)
+        guard !project.isEmpty else { return }
+        if !projects.contains(project) { projects.append(project) }
+        newProject = ""
     }
 }

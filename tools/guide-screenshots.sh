@@ -196,5 +196,7 @@ shot review-local        $MAIN --section review --query "$DEMO/work/orders-servi
 # Knowledge (guide knowledge.ru.md): the made-up base from tools/demo-home.sh.
 shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
+shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
+shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds
 
 exit $FAILED

@@ -1210,12 +1210,20 @@ Friction («трение») — места, где агент спотыкалс
 - **No knowledge base / Create Base…**: на этом Mac нет базы. **Create Base…** создаёт её в `~/.akit/local/knowledge/<World>`; то же делает `akit kb init --world NAME`. Подробнее: [Создать базу](knowledge#create)
 - **World**: поле в **Create Base…**: одно слово для мира базы. AKit предлагает тип этого Mac: `work` или `personal`. Подробнее: [Создать базу](knowledge#create)
 - **Show in Finder**: правый щелчок по пространству или заметке: показать папку или файл в Finder. Подробнее: [Удалить заметку или пространство](knowledge#spaces-delete)
+- **Kinds…**: виды заметок базы и поля каждого вида, файл `kb.yaml`. **Save** записывает его, коммит ждёт в очереди. То же делает `akit kb kinds`. Подробнее: [Kinds…](knowledge#kinds-sheet)
+- **Fields**: колонка в **Kinds…**: поля вида через запятую, их показывает **Properties**. Подробнее: [Kinds…](knowledge#kinds-sheet)
+- **Add Kind**: в **Kinds…**: новый вид с именем и полями. Подробнее: [Kinds…](knowledge#kinds-sheet)
+- **Rename…** (вид): новое имя вида в `kb.yaml` и во всех заметках этого вида, всё или ничего, одним коммитом сразу. То же делает `akit kb kinds rename`. Подробнее: [Rename… вида](knowledge#kinds-rename)
+- **Area Settings…**: правый щелчок по пространству: **Title**, **Description** и **Projects** пространства, файл `area.yaml`. То же делает `akit kb area`. Подробнее: [Area Settings…](knowledge#area-settings-edit)
+- **Projects / Add Project**: в **Area Settings…**: git remote, путь `~/…` или маска, о которых это пространство. Подробнее: [Настройки пространства](knowledge#area-settings)
 
 ### Панель заметки
 <!-- section: terms-knowledge-note -->
 
 - **Вкладка заметки**: каждая открытая заметка — вкладка над панелью. Крестик (**Close Tab**) закрывает её, и AKit коммитит ждущие правки. Подробнее: [Коммиты правок](knowledge#commits)
 - **Edit**: показать Markdown заметки и править его. Каждая правка сразу сохраняется в файл, байт в байт. Подробнее: [Edit](knowledge#note-edit)
+- **Properties**: форма над заметкой: **Kind** и поля вида. Значение сохраняется по Return; `[a, b]` — список, пустое значение удаляет строку. Меняется одна строка начала заметки. То же делает `akit kb set`. Подробнее: [Properties](knowledge#kinds-properties)
+- **Add Field… / Add**: в **Properties**: добавить свой ключ (**Name**) и значение (**Value**). Подробнее: [Properties](knowledge#kinds-properties)
 - **Copy**: скопировать весь текст заметки. Подробнее: [Copy и Paste](knowledge#note-copy)
 - **Paste**: добавить текст из буфера обмена в конец заметки и сохранить. Подробнее: [Copy и Paste](knowledge#note-copy)
 - **Open in Obsidian**: открыть заметку в Obsidian (`obsidian://open`). Подробнее: [Open in Obsidian](knowledge#note-obsidian)
@@ -1227,6 +1235,9 @@ Friction («трение») — места, где агент спотыкалс
 <!-- section: terms-knowledge-words -->
 
 - **База знаний** (knowledge base): папка `~/.akit/local/knowledge/<мир>` с `areas/` и `inbox/`, локальный git-репозиторий без remote. Подробнее: [Что такое база](knowledge#overview)
-- **Вид** (kind): строка `kind:` в начале заметки: `service`, `flow`, `team`. Подробнее: [Главные слова](knowledge#overview-terms)
+- **Вид** (kind): строка `kind:` в начале заметки: `service`, `flow`, `team`. Виды и их поля лежат в `kb.yaml` базы. Подробнее: [Виды и свойства](knowledge#kinds)
+- **Свойство** (property): строка `ключ: значение` в начале заметки, например `owner: team-a`. Подробнее: [Properties](knowledge#kinds-properties)
+- **`kb.yaml`**: файл базы со списком видов и полей каждого вида. Его создаёт **Create Base…**; без него AKit берёт виды по умолчанию. Подробнее: [Виды и свойства](knowledge#kinds)
+- **`area.yaml`**: необязательный файл пространства: название, описание, проекты. Подробнее: [Настройки пространства](knowledge#area-settings)
 - **Очередь коммитов** (commit queue): файл `.akit-pending.json` в базе: пути правок, которые ждут коммита. Подробнее: [Коммиты правок](knowledge#commits)
 - **Замок базы** (`.akit-queue.lock`): его берёт каждый коммит в базе, из приложения и из терминала. Подробнее: [Как AKit не путает коммиты](knowledge#commits-lock)

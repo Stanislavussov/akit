@@ -82,6 +82,181 @@ public struct KnowledgeNote: Sendable, Equatable {
         }
     }
 
+    // MARK: - Properties (frontmatter edits, P4)
+
+    /// A property's value: one string, or a list written `[a, b]`. JSON: a string or an array.
+    public enum PropertyValue: Sendable, Equatable, Encodable {
+        case string(String)
+        case list([String])
+
+        /// A parsed frontmatter value: a YAML list is a list, an empty value "", anything else its text.
+        public init(_ value: Any) {
+            if let list = value as? [Any] { self = .list(list.map { "\($0)" }) } else { self = .string(value is NSNull ? "" : "\(value)") }
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .string(let text): try container.encode(text)
+            case .list(let items): try container.encode(items)
+            }
+        }
+
+        /// As a form shows it: a list as `[a, b]`.
+        public var display: String {
+            switch self {
+            case .string(let text): text
+            case .list(let items): "[" + items.joined(separator: ", ") + "]"
+            }
+        }
+
+        /// `[a, b]` is a list (empty items dropped); anything else is one string, trimmed.
+        public static func parse(_ text: String) -> PropertyValue {
+            let trimmed = text.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("["), trimmed.hasSuffix("]") else { return .string(trimmed) }
+            return .list(trimmed.dropFirst().dropLast().split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+        }
+
+        /// The value as it is written after `key: `.
+        var yaml: String {
+            switch self {
+            case .string(let text): Self.scalar(text)
+            case .list(let items): "[" + items.map(Self.flowItem).joined(separator: ", ") + "]"
+            }
+        }
+
+        /// The text bare when YAML reads it back as exactly this string, else double-quoted.
+        static func scalar(_ text: String) -> String {
+            reads("k: \(text)", as: text) ? text : quoted(text)
+        }
+
+        /// A list item bare when YAML reads `[item]` back as exactly it, else double-quoted.
+        static func flowItem(_ text: String) -> String {
+            guard !text.contains(where: \.isNewline), !text.isEmpty,
+                  let list = (try? Yams.load(yaml: "k: [\(text)]") as? [String: Any])?["k"] as? [Any],
+                  list.count == 1, list[0] as? String == text else { return quoted(text) }
+            return text
+        }
+
+        private static func reads(_ yaml: String, as text: String) -> Bool {
+            !text.isEmpty && !text.contains(where: \.isNewline)
+                && ((try? Yams.load(yaml: yaml)) as? [String: Any])?["k"] as? String == text
+        }
+
+        private static func quoted(_ text: String) -> String {
+            var escaped = ""
+            for scalar in text.unicodeScalars {
+                switch scalar {
+                case "\\": escaped += "\\\\"
+                case "\"": escaped += "\\\""
+                case "\n": escaped += "\\n"
+                case "\r": escaped += "\\r"
+                case "\t": escaped += "\\t"
+                default: escaped.unicodeScalars.append(scalar)
+                }
+            }
+            return "\"\(escaped)\""
+        }
+
+        /// Whether a parsed frontmatter value is this one.
+        func matches(_ value: Any?) -> Bool {
+            switch self {
+            case .string(let text): (value as? String) == text
+            case .list(let items): (value as? [Any])?.map { "\($0)" } == items
+            }
+        }
+    }
+
+    /// The frontmatter's top-level keys and values (empty without one or when it doesn't parse).
+    public var properties: [String: PropertyValue] { frontmatter.mapValues(PropertyValue.init) }
+
+    /// A frontmatter key AKit writes: letters, digits, `_`, `-` and `.`, starting with a letter,
+    /// digit or `_`.
+    public static func validKey(_ key: String) -> Bool {
+        guard let first = key.unicodeScalars.first, key.count <= 64,
+              CharacterSet.alphanumerics.contains(first) || first == "_" else { return false }
+        return key.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || "_-.".unicodeScalars.contains($0) }
+    }
+
+    /// The lines of a top-level `key:` in the frontmatter (with its indented or `- ` lines);
+    /// nil when the header has no such key.
+    private func span(of key: String, in lines: [Substring], header: Range<Int>) -> Range<Int>? {
+        let quotes = CharacterSet(charactersIn: "\"'")
+        for index in header {
+            let line = lines[index].trimmingCharacters(in: .newlines)
+            guard let first = line.first, !" \t#-".contains(first), let colon = line.firstIndex(of: ":") else { continue }
+            let after = line[line.index(after: colon)...]
+            guard after.isEmpty || after.first == " " || after.first == "\t",
+                  line[..<colon].trimmingCharacters(in: .whitespaces).trimmingCharacters(in: quotes) == key else { continue }
+            var end = index + 1
+            var next = index + 1
+            while next < header.upperBound {
+                let following = lines[next].trimmingCharacters(in: .newlines)
+                if following.trimmingCharacters(in: .whitespaces).isEmpty {
+                    next += 1
+                    continue
+                }
+                guard following.hasPrefix(" ") || following.hasPrefix("\t") || following.hasPrefix("- ") || following == "-" else { break }
+                next += 1
+                end = next
+            }
+            return index..<end
+        }
+        return nil
+    }
+
+    /// The note with `key: value` in its frontmatter: that key's line (and its continuation lines)
+    /// replaced, else a new line before the closing `---`, else a new frontmatter block at the
+    /// start. Every other byte stays (P4), the note's own line end is used. Refused when the
+    /// frontmatter doesn't read back with exactly this value (a broken header is never touched).
+    public func setting(_ key: String, to value: PropertyValue) throws(Failure) -> KnowledgeNote {
+        guard Self.validKey(key) else {
+            throw Failure(message: "“\(key)” can't be a property: letters, digits, _, - and . (like repo or owner).")
+        }
+        let lines = lines
+        let line = "\(key): \(value.yaml)" + lineEnd
+        let edited: String
+        if let header = Frontmatter.header(in: lines.map { String($0).trimmingCharacters(in: .newlines) }) {
+            if !header.isEmpty, (try? Yams.load(yaml: lines[header].joined())) as? [String: Any] == nil {
+                throw Failure(message: "The note's frontmatter isn't valid YAML, so AKit doesn't change it. Fix it in Edit first.")
+            }
+            var copy = lines.map(String.init)
+            if let span = span(of: key, in: lines, header: header) {
+                copy.replaceSubrange(span, with: [line])
+            } else {
+                copy.insert(line, at: header.upperBound)
+            }
+            edited = copy.joined()
+        } else {
+            let bom = text.hasPrefix("\u{FEFF}") ? "\u{FEFF}" : ""
+            edited = bom + "---" + lineEnd + line + "---" + lineEnd + text.dropFirst(bom.isEmpty ? 0 : 1)
+        }
+        let note = KnowledgeNote(text: edited)
+        guard value.matches(note.frontmatter[key]) else {
+            throw Failure(message: "Writing \(key) would break the note's frontmatter, so nothing was changed.")
+        }
+        return note
+    }
+
+    /// The note without `key` in its frontmatter (its line and continuation lines removed); the
+    /// frontmatter block too when nothing is left in it. Unchanged when the key isn't there.
+    public func removing(_ key: String) -> KnowledgeNote {
+        let lines = lines
+        guard let header = Frontmatter.header(in: lines.map { String($0).trimmingCharacters(in: .newlines) }),
+              let span = span(of: key, in: lines, header: header) else { return self }
+        var copy = lines.map(String.init)
+        copy.removeSubrange(span)
+        let left = header.count - span.count
+        if left == 0 {
+            // Only the `---` lines are left: remove them too, keeping a BOM.
+            let bom = copy[0].hasPrefix("\u{FEFF}") ? "\u{FEFF}" : ""
+            copy.removeSubrange(0...1)
+            return KnowledgeNote(text: bom + copy.joined())
+        }
+        return KnowledgeNote(text: copy.joined())
+    }
+
     /// The first `# ` heading of the body; nil without one.
     public var title: String? {
         for line in body.split(whereSeparator: \.isNewline) where line.hasPrefix("# ") {

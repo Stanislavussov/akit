@@ -1061,8 +1061,8 @@ git -C "$LOCAL" add -A && GIT_AUTHOR_NAME="Alice" git -C "$LOCAL" commit -qm "Te
 cat >> "$LOCAL/src/Orders/OrdersController.cs" <<<"// GET /orders.csv: OrderCsv.Write(store.All())"
 file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."
 
-# Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world with two spaces and
-# six notes, committed. Maps come with step 2.3.
+# Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world with two spaces, their
+# settings and six notes, committed. Maps come with step 2.3.
 "$AKIT" kb init --world work >/dev/null
 KB="$DEMO/.akit/local/knowledge/work"
 file "$KB/areas/payments/orders-api.md" <<'EOF'
@@ -1130,6 +1130,17 @@ kind: flow
 # pick-and-ship
 
 [[warehouse]] picks the items, then [[shipping]] books the courier.
+EOF
+# Area settings (Area Settings…): titles, and the projects logistics is about. kb.yaml with the
+# default kinds comes from kb init.
+file "$KB/areas/payments/area.yaml" <<'EOF'
+title: Payments
+description: Orders, billing and invoices.
+EOF
+file "$KB/areas/logistics/area.yaml" <<'EOF'
+title: Logistics
+description: Stock, picking and shipping.
+projects: [git@example.com:shop/warehouse.git, ~/Projects/shipping-*]
 EOF
 git -C "$KB" add -A && git -C "$KB" commit -qm "Add the payments and logistics notes"
 

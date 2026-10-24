@@ -28,6 +28,10 @@ final class KnowledgeModel {
     var problem: String?
     /// The note panel shows the Markdown to edit (Edit). Snapshots: `--tab edit`.
     var editing = DebugSnapshot.options?.tab == "edit"
+    /// The note panel shows the Properties form (kind and fields). Snapshots: `--tab properties`.
+    var showingProperties = DebugSnapshot.options?.tab == "properties"
+    /// The base's kinds from `kb.yaml` (K24): the defaults without the file, or when it can't be read.
+    private(set) var kindsFile = KnowledgeKinds.defaults
     /// Delete…: the note whose move to the Trash waits for confirmation. Snapshots: `--tab delete`.
     var deleteRequest: String?
     /// What the last write did, under the panel's buttons.
@@ -48,8 +52,8 @@ final class KnowledgeModel {
     var noteEntry: KnowledgeBase.NoteEntry? { note.flatMap { id in allNotes.first { $0.id == id } } }
     private var allNotes: [KnowledgeBase.NoteEntry] = []
 
-    /// New Note…'s kinds: the usual ones and those the base uses already.
-    var kinds: [String] { Array(Set(["service", "flow", "team"] + allNotes.compactMap(\.kind))).sorted() }
+    /// The kinds New Note… and Properties offer: the ones in `kb.yaml`, in its order.
+    var kinds: [String] { kindsFile.names }
 
     // MARK: - Loading
 
@@ -79,7 +83,12 @@ final class KnowledgeModel {
     func reload() {
         guard let base else {
             (areas, notes, allNotes, tabs, note, text) = ([], [], [], [], nil, "")
+            kindsFile = .defaults
             return
+        }
+        do { kindsFile = try base.kinds() } catch {
+            kindsFile = .defaults
+            problem = "\(error.message) The screen uses the default kinds until it is fixed."
         }
         areas = base.areas()
         if let area, !areas.contains(where: { $0.name == area }) { self.area = nil }
@@ -225,6 +234,88 @@ final class KnowledgeModel {
         }
     }
 
+    // MARK: - Properties, kinds, area settings (K24)
+
+    /// Properties: sets one frontmatter key of the note in view (an empty value removes it), one
+    /// line, every other byte kept; the file is saved at once and its commit waits in the queue.
+    func setProperty(_ key: String, to value: String) {
+        guard let base, let note else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        do {
+            let result = trimmed.isEmpty ? try base.setProperties(note: note, set: [], unset: [key])
+                : try base.setProperties(note: note, set: [(key, .parse(trimmed))])
+            guard result.changed else { return }
+            enqueue(result.path, in: base)
+            reload()
+        } catch {
+            problem = error.message
+        }
+    }
+
+    /// The note in view's properties: the kind's fields first (in `kb.yaml`'s order, empty when
+    /// unset), then the other keys, sorted. `kind` itself is not in the list.
+    var noteProperties: [(key: String, value: String, isField: Bool)] {
+        let values = KnowledgeNote(text: text).properties
+        let fields = noteEntry?.kind.flatMap { kindsFile.kind($0) }?.fields ?? []
+        let others = values.keys.filter { $0 != "kind" && !fields.contains($0) }.sorted()
+        return fields.map { ($0, values[$0]?.display ?? "", true) } + others.map { ($0, values[$0]?.display ?? "", false) }
+    }
+
+    /// Kinds… Save: writes `kb.yaml`; its commit waits in the queue like a note edit.
+    func save(kinds: KnowledgeKinds) -> Bool {
+        guard let base else { return false }
+        do {
+            let path = try base.save(kinds: kinds)
+            enqueue(path, in: base)
+            reload()
+            notice = "The kinds are saved."
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
+    }
+
+    /// Kinds… Rename…: `kind:` changes in every note of that kind and in `kb.yaml`, all or
+    /// nothing, in one commit made at once (after the pending edits are committed).
+    func renameKind(_ old: String, to new: String) async -> Bool {
+        guard let base else { return false }
+        await lastEnqueue?.value
+        do {
+            let paths = try await base.renameKind(old, to: new.trimmingCharacters(in: .whitespaces), env: env)
+            reload()
+            notice = "Renamed \(old) in \(paths.count - 1) note\(paths.count == 2 ? "" : "s"), committed."
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
+    }
+
+    /// Area Settings…: the area's `area.yaml` (empty settings without one).
+    func settings(area: String) -> KnowledgeArea {
+        guard let base else { return KnowledgeArea() }
+        do { return try base.settings(area: area) } catch {
+            problem = error.message
+            return KnowledgeArea()
+        }
+    }
+
+    /// Area Settings… Save: writes `area.yaml`; its commit waits in the queue.
+    func save(area: String, settings: KnowledgeArea) -> Bool {
+        guard let base else { return false }
+        do {
+            let path = try base.save(area: area, settings: settings)
+            enqueue(path, in: base)
+            reload()
+            notice = "The settings of \(area) are saved."
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
+    }
+
     /// Delete…: the note (or the whole area) goes to the Trash, and its removal is committed.
     func delete(note id: String? = nil, area: String? = nil) async {
         guard let base else { return }
@@ -342,8 +433,23 @@ final class KnowledgeModel {
             lines.append("note: \(entry.title) (\(entry.id)\(entry.kind.map { ", kind \($0)" } ?? "")), \(editing ? "Edit" : "read")")
             let sections = KnowledgeNote(text: text).sections.map(\.heading)
             if !sections.isEmpty { lines.append("sections: " + sections.joined(separator: ", ")) }
+            if showingProperties {
+                lines.append("properties: kind \(entry.kind ?? "none")"
+                    + noteProperties.map { "; \($0.key) \($0.value.isEmpty ? "-" : $0.value)\($0.isField ? "" : " (not a field of the kind)")" }.joined())
+            }
         } else {
             lines.append("note: none")
+        }
+        switch DebugSnapshot.options?.tab {
+        case "kinds":
+            lines.append("kinds: " + kindsFile.kinds.map { "\($0.name) (\($0.fields.joined(separator: ", ")))" }.joined(separator: ", "))
+        case "area-settings":
+            if let area {
+                let settings = settings(area: area)
+                lines.append("area settings: \(area), title \(settings.title ?? "-"), description \(settings.description ?? "-"), projects "
+                    + (settings.projects.isEmpty ? "-" : settings.projects.joined(separator: ", ")))
+            }
+        default: break
         }
         return lines.joined(separator: "\n")
     }

@@ -2,7 +2,7 @@ import AKitKnowledge
 import SwiftUI
 
 /// The open note tabs and the note in view: read (frontmatter and Markdown) or Edit, which saves
-/// the file at once; Copy, Paste, Open in Obsidian and Delete….
+/// the file at once; Properties (kind and fields), Copy, Paste, Open in Obsidian and Delete….
 struct NotePanel: View {
     @Environment(KnowledgeModel.self) private var model
     @State private var draft = ""
@@ -17,6 +17,10 @@ struct NotePanel: View {
             if let entry = model.noteEntry {
                 toolbar(entry)
                 Divider()
+                if model.showingProperties {
+                    PropertiesForm(entry: entry)
+                    Divider()
+                }
                 if model.editing {
                     TextEditor(text: $draft)
                         .font(.body.monospaced())
@@ -83,6 +87,9 @@ struct NotePanel: View {
             Toggle("Edit", systemImage: "pencil", isOn: $model.editing)
                 .toggleStyle(.button)
                 .help("Edit the note's Markdown. Every change is saved to the file at once and committed when you close the tab, after 5 minutes without edits, or when AKit quits")
+            Toggle("Properties", systemImage: "list.bullet.rectangle", isOn: $model.showingProperties)
+                .toggleStyle(.button)
+                .help("Change the note's kind and fields (its frontmatter), one line each; saved at once, committed with your other edits")
             Button("Copy", systemImage: "doc.on.doc") { model.copy() }
                 .help("Copy the note's whole text")
             Button("Paste", systemImage: "doc.on.clipboard") { model.paste() }
@@ -95,6 +102,111 @@ struct NotePanel: View {
         .labelStyle(.titleAndIcon)
         .controlSize(.small)
         .padding(8)
+    }
+}
+
+/// Properties: the note's kind (from `kb.yaml`) and one field per field of the kind, then the
+/// other frontmatter keys; Add Field… adds a key. A value is saved when you press Return or leave
+/// the field: `[a, b]` is a list, an empty value removes the key.
+struct PropertiesForm: View {
+    @Environment(KnowledgeModel.self) private var model
+    let entry: KnowledgeBase.NoteEntry
+    @State private var adding = false
+    @State private var newKey = ""
+    @State private var newValue = ""
+
+    var body: some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 6) {
+            GridRow {
+                Text("Kind").foregroundStyle(.secondary)
+                Picker("Kind", selection: Binding(get: { entry.kind ?? "" }, set: { model.setProperty("kind", to: $0) })) {
+                    Text("None").tag("")
+                    ForEach(kinds, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("The kind of the note, from the base's kinds (Kinds…); written as kind: in its frontmatter")
+            }
+            ForEach(model.noteProperties, id: \.key) { property in
+                GridRow {
+                    Text(property.key).foregroundStyle(.secondary)
+                        .help(property.isField ? "A field of the kind \(entry.kind ?? "")" : "Not a field of the kind; kept as it is")
+                    PropertyField(key: property.key, value: property.value)
+                }
+            }
+            GridRow {
+                Color.clear.frame(width: 1, height: 1)
+                Button("Add Field…", systemImage: "plus") { adding = true }
+                    .controlSize(.small)
+                    .help("Add a frontmatter key that the kind doesn't list, like owner or url")
+                    .popover(isPresented: $adding) { addField }
+            }
+        }
+        .font(.callout)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.3))
+        .id(entry.id)
+    }
+
+    /// The base's kinds, and the note's own kind when `kb.yaml` doesn't list it.
+    private var kinds: [String] {
+        model.kinds + (entry.kind.map { model.kinds.contains($0) ? [] : [$0] } ?? [])
+    }
+
+    private var addField: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Add Field").font(.headline)
+            Form {
+                TextField(text: $newKey, prompt: Text("owner")) { RequiredLabel("Name") }
+                TextField(text: $newValue, prompt: Text("team-a, or [a, b] for a list")) { RequiredLabel("Value") }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { adding = false }
+                Button("Add") {
+                    model.setProperty(newKey.trimmingCharacters(in: .whitespaces), to: newValue)
+                    (newKey, newValue, adding) = ("", "", false)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(newKey.trimmingCharacters(in: .whitespaces).isEmpty || newValue.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
+    }
+}
+
+/// One property's value: saved on Return or when the field loses focus.
+private struct PropertyField: View {
+    @Environment(KnowledgeModel.self) private var model
+    let key: String
+    let value: String
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            TextField(key, text: $draft, prompt: Text("empty"))
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .focused($focused)
+                .onSubmit(save)
+                .onChange(of: focused) { _, now in if !now { save() } }
+                .help("[a, b] is a list; an empty value removes the line")
+            if !value.isEmpty {
+                Button("Remove \(key)", systemImage: "minus.circle") { model.setProperty(key, to: "") }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Remove the \(key): line from the note")
+            }
+        }
+        .frame(maxWidth: 420)
+        .onChange(of: value, initial: true) { _, new in draft = new }
+    }
+
+    private func save() {
+        if draft != value { model.setProperty(key, to: draft) }
     }
 }
 

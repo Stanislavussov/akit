@@ -71,7 +71,8 @@ public struct KnowledgeBase: Sendable, Hashable {
         return try await create(at: Self.world(world, home: env.homeDirectory), env: env, brainRoot: brainRoot)
     }
 
-    /// Creates a base at `root`: `areas/`, `inbox/`, `.gitignore`, `git init` with no remote, a git
+    /// Creates a base at `root`: `areas/`, `inbox/`, `.gitignore`, `kb.yaml` with the default kinds,
+    /// `git init` with no remote, a git
     /// identity (P5: the user's git config when it has a name and an email, else the base's own
     /// `AKit <akit@localhost>`) and a first commit. `root` may be missing, empty, or a git repo
     /// without a remote (an Obsidian vault kept in git). Refused: inside the brain (`brainRoot`,
@@ -114,6 +115,10 @@ public struct KnowledgeBase: Sendable, Hashable {
             } else {
                 try Data(gitignore.utf8).write(to: ignore, options: .withoutOverwriting)
             }
+            // K24: the kinds are data; a vault that has its own kb.yaml keeps it.
+            if !fm.fileExists(atPath: root.appending(path: KnowledgeKinds.fileName).path) {
+                try Data(KnowledgeKinds.defaults.text.utf8).write(to: root.appending(path: KnowledgeKinds.fileName), options: .withoutOverwriting)
+            }
         } catch {
             throw Failure(message: "Couldn't create the knowledge base in \(root.path): \(error.localizedDescription)")
         }
@@ -128,7 +133,7 @@ public struct KnowledgeBase: Sendable, Hashable {
                 try await git.run(["config", "--local", "user.name", "AKit"])
                 try await git.run(["config", "--local", "user.email", "akit@localhost"])
             }
-            try await git.commit(paths: [".gitignore"], message: "Create the knowledge base")
+            try await git.commit(paths: [".gitignore", KnowledgeKinds.fileName], message: "Create the knowledge base")
         } catch {
             throw Failure(message: "The knowledge base folder was created, but git failed: \(error.message)")
         }
@@ -155,10 +160,36 @@ public struct KnowledgeBase: Sendable, Hashable {
 
     // MARK: - Areas and notes
 
-    public struct Area: Codable, Equatable, Sendable {
+    public struct Area: Encodable, Equatable, Sendable {
         public let name: String
         public let notes: Int
         public let maps: Int
+        /// From `area.yaml` (K24); nil and empty without one, or when it can't be read.
+        public let title: String?
+        public let description: String?
+        public let projects: [String]
+
+        private enum CodingKeys: String, CodingKey { case name, notes, maps, title, description, projects }
+
+        public init(name: String, notes: Int, maps: Int, settings: KnowledgeArea = KnowledgeArea()) {
+            self.name = name
+            self.notes = notes
+            self.maps = maps
+            title = settings.title
+            description = settings.description
+            projects = settings.projects
+        }
+
+        // Unset settings are null, so every area has the same keys.
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(name, forKey: .name)
+            try container.encode(notes, forKey: .notes)
+            try container.encode(maps, forKey: .maps)
+            try container.encode(title, forKey: .title)
+            try container.encode(description, forKey: .description)
+            try container.encode(projects, forKey: .projects)
+        }
     }
 
     public struct NoteEntry: Codable, Equatable, Sendable {
@@ -191,12 +222,14 @@ public struct KnowledgeBase: Sendable, Hashable {
         }
     }
 
-    /// The areas (folders in `areas/`), sorted by name, with their note and map counts.
+    /// The areas (folders in `areas/`), sorted by name, with their note and map counts and their
+    /// `area.yaml` settings.
     public func areas() -> [Area] {
         FileWalk.children(of: areasFolder).filter(FileWalk.isDirectory).map { folder in
             let files = Self.files(in: folder)
             return Area(name: Self.nfc(folder.lastPathComponent), notes: files.filter { $0.pathExtension == "md" }.count,
-                        maps: files.filter { $0.pathExtension == "excalidraw" }.count)
+                        maps: files.filter { $0.pathExtension == "excalidraw" }.count,
+                        settings: (try? KnowledgeArea.load(folder: folder)) ?? KnowledgeArea())
         }
     }
 

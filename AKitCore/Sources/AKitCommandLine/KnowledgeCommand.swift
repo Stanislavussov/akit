@@ -3,8 +3,9 @@ import AKitFoundation
 import AKitKnowledge
 import Foundation
 
-/// `akit kb`: the knowledge base (docs/design/knowledge.md). Agents run only the read commands;
-/// the person-only ones (U1) are marked so in the help and are never in the `/akit` skill.
+/// `akit kb`: the knowledge base (docs/design/knowledge.md). Agents run the read commands; the
+/// person-only ones (U1, K22) are marked so in the help, and an agent runs them only when the user
+/// asked for that action in the session.
 extension AKitCLI {
     static let knowledgeUsage = """
     akit kb: the knowledge base, notes and maps of the systems around a repository
@@ -17,8 +18,15 @@ extension AKitCLI {
       akit kb notes [AREA] [--json] [--base PATH|WORLD]
                                         The notes (of one area): id, kind and title. An id is the
                                         path under areas/ without .md, like payments/orders-api
+      akit kb kinds [--json] [--base PATH|WORLD]
+                                        The kinds of notes and the fields of each, from kb.yaml in
+                                        the base (the defaults when it has none)
+      akit kb area AREA [--json] [--base PATH|WORLD]
+                                        An area's settings from areas/AREA/area.yaml: title,
+                                        description, projects (git remotes, ~/ paths, globs)
 
-    Write (for a person only: an agent never runs these, it asks the user):
+    Write (for a person only: an agent runs these only when the user asked for that action in
+    this session; otherwise it proposes or asks):
       akit kb init [--world NAME | --base PATH]
                                         For a person only. Create a base: areas/, inbox/, .gitignore,
                                         git without a remote, a first commit. NAME defaults to this
@@ -27,6 +35,18 @@ extension AKitCLI {
       akit kb new-note AREA NAME [--kind K] [--base PATH|WORLD]
                                         For a person only. Create areas/AREA/NAME.md (# NAME, and
                                         kind: K in the frontmatter) and commit it at once
+      akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json] [--base PATH|WORLD]
+                                        For a person only. Set or remove frontmatter properties of a
+                                        note (kind=flow, owner=team-a, files=[a.ts, b.ts]), one line
+                                        each, every other byte kept, and commit it at once
+      akit kb kinds add NAME [--fields a,b] | fields NAME a,b | remove NAME | rename OLD NEW
+                                        For a person only. Change the kinds in kb.yaml and commit at
+                                        once. rename also rewrites kind: in every note of that
+                                        kind, all or nothing, in one commit. remove leaves notes as
+                                        they are (their kind is then unknown)
+      akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]…
+                                        For a person only. Change areas/AREA/area.yaml and commit it
+                                        at once. P is a git remote, a ~/ path or a glob
 
     Which base (--base, else in this order): the current project's entry in
     ~/.akit/local/knowledge/focus.json, the only base, the base named like this Mac's kind. With
@@ -64,7 +84,9 @@ extension AKitCLI {
                     out(encode(AreasAnswer(base: base.root.path, areas: areas)))
                 } else {
                     out(areas.isEmpty ? "No areas in \(FileWalk.tilde(base.root, home: env.homeDirectory)) yet."
-                        : areas.map { "\($0.name)  \(count($0.notes, "note")), \(count($0.maps, "map"))" }.joined(separator: "\n"))
+                        : areas.map { area in
+                            "\(area.name)  \(count(area.notes, "note")), \(count(area.maps, "map"))" + (area.title.map { "  \($0)" } ?? "")
+                        }.joined(separator: "\n"))
                 }
                 return 0
             }
@@ -113,9 +135,168 @@ extension AKitCLI {
             do { path = try await base.newNote(area: area, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
             out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
             return 0
+        case "kinds":
+            return try await knowledgeKinds(&args, json: json, base: chosen, env: env, out: out)
+        case "set":
+            return try await knowledgeSet(&args, json: json, base: chosen, env: env, out: out)
+        case "area":
+            return try await knowledgeArea(&args, json: json, base: chosen, env: env, out: out)
         default:
             throw Failure(message: "Unknown command “kb \(command ?? "")”. Run akit kb --help.")
         }
+    }
+
+    /// The base for a write, or the error that says to create one.
+    private static func writable(_ base: () async throws -> KnowledgeBase?) async throws -> KnowledgeBase {
+        guard let base = try await base() else {
+            throw Failure(message: "No knowledge base on this Mac. Create one first: akit kb init [--world NAME]")
+        }
+        return base
+    }
+
+    /// `kb kinds` and its person-only changes `add`, `fields`, `remove`, `rename`.
+    private static func knowledgeKinds(_ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                       env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        let fieldsOption = args.value("--fields")
+        let action = args.positional()
+        let first = args.positional(), second = args.positional()
+        try args.finish()
+        func fields(_ text: String?) -> [String] { (text ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }
+        guard let action else {
+            if fieldsOption != nil { throw Failure(message: "--fields goes with akit kb kinds add NAME.") }
+            guard let base = try await chosen() else {
+                out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+                return 0
+            }
+            let kinds: KnowledgeKinds
+            do { kinds = try base.kinds() } catch { throw Failure(message: error.message) }
+            let defaults = !FileManager.default.fileExists(atPath: base.root.appending(path: KnowledgeKinds.fileName).path)
+            if json {
+                out(encode(KindsAnswer(base: base.root.path, file: KnowledgeKinds.fileName, defaults: defaults, kinds: kinds.kinds)))
+            } else {
+                out((kinds.kinds.isEmpty ? "No kinds in \(KnowledgeKinds.fileName)." : kinds.kinds.map { kind in
+                    kind.name + "  " + (kind.fields.isEmpty ? "-" : kind.fields.joined(separator: ", "))
+                }.joined(separator: "\n")) + (defaults ? "\n(the defaults: the base has no \(KnowledgeKinds.fileName))" : ""))
+            }
+            return 0
+        }
+        let base = try await writable(chosen)
+        var kinds: KnowledgeKinds
+        do { kinds = try base.kinds() } catch { throw Failure(message: error.message) }
+        let message: String
+        var report: String
+        do {
+            switch (action, first, second) {
+            case ("add", let name?, nil):
+                kinds = try kinds.adding(name, fields: fields(fieldsOption))
+                (message, report) = ("Add kind \(name)", "Added the kind \(name)")
+            case ("fields", let name?, let list?) where fieldsOption == nil:
+                kinds = try kinds.settingFields(of: name, to: fields(list))
+                (message, report) = ("Set the fields of kind \(name)", "Set the fields of \(name)")
+            case ("remove", let name?, nil) where fieldsOption == nil:
+                kinds = try kinds.removing(name)
+                let using = try base.notes().filter { $0.kind == name }.count
+                (message, report) = ("Remove kind \(name)", "Removed the kind \(name)"
+                    + (using == 0 ? "" : " (\(count(using, "note")) still \(using == 1 ? "has" : "have") kind: \(name))"))
+            case ("rename", let old?, let new?) where fieldsOption == nil:
+                let paths = try await base.renameKind(old, to: new, env: env)
+                kinds = try base.kinds()
+                let notes = max(paths.count - 1, 0)
+                report = "Renamed the kind \(old) to \(new) in \(KnowledgeKinds.fileName) and \(count(notes, "note")), committed."
+                out(json ? encode(KindsAnswer(base: base.root.path, file: KnowledgeKinds.fileName, defaults: false, kinds: kinds.kinds)) : report)
+                return 0
+            default:
+                throw Failure(message: "Use: akit kb kinds [add NAME [--fields a,b] | fields NAME a,b | remove NAME | rename OLD NEW] [--json] [--base PATH|WORLD]")
+            }
+            try base.save(kinds: kinds)
+            try await base.commit([KnowledgeKinds.fileName], message: message, env: env)
+        } catch let error as KnowledgeBase.Failure {
+            throw Failure(message: error.message)
+        }
+        out(json ? encode(KindsAnswer(base: base.root.path, file: KnowledgeKinds.fileName, defaults: false, kinds: kinds.kinds))
+            : report + ", committed.")
+        return 0
+    }
+
+    /// `kb set NOTE KEY=VALUE… [--unset KEY]…` (person only).
+    private static func knowledgeSet(_ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                     env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        let unset = args.values("--unset")
+        guard let name = args.positional() else {
+            throw Failure(message: "Use: akit kb set NOTE KEY=VALUE… [--unset KEY]… [--base PATH|WORLD]")
+        }
+        var pairs: [(key: String, value: KnowledgeNote.PropertyValue)] = []
+        while let pair = args.positional() {
+            guard let equals = pair.firstIndex(of: "="), equals != pair.startIndex else {
+                throw Failure(message: "“\(pair)” is not KEY=VALUE (like owner=team-a, or files=[a.ts, b.ts]).")
+            }
+            let value = String(pair[pair.index(after: equals)...])
+            guard !value.trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw Failure(message: "\(pair) has no value; remove a property with --unset \(pair.dropLast()).")
+            }
+            pairs.append((String(pair[..<equals]).trimmingCharacters(in: .whitespaces), .parse(value)))
+        }
+        try args.finish()
+        guard !pairs.isEmpty || !unset.isEmpty else { throw Failure(message: "Nothing to set: give KEY=VALUE or --unset KEY.") }
+        let base = try await writable(chosen)
+        let id: String, path: String, changed: Bool
+        do {
+            id = try base.noteID(name)
+            (path, changed) = try base.setProperties(note: id, set: pairs, unset: unset)
+            if changed {
+                let keys = pairs.map(\.key) + unset
+                try await base.commit([path], message: "Set \(keys.joined(separator: ", ")) of \(id)", env: env)
+            }
+        } catch {
+            throw Failure(message: error.message)
+        }
+        if json {
+            out(encode(SetAnswer(base: base.root.path, note: id, path: path, changed: changed,
+                                 properties: KnowledgeNote.load(base.noteFile(id))?.properties ?? [:])))
+        } else {
+            out(changed ? "Changed \(id) (\(path)), committed." : "Nothing changed in \(id): it has these values already.")
+        }
+        return 0
+    }
+
+    /// `kb area AREA` (read) and its person-only changes.
+    private static func knowledgeArea(_ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                      env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        let title = args.value("--title"), description = args.value("--description")
+        let add = args.values("--project"), remove = args.values("--remove-project")
+        guard let name = args.positional() else {
+            throw Failure(message: "Use: akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]… [--json]")
+        }
+        try args.finish()
+        let changes = title != nil || description != nil || !add.isEmpty || !remove.isEmpty
+        let found: KnowledgeBase?
+        if changes { found = try await writable(chosen) } else { found = try await chosen() }
+        guard let base = found else {
+            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+            return 0
+        }
+        var settings: KnowledgeArea
+        do {
+            settings = try base.settings(area: name)
+            if changes {
+                if let title { settings.title = title }
+                if let description { settings.description = description }
+                settings.projects = settings.projects.filter { !remove.contains($0) } + add
+                let path = try base.save(area: name, settings: settings)
+                try await base.commit([path], message: "Edit the settings of area \(name)", env: env)
+                settings = try base.settings(area: name)
+            }
+        } catch {
+            throw Failure(message: error.message)
+        }
+        if json {
+            out(encode(AreaAnswer(base: base.root.path, area: name, file: "areas/\(name)/\(KnowledgeArea.fileName)", settings: settings)))
+        } else {
+            let lines = ["area: \(name)", "title: \(settings.title ?? "-")", "description: \(settings.description ?? "-")",
+                         "projects: " + (settings.projects.isEmpty ? "-" : settings.projects.joined(separator: ", "))]
+            out(lines.joined(separator: "\n") + (changes ? "\nSaved areas/\(name)/\(KnowledgeArea.fileName), committed." : ""))
+        }
+        return 0
     }
 
     private static func count(_ number: Int, _ word: String) -> String { "\(number) \(word)\(number == 1 ? "" : "s")" }
@@ -137,6 +318,39 @@ extension AKitCLI {
             try container.encode(base, forKey: .base)
             try container.encode(area, forKey: .area) // null for every area
             try container.encode(notes, forKey: .notes)
+        }
+    }
+
+    struct KindsAnswer: Encodable {
+        let base: String
+        let file: String
+        /// The base has no kb.yaml, so these are the defaults.
+        let defaults: Bool
+        let kinds: [KnowledgeKinds.Kind]
+    }
+
+    struct SetAnswer: Encodable {
+        let base: String
+        let note: String
+        let path: String
+        let changed: Bool
+        let properties: [String: KnowledgeNote.PropertyValue]
+    }
+
+    struct AreaAnswer: Encodable {
+        let base: String
+        let area: String
+        let file: String
+        let settings: KnowledgeArea
+
+        private enum CodingKeys: String, CodingKey { case base, area, file }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(base, forKey: .base)
+            try container.encode(area, forKey: .area)
+            try container.encode(file, forKey: .file)
+            try settings.encode(to: encoder)
         }
     }
 

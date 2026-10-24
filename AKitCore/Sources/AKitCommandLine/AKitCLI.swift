@@ -269,7 +269,7 @@ public enum AKitCLI {
                                           akit review --help lists the rest
 
         Knowledge base (notes and maps of your systems; ~/.akit/local/knowledge/<world>, git without a remote):
-          akit kb areas | notes [AREA] [--json] [--base PATH|WORLD]
+          akit kb areas | notes [AREA] | kinds | area AREA [--json] [--base PATH|WORLD]
                                           What the base holds. akit kb --help lists the rest, with
                                           the commands for a person only
 
