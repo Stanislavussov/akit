@@ -200,6 +200,8 @@ shot knowledge-properties $MAIN --section knowledge --select payments/orders-api
 shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds
 # A map (read only) from the demo base's seed: payments/maps/overview.
 shot knowledge-map       $MAIN --section knowledge --tab map --select payments/maps/overview
+# The same map in Edit: Excalidraw's tools and the pressed Edit button.
+shot knowledge-map-edit  $MAIN --section knowledge --tab map-edit --select payments/maps/overview
 # Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.
 if [[ "$ONLY" == "  " || "$ONLY" == *" knowledge-sample "* ]]; then
     HOME="$DEMO" GIT_CONFIG_GLOBAL=/dev/null "$ROOT/AKitCore/.build/debug/akit" kb seed >/dev/null

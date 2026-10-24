@@ -24,10 +24,26 @@ final class KnowledgeModel {
     private(set) var notes: [KnowledgeBase.NoteEntry] = []
     /// The maps (`.excalidraw` ids, `payments/maps/overview`) of the chosen area.
     private(set) var maps: [String] = []
-    /// The map in view (read only until 2.2b); nil shows the note panel alone.
+    /// The map in view; nil shows the note panel alone.
     private(set) var map: String?
-    /// The `.excalidraw` text of the map in view, as on disk when it was opened.
-    private(set) var mapScene = ""
+    /// What the canvas shows: the map's `.excalidraw` text as on disk when it was opened (or
+    /// reloaded). AKit's own saves don't change it: the canvas has those edits already.
+    private(set) var mapScene = MapCanvasView.Scene(key: "", text: "")
+    /// The map can be edited (Edit); off is view mode, where a click on a block opens its note.
+    /// Snapshots: `--tab map-edit` (and the map-add, map-add-quit, map-conflict checks).
+    var mapEditing = DebugSnapshot.options?.tab.map { ["map-edit", "map-add", "map-add-quit", "map-conflict"].contains($0) } ?? false
+    /// Per map opened in this run: the hash of its bytes as AKit read or last wrote them. A save
+    /// writes only while the disk still has those bytes (`KnowledgeWrite.saveChecked`).
+    private var mapHashes: [String: String] = [:]
+    /// A save found the map changed on disk: Reload or Keep Mine. `bytes` is the latest unsaved
+    /// serialization, which Keep Mine writes.
+    struct MapConflict: Equatable {
+        var id: String
+        var bytes: Data
+    }
+    var mapConflict: MapConflict?
+    /// Delete… of a map waiting for its confirmation. Snapshots: `--tab map-delete`.
+    var mapDeleteRequest: String?
     /// A note opened from the map (a click on its block) shows beside the map.
     private(set) var noteBesideMap = false
     /// Open note tabs (ids), in the order they were opened.
@@ -87,6 +103,7 @@ final class KnowledgeModel {
             if DebugSnapshot.options?.tab == "delete" { deleteRequest = select }
         } else if let select, targets.maps.contains(select) {
             open(map: select)
+            if DebugSnapshot.options?.tab == "map-delete" { mapDeleteRequest = select }
         }
     }
 
@@ -100,7 +117,7 @@ final class KnowledgeModel {
     func reload() {
         guard let base else {
             (areas, notes, allNotes, tabs, note, text) = ([], [], [], [], nil, "")
-            (maps, map, mapScene, targets) = ([], nil, "", KnowledgeLinks(notes: [], maps: []))
+            (maps, map, targets) = ([], nil, KnowledgeLinks(notes: [], maps: []))
             kindsFile = .defaults
             return
         }
@@ -125,10 +142,14 @@ final class KnowledgeModel {
     func choose(base: KnowledgeBase) {
         guard base != self.base else { return }
         let old = self.base
-        Task { await flush(old) }
-        self.base = base
-        (area, tabs, note, map) = (nil, [], nil, nil)
-        reload()
+        Task {
+            // An open map's last change is saved in the old base first (N5).
+            await forcePostDirty()
+            self.base = base
+            (area, tabs, note, map) = (nil, [], nil, nil)
+            reload()
+            await flush(old)
+        }
     }
 
     func choose(area: String?) {
@@ -144,24 +165,131 @@ final class KnowledgeModel {
 
     // MARK: - Maps
 
-    /// Shows a map (read only): its file's text goes to the canvas.
+    /// Shows a map: its file's text goes to the canvas, and its hash becomes the one a save
+    /// expects. A change still waiting on the map that was open is saved under its own id (bridge.js).
     func open(map id: String) {
         guard let base, targets.maps.contains(id) else { return }
-        do {
-            mapScene = try String(contentsOf: base.areasFolder.appending(path: id + ".excalidraw"), encoding: .utf8)
-        } catch {
+        let data: Data
+        do { data = try Data(contentsOf: base.mapFile(id)) } catch {
             problem = "Can't read the map \(id): \(error.localizedDescription)"
             return
         }
         let area = String(id.split(separator: "/").first ?? "")
         if area != self.area { choose(area: area) }
+        mapHashes[id] = KnowledgeWrite.hash(data)
+        mapScene = MapCanvasView.Scene(key: id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
         map = id
         noteBesideMap = false
     }
 
-    /// Back to the note panel alone.
-    func closeMap() {
-        (map, mapScene, noteBesideMap) = (nil, "", false)
+    /// Close Map: the last change is saved, then the queue is committed (like a tab close, U2).
+    func closeMap() async {
+        await forcePostDirty()
+        (map, noteBesideMap) = (nil, false)
+        await flush(base)
+    }
+
+    /// A `save` from the canvas: Excalidraw's own serialization, written as it is when the file on
+    /// disk is still the one AKit read or last wrote; else the conflict waits for Reload / Keep Mine.
+    func saveMap(_ id: String, json: String) {
+        guard let base else { return }
+        let bytes = Data(json.utf8)
+        if mapConflict?.id == id {
+            mapConflict?.bytes = bytes
+            return
+        }
+        guard let expected = mapHashes[id] else {
+            problem = "The map \(id) wasn't opened in this run, so AKit didn't save it."
+            return
+        }
+        do {
+            let (path, outcome) = try base.saveMap(id, bytes: bytes, expectedHash: expected)
+            switch outcome {
+            case .saved(let hash):
+                mapHashes[id] = hash
+                enqueue(path, in: base)
+            case .conflict:
+                mapConflict = MapConflict(id: id, bytes: bytes)
+            }
+        } catch {
+            problem = error.message
+        }
+    }
+
+    /// Before a flush (tab or map close, quit, Update) and a base switch (N5): the open canvas
+    /// hands over a change still waiting for its 800 ms post, and it is saved now.
+    func forcePostDirty() async {
+        guard map != nil, let canvas = MapCanvasView.Coordinator.current, let save = await canvas.takeUnsaved() else { return }
+        if DebugSnapshot.options != nil { print("map: force-posted \(save.key), \(save.json.utf8.count) bytes") }
+        saveMap(save.key, json: save.json)
+        await lastEnqueue?.value
+    }
+
+    /// Changed on disk → Reload: the disk version goes on the canvas; the unsaved change is dropped.
+    func reloadConflictedMap() {
+        guard let conflict = mapConflict, let base else { return }
+        mapConflict = nil
+        guard let data = try? Data(contentsOf: base.mapFile(conflict.id)) else {
+            problem = "The map \(conflict.id) is gone from disk."
+            return
+        }
+        mapHashes[conflict.id] = KnowledgeWrite.hash(data)
+        if map == conflict.id {
+            mapScene = MapCanvasView.Scene(key: conflict.id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+        }
+        notice = "Reloaded \(conflict.id) from disk."
+    }
+
+    /// Changed on disk → Keep Mine: the disk copy is backed up (`~/.akit/backups`), then your
+    /// version is written over it and queued for its commit.
+    func keepMineInConflict() {
+        guard let conflict = mapConflict, let base else { return }
+        let file = base.mapFile(conflict.id)
+        guard let disk = try? Data(contentsOf: file) else {
+            mapConflict = nil
+            problem = "The map \(conflict.id) is gone from disk, so there is nothing to keep it over."
+            return
+        }
+        do {
+            let backup = try Backup.save(disk, as: file, home: home)
+            mapConflict = nil
+            mapHashes[conflict.id] = KnowledgeWrite.hash(disk)
+            saveMap(conflict.id, json: String(decoding: conflict.bytes, as: UTF8.self))
+            notice = "Kept your version; the disk copy is in \(backup.tildePath)."
+        } catch {
+            problem = "Couldn't back up \(file.path): \(error.localizedDescription)"
+        }
+    }
+
+    /// New Map…: `akit kb new-map AREA NAME`, committed at once; then it opens in Edit.
+    func newMap(area: String, name: String) async -> Bool {
+        guard let base else { return false }
+        do {
+            let path = try await base.newMap(area: area, name: name, env: env)
+            await forcePostDirty()
+            reload()
+            open(map: String(path.dropFirst("areas/".count).dropLast(".excalidraw".count)))
+            mapEditing = true
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
+    }
+
+    /// Delete… of a map: to the Trash, its removal committed at once (`akit kb rm <map> --yes`).
+    func delete(map id: String) async {
+        guard let base else { return }
+        if map == id { (map, noteBesideMap) = (nil, false) }
+        if mapConflict?.id == id { mapConflict = nil }
+        do {
+            try await base.moveToTrash(map: id, env: env)
+            mapHashes[id] = nil
+            reload()
+            notice = "Moved the map to the Trash."
+        } catch {
+            problem = error.message
+        }
     }
 
     /// A block or arrow of the map in view was opened (a click in view mode): a note link opens
@@ -487,7 +615,10 @@ final class KnowledgeModel {
     /// Before AKit quits or rebuilds: the model's own pending work, then every base of this Mac.
     static func flushBeforeQuit() async {
         let env = HarnessEnvironment.current
-        if let current { await current.flush(current.base) }
+        if let current {
+            await current.forcePostDirty()
+            await current.flush(current.base)
+        }
         await flushQueues(of: KnowledgeBase.all(home: env.homeDirectory), env: env)
     }
 
@@ -532,7 +663,8 @@ final class KnowledgeModel {
         lines.append("areas: " + areas.map { "\($0.name)\($0.name == area ? "*" : "") (\($0.notes))" }.joined(separator: ", "))
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
         lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
-        if let map { lines.append("map: \(map), view only" + (noteBesideMap && note != nil ? ", note beside it" : "")) }
+        if let map { lines.append("map: \(map), \(mapEditing ? "Edit" : "view only")" + (noteBesideMap && note != nil ? ", note beside it" : "")) }
+        if let mapConflict { lines.append("conflict: Changed on disk, \(mapConflict.id): Reload / Keep Mine") }
         lines.append("tabs: " + tabs.joined(separator: ", "))
         if let entry = noteEntry {
             lines.append("note: \(entry.title) (\(entry.id)\(entry.kind.map { ", kind \($0)" } ?? "")), \(editing ? "Edit" : "read")")

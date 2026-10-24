@@ -54,6 +54,11 @@ import SwiftUI
 /// canvas is ready and its scene loaded (10 s at most), draws the web view into the image and prints the page's
 /// messages, fonts, problems, every file the `akit-web:` handler served, the refused loads, the scene's element
 /// count and the canvas frame (`map canvas: x,y,w,h` in snapshot points from the top left).
+/// Maps can be edited (2.2b): `--tab map-edit` opens the map in Edit, `--tab map-delete` asks its Delete…, `--tab new-map`
+/// opens New Map…. Checks: `--tab map-add` adds a rectangle through Excalidraw's API and waits past the 800 ms save
+/// (prints `posts: 1`; the file is saved and queued, not committed); `--tab map-add-quit` adds one and quits at once
+/// (the quit flush force-posts, saves and commits it; no image); `--tab map-conflict` first appends a space to the file
+/// on disk, then adds one, so "Changed on disk" appears (`--query keep|reload` then answers it). Every map snapshot prints `posts: N` (0 after an open).
 ///
 /// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
 /// menu's items (to check which places get Ask AKit About This);
@@ -172,6 +177,36 @@ enum DebugSnapshot {
         // A map waits for its canvas first, so a click can open a block's link.
         let mapOpen = options.section == .knowledge && KnowledgeModel.current?.map != nil
         if mapOpen { await MapCanvasView.Coordinator.waitAndPrint() }
+        if mapOpen, let canvas = MapCanvasView.Coordinator.current, let model = KnowledgeModel.current, let id = model.map,
+           let tab = options.tab, ["map-add", "map-add-quit", "map-conflict"].contains(tab) {
+            // Checks of 2.2b without a hand: the file changes on disk first (map-conflict), then a
+            // rectangle is added through Excalidraw's API, as a user's drawing would be.
+            if tab == "map-conflict", let base = model.base, let handle = try? FileHandle(forWritingTo: base.mapFile(id)) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: Data(" ".utf8))
+                try? handle.close()
+                print("map: appended a space to \(base.mapPath(id)) on disk")
+            }
+            let count = (try? await canvas.call("akitDebugAddRectangle")) as? NSNumber
+            print("map: added a rectangle, \(count?.intValue ?? -1) elements")
+            if tab == "map-add-quit" {
+                // Quit inside the 800 ms debounce: the quit flush must force-post, save and commit it.
+                // From the run loop, not from this main-actor job: terminate waits in a nested event
+                // loop for the quit flush, which needs the main actor.
+                NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
+                try? await Task.sleep(for: .seconds(30))
+                exit(1)
+            }
+            try? await Task.sleep(for: .milliseconds(1600))
+            await canvas.printPosts()
+            // `--query keep|reload` answers "Changed on disk" like a click on Keep Mine or Reload.
+            if tab == "map-conflict", model.mapConflict != nil, let answer = options.query {
+                if answer == "keep" { model.keepMineInConflict() } else if answer == "reload" { model.reloadConflictedMap() }
+                try? await Task.sleep(for: .milliseconds(800))
+                print("map: answered \(answer): \(model.notice ?? model.problem ?? "")")
+                await canvas.printPosts()
+            }
+        }
         if let click = options.click {
             // SwiftUI takes clicks only in the key window of the active app.
             NSApp.activate(ignoringOtherApps: true)

@@ -96,13 +96,17 @@ public struct KnowledgeCommitQueue: Sendable {
         return committed ? .committed(paths) : .nothing
     }
 
-    /// "Edit payments/orders-api" or "Edit 3 notes: a, b, c".
+    /// Notes only: "Edit payments/orders-api" or "Edit 3 notes: a, b, c". Maps only: "Edit maps:
+    /// payments/maps/overview". Both: "Edit notes and maps: a, b".
     static func message(for paths: [String]) -> String {
         let names = paths.map { path in
             var name = path.hasPrefix("areas/") ? String(path.dropFirst("areas/".count)) : path
-            if name.hasSuffix(".md") { name.removeLast(3) }
+            for ext in [".md", ".excalidraw"] where name.hasSuffix(ext) { name.removeLast(ext.count) }
             return name
         }
+        let maps = paths.filter { $0.hasSuffix(".excalidraw") }.count
+        if maps == paths.count { return "Edit maps: " + names.joined(separator: ", ") }
+        if maps > 0 { return "Edit notes and maps: " + names.joined(separator: ", ") }
         return names.count == 1 ? "Edit \(names[0])" : "Edit \(names.count) notes: " + names.joined(separator: ", ")
     }
 

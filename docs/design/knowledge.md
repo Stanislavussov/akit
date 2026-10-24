@@ -7,7 +7,8 @@ folder per world in `bases.json`, `akit kb path`, Settings → Knowledge; 1.5, K
 `akit kb seed`, Add/Remove Sample Base…, `akit kb rm`); spike 2.0 (Excalidraw
 bundle, results below) done 2026-10-24; 2.1 (reading `.excalidraw`, the map graph, `akit kb maps`,
 `relations`, `new-map`, two seeded maps) built 2026-10-24; 2.2a (the read-only map view: Maps
-in the list, view mode, a click on a block opens its note, map snapshots) built 2026-10-24.
+in the list, view mode, a click on a block opens its note, map snapshots) built 2026-10-24; 2.2b (Edit,
+saves of Excalidraw's own bytes, Changed on disk, maps in the commit queue, New Map…, Delete…) built 2026-10-24.
 Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
@@ -156,6 +157,19 @@ point, shapes before arrows; a drag of more than 4 px is a pan) and posts `linkO
 own `onLinkOpen` is only prevented. A note link opens that note beside the map, a map link that map,
 an `http(s)` link the default browser. A synthetic AppKit click does not reach a web view, so
 snapshots (`--click` on the canvas) send pointer events into the page (`akitClick`).
+
+How 2.2b saves a map: in Edit the bridge posts one `serializeAsJSON(…, "local")` string 800 ms after
+the last change, only when its hash differs from the last one posted, with the map id it was loaded
+under (a change still waiting when another map loads goes out under its own id). A load hashes its
+own serialization (again 100 ms later, once Excalidraw has applied the app state) without posting,
+so opening never dirties a map (N4). Swift writes those bytes with
+`KnowledgeWrite.saveChecked`: only while the file still hashes to what AKit read or last wrote,
+else "Changed on disk: Reload / Keep Mine" (Keep Mine backs up the disk copy with `Backup.save`).
+Saved maps join the commit queue ("Edit maps: …"). Close Map, a base switch, the quit flush and the
+Update flush first take the change still waiting (`akitTakeUnsaved`, the N5 routine). Found on the
+way: `NSApp.terminate` called from a main-actor task hangs, because `.terminateLater` waits in a
+nested event loop for the flush, which needs the main actor; Update now terminates from the run
+loop (`perform(_:with:afterDelay:)`).
 
 How 2.1 reads a map (`ExcalidrawFile`, `MapGraph`): a block is a live shape whose `link`
 resolves to a note (P1, from the map's path); its label is its bound text or, in a CLI draft,

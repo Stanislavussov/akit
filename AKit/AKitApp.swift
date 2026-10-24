@@ -138,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         Task { @MainActor in
             await KnowledgeModel.within(seconds: 5) {
-                // Step 2.2b: force-post and save every dirty canvas here, before the flush.
+                // The open map's change still waiting for its post is saved first (N5), then committed.
                 await KnowledgeModel.flushBeforeQuit()
             }
             sender.reply(toApplicationShouldTerminate: true)

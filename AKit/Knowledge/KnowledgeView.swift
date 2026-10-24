@@ -10,7 +10,7 @@ import SwiftUI
 /// without a remote; AKit commits your edits in batches.
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
-    /// Snapshots: `--tab new-area|new-note|create-base|kinds|area-settings`.
+    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
     /// Add Sample Base… / Remove Sample Base… waiting for confirmation. Snapshots: `--tab sample-remove`.
@@ -19,7 +19,7 @@ struct KnowledgeView: View {
     enum SampleRequest { case add, remove }
 
     enum Sheet: String, Identifiable {
-        case createBase = "create-base", newArea = "new-area", newNote = "new-note", kinds, areaSettings = "area-settings"
+        case createBase = "create-base", newArea = "new-area", newNote = "new-note", newMap = "new-map", kinds, areaSettings = "area-settings"
         var id: Self { self }
     }
 
@@ -90,6 +90,11 @@ struct KnowledgeView: View {
                     .help("Write a new note in a space; it is committed at once")
             }
             ToolbarItem {
+                Button("New Map…", systemImage: "point.3.connected.trianglepath.dotted") { sheet = .newMap }
+                    .disabled(model.base == nil)
+                    .help("Draw a new map of a space: blocks for its notes, arrows between them; it is committed at once")
+            }
+            ToolbarItem {
                 Button("Kinds…", systemImage: "tag") { sheet = .kinds }
                     .disabled(model.base == nil)
                     .help("The kinds of notes in this base (service, flow, team…) and the fields of each, kept in kb.yaml")
@@ -111,6 +116,7 @@ struct KnowledgeView: View {
             case .createBase: CreateBaseSheet()
             case .newArea: NewAreaSheet()
             case .newNote: NewNoteSheet()
+            case .newMap: NewMapSheet()
             case .kinds: KindsSheet()
             case .areaSettings: AreaSettingsSheet(area: model.area ?? "")
             }
@@ -136,6 +142,20 @@ struct KnowledgeView: View {
             } else {
                 Text("A separate base, sample, with made-up notes about a shop: two spaces, a note of every kind, links between them. Your bases stay as they are; Remove Sample Base… moves it to the Trash.")
             }
+        }
+        .confirmationDialog("Move the map \(model.mapDeleteRequest ?? "") to the Trash?",
+                            isPresented: Binding(get: { model.mapDeleteRequest != nil }, set: { if !$0 { model.mapDeleteRequest = nil } })) {
+            Button("Move to Trash", role: .destructive) {
+                if let id = model.mapDeleteRequest { Task { await model.delete(map: id) } }
+            }
+        } message: {
+            Text("The .excalidraw file goes to the Trash, and its removal is committed in the base's git. Notes stay as they are.")
+        }
+        .alert("Changed on disk", isPresented: Binding(get: { model.mapConflict != nil }, set: { _ in })) {
+            Button("Reload") { model.reloadConflictedMap() }
+            Button("Keep Mine") { model.keepMineInConflict() }
+        } message: {
+            Text("The map \(model.mapConflict?.id ?? "") changed on disk after AKit opened it, in another app or by git. Reload shows the version on disk and drops your change. Keep Mine saves your version and backs up the one on disk in ~/.akit/backups.")
         }
         .task { await model.load(select: DebugSnapshot.options?.select) }
     }
@@ -179,8 +199,10 @@ struct KnowledgeView: View {
             if value.hasPrefix("map:") {
                 model.open(map: String(value.dropFirst("map:".count)))
             } else {
-                model.closeMap()
-                model.open(value)
+                Task {
+                    await model.closeMap()
+                    model.open(value)
+                }
             }
         })
     }
@@ -196,8 +218,9 @@ struct KnowledgeView: View {
                             .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
                             .contextMenu {
                                 Button("Show in Finder") {
-                                    if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: id + ".excalidraw")]) }
+                                    if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
                                 }
+                                Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
                             }
                     }
                 }

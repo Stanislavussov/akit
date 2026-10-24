@@ -8,12 +8,20 @@ import WebKit
 /// every http(s) load, and other navigations are cancelled. The page talks to AKit through the
 /// `kb` message handler (`web/excalidraw/bridge.js` describes the messages).
 struct MapCanvasView: NSViewRepresentable {
-    /// The `.excalidraw` text to show once the canvas is ready; a new text replaces the scene.
-    var scene: String
+    /// What the canvas shows: a map's `.excalidraw` text, the key its saves carry (the map id), and
+    /// a generation that a Reload raises, so the same text can be loaded again.
+    struct Scene: Equatable {
+        var key: String
+        var text: String
+        var generation = 0
+    }
+
+    /// The scene to show once the canvas is ready; a different one replaces it.
+    var scene: Scene
     /// Excalidraw's view mode (`viewModeEnabled`): nothing can be edited, and a click on a block or
-    /// arrow opens its link. Editing comes in 2.2b.
+    /// arrow opens its link. Off is Edit: every change is posted as `save` (`bridge.js`).
     var viewMode = true
-    /// Every message from the page (`type`: ready, sceneLoaded, linkOpen, problem).
+    /// Every message from the page (`type`: ready, sceneLoaded, linkOpen, save, problem).
     var onMessage: (MapCanvasMessage) -> Void = { _ in }
 
     /// The page's policy, sent as a header with every response; the smallest one that works
@@ -26,7 +34,7 @@ struct MapCanvasView: NSViewRepresentable {
     static let scheme = "akit-web"
     static let pageURL = URL(string: "\(scheme)://app/index.html")!
 
-    func makeCoordinator() -> Coordinator { Coordinator(scene: scene, onMessage: onMessage) }
+    func makeCoordinator() -> Coordinator { Coordinator(scene: scene, viewMode: viewMode, onMessage: onMessage) }
 
     /// What the page reads before its scripts run (the CSP doesn't apply to a user script).
     static func optionsScript(viewMode: Bool) -> WKUserScript {
@@ -49,9 +57,16 @@ struct MapCanvasView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.onMessage = onMessage
-        if context.coordinator.scene != scene {
-            context.coordinator.scene = scene
-            if context.coordinator.isReady { Task { await context.coordinator.loadScene() } }
+        let coordinator = context.coordinator
+        if coordinator.scene != scene {
+            coordinator.scene = scene
+            if coordinator.isReady { Task { await coordinator.loadScene() } }
+        }
+        if coordinator.viewMode != viewMode {
+            coordinator.viewMode = viewMode
+            if coordinator.isReady {
+                Task { _ = try? await webView.callAsyncJavaScript("akitSetViewMode(on)", arguments: ["on": viewMode], contentWorld: .page) }
+            }
         }
     }
 
@@ -63,7 +78,9 @@ struct MapCanvasView: NSViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         let files = MapWebFiles(root: Bundle.main.resourceURL!.appending(path: "excalidraw"),
                                 contentSecurityPolicy: MapCanvasView.contentSecurityPolicy)
-        var scene: String
+        var scene: Scene
+        /// The view mode the page has (set at start by the options script, later by `akitSetViewMode`).
+        var viewMode: Bool
         var onMessage: (MapCanvasMessage) -> Void
         weak var webView: WKWebView?
         /// Navigations the delegate cancelled (anything but the map page itself).
@@ -76,8 +93,9 @@ struct MapCanvasView: NSViewRepresentable {
         /// The canvas on screen, for snapshots (one map at a time).
         private(set) static weak var current: Coordinator?
 
-        init(scene: String, onMessage: @escaping (MapCanvasMessage) -> Void) {
+        init(scene: Scene, viewMode: Bool, onMessage: @escaping (MapCanvasMessage) -> Void) {
             self.scene = scene
+            self.viewMode = viewMode
             self.onMessage = onMessage
             super.init()
             Self.current = self
@@ -104,7 +122,13 @@ struct MapCanvasView: NSViewRepresentable {
             guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
             let event = MapCanvasMessage(type: type, body: body)
             onMessage(event)
-            if DebugSnapshot.options != nil { print("map: \(type) \(Self.json(body))") }
+            if DebugSnapshot.options != nil {
+                if type == "save" {
+                    print("map: save \(body["key"] as? String ?? "?"), \((body["json"] as? String)?.utf8.count ?? 0) bytes")
+                } else {
+                    print("map: \(type) \(Self.json(body))")
+                }
+            }
             switch type {
             case "ready":
                 isReady = true
@@ -145,16 +169,34 @@ struct MapCanvasView: NSViewRepresentable {
             for path in canvas.files.served { print("map served: \(MapCanvasView.scheme)://app/\(path)") }
             print("map refused loads: \(canvas.files.refused), cancelled navigations: \(canvas.cancelledNavigations)")
             print("map elements: \(elements)")
+            await canvas.printPosts()
         }
 
         static func json(_ value: Any) -> String {
             (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])).flatMap { String(data: $0, encoding: .utf8) } ?? "\(value)"
         }
 
+        /// Snapshots: how many saves the page handed to AKit (N4: 0 after an open without edits).
+        func printPosts() async {
+            let posts = (try? await webView?.callAsyncJavaScript("return akitPosts()", contentWorld: .page)) as? NSNumber
+            print("posts: \(posts?.intValue ?? -1)")
+        }
+
+        /// The flushes (N5): a change still waiting for its 800 ms post, handed over now; nil when
+        /// the scene is as last posted, or the page doesn't answer.
+        func takeUnsaved() async -> (key: String, json: String)? {
+            guard isReady, let webView,
+                  let save = try? await webView.callAsyncJavaScript("return akitTakeUnsaved()", contentWorld: .page) as? [String: Any],
+                  let key = save["key"] as? String, let json = save["json"] as? String
+            else { return nil }
+            return (key, json)
+        }
+
         func loadScene() async {
             guard let webView else { return }
             do {
-                _ = try await webView.callAsyncJavaScript("return akitLoadScene(json)", arguments: ["json": scene], contentWorld: .page)
+                _ = try await webView.callAsyncJavaScript("return akitLoadScene(json, key)", arguments: ["json": scene.text, "key": scene.key],
+                                                          contentWorld: .page)
             } catch {
                 onMessage(MapCanvasMessage(type: "problem", body: ["message": "akitLoadScene: \(error.localizedDescription)"]))
             }
