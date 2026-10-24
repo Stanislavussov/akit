@@ -670,6 +670,7 @@ pi:
 - «Я ещё не сделал push, но хочу ревью до MR» → ревью копии.
 - «Агент в Orca закончил задачу в своём worktree» → `akit review local .` в терминале этого worktree.
 - «Хочу проверить только то, что ещё не закоммитил» → **Uncommitted changes only**.
+- «Хочу ревью чужой ветки или отрезка истории, но не помню точное имя» → **Find…** у полей **Base** и **Head** (см. [найти ветку или коммит](#local-find)).
 - «Код не лежит в GitLab» → ревью копии работает с любым репозиторием git.
 
 **Чем отличается от ревью MR:**
@@ -686,16 +687,18 @@ pi:
 2. Вверху окна в переключателе **Review** выберите **Local Workspace**. Второе значение, **Merge Request**, — обычное ревью MR.
 3. В поле **Workspace** вставьте путь к папке копии. Или нажмите **Choose…** и выберите папку. Подойдёт и папка внутри репозитория: AKit найдёт его корень.
 4. Поле **Base** оставьте пустым. Тогда базой будет главная ветка (см. [диапазон](#local-range)).
-5. Прочитайте строки под полями: ветка, коммит, база и что AKit нашёл для ревью.
-6. В **What to review** выберите, что смотреть (см. [три режима](#local-modes)).
-7. Выберите **Scenario** и роли, как для MR. Поля **Work items** здесь нет.
-8. Нажмите **Start Review**.
+5. Поле **Head** тоже оставьте пустым. Тогда концом будет ваш последний коммит (HEAD) и незакоммиченные файлы.
+6. Прочитайте строки под полями: ветка, коммит, база и что AKit нашёл для ревью.
+7. В **What to review** выберите, что смотреть (см. [три режима](#local-modes)).
+8. Выберите **Scenario** и роли, как для MR. Поля **Work items** здесь нет.
+9. Нажмите **Start Review**.
 
-![Окно New Review… в режиме Local Workspace: переключатель Review со значениями Merge Request и Local Workspace; поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service и кнопка Choose…; пустое поле Base с подсказкой empty: the default branch (origin/HEAD, main or master); строка feature/4630-export-csv at <коммит> · base main; строка 2 commits since main (<коммит>..<коммит>) and 2 uncommitted files.; список What to review со значением Commits and uncommitted changes; свёрнутые Commits (2) и Uncommitted files (2); строка Project profile: orders-service (orders-service.yaml); подпись In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF).; ниже блок Scenario and roles со сценарием Bugfix; внизу подпись Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local.png)
+![Окно New Review… в режиме Local Workspace: переключатель Review со значениями Merge Request и Local Workspace; поле Workspace с путём /private/tmp/akit-demo-home/work/orders-service и кнопка Choose…; пустое поле Base с подсказкой empty: the default branch (origin/HEAD, main or master) и кнопкой Find…; пустое поле Head с подсказкой empty: HEAD of the workspace, with its uncommitted changes и кнопкой Find…; строка feature/4630-export-csv at <коммит> · base main; строка 2 commits since main (<коммит>..<коммит>) and 2 uncommitted files.; список What to review со значением Commits and uncommitted changes; свёрнутые Commits (2) и Uncommitted files (2); строка Project profile: orders-service (orders-service.yaml); подпись In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF, --head REF); akit review points . --find TEXT finds a ref.; ниже блок Context; внизу подпись Pi reads a copy of the workspace at the reviewed commit, never the workspace itself. The findings stay in AKit. и кнопки Cancel и Start Review](images/review-local.png)
 
 Что значат строки под полями:
 
 - «feature/4630-export-csv at 1d5d1f6feb · base main» — ветка копии, её последний коммит и база.
+- «up to release/1.4 at f7117b5cf7 · base main» — в **Head** вписана другая ветка или коммит: ревью идёт до неё.
 - «2 commits since main (a08971f8bb..1d5d1f6feb) and 2 uncommitted files.» — есть и коммиты, и незакоммиченные файлы. В скобках диапазон коммитов.
 - «No commits since origin/master: only the uncommitted changes (13 files) to review.» — новых коммитов нет, есть только незакоммиченные файлы.
 - «Nothing to review: no commits since main and no uncommitted changes.» — смотреть нечего. Что делать: [Nothing to review](#local-nothing).
@@ -703,11 +706,43 @@ pi:
 - **Uncommitted files (N)** раскрывает незакоммиченные файлы, как их пишет `git status`. Пример: « M src/Orders/OrdersController.cs» — файл изменён, «?? docs/export.md» — новый файл.
 - «Project profile: orders-service (orders-service.yaml)» — профиль проекта найден. Ревью возьмёт его правила, сценарий по умолчанию и роли.
 - «No project profile for this repository: no project rules.» — профиля нет. Ревью пойдёт без правил проекта.
-- Красная строка — AKit не смог прочитать папку. Примеры: «… is not a git workspace.» (это не репозиторий git), «… has no commit yet.» (в репозитории нет ни одного коммита), «… is not a branch, tag or commit of …» (в **Base** нет такой ветки).
+- Красная строка — AKit не смог прочитать папку. Примеры: «… is not a git workspace.» (это не репозиторий git), «… has no commit yet.» (в репозитории нет ни одного коммита), «… is not a branch, tag or commit of …» (в **Base** или **Head** нет такой ветки).
 
 **Start Review** активна, когда в выбранном режиме есть что смотреть.
 
 Нижняя строка окна говорит главное: Pi читает отдельную копию на коммите ревью, а не вашу папку. Находки остаются в AKit.
+
+### Просто: найти ветку или коммит: Find…
+<!-- section: local-find -->
+
+Точное имя ветки или хэш коммита помнить не нужно. Кнопка **Find…** справа от **Base** и от **Head** ищет их по слову.
+
+1. Заполните **Workspace**. Пока папки нет, **Find…** неактивна.
+2. Нажмите **Find…** у **Base** (откуда считать) или у **Head** (до чего смотреть).
+3. В окне «Find the base» (или «Find the head») сразу видны последние ветки, теги и коммиты.
+4. Впишите слово в поле поиска. Подойдёт часть имени ветки или тега, слово из заголовка коммита, автор или начало хэша. Пример: `4630`, `csv`, `alice`, `1d5d1f`.
+5. Нажмите на строку. Её имя встанет в поле: имя ветки или тега, у коммита — 12 знаков хэша. **Cancel** закрывает окно без выбора.
+
+Несколько слов ищут вместе: строка подходит, только если в ней есть каждое слово. Пример: `export csv`. Большие и маленькие буквы не важны.
+
+![Окно Find the base поверх New Review…: пустое поле поиска с подсказкой a word of a branch, tag, commit message or id; ветки feature/4630-export-csv, main и release/1.4 со значком ветки, тег v1.4.0 со значком тега — у каждой строки короткий хэш, дата, автор и заголовок коммита; ниже коммиты Test the CSV header, Add a CSV export of orders (AB#4630) и Start orders-service с хэшем, датой и автором; внизу подпись Branches and tags first, the most recent first; then the commits of all branches. Click one to use it. и кнопка Cancel](images/review-local-find.png)
+
+Порядок строк:
+
+- Сначала ветки (значок ветки), ветки `origin/…` (облако) и теги (ярлык). Свежие — выше; у тега с сообщением — дата самого тега.
+- Потом коммиты всех веток (кружок), новые — выше. Строка коммита — его заголовок, под ним хэш, дата и автор.
+- Окно показывает до 30 строк. Не нашли нужное — уточните слово.
+- Коммит старше последней тысячи коммитов находится только по началу хэша (не меньше 4 знаков).
+
+В терминале то же делает `akit review points . --find TEXT`. С `--json` — список для скрипта. Пример:
+
+```
+$ akit review points . --find csv
+branch  feature/4630-export-csv  1d5d1f6feb 2026-10-16 Alice: Test the CSV header
+commit  1d5d1f6feb8c  1d5d1f6feb 2026-10-16 Alice: Test the CSV header
+commit  7e30b2c41d0a  7e30b2c41d 2026-10-16 Alice: Add a CSV export of orders (AB#4630)
+Use one with akit review local --base NAME or --head NAME.
+```
 
 ### Просто: начать из терминала Orca или herdr
 <!-- section: local-terminal -->
@@ -739,7 +774,8 @@ To review: commits and uncommitted changes.
 Флаги:
 
 - `--what all|commits|uncommitted` — режим (см. [три режима](#local-modes)). Без флага — всё, что есть.
-- `--base REF` — своя база (см. [поле Base](#local-base)).
+- `--base REF` — своя база (см. [поля Base и Head](#local-base)).
+- `--head REF` — свой конец диапазона: другая ветка или коммит вместо HEAD (см. [поля Base и Head](#local-base)).
 - `--show` — только показать, что будет в ревью.
 - Остальные флаги как у ревью MR: `--scenario`, `--project`, `--role +ID` и `-ID`, `--passes-model`, `--verifier-model`, `--cap`, `--gather-only` (см. [ревью из командной строки](#run-cli)).
 
@@ -748,9 +784,9 @@ To review: commits and uncommitted changes.
 ### Средне: что такое диапазон
 <!-- section: local-range -->
 
-Диапазон — это коммиты, которые смотрит ревью. Он идёт от базы до вашего последнего коммита (HEAD).
+Диапазон — это коммиты, которые смотрит ревью. Он идёт от базы до вашего последнего коммита (HEAD) или до того, что вписано в **Head**.
 
-1. **База** — главная ветка репозитория. AKit ищет её по порядку: `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`. Он берёт первую, которая есть. Вашу текущую ветку он не берёт.
+1. **База** — главная ветка репозитория. AKit ищет её по порядку: `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master`. Он берёт первую, которая есть. Вашу текущую ветку (или ветку из **Head**) он не берёт.
 2. **Merge base** — коммит, где ваша ветка ушла от базы.
 3. **Коммиты ревью** — от merge base до HEAD. Это те коммиты, которые были бы в MR.
 
@@ -773,7 +809,7 @@ To review: commits and uncommitted changes.
 
 На странице ревью вторая строка повторяет режим и что вошло. Пример: «Commits and uncommitted changes: 2 commits since main and 2 uncommitted files. A local review stays in AKit: nothing goes to GitLab.».
 
-### Средне: поле Base и --base
+### Средне: поля Base и Head, --base и --head
 <!-- section: local-base -->
 
 Пустое поле **Base** — база по умолчанию (см. [диапазон](#local-range)). Своя база нужна, когда:
@@ -783,6 +819,17 @@ To review: commits and uncommitted changes.
 - AKit не нашёл главную ветку (строка «base none»).
 
 В **Base** подходит ветка, тег или коммит. В терминале то же делает `--base REF`. Пример: `akit review local . --base origin/develop`.
+
+Пустое поле **Head** — конец диапазона ваш HEAD, вместе с незакоммиченными файлами. Свой **Head** нужен, когда:
+
+- вы хотите ревью другой ветки, не переключаясь на неё. Пример: `origin/feature/4701-refunds`;
+- вы хотите ревью отрезка истории. Пример: **Base** `v1.4.0`, **Head** `v1.5.0` — всё, что вошло в выпуск 1.5.0.
+
+В **Head** тоже подходит ветка, тег или коммит. В терминале — `--head REF`. Пример: `akit review local . --base v1.4.0 --head v1.5.0`.
+
+Если **Head** — не ваш HEAD, незакоммиченные файлы в ревью не входят: они лежат на вашем HEAD. Тогда **What to review** даёт одно значение: **Commits only**. Если в **Head** вписана ваша же текущая ветка, это всё ещё ваш HEAD, и незакоммиченные файлы остаются.
+
+Имя ветки или коммита можно не вспоминать: [Find…](#local-find) ищет по слову.
 
 ### Средне: «Nothing to review»
 <!-- section: local-nothing -->

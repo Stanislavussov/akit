@@ -37,6 +37,8 @@ public struct ReviewLocalTarget: Codable, Sendable, Hashable {
     public var branch: String
     /// What the commits are counted from: `origin/main`, or the ref the user gave.
     public var baseRef: String
+    /// The ref the user gave as the end of the range; nil = the workspace's HEAD.
+    public var headRef: String?
     public var mode: Mode
     /// The diff is `base..head`.
     public var base: String
@@ -71,6 +73,9 @@ public enum ReviewLocal {
         public var repository: String
         public var branch: String
         public var head: String
+        /// The end of the range the user gave; nil = the workspace's HEAD (then the uncommitted
+        /// changes count too).
+        public var headRef: String?
         /// nil when no base branch was found (a repository without `main` or `master`).
         public var baseRef: String?
         public var mergeBase: String?
@@ -117,7 +122,9 @@ public enum ReviewLocal {
 
     /// Reads the workspace: its branch, the base, the commits since it, the uncommitted files.
     /// `baseRef`: the ref to count from; nil = the repository's default branch.
-    public static func inspect(path: URL, baseRef: String? = nil, env: HarnessEnvironment) async throws -> Inspection {
+    /// `headRef`: the end of the range; nil = HEAD. Another commit than HEAD has no uncommitted
+    /// changes: they belong to the workspace's HEAD.
+    public static func inspect(path: URL, baseRef: String? = nil, headRef: String? = nil, env: HarnessEnvironment) async throws -> Inspection {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git is not installed.") }
         func raw(_ arguments: [String], in folder: URL = path) async -> String? {
             let result = await ProcessRunner.run(git, arguments: ["-C", folder.path] + arguments, environment: env.gitVariables, timeout: 60)
@@ -131,10 +138,23 @@ public enum ReviewLocal {
             throw Failure(message: "\(path.path) is not a git workspace.")
         }
         let root = URL(filePath: top)
-        guard let head = await run(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], in: root), !head.isEmpty else {
+        guard let workspaceHead = await run(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], in: root), !workspaceHead.isEmpty else {
             throw Failure(message: "\(top) has no commit yet.")
         }
-        let branch = await run(["rev-parse", "--abbrev-ref", "HEAD"], in: root) ?? "HEAD"
+        var head = workspaceHead
+        var branch = await run(["rev-parse", "--abbrev-ref", "HEAD"], in: root) ?? "HEAD"
+        var chosenHead: String?
+        if let headRef {
+            guard isRefName(headRef), let sha = await run(["rev-parse", "--verify", "--quiet", "\(headRef)^{commit}"], in: root), !sha.isEmpty else {
+                throw Failure(message: "\(headRef) is not a branch, tag or commit of \(top).")
+            }
+            // The workspace's own HEAD by another name is still the workspace, with its changes.
+            if sha != workspaceHead {
+                head = sha
+                branch = headRef
+                chosenHead = headRef
+            }
+        }
         var base: String?
         if let baseRef {
             guard isRefName(baseRef), await run(["rev-parse", "--verify", "--quiet", "\(baseRef)^{commit}"], in: root) != nil else {
@@ -154,9 +174,9 @@ public enum ReviewLocal {
         }
         var mergeBase: String?
         var commits: [ReviewLocalTarget.Commit] = []
-        if let base, let point = await run(["merge-base", "HEAD", base], in: root), !point.isEmpty {
+        if let base, let point = await run(["merge-base", head, base], in: root), !point.isEmpty {
             mergeBase = point
-            let log = await run(["log", "-n", String(maxCommits), "--date=short", "--format=%H%x1f%s%x1f%an%x1f%ad", "\(point)..HEAD"], in: root) ?? ""
+            let log = await run(["log", "-n", String(maxCommits), "--date=short", "--format=%H%x1f%s%x1f%an%x1f%ad", "\(point)..\(head)"], in: root) ?? ""
             commits = log.split(separator: "\n").compactMap { line in
                 let parts = line.split(separator: "\u{1F}", omittingEmptySubsequences: false).map(String.init)
                 guard parts.count == 4 else { return nil }
@@ -164,10 +184,10 @@ public enum ReviewLocal {
             }
         }
         // Untrimmed: a status line starts with a space when only the working tree changed.
-        let status = await raw(["status", "--porcelain=v1", "--untracked-files=all"], in: root) ?? ""
+        let status = chosenHead != nil ? "" : await raw(["status", "--porcelain=v1", "--untracked-files=all"], in: root) ?? ""
         let uncommitted = status.split(separator: "\n").map(String.init).filter { !$0.isEmpty }.prefix(maxUncommitted)
         let remote = await run(["remote", "get-url", "origin"], in: root).flatMap(remoteProject)
-        return Inspection(path: top, repository: root.lastPathComponent, branch: branch, head: head, baseRef: base, mergeBase: mergeBase,
+        return Inspection(path: top, repository: root.lastPathComponent, branch: branch, head: head, headRef: chosenHead, baseRef: base, mergeBase: mergeBase,
                           commits: commits, uncommitted: Array(uncommitted), remoteProject: remote?.project, remoteHost: remote?.host)
     }
 
@@ -185,7 +205,7 @@ public enum ReviewLocal {
         let base = takesCommits ? inspection.mergeBase! : inspection.head
         let head = takesChanges ? try await snapshot(URL(filePath: inspection.path), env: env) : inspection.head
         return ReviewLocalTarget(path: inspection.path, repository: inspection.repository, branch: inspection.branch,
-                                 baseRef: takesCommits ? (inspection.baseRef ?? "?") : "HEAD", mode: mode, base: base, head: head,
+                                 baseRef: takesCommits ? (inspection.baseRef ?? "?") : "HEAD", headRef: inspection.headRef, mode: mode, base: base, head: head,
                                  commits: takesCommits ? inspection.commits : [], uncommitted: takesChanges ? inspection.uncommitted : [])
     }
 
@@ -217,9 +237,11 @@ public enum ReviewLocal {
         return try await run(["commit-tree", tree, "-p", "HEAD", "-m", "AKit review: uncommitted changes"])
     }
 
-    /// A ref the user typed: a branch, tag, remote branch or commit id, never an option.
+    /// A ref the user typed: a branch, tag, remote branch or commit id (`HEAD~2` too), never an
+    /// option. Branch names can hold `#` and `+` (`feature/AB#41-total`); git refuses spaces,
+    /// `:`, `?`, `*`, `[`, `\\` and `..` in a ref, and `{` would let a revision suffix in.
     static func isRefName(_ text: String) -> Bool {
-        text.range(of: "^[A-Za-z0-9_][A-Za-z0-9._/~^-]*$", options: .regularExpression) != nil && !text.contains("..")
+        text.range(of: #"^[A-Za-z0-9_][^\s:?*\[\\{}]*$"#, options: .regularExpression) != nil && !text.contains("..")
             && !text.hasSuffix(".lock") && text.count <= 200
     }
 

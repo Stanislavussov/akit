@@ -194,5 +194,15 @@ extension AKitCLITests {
         #expect(await review(["local", repo.path, "--what", "uncommitted", "--show"]).err.contains("Nothing to review with --what uncommitted"))
         #expect(await review(["local", repo.path, "--what", "some"]).err.contains("--what is all, commits or uncommitted"))
         #expect(!FileManager.default.fileExists(atPath: home.appending(path: ".akit/local/review/runs").path), "--show starts nothing")
+
+        // Find the points, then review up to another head.
+        let found = await review(["points", repo.path, "--find", "first"])
+        #expect(found.code == 0 && found.out.contains("branch  main") && found.out.contains("First") && !found.out.contains("Change a"), "\(found)")
+        let json = await review(["points", repo.path, "--json"])
+        #expect(json.out.contains("\"kind\" : \"branch\"") && json.out.contains("\"subject\" : \"Change a\""))
+        #expect(await review(["points", repo.path, "--find", "zzz"]).out.contains("No branch, tag or commit matches zzz."))
+        git("checkout", "-q", "main")
+        let upTo = await review(["local", repo.path, "--head", "topic", "--show"])
+        #expect(upTo.code == 0 && upTo.out.contains("up to topic") && upTo.out.contains("1 commit since main ("), "\(upTo)")
     }
 }

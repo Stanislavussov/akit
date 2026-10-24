@@ -1098,6 +1098,9 @@ public class OrderCsvTests
 }
 EOF
 git -C "$LOCAL" add -A && GIT_AUTHOR_NAME="Alice" git -C "$LOCAL" commit -qm "Test the CSV header"
+# More points for Find… of Base and Head: a release branch and a tag on main.
+git -C "$LOCAL" branch release/1.4 main
+git -C "$LOCAL" tag -a v1.4.0 -m "Release 1.4.0" main
 # Not committed yet: a changed controller and a new file.
 cat >> "$LOCAL/src/Orders/OrdersController.cs" <<<"// GET /orders.csv: OrderCsv.Write(store.All())"
 file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."

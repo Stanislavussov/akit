@@ -27,15 +27,21 @@ extension AKitCLI {
                                         already reviewed this commit. A rerun after a push reviews
                                         only what changed since the last review; --full reads the
                                         whole merge request again
-      akit review local [PATH] [--base REF] [--what all|commits|uncommitted] [--show]
+      akit review points [PATH] [--find TEXT] [--json]
+                                        Find a base or head for a local review: the branches, remote
+                                        branches, tags and commits of the workspace (PATH: the current
+                                        folder) whose name, commit message, author or id holds every
+                                        word of TEXT; the most recent first
+      akit review local [PATH] [--base REF] [--head REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
                          [--link URL]… [--extra-server NAME]… [--gather-only]
                                         Review a local git workspace (an Orca or herdr worktree; PATH
                                         defaults to the current folder): the commits since the base
-                                        branch (origin/HEAD, main or master; or --base), the
-                                        uncommitted changes, or both (--what, default: everything
-                                        there is). Prints the range and the commits first; --show
+                                        branch (origin/HEAD, main or master; or --base) up to HEAD
+                                        (or --head: another branch or commit, without the uncommitted
+                                        changes), the uncommitted changes, or both (--what, default:
+                                        everything there is). Prints the range and the commits first; --show
                                         stops there. Pi reads a copy, never the workspace; nothing
                                         goes to GitLab. With --link, a fetch pass reads the links
 
@@ -156,6 +162,8 @@ extension AKitCLI {
         let lineText = args.value("--line")
         let anyway = args.flag("--anyway")
         let baseRef = args.value("--base")
+        let headRef = args.value("--head")
+        let findText = args.value("--find")
         let whatText = args.value("--what")
         let showOnly = args.flag("--show")
         var choices = ReviewRunChoices(scenario: scenario, settings: settings, workItems: wis)
@@ -392,6 +400,22 @@ extension AKitCLI {
             let url = try id.map { try ReviewWorkflow.load(try runFolder($0, env: env)).spec.mergeRequest.url }
             out(outcomesText(ReviewOutcomes.all(home: env.homeDirectory).filter { url == nil || $0.mergeRequest == url }))
             return 0
+        case "points":
+            let path = args.positional().map { resolve($0, cwd: cwd, env: env) } ?? cwd
+            let json = args.flag("--json")
+            try args.finish()
+            let points = try await ReviewLocal.points(path: path, query: findText ?? "", env: env)
+            if json {
+                out(String(decoding: try ReviewJSON.encoder.encode(points), as: UTF8.self))
+            } else if points.isEmpty {
+                out(findText.map { "No branch, tag or commit matches \($0)." } ?? "No branch, tag or commit here.")
+            } else {
+                for point in points {
+                    out("\(point.kind.rawValue.padding(toLength: 7, withPad: " ", startingAt: 0)) \(point.name)  \(point.sha.prefix(10)) \(point.date) \(point.author): \(point.subject)")
+                }
+                out("Use one with akit review local --base NAME or --head NAME.")
+            }
+            return 0
         case "local":
             let path = args.positional().map { resolve($0, cwd: cwd, env: env) } ?? cwd
             try args.finish()
@@ -399,7 +423,7 @@ extension AKitCLI {
                 guard let mode = ReviewLocalTarget.Mode(rawValue: text) else { throw Failure(message: "--what is all, commits or uncommitted, not \(text).") }
                 return mode
             }
-            let inspection = try await ReviewLocal.inspect(path: path, baseRef: baseRef, env: env)
+            let inspection = try await ReviewLocal.inspect(path: path, baseRef: baseRef, headRef: headRef, env: env)
             out(localText(inspection))
             guard let chosen = mode ?? inspection.suggestedMode else { return 0 }
             guard inspection.has(chosen) else { throw Failure(message: "Nothing to review with --what \(chosen.rawValue). " + inspection.summary) }
@@ -495,7 +519,7 @@ extension AKitCLI {
     /// The workspace before a local review: branch, base, the commits of the range, the
     /// uncommitted files.
     static func localText(_ inspection: ReviewLocal.Inspection) -> String {
-        var lines = ["Workspace \(inspection.path) on \(inspection.branch) at \(inspection.head.prefix(10))",
+        var lines = ["Workspace \(inspection.path) " + (inspection.headRef == nil ? "on" : "up to") + " \(inspection.branch) at \(inspection.head.prefix(10))",
                      "Base: " + (inspection.baseRef.map { "\($0), merge base \(inspection.mergeBase?.prefix(10) ?? "none")" }
                         ?? "none found (give one with --base)"),
                      inspection.summary]
