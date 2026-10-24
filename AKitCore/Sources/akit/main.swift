@@ -49,5 +49,7 @@ let code = await AKitCLI.run(Array(CommandLine.arguments.dropFirst()), env: env,
                              installedTargets: installed,
                              out: { print($0) },
                              err: { FileHandle.standardError.write(Data(($0 + "\n").utf8)) },
-                             ask: ask, preferences: preferences)
+                             ask: ask, preferences: preferences,
+                             // Read only by the commands that take stdin (kb propose --stdin, translate -).
+                             input: { (try? FileHandle.standardInput.readToEnd()) ?? Data() })
 exit(code)
