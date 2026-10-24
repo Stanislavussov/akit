@@ -122,6 +122,13 @@ extension ReviewProcessTests {
             let byID = try await ReviewLocal.points(path: repo, query: String(first.prefix(7)), env: home.env)
             #expect(byID.contains { $0.kind == .commit && $0.sha == first && $0.name == String(first.prefix(12)) })
             #expect(try await ReviewLocal.points(path: repo, query: "nothing-like-this", env: home.env).isEmpty)
+
+            // One kind at a time; the limit counts only that kind.
+            #expect(try await ReviewLocal.points(path: repo, query: "vat", filter: .branches, env: home.env).map(\.name) == ["feature/AB#41-total"])
+            #expect(try await ReviewLocal.points(path: repo, query: "vat", filter: .commits, env: home.env).map(\.subject) == ["Add VAT"])
+            #expect(try await ReviewLocal.points(path: repo, filter: .tags, env: home.env).map(\.name) == ["v1"])
+            #expect(try await ReviewLocal.points(path: repo, filter: .commits, limit: 2, env: home.env).allSatisfy { $0.kind == .commit })
+            #expect(try await ReviewLocal.points(path: repo, filter: .commits, limit: 2, env: home.env).count == 2)
             await #expect(throws: ReviewLocal.Failure.self) { try await ReviewLocal.points(path: home.url, env: home.env) }
         }
 

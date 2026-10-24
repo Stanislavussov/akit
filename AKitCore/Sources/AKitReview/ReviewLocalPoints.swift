@@ -17,6 +17,30 @@ public struct ReviewLocalPoint: Codable, Sendable, Hashable, Identifiable {
     public var author: String
     public var date: String
     public var id: String { "\(kind.rawValue):\(name)" }
+
+    /// What Find… shows: everything, or one kind (Branches holds the remote ones too).
+    public enum Filter: String, Codable, Sendable, CaseIterable, Identifiable {
+        case all, branches, tags, commits
+        public var id: Self { self }
+
+        public var title: String {
+            switch self {
+            case .all: "All"
+            case .branches: "Branches"
+            case .tags: "Tags"
+            case .commits: "Commits"
+            }
+        }
+
+        public func admits(_ kind: Kind) -> Bool {
+            switch self {
+            case .all: true
+            case .branches: kind == .branch || kind == .remote
+            case .tags: kind == .tag
+            case .commits: kind == .commit
+            }
+        }
+    }
 }
 
 extension ReviewLocal {
@@ -26,8 +50,9 @@ extension ReviewLocal {
     /// word of it is in the name, the commit's subject or author, or starts the commit id. Refs
     /// come first, the most recent first (a tag by its own date), then the commits of all branches,
     /// newest first.
-    /// An empty query gives the most recent ones.
-    public static func points(path: URL, query: String = "", limit: Int = 30, env: HarnessEnvironment) async throws -> [ReviewLocalPoint] {
+    /// An empty query gives the most recent ones. `filter` keeps one kind; the limit counts only those.
+    public static func points(path: URL, query: String = "", filter: ReviewLocalPoint.Filter = .all, limit: Int = 30,
+                              env: HarnessEnvironment) async throws -> [ReviewLocalPoint] {
         guard let git = env.findExecutable("git") else { throw Failure(message: "git is not installed.") }
         func run(_ arguments: [String]) async -> String? {
             let result = await ProcessRunner.run(git, arguments: ["-C", path.path] + arguments, environment: env.gitVariables, timeout: 60)
@@ -39,11 +64,11 @@ extension ReviewLocal {
         let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         func matches(_ point: ReviewLocalPoint) -> Bool {
             let text = "\(point.name) \(point.subject) \(point.author)".lowercased()
-            return words.allSatisfy { text.contains($0) || point.sha.hasPrefix($0) }
+            return filter.admits(point.kind) && words.allSatisfy { text.contains($0) || point.sha.hasPrefix($0) }
         }
 
         var found: [ReviewLocalPoint] = []
-        let refs = await run(["for-each-ref", "--sort=-creatordate",
+        let refs = filter == .commits ? "" : await run(["for-each-ref", "--sort=-creatordate",
                               "--format=%(refname)%1f%(refname:short)%1f%(objectname)%1f%(subject)%1f%(authorname)%1f%(committerdate:short)%1f%(*objectname)%1f%(*authorname)%1f%(*committerdate:short)%1f%(objecttype)%1f%(*objecttype)",
                               "refs/heads", "refs/remotes", "refs/tags"]) ?? ""
         for line in refs.split(separator: "\n") {
@@ -62,10 +87,10 @@ extension ReviewLocal {
             if matches(point) { found.append(point) }
         }
 
-        var commits = await run(["log", "--branches", "--remotes", "--tags", "HEAD", "-n", String(maxSearchedCommits), "--date=short",
+        var commits = !filter.admits(.commit) ? "" : await run(["log", "--branches", "--remotes", "--tags", "HEAD", "-n", String(maxSearchedCommits), "--date=short",
                                  "--format=%H%x1f%s%x1f%an%x1f%ad"]) ?? ""
         // An older commit by its id: the log above doesn't go that far back.
-        if let word = words.first, words.count == 1, word.count >= 4, word.range(of: "^[0-9a-f]+$", options: .regularExpression) != nil,
+        if filter.admits(.commit), let word = words.first, words.count == 1, word.count >= 4, word.range(of: "^[0-9a-f]+$", options: .regularExpression) != nil,
            !commits.contains("\n\(word)"), !commits.hasPrefix(word),
            let one = await run(["log", "-1", "--date=short", "--format=%H%x1f%s%x1f%an%x1f%ad", "\(word)^{commit}", "--"]) {
             commits += "\n" + one
