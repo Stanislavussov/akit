@@ -50,7 +50,7 @@ public struct MCPWritePlan: Sendable {
     public let diff: [TextDiff.Line]
     /// An entry with this name exists and is replaced.
     public let replaces: Bool
-    public let notes: [String]
+    public internal(set) var notes: [String]
     /// Things to read before Apply, e.g. a Keychain item another server may use gets replaced.
     public let warnings: [String]
     let secrets: [(account: String, value: String)]
@@ -174,8 +174,10 @@ public enum MCPWriter {
         }
 
         if let scope = target.claudeScope {
+            // The entry before the edit (under its old name when renamed): the restore on a failed
+            // add-json, and Undo after the check.
             var originalCompact: String?
-            if replaces, let entry = current[name] { originalCompact = try text(entry, pretty: false) }
+            if let entry = current[originalName ?? name], replaces || originalName != nil { originalCompact = try text(entry, pretty: false) }
             return MCPWritePlan(target: target, name: name, originalName: originalName, isRemoval: false,
                                 entryJSON: entryJSON, diff: [], replaces: replaces,
                                 notes: notes + ["Claude writes this itself (`claude mcp add-json --scope \(scope)`); AKit keeps a backup of \(where_)."],
@@ -228,6 +230,60 @@ public enum MCPWriter {
         return MCPWritePlan(target: target, name: name, originalName: nil, isRemoval: true, entryJSON: "", diff: diff,
                             replaces: true, notes: notes, warnings: [], secrets: [], envVariables: [], before: before,
                             after: try text(object) + "\n", entryCompact: "", originalCompact: nil, secretMode: .environment)
+    }
+
+    /// Undo after a failed connection check: back to the state before `first`, the first Apply
+    /// of the sheet, also after Edit Again and more Applies (`last`, the latest one). A new
+    /// server is deleted; an edited one gets its old entry back. Refused when someone changed
+    /// the entry or the file since `last`. Keychain items saved by the plans stay: another
+    /// server may use them.
+    public static func undoPlan(of first: MCPWritePlan, last: MCPWritePlan? = nil, home: URL) throws -> MCPWritePlan {
+        let last = last ?? first
+        let target = first.target
+        let where_ = FileWalk.tilde(target.file, home: home)
+        guard !first.isRemoval, !last.isRemoval else {
+            throw ConfigTextError("A deleted server can't be undone here; its backup is in ~/.akit/backups.")
+        }
+        guard last.target.id == target.id else { throw ConfigTextError("The server was moved to another file; Undo can't follow it.") }
+        if first.originalName == nil, !first.replaces {
+            var removal = try removalPlan(last.name, from: target, home: home)
+            removal.notes = ["Undo: deletes “\(last.name)” again."] + removal.notes
+            return removal
+        }
+        let now = try? String(contentsOf: target.file, encoding: .utf8)
+        if let scope = target.claudeScope {
+            guard let original = first.originalCompact else {
+                throw ConfigTextError("AKit has no copy of the entry before the edit. Restore \(where_) from its backup.")
+            }
+            // Claude rewrites its file all the time: only the entry itself must be as Apply left it.
+            let current = now.flatMap { try? ConfigText.jsonObject(Data($0.utf8), jsonc: false) }
+                .flatMap { table(in: $0, at: target.keyPath)?[last.name] }
+            let written = try? JSONSerialization.jsonObject(with: Data(last.entryCompact.utf8))
+            guard let current, let written, (current as AnyObject).isEqual(written) else {
+                throw ConfigTextError("“\(last.name)” changed in \(where_) after Apply; Undo would lose that change. Restore it from its backup by hand.")
+            }
+            let oldName = first.originalName ?? first.name
+            return MCPWritePlan(target: target, name: oldName, originalName: last.name, isRemoval: false, entryJSON: "", diff: [],
+                                replaces: oldName == last.name,
+                                notes: ["Undo: Claude writes the old entry back itself (`claude mcp add-json --scope \(scope)`)."],
+                                warnings: [], secrets: [], envVariables: [], before: now ?? "", after: nil,
+                                entryCompact: original, originalCompact: last.entryCompact, secretMode: first.secretMode)
+        }
+        guard let before = first.before, let after = last.after else {
+            throw ConfigTextError("AKit has no copy of \(where_) before the change. Restore it from its backup.")
+        }
+        guard now == after else {
+            throw ConfigTextError("\(where_) changed after Apply; Undo would lose that change. Restore it from its backup by hand.")
+        }
+        // The diff is shown: masked like every other preview, never the file text itself.
+        let jsonc = target.dialect == .openCode
+        func shown(_ text: String) throws -> String {
+            text.isEmpty ? "" : try Self.text(redacted(try ConfigText.jsonObject(Data(text.utf8), jsonc: jsonc))) + "\n"
+        }
+        return MCPWritePlan(target: target, name: first.originalName ?? first.name, originalName: last.name, isRemoval: false,
+                            entryJSON: "", diff: TextDiff.lines(from: try shown(after), to: try shown(before)), replaces: true,
+                            notes: ["Undo: puts \(where_) back as it was before Apply."], warnings: [], secrets: [], envVariables: [],
+                            before: after, after: before, entryCompact: "", originalCompact: nil, secretMode: first.secretMode)
     }
 
     struct BuiltEntry {

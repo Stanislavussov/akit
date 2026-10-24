@@ -22,7 +22,8 @@ struct MCPView: View {
                 if let server = model.mcpServers.first(where: { $0.id == selection }) {
                     MCPServerDetailView(server: server,
                                         onEdit: { editor = EditorRequest(mode: .edit(server)) },
-                                        onDelete: { editor = EditorRequest(mode: .remove(server)) })
+                                        onDelete: { editor = EditorRequest(mode: .remove(server)) },
+                                        onCopy: { editor = EditorRequest(mode: .copy(server, to: $0)) })
                 } else {
                     ContentUnavailableView("Select a server", systemImage: "server.rack")
                 }
@@ -89,6 +90,12 @@ struct MCPView: View {
                 }
             }
             ToolbarItem {
+                Button("Check All", systemImage: "bolt.horizontal.circle") { Task { await model.checkMCP(filtered) } }
+                    .disabled(!model.mcpChecking.isEmpty || filtered.allSatisfy { model.mcpChecks(of: $0).isEmpty })
+                    .help("Ask Claude Code and Pi whether each listed server connects. It starts the servers; "
+                          + "a global server is checked in the chosen project, else in the home folder.")
+            }
+            ToolbarItem {
                 Button("Catalog…", systemImage: "books.vertical") {
                     editor = EditorRequest(mode: .add(project: chosenProject, catalog: true))
                 }
@@ -113,10 +120,20 @@ struct MCPView: View {
         .onChange(of: model.mcpFilter) { keepSelectionVisible() }
         .onChange(of: model.mcpServers) {
             keepSelectionVisible()
+            // Snapshot mode: `--select NAME` shows that server.
+            if let name = DebugSnapshot.options?.select, let server = filtered.first(where: { $0.name == name }) {
+                selection = server.id
+            }
             // Snapshot mode: `--tab edit` / `--tab delete` opens the editor on the first listed server.
             if let tab = DebugSnapshot.options?.tab, editor == nil, let server = filtered.first {
                 if tab == "edit" { editor = EditorRequest(mode: .edit(server)) }
                 if tab == "delete" { editor = EditorRequest(mode: .remove(server)) }
+                // `--tab copy`: Copy to… of the first server another harness could get.
+                if tab == "copy", let (source, harness) = filtered.lazy.compactMap({ server in
+                    model.copyTargets(of: server).first.map { (server, $0) }
+                }).first {
+                    editor = EditorRequest(mode: .copy(source, to: harness))
+                }
                 // `--tab switch`: Off in Project… of the first server with a switch.
                 if tab == "switch", model.mcpSwitchRequest == nil,
                    let (target, harness) = filtered.lazy.compactMap({ server in
@@ -156,8 +173,14 @@ struct MCPView: View {
                                     .disabled(!model.canEdit(server))
                                 Button("Delete…", role: .destructive) { editor = EditorRequest(mode: .remove(server)) }
                                     .disabled(!model.canEdit(server))
+                                ForEach(model.copyTargets(of: server), id: \.self) { harness in
+                                    Button("Copy to \(harness == .pi ? "Pi" : "Claude Code")…") { editor = EditorRequest(mode: .copy(server, to: harness)) }
+                                }
                                 Divider()
                                 MCPSwitchMenu(server: server)
+                                Divider()
+                                Button("Check Connection") { Task { await model.checkMCP([server]) } }
+                                    .disabled(model.mcpChecks(of: server).isEmpty)
                                 Divider()
                                 AskAKitMenuItem(title: "MCP server \(server.name)", facts: [
                                     "Where: \(group.scope.title)", "File: \(server.file.tildePath)",
@@ -306,6 +329,14 @@ private struct MCPServerRow: View {
                         .foregroundStyle(.orange)
                         .font(.caption)
                 }
+                let problems = model.mcpCheckProblems(of: server)
+                if let worst = problems.first {
+                    Image(systemName: worst.state.icon)
+                        .foregroundStyle(worst.state.color)
+                        .font(.caption)
+                        .help(problems.map { "\($0.harnessID.displayName): \($0.state.title), \($0.checkedAt.formatted(.relative(presentation: .named)))" }
+                            .joined(separator: "\n"))
+                }
                 Spacer()
                 ForEach(server.uses, id: \.harness) { use in
                     HarnessBadge(harness: use.harness)
@@ -345,6 +376,7 @@ private struct MCPServerDetailView: View {
     let server: MCPServer
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let onCopy: (HarnessID) -> Void
     @State private var secretFor: String?
 
     var body: some View {
@@ -354,6 +386,7 @@ private struct MCPServerDetailView: View {
                 info
                 if !model.warnings(of: server).isEmpty { warnings }
                 harnesses
+                MCPConnectionBox(server: server)
                 MCPSwitchControls(server: server)
                 if !server.environment.isEmpty { settings("Environment", server.environment) }
                 if !server.headers.isEmpty { settings("Headers", server.headers) }
@@ -379,6 +412,10 @@ private struct MCPServerDetailView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            ForEach(model.copyTargets(of: server), id: \.self) { harness in
+                Button("Copy to \(harness == .pi ? "Pi" : "Claude Code")…", systemImage: "doc.on.doc") { onCopy(harness) }
+                    .help("Add this server to \(harness == .pi ? "Pi" : "Claude Code") too: the form is filled from it, values stay hidden, Keychain items are reused")
+            }
             if model.canEdit(server) {
                 Button("Edit…", systemImage: "pencil", action: onEdit)
                     .help("Change this server; values in the file stay hidden")
@@ -601,10 +638,12 @@ private struct SecretRequest: Identifiable {
 }
 
 /// Asks for one secret value and stores it in the Keychain (service "AKit MCP").
-private struct KeychainSecretSheet: View {
+struct KeychainSecretSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let name: String
+    /// Run by Done after a save (Set Variable… checks the server again).
+    var onSaved: (() -> Void)?
     @State private var value = ""
     @State private var error: String?
     @State private var notes: [String]?
@@ -619,7 +658,11 @@ private struct KeychainSecretSheet: View {
                 ForEach(notes, id: \.self) { Label($0, systemImage: "info.circle").textSelection(.enabled) }
                 HStack {
                     Spacer()
-                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                    Button("Done") {
+                        dismiss()
+                        onSaved?()
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
             } else {
                 Text("The value goes to your login Keychain through /usr/bin/security (never as a command argument) and is not shown again; ~/.akit/env.sh exports it as \(name). It stays out of files and git, but programs running as you can read it with /usr/bin/security — the same as a token in ~/.zshrc.")

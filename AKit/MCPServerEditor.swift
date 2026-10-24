@@ -12,6 +12,10 @@ struct MCPServerEditor: View {
         /// `catalog` opens the sheet on the catalog search.
         case add(project: URL?, catalog: Bool = false)
         case edit(MCPServer)
+        /// A server of one harness added to another (Claude Code ↔ Pi): the form filled from
+        /// its entry, values kept hidden; Keychain items keep their names and reach the new
+        /// harness through its own mechanism.
+        case copy(MCPServer, to: HarnessID)
         case remove(MCPServer)
     }
 
@@ -47,6 +51,14 @@ struct MCPServerEditor: View {
     @State private var error: String?
     @State private var isApplying = false
     @State private var done: MCPWriter.Outcome?
+    /// The plan Apply wrote last, for the check after it and Edit Again.
+    @State private var applied: MCPWritePlan?
+    /// The first plan Apply wrote in this sheet: Undo goes back to before it.
+    @State private var firstApplied: MCPWritePlan?
+    /// The shown plan takes an applied one back.
+    @State private var undoing = false
+    /// Edit Again: the form now edits the server as Apply wrote it.
+    @State private var editedName: String?
     /// Editing: the file text the form was filled from.
     @State private var openedText: String?
 
@@ -81,9 +93,9 @@ struct MCPServerEditor: View {
     private var editor: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(editing == nil ? "Add MCP Server" : "Edit “\(editing!.name)”").font(.title2.bold())
+                Text(formTitle).font(.title2.bold())
                 Spacer()
-                if editing == nil {
+                if editing == nil, copying == nil {
                     Picker("Input", selection: $input) {
                         ForEach(Input.allCases, id: \.self) { Text($0.rawValue) }
                     }
@@ -107,7 +119,7 @@ struct MCPServerEditor: View {
     private var form: some View {
         Form {
             if !catalogNotes.isEmpty {
-                Section("From the Catalog") {
+                Section(copying == nil ? "From the Catalog" : "Copy") {
                     ForEach(catalogNotes, id: \.self) { note in
                         Text(note).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     }
@@ -134,7 +146,8 @@ struct MCPServerEditor: View {
                 values("Headers", $draft.headers, keyPrompt: "Authorization")
             }
             Section("Where") {
-                if editing == nil {
+                // After Edit Again the server stays where Apply wrote it.
+                if editing == nil, editedName == nil {
                 Picker("Add to", selection: $targetID) {
                     ForEach(targetGroups, id: \.scope) { group in
                         Section(group.title) {
@@ -304,11 +317,15 @@ struct MCPServerEditor: View {
                 if case .remove = mode {
                     Button("Cancel", role: .cancel) { dismiss() }
                         .keyboardShortcut(.cancelAction)
+                } else if undoing {
+                    // Undo is offered after Apply; not undoing keeps what Apply wrote.
+                    Button("Cancel", role: .cancel) { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 } else {
                     Button("Back") { self.plan = nil; error = nil }
                         .keyboardShortcut(.cancelAction)
                 }
-                Button(plan.isRemoval ? "Delete" : plan.replaces ? "Save" : "Apply", role: plan.isRemoval ? .destructive : nil) {
+                Button(undoing ? "Undo" : plan.isRemoval ? "Delete" : plan.replaces ? "Save" : "Apply", role: plan.isRemoval ? .destructive : nil) {
                     apply(plan)
                 }
                 .keyboardShortcut(.defaultAction)
@@ -331,9 +348,22 @@ struct MCPServerEditor: View {
             }
             Text("Restart the harness (or reload its MCP servers) to pick the change up.")
                 .foregroundStyle(.secondary)
+            if let server = appliedServer {
+                MCPConnectionBox(server: server)
+            }
             Spacer()
             HStack {
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3)
+                }
                 Spacer()
+                if let applied, let server = appliedServer, !model.mcpCheckProblems(of: server).isEmpty,
+                   !model.mcpChecks(of: server).contains(where: { model.mcpChecking.contains($0.id) }) {
+                    Button("Undo…") { undo(applied) }
+                        .help((firstApplied ?? applied).originalName == nil ? "Delete “\(applied.name)” again (a diff first)"
+                                                          : "Put the entry back as it was before Apply (a diff first)")
+                    Button("Edit Again") { editAgain(applied) }
+                }
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
         }
@@ -361,6 +391,20 @@ struct MCPServerEditor: View {
             } else {
                 error = "“\(server.name)” is no longer in \(target.file.tildePath)."
             }
+        case .copy(let server, let harness):
+            guard let source = MCPWriter.target(of: server, in: targets), let raw = MCPWriter.rawEntry(of: server, target: source) else {
+                if model.lastScan != nil { error = "AKit can't read the entry of “\(server.name)”." }
+                return
+            }
+            let copy = MCPDraft.copying(name: server.name, entry: raw.entry, from: source.dialect, toClaude: harness == .claudeCode,
+                                        keychain: KeychainSecretStore())
+            draft = copy.draft
+            catalogNotes = copy.notes
+            argumentLine = MCPDraft.joinArguments(draft.arguments)
+            // Only the places the other harness alone reads: the same level (a project's own file) when it has one.
+            targets = targets.filter { $0.harnesses == [harness] && $0.blockedReason == nil }
+            targetID = (targets.first { $0.scope == server.scope } ?? targets.first { $0.scope == .global })?.id
+            secretMode = .keychainLookup
         case .remove(let server):
             guard let target = MCPWriter.target(of: server, in: targets) else {
                 if model.lastScan != nil { error = "AKit can't edit this file." }
@@ -426,7 +470,7 @@ struct MCPServerEditor: View {
             return
         }
         do {
-            plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode, replacing: editing?.name,
+            plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode, replacing: editedName ?? editing?.name,
                                       openedText: openedText, keychain: KeychainSecretStore(),
                                       home: HarnessEnvironment.current.homeDirectory)
             error = nil
@@ -444,8 +488,44 @@ struct MCPServerEditor: View {
                 error = nil
             } catch {
                 self.error = error.localizedDescription
+                return
             }
+            // A new or changed server: does it connect? (docs/design/mcp-check.md)
+            guard !plan.isRemoval, !undoing else { return }
+            applied = plan
+            if firstApplied == nil { firstApplied = plan }
+            if let server = appliedServer { await model.checkMCP([server]) }
         }
+    }
+
+    /// The form again, now editing the server as Apply wrote it.
+    private func editAgain(_ applied: MCPWritePlan) {
+        editedName = applied.name
+        openedText = try? String(contentsOf: applied.target.file, encoding: .utf8)
+        self.applied = nil
+        done = nil
+        plan = nil
+        error = nil
+        input = .form
+    }
+
+    /// The undo plan in the preview: a diff first, then Undo writes it.
+    private func undo(_ applied: MCPWritePlan) {
+        do {
+            plan = try MCPWriter.undoPlan(of: firstApplied ?? applied, last: applied, home: HarnessEnvironment.current.homeDirectory)
+            undoing = true
+            self.applied = nil
+            done = nil
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// The listed server Apply wrote (after the rescan).
+    private var appliedServer: MCPServer? {
+        guard let applied else { return nil }
+        return model.mcpServers.first { $0.id == "\(applied.target.id)|\(applied.name)" }
     }
 
     // MARK: - Helpers
@@ -457,7 +537,19 @@ struct MCPServerEditor: View {
         return nil
     }
 
+    private var copying: (server: MCPServer, harness: HarnessID)? {
+        if case .copy(let server, let harness) = mode { return (server, harness) }
+        return nil
+    }
+
+    private var formTitle: String {
+        if let editing { return "Edit “\(editing.name)”" }
+        if let copying { return "Copy “\(copying.server.name)” to \(copying.harness == .pi ? "Pi" : "Claude Code")" }
+        return "Add MCP Server"
+    }
+
     private func planTitle(_ plan: MCPWritePlan) -> String {
+        if undoing { return "Undo “\(plan.originalName ?? plan.name)”" }
         if plan.isRemoval { return "Delete “\(plan.name)”" }
         if let original = plan.originalName, original != plan.name { return "Rename “\(original)” to “\(plan.name)”" }
         return plan.replaces ? "Save “\(plan.name)”" : "Add “\(plan.name)”"
@@ -465,6 +557,7 @@ struct MCPServerEditor: View {
 
     private var doneTitle: String {
         guard let plan else { return "Done" }
+        if undoing { return "Undone" }
         if plan.isRemoval { return "Deleted “\(plan.name)”" }
         return plan.replaces || plan.originalName != nil ? "Saved “\(plan.name)”" : "Added “\(plan.name)”"
     }

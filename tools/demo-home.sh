@@ -247,6 +247,30 @@ file "$DEMO/.codex/config.toml" <<'EOF'
 command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
 EOF
+# A Pi with built-in MCP (0.99+): AKit reads the version from here when no pi command is found.
+file "$DEMO/.pi/agent/settings.json" <<'EOF'
+{ "lastChangelogVersion": "1.4.0" }
+EOF
+file "$DEMO/.pi/agent/mcp.json" <<'EOF'
+{ "mcpServers": { "docs": { "url": "https://docs.example.com/mcp" } } }
+EOF
+# Last connection checks (MCP Servers → Connection): github lacks its token, playwright and
+# Pi's docs connect (docs with its tools, one of them declared directly).
+# The folder as AKit keys it (standardized: /private/tmp is /tmp).
+CHECKED="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)"
+file "$DEMO/.akit/mcp-checks.json" <<EOF
+{
+  "results": [
+    { "harness": "claude-code", "name": "github", "folder": "${DEMO#/private}", "state": "missingVariables",
+      "detail": "Failed to connect: HTTP 401: Unauthorized", "missingVariables": ["GITHUB_TOKEN"], "checkedAt": "$CHECKED" },
+    { "harness": "claude-code", "name": "playwright", "folder": "${DEMO#/private}", "state": "connected",
+      "missingVariables": [], "checkedAt": "$CHECKED" },
+    { "harness": "pi", "name": "docs", "folder": "${DEMO#/private}", "state": "connected", "missingVariables": [],
+      "tools": ["search_docs", "read_page", "list_sources"], "exposure": "codemode", "toolExposure": { "search_docs": "direct" },
+      "checkedAt": "$CHECKED" }
+  ]
+}
+EOF
 
 # Lab: a sending policy, a reviewed session with notes, and the sends behind it
 # (Settings → Lab, Lab → the review, Lab → Sends).
