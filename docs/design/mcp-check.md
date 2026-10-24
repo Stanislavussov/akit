@@ -1,7 +1,7 @@
 # MCP check: does the server connect, and what to do when it doesn't
 
-Status: designed 2026-10-24 (grilling with the user); steps 1–2 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
-`AKitFoundation/LoginShell.swift`, `akit mcp check`, `MCPWriter.undoPlan`, `AKit/MCPCheckViews.swift`). Steps in [Steps](#steps).
+Status: designed 2026-10-24 (grilling with the user); steps 1–3 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
+`AKitFoundation/LoginShell.swift`, `akit mcp check`, `MCPWriter.undoPlan`, `AKit/MCPCheckViews.swift`, `AKitMCP/MCPApprove.swift`). Steps in [Steps](#steps).
 
 ## Goal
 
@@ -62,9 +62,14 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 - **Fix buttons** next to the result:
   - Sign In… runs `claude mcp login NAME` / `pi mcp login NAME` (it opens the browser),
     waits, then checks again.
-  - Approve… adds the name to `enabledMcpjsonServers` of the project's entry in
-    `~/.claude.json` (where Claude's own approval goes; to verify before step 3). A write
-    to a harness file: backup and diff first, like the switches.
+  - Approve… adds the name to `enabledMcpjsonServers` of the project's
+    `.claude/settings.local.json`. Checked 2026-10-24 in Claude Code 2.1.310: its approval
+    goes to `localSettings` (older answers in `~/.claude.json` are moved there by Claude), and
+    counts only in a trusted folder (`hasTrustDialogAccepted`) where git doesn't track the
+    file; `claude mcp get` then stops saying Pending approval. The file may hold secrets, so
+    the preview shows only this key (`SettingsFile.change`), backup first; the user chose
+    this over a terminal hint (an exception noted in `CLAUDE.md`). The preview notes an
+    untrusted folder and a tracked file. Also `akit mcp approve NAME --project P [--yes]`.
   - Set Variable… stores the value in Keychain, like Set in Keychain… today.
 - **After a failed check from Apply** the sheet stays open: the result, its fix button,
   Edit Again and Undo (the file back from the backup, or the new server removed). Nothing
@@ -85,7 +90,7 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 |---|---|---|
 | 1 | The check core (both harnesses, folder, login shell, missing variables, timeout, saved results in `~/.akit/mcp-checks.json`) and `akit mcp check` | built 2026-10-24 |
 | 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | built 2026-10-24 |
-| 3 | Sign In…, Set Variable…, Approve… (verify Claude's approval key first) | — |
+| 3 | Sign In…, Set Variable…, Approve… and `akit mcp approve` (`AKitMCP/MCPApprove.swift`) | built 2026-10-24 |
 | 4 | Copy to Pi… / Copy to Claude Code… | — |
 | 5 | The tools of a Pi server | — |
 

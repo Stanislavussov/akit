@@ -84,6 +84,10 @@ public enum AKitCLI {
                                           server's project, or for a global server in --project or the
                                           home folder. Names missing variables; Pi also lists the tools.
                                           Exit 1 when a checked server doesn't connect (Off is fine)
+          akit mcp approve NAME --project PATH [--yes]
+                                          Claude Code's approval of the project's .mcp.json server NAME:
+                                          the name in enabledMcpjsonServers of .claude/settings.local.json
+                                          (only that key is shown; --yes writes it after a backup)
                                           Plugin servers have no switch: turn the plugin off with /plugin
 
         Worktrees (a local-only project's AKit files, linked into its other git worktrees):

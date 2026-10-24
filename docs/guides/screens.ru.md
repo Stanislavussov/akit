@@ -1298,7 +1298,7 @@ akit remove skill ИМЯ --everywhere
 - «Сервер нужен в одном проекте, а в остальных только ест контекст» → в карточке сервера блок **Switches**, меню **Change** → **Off in Project…**.
 - «Добавил сервер, а агент его не видит» → в карточке сервера блок **Connection**, кнопка **Check Connection**.
 
-![Экран MCP Servers: слева группа Global с серверами context7, github и playwright и значками агентов Codex и Claude, у github значок ключа от последней проверки; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Connection (Claude · Missing Variables · 5 minutes ago, строки Not set in your shell: GITHUB_TOKEN и Failed to connect: HTTP 401: Unauthorized, кнопка Check Connection), Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Check All, Catalog…, Add Server…](images/mcp.png)
+![Экран MCP Servers: слева группа Global с серверами context7, github и playwright и значками агентов Codex и Claude, у github значок ключа от последней проверки; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Connection (Claude · Missing Variables · 5 minutes ago, строки Not set in your shell: GITHUB_TOKEN и Failed to connect: HTTP 401: Unauthorized, кнопки Set Variable… и Check Connection), Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Check All, Catalog…, Add Server…](images/mcp.png)
 
 #### Что на экране
 <!-- section: mcp-screen -->
@@ -1373,9 +1373,9 @@ akit remove skill ИМЯ --everywhere
 
 - **Connected**: агент подключился. Для Pi рядом число инструментов, например «12 tools».
 - **Failed**: агент не подключился. Ниже текст ошибки от агента.
-- **Missing Variables**: сервер не подключился, и в терминале нет переменной, которая ему нужна. Строка «Not set in your shell: …» называет её. Сохраните значение кнопкой **Set in Keychain…** в блоке **Needs variables**.
-- **Needs Sign-In**: серверу нужен вход через браузер (OAuth). Выполните `claude mcp login имя` или `pi mcp login имя` в терминале.
-- **Pending Approval**: Claude Code ещё не спросил, можно ли использовать сервер из `.mcp.json` проекта. Запустите `claude` в проекте и ответьте.
+- **Missing Variables**: сервер не подключился, и в терминале нет переменной, которая ему нужна. Строка «Not set in your shell: …» называет её. Справа кнопка **Set Variable…**: выберите переменную, вставьте значение и нажмите **Save**, потом **Done**. AKit сохранит значение в Keychain и проверит сервер снова.
+- **Needs Sign-In**: серверу нужен вход через браузер (OAuth). Справа кнопка **Sign In…**: AKit запускает `claude mcp login имя` или `pi mcp login имя`, агент открывает браузер. После входа AKit проверяет сервер снова. Агент ждёт вход до 5 минут.
+- **Pending Approval**: Claude Code ещё не разрешил сервер из `.mcp.json` проекта. Справа кнопка **Approve…**: окно показывает одно изменение — имя сервера в ключе `enabledMcpjsonServers` файла `.claude/settings.local.json` проекта. Остальное содержимое файла AKit не показывает. Нажмите **Approve**: AKit сделает резервную копию, запишет ключ и проверит сервер снова. Если Claude Code ещё не доверяет папке проекта, окно об этом пишет: ответ начнёт действовать, когда вы запустите `claude` в проекте и доверите ему папку.
 - **Untrusted Project**: Pi не читает `.pi/mcp.json` в проекте, которому не доверяет. Запустите Pi в проекте один раз.
 - **Off**: сервер выключен переключателем или в настройках агента.
 - **Timed Out**: агент не ответил за 90 секунд. Нажмите **Check Connection** ещё раз.

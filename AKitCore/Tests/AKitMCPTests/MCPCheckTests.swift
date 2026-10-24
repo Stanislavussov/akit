@@ -216,3 +216,57 @@ struct MCPCheckTests {
         return MCPScanner.scan(installations: HarnessCatalog.detectAll(in: env), projects: [project], in: env).servers
     }
 }
+
+/// Approve…: one key of `.claude/settings.local.json`, never the rest of the file.
+struct MCPApproveTests {
+    let home: URL
+    let fm = FileManager.default
+
+    init() throws {
+        home = fm.temporaryDirectory.appending(path: "akit-mcp-approve-\(UUID().uuidString)")
+        try fm.createDirectory(at: project.appending(path: ".claude"), withIntermediateDirectories: true)
+    }
+
+    var project: URL { home.appending(path: "Projects/app", directoryHint: .isDirectory) }
+    var env: HarnessEnvironment { HarnessEnvironment(homeDirectory: home, executableSearchPaths: [URL(filePath: "/usr/bin")]) }
+
+    @Test func addsTheNameAndShowsOnlyThatKey() throws {
+        let file = MCPApprove.file(in: project)
+        try Data(#"{"env": {"API_TOKEN": "sk-live-abcdefghijklmnopqrstuvwxyz012345"}, "enabledMcpjsonServers": ["other"]}"#.utf8).write(to: file)
+        let plan = try MCPApprove.plan("shared", project: project, env: env)
+        let shown = plan.change.diff.map { "\($0)" }.joined(separator: "\n")
+        #expect(shown.contains("shared"))
+        #expect(!shown.contains("sk-live"))
+        #expect(!shown.contains("API_TOKEN"))
+        _ = try MCPApprove.apply(plan, home: home)
+        let saved = try JSONValue.parse(Data(contentsOf: file))
+        #expect(saved.value(at: ["enabledMcpjsonServers"]) == .array([.string("other"), .string("shared")]))
+        #expect(saved.value(at: ["env", "API_TOKEN"]) == .string("sk-live-abcdefghijklmnopqrstuvwxyz012345"))
+        #expect(throws: SettingsFile.Failure.self) { try MCPApprove.plan("shared", project: project, env: env) }
+    }
+
+    @Test func createsTheFileWhenMissing() throws {
+        let plan = try MCPApprove.plan("shared", project: project, env: env)
+        #expect(plan.change.creates)
+        _ = try MCPApprove.apply(plan, home: home)
+        #expect(try JSONValue.parse(Data(contentsOf: MCPApprove.file(in: project))).value(at: ["enabledMcpjsonServers"]) == .array([.string("shared")]))
+    }
+
+    @Test func aTrackedFileIsNamed() throws {
+        let git = URL(filePath: "/usr/bin/git")
+        for args in [["init", "-q"], ["add", "-f", ".claude/settings.local.json"]] {
+            if args[0] == "add" { try Data("{}".utf8).write(to: MCPApprove.file(in: project)) }
+            #expect(ProcessRunner.runAndWait(git, arguments: args, directory: project, environment: env.gitVariables, timeout: 30)?.succeeded == true)
+        }
+        let plan = try MCPApprove.plan("shared", project: project, env: env)
+        #expect(plan.notes.first?.contains("Git tracks this file") == true)
+        #expect(plan.notes.contains { $0.contains("doesn't trust this folder") })
+    }
+
+    @Test func aTrustedFolderGetsNoTrustNote() throws {
+        let key = MCPSwitches.claudeProjectKey(project)
+        try Data(#"{"projects": {"\#(key)": {"hasTrustDialogAccepted": true}}}"#.utf8).write(to: home.appending(path: ".claude.json"))
+        let plan = try MCPApprove.plan("shared", project: project, env: env)
+        #expect(!plan.notes.contains { $0.contains("doesn't trust") })
+    }
+}

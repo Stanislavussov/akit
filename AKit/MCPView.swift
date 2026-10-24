@@ -619,10 +619,12 @@ private struct SecretRequest: Identifiable {
 }
 
 /// Asks for one secret value and stores it in the Keychain (service "AKit MCP").
-private struct KeychainSecretSheet: View {
+struct KeychainSecretSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let name: String
+    /// Run by Done after a save (Set Variable… checks the server again).
+    var onSaved: (() -> Void)?
     @State private var value = ""
     @State private var error: String?
     @State private var notes: [String]?
@@ -637,7 +639,11 @@ private struct KeychainSecretSheet: View {
                 ForEach(notes, id: \.self) { Label($0, systemImage: "info.circle").textSelection(.enabled) }
                 HStack {
                     Spacer()
-                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+                    Button("Done") {
+                        dismiss()
+                        onSaved?()
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
             } else {
                 Text("The value goes to your login Keychain through /usr/bin/security (never as a command argument) and is not shown again; ~/.akit/env.sh exports it as \(name). It stays out of files and git, but programs running as you can read it with /usr/bin/security — the same as a token in ~/.zshrc.")

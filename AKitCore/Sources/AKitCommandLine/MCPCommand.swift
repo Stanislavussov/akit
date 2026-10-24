@@ -10,7 +10,7 @@ import Foundation
 /// in each harness's own setting (docs/design/harness-support.md, "MCP switches").
 extension AKitCLI {
     static let mcpUsage = "Use: akit mcp state [NAME] | akit mcp set NAME --harness claude|pi (--off everywhere | --off project --project PATH... | --on [--project PATH...]) [--yes]"
-        + " | akit mcp connectors on|off [--yes] | akit mcp check [NAME] [--harness claude|pi] [--project PATH]"
+        + " | akit mcp connectors on|off [--yes] | akit mcp check [NAME] [--harness claude|pi] [--project PATH] | akit mcp approve NAME --project PATH [--yes]"
 
     static func mcp(_ args: inout Arguments, yes: Bool, includeUnmanaged: Bool, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
                     out: (String) -> Void, err: (String) -> Void) async throws -> Int32 {
@@ -43,6 +43,11 @@ extension AKitCLI {
             if offMode != nil || turnOn || yes || includeUnmanaged || projectPaths.count > 1 { throw Failure(message: mcpUsage) }
             return try await mcpCheck(name, harnessName: harnessName, context: projectPaths.first.map { resolve($0, cwd: cwd, env: env) },
                                       servers: servers, env: env, out: out)
+        case "approve":
+            guard let name, harnessName == nil, offMode == nil, !turnOn, !includeUnmanaged, projectPaths.count == 1 else {
+                throw Failure(message: mcpUsage)
+            }
+            return try mcpApprove(name, project: resolve(projectPaths[0], cwd: cwd, env: env), yes: yes, env: env, out: out)
         case "set":
             break
         default:
@@ -120,6 +125,26 @@ extension AKitCLI {
         let shown = results.filter { asked.contains($0.id) }
         out(mcpCheckText(shown, home: env.homeDirectory))
         return shown.contains { $0.state.isProblem } ? 1 : 0
+    }
+
+    /// `akit mcp approve`: Claude Code's approval of a project's `.mcp.json` server, the one key
+    /// of `.claude/settings.local.json` (shown alone; --yes writes it after a backup).
+    static func mcpApprove(_ name: String, project: URL, yes: Bool, env: HarnessEnvironment, out: (String) -> Void) throws -> Int32 {
+        let plan: MCPApprove.Plan
+        do { plan = try MCPApprove.plan(name, project: project, env: env) } catch { throw Failure(message: error.message) }
+        var lines = ["Approve \(name) for Claude Code in \(FileWalk.tilde(project, home: env.homeDirectory)).",
+                     "\(plan.change.creates ? "Creates" : "Changes") \(FileWalk.tilde(plan.change.file, home: env.homeDirectory)):"]
+        lines += TextDiff.unified(plan.change.diff)
+        lines += plan.notes
+        guard yes else {
+            out((lines + ["Run again with --yes to do it."]).joined(separator: "\n"))
+            return 0
+        }
+        let backup: URL?
+        do { backup = try MCPApprove.apply(plan, home: env.homeDirectory) } catch { throw Failure(message: error.message) }
+        lines.append("Done." + (backup.map { " Backup: \(FileWalk.tilde($0, home: env.homeDirectory))." } ?? ""))
+        out(lines.joined(separator: "\n"))
+        return 0
     }
 
     static func mcpCheckText(_ results: [MCPCheckResult], home: URL) -> String {

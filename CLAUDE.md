@@ -47,4 +47,6 @@ Pi and other harnesses read this file too.
   `~/.akit/registry/skills/akit/SKILL.md` (commit it in the brain repo, then
   `akit apply --home`). Say the command, when to use it, and its `--json` / `--yes` flags.
 - Never display or copy secrets: auth.json files, tokens, MCP env/headers,
-  `settings.local.json`.
+  `settings.local.json`. One exception (2026-10-24, user's choice): MCP Approve… writes the
+  single key `enabledMcpjsonServers` of a project's `.claude/settings.local.json`, and its
+  preview shows only that key.

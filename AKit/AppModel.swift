@@ -63,6 +63,8 @@ final class AppModel {
     var mcpChecks: [String: MCPCheckResult] = [:]
     /// Checks running now, by the same id.
     var mcpChecking: Set<String> = []
+    /// Why a fix (Sign In…) failed, by the same id; cleared by the next try.
+    var mcpFixErrors: [String: String] = [:]
     /// An MCP switch change shown in its sheet (with a project choice first for Off in Project…).
     var mcpSwitchRequest: MCPSwitchRequest?
 
