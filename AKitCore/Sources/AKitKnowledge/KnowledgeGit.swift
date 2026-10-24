@@ -31,7 +31,14 @@ public struct KnowledgeGit: Sendable {
         if let bad = paths.first(where: { $0.isEmpty || $0.hasPrefix("/") || $0.split(separator: "/").contains("..") }) {
             throw Failure(message: "\(bad) is not a path inside the base.")
         }
-        let lock = try BaseLock.acquire(base.appending(path: KnowledgeBase.queueLockName), timeout: lockTimeout)
+        let lockFile = base.appending(path: KnowledgeBase.queueLockName)
+        let lock: FileLock?
+        do { lock = try FileLock.acquire(lockFile, timeout: lockTimeout) } catch {
+            throw Failure(message: "Can't open the lock \(lockFile.path): \(error.localizedDescription)")
+        }
+        guard let lock else {
+            throw Failure(message: "Another AKit is writing to the knowledge base (\(lockFile.lastPathComponent) is held); try again in a moment.")
+        }
         defer { lock.release() }
         let remotes = try await run(["remote"])
         if !remotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -73,30 +80,4 @@ public struct KnowledgeGit: Sendable {
         let redirecting: Set = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_PREFIX"]
         return env.gitVariables.filter { !redirecting.contains($0.key) }
     }
-}
-
-/// An exclusive `flock` on a file, polled with `LOCK_NB` until a timeout; released when closed.
-/// Small on purpose: it becomes Foundation's `FileLock` (slice 3.1).
-final class BaseLock: @unchecked Sendable {
-    private let descriptor: Int32
-
-    private init(descriptor: Int32) { self.descriptor = descriptor }
-
-    static func acquire(_ url: URL, timeout: TimeInterval) throws(KnowledgeGit.Failure) -> BaseLock {
-        let descriptor = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
-        guard descriptor >= 0 else {
-            throw KnowledgeGit.Failure(message: "Can't open the lock \(url.path): \(String(cString: strerror(errno))).")
-        }
-        let deadline = Date.now.addingTimeInterval(timeout)
-        while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
-            guard errno == EWOULDBLOCK || errno == EINTR, Date.now < deadline else {
-                close(descriptor)
-                throw KnowledgeGit.Failure(message: "Another AKit is writing to the knowledge base (\(url.lastPathComponent) is held); try again in a moment.")
-            }
-            usleep(50_000)
-        }
-        return BaseLock(descriptor: descriptor)
-    }
-
-    func release() { close(descriptor) }
 }

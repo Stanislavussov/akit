@@ -167,7 +167,7 @@ struct KnowledgeBaseTests {
 
     @Test func aHeldLockMakesACommitWaitThenFail() async throws {
         let base = try await KnowledgeBase.create(world: "work", env: env())
-        let lock = try BaseLock.acquire(base.root.appending(path: KnowledgeBase.queueLockName), timeout: 0)
+        let lock = try #require(try FileLock.acquire(base.root.appending(path: KnowledgeBase.queueLockName)))
         try write(base.areasFolder.appending(path: "a/x.md"), "# x\n")
         let started = Date.now
         await #expect(throws: KnowledgeGit.Failure.self) {
