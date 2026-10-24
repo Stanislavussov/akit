@@ -75,6 +75,10 @@ public enum SendOrigin: Hashable, Sendable {
     /// AKit only runs Pi on it, as the user would: Pi reads it through its own MCP servers and
     /// sends it to the model it is set up with, so any Pi destination may get it.
     case mergeRequest
+    /// A proposal for a knowledge base and the notes and map arrows it is checked against
+    /// (`akit kb check`, K15). The base describes systems the user gives Pi in daily work, and
+    /// the check runs only through Pi, so any Pi destination may get it.
+    case knowledgeBase
 
     /// The origin of a recorded session; for Pi, the providers its answers came from.
     public static func of(harness: HarnessID, sessionFile: URL) -> SendOrigin {
@@ -113,6 +117,9 @@ public enum SendPolicy {
         if origin == .mergeRequest, destination.harness == .pi {
             return Decision(allowed: true, reason: "AKit Review runs Pi, and Pi sends the merge request to the model it is set up with.")
         }
+        if origin == .knowledgeBase, destination.harness == .pi {
+            return Decision(allowed: true, reason: "The knowledge check runs Pi, and Pi sends the proposal to the model it is set up with.")
+        }
         if sameOrigin(origin, destination), !(isWork && origin.isCode) {
             return Decision(allowed: true, reason: "Same origin: \(destination.label) produced this data.")
         }
@@ -139,7 +146,7 @@ public enum SendPolicy {
                 && providers.first?.caseInsensitiveCompare(destination.provider) == .orderedSame
         case .code(let harness):
             return destination.harness == harness
-        case .mergeRequest:
+        case .mergeRequest, .knowledgeBase:
             return false
         }
     }
@@ -160,6 +167,7 @@ extension SendOrigin {
                 : "a Pi session through \(providers.sorted().joined(separator: ", "))"
         case .code(let harness): "repository code worked on with \(harness.title)"
         case .mergeRequest: "a merge request with its threads and work items"
+        case .knowledgeBase: "a knowledge base proposal with the notes it is checked against"
         }
     }
 }

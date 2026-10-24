@@ -19,7 +19,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 5
+    public static let version = 6
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -134,13 +134,19 @@ public enum KnowledgeSeed {
         return Outcome(base: base, status: status, files: paths)
     }
 
-    /// Writes each seed proposal that isn't in `inbox/` yet, untracked (never committed).
+    /// Writes each seed proposal that isn't in `inbox/` yet, untracked (never committed), with its
+    /// stored check marks when it has some.
     static func writeProposals(_ base: KnowledgeBase) {
         for proposal in proposals {
             let url = base.root.appending(path: proposal.path)
             guard !FileManager.default.fileExists(atPath: url.path) else { continue }
             try? FileManager.default.createDirectory(at: base.inboxFolder, withIntermediateDirectories: true)
             try? Data(proposal.text.utf8).write(to: url, options: .withoutOverwriting)
+            // The check model's marks (5.2), made up: no model is called.
+            if let marks = checkMarks[proposal.id], base.check(of: proposal) == nil {
+                _ = try? base.saveCheck(marks, of: proposal, model: "Pi · opencode-go/gpt-6-luna · low",
+                                        now: ISO8601DateFormatter().date(from: "2026-10-24T09:10:00Z") ?? .now)
+            }
         }
     }
 
@@ -462,6 +468,14 @@ public enum KnowledgeSeed {
             {"type": "excalidraw", "version": 2, "elements": [
 
             """),
+    ]
+
+    /// The stored check of a seed proposal (5.2), as `kb check` would keep it.
+    public static let checkMarks: [String: [KnowledgeCheck.Mark]] = [
+        "2026-10-24-payments-billing": [
+            .init(kind: .duplicate, note: "payments/flows/order-to-billing",
+                  message: "order-to-billing already says what happens to the order; the Refunds section may only need the credit note."),
+        ],
     ]
 
     /// The proposals waiting in the sample base's `inbox/` (5.1): a note proposal that adds a

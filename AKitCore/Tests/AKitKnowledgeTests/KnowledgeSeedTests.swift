@@ -164,6 +164,12 @@ struct KnowledgeSeedTests {
                 && entries.map(\.kind) == [.arrow, .note] && entries.allSatisfy { $0.checks.allSatisfy { $0.status == .passed } }
                 && entries[1].set == [.init(key: "sla", value: "next day")]
         }),
+        // The check model's marks (5.2), stored without a call.
+        ("the note proposal has a stored duplicate mark, the arrow none", { base in
+            let entries = base.proposals()
+            return entries[1].modelCheck?.marks.map(\.kind) == [.duplicate] && entries[1].modelCheck?.stale == false
+                && entries[0].modelCheck == nil
+        }),
         ("the note proposal applies: billing gets ## Refunds and sla", { base in
             let plan = try base.planAccept(try base.proposal("2026-10-24-payments-billing"))
             return plan.planned.contains("## Refunds") && plan.planned.contains("sla: next day") && !plan.newArea
@@ -201,7 +207,8 @@ struct KnowledgeSeedTests {
         #expect(try await git("log", "--format=%s", in: outcome.base.root) == "Seed: sample base v\(KnowledgeSeed.version)\nCreate the knowledge base")
         // Only the seed's proposals are untracked (P3), and the marker doesn't list them.
         #expect(try await git("status", "--porcelain", in: outcome.base.root)
-            == KnowledgeSeed.proposals.map { "?? \($0.path)" }.sorted().joined(separator: "\n"))
+            == (KnowledgeSeed.proposals.map { "?? \($0.path)" } + KnowledgeSeed.checkMarks.keys.map { "?? \(KnowledgeCheck.path(of: $0))" })
+                .sorted().joined(separator: "\n"))
         #expect(try await git("ls-files", "--", ".akit-seed.json", in: outcome.base.root) == ".akit-seed.json")
         #expect(try await git("ls-files", "inbox", in: outcome.base.root) == KnowledgeInbox.keepFile)
         #expect(KnowledgeSeed.bases(home: home) == [outcome.base])

@@ -1,6 +1,7 @@
 import AKitBrain
 import AKitFoundation
 import AKitKnowledge
+import AKitLab
 import Foundation
 
 /// `akit kb`: the knowledge base (docs/design/knowledge.md). Agents run the read commands; the
@@ -68,7 +69,16 @@ extension AKitCLI {
                                         The proposals waiting in inbox/ for the person: id, kind
                                         (note or arrow), target, reason, created, author, and the
                                         checks run now (secret, target, links, arrow: passed,
-                                        warning or failed)
+                                        warning or failed), and the check model's marks
+      akit kb check ID [--model M] [--json] [--base PATH|WORLD]
+                                        Ask the check model (Settings → Knowledge check model, or
+                                        --model provider/model) through Pi whether a proposal
+                                        repeats a note, contradicts a map arrow or has a broken
+                                        link. One model call under the sending policy, the monthly
+                                        limit and the send log (purpose kb-check). It only marks:
+                                        the marks are kept in inbox/.<id>.check.json and shown by
+                                        kb inbox; it never accepts or rejects. --json: {id, model,
+                                        marks: [{kind, note, edge, link, message}], candidates}
 
     Propose (agents: the only way an agent changes the base; the person accepts or rejects):
       akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T]
@@ -138,6 +148,12 @@ extension AKitCLI {
                                         commits it in one commit that also removes the proposal.
                                         An arrow proposal is drawn in the app: it writes nothing,
                                         says so and exits 2
+      akit kb check-model [MODEL [THINKING]]
+                                        For a person only. Show or set the check model of kb check:
+                                        a Pi model provider/model (default
+                                        opencode-go/gpt-6-luna) and its thinking (default low),
+                                        kept in ~/.akit/lab/settings.json; the same as Settings →
+                                        Knowledge check model
       akit kb reject ID [--yes] [--json] [--base PATH|WORLD]
                                         For a person only. Move a proposal to the Trash. Without
                                         --yes it only shows what would go
@@ -360,6 +376,8 @@ extension AKitCLI {
                 out("Would write \(path) to the core layer for Pi only and commit it in the brain. Run again with --yes to do it:\n\(edit.diff)")
             }
             return 0
+        case "check", "check-model":
+            return try await knowledgeCheck(command!, &args, json: json, base: chosen, env: env, out: out)
         case "propose", "inbox", "accept", "reject":
             return try await knowledgeInbox(command!, &args, json: json, base: chosen, cwd: cwd, env: env, out: out, trash: trash, input: input)
         case "seed":
@@ -793,7 +811,11 @@ extension AKitCLI {
                     let what = entry.arrow.map { "arrow \($0.text)" + ($0.map.map { " on \($0)" } ?? "") }
                         ?? "\(entry.kind?.rawValue ?? "unknown") \(entry.target ?? "-")"
                     let marks = entry.checks.filter { $0.status != .passed }.map { "\n    \($0.status.rawValue) \($0.name): \($0.message ?? "")" }
-                    return "\(entry.id)  \(what)" + (entry.reason.map { "\n    \($0)" } ?? "") + marks.joined()
+                    let model = entry.modelCheck.map { check in
+                        check.marks.map { "\n    mark \($0.kind.rawValue): \($0.message)" }.joined()
+                            + (check.stale ? "\n    (the marks are from before the proposal changed: akit kb check \(entry.id))" : "")
+                    } ?? ""
+                    return "\(entry.id)  \(what)" + (entry.reason.map { "\n    \($0)" } ?? "") + marks.joined() + model
                 }.joined(separator: "\n"))
             }
             return 0
@@ -842,6 +864,98 @@ extension AKitCLI {
             }
             return 0
         }
+    }
+
+    /// `kb check ID` (agent read: one model call through the sending policy, K15) and
+    /// `kb check-model [MODEL [THINKING]]` (person only).
+    private static func knowledgeCheck(_ command: String, _ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                       env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        if command == "check-model" {
+            let model = args.positional(), thinking = args.positional()
+            try args.finish()
+            guard let model else {
+                let agent = KnowledgeCheckModel.agent(settings: LabSettings.load(env: env))
+                out(json ? encode(CheckModelAnswer(agent)) : "Knowledge check model: \(KnowledgeCheckModel.label(agent))")
+                return 0
+            }
+            guard model.contains("/") else { throw Failure(message: "MODEL is a Pi model provider/model, like \(KnowledgeCheckModel.defaultAgent.model).") }
+            let effort = thinking ?? KnowledgeCheckModel.defaultAgent.effort
+            guard LabHarness.pi.efforts.contains(effort) else {
+                throw Failure(message: "THINKING is one of \(LabHarness.pi.efforts.joined(separator: ", ")).")
+            }
+            let agent = LabAgent(harness: .pi, model: model, effort: effort, mode: .call)
+            do {
+                try LabSettings.update(env: env) { $0.knowledgeCheckAgent = agent == KnowledgeCheckModel.defaultAgent ? nil : agent }
+            } catch {
+                throw Failure(message: error.localizedDescription)
+            }
+            out(json ? encode(CheckModelAnswer(agent)) : "Knowledge check model: \(KnowledgeCheckModel.label(agent))")
+            return 0
+        }
+        let modelOption = args.value("--model")
+        guard let id = args.positional() else { throw Failure(message: "Use: akit kb check ID [--model provider/model] [--json] [--base PATH|WORLD]") }
+        try args.finish()
+        guard let base = try await chosen() else {
+            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+            return 0
+        }
+        let proposal: KnowledgeProposal
+        do { proposal = try base.proposal(id) } catch { throw Failure(message: error.message) }
+        var agent = KnowledgeCheckModel.agent(settings: try LabSettings.loadForSending(env: env))
+        if let modelOption {
+            guard modelOption.contains("/") else { throw Failure(message: "--model is a Pi model provider/model, like \(KnowledgeCheckModel.defaultAgent.model).") }
+            agent = LabAgent(harness: .pi, model: modelOption, effort: agent.effort, mode: .call)
+        }
+        let candidates = base.checkCandidates(for: proposal)
+        let request = ModelCall.Request(agent: agent, purpose: KnowledgeCheckModel.purpose, system: KnowledgeCheck.system,
+                                        input: KnowledgeCheck.input(proposal, candidates: candidates), schema: KnowledgeCheck.schema,
+                                        origin: .knowledgeBase)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "akit-kb-check-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let marks: [KnowledgeCheck.Mark]
+        let result: KnowledgeCheck.Result
+        do {
+            let gate = try await SendGate.open(agent: agent, env: env)
+            let answer = try await ModelCall.run(request, gate: gate, folder: folder, env: env)
+            marks = try KnowledgeCheck.marks(fromAnswer: answer.text)
+            // The answer only marks: the proposal and the base stay as they are.
+            result = try base.saveCheck(marks, of: proposal, model: KnowledgeCheckModel.label(agent))
+        } catch let error as KnowledgeCheck.Failure {
+            throw Failure(message: error.message)
+        } catch let error as KnowledgeBase.Failure {
+            throw Failure(message: error.message)
+        }
+        if json {
+            out(encode(CheckAnswer(base: base.root.path, id: proposal.id, model: result.model, checked: result.checked, marks: marks,
+                                   candidates: candidates)))
+        } else {
+            let head = "\(proposal.id): checked by \(result.model); " + (marks.isEmpty ? "no marks." : "\(count(marks.count, "mark")):")
+            var lines: [String] = [head]
+            for mark in marks {
+                let subject: String = [mark.note, mark.edge, mark.link].compactMap { $0 }.first.map { " " + $0 } ?? ""
+                lines.append("  " + mark.kind.rawValue + subject + ": " + mark.message)
+            }
+            lines.append("Marks only: the person accepts or rejects (Knowledge → Inbox, or akit kb accept / reject).")
+            out(lines.joined(separator: "\n"))
+        }
+        return 0
+    }
+
+    struct CheckModelAnswer: Encodable {
+        let harness: String
+        let model: String
+        let thinking: String
+
+        init(_ agent: LabAgent) { (harness, model, thinking) = (agent.harness.rawValue, agent.model, agent.effort) }
+    }
+
+    struct CheckAnswer: Encodable {
+        let base: String
+        let id: String
+        let model: String
+        let checked: String
+        let marks: [KnowledgeCheck.Mark]
+        let candidates: KnowledgeCheck.Candidates
     }
 
     struct ProposeAnswer: Encodable {

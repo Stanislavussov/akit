@@ -5,7 +5,8 @@ import Foundation
 /// - `areas/…` (notes, maps, `area.yaml`): the index is refreshed, and an outside change goes to
 ///   the commit queue (U2).
 /// - `kb.yaml`: the kinds are read again; queued like an area file.
-/// - `inbox/…`: only the Inbox count and list are refreshed. Never queued: only Accept and Reject
+/// - `inbox/…` (a proposal, or its hidden `.<id>.check.json` marks): only the Inbox count and list
+///   are refreshed. Never queued: only Accept and Reject
 ///   change `inbox/` in git (P3).
 /// - git's, Obsidian's and AKit's own working files (`.git/`, `.obsidian/`, the index, the locks,
 ///   the queue, the miss log) and any other hidden file (`.DS_Store`, an editor's swap file):
@@ -34,6 +35,8 @@ public enum WatchFilter {
         guard let top = parts.first else { return .ignore }
         if ignoredTop.contains(top) || top.hasPrefix(KnowledgeIndex.fileName) { return .ignore }
         if path == KnowledgeSeed.markerName { return .other(path) }
+        // The check model's hidden marks of a proposal (5.2) refresh the Inbox like the proposal.
+        if top == "inbox", parts.count == 2, parts[1].hasPrefix("."), parts[1].hasSuffix(".check.json") { return .inbox(path) }
         if parts.contains(where: { $0.hasPrefix(".") }) { return .ignore }
         switch top {
         case "areas" where parts.count > 1: return .area(path)

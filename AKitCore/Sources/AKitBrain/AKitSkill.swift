@@ -254,14 +254,23 @@ akit kb lint [--json] [--base PATH|WORLD]          # check the base: {base, find
                                                    # file, element, link, message, fix}], counts}
 akit kb inbox [--json] [--base PATH|WORLD]         # the proposals waiting for the user: {base,
                                                    # proposals: [{id, kind, target, reason, created,
-                                                   # checks: [{name, status, message}]}]}
+                                                   # checks: [{name, status, message}], modelCheck:
+                                                   # {model, checked, stale, marks} or null}]}
+akit kb check ID [--json] [--base PATH|WORLD]      # ask the user's check model whether a proposal
+                                                   # repeats a note, contradicts a map arrow or has
+                                                   # a broken link: one model call through Pi under
+                                                   # the sending policy and the monthly limit (send
+                                                   # log: kb-check). It only marks: {id, model,
+                                                   # marks: [{kind, note, edge, link, message}]}
 ```
 
 You never edit the base: you propose, and the user accepts or rejects in AKit. Propose when
 you learn a fact a note lacks, find a system the base doesn't have, or see a relation no map
 shows. Name the note as AREA/NAME (`kb context`'s focus or `kb areas` picks the area); for a
 system unrelated to every area, propose a new area (`--note support/helpdesk`) rather than
-mixing it into one. Say in `--reason` where the fact comes from.
+mixing it into one. Say in `--reason` where the fact comes from. After a proposal, `kb check
+ID` may mark a duplicate or a contradiction: tell the user (and propose a better change if you
+have one); the marks never accept or reject anything.
 
 ```
 akit kb propose --note AREA/NAME (--file F | --stdin) [--set KEY=VALUE]… [--reason T] [--json]
@@ -334,6 +343,8 @@ akit kb accept ID [--yes] [--json]                 # accept a proposal: shows th
                                                    # proposal's removal; an arrow: exit 2, drawn
                                                    # in the app
 akit kb reject ID [--yes] [--json]                 # a proposal to the Trash
+akit kb check-model [MODEL [THINKING]]             # the check model of kb check: a Pi provider/model
+                                                   # (default opencode-go/gpt-6-luna, low)
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
 akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi

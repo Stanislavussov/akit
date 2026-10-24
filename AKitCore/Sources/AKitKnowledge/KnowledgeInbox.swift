@@ -4,7 +4,8 @@ import Foundation
 /// An agent's proposal (K14, P3): a file `inbox/<id>.md` that waits for the person's Accept or
 /// Reject. `propose` writes only there and never commits it (it stays untracked and is never
 /// indexed); Accept writes the change, commits it and removes the proposal in one commit; Reject
-/// moves the file to the Trash.
+/// moves the file to the Trash. The check model's marks (5.2) wait beside it in
+/// `inbox/.<id>.check.json` (`KnowledgeCheck`) and go with it.
 ///
 /// The file is Markdown with a frontmatter AKit writes and reads:
 ///
@@ -203,9 +204,26 @@ public enum KnowledgeInbox {
         public let set: [KnowledgeProposal.Setting]
         public let arrow: KnowledgeProposal.Arrow?
         public let checks: [Check]
+        /// The check model's marks (5.2); nil when the proposal wasn't checked.
+        public let modelCheck: ModelCheck?
         public let proposal: KnowledgeProposal?
 
-        private enum CodingKeys: String, CodingKey { case id, path, kind, target, reason, created, author, set, arrow, checks }
+        /// A stored model check as listed: `stale` when the proposal changed since.
+        public struct ModelCheck: Sendable, Equatable, Encodable {
+            public let model: String
+            public let checked: String
+            public let stale: Bool
+            public let marks: [KnowledgeCheck.Mark]
+        }
+
+        public init(id: String, path: String, kind: KnowledgeProposal.Kind?, target: String?, reason: String?, created: String?,
+                    author: String?, set: [KnowledgeProposal.Setting], arrow: KnowledgeProposal.Arrow?, checks: [Check],
+                    modelCheck: ModelCheck? = nil, proposal: KnowledgeProposal?) {
+            (self.id, self.path, self.kind, self.target, self.reason, self.created) = (id, path, kind, target, reason, created)
+            (self.author, self.set, self.arrow, self.checks, self.modelCheck, self.proposal) = (author, set, arrow, checks, modelCheck, proposal)
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, path, kind, target, reason, created, author, set, arrow, checks, modelCheck }
 
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
@@ -219,6 +237,7 @@ public enum KnowledgeInbox {
             try container.encode(Dictionary(set.map { ($0.key, $0.value) }, uniquingKeysWith: { $1 }), forKey: .set)
             try container.encode(arrow, forKey: .arrow)
             try container.encode(checks, forKey: .checks)
+            try container.encode(modelCheck, forKey: .modelCheck) // null before a check
         }
     }
 
@@ -435,9 +454,13 @@ extension KnowledgeBase {
                                                                        message: "\(path) is not a proposal AKit can read (its frontmatter needs id, kind and created).")],
                                             proposal: nil)
             }
+            let stored = check(of: proposal).map { result in
+                KnowledgeInbox.Entry.ModelCheck(model: result.model, checked: result.checked,
+                                                stale: result.proposalHash != KnowledgeCheck.hash(proposal), marks: result.marks)
+            }
             return KnowledgeInbox.Entry(id: id, path: path, kind: proposal.kind, target: proposal.target, reason: proposal.reason,
                                         created: proposal.created, author: proposal.author, set: proposal.set, arrow: proposal.arrow,
-                                        checks: checks(of: proposal), proposal: proposal)
+                                        checks: checks(of: proposal), modelCheck: stored, proposal: proposal)
         }.sorted { $0.id < $1.id }
     }
 
@@ -619,6 +642,7 @@ extension KnowledgeBase {
             restore(plan, proposal: proposalData, keep: addsKeep ? keep : nil)
             throw Failure(message: "Couldn't commit the accepted proposal (\(error.message)); the note and the proposal are as they were.")
         }
+        removeCheck(of: plan.proposal.id)
         return KnowledgeInbox.Accepted(plan: plan, paths: [plan.notePath] + (addsKeep ? [KnowledgeInbox.keepFile] : []), backup: backup)
     }
 
@@ -672,6 +696,7 @@ extension KnowledgeBase {
         do { place = try trash(file) } catch {
             throw Failure(message: "Couldn't move \(proposal.path) to the Trash: \(error.localizedDescription)")
         }
+        removeCheck(of: proposal.id)
         guard tracked else { return place }
         do { try await git.commit(paths: [proposal.path], message: "Reject proposal \(proposal.id)") } catch {
             throw Failure(message: "\(proposal.path) is in the Trash, but its removal wasn't committed: \(error.message)")

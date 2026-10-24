@@ -3,6 +3,7 @@ import Testing
 import AKitBrain
 import AKitFoundation
 import AKitKnowledge
+import AKitLab
 @testable import AKitCommandLine
 
 /// `akit kb` in a temporary fake home; git reads no config of the real user.
@@ -56,13 +57,13 @@ struct KnowledgeCLITests {
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
         for command in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
-                        "akit kb rm", "akit kb rename", "akit kb accept", "akit kb reject", "akit kb pi-template", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
+                        "akit kb rm", "akit kb rename", "akit kb accept", "akit kb reject", "akit kb check-model", "akit kb pi-template", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
         for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]",
                         "akit kb search", "akit kb show", "akit kb index", "akit kb neighbors", "akit kb context", "akit kb focus [FOLDER] [--json]", "akit kb lint",
-                        "akit kb inbox", "akit kb propose --note", "akit kb propose --arrow"] {
+                        "akit kb inbox", "akit kb propose --note", "akit kb propose --arrow", "akit kb check ID"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(!lines[index...].prefix(3).contains { $0.contains("person only") }, "\(command) is a read command")
         }
@@ -531,7 +532,7 @@ struct KnowledgeCLITests {
         let inbox = try json(await akit("kb", "inbox", "--json").out)
         let entries = try #require(inbox["proposals"] as? [[String: Any]])
         #expect(entries.count == 3)
-        #expect(Set(entries[0].keys) == ["id", "path", "kind", "target", "reason", "created", "author", "set", "arrow", "checks"])
+        #expect(Set(entries[0].keys) == ["id", "path", "kind", "target", "reason", "created", "author", "set", "arrow", "checks", "modelCheck"])
         #expect(entries.first { $0["id"] as? String == id }?["reason"] as? String == "from the code")
         #expect(await akit("kb", "inbox").out.contains("\(arrowID)  arrow payments/orders-api -events-> payments/billing"))
 
@@ -556,6 +557,51 @@ struct KnowledgeCLITests {
         #expect(Int(try await git("rev-list", "--count", "HEAD")) == Int(commits)! + 1)
         #expect(try await git("status", "--porcelain").hasPrefix("?? inbox/"))
         #expect(await akit("kb", "accept", "nope").err.contains("No proposal nope"))
+    }
+
+    /// 5.2: kb check sends the proposal through Pi under the sending policy (purpose kb-check),
+    /// keeps the marks beside it and never accepts; kb check-model sets the model.
+    @Test func checkMarksAProposalThroughPiAndNeverAccepts() async throws {
+        let bin = home.appending(path: "bin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        try Data(#"""
+            #!/bin/sh
+            if [ "$1 $2" = "auth check" ]; then echo '{"status":"ready"}'; exit 0; fi
+            echo "$@" > "$HOME/pi-args.txt"
+            for a in "$@"; do case "$a" in @*) cp "${a#@}" "$HOME/pi-input.json";; esac; done
+            echo '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"{\"marks\":[{\"kind\":\"duplicate\",\"note\":\"payments/billing\",\"message\":\"Invoices says it.\"}],\"accept\":true}"}],"usage":{"input":10,"output":3}}}'
+
+            """#.utf8).write(to: bin.appending(path: "pi"))
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: "pi").path)
+        let piEnv = HarnessEnvironment(homeDirectory: home, variables: env.variables, executableSearchPaths: [bin, URL(filePath: "/usr/bin"), URL(filePath: "/bin")])
+        func run(_ arguments: String...) async -> (code: Int32, out: String, err: String) {
+            var out: [String] = [], err: [String] = []
+            let code = await AKitCLI.run(arguments, env: piEnv, cwd: home, projectsRoot: home.appending(path: "Projects"), hostName: "TestMac.local",
+                                         out: { out.append($0) }, err: { err.append($0) }, trash: fakeTrash)
+            return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
+        }
+        #expect(await run("kb", "seed", "--world", "work").code == 0)
+        let head = try await git("rev-parse", "HEAD")
+        let checked = await run("kb", "check", "2026-10-24-arrow-billing-warehouse", "--json")
+        #expect(checked.code == 0, "\(checked.err)")
+        let answer = try json(checked.out)
+        #expect(answer["model"] as? String == "Pi · opencode-go/gpt-6-luna · low")
+        #expect((answer["marks"] as? [[String: Any]])?.map { $0["kind"] as? String } == ["duplicate"])
+        #expect(try String(contentsOf: home.appending(path: "pi-args.txt"), encoding: .utf8).contains("--model opencode-go/gpt-6-luna"))
+        let sent = try json(String(contentsOf: home.appending(path: "pi-input.json"), encoding: .utf8))
+        #expect(Set(sent.keys) == ["proposal", "candidates"])
+        #expect(SendLog.records(env: piEnv).map(\.purpose) == ["kb-check"])
+        // Marks only: nothing committed, the proposal is still open, kb inbox shows the mark.
+        #expect(try await git("rev-parse", "HEAD") == head)
+        #expect(fm.fileExists(atPath: base.appending(path: "inbox/2026-10-24-arrow-billing-warehouse.md").path))
+        #expect(await run("kb", "inbox").out.contains("mark duplicate: Invoices says it."))
+        // --model overrides; check-model sets and shows it.
+        #expect(await run("kb", "check", "2026-10-24-arrow-billing-warehouse", "--model", "zai/glm-5-air").code == 0)
+        #expect(try String(contentsOf: home.appending(path: "pi-args.txt"), encoding: .utf8).contains("--model zai/glm-5-air"))
+        #expect(await run("kb", "check-model", "zai/glm-5-air", "minimal").out == "Knowledge check model: Pi · zai/glm-5-air · minimal")
+        #expect(LabSettings.load(env: piEnv).knowledgeCheckAgent == LabAgent(harness: .pi, model: "zai/glm-5-air", effort: "minimal"))
+        #expect(await run("kb", "check-model", "glm").code == 2)
+        #expect(await run("kb", "check", "nope").err.contains("No proposal nope"))
     }
 
     /// K16 / D0: the core layer's Pi-only section reaches Pi's AGENTS.md through apply --home and

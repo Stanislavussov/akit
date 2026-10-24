@@ -278,15 +278,19 @@ public struct LabSettings: Codable, Sendable, Hashable {
     public var monthlyLimit: Double?
     /// The model Translate uses (Settings → Translation model); nil = `OutputTranslation.defaultAgent`.
     public var translationAgent: LabAgent?
+    /// The model `akit kb check` uses (Settings → Knowledge check model); nil = `KnowledgeCheckModel.defaultAgent`.
+    public var knowledgeCheckAgent: LabAgent?
 
     public init(reportLanguage: LabLanguage = .english, allowedDestinations: [SendDestination] = [], piAccounts: [PiAccount] = [],
-                scrub: Scrubber.OwnPatterns = Scrubber.OwnPatterns(), monthlyLimit: Double? = nil, translationAgent: LabAgent? = nil) {
+                scrub: Scrubber.OwnPatterns = Scrubber.OwnPatterns(), monthlyLimit: Double? = nil, translationAgent: LabAgent? = nil,
+                knowledgeCheckAgent: LabAgent? = nil) {
         self.reportLanguage = reportLanguage
         self.allowedDestinations = allowedDestinations
         self.piAccounts = piAccounts
         self.scrub = scrub
         self.monthlyLimit = monthlyLimit
         self.translationAgent = translationAgent
+        self.knowledgeCheckAgent = knowledgeCheckAgent
     }
 
     /// Fields missing in older files take their defaults; a broken field doesn't lose the others.
@@ -298,6 +302,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
         scrub = (try? container.decodeIfPresent(Scrubber.OwnPatterns.self, forKey: .scrub)) ?? Scrubber.OwnPatterns()
         monthlyLimit = try? container.decodeIfPresent(Double.self, forKey: .monthlyLimit)
         translationAgent = try? container.decodeIfPresent(LabAgent.self, forKey: .translationAgent)
+        knowledgeCheckAgent = try? container.decodeIfPresent(LabAgent.self, forKey: .knowledgeCheckAgent)
     }
 
     static func file(env: HarnessEnvironment) -> URL { LabPaths(env: env).folder.appending(path: "settings.json") }
@@ -384,6 +389,7 @@ public struct LabSettings: Codable, Sendable, Hashable {
         if new.reportLanguage != old.reportLanguage { reportLanguage = new.reportLanguage }
         if new.monthlyLimit != old.monthlyLimit { monthlyLimit = new.monthlyLimit }
         if new.translationAgent != old.translationAgent { translationAgent = new.translationAgent }
+        if new.knowledgeCheckAgent != old.knowledgeCheckAgent { knowledgeCheckAgent = new.knowledgeCheckAgent }
         if new.scrub.maskEmails != old.scrub.maskEmails { scrub.maskEmails = new.scrub.maskEmails }
         if new.scrub.hosts != old.scrub.hosts { scrub.hosts = new.scrub.hosts }
         if new.scrub.extra != old.scrub.extra { scrub.extra = new.scrub.extra }

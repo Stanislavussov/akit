@@ -318,8 +318,9 @@ enum DebugSnapshot {
         if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
             print(manifest)
         }
-        if options.settings, options.tab == "knowledge" {
+        if options.settings, options.tab == "knowledge" || options.tab == "knowledge-check" {
             print(KnowledgeSettingsSection.manifest())
+            print(KnowledgeCheckModelSection.manifest())
         }
         let bounds = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { exit(1) }

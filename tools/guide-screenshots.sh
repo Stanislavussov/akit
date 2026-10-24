@@ -222,5 +222,7 @@ shot knowledge-sample    $MAIN --section knowledge --tab sample --select payment
 rm -rf "$DEMO/.akit/local/knowledge/sample"
 # Settings → Knowledge: the base folder of each world (work has the demo base, personal none yet).
 shot knowledge-settings  900x760 --tab knowledge --settings
+# Settings → Knowledge check model: the Pi model and thinking of akit kb check (the default, Luna).
+shot knowledge-check-settings 900x760 --tab knowledge-check --settings
 
 exit $FAILED
