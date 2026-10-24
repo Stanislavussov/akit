@@ -281,6 +281,9 @@ struct ReviewRunDetail: View {
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+                if DebugSnapshot.options != nil { print("review: detail \(Int(width)) wide, content \(Int(width) - 40)") }
+            }
             }
             actions
         }

@@ -29,7 +29,9 @@ struct ReviewMapView: View {
     /// Modules and projects folded to one node; those over 8 files start folded.
     @State private var folded: Set<String>
     @State private var dependentsOpen = false
-    /// The lanes' width beside the inspector: each lane gets its share of it.
+    /// The width of the lanes' scroll view beside the inspector: each lane gets its share of it.
+    /// Measured on the scroll view, which takes the width it is offered, never the lanes' own:
+    /// the lanes can't widen what they are measured by, and the map never widens its pane.
     @State private var lanesWidth: CGFloat = 0
 
     /// Over this many files a module (or a project) starts folded.
@@ -91,6 +93,9 @@ struct ReviewMapView: View {
                 }
             }
         }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+            if DebugSnapshot.options != nil { print("map: \(Int(width)) wide") }
+        }
         // Another map in the same view (another run): its own folds, nothing selected.
         .onChange(of: map) { _, map in
             folded = Self.startFolded(map)
@@ -102,33 +107,40 @@ struct ReviewMapView: View {
 
     private static let laneSpacing: CGFloat = 36
 
+    /// The lanes in a sideways scroll view: under their least widths they scroll inside it, and the
+    /// inspector beside them stays in view.
     private var lanes: some View {
-        HStack(alignment: .top, spacing: Self.laneSpacing) {
-            lane("This change", systemImage: "doc.text", width: laneWidth(0.38, least: 200)) { changeLane }
-            lane("Boundaries", systemImage: "square.dashed", width: laneWidth(0.30, least: 160)) { boundariesLane }
-            lane("Other repositories", systemImage: "shippingbox", width: laneWidth(0.32, least: 170)) { othersLane }
-        }
-        .backgroundPreferenceValue(MapAnchors.self) { anchors in
-            GeometryReader { proxy in
-                Canvas { context, _ in draw(in: &context, anchors: anchors, proxy: proxy) }
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: Self.laneSpacing) {
+                lane("This change", systemImage: "doc.text", width: laneWidth(0.38, least: 150)) { changeLane }
+                lane("Boundaries", systemImage: "square.dashed", width: laneWidth(0.30, least: 120)) { boundariesLane }
+                lane("Other repositories", systemImage: "shippingbox", width: laneWidth(0.32, least: 130)) { othersLane }
             }
-            .allowsHitTesting(false)
+            .backgroundPreferenceValue(MapAnchors.self) { anchors in
+                GeometryReader { proxy in
+                    Canvas { context, _ in draw(in: &context, anchors: anchors, proxy: proxy) }
+                }
+                .allowsHitTesting(false)
+            }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width in
+                if DebugSnapshot.options != nil { print("map: lanes \(Int(width)) wide in \(Int(lanesWidth))") }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { lanesWidth = $0 }
     }
 
-    /// A lane's share of the width beside the inspector, at least `least`; nil before it is measured.
-    private func laneWidth(_ share: CGFloat, least: CGFloat) -> CGFloat? {
-        lanesWidth > 0 ? max(least, ((lanesWidth - 2 * Self.laneSpacing) * share).rounded(.down)) : nil
+    /// A lane's share of the scroll view's width, at least `least`.
+    private func laneWidth(_ share: CGFloat, least: CGFloat) -> CGFloat {
+        max(least, ((lanesWidth - 2 * Self.laneSpacing) * share).rounded(.down))
     }
 
-    private func lane(_ title: String, systemImage: String, width: CGFloat?, @ViewBuilder content: () -> some View) -> some View {
+    private func lane(_ title: String, systemImage: String, width: CGFloat, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: systemImage).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
             content()
         }
-        .frame(minWidth: width ?? 150, maxWidth: width ?? .infinity, alignment: .topLeading)
+        .frame(width: width, alignment: .topLeading)
     }
 
     // MARK: - Lanes
