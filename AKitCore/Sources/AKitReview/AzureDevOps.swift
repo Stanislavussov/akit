@@ -1,6 +1,6 @@
 import Foundation
 
-/// A work item as the fetch pass read it (`<run>/context/work-items/<id>.md`, `<run>/tracker/work-items.json`).
+/// A work item as the fetch pass read it (`<run>/context/work-items.md`, `<run>/tracker/work-items.json`).
 public struct WorkItem: Codable, Sendable, Hashable {
     public struct Comment: Codable, Sendable, Hashable {
         public var author: String
@@ -50,6 +50,8 @@ public enum AzureDevOpsJSON {
             default: break
             }
         }
+        // Some servers give the parent only as a field.
+        if let parent = fields.int("System.Parent"), !parents.contains(parent) { parents.append(parent) }
         func text(_ key: String) -> String { HTMLText.plain(fields.string(key) ?? "") }
         return WorkItem(id: id, type: fields.string("System.WorkItemType") ?? "", title: fields.string("System.Title") ?? "",
                         state: fields.string("System.State") ?? "", description: text("System.Description"),

@@ -22,7 +22,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 7
+    public static let version = 12
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -35,8 +35,109 @@ public enum ReviewExtension {
             || ["auth.json", "settings.local.json", ".npmrc", ".netrc", ".pypirc", ".git-credentials"].contains(lower)
     }
 
+    /// The extension's pure rules, in plain JavaScript inside the TypeScript file, so AKit's tests
+    /// run this same text with JavaScriptCore: the argument limit of open servers and of the
+    /// impact pass, the shape of a submitted use and of the brief's overview.
+    public static let rules = #"""
+    const openArgumentLimit = 300;
+    // The whole arguments of a call where the limit applies, as JSON.
+    const openInputLimit = 600;
+
+    // Where the limit applies: every server in the impact pass (it searches other projects), and an
+    // open server (reached only through every-server reading) in any pass.
+    function limitApplies(passName, base, extra) {
+      return passName === "impact" || (!base && !extra);
+    }
+
+    // No line break and no long text in a call's arguments (keys too), nothing nested deeper than
+    // AKit looks, and not much in all, so code of the change can't leave through a search box.
+    function tooMuchFor(input) {
+      let whole;
+      try { whole = JSON.stringify(input === undefined ? null : input); } catch (e) { return true; }
+      if (typeof whole !== "string" || whole.length > openInputLimit) return true;
+      const texts = [];
+      let deep = false;
+      const walk = (value, depth) => {
+        if (depth > 4) { deep = true; return; }
+        if (typeof value === "string") texts.push(value);
+        else if (Array.isArray(value)) value.forEach((v) => walk(v, depth + 1));
+        else if (value !== null && typeof value === "object") {
+          Object.entries(value).forEach(([key, v]) => { texts.push(key); walk(v, depth + 1); });
+        }
+      };
+      walk(input, 0);
+      return deep || texts.some((t) => t.length > openArgumentLimit || /[\r\n]/.test(t));
+    }
+
+    // A use of a boundary in another repository (the impact pass). AKit checks each against the
+    // saved GitLab answers; this only checks the shape.
+    function consumerProblems(list) {
+      const out = [];
+      list.forEach((c, i) => {
+        const at = `consumers[${i}]`;
+        if (typeof c !== "object" || c === null) { out.push(`${at} is not an object`); return; }
+        if (typeof c.boundary !== "string" || c.boundary.trim() === "") out.push(`${at}.boundary names the boundary (its id, such as b1, or its name)`);
+        if (typeof c.project !== "string" || c.project.trim() === "") out.push(`${at}.project is the other project's path in GitLab`);
+        if (typeof c.file !== "string" || c.file.trim() === "") out.push(`${at}.file is missing`);
+        if (c.ref !== undefined && c.ref !== null && typeof c.ref !== "string") out.push(`${at}.ref must be a branch or commit`);
+        if (c.line !== undefined && c.line !== null && (!Number.isInteger(c.line) || c.line < 1)) out.push(`${at}.line must be a line number from 1`);
+        if (typeof c.quote !== "string" || c.quote.trim() === "") out.push(`${at}.quote must copy the line from GitLab's answer`);
+        if (typeof c.usage !== "string" || c.usage.trim() === "") out.push(`${at}.usage says how the file uses the boundary`);
+        if (c.breaks !== undefined && typeof c.breaks !== "boolean") out.push(`${at}.breaks must be true or false`);
+        if (c.why !== undefined && typeof c.why !== "string") out.push(`${at}.why must be text`);
+        if (c.breaks === true && (typeof c.why !== "string" || c.why.trim() === "")) out.push(`${at}.why says how this change breaks it`);
+      });
+      return out;
+    }
+
+    // The brief's overview for the user (R45, R47): types and sizes. AKit checks the files and the flow.
+    const overviewSources = ["work-item", "description", "notes", "none"];
+    function overviewProblems(params) {
+      const out = [];
+      const p = params !== null && typeof params === "object" && !Array.isArray(params) ? params : {};
+      const given = (key) => (p[key] === undefined || p[key] === null ? [] : p[key]);
+      const points = given("points");
+      if (!Array.isArray(points)) out.push("points must be a list");
+      else {
+        if (points.length > 8) out.push("at most 8 points (AKit keeps 3–5)");
+        points.forEach((t, i) => {
+          if (typeof t !== "string" || t.trim() === "" || t.length > 400) out.push(`points[${i}] must be text of 1–400 characters`);
+        });
+      }
+      const modules = given("modules");
+      if (!Array.isArray(modules)) out.push("modules must be a list");
+      else {
+        if (modules.length > 20) out.push("at most 20 modules");
+        modules.forEach((m, i) => {
+          const at = `modules[${i}]`;
+          if (typeof m !== "object" || m === null || Array.isArray(m)) { out.push(`${at} is not an object`); return; }
+          if (typeof m.name !== "string" || m.name.trim() === "" || m.name.length > 120) out.push(`${at}.name must be 1–120 characters`);
+          if (!Array.isArray(m.files) || m.files.length === 0) out.push(`${at}.files must list the module's changed files`);
+          else {
+            if (m.files.length > 50) out.push(`${at}.files: at most 50`);
+            if (m.files.some((f) => typeof f !== "string" || f.trim() === "")) out.push(`${at}.files must hold file paths`);
+          }
+          if (m.why !== undefined && m.why !== null && (typeof m.why !== "string" || m.why.length > 400)) out.push(`${at}.why must be text of at most 400 characters`);
+        });
+      }
+      const sources = given("why_sources");
+      if (!Array.isArray(sources)) out.push("why_sources must be a list");
+      else sources.forEach((s, i) => {
+        if (!overviewSources.includes(s)) out.push(`why_sources[${i}] must be one of ${overviewSources.join(", ")}`);
+      });
+      if (p.flow !== undefined && p.flow !== null) {
+        if (typeof p.flow !== "string") out.push("flow must be Mermaid text");
+        else if (p.flow.length > 6000) out.push("flow must have at most 6000 characters");
+      }
+      if (p.flow_kind !== undefined && p.flow_kind !== null && p.flow_kind !== "flowchart" && p.flow_kind !== "sequenceDiagram") {
+        out.push("flow_kind must be flowchart or sequenceDiagram");
+      }
+      return out;
+    }
+    """#
+
     public static let source = #"""
-    // akit-review.ts v7: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v12: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -69,12 +170,13 @@ public enum ReviewExtension {
       "execute", "exec", "run", "send", "merge", "trigger", "cancel", "close", "archive", "set", "complete", "order", "invite", "share",
       "upload", "sql", "query", "insert", "drop", "move", "rename", "start", "stop", "deploy", "pay", "buy", "checkout", "submit", "reply",
       "comment"];
-    const openArgumentLimit = 300;
+    \#(rules)
     const severities = ["nit", "low", "medium", "high", "critical"];
     const verdicts = ["confirmed", "rejected", "question", "merged"];
     const kinds = ["finding", "ac", "question"];
+    const boundaryKinds = ["http-api", "graphql", "mfe", "shared-lib", "event", "db-schema", "infra", "ci", "config"];
     const readTools = ["read", "grep", "find", "ls"];
-    const ownTools = ["akit_submit_findings", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link"];
+    const ownTools = ["akit_submit_findings", "akit_submit_boundaries", "akit_submit_overview", "akit_submit_consumers", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link"];
     const resourceTools = ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"];
     const forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"];
     const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
@@ -145,20 +247,6 @@ public enum ReviewExtension {
     // Everything after `mcp__`: a server named `docs--fetch` must not pass as `docs`.
     function match_rest(name: string): string {
       return name.replace(/^mcp__/, "");
-    }
-
-    // An open server's call: no line break and no long text in its arguments, so code of the
-    // change can't leave through a search box.
-    function tooMuchFor(input: any): boolean {
-      const texts: string[] = [];
-      const walk = (value: any, depth: number) => {
-        if (depth > 4) return;
-        if (typeof value === "string") texts.push(value);
-        else if (Array.isArray(value)) value.forEach((v) => walk(v, depth + 1));
-        else if (value !== null && typeof value === "object") Object.values(value).forEach((v) => walk(v, depth + 1));
-      };
-      walk(input, 0);
-      return texts.some((t) => t.length > openArgumentLimit || /[\r\n]/.test(t));
     }
 
     function lead(tool: string): string[] {
@@ -338,6 +426,31 @@ public enum ReviewExtension {
       return out;
     }
 
+    // A key that is there must hold a list: a string or an object is a mistake, not an empty answer.
+    function listOf(params: any, key: string): { list: any[]; wrong: string[] } {
+      const value = params?.[key];
+      if (value === undefined || value === null) return { list: [], wrong: [] };
+      return Array.isArray(value) ? { list: value, wrong: [] } : { list: [], wrong: [`${key} must be a list`] };
+    }
+
+    function boundaryProblems(list: any[]): string[] {
+      const out: string[] = [];
+      if (list.length > 50) out.push("at most 50 boundaries; send the ones other repositories most likely use");
+      list.forEach((b, i) => {
+        const at = `boundaries[${i}]`;
+        if (typeof b !== "object" || b === null) { out.push(`${at} is not an object`); return; }
+        if (!boundaryKinds.includes(b.kind)) out.push(`${at}.kind must be one of ${boundaryKinds.join(", ")}`);
+        if (b.direction !== "provides" && b.direction !== "uses") out.push(`${at}.direction must be provides or uses`);
+        if (typeof b.name !== "string" || b.name.trim() === "" || b.name.length > 120) out.push(`${at}.name must be 1–120 characters`);
+        if (typeof b.file !== "string" || b.file.trim() === "") out.push(`${at}.file is missing`);
+        if (b.line !== undefined && b.line !== null && (!Number.isInteger(b.line) || b.line < 1)) out.push(`${at}.line must be a line number from 1`);
+        if (typeof b.quote !== "string" || b.quote.trim() === "" || b.quote.length > 500) out.push(`${at}.quote must quote the code (at most 500 characters)`);
+        if (b.side !== undefined && b.side !== "new" && b.side !== "old") out.push(`${at}.side must be new or old`);
+        if (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 300)) out.push(`${at}.note must be text of at most 300 characters`);
+      });
+      return out;
+    }
+
     export default function (pi: any) {
       if (mode === "review") {
         pi.registerTool({
@@ -388,15 +501,147 @@ public enum ReviewExtension {
             },
           },
           async execute(_id: string, params: any) {
-            const findings = Array.isArray(params?.findings) ? params.findings : [];
-            const verdictList = Array.isArray(params?.verdicts) ? params.verdicts : [];
-            const wrong = problems(findings, verdictList);
+            const given = listOf(params, "findings");
+            const givenVerdicts = listOf(params, "verdicts");
+            const findings = given.list;
+            const verdictList = givenVerdicts.list;
+            const wrong = [...given.wrong, ...givenVerdicts.wrong, ...problems(findings, verdictList)];
             if (wrong.length > 0) {
               return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
             }
             const name = pass === "discuss" ? `passes/discuss-${Date.now()}.json` : `passes/${pass}.json`;
             write(name, JSON.stringify({ pass, role, findings, verdicts: verdictList }, null, 2));
             return { content: [{ type: "text", text: `Saved ${findings.length} findings and ${verdictList.length} verdicts.` }], details: undefined };
+          },
+        });
+      }
+
+      if (mode === "review") {
+        pi.registerTool({
+          name: "akit_submit_boundaries",
+          label: "Submit boundaries",
+          description: "Hand AKit what the change provides or uses across the repository's edge: an HTTP or GraphQL API, a micro-frontend "
+            + "module, a published package, an event or queue, a database schema, infrastructure, a shared CI template, a config key. "
+            + "Removed ones count too (side old). Call it once with at most 50; an empty list is a valid answer. AKit keeps a boundary only "
+            + "when its quote is in the changed file or on the diff's removed lines, with its name near it.",
+          parameters: {
+            type: "object",
+            properties: {
+              boundaries: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    kind: { type: "string", enum: boundaryKinds },
+                    direction: { type: "string", enum: ["provides", "uses"] },
+                    name: { type: "string", maxLength: 120, description: "What to search for in other repositories: an endpoint path, a package, module, topic or variable name; it must be on the quoted line or near it" },
+                    file: { type: "string", description: "The changed file in the repository" },
+                    side: { type: "string", enum: ["new", "old"], description: "new: a line of the changed file; old: a removed line (a boundary the change removes, a deleted file)" },
+                    line: { type: ["integer", "null"], description: "The line in the changed file, or in the old file for side old" },
+                    quote: { type: "string", maxLength: 500, description: "The exact code line that declares or uses it, copied from the file or the removed line; never a secret's value" },
+                    note: { type: "string", maxLength: 300, description: "One short sentence: what changes for its users" },
+                  },
+                  required: ["kind", "direction", "name", "file", "quote"],
+                },
+              },
+            },
+          },
+          async execute(_id: string, params: any) {
+            const { list, wrong: notList } = listOf(params, "boundaries");
+            const wrong = [...notList, ...boundaryProblems(list)];
+            if (wrong.length > 0) {
+              return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
+            }
+            write("passes/boundaries.json", JSON.stringify({ pass, boundaries: list }, null, 2));
+            return { content: [{ type: "text", text: `Saved ${list.length} boundaries.` }], details: undefined };
+          },
+        });
+      }
+
+      if (mode === "review") {
+        pi.registerTool({
+          name: "akit_submit_overview",
+          label: "Submit the overview",
+          description: "Hand AKit a short overview of the change for the user (never posted): 3–5 points on what happens, the modules "
+            + "that change with their files and why, where the why comes from, and a Mermaid flow of the path a request or data takes "
+            + "where the change is. Call it once. AKit keeps only changed files and checks the flow.",
+          parameters: {
+            type: "object",
+            properties: {
+              points: { type: "array", maxItems: 8, items: { type: "string", maxLength: 400 }, description: "3–5 short points on what happens" },
+              modules: {
+                type: "array",
+                maxItems: 20,
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string", maxLength: 120 },
+                    files: { type: "array", maxItems: 50, items: { type: "string" }, description: "Its changed files, as paths in the repository" },
+                    why: { type: "string", maxLength: 400, description: "Why it changes" },
+                  },
+                  required: ["name", "files", "why"],
+                },
+              },
+              why_sources: { type: "array", items: { type: "string", enum: overviewSources }, description: "Where the why comes from" },
+              flow: { type: "string", maxLength: 6000, description: "A Mermaid flowchart or sequenceDiagram, at most 40 nodes; changed parts in class changed" },
+              flow_kind: { type: "string", enum: ["flowchart", "sequenceDiagram"] },
+            },
+            required: ["points", "modules", "why_sources"],
+          },
+          async execute(_id: string, params: any) {
+            const wrong = overviewProblems(params);
+            if (wrong.length > 0) {
+              return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
+            }
+            const p = params ?? {};
+            write("passes/overview.json", JSON.stringify({ pass, points: p.points ?? [], modules: p.modules ?? [], why_sources: p.why_sources ?? [],
+              flow: p.flow ?? null, flow_kind: p.flow_kind ?? null }, null, 2));
+            return { content: [{ type: "text", text: `Saved the overview (${(p.points ?? []).length} points, ${(p.modules ?? []).length} modules).` }], details: undefined };
+          },
+        });
+      }
+
+      if (mode === "review" && pass === "impact") {
+        pi.registerTool({
+          name: "akit_submit_consumers",
+          label: "Submit uses in other repositories",
+          description: "Hand AKit the uses of the change's boundaries you found in other GitLab projects, each once. You may call it "
+            + "again with more; an empty list is a valid answer. AKit keeps a use only when its quote is in an answer GitLab gave you "
+            + "in this pass.",
+          parameters: {
+            type: "object",
+            properties: {
+              consumers: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    boundary: { type: "string", description: "The boundary's id (b1, b2, …) or, for one you named yourself, its name" },
+                    project: { type: "string", description: "The other project's path in GitLab (group/project)" },
+                    file: { type: "string", description: "The file's path in that project" },
+                    ref: { type: ["string", "null"], description: "The branch or commit you read it at" },
+                    line: { type: ["integer", "null"] },
+                    quote: { type: "string", description: "The exact line that uses the boundary, copied from GitLab's answer; never a secret's value" },
+                    usage: { type: "string", description: "One short sentence: how the file uses the boundary" },
+                    breaks: { type: "boolean", description: "true: this change breaks the use" },
+                    why: { type: "string", description: "How this change breaks it (or why not)" },
+                  },
+                  required: ["boundary", "project", "file", "quote", "usage"],
+                },
+              },
+            },
+          },
+          async execute(_id: string, params: any) {
+            const { list, wrong: notList } = listOf(params, "consumers");
+            const wrong = [...notList, ...consumerProblems(list)];
+            if (wrong.length > 0) {
+              return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
+            }
+            const file = path.join(run, "passes/consumers.json");
+            const earlier = parse(readText(file))?.consumers;
+            const all = (Array.isArray(earlier) ? earlier : []).concat(list).slice(0, 200);
+            write("passes/consumers.json", JSON.stringify({ pass, consumers: all }, null, 2));
+            return { content: [{ type: "text", text: `Saved ${list.length} uses (${all.length} in all).` }], details: undefined };
           },
         });
       }
@@ -489,6 +734,10 @@ public enum ReviewExtension {
           if (!mcpAllowed) return refuse(name, "AKit review gives this pass no MCP tools.");
           const server = norm(event.input?.server ?? "");
           if (!serverAllowed(server)) return refuse(name, "That server is not one this review may use.");
+          if (limitApplies(pass, serverBase(server), serverExtra(server)) && tooMuchFor(event.input)) {
+            return refuse(name, `AKit review sends ${server} only short queries without line breaks (at most ${openArgumentLimit} `
+              + "characters each): ask with names of libraries, APIs or pages, never with code or file contents.");
+          }
           return undefined;
         }
         const hints = (pi.getAllTools?.() ?? []).find((tool: any) => tool.name === name)?.annotations;
@@ -500,7 +749,8 @@ public enum ReviewExtension {
               + "and review never publishes, approves, merges or resolves.");
           }
           const parts = split(name);
-          if (parts !== null && !serverBase(parts.server) && !serverExtra(parts.server) && tooMuchFor(event.input)) {
+          // The impact pass searches other projects: short queries to every server, GitLab too.
+          if (parts !== null && limitApplies(pass, serverBase(parts.server), serverExtra(parts.server)) && tooMuchFor(event.input)) {
             return refuse(name, `AKit review sends ${parts.server} only short queries without line breaks (at most ${openArgumentLimit} `
               + "characters each): ask with names of libraries, APIs or pages, never with code or file contents.");
           }

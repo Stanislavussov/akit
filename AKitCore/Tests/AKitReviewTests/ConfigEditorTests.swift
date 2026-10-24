@@ -95,4 +95,37 @@ struct ConfigEditorTests {
                                                 brain: home.url.appending(path: "brain"))
         #expect(local.workWords.isEmpty)
     }
+
+    @Test func impactAndSummaryLanguageAtEachLevel() throws {
+        let home = TempHome()
+        let root = home.url.appending(path: "brain")
+        // A profile's flow `review:` block: set, change, take out.
+        let profile = "gitlab: { host: https://g, project_path: a/b }\nreview: { max_inline: 5 }   # keep\n"
+        let file = home.write(".akit/local/review/projects/app.yaml", profile)
+        let set = try ReviewConfigEditor.reviewSetting(impact: .off, profile: "app", home: home.url, brain: root)
+        #expect(set.new == "gitlab: { host: https://g, project_path: a/b }\nreview: { max_inline: 5, impact: off }   # keep\n")
+        #expect(try String(contentsOf: file, encoding: .utf8) == profile, "nothing written before the save")
+        home.write(".akit/local/review/projects/app.yaml", set.new)
+        let changed = try ReviewConfigEditor.reviewSetting(impact: .always, profile: "app", home: home.url, brain: root)
+        #expect(changed.new.contains("review: { max_inline: 5, impact: always }"))
+        let out = try ReviewConfigEditor.reviewSetting(impact: nil, profile: "app", home: home.url, brain: root)
+        #expect(out.new == profile)
+        // A block `review:` and a profile without one.
+        home.write(".akit/local/review/projects/block.yaml", "gitlab: { host: https://g, project_path: a/b }\nreview:\n  max_inline: 5\n")
+        let language = try ReviewConfigEditor.reviewSetting(summaryLanguage: .russian, profile: "block", home: home.url, brain: root)
+        #expect(language.new == "gitlab: { host: https://g, project_path: a/b }\nreview:\n  summary_language: ru\n  max_inline: 5\n")
+        home.write(".akit/local/review/projects/bare.yaml", "gitlab: { host: https://g, project_path: a/b }\n")
+        #expect(try ReviewConfigEditor.reviewSetting(summaryLanguage: .czech, profile: "bare", home: home.url, brain: root).new
+                .hasSuffix("review:\n  summary_language: cs\n"))
+        #expect(throws: ReviewConfigEditor.Failure.self) {
+            try ReviewConfigEditor.reviewSetting(impact: .off, profile: "missing", home: home.url, brain: root)
+        }
+        // The brain's review.yaml: a commented-out line becomes the setting, a set one changes, nil takes it out.
+        home.write("brain/layers/review/review.yaml", "impact: auto        # look elsewhere\n# summary_language: en  # the overview's language\n")
+        let brainLanguage = try ReviewConfigEditor.reviewSetting(summaryLanguage: .german, profile: nil, home: home.url, brain: root)
+        #expect(brainLanguage.new == "impact: auto        # look elsewhere\nsummary_language: de  # the overview's language\n")
+        #expect(brainLanguage.level == .brain && brainLanguage.kind == .defaults)
+        let brainImpact = try ReviewConfigEditor.reviewSetting(impact: nil, profile: nil, home: home.url, brain: root)
+        #expect(brainImpact.new == "# summary_language: en  # the overview's language\n")
+    }
 }

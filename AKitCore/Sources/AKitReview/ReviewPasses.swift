@@ -336,7 +336,20 @@ public enum ReviewPasses {
             try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
             options.progress("No work item: the requirements role doesn't run.")
         }
-        let roles = spec.roles
+        // R44 decides again on every run of the passes: the contracts role it added earlier goes,
+        // with its definition when AKit wrote it.
+        if spec.roles.contains(where: { $0.reason == contractsReason }) {
+            let added = spec.roles.filter { $0.reason == contractsReason }
+            spec.roles.removeAll { $0.reason == contractsReason }
+            for role in added where !spec.roles.contains(where: { $0.id == role.id }) {
+                let roleFolder = folder.appending(path: "roles/review-\(role.id)")
+                if let text = try? String(contentsOf: roleFolder.appending(path: "SKILL.md"), encoding: .utf8), ReviewHash.sha256(text) == role.sha256 {
+                    try? FileManager.default.removeItem(at: roleFolder)
+                }
+            }
+            try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+        }
+        var roles = spec.roles
         // Every send checks the policy first: a merge request goes only to a destination on
         // the allowed list (a work Mac's list is the company's).
         let passesGate = try await gate(model: spec.passes.value.model, env: env)
@@ -353,7 +366,13 @@ public enum ReviewPasses {
 
         let contextSize = directorySize(context)
         let steps = spec.steps ?? []
-        let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count, roles: roles.count + steps.count)
+        // The impact pass may run (R42) and add the contracts role (R44): both count, so the cap and
+        // the monthly limit are checked against the most the passes may cost.
+        let mayImpact = spec.impactMode != .off && spec.access.inPasses && !ReviewConsumers.gitlabServers(folder: folder, spec: spec).isEmpty
+        let mayAddContracts = mayImpact && !roles.contains { $0.id == "contracts" } && !(spec.rolesOff ?? []).contains("contracts")
+        let extraPasses = (mayImpact ? 1 : 0) + (mayAddContracts ? 1 : 0)
+        let estimate = ReviewCredits.estimate(contextCharacters: contextSize, systemCharacters: system.count,
+                                              roles: roles.count + steps.count + extraPasses)
         try ReviewRuns.setStatus(.estimating, message: String(format: "≈ %.0f credits (cap %d)", estimate, spec.capCredits.value), folder: folder)
         // A change too big to review well: the passes ask first (`max_changed_lines`).
         let scan = ReviewJSON.read(ReviewScan.self, from: folder.appending(path: "scan.json"))
@@ -382,7 +401,7 @@ public enum ReviewPasses {
         }
         // The monthly limit (US dollars, Settings → Lab) counts review passes too.
         let records = SendLog.records(env: env)
-        let dollars = SendLog.estimate(characters: contextSize * (roles.count + steps.count + 2), harness: .pi, model: spec.passes.value.model, records: records)
+        let dollars = SendLog.estimate(characters: contextSize * (roles.count + steps.count + extraPasses + 2), harness: .pi, model: spec.passes.value.model, records: records)
         try SendLog.checkLimit(estimate: dollars, settings: passesGate.settings, env: env)
 
         var log = ReviewPassLog(mainSession: UUID().uuidString.lowercased(), estimate: estimate)
@@ -390,7 +409,7 @@ public enum ReviewPasses {
         let logFile = folder.appending(path: "passes.json")
         try ReviewJSON.write(log, to: logFile)
         try ReviewRuns.setStatus(.passes, folder: folder)
-        let skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
+        var skills = roles.flatMap { ["--skill", folder.appending(path: "roles/review-\($0.id)").path] }
         let roots = readRoots(folder: folder, worktree: hasWorktree ? worktree : nil)
 
         // A subagent step with its own model goes where that model goes: the policy checks it too.
@@ -400,7 +419,7 @@ public enum ReviewPasses {
         }
 
         func pass(_ name: String, role: ReviewRunSpec.Role?, prompt: String, model: ReviewModelChoice, gate: SendGate,
-                  session: [String]) async throws -> PassOutput {
+                  session: [String], tools: String = Self.tools) async throws -> PassOutput {
             var setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
                                   skills: skills, tools: tools, mcp: spec.access.inPasses, cwd: cwd, systemPrompt: systemFile, roots: roots)
             setup.flags = spec.extraFlags
@@ -409,14 +428,50 @@ public enum ReviewPasses {
 
         do {
             let main = ["--session-id", log.mainSession]
+            for path in ["passes/boundaries.json", "passes/overview.json", "overview.json"] {
+                try? FileManager.default.removeItem(at: folder.appending(path: path))
+            }
             let brief = try await pass("brief", role: nil, prompt: ReviewPrompts.brief(spec: spec), model: spec.passes.value, gate: passesGate,
-                                       session: main)
+                                       session: main, tools: tools + ",akit_submit_boundaries,akit_submit_overview")
             log.brief = brief.answer.map(SecretFilter.masked)
             try ReviewJSON.write(log, to: logFile)
+            // The boundaries the brief named (R41): only those whose quote is in a changed file.
+            let boundaries = ReviewBoundaries.check(folder: folder, worktree: hasWorktree ? worktree : nil)
+            try ReviewJSON.write(boundaries, to: folder.appending(path: "boundaries.json"))
+            options.progress("Boundaries: \(boundaries.count) kept.")
+            // Other repositories (R42–R44): the impact pass, in the main session, before the roles.
+            let consumers = try await impact(folder: folder, spec: spec, boundaries: boundaries, options: options) { name, prompt, tools in
+                _ = try await pass(name, role: nil, prompt: prompt, model: spec.passes.value, gate: passesGate, session: main, tools: tools)
+            }
+            // The overview (R45–R47), after the impact pass so the flow shows the other repositories.
+            // For the user only: a failure never fails the run.
+            if let overview = ReviewOverview.check(folder: folder, spec: spec) {
+                do {
+                    try overview.save(in: folder)
+                    options.progress("Overview: \(overview.points.count) points, \(overview.modules.count) modules"
+                                     + (overview.flow == nil ? ", no flow." : ", a flow."))
+                } catch {
+                    options.progress("The overview failed: \(error.localizedDescription)")
+                }
+            } else {
+                options.progress("Overview: the brief submitted none.")
+            }
+            // A use this change breaks is a contracts finding: that role runs whenever there are uses,
+            // unless the user turned it off.
+            if !consumers.isEmpty, !roles.contains(where: { $0.id == "contracts" }) {
+                if (spec.rolesOff ?? []).contains("contracts") {
+                    options.progress("Other repositories use the change, but the contracts role is off by the user's choice.")
+                } else if let role = try addContractsRole(folder: folder, spec: &spec) {
+                    roles.append(role)
+                    skills += ["--skill", folder.appending(path: "roles/review-\(role.id)").path]
+                    options.progress("Other repositories use the change: the contracts role runs too.")
+                }
+            }
             for role in roles {
                 let definition = try? String(contentsOf: folder.appending(path: "roles/review-\(role.id)/SKILL.md"), encoding: .utf8)
                 _ = try await pass("role-\(role.id)", role: role,
-                                   prompt: ReviewPrompts.role(role, body: definition.map(ReviewYAML.body) ?? "", spec: spec),
+                                   prompt: ReviewPrompts.role(role, body: definition.map(ReviewYAML.body) ?? "", spec: spec,
+                                                              consumers: !consumers.isEmpty),
                                    model: spec.passes.value, gate: passesGate, session: main)
             }
             for step in steps {
@@ -482,6 +537,14 @@ public enum ReviewPasses {
             let findings = ReviewFindingsFile(version: 1, findings: candidates, source: "passes")
             try ReviewJSON.write(findings, to: folder.appending(path: "findings.json"))
             try mergeGaps(folder: folder, codeOnly: spec.workItems.isEmpty)
+            // The change map (R40) is for the user only: a failure never fails the run.
+            do {
+                // A map of an earlier run never stays when this one fails.
+                try? FileManager.default.removeItem(at: folder.appending(path: "map.json"))
+                try ReviewMap.make(folder: folder).save(in: folder)
+            } catch {
+                options.progress("The change map failed: \(error.localizedDescription)")
+            }
             try await ReviewWorkflow.plan(folder, env: env)
             try ReviewRuns.setStatus(.planned, folder: folder)
             return findings
@@ -490,6 +553,95 @@ public enum ReviewPasses {
             try? ReviewRuns.setStatus(error is CancellationError ? .stopped : .failed, message: error.localizedDescription, folder: folder)
             throw error
         }
+    }
+
+    /// The impact pass (R42–R43) and AKit's check of it. It runs when `impact` is `always`, or
+    /// `auto` and the brief kept a boundary, and the run has a GitLab server; needed without
+    /// one, the run gets a gap instead. Writes `consumers.json` and `context/consumers.md` and
+    /// returns the kept uses. A failed pass is a gap too: the review goes on with the uses it
+    /// submitted before it failed.
+    static func impact(folder: URL, spec: ReviewRunSpec, boundaries: [ReviewBoundary], options: Options,
+                       run: (_ name: String, _ prompt: String, _ tools: String) async throws -> Void) async throws -> [ReviewConsumer] {
+        // Nothing of an earlier run of the passes counts.
+        for path in ["passes/consumers.json", "consumers.json", "context/consumers.md", "passes/gaps-impact.jsonl"] {
+            try? FileManager.default.removeItem(at: folder.appending(path: path))
+        }
+        for file in FileWalk.children(of: folder.appending(path: "mcp/calls")) where file.lastPathComponent.hasPrefix("impact-") {
+            try? FileManager.default.removeItem(at: file)
+        }
+        let mode = spec.impactMode
+        guard mode == .always || (mode == .auto && !boundaries.isEmpty) else {
+            if mode == .off { options.progress("Other repositories: impact is off.") }
+            return []
+        }
+        func gap(_ needed: String, _ why: String, how: String) throws {
+            let line = try JSONSerialization.data(withJSONObject: ["system": "gitlab", "needed": needed, "why": why, "howToGet": how,
+                                                                   "effect": "Breaks in other repositories that use this change aren't checked.",
+                                                                   "reportedBy": "impact"])
+            // After the gaps the pass itself reported, never over them.
+            let file = folder.appending(path: "passes/gaps-impact.jsonl")
+            let earlier = (try? String(contentsOf: file, encoding: .utf8)).map { $0.isEmpty || $0.hasSuffix("\n") ? $0 : $0 + "\n" } ?? ""
+            try write(earlier + String(decoding: line, as: UTF8.self) + "\n", to: file)
+        }
+        let what = boundaries.isEmpty ? "The uses of this change in other repositories"
+            : "The uses of \(boundaries.count) boundar\(boundaries.count == 1 ? "y" : "ies") of this change in other repositories"
+        let servers = ReviewConsumers.gitlabServers(folder: folder, spec: spec)
+        guard spec.access.inPasses, !servers.isEmpty else {
+            let why = spec.local != nil ? "A local review has no GitLab server: AKit didn't look in other repositories."
+                : !spec.access.inPasses ? "MCP is off in the review passes (mcp: in_passes: false): AKit didn't look in other repositories."
+                : "The run has no GitLab MCP server that read the merge request: AKit didn't look in other repositories."
+            try gap(what, why, how: "Give Pi a GitLab MCP server (akit review check) and name it in the project profile (mcp: servers).")
+            options.progress("Other repositories: skipped, no GitLab server.")
+            return []
+        }
+        let tools = "read,grep,find,ls,akit_submit_consumers,akit_report_context_gap" + (boundaries.isEmpty ? ",akit_submit_boundaries" : "")
+        do {
+            try await run("impact", ReviewPrompts.impact(spec: spec, boundaries: boundaries, servers: servers), tools)
+        } catch {
+            if error is CancellationError || Task.isCancelled { throw error }
+            try gap(what, "The impact pass failed: \(SecretFilter.masked(error.localizedDescription))",
+                    how: "Run the passes again (akit review passes RUN), or check the GitLab server in Pi.")
+            // The uses it submitted before it failed are checked like any others.
+            options.progress("Other repositories: the impact pass failed; the review goes on.")
+        }
+        // `always` with no boundary from the brief: the pass named them, checked like the brief's.
+        var kept = boundaries
+        if boundaries.isEmpty {
+            let worktree = folder.appending(path: "worktree")
+            kept = ReviewBoundaries.check(folder: folder, worktree: FileManager.default.fileExists(atPath: worktree.appending(path: ".git").path) ? worktree : nil)
+            try ReviewJSON.write(kept, to: folder.appending(path: "boundaries.json"))
+        }
+        let usage = ReviewConsumers.usage(folder: folder)
+        if usage.searches > ReviewConsumers.maxSearches {
+            options.over("The impact pass made \(usage.searches) searches in GitLab, over its budget of \(ReviewConsumers.maxSearches). The review goes on.")
+        }
+        if usage.files > ReviewConsumers.maxFileReads {
+            options.over("The impact pass read \(usage.files) files in GitLab, over its budget of \(ReviewConsumers.maxFileReads). The review goes on.")
+        }
+        let consumers = ReviewConsumers.check(folder: folder, spec: spec, boundaries: kept, servers: servers)
+        try ReviewJSON.write(consumers, to: folder.appending(path: "consumers.json"))
+        if !consumers.isEmpty {
+            try write(ReviewConsumers.markdown(consumers, boundaries: kept), to: folder.appending(path: "context/consumers.md"))
+        }
+        let projects = Set(consumers.map(\.project)).count
+        options.progress("Other repositories: \(consumers.count) use\(consumers.count == 1 ? "" : "s") kept in \(projects) project\(projects == 1 ? "" : "s").")
+        return consumers
+    }
+
+    /// The reason in `run.json` of the contracts role R44 added.
+    static let contractsReason = "added: other repositories use the change"
+
+    /// R44: the built-in `contracts` role joins a run whose change other repositories use. Its
+    /// definition goes where Gather puts the run's roles; the run's spec lists it.
+    static func addContractsRole(folder: URL, spec: inout ReviewRunSpec) throws -> ReviewRunSpec.Role? {
+        guard let text = ReviewBuiltIns.roleFiles["contracts"], let role = try? ReviewRole.parse(text, source: .builtIn) else { return nil }
+        try write(role.text, to: folder.appending(path: "roles/\(role.skillName)/SKILL.md"))
+        let added = ReviewRunSpec.Role(id: role.id, source: role.source, reason: contractsReason, minSeverity: role.minSeverity,
+                                       maxFindings: role.maxFindings, needs: role.needs, doNotComment: role.doNotComment,
+                                       sha256: ReviewHash.sha256(role.text))
+        spec.roles.append(added)
+        try ReviewJSON.write(spec, to: folder.appending(path: "run.json"))
+        return added
     }
 
     /// The checked destination of a pass model: Pi with the model's provider, the account the
@@ -599,6 +751,13 @@ public enum ReviewPasses {
                 let count = (args["findings"] as? [Any])?.count ?? 0
                 let verdicts = (args["verdicts"] as? [Any])?.count ?? 0
                 return verdicts > 0 ? "submits \(verdicts) verdicts" : "submits \(count) finding\(count == 1 ? "" : "s")"
+            case "akit_submit_boundaries":
+                let count = (args["boundaries"] as? [Any])?.count ?? 0
+                return "submits \(count) boundar\(count == 1 ? "y" : "ies")"
+            case "akit_submit_overview": return "submits the overview"
+            case "akit_submit_consumers":
+                let count = (args["consumers"] as? [Any])?.count ?? 0
+                return "submits \(count) use\(count == 1 ? "" : "s") in other repositories"
             case "akit_report_context_gap": return "reports a context gap: " + SecretFilter.masked(String((args["needed"] as? String ?? "").prefix(80)))
             case "akit_submit_context": return "hands the merge request's data to AKit"
             case "akit_reading_link": return "reads a link"

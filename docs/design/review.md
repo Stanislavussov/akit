@@ -16,6 +16,10 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-24 (branch `review-impact-map`): R40–R48, a map of the change for the user and its
+uses in other repositories, an overview with a flow diagram in the chosen language, the whole work item chain, found by the agent through GitLab's MCP server (section "Change map
+and impact on other repositories").
+
 Added 2026-10-23 (branch `review-branch-wi`): R39, the work item comes only from the source branch
 (`COL-317494`); without one the review checks the code alone.
 
@@ -375,6 +379,271 @@ CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R
 Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are the team's
 repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the
 user's. Automatic choice of a verifier model of another family (R25: the user wants it explicit).
+
+## Change map and impact on other repositories (2026-10-24)
+
+Asked by the user on 2026-10-24: "a graphic view of the merge request for me: the links, what
+each change affects". When the change is on a boundary (an API, a micro-frontend, a shared
+library, an event, infrastructure), the agent itself searches the whole GitLab through the MCP
+server for the other repositories that use it. The user names no repositories. Built on branch
+`review-impact-map` in three parts: (a) R40, R41 and `akit review map`; (b) R42–R44, the `impact` pass; (c) the Map tab, the guide and the `/akit` skill.
+
+| # | Question | Decision |
+|---|---|---|
+| R40 | What is on the map? | Three lanes, left to right. **This change**: the changed files, grouped by module (the nearest folder with `package.json`, else the top folder), with lines added and removed and the worst severity of their findings. **Boundaries**: what the change provides or uses across the repository's edge. **Other repositories**: the projects and files that use a boundary. Faded nodes in the first lane: unchanged files of this repository that import a changed file. For TS/JS AKit reads the imports itself (`import`, `export … from`, `require`, `import()`), relative paths and the workspace's own package names; files of other languages are nodes without edges. The map is for the user only and is never posted. Saved as `<run>/map.json`; built again on each run and rerun |
+| R41 | Who finds the boundaries? | The brief, with a new tool `akit_submit_boundaries`. Each boundary has a kind (`http-api`, `graphql`, `mfe` (an exposed or remote module), `shared-lib` (a published package), `event` (a topic, a queue, a message schema), `db-schema`, `infra` (Helm, Terraform, Kubernetes, Docker), `ci` (a shared CI template, a job others include), `config` (an environment variable, a feature flag, a config key)), a direction (`provides` or `uses`), a name to search for (an endpoint path, a package name, a module name, a topic, a variable; at most 120 characters), the file, the line and a quote. AKit keeps a boundary only when its quote is in the file at the reviewed commit, like a finding (Checks without a model). A boundary of a file the change doesn't touch is dropped |
+| R42 | When does AKit look in other repositories? | Automatically, when the brief kept at least one boundary and the run has a GitLab server. A new pass `impact` runs after the brief and before the roles, in the main session, so the roles see what it found. `impact: auto` (default), `off` or `always` at the three config levels (review.yaml, the profile, the run: New Review… → Other repositories, `--impact`). `always` runs the pass even when the brief kept no boundary: the pass then looks at the diff itself. Without a GitLab server the run gets a gap |
+| R43 | How does the pass search? | GitLab's MCP server, reading tools only (R22's policy, the 300-character argument limit): `search` with `scope: blobs` and the name, first in the merge request's top group (`group_id`), then in the whole GitLab when the group gives fewer than 3 projects; `get_repository_file` to read a hit around the use; `semantic_search` and Orbit's `query_graph` when the server offers them. A budget, given to the pass in its prompt and counted by AKit: 20 searches and 30 files read; over it AKit only alerts (R37). When search over code in a group or the instance fails (it can need Advanced search), the pass reports a gap that says so and what it tried. The pass submits each use with `akit_submit_consumers`: the boundary, the project path, the file, the ref, the line, a quote and how the file uses the boundary, and whether this change breaks it with the reason. AKit keeps a use only when its quote is in an answer the pass got from GitLab in `mcp/calls/` (never the model's word alone) and the project is not the merge request's own. The kept uses go to `context/consumers.md` for the roles and onto the map |
+| R44 | Where do the uses go? | On the map (the third lane). A use that this change breaks is a candidate of the `contracts` role, which now runs in every run that has kept uses: its anchor is the changed line in this merge request (never a line in the other repository), its text names the other project and file, and it goes through the verifier and the user's approval like any finding. Answers from other projects are context: they never become this merge request's data (R30's rule) and AKit never writes to another project |
+
+Built: part (a) (2026-10-24): R40, R41 and `akit review map RUN [--json | --mermaid]`
+(`ReviewMap.swift`). The brief gets `akit_submit_boundaries`; right after it AKit writes
+`<run>/boundaries.json`, and at the end of the passes `<run>/map.json` (a failure there only
+writes a progress line). `consumers.json` (part b) is read when it is there. What differs from
+or adds to the table:
+
+- A boundary is kept only with a worktree (the quote can't be checked without one), in a file
+  the change adds or modifies (not a deleted one); its line moves to the quote's line when the
+  brief's line is more than 3 lines off. Model text is masked. Since the review of part (a): a
+  removed boundary (`side: old`, and every boundary of a deleted file) is checked against the
+  diff's removed lines with old line numbers, needs no worktree, and the map and the impact
+  prompt mark it (its uses are the ones that break); the name, its last path segment or last
+  identifier must be within 3 lines of the quote's hit, and a quote's piece counts only with 12
+  characters or as a whole line (uses in other repositories too; findings keep 4); at most 50
+  boundaries, quotes of 500 and notes of 300 characters.
+- The import scan skips `node_modules`, `dist`, `build` and hidden folders, links and secret
+  files; it reads at most 20,000 TS/JS files (200,000 entries) of up to 1 MB each and says so
+  in the map's notes when it stops early. TS imports of `x.js` find `x.ts`. A workspace
+  package resolves through its `source`, `module`, `main` or `types`, else `index.*` or
+  `src/index.*`; a subpath also under `src/`. At most 200 dependents are shown. Comments and
+  the insides of strings don't count as imports; `.mts`/`.cts` are read (`x.mjs` finds `x.mts`,
+  `x.cjs` finds `x.cts`). Two workspace packages of one name: the shortest folder, then the
+  first by name, and a note on the map. `exports` maps and tsconfig `paths` aliases aren't
+  resolved: such imports are only missing edges.
+- A file's lines added and removed count every `+`/`-` line after the first `@@` (GitLab's
+  diff text has no file headers); `changes.md` counted the same wrong way and is fixed too.
+- A node's severity is only what the plan could post as a problem: a finding the verifier
+  confirmed, whose evidence was found, that the change brought, at its final severity.
+- A run made before the map gets one the first time `akit review map` (or `ReviewMap.load`)
+  asks, when its worktree is still there. When `findings.json`, `boundaries.json` or
+  `consumers.json` is newer than `map.json` (Discuss in Pi changed the findings), `load` builds
+  it again too. The passes delete the old `map.json` before they build a new one.
+
+Review of part (a) (2026-10-24): removed boundaries, the name tied to the quote, stricter quote
+pieces, line counts, the map's severity, imports in comments and strings, `.mts`/`.cts`,
+duplicate package names, size caps, a non-list tool argument is an error (not "Saved 0"), no
+stale `map.json`, Mermaid control characters, and the map follows Discuss in Pi.
+
+Built: part (b) (2026-10-24): R42–R44, the `impact` pass (`ReviewPasses.impact`,
+`ReviewConsumers.swift`, `ReviewPrompts.impact`). `impact: auto | off | always` in review.yaml
+(top level), a profile's `review:` block and the run (`--impact`, also for `akit review local`);
+`config show` lists it. The pass runs after the brief's boundary check, in the main session, with
+the reading tools, MCP, `tool_search`, `akit_submit_consumers` and `akit_report_context_gap`.
+What differs from or adds to the table:
+
+- The run's GitLab server is the one the fetch pass read the merge request with (the run's own
+  server whose saved answer holds it; for an older run, its own servers named like GitLab). A
+  local review, `mcp: in_passes: false` or no such server: a gap (system `gitlab`) and no pass.
+  A failed impact pass is a gap too, added after the gaps the pass reported itself; the review
+  goes on, and the uses the pass submitted before it failed are checked like any others.
+- The top group for `group_id` is the first segment of the merge request's project path; the
+  prompt also names the full namespace, and when the group search fails (a user's namespace)
+  the pass searches the whole GitLab. The 300-character, one-line argument limit holds for every
+  server in this pass, GitLab included (and for open servers in every pass); it covers keys too,
+  a value nested deeper than 4 levels is refused, the arguments as JSON may have at most 600
+  characters, and `read_mcp_resource` (its `uri`) passes the same check.
+- `always` with no boundary from the brief: the pass also gets `akit_submit_boundaries`, AKit
+  checks those like the brief's, and a use names such a boundary by its name.
+- `akit_submit_consumers` may be called more than once; the calls add up (at most 200).
+- AKit keeps a use when its boundary is kept, its project is a GitLab path other than the merge
+  request's, and ONE answer of a run's GitLab server to this pass holds the quote (each line,
+  spaces collapsed, split at `...`; 12 characters or a whole line), the use's whole file path
+  and its project. Such an answer is either a search hit (an object with `data` or `content`,
+  base64 decoded when `encoding` says so, and `path`, `filename`, `file_path` or `file_name`; the
+  project from `path_with_namespace`, `project_path`, `project` or `project_id`), or a file read
+  (a tool with `file` and a reading verb in its name, like `get_repository_file`): its project
+  (`project_id`, `id`, `project`, `project_path`) and file (`file_path`, `path`, `file`) come from
+  the call, since the answer is that file, but only when the answer names no other file, and the
+  quote must be in the answer. A project number counts only when an answer of the pass gives it
+  exactly one path (`id` or `project_id` next to `path_with_namespace`, as `get_project` or a
+  `projects` search answers). An answer of the merge request's own project (its path, or its
+  number from `gitlab/snapshot.json`) is no evidence. The call's input is never evidence for the
+  quote. Answers over 2 MB are skipped, base64 contents decode to at most 2 MB. One use per
+  project, file and boundary, at most 100; texts masked and cut, the file and the ref defused in
+  `consumers.md`. `url` is `<host>/<project>/-/blob/<ref or HEAD>/<file>#L<line>`, none when the
+  ref or the file has a `.` or `..` segment.
+- Searches (`search`, `semantic_search`, `query_graph`) and file reads (a tool like
+  `get_repository_file`: `file` and a reading verb in its name, no `list` or `tree`) are counted
+  from the saved answers or the pass's own tool calls, whichever is more; trees, file lists and
+  projects count as neither.
+- The contracts role that R44 adds is the built-in one, after the scenario's roles; `run.json`
+  lists it with the reason "added: other repositories use the change". Each run of the passes
+  first takes such a role out (and its folder, when it is the definition AKit wrote) and decides
+  again. A role the user turned off (the profile's `roles: off` or the run's choice; `run.json`
+  lists them as `rolesOff`) is never added: the progress says the uses were found but contracts
+  is off by the user's choice.
+- The estimate (credits and the monthly limit in dollars) counts the impact pass, and the
+  contracts role it may add, whenever the pass may run (impact not `off`, MCP in the passes and
+  a GitLab server).
+- The extension's pure rules (`ReviewExtension.rules`: the argument limit, where it applies, the
+  shape of a use) are plain JavaScript inside the TypeScript file; the tests run that same text
+  with JavaScriptCore.
+
+Review of part (b) (2026-10-24): a use is tied to its project and its whole file in one answer
+(never the call's input), the added contracts role is decided again on every run and the user's
+removal wins, the argument limit covers depth, keys, total size and resource reads, the
+extension's rules run in the tests, big answers and base64 are capped, AKit's failure gap is
+appended, the estimate counts the impact pass, a failed pass keeps its saved uses, file and ref
+defused, `.`/`..` refs give no link, and trees and file lists don't count as file reads.
+
+Built: part (c) (2026-10-24): the app. A run's detail has **Overview** on top (points, a table of
+modules with their files in a popover and the why, the why's sources as tags, AKit's notes, the
+run's one Translate menu) and the **Flow**, then a **Requests | Map** switch. What differs from or
+adds to the decisions:
+
+- The flow is drawn by `mermaid.js` 11.17.2 (`AKit/Resources/Mermaid`, MIT, sha256 in its README)
+  in a `WKWebView` (`MermaidView`): the library is a user script, the page loads with no base URL
+  and a content policy `default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src
+  data:; font-src data:`; a content rule list blocks every URL but `about:` and `data:`;
+  `securityLevel: "strict"`; the source goes in as an argument of `callAsyncJavaScript`; every
+  navigation after the first load is cancelled, no windows, a
+  non-persistent store, no context menu, the wheel scrolls the screen. A policy violation is
+  counted under the diagram. The height follows the SVG; light and dark redraw. A hostile flow
+  (`A@{ img: … }`, a label `<img src=…>`, `url(…)` in `classDef`/`style`) made no request to a
+  local server: the image shape ends in mermaid's "Loading error", the label image is a counted
+  violation, `url(` doesn't parse. Snapshots draw a picture of the web view on top
+  (`takeSnapshot`), since `cacheDisplay` can't see it.
+- Review of part (c) (2026-10-24): mermaid 11.17.2 (CVE-2025-54881, KaTeX `innerHTML` in
+  sequence diagrams). The page has no script and `script-src 'none'`, so inline handlers don't
+  run; mermaid (a user script) and AKit's render code (`callAsyncJavaScript`, the source and theme
+  as arguments) run in a content world of their own (`akit-mermaid`), and only that world can post
+  to the `akit` handler (the page world has no `window.webkit`). Labels are SVG text
+  (`htmlLabels: false`); `<br/>` still breaks a line (a sequence diagram's KaTeX is still
+  HTML). The flow check refuses any `<` before a
+  letter, `/`, `!` or `?` (closed or not) but `<br/>`, `<br>`, `<br />`, and `$$`. Checked
+  against a local server with the flows fed to the view directly: label and sequence `<img>`,
+  KaTeX `$$…$$`, `A@{ img: … }`, `url(…)`: no request reached it, the sequence image is a counted
+  violation, inline handlers were blocked. A new diagram clears the error and the blocked loads
+  (at most 20 kept); the rule list's first load draws the current diagram. Open in GitLab only
+  for a link on the run's GitLab host. A left-out flow's button is **Copy Unchecked Source**.
+  The map works out its id index once, resets its folds for another map, uses positions as list
+  ids, and a node has an accessibility action that selects it.
+- The Map is native SwiftUI: three lanes in a fixed layout, lines in a `Canvas` from anchor
+  preferences (between lanes; imports as arcs on the first lane's left), hover lights a node's
+  lines, a click opens an inspector (files and the file's diff, findings with Show Request, a
+  boundary's quote, each use with its quote, why it breaks and Open in GitLab, only http/https).
+  A module or project with over 8 files starts folded; 8 dependents show until Show All. A run
+  without a map: "No map for this run" and Review Again….
+- New Review… → This run only: **Other repositories** (Auto/Off/Always) and **Summary language**,
+  each with "From the configuration (…)"; Review Again… carries a run-level choice over. Review
+  Settings… → **Overview and other repositories** edits `impact` and `summary_language` for the
+  level in Rules of (`ReviewConfigEditor.reviewSetting`: the top of the brain's review.yaml, or
+  the profile's `review:` block; none takes the key out), shown as a diff before Save.
+- Snapshots: `--tab requests` and `--tab map` fold the overview; `--tab map --query <node id>`
+  selects a node. The demo home has a made-up overview, boundaries and uses for
+  `shop/orders-service!42`; guide shots `review-overview` and `review-map`.
+
+### Overview, flow and the work item chain (2026-10-24)
+
+Asked by the user later on 2026-10-24: "a summary in the chosen language: 3–5 points on what
+happens, which modules change and why (from the task and Azure DevOps through MCP); draw the
+flow with Mermaid, how the change affects it"; and "the review always reads Azure DevOps: the
+task, its parents up through every level (task, user story, feature, epic) and their comments".
+Built as part (d), before the Map tab.
+
+| # | Question | Decision |
+|---|---|---|
+| R45 | A short overview for the user | The brief submits it with a new tool `akit_submit_overview`: 3–5 points on what happens; the modules that change, each with its files and why it changes; where the why comes from (`work-item`, `description`, `notes`, `none`, more than one allowed). AKit keeps a module only when its files are changed files of the run, and keeps 3–5 points (fewer: the overview says it is short; more: the first 5). Saved as `<run>/overview.json`. Never posted |
+| R46 | Its language | `summary_language` at the three config levels (review.yaml, the profile, the run: New Review… → Summary language, `--summary-language`), a `LabLanguage` code; default the Mac's preferred language when AKit knows it, else English. Only the overview and the flow's labels use it; GitLab text stays in `posting: language` (R35). Translate works on the overview too |
+| R47 | The flow | In the same tool: a Mermaid diagram (`flowchart` or `sequenceDiagram`, at most 40 nodes and 6000 characters) of the path a request or data takes through the system where the change is (UI → micro-frontend → API → service → database, a job, an event), with the changed parts in a class `changed`. After the `impact` pass AKit adds the other repositories' uses as nodes under a `subgraph` (from `consumers.json`, not from the model). AKit rejects a diagram with `click`, `href`, `call`, `%%{init` or `<script` and keeps the text for the gap. The app renders it with `mermaid.js` shipped inside AKit (a pinned version, MIT, no network: `securityLevel: "strict"`, a content policy with no outside loads), light and dark; a syntax error shows the source and the error. **Copy Mermaid** copies the source |
+| R48 | The work item chain | The fetch pass reads the work item named by the branch (R39), then its parent, the parent's parent and so on to the top (Task → User Story → Feature → Epic; at most 6 levels, a visited set against loops), each with its description, acceptance criteria and **all comments**; related items one level from the named item. Gather keeps the whole chain (R39's filter keeps ancestors of a named item, not only the direct parent). `work-items.md` shows the chain from the top down, so the overview's why can name the epic's or feature's goal |
+
+Built: part (d) (2026-10-24): R45–R48 and `akit review overview RUN [--json | --mermaid]`
+(`ReviewOverview.swift`). The brief gets `akit_submit_overview`; AKit checks it after the impact
+pass and writes `<run>/overview.json` (a failure there only writes a progress line). What differs
+from or adds to the table:
+
+- The chain: the fetch prompt names both ways to a parent (`System.LinkTypes.Hierarchy-Reverse`
+  and the field `System.Parent`, which AKit now reads too) and `tool_search`. Gather keeps each
+  named item, its first parent and so on (at most 6 above it, a visited set), then the items
+  related to a named item; each item's reason says `parent of #N` or `related to #N`. A parent
+  the fetch pass didn't read is a gap ("Work item #P, the parent of #N"), not an error. The
+  context pack has one `work-items.md` instead of `work-items/<id>.md`: a line per chain
+  (`Epic #1 → Feature #2 → … → Task #4`), the items from the top down, then the related items.
+- `summary_language` is read at the top of review.yaml and in a profile's `review:`; `--summary-
+  language` on `akit review` and `akit review local`. The default is the first of the Mac's
+  preferred languages by its language code (before the first `-`), when it is a `LabLanguage`, else English
+  (`[built-in]` in `config show`). A run made before has none: AKit resolves it the same way when
+  it reads the run.
+- The check: points are masked and cut to 400 characters; fewer than 3 gives a note "short",
+  more than 5 keeps the first 5. A module keeps only changed files (a deleted file by its old
+  path) and goes when none is left. The flow is masked and must start with `flowchart`, `graph` or
+  `sequenceDiagram`; AKit drops it for `click`, `href` and `call` outside labels,
+  `%%{`, `<script`, `javascript:`, `<iframe`, any HTML tag but `<br/>`, over 6000 characters or
+  about 40 nodes (a rough count of ids outside labels, or of participants); see the review of
+  part (d) below for the full list. The dropped text stays in
+  `overview.json` as `flowOriginal` with the reason in `notes`, not in `gaps.json`: gaps can reach
+  the merge request's summary, the overview never does.
+- The other repositories: for a flowchart only, a `subgraph akit_others` with one node per project
+  of `consumers.json` (`akit_c1`…, at most 20, escaped like the map's labels, "· breaks" when a use
+  breaks) and a dashed edge from the subgraph to each node whose label holds the file name of a
+  used boundary.
+- Translate: the overview's points (`overview:point:N`) and modules' why (`overview:module:N`)
+  are parts of the run's translation, next to the brief and the requests.
+- Review of part (d) (2026-10-24): the flow check now reads a check form of the text (NFKC,
+  zero-width characters out, `&#…;`, `#…;` and named entities decoded, lowercased; the flow keeps
+  the text as given) and refuses, over the whole text with labels: `://`, `url(`, `@import`, `@{`
+  (Mermaid 11.3+ shapes and images), ids that start with `akit_` (AKit's own). A URL in a label
+  is refused too: a label doesn't load it, but one strict rule is simpler to trust. Outside
+  labels and edge texts (`"…"`, `[…]`, `(…)`, `{…}`, `|…|`, `-- … -->` and a sequence diagram's
+  message and note texts blanked first, each `;` a statement): `click` at a statement's start,
+  `href`, `call`, and `link`, `links` or `properties` lines (sequence diagram link menus). So
+  `A["Click Pay"]` and `A[API call to billing]` pass. A `style`, `classDef` or `linkStyle` line
+  may set only `fill`, `stroke`, `stroke-width`, `color`, `stroke-dasharray` and `font-weight`
+  with a hex color, a word or numbers (a trailing `;` dropped as Mermaid does; no other `;`, `{`
+  or `}`). A flowchart's `subgraph` and `end` lines must pair up. `box` stays allowed: it takes a
+  color, never a URL. The other repositories' edge finds a node only by a real node label (ids
+  `[A-Za-z_]\w*` after a line start, a space, `&`, `|` or an arrow; one-line labels, so `A-->B` is
+  not the id `A--`) holding the boundary's file name on a word or path boundary (`api.ts` is not in
+  `openapi.ts`). The module check also takes `a/`, `b/`, `/` and `./` paths and a renamed file's
+  old path. The default summary language takes the code before the first `-` (`kok-IN` is not
+  Korean, `zh-Hans` is Chinese). A named item is always "named by the merge request", also when it
+  is the parent of another named item, and a chain cut after 6 levels is a gap ("AKit reads at
+  most 6 levels above a named work item"). The brief prompt says the brief's own answer stays in
+  English; `log.brief` goes only to the verifier's prompt, the app and Translate, never to a
+  draft (ReviewPlan doesn't read it).
+
+The Review screen of a run: **Overview** (points, modules, flow) on top, then the tabs **Map**
+(R40) and the requests.
+
+### The map on the Review screen
+
+```
+┌ This change ──────────────┐  ┌ Boundaries ────────────┐  ┌ Other repositories ──┐
+│ orders/  +120 −40         │  │ ⇄ GET /api/orders/{id} │─►│ shop-mfe        2 ●  │
+│   api/orders.ts   ● high  │─►│ ▣ mfe: ./OrderWidget   │─►│ billing-svc     1    │
+│   ui/OrderForm.tsx        │  │ ⚙ env ORDERS_URL       │  └──────────────────────┘
+│ helm/values.yaml  ● med   │─►│                        │
+│ ┄ checkout/Cart.tsx ┄     │  └────────────────────────┘
+└───────────────────────────┘
+ a node selected → the inspector: files, findings, quotes, the GitLab link of a use
+```
+
+A tab **Map** next to the requests of a run. Native SwiftUI, a fixed lane layout (no force
+layout), lines drawn between the lanes; hovering a node lights up its lines. Clicking a node
+opens the inspector on the right: the files and their changed lines, the findings on them (a
+click goes to the request), a boundary's quote, a use's quote and its GitLab link. A node's dot
+is the worst severity of its findings. **Copy as Mermaid** copies the map as a `flowchart LR`.
+`akit review map RUN [--json | --mermaid]` prints it in a terminal. A run without `map.json`
+(made before) shows "No map for this run" and **Review Again…**.
+
+### Facts to check on the work Mac
+
+- Whether `search` with `scope: blobs` works at the group and instance level on the work
+  GitLab (it may need Advanced search or exact code search).
+- Whether the server offers `semantic_search` (Duo add-on) and the `orbit` toolset.
+- How long a search over the instance takes.
+
 
 ## One run
 

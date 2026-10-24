@@ -7,10 +7,13 @@ extension ReviewWorkflow.Run {
     public enum TranslationKey {
         public static let brief = "brief"
         public static func request(_ id: String) -> String { "request:\(id)" }
+        /// The overview's points and modules' why (R46), by their index in `overview.json`.
+        public static func overviewPoint(_ index: Int) -> String { "overview:point:\(index)" }
+        public static func overviewModule(_ index: Int) -> String { "overview:module:\(index)" }
     }
 
-    /// The whole review in one Translate call: the brief and every request's text as it would
-    /// go to GitLab. Translating never changes them: the drafts AKit sends stay the originals.
+    /// The whole review in one Translate call: the brief, the overview's points and modules' why,
+    /// and every request's text as it would go to GitLab. Translating never changes them: the drafts AKit sends stay the originals.
     /// The origin the review's passes were checked under (`.mergeRequest`, a local review's too):
     /// a translation by Pi sends the same text where the passes sent it. Cached in the run's
     /// folder. When the policy refuses
@@ -18,6 +21,11 @@ extension ReviewWorkflow.Run {
     /// passes sent this data there already.
     public var translationSource: OutputTranslation.Source {
         var parts = [OutputTranslation.Part(TranslationKey.brief, passes?.brief ?? "")]
+        if let overview = ReviewOverview.load(folder: folder) {
+            parts += overview.points.enumerated().map { OutputTranslation.Part(TranslationKey.overviewPoint($0.offset), $0.element) }
+            parts += overview.modules.enumerated().filter { !$0.element.why.isEmpty }
+                .map { OutputTranslation.Part(TranslationKey.overviewModule($0.offset), $0.element.why) }
+        }
         parts += (plan?.requests ?? []).map { OutputTranslation.Part(TranslationKey.request($0.id), $0.text) }
         return OutputTranslation.Source(parts: parts, origins: [.mergeRequest], cacheFolder: folder,
                                         ownAgent: reviewAgent, ownAgentName: "the review's model")

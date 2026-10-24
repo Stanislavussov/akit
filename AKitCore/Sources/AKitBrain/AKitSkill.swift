@@ -211,6 +211,29 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
   (also `direct`, `codemode` = Pi's default, `hidden`; shows the change; `--yes` writes).
   `akit doctor pi` suggests it for a direct server Pi rarely calls.
 
+## Merge request review
+
+`akit review map RUN [--json | --mermaid]` prints a review run's change map: the changed files
+by module with their lines and worst finding, the unchanged files that import them, the
+boundaries the change provides or uses (APIs, packages, events, infra, config) and the other
+repositories that use them. Use it when the user asks what a merge request affects; `--json`
+for the data, `--mermaid` for a `flowchart LR` to paste. It never posts anything.
+
+`akit review MR-URL --impact auto|off|always` (also `akit review local`) says whether the review
+looks for uses of the change in other GitLab repositories through the GitLab MCP server: `auto`
+(default) when the brief found a boundary, `always`, or `off`. The kept uses are on the map and
+in `context/consumers.md`; a use the change breaks becomes a `contracts` finding on the changed
+line. Use `--impact off` for a quick review, `always` when the user asks what else a change breaks.
+
+`akit review overview RUN [--json | --mermaid]` prints a review run's overview: 3–5 points on what
+happens, the modules that change with their files and why (from the work item chain, the
+description and the notes), where the why comes from, and the flow as Mermaid with the changed
+parts marked and the other repositories added. Use it when the user asks what a merge request
+does or why; `--json` for the data, `--mermaid` for the flow only. It is never posted.
+`akit review MR-URL --summary-language CODE` (also `akit review local`; `summary_language` in
+review.yaml or a profile's `review:`) sets the overview's language (`en`, `ru`, `cs`, …); the default
+is the Mac's preferred language, else English. GitLab text keeps `posting: language`.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

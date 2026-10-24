@@ -1,3 +1,4 @@
+import AKitLab
 import Foundation
 import Yams
 
@@ -98,6 +99,13 @@ public struct ReviewModelChoice: Codable, Sendable, Hashable {
     }
 }
 
+/// When a run looks for uses of the change in other GitLab repositories (R42, the `impact` pass):
+/// `auto` when the brief kept a boundary, `always` (the pass then finds the boundaries itself
+/// when the brief kept none), or `off`.
+public enum ReviewImpact: String, Codable, Sendable, CaseIterable {
+    case auto, off, always
+}
+
 /// The posting thresholds and the cost cap (`review.yaml`, a profile's `review:`, a run's choices).
 /// Every field is optional so each level sets only what it changes.
 public struct ReviewSettingsPatch: Sendable, Hashable {
@@ -114,6 +122,10 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var capCredits: Int?
     /// Over this many changed lines the passes ask first (`cost: max_changed_lines`).
     public var maxChangedLines: Int?
+    /// Whether the `impact` pass looks in other repositories (`impact: auto|off|always`).
+    public var impact: ReviewImpact?
+    /// The language of the overview AKit shows the user (`summary_language`, R46); never posted.
+    public var summaryLanguage: LabLanguage?
 
     public init(passes: ReviewModelChoice? = nil, verifier: ReviewModelChoice? = nil, marker: String? = nil,
                 severityThreshold: ReviewSeverity? = nil, confidenceThreshold: Double? = nil, maxInline: Int? = nil,
@@ -174,6 +186,19 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
         if let value = (cost["max_changed_lines"] ?? map["max_changed_lines"]) as? Int {
             guard value > 0 else { throw ReviewRole.Failure(message: "\(where_): max_changed_lines must be above 0.") }
             patch.maxChangedLines = value
+        }
+        // YAML reads a bare `off` as false.
+        if let value = map["impact"] {
+            guard let impact = (value as? String).flatMap(ReviewImpact.init) ?? (value as? Bool == false ? .off : nil) else {
+                throw ReviewRole.Failure(message: "\(where_): impact \(value) is not auto, off or always.")
+            }
+            patch.impact = impact
+        }
+        if let value = map["summary_language"] {
+            guard let language = (value as? String).flatMap({ LabLanguage(rawValue: $0.lowercased()) }) else {
+                throw ReviewRole.Failure(message: "\(where_): summary_language \(value) is not one of \(LabLanguage.codes).")
+            }
+            patch.summaryLanguage = language
         }
         return patch
     }

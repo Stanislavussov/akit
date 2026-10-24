@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitLab
 import AKitReview
 import Foundation
 import Testing
@@ -53,11 +54,92 @@ extension AKitCLITests {
         #expect(await review(["--help"]).out.contains("--link URL"))
     }
 
+    /// `--impact`: whether the impact pass looks in other repositories, over the profile's choice.
+    @Test func reviewImpactOption() async throws {
+        try write(".akit/local/review/projects/app.yaml", """
+        gitlab: { host: https://gitlab.test, project_path: team/app }
+        review: { impact: off }
+
+        """)
+        let none = home.appending(path: "none").path
+        #expect(await review(["config", "show", "--project", "app", "--brain", none]).out.contains("impact: off  [project]"))
+        let shown = await review(["config", "show", "--project", "app", "--brain", none, "--impact", "always"])
+        #expect(shown.code == 0 && shown.out.contains("impact: always  [run]"), "\(shown)")
+        #expect(await review(["config", "show", "--brain", none, "--impact", "maybe"]).err.contains("--impact takes auto, off or always"))
+        #expect(await review(["--help"]).out.contains("--impact auto|off|always"))
+    }
+
     @Test func reviewNeedsAMergeRequest() async throws {
         #expect(await review(["https://gitlab.test/a/-/issues/1"]).err.contains("not a merge request address"))
         let help = await review(["--help"])
         #expect(help.out.contains("akit review check [--project P]") && !help.out.contains("token"))
         #expect(await review(["token", "gitlab", "https://gitlab.test"]).code != 0, "tokens are gone: Pi's MCP servers connect")
+    }
+
+    /// `akit review map RUN`: the saved map as text, JSON or Mermaid; a clear error without one.
+    @Test func reviewMapPrintsTheLanes() async throws {
+        try write(".akit/local/review/runs/r1/run.json", "{}")
+        let missing = await review(["map", "r1"])
+        #expect(missing.code != 0 && missing.err.contains("No map for run r1"))
+        var file = ReviewMap.Node(id: "file:api/orders.ts", kind: .file, lane: .change, label: "api/orders.ts", path: "api/orders.ts")
+        file.added = 5
+        file.removed = 2
+        file.severity = .high
+        let boundary = ReviewBoundary(id: "b1", kind: .httpAPI, direction: .provides, name: "GET /api/orders", file: "api/orders.ts", line: 3,
+                                      quote: "get('/api/orders')")
+        var node = ReviewMap.Node(id: "boundary:b1", kind: .boundary, lane: .boundaries, label: "provides http-api: GET /api/orders")
+        node.boundary = boundary
+        try ReviewMap(nodes: [file, node], edges: [.init(from: file.id, to: node.id, kind: .declares)])
+            .save(in: ReviewPaths(home: home).run("r1"))
+        let text = await review(["map", "r1"])
+        #expect(text.code == 0 && text.out.contains("Boundaries\n  b1 provides http-api: GET /api/orders  (api/orders.ts:3)"), "\(text)")
+        #expect(text.out.contains("Other repositories\n  none found"))
+        let json = await review(["map", "r1", "--json"])
+        #expect(json.code == 0 && json.out.contains("\"kind\" : \"declares\""))
+        let mermaid = await review(["map", "r1", "--mermaid"])
+        #expect(mermaid.out.hasPrefix("flowchart LR") && mermaid.out.contains("n1 --> n2"))
+        #expect(await review(["map", "r1", "--json", "--mermaid"]).code != 0)
+        #expect(await review(["map"]).err.contains("Which run?"))
+    }
+
+    /// `akit review overview RUN`: the saved overview as text, JSON or the flow only; a clear error without one.
+    @Test func reviewOverviewPrintsThePoints() async throws {
+        try write(".akit/local/review/runs/r1/run.json", "{}")
+        let missing = await review(["overview", "r1"])
+        #expect(missing.code != 0 && missing.err.contains("No overview for run r1"))
+        let folder = ReviewPaths(home: home).run("r1")
+        try ReviewOverview(points: ["Logs less", "Keeps the header out"], modules: [.init(name: "auth", files: ["src/Auth.swift"], why: "Bug #41")],
+                           whySources: [.workItem, .description], language: .russian, notes: ["The overview is short: 2 points instead of 3–5."])
+            .save(in: folder)
+        let text = await review(["overview", "r1"])
+        #expect(text.code == 0 && text.out.contains("Overview (Russian)\n  • Logs less"), "\(text)")
+        #expect(text.out.contains("  auth: Bug #41\n    src/Auth.swift") && text.out.contains("Why from: work-item, description"))
+        #expect(text.out.contains("Flow: none"))
+        #expect(await review(["overview", "r1", "--mermaid"]).err.contains("has no flow"))
+        try ReviewOverview(points: ["a"], modules: [], whySources: [], flow: "flowchart LR\n  A --> B", flowKind: .flowchart, language: .english)
+            .save(in: folder)
+        let mermaid = await review(["overview", "r1", "--mermaid"])
+        #expect(mermaid.code == 0 && mermaid.out.hasPrefix("flowchart LR\n  A --> B"))
+        let json = await review(["overview", "r1", "--json"])
+        #expect(json.code == 0 && json.out.contains("\"flowKind\" : \"flowchart\""))
+        #expect(await review(["overview", "r1", "--json", "--mermaid"]).code != 0)
+        #expect(await review(["overview"]).err.contains("Which run?"))
+        #expect(await review(["--help"]).out.contains("akit review overview RUN [--json | --mermaid]"))
+    }
+
+    /// `--summary-language`: the overview's language for this run, over the profile's.
+    @Test func reviewSummaryLanguageOption() async throws {
+        try write(".akit/local/review/projects/app.yaml", """
+        gitlab: { host: https://gitlab.test, project_path: team/app }
+        review: { summary_language: de }
+
+        """)
+        let none = home.appending(path: "none").path
+        #expect(await review(["config", "show", "--project", "app", "--brain", none]).out.contains("summary_language: de (German)  [project]"))
+        let shown = await review(["config", "show", "--project", "app", "--brain", none, "--summary-language", "RU"])
+        #expect(shown.code == 0 && shown.out.contains("summary_language: ru (Russian)  [run]"), "\(shown)")
+        #expect(await review(["config", "show", "--brain", none, "--summary-language", "xx"]).err.contains("--summary-language is one of en, ru"))
+        #expect(await review(["--help"]).out.contains("--summary-language CODE"))
     }
 
     /// `akit review eval`: the set, and its errors.

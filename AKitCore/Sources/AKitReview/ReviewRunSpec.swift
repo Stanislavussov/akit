@@ -1,4 +1,5 @@
 import AKitFoundation
+import AKitLab
 import Foundation
 
 /// What one run chooses on top of the brain and the project (New Review… or the command line).
@@ -160,6 +161,22 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
 
     /// Over this many changed lines the passes ask first; nil in runs made before 2026-10-22.
     public var maxChangedLines: Sourced<Int>?
+    /// Whether the `impact` pass looks in other repositories (R42); nil in runs made before 2026-10-24.
+    public var impact: Sourced<ReviewImpact>?
+    /// Roles the user turned off (the project profile's `roles: off` and the run's choices); R44
+    /// never adds one of them back. nil when none, or in runs made before 2026-10-24.
+    public var rolesOff: [String]?
+
+    /// The run's `impact`: `auto` when the run predates it.
+    public var impactMode: ReviewImpact { impact?.value ?? .auto }
+
+    /// The overview's language (R46); nil in runs made before 2026-10-24.
+    public var summaryLanguage: Sourced<LabLanguage>?
+
+    /// The overview's language: the run's, or for an older run the Mac's preferred one, else English.
+    public func overviewLanguage(preferred: [String] = Locale.preferredLanguages) -> LabLanguage {
+        summaryLanguage?.value ?? ReviewResolver.preferredLanguage(preferred)
+    }
 
     /// Every extra flag, in level order.
     public var extraFlags: [String] { (piFlags ?? []).flatMap(\.value) }
@@ -206,7 +223,8 @@ public enum ReviewResolver {
     }
 
     public static func resolve(catalog: ReviewCatalog, profile: ReviewProfile?, choices: ReviewRunChoices, mergeRequest: MergeRequestRef,
-                               id: String, now: Date = .now, pi: ReviewPiLibrary = ReviewPiLibrary()) throws -> (spec: ReviewRunSpec, roles: [ReviewRole]) {
+                               id: String, now: Date = .now, pi: ReviewPiLibrary = ReviewPiLibrary(),
+                               preferredLanguages: [String] = Locale.preferredLanguages) throws -> (spec: ReviewRunSpec, roles: [ReviewRole]) {
         let scenarios = catalog.scenarios(for: profile)
         let scenario: Sourced<String>
         if let chosen = choices.scenario {
@@ -304,6 +322,10 @@ public enum ReviewResolver {
         spec.mcpServers = servers
         spec.fullReview = choices.fullReview ? true : nil
         spec.maxChangedLines = pick(\.maxChangedLines, fallback: 6000)
+        spec.impact = pick(\.impact, fallback: .auto)
+        spec.summaryLanguage = pick(\.summaryLanguage, fallback: preferredLanguage(preferredLanguages))
+        let turnedOff = off.filter { !choices.rolesOn.contains($0) }.sorted()
+        spec.rolesOff = turnedOff.isEmpty ? nil : turnedOff
         let levels: [(ReviewPiExtras, ReviewSource)] = [(catalog.brainPi, .brain), (profile?.pi ?? ReviewPiExtras(), .project), (choices.pi, .run)]
         for (extras, _) in levels {
             if let problem = ReviewPiFlags.problem(extras.flags) { throw Failure(message: "Pi flags: \(problem)") }
@@ -372,6 +394,15 @@ public enum ReviewResolver {
                                   minSeverity: config.minSeverity ?? .medium, maxFindings: config.maxFindings ?? 5, toolsLeftOut: leftOut)
     }
 
+    /// The default overview language (R46): the first of the Mac's preferred languages
+    /// (`Locale.preferredLanguages`, such as `ru-CZ` or `zh-Hans`) by its language code before
+    /// the first `-`, when it is a `LabLanguage`; else English (`fil` is not Finnish).
+    public static func preferredLanguage(_ preferred: [String]) -> LabLanguage {
+        guard let first = preferred.first else { return .english }
+        let code = first.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? ""
+        return LabLanguage(rawValue: code.lowercased()) ?? .english
+    }
+
     /// `akit review config show`: every resolved value with its source.
     public static func describe(_ spec: ReviewRunSpec) -> String {
         func line(_ name: String, _ value: String, _ source: ReviewSource) -> String { "  \(name): \(value)  [\(source.rawValue)]" }
@@ -400,6 +431,10 @@ public enum ReviewResolver {
                   "Cost:",
                   line("cap_credits_per_run", String(spec.capCredits.value), spec.capCredits.source)]
         if let size = spec.maxChangedLines { lines.append(line("max_changed_lines", String(size.value), size.source)) }
+        if let impact = spec.impact { lines += ["Other repositories:", line("impact", impact.value.rawValue, impact.source)] }
+        if let language = spec.summaryLanguage {
+            lines += ["Overview:", line("summary_language", "\(language.value.rawValue) (\(language.value.name))", language.source)]
+        }
         if !spec.constraints.isEmpty { lines += ["Constraints [project]:"] + spec.constraints.map { "  - \($0)" } }
         if !spec.pathInstructions.isEmpty {
             lines += ["Path instructions [project]:"] + spec.pathInstructions.map {

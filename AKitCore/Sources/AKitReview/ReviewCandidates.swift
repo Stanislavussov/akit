@@ -66,17 +66,28 @@ public enum ReviewCandidates {
         guard let needle else { return }
         // The model's quote went through the same masking and defusing as the file's lines. Any
         // quoted line counts, without a diff marker, a line number or `...`, spaces collapsed.
-        let quoted = finding.evidence.split(whereSeparator: \.isNewline).flatMap { evidencePieces(String($0)) }
-        if !quoted.isEmpty {
-            let file = lines.map { collapsed(ReviewNotes.defused($0)) }
-            finding.evidenceFound = quoted.contains { piece in file.contains { $0.contains(piece) } }
-        }
+        if let hits = quoteHits(finding.evidence, in: lines) { finding.evidenceFound = !hits.isEmpty }
         if let line = finding.line, line >= 1, line <= lines.count {
             let window = lines[max(0, line - 4)..<min(lines.count, line + 3)]
             if window.contains(where: { $0.contains(needle) }) { return }
         }
         let hits = lines.indices.filter { lines[$0].contains(needle) }
         if hits.count == 1 { finding.line = hits[0] + 1 }
+    }
+
+    /// The lines (0-based) of a file, masked, that hold a piece of the quote; nil when the quote has
+    /// no piece worth looking for. The quote went through the same masking and defusing as the
+    /// file's lines. With a `minimum`, a shorter piece counts only when it is the whole line.
+    static func quoteHits(_ quote: String, in lines: [String], minimum: Int = 0) -> [Int]? {
+        let quoted = quote.split(whereSeparator: \.isNewline).flatMap { evidencePieces(String($0)) }
+        guard !quoted.isEmpty else { return nil }
+        let file = lines.map { collapsed(ReviewNotes.defused($0)) }
+        return file.indices.filter { index in quoted.contains { pieceMatches($0, file[index], minimum: minimum) } }
+    }
+
+    /// A piece of a quote in a collapsed line: at least `minimum` characters, or the whole line.
+    static func pieceMatches(_ piece: String, _ line: String, minimum: Int) -> Bool {
+        line.contains(piece) && (piece.count >= minimum || line == piece)
     }
 
     /// The parts of a quoted line worth looking for: no diff marker or line number, split at

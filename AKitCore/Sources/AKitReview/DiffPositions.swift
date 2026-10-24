@@ -51,6 +51,38 @@ public struct DiffPositions: Sendable {
         self.hunks = hunks
     }
 
+    /// The lines a diff adds and removes: every `+` and `-` line after the first `@@` (GitLab's
+    /// diff text has no `---`/`+++` file headers, and an added line may start with `++`).
+    public static func lineCounts(_ diff: String) -> (added: Int, removed: Int) {
+        var counts = (added: 0, removed: 0)
+        var inHunk = false
+        for line in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("@@") { inHunk = true }
+            else if inHunk, line.hasPrefix("+") { counts.added += 1 }
+            else if inHunk, line.hasPrefix("-") { counts.removed += 1 }
+        }
+        return counts
+    }
+
+    /// The removed lines of a diff with their old line numbers, without the `-`.
+    static func removedLines(_ diff: String) -> [(line: Int, text: String)] {
+        var result: [(line: Int, text: String)] = []
+        var old: Int?
+        for line in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("@@") {
+                old = header(String(line))?.oldStart
+            } else if let number = old {
+                if line.hasPrefix("-") {
+                    result.append((number, String(line.dropFirst())))
+                    old = number + 1
+                } else if !line.hasPrefix("+"), !line.hasPrefix("\\") {
+                    old = number + 1
+                }
+            }
+        }
+        return result
+    }
+
     /// `@@ -12,7 +12,9 @@` → (12, 7, 12, 9). A missing count is 1.
     static func header(_ line: String) -> (oldStart: Int, oldCount: Int, newStart: Int, newCount: Int)? {
         guard let match = line.firstMatch(of: /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/) else { return nil }

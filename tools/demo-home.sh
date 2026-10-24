@@ -944,7 +944,7 @@ file "$REVIEWRUN/passes.json" <<EOF
  "brief":"Intent: stop the token from reaching the log after bug #4512.\nTouched components: AuthMiddleware.\nAlready raised: bob asked why the header is logged (resolved).\nAcceptance criteria: no secret reaches a log; requests without a header get 401.\nFirst gaps: no test output for the middleware.",
  "passes":[
   {"name":"fetch","model":"github-copilot/gpt-5.4-mini","started":"$(rago 180M)","ended":"$(rago 179M)","usage":{"input":4800,"cached":0,"output":1400},"credits":6.2,"paths":[]},
-  {"name":"brief","model":"github-copilot/gpt-5.4-mini","started":"$(rago 178M)","ended":"$(rago 177M)","usage":{"input":14200,"cached":0,"output":420},"credits":14.6,"paths":["../context/README.md","../context/diff.patch","../context/work-items/4512.md"]},
+  {"name":"brief","model":"github-copilot/gpt-5.4-mini","started":"$(rago 178M)","ended":"$(rago 177M)","usage":{"input":14200,"cached":0,"output":420},"credits":14.6,"paths":["../context/README.md","../context/diff.patch","../context/work-items.md"]},
   {"name":"role-bug-hunter","role":"bug-hunter","model":"github-copilot/gpt-5.4-mini","started":"$(rago 177M)","ended":"$(rago 176M)","usage":{"input":3100,"cached":14500,"output":610},"credits":5.2,"paths":["src/Auth/AuthMiddleware.cs"]},
   {"name":"role-requirements","role":"requirements","model":"github-copilot/gpt-5.4-mini","started":"$(rago 176M)","ended":"$(rago 175M)","usage":{"input":1800,"cached":18400,"output":380},"credits":4.0,"paths":[]},
   {"name":"role-tests","role":"tests","model":"github-copilot/gpt-5.4-mini","started":"$(rago 175M)","ended":"$(rago 174M)","usage":{"input":2600,"cached":20100,"output":350},"credits":4.96,"paths":["tests/Auth/AuthMiddlewareTests.cs"]},
@@ -976,6 +976,44 @@ file "$REVIEWRUN/gaps.json" <<'EOF'
 [{"id":"g1","system":"tests","needed":"Output of tests","why":"dotnet test failed to build in the worktree.","howToGet":"Check the command in the profile.","effect":"","reportedBy":"gather"},
  {"id":"g2","system":"azure-devops","needed":"Které endpointy zůstanou anonymní","why":"Work item #4512 je neuvádí.","howToGet":"Zeptejte se autora.","effect":"f5 je otázka, ne nález.","reportedBy":"role-requirements"}]
 EOF
+# The overview (Review → a run: Overview and Flow), in the run's summary language, and what the
+# map (Review → a run → Map) is built from: the boundaries the brief kept and the uses the impact
+# pass found in other made-up repositories. AKit builds map.json from these when the run opens.
+file "$REVIEWRUN/overview.json" <<'EOF'
+{"points":["Middleware читает заголовок Authorization, кладёт токен в HttpContext.Items и пишет заголовок в лог (баг #4512 просил обратного).",
+  "Запрос без заголовка получает 401; GET /api/orders и GET /api/orders/{id} теперь требуют вход.",
+  "Флаг ORDERS_ALLOW_ANONYMOUS удалён из Helm: анонимного чтения заказов больше нет.",
+  "Новый тест проверяет 401 без заголовка; проверки лога в нём нет."],
+ "modules":[{"name":"src/Auth","files":["src/Auth/AuthMiddleware.cs"],"why":"Баг #4512: токен попадал в общий лог. Эпик «Безопасность платежей» требует, чтобы секреты не уходили в логи."},
+  {"name":"src/Orders","files":["src/Orders/OrdersController.cs"],"why":"User Story #4480: заказ видит только вошедший пользователь."},
+  {"name":"helm","files":["helm/orders/values.yaml"],"why":"Без анонимного режима флаг не нужен (комментарий Алисы в #4512)."},
+  {"name":"tests","files":["tests/Auth/AuthMiddlewareTests.cs"],"why":"Критерий приёмки #4512: запросы без заголовка получают 401."}],
+ "whySources":["work-item","description"],
+ "flow":"flowchart LR\n  ui[\"web-mfe: страница заказа\"] --> api[\"OrdersController.cs<br/>GET /api/orders/{id}\"]\n  smoke[\"smoke-тест staging\"] --> api\n  api --> auth[\"AuthMiddleware.cs<br/>проверяет Bearer\"]\n  auth -->|нет заголовка| e401[\"401\"]\n  auth --> store[(\"orders DB\")]\n  auth -.-> log[\"общий лог\"]\n  cfg[\"values.yaml<br/>без ORDERS_ALLOW_ANONYMOUS\"] -.-> auth\n  classDef changed fill:#fde68a,stroke:#b45309\n  class api,auth,cfg changed\n  subgraph akit_others[\"Other repositories\"]\n    akit_c1[\"shop/web-mfe · 2 uses · breaks\"]\n    akit_c2[\"shop/billing-service · 1 use\"]\n    akit_c3[\"shop/deploy-config · 1 use · breaks\"]\n  end\n  akit_others -.-> api\n  akit_others -.-> cfg\n",
+ "flowKind":"flowchart","language":"ru","notes":[]}
+EOF
+file "$REVIEWRUN/boundaries.json" <<'EOF'
+[{"id":"b1","kind":"http-api","direction":"provides","name":"GET /api/orders/{id}","file":"src/Orders/OrdersController.cs","line":12,
+  "quote":"[HttpGet(\"api/orders/{id}\")]","note":"Now needs a signed-in user."},
+ {"id":"b2","kind":"http-api","direction":"provides","name":"GET /api/orders","file":"src/Orders/OrdersController.cs","line":15,
+  "quote":"[HttpGet(\"api/orders\")]","note":"Now needs a signed-in user."},
+ {"id":"b3","kind":"config","direction":"provides","name":"ORDERS_ALLOW_ANONYMOUS","file":"helm/orders/values.yaml","line":14,
+  "quote":"ORDERS_ALLOW_ANONYMOUS: \"true\"","note":"Removed: nothing reads it any more.","side":"old"}]
+EOF
+file "$REVIEWRUN/consumers.json" <<'EOF'
+[{"boundary":"b1","project":"shop/web-mfe","file":"src/api/orders.ts","ref":"main","line":12,"quote":"const response = await fetch(`/api/orders/${id}`);",
+  "usage":"Loads one order for the order page, without an Authorization header.","breaks":true,"why":"It sends no token: the call gets 401 after this change.",
+  "url":"https://gitlab.example.com/shop/web-mfe/-/blob/main/src/api/orders.ts#L12"},
+ {"boundary":"b2","project":"shop/web-mfe","file":"src/pages/OrderList.tsx","ref":"main","line":31,"quote":"api.get('/api/orders', { headers: authHeaders() })",
+  "usage":"Lists the orders with the user's token.","breaks":false,"why":"It sends the token already.",
+  "url":"https://gitlab.example.com/shop/web-mfe/-/blob/main/src/pages/OrderList.tsx#L31"},
+ {"boundary":"b1","project":"shop/billing-service","file":"src/Billing/OrdersClient.cs","ref":"main","line":22,"quote":"var order = await http.GetFromJsonAsync<Order>($\"api/orders/{id}\");",
+  "usage":"Reads an order before an invoice, with the service's token (set in the HttpClient).","breaks":false,"why":"Its HttpClient adds a Bearer token.",
+  "url":"https://gitlab.example.com/shop/billing-service/-/blob/main/src/Billing/OrdersClient.cs#L22"},
+ {"boundary":"b3","project":"shop/deploy-config","file":"envs/staging/orders.yaml","ref":"main","line":8,"quote":"ORDERS_ALLOW_ANONYMOUS: \"true\"",
+  "usage":"Staging turns anonymous reads on for its smoke test.","breaks":true,"why":"The smoke test reads orders without a token: it fails once the flag is gone.",
+  "url":"https://gitlab.example.com/shop/deploy-config/-/blob/main/envs/staging/orders.yaml#L8"}]
+EOF
 # What the passes asked Pi's MCP servers (Log…): made-up calls, no answers worth reading.
 file "$REVIEWRUN/mcp/calls/fetch-1760520000000-0001.json" <<'EOF'
 {"pass":"fetch","tool":"mcp__gitlab__get_merge_request","server":"gitlab","input":"{\"project_id\":\"shop/orders-service\",\"merge_request_iid\":42}","text":["{\"iid\":42}"],"isError":false}
@@ -997,7 +1035,10 @@ file "$REVIEWRUN/gitlab/snapshot.json" <<EOF
   "sourceBranch":"fix/4512-auth-log","targetBranch":"main","labels":["backend","security"],"webURL":"https://gitlab.example.com/shop/orders-service/-/merge_requests/42",
   "diffRefs":{"baseSHA":"1a2b3c4d","startSHA":"1a2b3c4d","headSHA":"$HEADSHA"}},
  "versions":[{"id":3,"headSHA":"$HEADSHA","baseSHA":"1a2b3c4d","startSHA":"1a2b3c4d"}],
- "diffs":[{"oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs","diff":"@@ -5,10 +5,13 @@\n     public async Task InvokeAsync(HttpContext context)\n     {\n         var header = context.Request.Headers.Authorization.ToString();\n+        logger.LogInformation(\"Auth: {Header}\", header);\n         if (string.IsNullOrEmpty(header))\n         {\n             context.Response.StatusCode = 401;\n             return;\n         }\n+        var token = header[\"Bearer \".Length..];\n+        context.Items[\"token\"] = token;\n         await next(context);\n     }\n }\n","newFile":false,"renamedFile":false,"deletedFile":false,"tooLarge":false}],
+ "diffs":[{"oldPath":"src/Auth/AuthMiddleware.cs","newPath":"src/Auth/AuthMiddleware.cs","diff":"@@ -5,10 +5,13 @@\n     public async Task InvokeAsync(HttpContext context)\n     {\n         var header = context.Request.Headers.Authorization.ToString();\n+        logger.LogInformation(\"Auth: {Header}\", header);\n         if (string.IsNullOrEmpty(header))\n         {\n             context.Response.StatusCode = 401;\n             return;\n         }\n+        var token = header[\"Bearer \".Length..];\n+        context.Items[\"token\"] = token;\n         await next(context);\n     }\n }\n","newFile":false,"renamedFile":false,"deletedFile":false,"tooLarge":false},
+  {"oldPath":"src/Orders/OrdersController.cs","newPath":"src/Orders/OrdersController.cs","diff":"@@ -8,6 +8,8 @@\n public sealed class OrdersController(IOrderStore store)\n {\n+    [Authorize]\n     [HttpGet(\"api/orders/{id}\")]\n     public Order? Get(int id) => store.Find(id);\n+    [Authorize]\n     [HttpGet(\"api/orders\")]\n     public IReadOnlyList<Order> List() => store.All();\n }\n","newFile":false,"renamedFile":false,"deletedFile":false,"tooLarge":false},
+  {"oldPath":"helm/orders/values.yaml","newPath":"helm/orders/values.yaml","diff":"@@ -12,5 +12,3 @@\n env:\n   ORDERS_DB: orders\n-  ORDERS_ALLOW_ANONYMOUS: \"true\"\n-  # anonymous reads for the smoke test\n   LOG_LEVEL: Information\n","newFile":false,"renamedFile":false,"deletedFile":false,"tooLarge":false},
+  {"oldPath":"tests/Auth/AuthMiddlewareTests.cs","newPath":"tests/Auth/AuthMiddlewareTests.cs","diff":"@@ -0,0 +1,6 @@\n+namespace Orders.Tests.Auth;\n+\n+public class AuthMiddlewareTests\n+{\n+    [Fact] public async Task NoHeaderGives401() => Assert.Equal(401, await Run(header: null));\n+}\n","newFile":true,"renamedFile":false,"deletedFile":false,"tooLarge":false}],
  "discussions":[],"drafts":[],"user":"demo","gathered":"$(rago 179M)"}
 EOF
 SUMMARY='🤖 · souhrn · scénář **bugfix** · role `bug-hunter`, `requirements`, `tests`, `security`\n\n2 komentáře k řádkům diffu.\n\n### Otázky pro autora\n\n- `src/Auth/AuthMiddleware.cs:11`: Má chybějící hlavička vrátit 401, nebo projít k anonymním endpointům? — Zeptejte se, zda /health a /metrics musí zůstat anonymní.\n\n### Akceptační kritéria\n\n| Kritérium | Stav |\n|---|---|\n| Žádný tajný údaj se nedostane do logu | kód: AuthMiddleware.cs:8 stále zapisuje hlavičku (f1) |\n\n### Co chybělo\n\n- Které endpointy zůstanou anonymní: Work item #4512 je neuvádí.\n\n<sub>Zkontrolovaný commit 4f2c9e1b7a.</sub>'

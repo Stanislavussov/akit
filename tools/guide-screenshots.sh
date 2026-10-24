@@ -183,7 +183,11 @@ shot guide-search        820x900 --guide screens:start --query "usage"
 shot guide-section       820x900 --guide screens:skills
 # Review (guide review.ru.md): the made-up review of shop/orders-service!42 from tools/demo-home.sh.
 REVIEWMR="https://gitlab.example.com/shop/orders-service/-/merge_requests/42"
-shot review-run          1280x860 --section review --select 20261015-091500-orders-service-42
+shot review-run          1280x860 --section review --select 20261015-091500-orders-service-42 --tab requests
+shot review-overview     1280x900 --section review --select 20261015-091500-orders-service-42
+shot review-map          1440x900 --section review --select 20261015-091500-orders-service-42 --tab map --query consumer:shop/web-mfe:src/api/orders.ts
+# Open Larger on the Flow: a sheet of 90% of the screen, at Fit.
+shot review-flow-large   1440x900 --section review --select 20261015-091500-orders-service-42 --tab flow
 shot review-new          $MAIN --section review --query "$REVIEWMR" --add
 shot review-settings     $MAIN --section review --tab settings --add
 shot review-roles        $MAIN --section review --tab roles --select security

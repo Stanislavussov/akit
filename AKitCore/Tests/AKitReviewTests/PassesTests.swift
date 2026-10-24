@@ -28,7 +28,7 @@ struct ReviewRunFixture {
         home.write("bin/pi", fakePi, executable: true)
     }
 
-    static func make(allowed: Bool = true, cap: Int? = nil) async throws -> ReviewRunFixture {
+    static func make(allowed: Bool = true, cap: Int? = nil, choices: ReviewRunChoices = ReviewRunFixture.choices) async throws -> ReviewRunFixture {
         let (home, head) = try ReviewProcessTests.GatherTests().setUp()
         var choices = choices
         choices.settings.capCredits = cap
@@ -65,6 +65,12 @@ struct ReviewRunFixture {
     echo '{"type":"tool_execution_start","toolName":"read","args":{"path":"../context/diff.patch"}}'
     mkdir -p "$AKIT_REVIEW_RUN/passes"
     [ -f "$HOME/fake/$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/$AKIT_REVIEW_PASS.json"
+    [ -f "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/boundaries.json"
+    [ -f "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/consumers.json"
+    [ -f "$HOME/fake/overview-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/overview-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/overview.json"
+    if [ -d "$HOME/fake/calls-$AKIT_REVIEW_PASS" ]; then
+      mkdir -p "$AKIT_REVIEW_RUN/mcp/calls"; cp "$HOME/fake/calls-$AKIT_REVIEW_PASS"/*.json "$AKIT_REVIEW_RUN/mcp/calls/"
+    fi
     [ -f "$HOME/fake/gaps-$AKIT_REVIEW_PASS.jsonl" ] && cp "$HOME/fake/gaps-$AKIT_REVIEW_PASS.jsonl" "$AKIT_REVIEW_RUN/passes/gaps-$AKIT_REVIEW_PASS.jsonl"
     if [ -f "$HOME/fake/fail-$AKIT_REVIEW_PASS" ]; then
       echo '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"quota exceeded","usage":{"input":10,"output":0,"cacheRead":0,"cacheWrite":0}}}'
@@ -144,7 +150,8 @@ extension ReviewProcessTests {
                 #expect(brief.contains(flag), "\(flag)")
             }
             #expect(!brief.contains("--no-mcp"), "the passes read through Pi's MCP servers by default")
-            #expect(brief.contains(ReviewPasses.tools + ",codemode,tool_search,mcp__*"), "every server of Pi; the extension checks each call")
+            #expect(brief.contains(ReviewPasses.tools + ",akit_submit_boundaries,akit_submit_overview,codemode,tool_search,mcp__*"),
+                    "every server of Pi; the extension checks each call; the brief names the boundaries")
             #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
             #expect(brief.filter { $0 == "--skill" }.count == 4)
             let env = try String(contentsOf: run.home.url.appending(path: "fake/env-role-tests.txt"), encoding: .utf8)

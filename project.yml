@@ -12,7 +12,12 @@ targets:
     type: application
     platform: macOS
     sources:
-      - AKit
+      - path: AKit
+        excludes: ["Resources/Mermaid/**"]
+      # mermaid.js for the Review flow (offline, pinned): a folder in the bundle.
+      - path: AKit/Resources/Mermaid
+        type: folder
+        buildPhase: resources
       # In-app guides (Help menu, Guide buttons): read from the bundle's guides folder.
       - path: docs/guides
         type: folder

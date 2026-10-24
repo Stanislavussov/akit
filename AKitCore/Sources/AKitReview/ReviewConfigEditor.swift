@@ -1,5 +1,6 @@
 import AKitBrain
 import AKitFoundation
+import AKitLab
 import Foundation
 
 /// Changes to review's configuration files: a role, a scenario or the defaults, in the brain
@@ -149,26 +150,44 @@ public enum ReviewConfigEditor {
     /// One key of the profile's `mcp:` set to `value` (YAML), the rest of the file as it was.
     /// `addWhenMissing`: whether a file without `mcp:` gets one.
     static func settingMCP(_ key: String, _ value: String, in original: String, addWhenMissing: Bool = true) -> String {
+        settingKey(key, value, block: "mcp", in: original, addWhenMissing: addWhenMissing)
+    }
+
+    /// One key of a top-level block (`mcp:`, `review:`) set to `value` (YAML), or taken out when
+    /// `value` is nil; the rest of the file as it was.
+    static func settingKey(_ key: String, _ value: String?, block: String, in original: String, addWhenMissing: Bool = true) -> String {
         let crlf = original.contains("\r\n")
         let text = crlf ? original.replacingOccurrences(of: "\r\n", with: "\n") : original
-        let result = settingMCPLF(key, value, in: text, addWhenMissing: addWhenMissing)
+        let result = settingKeyLF(key, value, block: block, in: text, addWhenMissing: addWhenMissing && value != nil)
         return crlf ? result.replacingOccurrences(of: "\n", with: "\r\n") : result
     }
 
-    static func settingMCPLF(_ key: String, _ value: String, in text: String, addWhenMissing: Bool) -> String {
+    static func settingKeyLF(_ key: String, _ value: String?, block: String, in text: String, addWhenMissing: Bool) -> String {
         var lines = text.components(separatedBy: "\n")
-        guard let start = lines.firstIndex(where: { $0.hasPrefix("mcp:") }) else {
-            guard addWhenMissing else { return text }
+        guard let start = lines.firstIndex(where: { $0.hasPrefix(block + ":") }) else {
+            guard addWhenMissing, let value else { return text }
             var result = text
             if !result.isEmpty, !result.hasSuffix("\n") { result += "\n" }
-            return result + "mcp:\n  \(key): \(value)\n"
+            return result + "\(block):\n  \(key): \(value)\n"
         }
         let (head, headComment) = comment(lines[start])
-        let rest = head.dropFirst("mcp:".count).trimmingCharacters(in: .whitespaces)
+        let rest = head.dropFirst(block.count + 1).trimmingCharacters(in: .whitespaces)
         if rest.hasPrefix("{") {
             // A flow mapping on one line.
             var line = head
-            if let range = line.range(of: key + #":\s*(\[[^\]]*\]|[A-Za-z0-9_]+)"#, options: .regularExpression) {
+            let pattern = key + #":\s*(\[[^\]]*\]|[A-Za-z0-9_]+)"#
+            guard let value else {
+                // Out with the comma before it, else the one after it.
+                for form in [#",\s*"# + pattern, pattern + #"\s*,\s*"#, pattern] {
+                    if let range = line.range(of: form, options: .regularExpression) {
+                        line.replaceSubrange(range, with: "")
+                        break
+                    }
+                }
+                lines[start] = line + headComment
+                return lines.joined(separator: "\n")
+            }
+            if let range = line.range(of: pattern, options: .regularExpression) {
                 line.replaceSubrange(range, with: "\(key): \(value)")
             } else if let open = line.firstIndex(of: "{"), let close = line.lastIndex(of: "}"), open < close {
                 let inside = line[line.index(after: open)..<close].trimmingCharacters(in: .whitespaces)
@@ -194,11 +213,65 @@ public enum ReviewConfigEditor {
                   lines[stop].prefix(while: { $0 == " " || $0 == "\t" }).count >= own {
                 stop += 1
             }
-            lines.replaceSubrange(at..<stop, with: [String(lines[at].prefix(own)) + "\(key): \(value)" + comment(lines[at]).comment])
-        } else {
+            lines.replaceSubrange(at..<stop, with: value.map { [String(lines[at].prefix(own)) + "\(key): \($0)" + comment(lines[at]).comment] } ?? [])
+        } else if let value {
             lines.insert(indent + "\(key): \(value)", at: start + 1)
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// A top-level key of review.yaml set to `value`, or taken out when nil. A commented-out
+    /// `# key:` line becomes the setting; else it goes at the end.
+    static func settingTopLevel(_ key: String, _ value: String?, in original: String) -> String {
+        let crlf = original.contains("\r\n")
+        var lines = (crlf ? original.replacingOccurrences(of: "\r\n", with: "\n") : original).components(separatedBy: "\n")
+        if let at = lines.firstIndex(where: { $0.hasPrefix(key + ":") }) {
+            if let value { lines[at] = "\(key): \(value)" + comment(lines[at]).comment } else { lines.remove(at: at) }
+        } else if let value {
+            if let at = lines.firstIndex(where: { $0.hasPrefix("# \(key):") }) {
+                lines[at] = "\(key): \(value)" + comment(String(lines[at].dropFirst(2))).comment
+            } else {
+                if lines.last == "" { lines.removeLast() }
+                lines += ["\(key): \(value)", ""]
+            }
+        }
+        let result = lines.joined(separator: "\n")
+        return crlf ? result.replacingOccurrences(of: "\n", with: "\r\n") : result
+    }
+
+    /// Review Settings… → Other repositories and Summary language: `impact` or `summary_language`
+    /// at the top of the brain's review.yaml (`profile` nil) or in a profile's `review:` block; nil
+    /// takes the key out, so the level above decides. Nothing is written; the save shows its diff.
+    public static func reviewSetting(impact: ReviewImpact?, profile slug: String?, home: URL, brain: URL) throws -> Save {
+        try reviewSetting("impact", impact?.rawValue, profile: slug, home: home, brain: brain) { $0.impact = impact }
+    }
+
+    public static func reviewSetting(summaryLanguage: LabLanguage?, profile slug: String?, home: URL, brain: URL) throws -> Save {
+        try reviewSetting("summary_language", summaryLanguage?.rawValue, profile: slug, home: home, brain: brain) { $0.summaryLanguage = summaryLanguage }
+    }
+
+    /// The edit may change this one key and nothing else (`set` gives the expected settings).
+    static func reviewSetting(_ key: String, _ value: String?, profile slug: String?, home: URL, brain: URL,
+                              set: (inout ReviewSettingsPatch) -> Void) throws -> Save {
+        let refused = Failure(message: "AKit couldn't change \(key) by itself. Edit the file and set "
+                              + (value.map { "\(key): \($0)" } ?? "no \(key)") + (slug == nil ? " in review.yaml." : " in the profile's review: block."))
+        if let slug {
+            let url = file(.profile, id: slug, level: .project(slug), home: home, brain: brain)
+            guard let old = try? String(contentsOf: url, encoding: .utf8) else { throw Failure(message: "There is no project profile \(slug).") }
+            let text = settingKey(key, value, block: "review", in: old)
+            guard var expected = try? ReviewProfile.parse(old, slug: slug), let after = try? ReviewProfile.parse(text, slug: slug) else { throw refused }
+            set(&expected.settings)
+            guard after == expected else { throw refused }
+            return try plan(.profile, id: slug, text: text, level: .project(slug), home: home, brain: brain)
+        }
+        let url = file(.defaults, id: "", level: .brain, home: home, brain: brain)
+        let old = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let text = settingTopLevel(key, value, in: old)
+        guard var expected = try? ReviewSettingsPatch.parse(ReviewYAML.map(old), where: "review.yaml"),
+              let after = try? ReviewSettingsPatch.parse(ReviewYAML.map(text), where: "review.yaml") else { throw refused }
+        set(&expected)
+        guard after == expected else { throw refused }
+        return try plan(.defaults, id: "", text: text, level: .brain, home: home, brain: brain)
     }
 
     /// Review Settings… → Every Pi server in the review passes: the profile's `mcp: all_servers:`.
