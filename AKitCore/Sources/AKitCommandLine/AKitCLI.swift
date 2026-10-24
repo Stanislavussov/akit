@@ -243,6 +243,11 @@ public enum AKitCLI {
                                           output. akit translate --help lists the rest
 
         Instructions (AGENTS.md, CLAUDE.md; only reads):
+          akit instructions remove FILE (--line N | --section HEADING) [--yes]
+                                          Take one section out of an instruction file (Remove This
+                                          Copy… on the Instructions screen): shows the diff; --yes
+                                          writes it after a backup, refused if the file changed.
+                                          Never AKit's core block or a file AKit renders
           akit instructions [FOLDER] [--harness claude|pi|codex|opencode] [--global]
                                           The instruction files each harness loads for a session in
                                           FOLDER (default: here), in the order the model gets them,
@@ -387,6 +392,14 @@ public enum AKitCLI {
             }
             if command == "instructions" {
                 try refuseProjectOptions(options, command: "instructions")
+                if args.peek == "remove" {
+                    _ = args.positional()
+                    // Files AKit rendered from the brain change there, not here (InstructionEdit).
+                    let context = await skillContext(brainRoot: brainRoot(options, cwd: cwd, env: env), env: env, projectsRoot: projectsRoot,
+                                                     hostName: hostName, installedTargets: installedTargets)
+                    let rendered = InstructionEdit.renderedFiles(projects: context.projectFolders, store: context.store)
+                    return try instructionsRemove(&args, yes: options.yes, rendered: rendered, env: env, cwd: cwd, out: out)
+                }
                 return try instructions(&args, env: env, cwd: cwd, out: out)
             }
             if command == "worktrees" {

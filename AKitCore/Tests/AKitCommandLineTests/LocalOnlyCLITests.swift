@@ -152,4 +152,24 @@ struct LocalOnlyCLITests {
         #expect(await akit("doctor", "--json").code == 2)
         #expect(AKitCLI.usage.contains("akit doctor pi [--live] [--json]"))
     }
+
+    @Test func instructionsRemoveShowsTheDiffAndWritesOnlyWithYes() async throws {
+        let original = "# Rules\n\n## Style\nShort sentences.\n\n## Build\nmake build\n"
+        try write(".pi/agent/AGENTS.md", original)
+        let file = home.appending(path: ".pi/agent/AGENTS.md")
+        let plan = await akit("instructions", "remove", "~/.pi/agent/AGENTS.md", "--section", "style")
+        #expect(plan.code == 0, "\(plan.err)")
+        #expect(plan.out.contains("Remove ## Style (line 3) from ~/.pi/agent/AGENTS.md:"))
+        #expect(plan.out.contains("- Short sentences.") && plan.out.hasSuffix("Run again with --yes to do it."))
+        #expect(try String(contentsOf: file, encoding: .utf8) == original)
+
+        let done = await akit("instructions", "remove", "~/.pi/agent/AGENTS.md", "--line", "3", "--yes")
+        #expect(done.code == 0, "\(done.err)")
+        #expect(done.out.contains("Done. A backup is in ~/"))
+        #expect(try String(contentsOf: file, encoding: .utf8) == "# Rules\n\n## Build\nmake build\n")
+
+        #expect(await akit("instructions", "remove", "~/.pi/agent/AGENTS.md", "--line", "9").code == 2)
+        #expect(await akit("instructions", "remove", "~/.pi/agent/AGENTS.md").code == 2)
+        #expect(AKitCLI.usage.contains("akit instructions remove FILE (--line N | --section HEADING) [--yes]"))
+    }
 }
