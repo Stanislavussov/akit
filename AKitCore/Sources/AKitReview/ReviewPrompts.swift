@@ -210,7 +210,8 @@ public enum ReviewPrompts {
         How to search:
         1. For each boundary, GitLab's `search` with `scope: "blobs"` and `search` set to the boundary's name, first with \
         `group_id: "\(group)"` (the merge request's top-level group). When the group gives fewer than \(ReviewConsumers.groupProjects) \
-        other projects, search the whole GitLab too (no `group_id`, no `project_id`).
+        other projects, or when the group search fails (the top level may be a user's namespace, not a group), search the whole \
+        GitLab too (no `group_id`, no `project_id`).
         2. Read a promising hit with `get_repository_file` (`project_id`, `file_path` and `ref`, or its `url`) around the use, \
         with `offset` and `limit`: enough lines to tell how the file uses the boundary and whether this change breaks it.
         3. When the server offers them, `semantic_search` (`scope: "code"`) and Orbit's `query_graph` may find uses a text \
@@ -228,8 +229,11 @@ public enum ReviewPrompts {
 
         Then call `akit_submit_consumers` with each use once: the boundary, the other project's path (`group/project`), the \
         file, the ref and the line you read, the quote (the exact line that uses the boundary, copied from GitLab's answer: \
-        AKit keeps a use only when its quote is in an answer GitLab gave you in this pass about that file), how the file uses \
-        the boundary, and whether this change breaks it with the reason. An empty list is a valid answer. Then answer "done".
+        AKit keeps a use only when one answer GitLab gave you in this pass holds the quote, the file's whole path and the \
+        project: one search hit, or the answer of a file read of that project and file), how the file uses the boundary, and \
+        whether this change breaks it with the reason. A search hit that names its project only by number (`project_id`) counts \
+        when an answer of this pass gives that number's path: read the project (`get_project`) or the file \
+        (`get_repository_file`). An empty list is a valid answer. Then answer "done".
         """
     }
 

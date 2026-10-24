@@ -444,22 +444,57 @@ What differs from or adds to the table:
 - The run's GitLab server is the one the fetch pass read the merge request with (the run's own
   server whose saved answer holds it; for an older run, its own servers named like GitLab). A
   local review, `mcp: in_passes: false` or no such server: a gap (system `gitlab`) and no pass.
-  A failed impact pass is a gap too; the review goes on.
+  A failed impact pass is a gap too, added after the gaps the pass reported itself; the review
+  goes on, and the uses the pass submitted before it failed are checked like any others.
 - The top group for `group_id` is the first segment of the merge request's project path; the
-  prompt also names the full namespace. The 300-character, one-line argument limit holds for
-  every server in this pass, GitLab included.
+  prompt also names the full namespace, and when the group search fails (a user's namespace)
+  the pass searches the whole GitLab. The 300-character, one-line argument limit holds for every
+  server in this pass, GitLab included (and for open servers in every pass); it covers keys too,
+  a value nested deeper than 4 levels is refused, the arguments as JSON may have at most 600
+  characters, and `read_mcp_resource` (its `uri`) passes the same check.
 - `always` with no boundary from the brief: the pass also gets `akit_submit_boundaries`, AKit
   checks those like the brief's, and a use names such a boundary by its name.
 - `akit_submit_consumers` may be called more than once; the calls add up (at most 200).
 - AKit keeps a use when its boundary is kept, its project is a GitLab path other than the merge
-  request's, and its quote (each line, spaces collapsed, split at `...`) is in one answer of a
-  run's GitLab server to this pass that also names the file (its name in the call or the
-  answer); JSON strings and base64 file contents count. One use per project, file and boundary,
-  at most 100; texts masked and cut. `url` is `<host>/<project>/-/blob/<ref or HEAD>/<file>#L<line>`.
-- Searches (`search`, `semantic_search`, `query_graph`) and file reads (`…file…`, `…blob…`) are
-  counted from the saved answers or the pass's own tool calls, whichever is more.
+  request's, and ONE answer of a run's GitLab server to this pass holds the quote (each line,
+  spaces collapsed, split at `...`; 12 characters or a whole line), the use's whole file path
+  and its project. Such an answer is either a search hit (an object with `data` or `content`,
+  base64 decoded when `encoding` says so, and `path`, `filename`, `file_path` or `file_name`; the
+  project from `path_with_namespace`, `project_path`, `project` or `project_id`), or a file read
+  (a tool with `file` and a reading verb in its name, like `get_repository_file`): its project
+  (`project_id`, `id`, `project`, `project_path`) and file (`file_path`, `path`, `file`) come from
+  the call, since the answer is that file, but only when the answer names no other file, and the
+  quote must be in the answer. A project number counts only when an answer of the pass gives it
+  exactly one path (`id` or `project_id` next to `path_with_namespace`, as `get_project` or a
+  `projects` search answers). An answer of the merge request's own project (its path, or its
+  number from `gitlab/snapshot.json`) is no evidence. The call's input is never evidence for the
+  quote. Answers over 2 MB are skipped, base64 contents decode to at most 2 MB. One use per
+  project, file and boundary, at most 100; texts masked and cut, the file and the ref defused in
+  `consumers.md`. `url` is `<host>/<project>/-/blob/<ref or HEAD>/<file>#L<line>`, none when the
+  ref or the file has a `.` or `..` segment.
+- Searches (`search`, `semantic_search`, `query_graph`) and file reads (a tool like
+  `get_repository_file`: `file` and a reading verb in its name, no `list` or `tree`) are counted
+  from the saved answers or the pass's own tool calls, whichever is more; trees, file lists and
+  projects count as neither.
 - The contracts role that R44 adds is the built-in one, after the scenario's roles; `run.json`
-  lists it with the reason "added: other repositories use the change".
+  lists it with the reason "added: other repositories use the change". Each run of the passes
+  first takes such a role out (and its folder, when it is the definition AKit wrote) and decides
+  again. A role the user turned off (the profile's `roles: off` or the run's choice; `run.json`
+  lists them as `rolesOff`) is never added: the progress says the uses were found but contracts
+  is off by the user's choice.
+- The estimate (credits and the monthly limit in dollars) counts the impact pass, and the
+  contracts role it may add, whenever the pass may run (impact not `off`, MCP in the passes and
+  a GitLab server).
+- The extension's pure rules (`ReviewExtension.rules`: the argument limit, where it applies, the
+  shape of a use) are plain JavaScript inside the TypeScript file; the tests run that same text
+  with JavaScriptCore.
+
+Review of part (b) (2026-10-24): a use is tied to its project and its whole file in one answer
+(never the call's input), the added contracts role is decided again on every run and the user's
+removal wins, the argument limit covers depth, keys, total size and resource reads, the
+extension's rules run in the tests, big answers and base64 are capped, AKit's failure gap is
+appended, the estimate counts the impact pass, a failed pass keeps its saved uses, file and ref
+defused, `.`/`..` refs give no link, and trees and file lists don't count as file reads.
 
 ### Overview, flow and the work item chain (2026-10-24)
 

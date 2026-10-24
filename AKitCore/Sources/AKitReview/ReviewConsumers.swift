@@ -34,24 +34,33 @@ public enum ReviewConsumers {
     }
 
     /// The submitted uses (`passes/consumers.json`) that AKit keeps: a known boundary (by id, or
-    /// by name for one the pass named itself), another project than the merge request's, and a
-    /// quote that is in an answer one of the run's GitLab servers gave the `impact` pass about
-    /// that file (its name is in the call or the answer). Model
-    /// text is masked and cut; one use per project, file and boundary.
+    /// by name for one the pass named itself), another project than the merge request's, and one
+    /// answer of the run's GitLab servers to the `impact` pass that holds the quote, the file and
+    /// the project together (`evidence`). Model text is masked and cut; one use per project, file
+    /// and boundary.
     static func check(folder: URL, spec: ReviewRunSpec, boundaries: [ReviewBoundary], servers: [String]) -> [ReviewConsumer] {
         guard let object = FileWalk.jsonObject(folder.appending(path: "passes/consumers.json")) else { return [] }
         let answers = ReviewMCPData.calls(in: folder, pass: "impact").filter { call in
             guard !call.isError, let server = call.server ?? spec.access.server(ofTool: call.tool) else { return false }
             return servers.contains { $0.lowercased() == server.lowercased() }
         }
+        let ownID = ReviewJSON.read(ReviewSnapshot.self, from: folder.appending(path: "gitlab/snapshot.json"))?.mergeRequest.projectID
         return check(object["consumers"] as? [[String: Any]] ?? [], boundaries: boundaries, answers: answers,
-                     ownProject: spec.mergeRequest.projectPath, host: spec.mergeRequest.host)
+                     ownProject: spec.mergeRequest.projectPath, ownProjectID: ownID, host: spec.mergeRequest.host)
     }
 
     static func check(_ raw: [[String: Any]], boundaries: [ReviewBoundary], answers: [ReviewMCPCall], ownProject: String,
-                      host: String) -> [ReviewConsumer] {
-        let calls = answers.map { (lines: answerLines([$0]), raw: ([$0.input] + $0.text + [$0.structured ?? ""]).joined(separator: "\n")) }
-        let own = projectPath(ownProject)
+                      ownProjectID: Int? = nil, host: String) -> [ReviewConsumer] {
+        let own = projectPath(ownProject)?.lowercased()
+        let found = evidence(answers)
+        // A project number counts only when an answer of this pass names its path, and only one path.
+        func resolved(_ id: String) -> String? {
+            guard let paths = found.projects[id], paths.count == 1 else { return nil }
+            return paths.first
+        }
+        let units = found.units.filter { unit in
+            !unit.paths.contains { $0 == own } && !unit.ids.contains { $0 == ownProjectID.map(String.init) || resolved($0) == own }
+        }
         var result: [ReviewConsumer] = []
         var seen = Set<String>()
         for item in raw where result.count < maxKept {
@@ -59,16 +68,15 @@ public enum ReviewConsumers {
                   let rawQuote = item["quote"] as? String else { continue }
             let key = given.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let boundary = boundaries.first(where: { $0.id == key }) ?? boundaries.first(where: { $0.name.lowercased() == key.lowercased() }),
-                  let project = projectPath(rawProject), project.lowercased() != own?.lowercased() else { continue }
-            var file = rawFile.trimmingCharacters(in: .whitespacesAndNewlines)
-            if file.hasPrefix("./") { file = String(file.dropFirst(2)) }
-            if file.hasPrefix("/") { file = String(file.dropFirst()) }
-            guard !file.isEmpty, file.count <= 400, !file.split(separator: "/").contains(".."), !file.contains(where: \.isNewline) else { continue }
+                  let project = projectPath(rawProject), project.lowercased() != own else { continue }
+            guard let file = filePath(rawFile) else { continue }
             let quote = SecretFilter.masked(rawQuote)
-            // The quote is in an answer about that file: its name is in the call or the answer.
-            let name = String(file.split(separator: "/").last ?? Substring(file))
-            guard calls.contains(where: { $0.raw.contains(name) && quoted(quote, in: $0.lines) }) else { continue }
-            guard seen.insert("\(project.lowercased())\n\(file)\n\(boundary.id)").inserted else { continue }
+            // One answer holds the quote, the whole file path and the project.
+            let lower = project.lowercased()
+            guard units.contains(where: { unit in
+                unit.files.contains(file) && (unit.paths.contains(lower) || unit.ids.contains { resolved($0) == lower }) && quoted(quote, in: unit.lines)
+            }) else { continue }
+            guard seen.insert("\(lower)\n\(file)\n\(boundary.id)").inserted else { continue }
             let ref = (item["ref"] as? String).map { $0.trimmingCharacters(in: .whitespaces) }
                 .flatMap { $0.isEmpty || $0.count > 200 || $0.contains(where: \.isWhitespace) ? nil : SecretFilter.masked($0) }
             let line = (item["line"] as? NSNumber).flatMap { $0.intValue >= 1 ? $0.intValue : nil }
@@ -83,27 +91,141 @@ public enum ReviewConsumers {
         return result
     }
 
-    /// `group/sub/project`, trimmed of slashes; nil for anything that isn't a GitLab path.
-    static func projectPath(_ text: String) -> String? {
-        let path = text.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard path.contains("/"), path.count <= 255,
-              path.range(of: #"^[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*$"#, options: .regularExpression) != nil,
-              !path.split(separator: "/").contains("..") else { return nil }
-        return path
+    /// One piece of GitLab's answer that ties lines of code to a file and a project: a search hit
+    /// (`data` or `content`, with `path`, `filename` or `file_path`, and `project_id` or
+    /// `path_with_namespace`), or a file read's whole answer with the project and file of its call.
+    struct Evidence {
+        var lines: [String]
+        var files: Set<String>
+        /// Project paths, lowercased.
+        var paths: Set<String>
+        /// Project numbers, as text.
+        var ids: Set<String>
     }
 
-    /// The file's page in GitLab: `<host>/<project>/-/blob/<ref>/<file>#L<line>` (`HEAD` without a ref).
-    static func url(host: String, project: String, ref: String?, file: String, line: Int?) -> String? {
-        guard host.hasPrefix("https://") || host.hasPrefix("http://") else { return nil }
-        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "#?"))
-        guard let path = file.addingPercentEncoding(withAllowedCharacters: allowed),
-              let at = (ref ?? "HEAD").addingPercentEncoding(withAllowedCharacters: allowed.subtracting(CharacterSet(charactersIn: "/"))) else { return nil }
-        return "\(host)/\(project)/-/blob/\(at)/\(path)" + (line.map { "#L\($0)" } ?? "")
+    static let fileKeys = ["path", "filename", "file_path", "file_name"]
+    static let projectKeys = ["project_id", "projectId", "project", "project_path", "path_with_namespace", "id"]
+    /// An answer bigger than this is skipped; a base64 content decodes to at most this much.
+    static let maxAnswer = 2_000_000
+
+    /// The evidence in the answers, and the project numbers they name with a path (a project's
+    /// `id` or `project_id` next to its `path_with_namespace`).
+    static func evidence(_ answers: [ReviewMCPCall]) -> (units: [Evidence], projects: [String: Set<String>]) {
+        var units: [Evidence] = []
+        var projects: [String: Set<String>] = [:]
+        for answer in answers where size(answer) <= maxAnswer {
+            let (values, texts) = parsed(answer)
+            func visit(_ value: Any, depth: Int) {
+                guard depth < 8 else { return }
+                if let list = value as? [Any] {
+                    for item in list { visit(item, depth: depth + 1) }
+                    return
+                }
+                guard let object = value as? JSONObject else { return }
+                if let path = object.string("path_with_namespace").flatMap(projectPath), let id = number(object["id"] ?? object["project_id"]) {
+                    projects[id, default: []].insert(path.lowercased())
+                }
+                let files = Set(fileKeys.compactMap { object.string($0).flatMap(filePath) })
+                if !files.isEmpty, let content = content(of: object) {
+                    var unit = Evidence(lines: lines([content]), files: files, paths: [], ids: [])
+                    for key in ["project_id", "projectId", "project", "project_path", "path_with_namespace"] { add(object[key], to: &unit) }
+                    units.append(unit)
+                }
+                for child in object.values { visit(child, depth: depth + 1) }
+            }
+            for value in values { visit(value, depth: 0) }
+            // A file read: its answer is the file the call asked for, so the call names the project
+            // and the file; the quote must still be in the answer. An answer naming another file isn't.
+            guard isFileRead(answer.tool) else { continue }
+            let input = answer.inputObject
+            guard let file = ["file_path", "path", "file"].lazy.compactMap({ input.string($0).flatMap(filePath) }).first else { continue }
+            let named = values.compactMap { $0 as? JSONObject }.flatMap { object in fileKeys.compactMap { object.string($0).flatMap(filePath) } }
+            guard named.allSatisfy({ $0 == file }) else { continue }
+            var unit = Evidence(lines: lines(texts + strings(in: values)), files: [file], paths: [], ids: [])
+            for key in projectKeys { add(input[key], to: &unit) }
+            units.append(unit)
+        }
+        return (units, projects)
     }
 
-    /// Every line of text in the answers, spaces collapsed: the text blocks, and each string in
-    /// their JSON (a search hit's `data`, a file's `content`, base64 decoded).
+    /// A project named by a path (`group/project`, also URL-encoded), a number, or an object with
+    /// its `path_with_namespace` and `id`.
+    static func add(_ value: Any?, to unit: inout Evidence) {
+        if let id = number(value) { unit.ids.insert(id) }
+        else if let text = value as? String, let path = projectPath(text.removingPercentEncoding ?? text) { unit.paths.insert(path.lowercased()) }
+        else if let object = value as? JSONObject {
+            if let path = object.string("path_with_namespace").flatMap(projectPath) { unit.paths.insert(path.lowercased()) }
+            if let id = number(object["id"]) { unit.ids.insert(id) }
+        }
+    }
+
+    /// A project number, from JSON's number or a text of digits.
+    static func number(_ value: Any?) -> String? {
+        if let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() { return String(number.int64Value) }
+        if let text = value as? String, !text.isEmpty, text.count <= 20, text.allSatisfy(\.isASCII), text.allSatisfy(\.isNumber) { return text }
+        return nil
+    }
+
+    /// A file path in another project: no `..`, no line break; `./` and a leading `/` dropped.
+    static func filePath(_ text: String) -> String? {
+        var file = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if file.hasPrefix("./") { file = String(file.dropFirst(2)) }
+        if file.hasPrefix("/") { file = String(file.dropFirst()) }
+        guard !file.isEmpty, file.count <= 400, !file.split(separator: "/").contains(".."), !file.contains(where: \.isNewline) else { return nil }
+        return file
+    }
+
+    /// A hit's or a file's code: `data` or `content`, base64 decoded when its `encoding` says so.
+    static func content(of object: JSONObject) -> String? {
+        for key in ["data", "content"] {
+            guard let text = object.string(key) else { continue }
+            guard object.string("encoding") == "base64" else { return text }
+            return decoded(text)
+        }
+        return nil
+    }
+
+    /// Base64 text decoded, when it decodes to at most `maxAnswer` bytes of UTF-8.
+    static func decoded(_ text: String) -> String? {
+        guard text.utf8.count <= maxAnswer / 3 * 4 + 8, let data = Data(base64Encoded: text, options: .ignoreUnknownCharacters),
+              data.count <= maxAnswer else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func size(_ answer: ReviewMCPCall) -> Int {
+        answer.text.reduce(0) { $0 + $1.utf8.count } + (answer.structured?.utf8.count ?? 0)
+    }
+
+    /// The JSON values of an answer (as `ReviewMCPCall.values`) and its text blocks that aren't
+    /// JSON, each block parsed once.
+    static func parsed(_ answer: ReviewMCPCall) -> (values: [Any], texts: [String]) {
+        var values: [Any] = []
+        var texts: [String] = []
+        if let structured = answer.structured, let value = ReviewMCPCall.json(structured), !((value as? JSONObject)?["content"] is [Any]) {
+            values.append(value)
+        }
+        for block in answer.text {
+            if let value = ReviewMCPCall.json(block) { values.append(value); continue }
+            texts.append(block)
+            if let start = block.firstIndex(where: { $0 == "{" || $0 == "[" }), let value = ReviewMCPCall.json(String(block[start...])) {
+                values.append(value)
+            }
+        }
+        return (values, texts)
+    }
+
+    /// Every line of text in the answers, spaces collapsed: the text blocks that aren't JSON, and
+    /// each string in the JSON (a search hit's `data`, a file's `content`, base64 decoded). An
+    /// answer over `maxAnswer` is skipped.
     static func answerLines(_ answers: [ReviewMCPCall]) -> [String] {
+        lines(answers.filter { size($0) <= maxAnswer }.flatMap { answer in
+            let (values, texts) = parsed(answer)
+            return texts + strings(in: values)
+        })
+    }
+
+    /// Every string in JSON values, a base64 `content` decoded instead of its text.
+    static func strings(in values: [Any]) -> [String] {
         var texts: [String] = []
         func visit(_ value: Any, depth: Int) {
             guard depth < 8 else { return }
@@ -112,18 +234,17 @@ public enum ReviewConsumers {
             } else if let list = value as? [Any] {
                 for item in list { visit(item, depth: depth + 1) }
             } else if let object = value as? JSONObject {
-                if object.string("encoding") == "base64", let content = object.string("content"),
-                   let data = Data(base64Encoded: content, options: .ignoreUnknownCharacters), let text = String(data: data, encoding: .utf8) {
-                    texts.append(text)
-                }
-                for child in object.values { visit(child, depth: depth + 1) }
+                let base64 = object.string("encoding") == "base64"
+                if base64, let text = object.string("content").flatMap(decoded) { texts.append(text) }
+                for (key, child) in object where !(base64 && key == "content") { visit(child, depth: depth + 1) }
             }
         }
-        for answer in answers {
-            texts += answer.text
-            for value in answer.values { visit(value, depth: 0) }
-        }
-        return texts.flatMap { $0.split(whereSeparator: \.isNewline) }.map { ReviewCandidates.collapsed(ReviewNotes.defused(String($0))) }
+        for value in values { visit(value, depth: 0) }
+        return texts
+    }
+
+    static func lines(_ texts: [String]) -> [String] {
+        texts.flatMap { $0.split(whereSeparator: \.isNewline) }.map { ReviewCandidates.collapsed(ReviewNotes.defused(String($0))) }
             .filter { !$0.isEmpty }
     }
 
@@ -151,12 +272,43 @@ public enum ReviewConsumers {
         return (max(saved.searches, direct.searches), max(saved.files, direct.files))
     }
 
-    /// `search`, `semantic_search`, `query_graph` search; `get_repository_file` and other file or blob reads read a file.
+    /// `search`, `semantic_search`, `query_graph` search; a file read (`isFileRead`) reads a file;
+    /// anything else (a tree, a list of files, a project) counts as neither.
     static func count(_ tool: String, into counts: inout (searches: Int, files: Int)) {
         let name = String(tool.split(separator: "__", omittingEmptySubsequences: false).last ?? Substring(tool)).lowercased()
         let words = name.split(whereSeparator: { !$0.isLetter }).map(String.init)
         if words.contains("search") || name.contains("query_graph") { counts.searches += 1 }
-        else if words.contains("file") || words.contains("blob") || words.contains("files") { counts.files += 1 }
+        else if isFileRead(tool) { counts.files += 1 }
+    }
+
+    /// A tool that reads one file, like `get_repository_file`: `file` and a reading verb in its
+    /// name, and no `list` or `tree`.
+    static func isFileRead(_ tool: String) -> Bool {
+        let name = String(tool.split(separator: "__", omittingEmptySubsequences: false).last ?? Substring(tool)).lowercased()
+        let words = name.split(whereSeparator: { !$0.isLetter }).map(String.init)
+        return words.contains("file") && !words.contains("list") && !words.contains("tree")
+            && words.contains { ["get", "read", "show", "view", "fetch", "download"].contains($0) }
+    }
+
+    /// `group/sub/project`, trimmed of slashes; nil for anything that isn't a GitLab path.
+    static func projectPath(_ text: String) -> String? {
+        let path = text.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard path.contains("/"), path.count <= 255,
+              path.range(of: #"^[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)*$"#, options: .regularExpression) != nil,
+              !path.split(separator: "/").contains("..") else { return nil }
+        return path
+    }
+
+    /// The file's page in GitLab: `<host>/<project>/-/blob/<ref>/<file>#L<line>` (`HEAD` without a
+    /// ref); nil when the ref or the file has a `.` or `..` segment.
+    static func url(host: String, project: String, ref: String?, file: String, line: Int?) -> String? {
+        guard host.hasPrefix("https://") || host.hasPrefix("http://") else { return nil }
+        let dots = { (text: String) in text.split(separator: "/", omittingEmptySubsequences: false).contains { $0 == "." || $0 == ".." } }
+        guard !dots(ref ?? ""), !dots(file) else { return nil }
+        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "#?"))
+        guard let path = file.addingPercentEncoding(withAllowedCharacters: allowed),
+              let at = (ref ?? "HEAD").addingPercentEncoding(withAllowedCharacters: allowed.subtracting(CharacterSet(charactersIn: "/"))) else { return nil }
+        return "\(host)/\(project)/-/blob/\(at)/\(path)" + (line.map { "#L\($0)" } ?? "")
     }
 
     /// `context/consumers.md`: the kept uses by boundary, then project.
@@ -173,7 +325,7 @@ public enum ReviewConsumers {
             for project in Set(uses.map(\.project)).sorted() {
                 lines += ["", "### \(project)", ""]
                 for use in uses.filter({ $0.project == project }).sorted(by: { ($0.file, $0.line ?? 0) < ($1.file, $1.line ?? 0) }) {
-                    lines.append("- `\(use.file)\(use.line.map { ":\($0)" } ?? "")`\(use.ref.map { " at `\($0)`" } ?? ""): \(use.usage)")
+                    lines.append("- `\(ReviewNotes.defused(use.file))\(use.line.map { ":\($0)" } ?? "")`\(use.ref.map { " at `\(ReviewNotes.defused($0))`" } ?? ""): \(use.usage)")
                     lines.append("  - quote: `\(use.quote)`")
                     if use.breaks { lines.append("  - breaks: \(use.why.isEmpty ? "yes" : use.why)") }
                     else if !use.why.isEmpty { lines.append("  - doesn't break: \(use.why)") }

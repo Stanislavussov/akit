@@ -22,7 +22,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 10
+    public static let version = 11
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -35,8 +35,64 @@ public enum ReviewExtension {
             || ["auth.json", "settings.local.json", ".npmrc", ".netrc", ".pypirc", ".git-credentials"].contains(lower)
     }
 
+    /// The extension's pure rules, in plain JavaScript inside the TypeScript file, so AKit's tests
+    /// run this same text with JavaScriptCore: the argument limit of open servers and of the
+    /// impact pass, and the shape of a submitted use.
+    public static let rules = #"""
+    const openArgumentLimit = 300;
+    // The whole arguments of a call where the limit applies, as JSON.
+    const openInputLimit = 600;
+
+    // Where the limit applies: every server in the impact pass (it searches other projects), and an
+    // open server (reached only through every-server reading) in any pass.
+    function limitApplies(passName, base, extra) {
+      return passName === "impact" || (!base && !extra);
+    }
+
+    // No line break and no long text in a call's arguments (keys too), nothing nested deeper than
+    // AKit looks, and not much in all, so code of the change can't leave through a search box.
+    function tooMuchFor(input) {
+      let whole;
+      try { whole = JSON.stringify(input === undefined ? null : input); } catch (e) { return true; }
+      if (typeof whole !== "string" || whole.length > openInputLimit) return true;
+      const texts = [];
+      let deep = false;
+      const walk = (value, depth) => {
+        if (depth > 4) { deep = true; return; }
+        if (typeof value === "string") texts.push(value);
+        else if (Array.isArray(value)) value.forEach((v) => walk(v, depth + 1));
+        else if (value !== null && typeof value === "object") {
+          Object.entries(value).forEach(([key, v]) => { texts.push(key); walk(v, depth + 1); });
+        }
+      };
+      walk(input, 0);
+      return deep || texts.some((t) => t.length > openArgumentLimit || /[\r\n]/.test(t));
+    }
+
+    // A use of a boundary in another repository (the impact pass). AKit checks each against the
+    // saved GitLab answers; this only checks the shape.
+    function consumerProblems(list) {
+      const out = [];
+      list.forEach((c, i) => {
+        const at = `consumers[${i}]`;
+        if (typeof c !== "object" || c === null) { out.push(`${at} is not an object`); return; }
+        if (typeof c.boundary !== "string" || c.boundary.trim() === "") out.push(`${at}.boundary names the boundary (its id, such as b1, or its name)`);
+        if (typeof c.project !== "string" || c.project.trim() === "") out.push(`${at}.project is the other project's path in GitLab`);
+        if (typeof c.file !== "string" || c.file.trim() === "") out.push(`${at}.file is missing`);
+        if (c.ref !== undefined && c.ref !== null && typeof c.ref !== "string") out.push(`${at}.ref must be a branch or commit`);
+        if (c.line !== undefined && c.line !== null && (!Number.isInteger(c.line) || c.line < 1)) out.push(`${at}.line must be a line number from 1`);
+        if (typeof c.quote !== "string" || c.quote.trim() === "") out.push(`${at}.quote must copy the line from GitLab's answer`);
+        if (typeof c.usage !== "string" || c.usage.trim() === "") out.push(`${at}.usage says how the file uses the boundary`);
+        if (c.breaks !== undefined && typeof c.breaks !== "boolean") out.push(`${at}.breaks must be true or false`);
+        if (c.why !== undefined && typeof c.why !== "string") out.push(`${at}.why must be text`);
+        if (c.breaks === true && (typeof c.why !== "string" || c.why.trim() === "")) out.push(`${at}.why says how this change breaks it`);
+      });
+      return out;
+    }
+    """#
+
     public static let source = #"""
-    // akit-review.ts v10: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v11: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -69,7 +125,7 @@ public enum ReviewExtension {
       "execute", "exec", "run", "send", "merge", "trigger", "cancel", "close", "archive", "set", "complete", "order", "invite", "share",
       "upload", "sql", "query", "insert", "drop", "move", "rename", "start", "stop", "deploy", "pay", "buy", "checkout", "submit", "reply",
       "comment"];
-    const openArgumentLimit = 300;
+    \#(rules)
     const severities = ["nit", "low", "medium", "high", "critical"];
     const verdicts = ["confirmed", "rejected", "question", "merged"];
     const kinds = ["finding", "ac", "question"];
@@ -146,20 +202,6 @@ public enum ReviewExtension {
     // Everything after `mcp__`: a server named `docs--fetch` must not pass as `docs`.
     function match_rest(name: string): string {
       return name.replace(/^mcp__/, "");
-    }
-
-    // An open server's call: no line break and no long text in its arguments, so code of the
-    // change can't leave through a search box.
-    function tooMuchFor(input: any): boolean {
-      const texts: string[] = [];
-      const walk = (value: any, depth: number) => {
-        if (depth > 4) return;
-        if (typeof value === "string") texts.push(value);
-        else if (Array.isArray(value)) value.forEach((v) => walk(v, depth + 1));
-        else if (value !== null && typeof value === "object") Object.values(value).forEach((v) => walk(v, depth + 1));
-      };
-      walk(input, 0);
-      return texts.some((t) => t.length > openArgumentLimit || /[\r\n]/.test(t));
     }
 
     function lead(tool: string): string[] {
@@ -360,27 +402,6 @@ public enum ReviewExtension {
         if (typeof b.quote !== "string" || b.quote.trim() === "" || b.quote.length > 500) out.push(`${at}.quote must quote the code (at most 500 characters)`);
         if (b.side !== undefined && b.side !== "new" && b.side !== "old") out.push(`${at}.side must be new or old`);
         if (b.note !== undefined && (typeof b.note !== "string" || b.note.length > 300)) out.push(`${at}.note must be text of at most 300 characters`);
-      });
-      return out;
-    }
-
-    // A use of a boundary in another repository (the impact pass). AKit checks each against the
-    // saved GitLab answers; this only checks the shape.
-    function consumerProblems(list: any[]): string[] {
-      const out: string[] = [];
-      list.forEach((c, i) => {
-        const at = `consumers[${i}]`;
-        if (typeof c !== "object" || c === null) { out.push(`${at} is not an object`); return; }
-        if (typeof c.boundary !== "string" || c.boundary.trim() === "") out.push(`${at}.boundary names the boundary (its id, such as b1, or its name)`);
-        if (typeof c.project !== "string" || c.project.trim() === "") out.push(`${at}.project is the other project's path in GitLab`);
-        if (typeof c.file !== "string" || c.file.trim() === "") out.push(`${at}.file is missing`);
-        if (c.ref !== undefined && c.ref !== null && typeof c.ref !== "string") out.push(`${at}.ref must be a branch or commit`);
-        if (c.line !== undefined && c.line !== null && (!Number.isInteger(c.line) || c.line < 1)) out.push(`${at}.line must be a line number from 1`);
-        if (typeof c.quote !== "string" || c.quote.trim() === "") out.push(`${at}.quote must copy the line from GitLab's answer`);
-        if (typeof c.usage !== "string" || c.usage.trim() === "") out.push(`${at}.usage says how the file uses the boundary`);
-        if (c.breaks !== undefined && typeof c.breaks !== "boolean") out.push(`${at}.breaks must be true or false`);
-        if (c.why !== undefined && typeof c.why !== "string") out.push(`${at}.why must be text`);
-        if (c.breaks === true && (typeof c.why !== "string" || c.why.trim() === "")) out.push(`${at}.why says how this change breaks it`);
       });
       return out;
     }
@@ -625,6 +646,10 @@ public enum ReviewExtension {
           if (!mcpAllowed) return refuse(name, "AKit review gives this pass no MCP tools.");
           const server = norm(event.input?.server ?? "");
           if (!serverAllowed(server)) return refuse(name, "That server is not one this review may use.");
+          if (limitApplies(pass, serverBase(server), serverExtra(server)) && tooMuchFor(event.input)) {
+            return refuse(name, `AKit review sends ${server} only short queries without line breaks (at most ${openArgumentLimit} `
+              + "characters each): ask with names of libraries, APIs or pages, never with code or file contents.");
+          }
           return undefined;
         }
         const hints = (pi.getAllTools?.() ?? []).find((tool: any) => tool.name === name)?.annotations;
@@ -637,7 +662,7 @@ public enum ReviewExtension {
           }
           const parts = split(name);
           // The impact pass searches other projects: short queries to every server, GitLab too.
-          if (parts !== null && (pass === "impact" || (!serverBase(parts.server) && !serverExtra(parts.server))) && tooMuchFor(event.input)) {
+          if (parts !== null && limitApplies(pass, serverBase(parts.server), serverExtra(parts.server)) && tooMuchFor(event.input)) {
             return refuse(name, `AKit review sends ${parts.server} only short queries without line breaks (at most ${openArgumentLimit} `
               + "characters each): ask with names of libraries, APIs or pages, never with code or file contents.");
           }
