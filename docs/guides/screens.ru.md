@@ -1296,8 +1296,9 @@ akit remove skill ИМЯ --everywhere
 - «В README сервера есть кусок JSON, куда его вставить?» → **Add Server…**, вкладка **JSON**.
 - «Токен лежит прямо в конфиге, хочу его спрятать» → **Edit…**, флажок **Secret** у значения.
 - «Сервер нужен в одном проекте, а в остальных только ест контекст» → в карточке сервера блок **Switches**, меню **Change** → **Off in Project…**.
+- «Добавил сервер, а агент его не видит» → в карточке сервера блок **Connection**, кнопка **Check Connection**.
 
-![Экран MCP Servers: слева группа Global с серверами context7, github и playwright и значками агентов Codex и Claude; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Catalog…, Add Server…](images/mcp.png)
+![Экран MCP Servers: слева группа Global с серверами context7, github и playwright и значками агентов Codex и Claude, у github значок ключа от последней проверки; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Connection (Claude · Missing Variables · 5 minutes ago, строки Not set in your shell: GITHUB_TOKEN и Failed to connect: HTTP 401: Unauthorized, кнопка Check Connection), Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Check All, Catalog…, Add Server…](images/mcp.png)
 
 #### Что на экране
 <!-- section: mcp-screen -->
@@ -1309,6 +1310,7 @@ akit remove skill ИМЯ --everywhere
 - **Harness**: серверы одного агента. Агент (в интерфейсе — harness) — это программа вроде Claude Code или Pi. **All Harnesses** показывает серверы всех агентов.
 - **Refresh** (кнопка с круглой стрелкой, ⌘R): перечитать файлы настроек.
 - Кнопка с облаком (**claude.ai Connectors: On** или **Off**): включить или выключить все коннекторы claude.ai в Claude Code. Кнопка есть, только если Claude Code установлен.
+- **Check All** (кнопка с молнией в круге): проверить подключение всех серверов в списке. Подробнее в разделе [«Проверить, что сервер подключается»](#mcp-check).
 - **Catalog…** (кнопка с книгами): найти сервер в публичных каталогах.
 - **Add Server…** (кнопка с плюсом): добавить сервер из формы, из JSON или из каталога.
 - Поле поиска **Name, command or URL**: ищет по имени сервера, команде и адресу.
@@ -1320,8 +1322,9 @@ akit remove skill ИМЯ --everywhere
 - Серверы собраны в группы: **Global** (для всех проектов) и по одной на проект. Наведите курсор на заголовок группы проекта, чтобы увидеть путь к папке.
 - В строке сервера: имя, значки агентов, которые его читают (например, «Claude» или «Codex»), и команда или адрес. Бледный значок агента означает, что у этого агента сервер сейчас не активен.
 - Оранжевый треугольник рядом с именем означает предупреждение. Его текст есть в карточке.
+- Красный или оранжевый значок после треугольника — итог последней проверки подключения: сервер не подключился. Наведите курсор, чтобы увидеть агента, состояние и время проверки.
 - Оранжевая строка под именем, например «Claude · off in 1 folder», означает, что сервер выключен переключателем.
-- Правый клик по серверу: **Open имя-файла in VS Code** (есть, только если VS Code установлен), **Show in Finder**, **Edit…**, **Delete…** и переключатели (пункты **Claude: …** и **Pi: …**).
+- Правый клик по серверу: **Open имя-файла in VS Code** (есть, только если VS Code установлен), **Show in Finder**, **Edit…**, **Delete…**, переключатели (пункты **Claude: …** и **Pi: …**) и **Check Connection**.
 - Раздел **Worktree Sync** внизу списка показывает, что добавила последняя синхронизация worktree. Кнопка **Dismiss** убирает раздел.
 - Раздел **Couldn't read** перечисляет файлы настроек, которые AKit не смог прочитать.
 
@@ -1331,6 +1334,7 @@ akit remove skill ИМЯ --everywhere
 - Кнопки в шапке: **Edit…**, **Delete…** (корзина), **Open in VS Code** (есть, только если VS Code установлен), **Show in Finder**.
 - **Defined in**: файл, где сервер записан. **Command** — команда запуска с аргументами. **URL** — адрес удалённого сервера. **Folder** — рабочая папка, если она задана.
 - **Used by**: какой агент читает сервер, из какого уровня настроек и в каком он состоянии. Состояния: **Active**, **Turned off**, **Waiting for approval** (Claude Code спросит о сервере проекта перед первым использованием), **Rejected** (вы отклонили его в Claude Code), **Overridden by …** (побеждает другая запись с тем же именем).
+- **Connection**: итог последней проверки подключения для Claude Code и Pi, время проверки и кнопка **Check Connection**. Блок есть, только если сервер читает Claude Code или Pi.
 - **Switches**: состояние переключателя для каждого агента и меню **Change**.
 - **Environment** и **Headers**: имена переменных и заголовков. Значения AKit не показывает: видна только ссылка вида `${ИМЯ}`, строка «runs: команда» или подпись «Value is written in the file (hidden)».
 - **Needs variables**: переменные, которые нужны серверу. У каждой метка **In Keychain** с кнопкой **Replace…** или **Not in AKit's Keychain** с кнопкой **Set in Keychain…**.
@@ -1348,6 +1352,37 @@ akit remove skill ИМЯ --everywhere
 
 > **Совет:** если сервера нет в списке совсем, проверьте раздел **Couldn't read** внизу: возможно, AKit не смог прочитать файл настроек.
 
+#### Просто: проверить, что сервер подключается
+<!-- section: mcp-check -->
+
+Пример: вы добавили сервер `github`, а агент не видит его инструменты.
+
+1. Откройте карточку сервера и найдите блок **Connection**.
+2. Нажмите **Check Connection**. Пока идёт проверка, в строке агента написано «Checking…».
+3. Посмотрите итог в строке агента: состояние, время проверки и текст ошибки, если она есть.
+
+Проверяет сам агент: AKit запускает `claude mcp get имя` (Claude Code) или `pi mcp list --json` (Pi). Поэтому итог такой же, как в сессии агента.
+
+- Агент запускается в папке сервера. Сервер проекта проверяется в своём проекте. Глобальный сервер проверяется в проекте, выбранном в меню области, иначе в домашней папке. Если папка не домашняя, под строкой написано «In путь».
+- Агент запускается с переменными вашего терминала (login shell), а не с переменными AKit.
+- Проверка запускает сервер по-настоящему, например `npx` или docker. Первый запуск может быть долгим: AKit ждёт до 90 секунд.
+- Pi проверяет все свои серверы в папке сразу. AKit обновляет итог каждого из них.
+- **Check All** в панели инструментов проверяет все серверы в списке.
+
+Состояния:
+
+- **Connected**: агент подключился. Для Pi рядом число инструментов, например «12 tools».
+- **Failed**: агент не подключился. Ниже текст ошибки от агента.
+- **Missing Variables**: сервер не подключился, и в терминале нет переменной, которая ему нужна. Строка «Not set in your shell: …» называет её. Сохраните значение кнопкой **Set in Keychain…** в блоке **Needs variables**.
+- **Needs Sign-In**: серверу нужен вход через браузер (OAuth). Выполните `claude mcp login имя` или `pi mcp login имя` в терминале.
+- **Pending Approval**: Claude Code ещё не спросил, можно ли использовать сервер из `.mcp.json` проекта. Запустите `claude` в проекте и ответьте.
+- **Untrusted Project**: Pi не читает `.pi/mcp.json` в проекте, которому не доверяет. Запустите Pi в проекте один раз.
+- **Off**: сервер выключен переключателем или в настройках агента.
+- **Timed Out**: агент не ответил за 90 секунд. Нажмите **Check Connection** ещё раз.
+- **Not Found**: агент не видит сервер в этой папке.
+
+> **Важно:** AKit читает только состояние и текст ошибки. Значения переменных из ответа агента AKit не показывает и не сохраняет. Итог последней проверки лежит в `~/.akit/mcp-checks.json`.
+
 #### Просто: найти сервер в каталоге и добавить
 <!-- section: mcp-catalog -->
 
@@ -1364,7 +1399,7 @@ akit remove skill ИМЯ --everywhere
 ![Окно Add MCP Server, вкладка Form после Fill the Form: раздел From the Catalog со строкой Dice · Remote · mcp.dice.com (Anthropic directory), поля Name (dice), Transport (Remote (HTTP)) и URL (https://mcp.dice.com/mcp), раздел Headers с кнопкой Add, раздел Where с меню Add to (Claude · User (.claude.json)) и путём ~/.claude.json; кнопки Cancel и активная Preview…](images/mcp-add-filled.png)
 
 8. Впишите значения, выберите место в **Add to** и нажмите **Preview…**. AKit покажет, что именно попадёт в файл.
-9. Нажмите **Apply**. Перезапустите агента или перезагрузите его MCP-серверы, чтобы он увидел сервер.
+9. Нажмите **Apply**. AKit сразу проверяет подключение: итог виден в блоке **Connection** последнего окна. Перезапустите агента или перезагрузите его MCP-серверы, чтобы он увидел сервер.
 
 ![Окно Add MCP Server, вкладка Catalog: в поиске набрано github, слева разделы Anthropic directory (Dice, Excalidraw, Miro, PostHog) и MCP Registry; справа сервер Dice с подписью Listed in Anthropic's connector directory, ссылкой Documentation, блоком Connection (Remote · mcp.dice.com), полем имени dice и кнопкой Fill the Form; внизу Cancel и неактивная Preview…](images/mcp-catalog.png)
 
@@ -1388,7 +1423,14 @@ akit remove skill ИМЯ --everywhere
 
 ![Страница предпросмотра окна Add MCP Server: заголовок Add “linear”, строка Claude · User (.claude.json) · ~/.claude.json, пояснение, что Claude пишет запись сам командой claude mcp add-json --scope user, а AKit хранит резервную копию ~/.claude.json, JSON сервера с type http и url https://mcp.linear.app/mcp; кнопки Back и Apply](images/mcp-add-preview.png)
 
-5. В последнем окне видно путь к резервной копии (**Backup: …**), если файл уже существовал. Нажмите **Done**.
+5. В последнем окне видно путь к резервной копии (**Backup: …**), если файл уже существовал, и блок **Connection** с итогом проверки (подробнее в разделе [«Проверить, что сервер подключается»](#mcp-check)). Нажмите **Done**.
+
+Если сервер не подключился, в последнем окне есть ещё две кнопки:
+
+- **Edit Again**: вернуться к форме и поправить сервер. Форма теперь меняет уже записанный сервер.
+- **Undo…**: убрать изменение. Новый сервер удаляется, у изменённого возвращается старая запись. Сначала AKit показывает diff, записывает только кнопка **Undo**. Значения, сохранённые в Keychain, остаются.
+
+Сам AKit ничего не откатывает: **Needs Sign-In** или медленный первый запуск `npx` — не ошибка в конфиге.
 
 ![Окно Add MCP Server, вкладка Form: переключатель Form / JSON / Catalog, поля Name, Transport (Local command (stdio)), Command, Arguments, раздел Environment с кнопкой Add, раздел Where с меню Add to (Claude · User (.claude.json)) и путём ~/.claude.json, кнопки Cancel и Preview…](images/mcp-add.png)
 

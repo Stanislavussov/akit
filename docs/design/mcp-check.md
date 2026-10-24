@@ -1,7 +1,7 @@
 # MCP check: does the server connect, and what to do when it doesn't
 
-Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
-`AKitFoundation/LoginShell.swift`, `akit mcp check`). Steps in [Steps](#steps).
+Status: designed 2026-10-24 (grilling with the user); steps 1–2 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
+`AKitFoundation/LoginShell.swift`, `akit mcp check`, `MCPWriter.undoPlan`, `AKit/MCPCheckViews.swift`). Steps in [Steps](#steps).
 
 ## Goal
 
@@ -84,7 +84,7 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 | # | Step | Status |
 |---|---|---|
 | 1 | The check core (both harnesses, folder, login shell, missing variables, timeout, saved results in `~/.akit/mcp-checks.json`) and `akit mcp check` | built 2026-10-24 |
-| 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | — |
+| 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | built 2026-10-24 |
 | 3 | Sign In…, Set Variable…, Approve… (verify Claude's approval key first) | — |
 | 4 | Copy to Pi… / Copy to Claude Code… | — |
 | 5 | The tools of a Pi server | — |

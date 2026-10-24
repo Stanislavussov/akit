@@ -247,6 +247,19 @@ file "$DEMO/.codex/config.toml" <<'EOF'
 command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
 EOF
+# Last connection checks (MCP Servers → Connection): github lacks its token, playwright connects.
+# The folder as AKit keys it (standardized: /private/tmp is /tmp).
+CHECKED="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)"
+file "$DEMO/.akit/mcp-checks.json" <<EOF
+{
+  "results": [
+    { "harness": "claude-code", "name": "github", "folder": "${DEMO#/private}", "state": "missingVariables",
+      "detail": "Failed to connect: HTTP 401: Unauthorized", "missingVariables": ["GITHUB_TOKEN"], "checkedAt": "$CHECKED" },
+    { "harness": "claude-code", "name": "playwright", "folder": "${DEMO#/private}", "state": "connected",
+      "missingVariables": [], "checkedAt": "$CHECKED" }
+  ]
+}
+EOF
 
 # Lab: a sending policy, a reviewed session with notes, and the sends behind it
 # (Settings → Lab, Lab → the review, Lab → Sends).

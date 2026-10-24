@@ -14,7 +14,7 @@ public enum LoginShell {
 
     /// Runs `$SHELL -l -i -c` once and reads `env -0` after a marker, so whatever the startup
     /// files print doesn't matter. Falls back to AKit's own environment, with a note.
-    public static func variables(in env: HarnessEnvironment, timeout: TimeInterval = 15) async -> Variables {
+    public static func variables(in env: HarnessEnvironment, timeout: TimeInterval = 30) async -> Variables {
         let shell = env.variables["SHELL"].flatMap { $0.isEmpty ? nil : URL(filePath: $0) } ?? URL(filePath: "/bin/zsh")
         let script = "printf '\\n%s\\n' \(marker); /usr/bin/env -0"
         let base = env.variables.merging(["HOME": env.homeDirectory.path, "PATH": env.pathForChildProcesses]) { $1 }

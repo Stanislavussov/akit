@@ -89,6 +89,12 @@ struct MCPView: View {
                 }
             }
             ToolbarItem {
+                Button("Check All", systemImage: "bolt.horizontal.circle") { Task { await model.checkMCP(filtered) } }
+                    .disabled(!model.mcpChecking.isEmpty || filtered.allSatisfy { model.mcpChecks(of: $0).isEmpty })
+                    .help("Ask Claude Code and Pi whether each listed server connects. It starts the servers; "
+                          + "a global server is checked in the chosen project, else in the home folder.")
+            }
+            ToolbarItem {
                 Button("Catalog…", systemImage: "books.vertical") {
                     editor = EditorRequest(mode: .add(project: chosenProject, catalog: true))
                 }
@@ -158,6 +164,9 @@ struct MCPView: View {
                                     .disabled(!model.canEdit(server))
                                 Divider()
                                 MCPSwitchMenu(server: server)
+                                Divider()
+                                Button("Check Connection") { Task { await model.checkMCP([server]) } }
+                                    .disabled(model.mcpChecks(of: server).isEmpty)
                                 Divider()
                                 AskAKitMenuItem(title: "MCP server \(server.name)", facts: [
                                     "Where: \(group.scope.title)", "File: \(server.file.tildePath)",
@@ -306,6 +315,14 @@ private struct MCPServerRow: View {
                         .foregroundStyle(.orange)
                         .font(.caption)
                 }
+                let problems = model.mcpCheckProblems(of: server)
+                if let worst = problems.first {
+                    Image(systemName: worst.state.icon)
+                        .foregroundStyle(worst.state.color)
+                        .font(.caption)
+                        .help(problems.map { "\($0.harnessID.displayName): \($0.state.title), \($0.checkedAt.formatted(.relative(presentation: .named)))" }
+                            .joined(separator: "\n"))
+                }
                 Spacer()
                 ForEach(server.uses, id: \.harness) { use in
                     HarnessBadge(harness: use.harness)
@@ -354,6 +371,7 @@ private struct MCPServerDetailView: View {
                 info
                 if !model.warnings(of: server).isEmpty { warnings }
                 harnesses
+                MCPConnectionBox(server: server)
                 MCPSwitchControls(server: server)
                 if !server.environment.isEmpty { settings("Environment", server.environment) }
                 if !server.headers.isEmpty { settings("Headers", server.headers) }

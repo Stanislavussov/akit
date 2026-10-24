@@ -257,6 +257,52 @@ struct MCPWriterTests {
         #expect(calls.all.map { Array($0.prefix(2)) + [$0[4]] } == [["mcp", "add-json", "b"], ["mcp", "remove", "a"], ["mcp", "remove", "a"]]) // rename adds first
     }
 
+    /// Undo after a failed connection check: a new server goes, an edit is taken back.
+    @Test func undoOfAddEditAndClaudeEdit() async throws {
+        try write(".claude/settings.json", "{}")
+        try write("Projects/app/.mcp.json", #"{"mcpServers": {"a": {"command": "a", "env": {"K": "literal-secret-abc"}}}}"#)
+        let shared = try #require(try targets().first { $0.file.lastPathComponent == ".mcp.json" })
+        let original = try String(contentsOf: shared.file, encoding: .utf8)
+
+        let add = try MCPWriter.plan(MCPDraft(name: "n", command: "n"), into: shared, secretMode: .environment, keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(add, secrets: MemorySecretStore(), home: home) { _, _ in }
+        let undoAdd = try MCPWriter.undoPlan(of: add, home: home)
+        #expect(undoAdd.isRemoval)
+        _ = try await MCPWriter.apply(undoAdd, secrets: MemorySecretStore(), home: home) { _, _ in }
+        #expect((try read("Projects/app/.mcp.json")["mcpServers"] as? [String: Any]).map { Set($0.keys) } == ["a"])
+
+        let edit = try MCPWriter.plan(MCPDraft(name: "b", command: "b"), into: shared, secretMode: .environment, replacing: "a",
+                                      keychain: MemorySecretStore(), home: home)
+        let before = try String(contentsOf: shared.file, encoding: .utf8)
+        _ = try await MCPWriter.apply(edit, secrets: MemorySecretStore(), home: home) { _, _ in }
+        let undoEdit = try MCPWriter.undoPlan(of: edit, home: home)
+        #expect(!undoEdit.diff.map { "\($0)" }.joined().contains("literal-secret-abc"))
+        _ = try await MCPWriter.apply(undoEdit, secrets: MemorySecretStore(), home: home) { _, _ in }
+        #expect(try String(contentsOf: shared.file, encoding: .utf8) == before)
+        #expect(before.contains("literal-secret-abc") && original.contains("literal-secret-abc"))
+
+        // Changed by someone after Apply: Undo refuses rather than lose that change.
+        _ = try await MCPWriter.apply(try MCPWriter.plan(MCPDraft(name: "a", command: "z"), into: shared, secretMode: .environment,
+                                                         replacing: "a", keychain: MemorySecretStore(), home: home),
+                                      secrets: MemorySecretStore(), home: home) { _, _ in }
+        let later = try MCPWriter.plan(MCPDraft(name: "a", command: "y"), into: shared, secretMode: .environment, replacing: "a",
+                                       keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(later, secrets: MemorySecretStore(), home: home) { _, _ in }
+        try write("Projects/app/.mcp.json", #"{"mcpServers": {"a": {"command": "by hand"}}}"#)
+        #expect(throws: ConfigTextError.self) { try MCPWriter.undoPlan(of: later, home: home) }
+
+        // Claude's own file: the old entry goes back through the CLI, under its old name.
+        try write(".claude.json", #"{"mcpServers": {"old": {"command": "old"}}}"#)
+        let user = try #require(try targets().first { $0.claudeScope == "user" })
+        let rename = try MCPWriter.plan(MCPDraft(name: "new", command: "new"), into: user, secretMode: .environment, replacing: "old",
+                                        keychain: MemorySecretStore(), home: home)
+        let undoRename = try MCPWriter.undoPlan(of: rename, home: home)
+        let calls = CallLog()
+        _ = try await MCPWriter.apply(undoRename, secrets: MemorySecretStore(), home: home) { args, _ in calls.add(args) }
+        #expect(calls.all.map { Array($0.prefix(2)) + [$0[4]] } == [["mcp", "add-json", "old"], ["mcp", "remove", "new"]])
+        #expect(calls.all.first?.last == #"{"command":"old"}"#)
+    }
+
     /// The real-CLI `apply` with a fake `claude` script: arguments, PATH, masked failure output.
     @Test func claudeCLIRunsWithEnvironmentAndMasksFailures() async throws {
         try write(".claude/settings.json", "{}")

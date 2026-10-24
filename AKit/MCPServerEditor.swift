@@ -47,6 +47,12 @@ struct MCPServerEditor: View {
     @State private var error: String?
     @State private var isApplying = false
     @State private var done: MCPWriter.Outcome?
+    /// The plan Apply wrote, for the check after it, Edit Again and Undo.
+    @State private var applied: MCPWritePlan?
+    /// The shown plan takes an applied one back.
+    @State private var undoing = false
+    /// Edit Again: the form now edits the server as Apply wrote it.
+    @State private var editedName: String?
     /// Editing: the file text the form was filled from.
     @State private var openedText: String?
 
@@ -304,11 +310,15 @@ struct MCPServerEditor: View {
                 if case .remove = mode {
                     Button("Cancel", role: .cancel) { dismiss() }
                         .keyboardShortcut(.cancelAction)
+                } else if undoing {
+                    // Undo is offered after Apply; not undoing keeps what Apply wrote.
+                    Button("Cancel", role: .cancel) { dismiss() }
+                        .keyboardShortcut(.cancelAction)
                 } else {
                     Button("Back") { self.plan = nil; error = nil }
                         .keyboardShortcut(.cancelAction)
                 }
-                Button(plan.isRemoval ? "Delete" : plan.replaces ? "Save" : "Apply", role: plan.isRemoval ? .destructive : nil) {
+                Button(undoing ? "Undo" : plan.isRemoval ? "Delete" : plan.replaces ? "Save" : "Apply", role: plan.isRemoval ? .destructive : nil) {
                     apply(plan)
                 }
                 .keyboardShortcut(.defaultAction)
@@ -331,9 +341,22 @@ struct MCPServerEditor: View {
             }
             Text("Restart the harness (or reload its MCP servers) to pick the change up.")
                 .foregroundStyle(.secondary)
+            if let server = appliedServer {
+                MCPConnectionBox(server: server)
+            }
             Spacer()
             HStack {
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).lineLimit(3)
+                }
                 Spacer()
+                if let applied, let server = appliedServer, !model.mcpCheckProblems(of: server).isEmpty,
+                   !model.mcpChecks(of: server).contains(where: { model.mcpChecking.contains($0.id) }) {
+                    Button("Undo…") { undo(applied) }
+                        .help(applied.originalName == nil ? "Delete “\(applied.name)” again (a diff first)"
+                                                          : "Put the entry back as it was before Apply (a diff first)")
+                    Button("Edit Again") { editAgain(applied) }
+                }
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
         }
@@ -426,7 +449,7 @@ struct MCPServerEditor: View {
             return
         }
         do {
-            plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode, replacing: editing?.name,
+            plan = try MCPWriter.plan(draft, into: target, secretMode: secretMode, replacing: editedName ?? editing?.name,
                                       openedText: openedText, keychain: KeychainSecretStore(),
                                       home: HarnessEnvironment.current.homeDirectory)
             error = nil
@@ -444,8 +467,43 @@ struct MCPServerEditor: View {
                 error = nil
             } catch {
                 self.error = error.localizedDescription
+                return
             }
+            // A new or changed server: does it connect? (docs/design/mcp-check.md)
+            guard !plan.isRemoval, !undoing else { return }
+            applied = plan
+            if let server = appliedServer { await model.checkMCP([server]) }
         }
+    }
+
+    /// The form again, now editing the server as Apply wrote it.
+    private func editAgain(_ applied: MCPWritePlan) {
+        editedName = applied.name
+        openedText = try? String(contentsOf: applied.target.file, encoding: .utf8)
+        self.applied = nil
+        done = nil
+        plan = nil
+        error = nil
+        input = .form
+    }
+
+    /// The undo plan in the preview: a diff first, then Undo writes it.
+    private func undo(_ applied: MCPWritePlan) {
+        do {
+            plan = try MCPWriter.undoPlan(of: applied, home: HarnessEnvironment.current.homeDirectory)
+            undoing = true
+            self.applied = nil
+            done = nil
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// The listed server Apply wrote (after the rescan).
+    private var appliedServer: MCPServer? {
+        guard let applied else { return nil }
+        return model.mcpServers.first { $0.id == "\(applied.target.id)|\(applied.name)" }
     }
 
     // MARK: - Helpers
@@ -458,6 +516,7 @@ struct MCPServerEditor: View {
     }
 
     private func planTitle(_ plan: MCPWritePlan) -> String {
+        if undoing { return "Undo “\(plan.originalName ?? plan.name)”" }
         if plan.isRemoval { return "Delete “\(plan.name)”" }
         if let original = plan.originalName, original != plan.name { return "Rename “\(original)” to “\(plan.name)”" }
         return plan.replaces ? "Save “\(plan.name)”" : "Add “\(plan.name)”"
@@ -465,6 +524,7 @@ struct MCPServerEditor: View {
 
     private var doneTitle: String {
         guard let plan else { return "Done" }
+        if undoing { return "Undone" }
         if plan.isRemoval { return "Deleted “\(plan.name)”" }
         return plan.replaces || plan.originalName != nil ? "Saved “\(plan.name)”" : "Added “\(plan.name)”"
     }

@@ -59,6 +59,10 @@ final class AppModel {
     private(set) var mcpStates: [MCPServer.ID: [HarnessID: MCPSwitches.Status]] = [:]
     /// claude.ai connectors all off (`disableClaudeAiConnectors`); nil when the settings can't be read.
     private(set) var connectorsOff: Bool? = false
+    /// The last connection check of each server, by `MCPCheckResult.id` (`~/.akit/mcp-checks.json`).
+    var mcpChecks: [String: MCPCheckResult] = [:]
+    /// Checks running now, by the same id.
+    var mcpChecking: Set<String> = []
     /// An MCP switch change shown in its sheet (with a project choice first for Off in Project…).
     var mcpSwitchRequest: MCPSwitchRequest?
 
@@ -1154,6 +1158,7 @@ final class AppModel {
         mcpWriteTargets = targets
         mcpStates = switches.0
         connectorsOff = switches.1
+        mcpChecks = MCPCheckStore.load(home: HarnessEnvironment.current.homeDirectory)
         lastScan = .now
         Task { await syncMCPWorktrees() }
 
