@@ -330,6 +330,10 @@
 - **Name of this Mac**: имя рабочего Mac, например `acme-laptop`. Пустое поле значит имя `work`. Подробнее: [Отметить рабочий Mac](screens#settings-machine)
 - **Brain repo**: путь к вашему brain, по умолчанию `~/.akit/registry`. Ни один агент эту папку не читает: AKit собирает из неё файлы. Подробнее: [Указать, где лежит brain](screens#settings-brain)
 - **Commit name / Commit email**: имя и почта в коммитах, которые AKit делает в brain. Хранятся в `.git/config` самого brain, только на этом Mac. На рабочем Mac без них AKit не меняет brain («This work Mac can't commit in the brain until both are set.»): иначе в личный brain попала бы рабочая почта. Подробнее: [Имя и почта для коммитов](screens#settings-brain-identity)
+- **Knowledge** (Settings): папка базы знаний каждого мира, только на этом Mac (`~/.akit/local/knowledge/bases.json`). Подходит любая локальная папка, например в vault Obsidian, кроме brain, синхронизируемых папок (iCloud Drive, Dropbox, Google Drive) и git-репозитория с remote. То же делает `akit kb path`. Подробнее: [Папка базы и Obsidian](knowledge#folder)
+- **Choose… / Use for Base** (Knowledge): взять другую папку для базы мира: новую, пустую, vault Obsidian или готовую базу. Старая база остаётся на месте. Подробнее: [Choose…](knowledge#folder-choose)
+- **Move Base… / Move Here** (Knowledge): закоммитить ждущие правки и перенести базу с историей git в новую папку. Подробнее: [Move Base…](knowledge#folder-move)
+- **Reset to Default** (Knowledge): снова папка по умолчанию `~/.akit/local/knowledge/<мир>`; ничего не переносится и не удаляется. Подробнее: [Show in Finder и Reset to Default](knowledge#folder-reset)
 - **Review language**: язык новых разборов сессий, один из 17 (например **English**, **Russian** или **Czech**). Тексты самого AKit остаются английскими. После смены языка уже разобранные сессии при следующем разборе в Error Analysis перепишутся, а это стоит денег; готовый разбор дешевле [перевести](screens#lab-translate). Подробнее: [Выбрать язык разборов](screens#settings-language)
 - **Translation model**: агент, модель и усилие, которыми переводит кнопка **Translate**. По умолчанию Claude Code · haiku · low, а на Mac без Claude Code — Pi с моделью по умолчанию: маленькой модели хватает. **Reset to Default** возвращает это значение. Хранится в `~/.akit/lab/settings.json`; в терминале `akit translate model`. Подробнее: [Выбрать модель перевода](screens#settings-translation)
 
@@ -1207,7 +1211,7 @@ Friction («трение») — места, где агент спотыкалс
 - **Base**: список баз, если их на этом Mac несколько. Одна база — один мир: `work` или `personal`. Подробнее: [Создать базу](knowledge#create)
 - **New Area…**: новое пространство, папка `areas/<Name>`. Коммита нет: git не хранит пустых папок. Подробнее: [Новое пространство](knowledge#spaces-new-area)
 - **New Note…**: новая заметка. Поля **Area** и **Name** обязательные, **Kind** — **None** или вид из списка. AKit сразу делает коммит только этого файла. То же делает `akit kb new-note`. Подробнее: [Новая заметка](knowledge#spaces-new-note)
-- **No knowledge base / Create Base…**: на этом Mac нет базы. **Create Base…** создаёт её в `~/.akit/local/knowledge/<World>`; то же делает `akit kb init --world NAME`. Подробнее: [Создать базу](knowledge#create)
+- **No knowledge base / Create Base…**: на этом Mac нет базы. **Create Base…** создаёт её в папке мира: по умолчанию `~/.akit/local/knowledge/<World>`, или в папке из Settings → **Knowledge**; то же делает `akit kb init --world NAME`. Подробнее: [Создать базу](knowledge#create)
 - **World**: поле в **Create Base…**: одно слово для мира базы. AKit предлагает тип этого Mac: `work` или `personal`. Подробнее: [Создать базу](knowledge#create)
 - **Show in Finder**: правый щелчок по пространству или заметке: показать папку или файл в Finder. Подробнее: [Удалить заметку или пространство](knowledge#spaces-delete)
 - **Kinds…**: виды заметок базы и поля каждого вида, файл `kb.yaml`. **Save** записывает его, коммит ждёт в очереди. То же делает `akit kb kinds`. Подробнее: [Kinds…](knowledge#kinds-sheet)
@@ -1226,7 +1230,7 @@ Friction («трение») — места, где агент спотыкалс
 - **Add Field… / Add**: в **Properties**: добавить свой ключ (**Name**) и значение (**Value**). Подробнее: [Properties](knowledge#kinds-properties)
 - **Copy**: скопировать весь текст заметки. Подробнее: [Copy и Paste](knowledge#note-copy)
 - **Paste**: добавить текст из буфера обмена в конец заметки и сохранить. Подробнее: [Copy и Paste](knowledge#note-copy)
-- **Open in Obsidian**: открыть заметку в Obsidian (`obsidian://open`). Подробнее: [Open in Obsidian](knowledge#note-obsidian)
+- **Open in Obsidian**: открыть заметку в Obsidian (`obsidian://open`), в том vault, где лежит база. Подробнее: [Open in Obsidian](knowledge#note-obsidian)
 - **Delete… / Move to Trash**: переместить заметку (или пространство) в Корзину и сразу закоммитить удаление. Подробнее: [Удалить](knowledge#spaces-delete)
 - **Committed 1 edit. / Committed N edits.**: AKit только что закоммитил правки из очереди. Подробнее: [Коммиты правок](knowledge#commits)
 - **No note open**: ни одна заметка не открыта. Нажмите на заметку в списке. Подробнее: [Открыть заметку](knowledge#spaces-open)
@@ -1234,7 +1238,7 @@ Friction («трение») — места, где агент спотыкалс
 ### Слова базы знаний
 <!-- section: terms-knowledge-words -->
 
-- **База знаний** (knowledge base): папка `~/.akit/local/knowledge/<мир>` с `areas/` и `inbox/`, локальный git-репозиторий без remote. Подробнее: [Что такое база](knowledge#overview)
+- **База знаний** (knowledge base): папка мира (по умолчанию `~/.akit/local/knowledge/<мир>`) с `areas/` и `inbox/`, локальный git-репозиторий без remote. Подробнее: [Что такое база](knowledge#overview)
 - **Вид** (kind): строка `kind:` в начале заметки: `service`, `flow`, `team`. Виды и их поля лежат в `kb.yaml` базы. Подробнее: [Виды и свойства](knowledge#kinds)
 - **Свойство** (property): строка `ключ: значение` в начале заметки, например `owner: team-a`. Подробнее: [Properties](knowledge#kinds-properties)
 - **`kb.yaml`**: файл базы со списком видов и полей каждого вида. Его создаёт **Create Base…**; без него AKit берёт виды по умолчанию. Подробнее: [Виды и свойства](knowledge#kinds)

@@ -78,18 +78,15 @@ struct KnowledgeBaseTests {
         #expect(!fm.fileExists(atPath: inside.path))
     }
 
-    @Test func workMacRefusesAFolderOutsideAkitLocal() async throws {
+    /// K25 replaced the work-Mac rule "only under ~/.akit/local/": any local folder outside the brain
+    /// and the synced folders.
+    @Test func workMacMayUseAFolderOutsideAkitLocal() async throws {
         try work()
         let outside = home.appending(path: "Documents/kb")
-        do {
-            try await KnowledgeBase.create(at: outside, env: env())
-            Issue.record("created outside ~/.akit/local on a work Mac")
-        } catch {
-            #expect(error.message.contains("work Mac"))
+        #expect(KnowledgeBase.isBase(try await KnowledgeBase.create(at: outside, env: env()).root))
+        await #expect(throws: KnowledgeBase.Failure.self) {
+            try await KnowledgeBase.create(at: home.appending(path: "Library/CloudStorage/OneDrive/kb"), env: env())
         }
-        #expect(!fm.fileExists(atPath: outside.path))
-        // Inside it is fine.
-        #expect(try await KnowledgeBase.create(world: "work", env: env()).root.path.hasSuffix(".akit/local/knowledge/work"))
     }
 
     @Test func personalMacMayUseAnyFolderOutsideTheBrain() async throws {

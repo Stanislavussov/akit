@@ -5,7 +5,8 @@ import AppKit
 import SwiftUI
 
 /// Knowledge screen (`docs/design/knowledge.md`): the base's spaces (areas), their notes and the
-/// note panel. Notes are plain Markdown in `~/.akit/local/knowledge/<world>`, a local git repo
+/// note panel. Notes are plain Markdown in the world's base folder (by default
+/// `~/.akit/local/knowledge/<world>`, Settings → Knowledge sets another), a local git repo
 /// without a remote; AKit commits your edits in batches.
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
@@ -41,7 +42,7 @@ struct KnowledgeView: View {
                     ContentUnavailableView {
                         Label("No knowledge base", systemImage: "books.vertical")
                     } description: {
-                        Text("A knowledge base holds notes about your services, flows and teams as Markdown files in a local git repo without a remote, in ~/.akit/local/knowledge. Agents read it; you write it here or in Obsidian.")
+                        Text("A knowledge base holds notes about your services, flows and teams as Markdown files in a local git repo without a remote, by default in ~/.akit/local/knowledge (Settings → Knowledge sets another folder, like one in your Obsidian vault). Agents read it; you write it here or in Obsidian.")
                     } actions: {
                         Button("Create Base…") { sheet = .createBase }
                     }
@@ -177,7 +178,7 @@ struct CreateBaseSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Create Knowledge Base").font(.title3.bold())
-            Text("A folder in ~/.akit/local/knowledge with areas/ and inbox/, and a git repo that never gets a remote: nothing leaves this Mac.")
+            Text("A folder with areas/ and inbox/, and a git repo that never gets a remote: nothing leaves this Mac. It goes in the world's folder from Settings → Knowledge, by default ~/.akit/local/knowledge/<world>.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Form {
                 TextField(text: $world) { RequiredLabel("World") }

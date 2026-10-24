@@ -198,5 +198,7 @@ shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
 shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds
+# Settings → Knowledge: the base folder of each world (work has the demo base, personal none yet).
+shot knowledge-settings  900x760 --tab knowledge --settings
 
 exit $FAILED

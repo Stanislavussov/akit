@@ -2,7 +2,8 @@
 
 Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (base, notes, links,
 `akit kb`, the Knowledge screen, the commit queue, guide `knowledge.ru.md`; 1.3, K24: kinds in
-`kb.yaml`, Properties and `akit kb set`, Kinds…, `area.yaml` and Area Settings…); spike 2.0 (Excalidraw
+`kb.yaml`, Properties and `akit kb set`, Kinds…, `area.yaml` and Area Settings…; 1.4, K25: the base
+folder per world in `bases.json`, `akit kb path`, Settings → Knowledge); spike 2.0 (Excalidraw
 bundle, results below) done 2026-10-24. Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
@@ -31,7 +32,7 @@ describe the system once, by hand, and let the agent read it.
 | K8 | Source of relations | Arrows bound to two blocks. Notes hold text and references; a note shows its relations, read from the maps, read-only |
 | K9 | Space = area | A space of maps and an area of notes are one thing: `areas/<name>/` holds both |
 | K10 | Obsidian | The base folder is a plain Obsidian vault (`[[links]]`, frontmatter). **Open in Obsidian** opens a note through `obsidian://open`. No plugin. Maps are edited in AKit only. AKit watches the folder and reindexes changed files |
-| K11 | Git | The base is a local git repository **without a remote**. AKit commits each accepted change. On a work Mac the base never goes into the personal brain |
+| K11 | Git | The base is a local git repository **without a remote**. AKit commits each accepted change. On a work Mac the base never goes into the personal brain. Where the folder may be: K25 (it replaced the first rule "on a work Mac only under `~/.akit/local/`") |
 | K12 | References | `repo:` is the git remote URL when the repository has one, else a `~/` path; AKit finds the local copy among its projects. `files:` are paths inside the repository. Files outside git use `~/` paths. Missing → grey link and a lint finding |
 | K13 | Agent access | `akit kb context / search / show / neighbors --json`; the `/akit` skill teaches them. No MCP server. A retrieval subagent on a small model is a harness matter: AKit may ship its template in a brain layer, the harness runs it |
 | K14 | Agent writes | Only proposals: `akit kb propose` puts a change into `inbox/`. A light model checks it (duplicate, contradiction with a map, broken `[[link]]`) and only marks it; checks without a model (secrets, broken links) block at once. Accept / Reject is always the user's; Accept writes and commits. The agent never edits maps; it proposes an arrow in text ("Add an arrow?") |
@@ -45,11 +46,12 @@ describe the system once, by hand, and let the agent read it.
 | K22 | AKit and Pi | Added 2026-10-24 at the user's request: everything works from AKit (a button) and from Pi (an `akit kb` command with `--json` / `--yes`). The `/akit` skill lists the person-only commands too, with the rule: run them only when the user asked for that action in the session; never accept or reject a proposal on your own |
 | K23 | Separate folders | Added 2026-10-24 at the user's request: one area `areas/<name>/` per project, system or unrelated entity, with its own notes and maps; unrelated worlds get separate bases. Every create or proposal names its area; an agent proposes a new area instead of mixing unrelated systems, and the area is created on Accept |
 | K24 | Kinds and settings | Added 2026-10-24 at the user's request: kinds and their fields are data in `<base>/kb.yaml` (defaults `service`, `flow`, `team`, `database`, `queue`, `external`; the user adds, renames, removes). A note's kind and fields change in the note panel's **Properties** or with `akit kb set NOTE KEY=VALUE`, one frontmatter line at a time. `areas/<name>/area.yaml` maps an area to projects (remotes, `~/` paths, globs), so focus and Review find the area for new clones and folders without setup |
+| K25 | Base folder | Added 2026-10-24 at the user's request: the base folder is a setting per world (`~/.akit/local/knowledge/bases.json`, this Mac only), e.g. a folder in the user's Obsidian vault. Any local folder is allowed except inside the brain, a synced folder (iCloud Drive, CloudStorage, Dropbox, Google Drive) or a repo with a remote; this replaces the work-Mac rule "only under `~/.akit/local/`" (K11). **Open in Obsidian** opens the vault that holds the base |
 
 ## Layout
 
 ```
-~/.akit/local/knowledge/work/          (work Mac; one folder = one base, git without remote)
+~/.akit/local/knowledge/work/          (the default folder of the world work; one folder = one base, git without remote)
 ├── areas/
 │   ├── payments/
 │   │   ├── orders-api.md               note of a system
@@ -60,6 +62,10 @@ describe the system once, by hand, and let the agent read it.
 ├── inbox/                               agent proposals waiting for Accept / Reject
 └── .akit-index.sqlite                   index, rebuildable, git-ignored
 ```
+
+The folder is the default; `~/.akit/local/knowledge/bases.json` may set another one per world
+(K25), like `~/Notes/Vault/kb` inside an Obsidian vault or the vault itself. The vault's own notes
+outside `areas/` stay untracked, and `.obsidian/` is git-ignored.
 
 A note of a system:
 

@@ -167,21 +167,37 @@ public enum Doctor {
 
     // MARK: - Pieces
 
-    /// One line per knowledge base in `~/.akit/local/knowledge` (knowledge.md, K11): it has no
-    /// remote, or a problem line when it has one (only the remote's name, never its URL).
+    /// One line per knowledge base of this Mac (knowledge.md, K11, K25): its folder (and the world
+    /// when `bases.json` sets that folder, and the Obsidian vault it is in), and that it has no
+    /// remote, or a problem line when it has one (only the remote's name, never its URL). A broken
+    /// `bases.json` or a set folder that is no base are problems too.
     static func knowledgeLines(env: HarnessEnvironment, tilde: (URL) -> String) async -> [String] {
-        let bases = KnowledgeBase.all(home: env.homeDirectory)
-        if bases.isEmpty { return ["  knowledge base: none (a person creates one with akit kb init)"] }
+        let home = env.homeDirectory
         var lines: [String] = []
+        let folders: KnowledgeBase.Folders
+        do { folders = try KnowledgeBase.Folders.load(home: home) } catch {
+            folders = KnowledgeBase.Folders()
+            lines.append("! knowledge base: \(error.message)")
+        }
+        let bases = KnowledgeBase.all(home: home)
+        for world in folders.bases.keys.sorted() where !bases.contains(where: { $0.world == world }) {
+            let path = folders.url(of: world, home: home).map(tilde) ?? folders.bases[world] ?? ""
+            lines.append("! knowledge base: the world \(world) is set to \(path) in \(tilde(KnowledgeBase.basesFile(home: home))), which is no base; create it with akit kb init --world \(world), or akit kb path \(world) --reset")
+        }
+        if bases.isEmpty, lines.isEmpty { return ["  knowledge base: none (a person creates one with akit kb init)"] }
         for base in bases {
-            let path = tilde(base.root)
+            var path = tilde(base.root)
+            if let world = base.world, folders.bases[world] != nil {
+                path += " (world \(world), set in bases.json"
+                    + (Obsidian.vault(containing: base.root).map { "; in the Obsidian vault \(tilde($0))" } ?? "") + ")"
+            }
             switch await KnowledgeGit(base: base.root, env: env).remotes() {
             case nil:
-                lines.append("! knowledge base: \(path): git can't read it; run git -C \(path) status to see why.")
+                lines.append("! knowledge base: \(path): git can't read it; run git -C \(tilde(base.root)) status to see why.")
             case let remotes? where remotes.isEmpty:
                 lines.append("  knowledge base: \(path), no remote")
             case let remotes?:
-                lines.append("! knowledge base: \(path) has a git remote (\(remotes.joined(separator: ", "))); a base stays on this Mac: git -C \(path) remote remove \(remotes[0])")
+                lines.append("! knowledge base: \(path) has a git remote (\(remotes.joined(separator: ", "))); a base stays on this Mac: git -C \(tilde(base.root)) remote remove \(remotes[0])")
             }
         }
         return lines

@@ -128,7 +128,7 @@ struct GuideDocumentTests {
         }
         let document = try #require(documents["knowledge"])
         #expect(!document.title.isEmpty)
-        for id in ["overview", "create", "spaces", "note", "commits", "details", "links"] {
+        for id in ["overview", "create", "spaces", "note", "folder", "commits", "details", "links"] {
             #expect(document.path(to: id) == [id], "no section \(id)")
         }
         let text = try String(contentsOf: folder.appending(path: "knowledge.ru.md"), encoding: .utf8)

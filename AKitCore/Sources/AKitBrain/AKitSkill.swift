@@ -214,8 +214,9 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
 ## Knowledge base
 
 Notes and maps of the systems around a repository: which service sends what to whom, which
-repo owns what. A base is a folder per world (`~/.akit/local/knowledge/<world>`, git without
-a remote); `areas/<area>/` holds the notes, one area per project, system or unrelated entity.
+repo owns what. A base is a folder per world (by default `~/.akit/local/knowledge/<world>`, or
+the folder `akit kb path` sets, like one in an Obsidian vault; git without a remote);
+`areas/<area>/` holds the notes, one area per project, system or unrelated entity.
 Read it when a task is about systems:
 
 ```
@@ -246,6 +247,11 @@ akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
 akit kb kinds add NAME [--fields a,b] | fields NAME a,b | remove NAME | rename OLD NEW [--json]
                                                    # rename rewrites kind: in every note, all or nothing
 akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]… [--json]
+akit kb path [WORLD] [--set PATH | --move PATH | --reset] [--json]
+                                                   # where the world's base lives (this Mac only):
+                                                   # --set uses a folder (an Obsidian vault too),
+                                                   # --move commits pending edits and moves it,
+                                                   # --reset goes back to ~/.akit/local/knowledge
 ```
 
 ## Rules

@@ -44,7 +44,7 @@ struct KnowledgeCLITests {
         let help = await akit("kb", "--help")
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
-        for command in ["akit kb init", "akit kb new-note", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title"] {
+        for command in ["akit kb init", "akit kb new-note", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
@@ -161,15 +161,46 @@ struct KnowledgeCLITests {
         #expect(await akit("kb", "area", "nope").code == 2)
     }
 
-    @Test func initRefusesTheBrainAndOutsideOnAWorkMac() async throws {
+    @Test func initRefusesTheBrainAndSyncedFolders() async throws {
         let brain = await akit("kb", "init", "--base", "~/.akit/registry/kb")
         #expect(brain.code == 2 && brain.err.contains("inside the brain"), "\(brain.err)")
         try MachineProfile(kind: .work, name: "work").save(home: home)
-        let outside = await akit("kb", "init", "--base", "~/Documents/kb")
-        #expect(outside.code == 2 && outside.err.contains("work Mac"), "\(outside.err)")
+        let synced = await akit("kb", "init", "--base", "~/Library/Mobile Documents/com~apple~CloudDocs/kb")
+        #expect(synced.code == 2 && synced.err.contains("synced folder"), "\(synced.err)")
+        // K25: a work Mac may keep its base outside ~/.akit/local/.
+        #expect(await akit("kb", "init", "--base", "~/Documents/kb").code == 0)
         // The default world is the Mac's kind.
         #expect(await akit("kb", "init").code == 0)
         #expect(KnowledgeBase.isBase(base))
         #expect(await akit("kb", "init").code == 2)
+    }
+
+    @Test func pathSetMoveAndResetTheWorldsFolder() async throws {
+        let shown = try json(await akit("kb", "path", "work", "--json").out)
+        #expect(shown["path"] as? String == base.path && shown["configured"] as? Bool == false && shown["isBase"] as? Bool == false)
+        #expect(shown["vault"] is NSNull)
+
+        let vault = home.appending(path: "Vault")
+        try fm.createDirectory(at: vault.appending(path: ".obsidian"), withIntermediateDirectories: true)
+        let set = try json(await akit("kb", "path", "work", "--set", vault.path, "--json").out)
+        #expect(set["path"] as? String == vault.path && set["configured"] as? Bool == true && set["isBase"] as? Bool == true)
+        #expect(set["vault"] as? String == vault.path)
+        #expect(try json(await akit("kb", "areas", "--json").out)["base"] as? String == vault.path)
+        #expect(try String(contentsOf: home.appending(path: ".akit/local/knowledge/bases.json"), encoding: .utf8).contains(#""work" : "~/Vault""#))
+        #expect(await akit("kb", "new-note", "payments", "orders-api", "--base", "work").code == 0)
+        #expect(fm.fileExists(atPath: vault.appending(path: "areas/payments/orders-api.md").path))
+
+        let refused = await akit("kb", "path", "work", "--set", home.appending(path: "Library/Mobile Documents/x").path)
+        #expect(refused.code == 2 && refused.err.contains("synced folder"), "\(refused.err)")
+        #expect(await akit("kb", "path", "work", "--set", "~/a", "--reset").code == 2)
+
+        let moved = await akit("kb", "path", "work", "--move", "~/Notes/kb")
+        #expect(moved.code == 0 && moved.out == "Moved the base of work from ~/Vault to ~/Notes/kb.", "\(moved.out) \(moved.err)")
+        #expect(KnowledgeBase.isBase(home.appending(path: "Notes/kb")))
+        #expect(await akit("kb", "path", "work").out.hasPrefix("work: ~/Notes/kb (set on this Mac"))
+
+        let reset = await akit("kb", "path", "work", "--reset")
+        #expect(reset.out == "The base of work is the default folder again: ~/.akit/local/knowledge/work (no base there yet: akit kb init --world work). ~/Notes/kb stays as it is.")
+        #expect(try json(await akit("kb", "path", "--json").out)["configured"] as? Bool == false)
     }
 }

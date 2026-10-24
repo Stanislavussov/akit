@@ -3975,7 +3975,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 ### Knowledge
 <!-- section: knowledge -->
 
-**Что это:** база знаний этого Mac — папка `~/.akit/local/knowledge/<мир>` (например, `work`) с заметками Markdown по пространствам (`areas/payments`, `areas/logistics`). Это локальный git-репозиторий, у которого никогда нет remote. Агенты читают базу командами `akit kb areas` и `akit kb notes`. Вы пишете её здесь или в Obsidian.
+**Что это:** база знаний этого Mac — папка мира (по умолчанию `~/.akit/local/knowledge/<мир>`, например `work`; другую задаёт [Settings](#settings) → **Knowledge**) с заметками Markdown по пространствам (`areas/payments`, `areas/logistics`). Это локальный git-репозиторий, у которого никогда нет remote. Агенты читают базу командами `akit kb areas` и `akit kb notes`. Вы пишете её здесь или в Obsidian.
 
 У этого экрана есть своё подробное руководство. Откройте его кнопкой **Guide** на этом экране или через Help → **Knowledge Base Guide**. Ниже — только вход.
 
@@ -4011,7 +4011,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 #### Связи с другими экранами
 <!-- section: knowledge-links -->
 
-- Где может жить база, решает тип Mac в [Settings](#settings): на рабочем Mac — только в `~/.akit/local/knowledge`.
+- Где лежит база, задаёт [Settings](#settings) → **Knowledge**, например папка в вашем vault Obsidian: [Папка базы и Obsidian](knowledge#folder).
 - Все надписи экрана: [словарь](terms#terms-knowledge).
 
 ## Settings
@@ -4025,6 +4025,7 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Это рабочий компьютер, данные о проектах не должны уйти в мой личный репозиторий» → выберите **Work** в **This Mac**.
 - «Мой brain лежит в другой папке» → укажите её в **Brain repo**.
 - «AKit пишет: The brain has no git email of its own» → заполните **Commit name** и **Commit email** в **Brain repo**.
+- «Хочу держать базу знаний в своём vault Obsidian» → **Choose…** в части **Knowledge**.
 - «Хочу разборы сессий на русском» → выберите **Russian** в **Review language**.
 - «Кнопка **Translate** переводит не той моделью» → выберите модель в **Translation model**.
 - «Боюсь потратить на разборы слишком много» → задайте **Monthly limit (US dollars)** в части **Cost**.
@@ -4037,11 +4038,12 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 ### Что в окне
 <!-- section: settings-window -->
 
-Окно — одна длинная форма из десяти частей (ссылка **How It Works** стоит в заголовке шестой). Прокручивайте её вниз.
+Окно — одна длинная форма из одиннадцати частей (ссылка **How It Works** стоит в заголовке седьмой). Прокручивайте её вниз.
 
 - **Project folders**: список папок, в которых AKit ищет проекты. У каждой папки справа кнопка с минусом в кружке: она убирает папку из списка. Кнопки **Add Folder…** и **Reset to Default**.
 - **This Mac**: переключатель **This Mac is** с двумя значениями, **Personal** и **Work**. На рабочем Mac появляется поле **Name of this Mac**. Под переключателем написано, что значит текущий выбор.
 - **Brain repo**: путь к вашему brain. Кнопки **Choose…** и **Reset to Default**. Если brain — git-репозиторий, ниже стоят поля **Commit name** и **Commit email** и кнопка **Save**.
+- **Knowledge**: папка базы знаний каждого мира, например `work`. У строки мира кнопки **Choose…**, **Move Base…**, **Show in Finder** и **Reset to Default**. Подробно: [Папка базы и Obsidian](knowledge#folder).
 - **Lab**: список **Review language**, язык новых разборов сессий.
 - **Translation model**: кем переводит кнопка **Translate**: **Harness**, **Model** с меню **Models** и **Effort** (у Pi — **Thinking**). Кнопка **Reset to Default** возвращает Claude Code · haiku. Подробно: [выбрать модель перевода](#settings-translation).
 - **Sending policy**: строка режима (Personal Mac или Work Mac), список разрешённых адресатов, кнопки **Add Destination…** и **Check Accounts**.

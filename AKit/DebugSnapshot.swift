@@ -31,7 +31,7 @@ import SwiftUI
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--local-only` picks Local only, `--capture` for the preview).
 /// Lab: `--tab sends` shows the send log; with `--select <run id>` of a review, `--tab notes` opens its
-/// notes' disclosures and `--tab recheck` the Re-check sheet (`tools/demo-home.sh` has one). Settings: `--tab lab` (or `scrub`) scrolls to the sending
+/// notes' disclosures and `--tab recheck` the Re-check sheet (`tools/demo-home.sh` has one). Settings: `--tab lab` (or `scrub`) scrolls to the sending (`--tab knowledge` to Knowledge, and prints its folders)
 /// policy, `--add` opens Add Destination, `--capture` checks the accounts. Error Analysis (`--section analysis`):
 /// `--tab modes|review|bootstrap|reports` (`--tab review --add` opens Cluster Unmatched Notes' cost confirmation); on Modes `--select <mode id>` opens the mode's page (`--query judge|fix` scrolls to that panel, `--query fix --add` opens Draft Fix…), on Bootstrap
 /// `--select <session key>` opens its labeling view (`--query <step>` starts a note at that step); on Reports
@@ -209,6 +209,9 @@ enum DebugSnapshot {
         }
         if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
             print(manifest)
+        }
+        if options.settings, options.tab == "knowledge" {
+            print(KnowledgeSettingsSection.manifest())
         }
         let bounds = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { exit(1) }

@@ -108,6 +108,19 @@ struct DoctorTests {
         #expect(!withRemote.contains(secrets[1]) && !withRemote.contains("example.com/me/kb"))
     }
 
+    @Test func theKnowledgeBaseLineShowsTheSetFolderAndItsVault() async throws {
+        func report() async -> String { await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")])) }
+        let vault = home.appending(path: "Vault")
+        try FileManager.default.createDirectory(at: vault.appending(path: ".obsidian"), withIntermediateDirectories: true)
+        try await KnowledgeBase.setFolder(world: "work", to: vault.appending(path: "kb"), env: env)
+        let text = await report()
+        #expect(text.contains("  knowledge base: ~/Vault/kb (world work, set in bases.json; in the Obsidian vault ~/Vault), no remote"), "\(text)")
+        try write(".akit/local/knowledge/bases.json", #"{"bases": {"work": "~/Vault/kb", "side": "~/Gone"}}"#)
+        #expect(await report().contains("! knowledge base: the world side is set to ~/Gone in ~/.akit/local/knowledge/bases.json, which is no base"))
+        try write(".akit/local/knowledge/bases.json", "{broken")
+        #expect(await report().contains("! knowledge base: ~/.akit/local/knowledge/bases.json can't be read"))
+    }
+
     @Test func theSkillListingBudgetVariableShowsOnlyWhenSet() async throws {
         let plain = await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")]))
         #expect(!plain.contains("SLASH_COMMAND_TOOL_CHAR_BUDGET"))

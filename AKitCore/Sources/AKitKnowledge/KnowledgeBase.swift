@@ -2,9 +2,10 @@ import AKitBrain
 import AKitFoundation
 import Foundation
 
-/// A knowledge base (knowledge.md, K4, K11): one folder per world (`~/.akit/local/knowledge/<world>`)
-/// holding `areas/<area>/` (notes and maps) and `inbox/` (an agent's proposals), a local git repo
-/// that never has a remote. Never inside the brain: the brain goes to a personal remote.
+/// A knowledge base (knowledge.md, K4, K11, K25): one folder per world (by default
+/// `~/.akit/local/knowledge/<world>`, or the folder set in `bases.json`, like one in an Obsidian
+/// vault) holding `areas/<area>/` (notes and maps) and `inbox/` (an agent's proposals), a local
+/// git repo that never has a remote. Never inside the brain: the brain goes to a personal remote.
 public struct KnowledgeBase: Sendable, Hashable {
     public struct Failure: Error, LocalizedError, Equatable {
         public let message: String
@@ -13,9 +14,19 @@ public struct KnowledgeBase: Sendable, Hashable {
     }
 
     public let root: URL
+    /// The world this base is the base of, when it was found as one (`all(home:)`, `create(world:)`,
+    /// `--base WORLD`); nil for a folder named by its path only.
+    public let world: String?
 
     /// `root` without a trailing slash, so one folder is always one equal value.
-    public init(root: URL) { self.root = URL(filePath: root.standardized.path, directoryHint: .notDirectory) }
+    public init(root: URL, world: String? = nil) {
+        self.root = URL(filePath: root.standardized.path, directoryHint: .notDirectory)
+        self.world = world
+    }
+
+    // One folder is one base, whatever it was found as.
+    public static func == (lhs: KnowledgeBase, rhs: KnowledgeBase) -> Bool { lhs.root == rhs.root }
+    public func hash(into hasher: inout Hasher) { hasher.combine(root) }
 
     /// The base's git lock: every git write in a base holds it (P8).
     public static let queueLockName = ".akit-queue.lock"
@@ -31,7 +42,8 @@ public struct KnowledgeBase: Sendable, Hashable {
 
         """
 
-    public var name: String { root.lastPathComponent }
+    /// The world, else the folder's name.
+    public var name: String { world ?? root.lastPathComponent }
     public var areasFolder: URL { root.appending(path: "areas", directoryHint: .isDirectory) }
     public var inboxFolder: URL { root.appending(path: "inbox", directoryHint: .isDirectory) }
 
@@ -49,9 +61,19 @@ public struct KnowledgeBase: Sendable, Hashable {
         FileWalk.isDirectory(url.appending(path: "areas")) && FileManager.default.fileExists(atPath: url.appending(path: ".git").path)
     }
 
-    /// The bases in `~/.akit/local/knowledge`, sorted by name.
+    /// The bases of this Mac, sorted by name: each world set in `bases.json` whose folder is a
+    /// base (K25), then the bases in `~/.akit/local/knowledge` of the other worlds.
     public static func all(home: URL) -> [KnowledgeBase] {
-        FileWalk.children(of: folder(home: home)).filter(isBase).map(KnowledgeBase.init)
+        let set = Folders.loadOrEmpty(home: home)
+        var bases: [KnowledgeBase] = set.bases.keys.sorted().compactMap { world in
+            guard validWorld(world), let url = set.url(of: world, home: home), isBase(url) else { return nil }
+            return KnowledgeBase(root: url, world: world)
+        }
+        for child in FileWalk.children(of: folder(home: home)) where isBase(child) && set.bases[child.lastPathComponent] == nil {
+            let base = KnowledgeBase(root: child, world: child.lastPathComponent)
+            if !bases.contains(base) { bases.append(base) }
+        }
+        return bases.sorted { $0.name < $1.name }
     }
 
     // MARK: - Create
@@ -62,33 +84,29 @@ public struct KnowledgeBase: Sendable, Hashable {
         return name.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" } && name.count <= 64
     }
 
-    /// Creates the base of `world` in `~/.akit/local/knowledge/`.
+    /// Creates the base of `world` in its folder: the one set in `bases.json`, else
+    /// `~/.akit/local/knowledge/<world>`.
     @discardableResult
     public static func create(world: String, env: HarnessEnvironment, brainRoot: URL? = nil) async throws(Failure) -> KnowledgeBase {
         guard validWorld(world) else {
             throw Failure(message: "“\(world)” can't name a world: use letters, digits, - and _ (like work or personal).")
         }
-        return try await create(at: Self.world(world, home: env.homeDirectory), env: env, brainRoot: brainRoot)
+        let base = try await create(at: root(world: world, home: env.homeDirectory), env: env, brainRoot: brainRoot)
+        return KnowledgeBase(root: base.root, world: world)
     }
 
     /// Creates a base at `root`: `areas/`, `inbox/`, `.gitignore`, `kb.yaml` with the default kinds,
     /// `git init` with no remote, a git
     /// identity (P5: the user's git config when it has a name and an email, else the base's own
-    /// `AKit <akit@localhost>`) and a first commit. `root` may be missing, empty, or a git repo
-    /// without a remote (an Obsidian vault kept in git). Refused: inside the brain (`brainRoot`,
-    /// default `~/.akit/registry`); on a work Mac outside `~/.akit/local/`; a folder with a remote;
-    /// a base already; any other folder with files.
+    /// `AKit <akit@localhost>`) and a first commit. `root` may be missing, empty, an Obsidian vault
+    /// (a folder with `.obsidian/`; its other files stay as they are, untracked), or a git repo
+    /// without a remote (a vault kept in git). Refused (K25, `check(folder:)`): inside the brain
+    /// (`brainRoot`, default `~/.akit/registry`), in a synced folder, not on a local disk; a folder
+    /// with a remote; a base already; any other folder with files.
     @discardableResult
     public static func create(at root: URL, env: HarnessEnvironment, brainRoot: URL? = nil) async throws(Failure) -> KnowledgeBase {
-        let home = env.homeDirectory
         let root = root.standardized
-        let brain = brainRoot ?? Brain.defaultRoot(home: home)
-        if isWithin(root, brain) {
-            throw Failure(message: "\(root.path) is inside the brain (\(brain.path)), which goes to a remote. Pick a folder outside it, like \(world("work", home: home).path).")
-        }
-        if MachineProfile.load(home: home).isWork, !isWithin(root, home.appending(path: ".akit/local")) {
-            throw Failure(message: "This is a work Mac, so the knowledge base stays in \(FileWalk.tilde(folder(home: home), home: home))/<world>, never elsewhere. Use akit kb init --world NAME.")
-        }
+        try check(folder: root, home: env.homeDirectory, brainRoot: brainRoot)
         let base = KnowledgeBase(root: root)
         let fm = FileManager.default
         let isRepo = fm.fileExists(atPath: root.appending(path: ".git").path)
@@ -98,8 +116,8 @@ public struct KnowledgeBase: Sendable, Hashable {
                 throw Failure(message: "\(root.path) is a git repo with a remote (\(remotes.joined(separator: ", "))); a knowledge base never has one. Pick another folder.")
             }
             if isBase(root) { throw Failure(message: "\(root.path) is a knowledge base already.") }
-        } else if !((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).filter({ $0 != ".DS_Store" }).isEmpty {
-            throw Failure(message: "\(root.path) is not empty. Pick an empty or new folder.")
+        } else if !Obsidian.isVault(root), !((try? fm.contentsOfDirectory(atPath: root.path)) ?? []).filter({ $0 != ".DS_Store" }).isEmpty {
+            throw Failure(message: "\(root.path) is not empty. Pick an empty or new folder, or an Obsidian vault.")
         }
 
         do {
@@ -386,11 +404,12 @@ public struct KnowledgeBase: Sendable, Hashable {
         func named(_ value: String, from: String) throws(Failure) -> KnowledgeBase {
             let isPath = value.contains("/") || value.hasPrefix("~") || value.hasPrefix(".")
             let url = isPath ? (value.hasPrefix("/") || value.hasPrefix("~") ? env.expand(value) : folder.appending(path: value))
-                : world(value, home: home)
+                : root(world: value, home: home)
             guard isBase(url) else {
                 throw Failure(message: "No knowledge base at \(url.standardized.path) (\(from)). \(listing(bases, home: home))")
             }
-            return KnowledgeBase(root: url.standardized)
+            let found = KnowledgeBase(root: url.standardized, world: isPath ? nil : value)
+            return isPath ? bases.first { $0 == found } ?? found : found
         }
         if let option { return try named(option, from: "--base") }
         if FileManager.default.fileExists(atPath: focusFile(home: home).path) {

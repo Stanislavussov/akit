@@ -9,7 +9,8 @@ import Foundation
 extension AKitCLI {
     static let knowledgeUsage = """
     akit kb: the knowledge base, notes and maps of the systems around a repository
-    (docs/design/knowledge.md). A base is a folder per world, ~/.akit/local/knowledge/<world>,
+    (docs/design/knowledge.md). A base is a folder per world (by default
+    ~/.akit/local/knowledge/<world>; akit kb path sets another, like one in an Obsidian vault),
     a local git repo that never has a remote: areas/<area>/ holds notes (Markdown) and maps.
 
     Read (agents may run these):
@@ -29,9 +30,17 @@ extension AKitCLI {
     this session; otherwise it proposes or asks):
       akit kb init [--world NAME | --base PATH]
                                         For a person only. Create a base: areas/, inbox/, .gitignore,
-                                        git without a remote, a first commit. NAME defaults to this
-                                        Mac's kind (work or personal). Refused inside the brain, on
-                                        a work Mac outside ~/.akit/local/, in a repo with a remote
+                                        git without a remote, a first commit, in the world's folder
+                                        (see kb path). NAME defaults to this Mac's kind (work or
+                                        personal). Refused inside the brain, in a synced folder
+                                        (iCloud Drive, Dropbox, Google Drive), in a repo with a remote
+      akit kb path [WORLD] [--set PATH | --move PATH | --reset] [--json]
+                                        For a person only. Shows where the base of WORLD (default:
+                                        this Mac's kind) lives, kept on this Mac in
+                                        ~/.akit/local/knowledge/bases.json. --set makes PATH the base
+                                        (an empty folder, an Obsidian vault or a base already; the old
+                                        one stays as it is); --move commits the pending edits, then
+                                        moves the base there; --reset goes back to the default folder
       akit kb new-note AREA NAME [--kind K] [--base PATH|WORLD]
                                         For a person only. Create areas/AREA/NAME.md (# NAME, and
                                         kind: K in the frontmatter) and commit it at once
@@ -135,6 +144,8 @@ extension AKitCLI {
             do { path = try await base.newNote(area: area, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
             out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
             return 0
+        case "path":
+            return try await knowledgePath(&args, json: json, cwd: cwd, env: env, out: out)
         case "kinds":
             return try await knowledgeKinds(&args, json: json, base: chosen, env: env, out: out)
         case "set":
@@ -152,6 +163,63 @@ extension AKitCLI {
             throw Failure(message: "No knowledge base on this Mac. Create one first: akit kb init [--world NAME]")
         }
         return base
+    }
+
+    /// `kb path [WORLD]` and its person-only changes `--set`, `--move`, `--reset` (K25).
+    private static func knowledgePath(_ args: inout Arguments, json: Bool, cwd: URL, env: HarnessEnvironment,
+                                      out: (String) -> Void) async throws -> Int32 {
+        let home = env.homeDirectory
+        let set = args.value("--set"), move = args.value("--move"), reset = args.flag("--reset")
+        let brain = args.value("--brain").map { resolve($0, cwd: cwd, env: env) }
+        let world = args.positional() ?? MachineProfile.load(home: home).kind.rawValue
+        try args.finish()
+        if [set != nil, move != nil, reset].filter(\.self).count > 1 { throw Failure(message: "Use one of --set PATH, --move PATH and --reset.") }
+        guard KnowledgeBase.validWorld(world) else {
+            throw Failure(message: "“\(world)” can't name a world: use letters, digits, - and _ (like work or personal).")
+        }
+        // Not `resolve`: its standardizedFileURL turns an existing /private/tmp/… into /tmp/…, and
+        // the folder is kept as typed (links are not followed).
+        func folder(_ path: String) -> URL {
+            (path.hasPrefix("~") || path.hasPrefix("/") ? env.expand(path) : cwd.appending(path: path)).standardized
+        }
+        var report: String?
+        do {
+            if let set {
+                let change = try await KnowledgeBase.setFolder(world: world, to: folder(set), env: env, brainRoot: brain)
+                let path = FileWalk.tilde(change.base.root, home: home)
+                report = (change.created ? "Created the knowledge base of \(world) in \(path) (git without a remote, committed)"
+                    : "The base of \(world) is now \(path)") + "; kept in ~/.akit/local/knowledge/bases.json."
+                    + (change.previous.map { " The old base \(FileWalk.tilde($0, home: home)) stays as it is and is no longer used." } ?? "")
+            } else if let move {
+                let from = KnowledgeBase.root(world: world, home: home)
+                let base = try await KnowledgeBase.move(world: world, to: folder(move), env: env, brainRoot: brain)
+                report = "Moved the base of \(world) from \(FileWalk.tilde(from, home: home)) to \(FileWalk.tilde(base.root, home: home))."
+            } else if reset {
+                let old = KnowledgeBase.root(world: world, home: home)
+                let folder = try KnowledgeBase.resetFolder(world: world, home: home)
+                report = "The base of \(world) is the default folder again: \(FileWalk.tilde(folder, home: home))"
+                    + (KnowledgeBase.isBase(folder) ? "." : " (no base there yet: akit kb init --world \(world)).")
+                    + (KnowledgeBase(root: old) == KnowledgeBase(root: folder) ? "" : " \(FileWalk.tilde(old, home: home)) stays as it is.")
+            }
+        } catch {
+            throw Failure(message: error.message)
+        }
+        let root = KnowledgeBase(root: KnowledgeBase.root(world: world, home: home)).root
+        let answer = PathAnswer(world: world, path: root.path, configured: KnowledgeBase.isConfigured(world: world, home: home),
+                                isBase: KnowledgeBase.isBase(root), vault: Obsidian.vault(containing: root)?.standardized.path,
+                                defaultPath: KnowledgeBase(root: KnowledgeBase.world(world, home: home)).root.path)
+        if json {
+            out(encode(answer))
+        } else if let report {
+            out(report)
+        } else {
+            var lines = ["\(world): \(FileWalk.tilde(root, home: home))"
+                + (answer.configured ? " (set on this Mac in ~/.akit/local/knowledge/bases.json)" : " (the default folder)")]
+            if !answer.isBase { lines.append("No base there yet (a person creates one with akit kb init --world \(world)).") }
+            if let vault = answer.vault { lines.append("In the Obsidian vault \(FileWalk.tilde(URL(filePath: vault), home: home)).") }
+            out(lines.joined(separator: "\n"))
+        }
+        return 0
     }
 
     /// `kb kinds` and its person-only changes `add`, `fields`, `remove`, `rename`.
@@ -318,6 +386,29 @@ extension AKitCLI {
             try container.encode(base, forKey: .base)
             try container.encode(area, forKey: .area) // null for every area
             try container.encode(notes, forKey: .notes)
+        }
+    }
+
+    struct PathAnswer: Encodable {
+        let world: String
+        let path: String
+        /// `bases.json` sets the folder; false for the default one.
+        let configured: Bool
+        let isBase: Bool
+        /// The Obsidian vault the folder is in (nearest folder with `.obsidian/`).
+        let vault: String?
+        let defaultPath: String
+
+        private enum CodingKeys: String, CodingKey { case world, path, configured, isBase, vault, defaultPath }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(world, forKey: .world)
+            try container.encode(path, forKey: .path)
+            try container.encode(configured, forKey: .configured)
+            try container.encode(isBase, forKey: .isBase)
+            try container.encode(vault, forKey: .vault) // null outside a vault
+            try container.encode(defaultPath, forKey: .defaultPath)
         }
     }
 
