@@ -11,7 +11,7 @@ import SwiftUI
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
     @Environment(AppModel.self) private var app
-    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings|focus|context`.
+    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings|focus|context|pi-template`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
     /// Add Sample Base… / Remove Sample Base… waiting for confirmation. Snapshots: `--tab sample-remove`.
@@ -21,7 +21,7 @@ struct KnowledgeView: View {
 
     enum Sheet: String, Identifiable {
         case createBase = "create-base", newArea = "new-area", newNote = "new-note", newMap = "new-map", kinds, areaSettings = "area-settings"
-        case focus, context
+        case focus, context, piTemplate = "pi-template", homeSetup = "home-setup"
         var id: Self { self }
     }
 
@@ -77,82 +77,11 @@ struct KnowledgeView: View {
         .frame(maxHeight: .infinity)
         .navigationTitle("Knowledge")
         .navigationSubtitle(model.base.map { "\($0.name) · \($0.root.tildePath)" } ?? "")
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("View", selection: $model.showingLint) {
-                    Text("Notes").tag(false)
-                    Text(lintTitle).tag(true)
-                }
-                .pickerStyle(.segmented)
-                .disabled(model.base == nil)
-                .help("Notes: the spaces, notes and maps. Lint: what in them points nowhere or at something this Mac doesn't have (akit kb lint)")
-            }
-            if model.bases.count > 1 {
-                ToolbarItem(placement: .navigation) {
-                    Picker("Base", selection: Binding(get: { model.base }, set: { if let base = $0 { model.choose(base: base) } })) {
-                        ForEach(model.bases, id: \.self) { Text($0.name).tag(Optional($0)) }
-                    }
-                    .fixedSize()
-                    .help("The knowledge base of one world (work, personal) on this Mac")
-                }
-            }
-            ToolbarItem {
-                Button("New Area…", systemImage: "folder.badge.plus") { sheet = .newArea }
-                    .disabled(model.base == nil)
-                    .help("Add a space: a folder in areas/ for one part of your work, like payments or logistics")
-            }
-            ToolbarItem {
-                Button("New Note…", systemImage: "square.and.pencil") { sheet = .newNote }
-                    .disabled(model.base == nil)
-                    .help("Write a new note in a space; it is committed at once")
-            }
-            ToolbarItem {
-                Button("New Map…", systemImage: "point.3.connected.trianglepath.dotted") { sheet = .newMap }
-                    .disabled(model.base == nil)
-                    .help("Draw a new map of a space: blocks for its notes, arrows between them; it is committed at once")
-            }
-            ToolbarItem {
-                Button("Kinds…", systemImage: "tag") { sheet = .kinds }
-                    .disabled(model.base == nil)
-                    .help("The kinds of notes in this base (service, flow, team…) and the fields of each, kept in kb.yaml")
-            }
-            ToolbarItem {
-                Button("Focus…", systemImage: "scope") { sheet = .focus }
-                    .disabled(model.base == nil)
-                    .help("Choose the space an agent's knowledge card starts from in a project (akit kb focus)")
-            }
-            ToolbarItem {
-                Button("Preview Agent Context…", systemImage: "text.viewfinder") { sheet = .context }
-                    .disabled(model.base == nil)
-                    .help("See exactly what an agent reads from this base in a project (akit kb context), with its token count")
-            }
-            ToolbarItem {
-                Menu("Sample Base", systemImage: "shippingbox") {
-                    Button("Add Sample Base…") { sampleRequest = .add }
-                    Button("Remove Sample Base…") { sampleRequest = .remove }
-                        .disabled(model.sampleBase == nil)
-                }
-                .help("A separate base, sample, with made-up notes that shows every feature; remove it when you are done")
-            }
-            ToolbarItem {
-                GuideButton(guide: .knowledge)
-            }
-        }
+        .toolbar { toolbar }
         .sheet(item: $model.newNoteRequest) { request in
             NewNoteSheet(initialArea: request.area, initialName: request.name)
         }
-        .sheet(item: $sheet) { sheet in
-            switch sheet {
-            case .createBase: CreateBaseSheet()
-            case .newArea: NewAreaSheet()
-            case .newNote: NewNoteSheet()
-            case .newMap: NewMapSheet()
-            case .kinds: KindsSheet()
-            case .areaSettings: AreaSettingsSheet(area: model.area ?? "")
-            case .focus: FocusSheet()
-            case .context: AgentContextSheet()
-            }
-        }
+        .sheet(item: $sheet, content: sheetView)
         // A query shows its hits in the Notes view, so typing one leaves the Lint view.
         .searchable(text: Binding(get: { model.searchText }, set: {
             if !$0.isEmpty { model.showingLint = false }
@@ -201,6 +130,91 @@ struct KnowledgeView: View {
         .task {
             (model.projectsRoot, model.brainRoot) = (app.projectsRoot, app.brainRoot)
             await model.load(select: DebugSnapshot.options?.select)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        @Bindable var model = model
+        ToolbarItem(placement: .principal) {
+            Picker("View", selection: $model.showingLint) {
+                Text("Notes").tag(false)
+                Text(lintTitle).tag(true)
+            }
+            .pickerStyle(.segmented)
+            .disabled(model.base == nil)
+            .help("Notes: the spaces, notes and maps. Lint: what in them points nowhere or at something this Mac doesn't have (akit kb lint)")
+        }
+        if model.bases.count > 1 {
+            ToolbarItem(placement: .navigation) {
+                Picker("Base", selection: Binding(get: { model.base }, set: { if let base = $0 { model.choose(base: base) } })) {
+                    ForEach(model.bases, id: \.self) { Text($0.name).tag(Optional($0)) }
+                }
+                .fixedSize()
+                .help("The knowledge base of one world (work, personal) on this Mac")
+            }
+        }
+        ToolbarItem {
+            Button("New Area…", systemImage: "folder.badge.plus") { sheet = .newArea }
+                .disabled(model.base == nil)
+                .help("Add a space: a folder in areas/ for one part of your work, like payments or logistics")
+        }
+        ToolbarItem {
+            Button("New Note…", systemImage: "square.and.pencil") { sheet = .newNote }
+                .disabled(model.base == nil)
+                .help("Write a new note in a space; it is committed at once")
+        }
+        ToolbarItem {
+            Button("New Map…", systemImage: "point.3.connected.trianglepath.dotted") { sheet = .newMap }
+                .disabled(model.base == nil)
+                .help("Draw a new map of a space: blocks for its notes, arrows between them; it is committed at once")
+        }
+        ToolbarItem {
+            Button("Kinds…", systemImage: "tag") { sheet = .kinds }
+                .disabled(model.base == nil)
+                .help("The kinds of notes in this base (service, flow, team…) and the fields of each, kept in kb.yaml")
+        }
+        ToolbarItem {
+            Button("Focus…", systemImage: "scope") { sheet = .focus }
+                .disabled(model.base == nil)
+                .help("Choose the space an agent's knowledge card starts from in a project (akit kb focus)")
+        }
+        // What agents get from the base (one group: a toolbar takes at most 10 items).
+        ToolbarItemGroup {
+            Button("Preview Agent Context…", systemImage: "text.viewfinder") { sheet = .context }
+                .disabled(model.base == nil)
+                .help("See exactly what an agent reads from this base in a project (akit kb context), with its token count")
+            Button("Pi Template…", systemImage: "text.badge.plus") { sheet = .piTemplate }
+                .disabled(model.base == nil)
+                .help("Tell Pi about this base: a short section in the core layer for Pi only, then Update Home Folder… (akit kb pi-template)")
+        }
+        ToolbarItem {
+            Menu("Sample Base", systemImage: "shippingbox") {
+                Button("Add Sample Base…") { sampleRequest = .add }
+                Button("Remove Sample Base…") { sampleRequest = .remove }
+                    .disabled(model.sampleBase == nil)
+            }
+            .help("A separate base, sample, with made-up notes that shows every feature; remove it when you are done")
+        }
+        ToolbarItem {
+            GuideButton(guide: .knowledge)
+        }
+    }
+
+    @ViewBuilder
+    private func sheetView(_ sheet: Sheet) -> some View {
+        switch sheet {
+        case .createBase: CreateBaseSheet()
+        case .newArea: NewAreaSheet()
+        case .newNote: NewNoteSheet()
+        case .newMap: NewMapSheet()
+        case .kinds: KindsSheet()
+        case .areaSettings: AreaSettingsSheet(area: model.area ?? "")
+        case .focus: FocusSheet()
+        case .context: AgentContextSheet()
+        // Update Home Folder… takes the Pi Template sheet's place.
+        case .piTemplate: PiTemplateSheet { self.sheet = .homeSetup }
+        case .homeSetup: ProjectSetupSheet(forHome: true)
         }
     }
 

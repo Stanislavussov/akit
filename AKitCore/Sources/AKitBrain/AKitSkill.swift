@@ -308,6 +308,9 @@ akit kb rename NOTE|MAP NEW [--yes] [--json]      # rename a note or map and eve
                                                    # another link would change its target)
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
+akit kb pi-template [--yes] [--json]               # the core layer's section about the base, for Pi
+                                                   # only (templates/kb-pi.md, a brain commit); then
+                                                   # akit apply --home; again: "already set"
 akit kb seed [--world NAME] [--json]               # the sample base (world sample): made-up notes
                                                    # that show every feature, separate from yours
 akit kb seed --remove [--world NAME] [--yes] [--json]

@@ -67,6 +67,7 @@ import SwiftUI
 /// renames right after an unsaved edit (N5). Every map snapshot prints `posts: N` (0 after an open).
 /// 3.3: `--query <words>` (no `--tab`) fills the toolbar search and prints the hits; `--tab focus` and `--tab context`
 /// open Focus… and Preview Agent Context… (`--project <folder name>` picks the project, `--query json` the JSON view).
+/// 3.4: `--tab pi-template` opens Pi Template… and prints its state ("already set" or the diff it would write).
 /// `--tab watch --select <note id> --query <word>` is the watcher check: it appends a section with the word to the
 /// note's file from outside, waits for the watcher's batch, searches the word and prints the hit, the time it took
 /// and the commit queue (the edit is queued, not committed: that waits for the 5 min idle flush, or the quit).

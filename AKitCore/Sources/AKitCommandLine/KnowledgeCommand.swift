@@ -116,6 +116,14 @@ extension AKitCLI {
                                         the Trash and commit the removal at once. Without --yes it
                                         only shows what would go. Proposals in inbox/ are rejected,
                                         not removed
+      akit kb pi-template [--yes] [--json] [--brain PATH]
+                                        For a person only. Add a short section about the base to
+                                        the brain's core layer for Pi only (templates/kb-pi.md,
+                                        sent to AGENTS.md when target == pi), commit it in the
+                                        brain, then run akit apply --home: Pi's AGENTS.md gets it,
+                                        ~/.claude/CLAUDE.md doesn't. Pending edits of the base are
+                                        committed first. Run again, it says "already set". Without
+                                        --yes it only shows the diff
       akit kb seed [--world NAME] [--json]
                                         For a person only. Write the sample base: a separate base
                                         (world sample unless named) with made-up notes that show
@@ -289,6 +297,36 @@ extension AKitCLI {
                 out((yes ? "Renamed the \(plan.kind.rawValue) \(plan.from) to \(plan.to) and \(links), committed:"
                     : "Would rename the \(plan.kind.rawValue) \(plan.from) to \(plan.to) and \(links), then commit. Run again with --yes to do it:")
                     + "\n" + plan.diff)
+            }
+            return 0
+        case "pi-template":
+            let yes = args.flag("--yes")
+            let root = args.value("--brain").map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+            try args.finish()
+            guard let brain = Brain.load(from: root) else {
+                throw Failure(message: "No brain at \(FileWalk.tilde(root, home: env.homeDirectory)). Create one first: akit init")
+            }
+            let edit: LayerEditor.FileEdit
+            do {
+                edit = try KnowledgePiTemplate.plan(brain: brain)
+                if yes { try await KnowledgePiTemplate.apply(edit, base: try? await chosen(), brain: brain, env: env) }
+            } catch {
+                throw Failure(message: error.message)
+            }
+            let state = edit.isEmpty ? "already set" : yes ? "written" : "would write"
+            if json {
+                out(encode(PiTemplateAnswer(brain: brain.root.path, layer: edit.layer, template: edit.template,
+                                            state: state, diff: edit.diff)))
+                return 0
+            }
+            let path = "layers/\(edit.layer)/templates/\(edit.template)"
+            if edit.isEmpty {
+                out("The Pi template is already set: \(path), listed for AGENTS.md when target == pi. Nothing changed."
+                    + " If Pi's AGENTS.md doesn't have it yet, run `akit apply --home`.")
+            } else if yes {
+                out("Wrote \(path) to the core layer for Pi only, committed in the brain:\n\(edit.diff)\nNow run `akit apply --home`: it puts the section into Pi's AGENTS.md.")
+            } else {
+                out("Would write \(path) to the core layer for Pi only and commit it in the brain. Run again with --yes to do it:\n\(edit.diff)")
             }
             return 0
         case "seed":
@@ -798,6 +836,15 @@ extension AKitCLI {
     }
 
     private static func count(_ number: Int, _ word: String) -> String { "\(number) \(word)\(number == 1 ? "" : "s")" }
+
+    struct PiTemplateAnswer: Encodable {
+        let brain: String
+        let layer: String
+        let template: String
+        /// "already set", "would write" or "written".
+        let state: String
+        let diff: String
+    }
 
     struct AreasAnswer: Encodable {
         let base: String

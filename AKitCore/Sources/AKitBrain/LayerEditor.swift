@@ -209,6 +209,82 @@ public enum LayerEditor {
         try await commit(paths, "Edit layer \(name)", in: brain, env: env)
     }
 
+    /// One template of a layer and its `files:` entry, before and after an edit, for a preview.
+    public struct FileEdit: Equatable, Sendable {
+        public let layer: String
+        public let template: String
+        public let layerBefore: String
+        public let layerAfter: String
+        /// nil: the template file isn't there yet.
+        public let templateBefore: String?
+        public let templateAfter: String
+
+        public var changesLayer: Bool { layerBefore != layerAfter }
+        public var changesTemplate: Bool { templateBefore != templateAfter }
+        /// Nothing to write: the entry is listed and the template has this text.
+        public var isEmpty: Bool { !changesLayer && !changesTemplate }
+
+        /// Both files' changed lines with 3 lines of context, each under its path in the brain.
+        public var diff: String {
+            var parts: [[String]] = []
+            if changesLayer {
+                parts.append(["--- layers/\(layer)/layer.yaml"] + TextDiff.unified(TextDiff.lines(from: layerBefore, to: layerAfter)))
+            }
+            if changesTemplate {
+                parts.append(["--- layers/\(layer)/templates/\(template)" + (templateBefore == nil ? " (new)" : "")]
+                             + TextDiff.unified(TextDiff.lines(from: templateBefore ?? "", to: templateAfter)))
+            }
+            return parts.map { $0.joined(separator: "\n") }.joined(separator: "\n")
+        }
+    }
+
+    /// What setting `templates/<template>` to `text` does, read from disk now: when `files:`
+    /// already lists that template (whatever its `to:` and `when:`), only the template text
+    /// changes; otherwise the entry `template → path` with `when` is added too.
+    public static func fileEdit(template: String, to path: String, when conditions: [Condition], text: String,
+                                in layer: Layer) throws(Failure) -> FileEdit {
+        let parts = template.split(separator: "/")
+        guard !template.hasPrefix("/"), !parts.isEmpty, !parts.contains("..") else {
+            throw Failure(message: "“\(template)” must be a file path inside the layer's templates/.")
+        }
+        let before = try read(layer)
+        let after = try snapshot(before).files.contains { $0.template == template } ? before
+            : try addingFile(template: template, to: path, when: conditions, in: before)
+        let current = try? String(contentsOf: layer.templates.appending(path: template), encoding: .utf8)
+        return FileEdit(layer: layer.name, template: template, layerBefore: before, layerAfter: after,
+                        templateBefore: current, templateAfter: text)
+    }
+
+    /// Writes what `edit` previewed (the template first: layer.yaml must never list a file that
+    /// isn't there) and commits both in one brain commit. Refused when the files changed since
+    /// the preview; nothing is written when the edit is empty.
+    public static func apply(_ edit: FileEdit, to path: String, when conditions: [Condition], message: String,
+                             in brain: Brain, env: HarnessEnvironment) async throws(Failure) {
+        if let problem = await BrainGit.commitProblem(brain: brain.root, env: env) { throw Failure(message: problem) }
+        guard let fresh = Brain.load(from: brain.root) else { throw Failure(message: "The brain at \(brain.root.path) can't be read.") }
+        let layer = try find(edit.layer, in: fresh)
+        guard try fileEdit(template: edit.template, to: path, when: conditions, text: edit.templateAfter, in: layer) == edit else {
+            throw Failure(message: "layers/\(edit.layer)/layer.yaml or templates/\(edit.template) changed since the preview. Look at the preview again.")
+        }
+        guard !edit.isEmpty else { return }
+        var paths: [String] = []
+        if edit.changesTemplate {
+            let url = layer.templates.appending(path: edit.template)
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(edit.templateAfter.utf8).write(to: url, options: .atomic)
+            } catch {
+                throw Failure(message: "Couldn't write layers/\(edit.layer)/templates/\(edit.template): \(error.localizedDescription)")
+            }
+            paths.append("layers/\(edit.layer)/templates/\(edit.template)")
+        }
+        if edit.changesLayer {
+            try write(edit.layerAfter, to: layer.manifest, edit.layer)
+            paths.insert("layers/\(edit.layer)/layer.yaml", at: 0)
+        }
+        try await commit(paths, message, in: fresh, env: env)
+    }
+
     // MARK: - layer.yaml text
 
     /// Adds `- name: x / mode: m` entries to the top-level `skills:` list.
@@ -310,12 +386,24 @@ public enum LayerEditor {
 
     /// Lists `templates/AGENTS.md → AGENTS.md` in `files:`.
     static func addingAgentsFile(to text: String) throws(Failure) -> String {
+        try addingFile(template: LayerWriter.agentsTemplate, to: "AGENTS.md", when: [], in: text,
+                       refusal: "AKit couldn't add the AGENTS.md section to layer.yaml safely. Add it by hand.")
+    }
+
+    /// Lists `templates/<template> → <path>` in `files:`, with its `when:` conditions (one inline,
+    /// more as a flow list); read back like every other edit.
+    static func addingFile(template: String, to path: String, when conditions: [Condition], in text: String,
+                           refusal: String? = nil) throws(Failure) -> String {
         let before = try snapshot(text)
-        let path = LayerWriter.agentsTemplate
-        let result = try appending({ indent in ["\(indent)- template: \(path)", "\(indent)  to: AGENTS.md"] }, toList: "files", in: text)
+        let quotedTemplate = try scalar(template), quotedPath = try scalar(path)
+        let quoted = try conditions.map { condition throws(Failure) in try scalar(condition.description) }
+        let when = quoted.isEmpty ? [] : ["when: " + (quoted.count == 1 ? quoted[0] : "[\(quoted.joined(separator: ", "))]")]
+        let result = try appending({ indent in
+            ["\(indent)- template: \(quotedTemplate)", "\(indent)  to: \(quotedPath)"] + when.map { "\(indent)  \($0)" }
+        }, toList: "files", in: text)
         var expected = before
-        expected.files.append(LayerFile(template: path, to: "AGENTS.md", when: [], override: false))
-        try verify(result, expected, "AKit couldn't add the AGENTS.md section to layer.yaml safely. Add it by hand.")
+        expected.files.append(LayerFile(template: template, to: ProjectBundle.normalizedPath(path), when: conditions, override: false))
+        try verify(result, expected, refusal ?? "AKit couldn't add \(template) to layer.yaml safely. Add it by hand.")
         return result
     }
 

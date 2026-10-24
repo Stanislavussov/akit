@@ -55,7 +55,7 @@ struct KnowledgeCLITests {
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
         for command in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
-                        "akit kb rm", "akit kb rename", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
+                        "akit kb rm", "akit kb rename", "akit kb pi-template", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
@@ -491,5 +491,66 @@ struct KnowledgeCLITests {
         #expect(gone["removed"] as? Bool == true && gone["world"] as? String == "sample")
         #expect(!fm.fileExists(atPath: sample.path))
         #expect(try fm.contentsOfDirectory(atPath: home.appending(path: "Trash").path).count == 3)
+    }
+
+    /// K16 / D0: the core layer's Pi-only section reaches Pi's AGENTS.md through apply --home and
+    /// never ~/.claude/CLAUDE.md; a second run says "already set" and changes nothing.
+    @Test func piTemplateReachesOnlyPiAndASecondRunIsAlreadySet() async throws {
+        let brainRoot = home.appending(path: ".akit/registry")
+        let created = await akit("init", "--brain", brainRoot.path, "--targets", "claude,pi", "--yes")
+        #expect(created.code == 0, "\(created.err)")
+        // A section for every target, so CLAUDE.md is written too.
+        let brain = try #require(Brain.load(from: brainRoot))
+        let before = try #require(brain.layers.first { $0.name == "core" })
+        try await LayerEditor.update("core", to: LayerEditor.Details(description: before.description, requires: before.requires, agentsSection: "Be brief."),
+                                     in: brain, env: env)
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        // A pending edit of the base is committed before the brain changes.
+        #expect(await akit("kb", "new-note", "payments", "orders-api").code == 0)
+        try Data("# orders-api\n\nEdited.\n".utf8).write(to: base.appending(path: "areas/payments/orders-api.md"))
+        #expect(KnowledgeCommitQueue(base: base, env: env).enqueue(["areas/payments/orders-api.md"]) == .queued(refused: []))
+
+        let preview = await akit("kb", "pi-template")
+        #expect(preview.code == 0 && preview.out.hasPrefix("Would write layers/core/templates/kb-pi.md"))
+        #expect(preview.out.contains("+     when: target == pi"))
+        #expect(!fm.fileExists(atPath: brainRoot.appending(path: "layers/core/templates/kb-pi.md").path))
+        #expect(KnowledgeCommitQueue(base: base, env: env).pending() == ["areas/payments/orders-api.md"])
+
+        let written = await akit("kb", "pi-template", "--yes")
+        #expect(written.code == 0, "\(written.err)")
+        #expect(written.out.contains("Now run `akit apply --home`"))
+        #expect(KnowledgeCommitQueue(base: base, env: env).pending().isEmpty)
+        #expect(try await git("status", "--porcelain").isEmpty)
+        let brainLog = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["log", "-1", "--format=%s", "--name-only"],
+                                                             directory: brainRoot, environment: env.variables, timeout: 20)).output
+        #expect(brainLog.hasPrefix("Add the knowledge base section for Pi to layer core"))
+        #expect(brainLog.contains("layers/core/layer.yaml") && brainLog.contains("layers/core/templates/kb-pi.md"))
+        let core = try #require(Brain.load(from: brainRoot)?.layers.first { $0.name == "core" })
+        #expect(core.files.contains { $0.template == "kb-pi.md" && $0.to == "AGENTS.md" && $0.when == KnowledgePiTemplate.when && !$0.override })
+        // The Edit Layer sheet still edits the section for every target.
+        #expect(LayerEditor.details(of: core).agentsSection == "Be brief.")
+
+        // akit init only makes the brain; the targets are the apply's (installed harnesses by default).
+        let applied = await akit("apply", "--home", "--targets", "claude,pi", "--yes")
+        #expect(applied.code == 0, "\(applied.err)")
+        let pi = try String(contentsOf: home.appending(path: ".pi/agent/AGENTS.md"), encoding: .utf8)
+        let claude = try String(contentsOf: home.appending(path: ".claude/CLAUDE.md"), encoding: .utf8)
+        #expect(pi.components(separatedBy: "akit kb context").count == 2)
+        #expect(pi.contains("Be brief.") && claude.contains("Be brief."))
+        #expect(!claude.contains("akit kb"))
+
+        let again = await akit("kb", "pi-template", "--yes")
+        #expect(again.code == 0 && again.out.contains("already set"))
+        let answer = try json(await akit("kb", "pi-template", "--json").out)
+        #expect(answer["state"] as? String == "already set" && answer["diff"] as? String == "")
+        #expect(try String(contentsOf: home.appending(path: ".pi/agent/AGENTS.md"), encoding: .utf8) == pi)
+        let yaml = try String(contentsOf: core.manifest, encoding: .utf8)
+        #expect(yaml.components(separatedBy: "kb-pi.md").count == 2)
+
+        // A changed template text is written back; layer.yaml stays.
+        try Data("Mine.\n".utf8).write(to: core.templates.appending(path: "kb-pi.md"))
+        let back = try json(await akit("kb", "pi-template", "--json").out)
+        #expect(back["state"] as? String == "would write")
+        #expect((back["diff"] as? String)?.hasPrefix("--- layers/core/templates/kb-pi.md\n") == true)
     }
 }

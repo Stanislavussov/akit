@@ -15,7 +15,7 @@
 - Знания уже лежат в README и `AGENTS.md` проекта, и агенту их хватает.
 - Вам нужна общая вики команды. База живёт на одном Mac и не имеет remote.
 
-**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пример базы, пространства и заметки, читать и править, карты, переименовать, папка базы и Obsidian, виды и свойства, настройки пространства, поиск, фокус, что видит агент, проверка, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
+**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пример базы, пространства и заметки, читать и править, карты, переименовать, папка базы и Obsidian, виды и свойства, настройки пространства, поиск, фокус, что видит агент, подсказка для Pi, проверка, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
 
 **Как искать.** Меню Help → **Search Guides and Screens…** (⌥⌘F). Это руководство открывает кнопка **Guide** на экране Knowledge или Help → **Knowledge Base Guide**.
 
@@ -530,6 +530,30 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 
 То же в терминале: `akit kb context ~/Projects/orders-api` и `akit kb neighbors payments/orders-api`, с `--json`.
 
+## Подсказка для Pi
+<!-- section: pi-template -->
+
+**Что это:** Pi сам не знает, что на этом Mac есть база знаний. **Pi Template…** добавляет в слой `core` мозга короткий раздел для Pi: «в начале задачи про другие сервисы, события или репозитории запусти `akit kb context --json`, потом `akit kb search` и `akit kb show`; базу сам не правь». Раздел лежит в `layers/core/templates/kb-pi.md` и в `layer.yaml` записан с условием `when: target == pi`. Поэтому после **Update Home Folder…** он попадает только в `AGENTS.md`, который Pi читает в `~/.pi/agent`. В `~/.claude/CLAUDE.md` его нет: Claude Code эта подсказка не нужна.
+
+**Когда пригодится:**
+
+- «Pi в `orders-api` не смотрит в базу» → один раз на этом Mac нажмите **Pi Template…**, потом **Update Home Folder…**.
+- «Хочу другие слова в подсказке» → поправьте `layers/core/templates/kb-pi.md` в мозге и снова **Update Home Folder…**. Слова выбраны в AKit; их можно менять.
+
+![Pi Template…: сверху объяснение, что раздел получает только Pi; строка The core layer gets this section for Pi:; часть Template с текстом раздела ## Knowledge base; ниже layers/core/layer.yaml с новыми строками files:, template: kb-pi.md, to: AGENTS.md, when: target == pi и layers/core/templates/kb-pi.md (new) с текстом раздела; кнопки Cancel и Add to Core Layer](images/knowledge-pi-template.png)
+
+### Просто: Pi Template…
+<!-- section: pi-template-add -->
+
+1. Нажмите **Pi Template…** в панели инструментов.
+2. Посмотрите текст раздела (**Template**) и что изменится в мозге: `layer.yaml` и `templates/kb-pi.md`.
+3. Нажмите **Add to Core Layer**. AKit сначала делает коммит ждущих правок базы, потом пишет оба файла в мозг и делает там один коммит.
+4. Нажмите **Update Home Folder…** и примените план: раздел появится в `~/.pi/agent/AGENTS.md`.
+
+Если раздел уже есть, окно пишет **Already set** и ничего не меняет. Если вы правили `kb-pi.md` руками, кнопка называется **Update Template**: AKit вернёт свой текст.
+
+То же в терминале: `akit kb pi-template` (показать изменения), `akit kb pi-template --yes` (записать), потом `akit apply --home`. Второй запуск пишет «already set». Это команда для человека: агент запускает её, только если вы попросили.
+
 ## Проверка
 <!-- section: lint -->
 
@@ -633,7 +657,7 @@ AKit коммитит очередь одним коммитом, когда:
 - Список заметок показывает заголовок `#` из текста заметки. Если заголовка нет, показано имя файла.
 - Файлы и папки с точкой в начале (например, `.obsidian`) экран не показывает.
 - Индекс поиска, замки, очередь и настройки Obsidian не попадают в git: они в `.gitignore` базы.
-- Агенты читают базу командами `akit kb areas`, `akit kb notes`, `akit kb kinds`, `akit kb area`, `akit kb search`, `akit kb show`, `akit kb neighbors`, `akit kb context` и `akit kb lint`. Команды, которые меняют базу (`akit kb init`, `new-note`, `set`, `kinds add`, `kinds rename`, `area … --project`, `path --set`, `rm`, `seed` и другие), помечены в `akit kb --help` как команды для человека. Агент запускает их, только если вы попросили об этом в этой сессии.
+- Агенты читают базу командами `akit kb areas`, `akit kb notes`, `akit kb kinds`, `akit kb area`, `akit kb search`, `akit kb show`, `akit kb neighbors`, `akit kb context` и `akit kb lint`. Команды, которые меняют базу или мозг (`akit kb init`, `new-note`, `set`, `kinds add`, `kinds rename`, `area … --project`, `path --set`, `rm`, `seed`, `pi-template` и другие), помечены в `akit kb --help` как команды для человека. Агент запускает их, только если вы попросили об этом в этой сессии.
 - `kb.yaml` и `area.yaml` AKit пишет целиком. Если вы вписали туда ключ, который AKit не знает, AKit этот файл не перепишет и скажет об этом: поправьте его вручную.
 - Если `kb.yaml` нет (база создана старой версией AKit), экран и команды берут виды по умолчанию.
 

@@ -210,6 +210,8 @@ shot knowledge-rename    $MAIN --section knowledge --tab rename --select payment
 shot knowledge-search    $MAIN --section knowledge --query order
 # Preview Agent Context… for the project orders-api, with the note orders-api in view (its neighbors too).
 shot knowledge-context   $MAIN --section knowledge --tab context --project orders-api --select payments/orders-api
+# Pi Template…: the core layer's Pi-only section about the base, with the layer.yaml and template diff.
+shot knowledge-pi-template $MAIN --section knowledge --tab pi-template
 # The Lint tab: the findings the seed's space lint-examples has on purpose (akit kb lint).
 shot knowledge-lint      $MAIN --section knowledge --tab lint
 # Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.

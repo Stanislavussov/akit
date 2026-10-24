@@ -135,4 +135,47 @@ struct LayerEditorTests {
         #expect(try LayerEditor.addingAgentsFile(to: "name: x\nfiles:\n- template: a.md\n  to: A.md\n")
                 == "name: x\nfiles:\n- template: a.md\n  to: A.md\n- template: AGENTS.md\n  to: AGENTS.md\n")
     }
+
+    @Test func addingAFileWithAConditionRoundTripsThroughTheManifest() throws {
+        let pi = [Condition(field: "target", test: .equals("pi"))]
+        let text = "name: core\n# kept\nskills:\n  - name: akit\n    mode: manual\n"
+        let added = try LayerEditor.addingFile(template: "kb-pi.md", to: "AGENTS.md", when: pi, in: text)
+        #expect(added == text + "files:\n  - template: kb-pi.md\n    to: AGENTS.md\n    when: target == pi\n")
+        let parsed = try #require(LayerManifest.parse(added, folder: URL(filePath: "/layer")).layer)
+        #expect(parsed.files == [LayerFile(template: "kb-pi.md", to: "AGENTS.md", when: pi, override: false)])
+        // Two conditions: a flow list, read back the same.
+        let two = pi + [Condition(field: "pi_skills", test: .isSet)]
+        let both = try LayerEditor.addingFile(template: "a.md", to: "AGENTS.md", when: two, in: added)
+        #expect(both.hasSuffix("  - template: a.md\n    to: AGENTS.md\n    when: [target == pi, pi_skills]\n"))
+        #expect(try #require(LayerManifest.parse(both, folder: URL(filePath: "/layer")).layer).files.last?.when == two)
+        // addingAgentsFile is the same as before: no when:.
+        #expect(try LayerEditor.addingAgentsFile(to: "name: x\n") == "name: x\nfiles:\n  - template: AGENTS.md\n    to: AGENTS.md\n")
+    }
+
+    @Test func aFileEditAddsTheEntryOnceThenOnlyTheTemplate() async throws {
+        let pi = [Condition(field: "target", test: .equals("pi"))]
+        var brain = try await brain()
+        var layer = try #require(brain.layers.first { $0.name == "web" })
+        let edit = try LayerEditor.fileEdit(template: "kb-pi.md", to: "AGENTS.md", when: pi, text: "Pi.\n", in: layer)
+        #expect(edit.changesLayer && edit.templateBefore == nil && !edit.isEmpty)
+        #expect(edit.diff.contains("--- layers/web/layer.yaml") && edit.diff.contains("--- layers/web/templates/kb-pi.md (new)\n+ Pi."))
+        try await LayerEditor.apply(edit, to: "AGENTS.md", when: pi, message: "Add Pi", in: brain, env: env)
+        #expect(try await lastCommit() == "Add Pi\n\nlayers/web/layer.yaml\nlayers/web/templates/kb-pi.md\n")
+        brain = try #require(Brain.load(from: root))
+        layer = try #require(brain.layers.first { $0.name == "web" })
+        // A when: entry is not the layer's AGENTS.md section.
+        #expect(LayerEditor.agentsFile(of: layer) == nil)
+        #expect(try LayerEditor.fileEdit(template: "kb-pi.md", to: "AGENTS.md", when: pi, text: "Pi.\n", in: layer).isEmpty)
+        let text = try LayerEditor.fileEdit(template: "kb-pi.md", to: "AGENTS.md", when: pi, text: "Pi 2.\n", in: layer)
+        #expect(!text.changesLayer && text.changesTemplate && text.templateBefore == "Pi.\n")
+        // A preview the files no longer match is refused.
+        try Data("Mine.\n".utf8).write(to: layer.templates.appending(path: "kb-pi.md"))
+        await #expect(throws: LayerEditor.Failure.self) {
+            try await LayerEditor.apply(text, to: "AGENTS.md", when: pi, message: "Edit Pi", in: brain, env: env)
+        }
+        #expect(try String(contentsOf: layer.templates.appending(path: "kb-pi.md"), encoding: .utf8) == "Mine.\n")
+        #expect(throws: LayerEditor.Failure.self) {
+            try LayerEditor.fileEdit(template: "../x.md", to: "AGENTS.md", when: pi, text: "", in: layer)
+        }
+    }
 }
