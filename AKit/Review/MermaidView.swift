@@ -2,9 +2,10 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// A Mermaid diagram drawn with mermaid.js shipped inside AKit (`Resources/Mermaid`, 11.4.1, MIT),
-/// offline (R47). The page is locked down: a content policy with no outside loads, mermaid's
-/// `securityLevel: "strict"`, a content rule list that blocks every URL but `about:` and `data:`,
+/// A Mermaid diagram drawn with mermaid.js shipped inside AKit (`Resources/Mermaid`, 11.17.2, MIT),
+/// offline (R47). The page is locked down: a content policy with no script and no outside loads,
+/// mermaid and AKit's code in a world of their own, mermaid's `securityLevel: "strict"` and SVG
+/// text labels, a content rule list that blocks every URL but `about:` and `data:`,
 /// no navigation after the first load, no windows, a data store that keeps nothing. A diagram
 /// mermaid can't draw shows its error and the source; a load the policy stopped is counted.
 ///
@@ -25,6 +26,15 @@ struct MermaidView: View {
     @State private var blocked: [String] = []
 
     var body: some View {
+        content
+            // Another diagram: the last one's error and blocked loads go.
+            .onChange(of: source) {
+                error = nil
+                blocked = []
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         if let error {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Mermaid couldn't draw it: \(error)", systemImage: "exclamationmark.triangle")
@@ -155,10 +165,14 @@ private struct MermaidWebView: NSViewRepresentable {
     /// The page's background: the same in the web view and around it.
     static func background(dark: Bool) -> Color { dark ? Color(white: 0.12) : .white }
 
-    /// mermaid.min.js, read once. Injected as a user script: the page's own policy then needs no
-    /// `script-src` for files.
+    /// mermaid.min.js, read once.
     @MainActor private static let library: String? = Bundle.main.url(forResource: "mermaid.min", withExtension: "js", subdirectory: "Mermaid")
         .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+
+    /// The world mermaid and AKit's render code run in, and the only one the `akit` handler
+    /// listens to. It shares the page's DOM, not its scripts: the page world runs nothing (its
+    /// policy allows no script), and if something there ever ran it couldn't post to AKit.
+    @MainActor static let world = WKContentWorld.world(name: "akit-mermaid")
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -170,9 +184,9 @@ private struct MermaidWebView: NSViewRepresentable {
         configuration.suppressesIncrementalRendering = true
         let content = WKUserContentController()
         if let library = Self.library {
-            content.addUserScript(WKUserScript(source: library, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            content.addUserScript(WKUserScript(source: library, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.world))
         }
-        content.add(WeakHandler(context.coordinator), name: "akit")
+        content.add(WeakHandler(context.coordinator), contentWorld: Self.world, name: "akit")
         configuration.userContentController = content
         let web = DiagramWebView(frame: .zero, configuration: configuration)
         web.navigationDelegate = context.coordinator
@@ -189,15 +203,17 @@ private struct MermaidWebView: NSViewRepresentable {
         if Self.library == nil {
             DispatchQueue.main.async { error = "mermaid.js is missing from AKit." }
         } else {
-            // The rule list first: nothing loads before it is in place.
-            Task { @MainActor [coordinator = context.coordinator, source, dark, large] in
+            // The rule list first: nothing loads before it is in place. The diagram is the one
+            // shown when the list is ready, not the one at the start.
+            Task { @MainActor [coordinator = context.coordinator] in
                 guard let rules = await Self.rules() else {
                     coordinator.parent.error = "AKit couldn't set up the diagram's content rules."
                     return
                 }
                 content.add(rules)
                 coordinator.ready = true
-                coordinator.load(source: source, dark: dark, large: large)
+                let parent = coordinator.parent
+                coordinator.load(source: parent.source, dark: parent.dark, large: parent.large)
             }
         }
         return container
@@ -223,46 +239,46 @@ private struct MermaidWebView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
-        coordinator.web?.configuration.userContentController.removeScriptMessageHandler(forName: "akit")
+        coordinator.web?.configuration.userContentController.removeScriptMessageHandler(forName: "akit", contentWorld: world)
     }
 
-    /// The page for one diagram. The source goes in as a JSON string with `<` escaped, never as
-    /// raw text, so nothing in it can end the script.
-    static func page(source: String, dark: Bool, large: Bool) -> String {
-        let data = (try? JSONSerialization.data(withJSONObject: [source])) ?? Data("[\"\"]".utf8)
-        let json = String(decoding: data, as: UTF8.self)
-            .replacingOccurrences(of: "<", with: "\\u003c").replacingOccurrences(of: ">", with: "\\u003e")
-            .replacingOccurrences(of: "\u{2028}", with: "\\u2028").replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+    /// The page for one diagram: an empty box and no script. Its policy runs no script at all
+    /// (inline handlers neither); mermaid and `render` run in AKit's own world, which the page's
+    /// policy doesn't bind. Images and fonts only from `data:`.
+    static func page(dark: Bool, large: Bool) -> String {
         let background = dark ? "#1f1f1f" : "#ffffff"
         return """
         <!doctype html><html><head><meta charset="utf-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">
         <style>html,body{margin:0;padding:0;background:\(background);overflow:hidden}#d{padding:8px}#d svg{display:block;margin:0 auto;max-width:100%;height:auto}\(large ? "#d svg{max-width:none!important;width:100%}" : "")</style>
-        </head><body><div id="d"></div><script>
-        (async function () {
-          const post = function (m) { window.webkit.messageHandlers.akit.postMessage(m); };
-          document.addEventListener("securitypolicyviolation", function (e) { post({ blocked: String(e.blockedURI || e.violatedDirective) }); });
-          try {
-            if (typeof mermaid === "undefined") { throw new Error("mermaid.js didn't load"); }
-            mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: \(dark ? "\"dark\"" : "\"default\""),
-              fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif" });
-            const source = \(json)[0];
-            const result = await mermaid.render("akit-diagram", source);
-            const d = document.getElementById("d");
-            d.innerHTML = result.svg;
-            const svg = d.querySelector("svg");
-            const box = svg && svg.viewBox && svg.viewBox.baseVal;
-            const natural = box && box.width > 0 ? [box.width, box.height] : [0, 0];
-            const report = function () { post({ height: Math.ceil(d.getBoundingClientRect().height), natural: natural }); };
-            new ResizeObserver(report).observe(d);
-            report();
-          } catch (e) {
-            post({ error: String((e && e.message) || e) });
-          }
-        })();
-        </script></body></html>
+        </head><body><div id="d"></div></body></html>
         """
     }
+
+    /// Draws the diagram, in AKit's world once the page has loaded. The source and the theme
+    /// come in as arguments, never as page text. Labels are SVG text (`htmlLabels: false`), so a
+    /// flowchart's labels carry no HTML; `<br/>` still breaks a line. (A sequence diagram's KaTeX
+    /// `$$…$$` is still HTML: the flow check refuses `$$`.)
+    static let render = """
+        const post = function (m) { window.webkit.messageHandlers.akit.postMessage(m); };
+        document.addEventListener("securitypolicyviolation", function (e) { post({ blocked: String(e.blockedURI || e.violatedDirective) }); });
+        try {
+          if (typeof mermaid === "undefined") { throw new Error("mermaid.js didn't load"); }
+          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", htmlLabels: false, flowchart: { htmlLabels: false },
+            theme: dark ? "dark" : "default", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif" });
+          const result = await mermaid.render("akit-diagram", source);
+          const d = document.getElementById("d");
+          d.innerHTML = result.svg;
+          const svg = d.querySelector("svg");
+          const box = svg && svg.viewBox && svg.viewBox.baseVal;
+          const natural = box && box.width > 0 ? [box.width, box.height] : [0, 0];
+          const report = function () { post({ height: Math.ceil(d.getBoundingClientRect().height), natural: natural }); };
+          new ResizeObserver(report).observe(d);
+          report();
+        } catch (e) {
+          post({ error: String((e && e.message) || e) });
+        }
+        """
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
@@ -283,14 +299,36 @@ private struct MermaidWebView: NSViewRepresentable {
             loaded = (source, dark, large)
             snapshot?.removeFromSuperview()
             snapshot = nil
+            // A new page starts with no error and no blocked loads (after this update, not in it).
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if parent.error != nil { parent.error = nil }
+                if !parent.blocked.isEmpty { parent.blocked = [] }
+            }
             allowLoad = true
-            web.loadHTMLString(MermaidWebView.page(source: source, dark: dark, large: large), baseURL: nil)
+            web.loadHTMLString(MermaidWebView.page(dark: dark, large: large), baseURL: nil)
         }
+
+        /// The page AKit loaded is in: draw the diagram in AKit's world.
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard let loaded else { return }
+            webView.callAsyncJavaScript(MermaidWebView.render, arguments: ["source": loaded.source, "dark": loaded.dark],
+                                        in: nil, in: MermaidWebView.world) { [weak self] result in
+                if case .failure(let failure) = result, let self, parent.error == nil {
+                    parent.error = String(failure.localizedDescription.prefix(500))
+                    if DebugSnapshot.options != nil { print("mermaid: error \(failure.localizedDescription)") }
+                }
+            }
+        }
+
+        /// At most this many blocked loads are kept, each its first 200 characters.
+        static let blockedKept = 20
 
         func receive(_ body: Any) {
             guard let message = body as? [String: Any] else { return }
             if let url = message["blocked"] as? String {
-                if !parent.blocked.contains(url) { parent.blocked.append(String(url.prefix(200))) }
+                let entry = String(url.prefix(200))
+                if !parent.blocked.contains(entry), parent.blocked.count < Self.blockedKept { parent.blocked.append(entry) }
                 // Snapshot runs print it: a check that a diagram's outside load was stopped.
                 if DebugSnapshot.options != nil { print("mermaid: blocked \(url)") }
             } else if let error = message["error"] as? String {

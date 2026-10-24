@@ -150,6 +150,8 @@ public struct ReviewOverview: Codable, Sendable, Hashable {
         (#"://"#, "://"), (#"url\s*\("#, "url("), (#"@\s*import"#, "@import"), (#"@\s*\{"#, "@{"),
         (#"%%\{"#, "%%{"), (#"<\s*script"#, "<script"), (#"javascript\s*:"#, "javascript:"), (#"<\s*iframe"#, "<iframe"),
         (#"\bakit_"#, "akit_ (AKit's own ids)"),
+        // KaTeX math: mermaid draws it outside its sanitizer.
+        (#"\$\$"#, "$$"),
     ]
 
     /// Constructs a flow may not have outside labels and edge texts: callbacks and links.
@@ -166,7 +168,8 @@ public struct ReviewOverview: Codable, Sendable, Hashable {
     static let styleValue = #"(?:#[0-9a-f]{3,8}|[a-z]+|\d+(?:px)?|[\d ,]+)"#
 
     /// Whether AKit may show the flow: a `flowchart`, `graph` or `sequenceDiagram`, within the
-    /// limits, with no forbidden construct, safe CSS only, no HTML but `<br/>`, and in a
+    /// limits, with no forbidden construct, safe CSS only, no HTML but `<br/>` (a `<` before a
+    /// letter or `/` is a tag, closed or not), no KaTeX `$$`, and in a
     /// flowchart every `subgraph` closed by an `end`. A URL in a label is refused too: labels
     /// don't load it, but one simple strict rule is easier to trust.
     static func flowCheck(_ text: String) -> Result<FlowKind, FlowProblem> {
@@ -191,8 +194,8 @@ public struct ReviewOverview: Codable, Sendable, Hashable {
                 return .failure(FlowProblem(reason: "it has \(problem)"))
             }
         }
-        if let tag = htmlTags(in: form).first(where: { $0.range(of: #"^<br\s*/?>$"#, options: .regularExpression) == nil }) {
-            return .failure(FlowProblem(reason: "it has the HTML tag `\(tag.prefix(40))`"))
+        if let tag = htmlTag(in: form) {
+            return .failure(FlowProblem(reason: "it has the HTML tag `\(tag)`"))
         }
         if kind == .flowchart, let problem = subgraphProblem(text) { return .failure(FlowProblem(reason: problem)) }
         let nodes = nodeCount(text, kind: kind)
@@ -292,9 +295,20 @@ public struct ReviewOverview: Codable, Sendable, Hashable {
         return open > 0 ? "it has a `subgraph` without an `end`" : nil
     }
 
-    static func htmlTags(in text: String) -> [String] {
-        guard let regex = try? NSRegularExpression(pattern: #"<\s*/?\s*[A-Za-z][^<>]*>"#) else { return [] }
-        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { Range($0.range, in: text).map { String(text[$0]) } }
+    /// The first tag in the text (in check form), at most 40 characters: a `<` followed by a
+    /// letter, `/`, `!` or `?`, with or without a closing `>`. Only `<br/>`, `<br>` and `<br />`
+    /// pass. nil when there is none.
+    static func htmlTag(in text: String) -> String? {
+        var rest = text[...]
+        while let open = rest.firstIndex(of: "<") {
+            let tail = rest[open...]
+            if let next = tail.dropFirst().first, next.isLetter || "/!?".contains(next),
+               !["<br/>", "<br>", "<br />"].contains(where: { tail.hasPrefix($0) }) {
+                return String(tail.prefix { !$0.isNewline }.prefix(40))
+            }
+            rest = tail.dropFirst()
+        }
+        return nil
     }
 
     static let keywords: Set<String> = ["flowchart", "graph", "subgraph", "end", "direction", "TB", "TD", "BT", "RL", "LR", "classDef", "class",

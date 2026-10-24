@@ -119,7 +119,9 @@ struct ReviewOverviewSection<Translate: View>: View {
             DisclosureGroup("Flow left out (the source)") {
                 HStack(alignment: .top) {
                     Text(original).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                    Button("Copy Mermaid", systemImage: "doc.on.doc") { copy(original) }.controlSize(.small)
+                    Button("Copy Unchecked Source", systemImage: "doc.on.doc") { copy(original) }
+                        .controlSize(.small)
+                        .help("Copy the flow as the model wrote it. AKit's check left it out: it is unchecked text from the model")
                 }
             }
             .font(.callout)

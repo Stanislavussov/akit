@@ -36,24 +36,34 @@ struct ReviewMapView: View {
     static let foldOver = 8
     static let dependentsShown = 8
 
+    /// The map's nodes by id (the first of a repeated id) and its dependents, worked out once.
+    private let byID: [String: ReviewMap.Node]
+    private let dependents: [ReviewMap.Node]
+    /// The dependents shown while Show All is off.
+    private let firstDependents: Set<String>
+
     init(map: ReviewMap, run: ReviewWorkflow.Run, showFinding: @escaping (String) -> Void) {
         self.map = map
         self.run = run
         self.showFinding = showFinding
-        let big = map.nodes.filter { node in (node.kind == .module || node.kind == .project)
-            && map.nodes.count(where: { $0.parent == node.id }) > Self.foldOver }
-        _folded = State(initialValue: Set(big.map(\.id)))
+        byID = Dictionary(map.nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        dependents = map.nodes.filter { $0.kind == .dependent }
+        firstDependents = Set(dependents.prefix(Self.dependentsShown).map(\.id))
+        _folded = State(initialValue: Self.startFolded(map))
     }
 
-    private var byID: [String: ReviewMap.Node] { Dictionary(map.nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }) }
+    /// Modules and projects with over `foldOver` files.
+    static func startFolded(_ map: ReviewMap) -> Set<String> {
+        Set(map.nodes.filter { node in (node.kind == .module || node.kind == .project)
+            && map.nodes.count(where: { $0.parent == node.id }) > foldOver }.map(\.id))
+    }
 
     /// The node a line ends at: a file of a folded module ends at the module, a hidden dependent at
     /// the dependents' row.
     private func shown(_ id: String) -> String? {
         guard let node = byID[id] else { return nil }
         if node.kind == .dependent {
-            let dependents = map.nodes.filter { $0.kind == .dependent }
-            return dependentsOpen || dependents.prefix(Self.dependentsShown).contains(where: { $0.id == id }) ? id : "dependents"
+            return dependentsOpen || firstDependents.contains(id) ? id : "dependents"
         }
         if let parent = node.parent, folded.contains(parent) { return parent }
         return id
@@ -72,7 +82,7 @@ struct ReviewMapView: View {
                 .controlSize(.small)
                 .help("Copy the map as a Mermaid flowchart (akit review map RUN --mermaid prints the same)")
             }
-            ForEach(map.notes, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
+            ForEach(Array(map.notes.enumerated()), id: \.offset) { Text($1).font(.caption).foregroundStyle(.secondary).textSelection(.enabled) }
             HStack(alignment: .top, spacing: 12) {
                 lanes
                 if let id = selected, let node = byID[id] {
@@ -80,6 +90,13 @@ struct ReviewMapView: View {
                         .frame(width: 260)
                 }
             }
+        }
+        // Another map in the same view (another run): its own folds, nothing selected.
+        .onChange(of: map) { _, map in
+            folded = Self.startFolded(map)
+            selected = nil
+            hovered = nil
+            dependentsOpen = false
         }
     }
 
@@ -117,19 +134,18 @@ struct ReviewMapView: View {
     // MARK: - Lanes
 
     @ViewBuilder private var changeLane: some View {
-        ForEach(map.nodes.filter { $0.kind == .module }) { module in
+        ForEach(Array(map.nodes.filter { $0.kind == .module }.enumerated()), id: \.offset) { _, module in
             let files = map.nodes.filter { $0.parent == module.id }
             VStack(alignment: .leading, spacing: 3) {
                 node(module, fold: files.count > 1 ? module.id : nil)
                 if !folded.contains(module.id) {
-                    ForEach(files) { node($0).padding(.leading, 14) }
+                    ForEach(Array(files.enumerated()), id: \.offset) { node($1).padding(.leading, 14) }
                 }
             }
         }
-        let dependents = map.nodes.filter { $0.kind == .dependent }
         if !dependents.isEmpty {
             Text("Import the change, unchanged").font(.caption).foregroundStyle(.tertiary).padding(.top, 6)
-            ForEach(dependentsOpen ? dependents : Array(dependents.prefix(Self.dependentsShown))) { node($0) }
+            ForEach(Array((dependentsOpen ? dependents : Array(dependents.prefix(Self.dependentsShown))).enumerated()), id: \.offset) { node($1) }
             if dependents.count > Self.dependentsShown {
                 Button(dependentsOpen ? "Show Fewer" : "Show All \(dependents.count)") { dependentsOpen.toggle() }
                     .buttonStyle(.link).font(.caption)
@@ -144,7 +160,7 @@ struct ReviewMapView: View {
         if boundaries.isEmpty {
             empty("None found: the change stays inside this repository, or the brief named none.")
         }
-        ForEach(boundaries) { node($0) }
+        ForEach(Array(boundaries.enumerated()), id: \.offset) { node($1) }
     }
 
     @ViewBuilder private var othersLane: some View {
@@ -152,12 +168,12 @@ struct ReviewMapView: View {
         if projects.isEmpty {
             empty(map.nodes(in: .boundaries).isEmpty ? "Nothing to look for." : "No uses found in other repositories.")
         }
-        ForEach(projects) { project in
+        ForEach(Array(projects.enumerated()), id: \.offset) { _, project in
             let files = map.nodes.filter { $0.parent == project.id }
             VStack(alignment: .leading, spacing: 3) {
                 node(project, fold: files.isEmpty ? nil : project.id)
                 if !folded.contains(project.id) {
-                    ForEach(files) { node($0).padding(.leading, 14) }
+                    ForEach(Array(files.enumerated()), id: \.offset) { node($1).padding(.leading, 14) }
                 }
             }
         }
@@ -213,13 +229,17 @@ struct ReviewMapView: View {
         }
         .opacity(node.kind == .dependent ? 0.6 : 1)
         .contentShape(Rectangle())
-        .onTapGesture { selected = selected == node.id ? nil : node.id }
+        .onTapGesture { toggleSelection(node.id) }
         .onHover { inside in hovered = inside ? node.id : (hovered == node.id ? nil : hovered) }
         .anchorPreference(key: MapAnchors.self, value: .bounds) { [node.id: $0] }
         .help(node.boundary.map { "\($0.name)\n\($0.file)" } ?? node.path ?? node.label)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggleSelection(node.id) }
     }
+
+    /// A click on a node opens its inspector; a second one closes it.
+    private func toggleSelection(_ id: String) { selected = selected == id ? nil : id }
 
     /// Over this many characters a file's path shows its name on the first line and its folder below.
     static let longPath = 24
@@ -357,7 +377,7 @@ private struct ReviewMapInspector: View {
         switch node.kind {
         case .module:
             counts(node)
-            ForEach(map.nodes.filter { $0.parent == node.id }) { file in
+            ForEach(Array(map.nodes.filter { $0.parent == node.id }.enumerated()), id: \.offset) { _, file in
                 HStack {
                     Text(file.label).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
                     Spacer()
@@ -375,7 +395,7 @@ private struct ReviewMapInspector: View {
             changedLines
         case .dependent:
             Text("Unchanged, imports:").font(.caption).foregroundStyle(.secondary)
-            ForEach(map.edges.filter { $0.from == node.id }.map(\.to), id: \.self) { target in
+            ForEach(Array(map.edges.filter { $0.from == node.id }.map(\.to).enumerated()), id: \.offset) { _, target in
                 Text(target.replacingOccurrences(of: "file:", with: "")).font(.caption.monospaced())
             }
         case .boundary:
@@ -399,7 +419,7 @@ private struct ReviewMapInspector: View {
         if !found.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Findings").font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                ForEach(found, id: \.id) { finding in
+                ForEach(Array(found.enumerated()), id: \.offset) { _, finding in
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 5) {
                             Circle().fill(finding.finalSeverity.color).frame(width: 7, height: 7)
@@ -466,11 +486,19 @@ private struct ReviewMapInspector: View {
                 Text(use.why).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
             quote(use.quote)
-            if let link = use.url, let url = URL(string: link), ["http", "https"].contains(url.scheme?.lowercased()) {
+            if let url = gitLabLink(use.url) {
                 Link("Open in GitLab", destination: url).font(.caption)
             }
         }
         .padding(.bottom, 4)
+    }
+
+    /// A use's link, only http/https on the run's own GitLab (its merge request's host and port).
+    private func gitLabLink(_ link: String?) -> URL? {
+        guard let link, let url = URL(string: link), ["http", "https"].contains(url.scheme?.lowercased()),
+              let own = URL(string: run.spec.mergeRequest.host), let host = url.host()?.lowercased(), !host.isEmpty,
+              host == own.host()?.lowercased(), url.port == own.port else { return nil }
+        return url
     }
 
     private func quote(_ text: String) -> some View {

@@ -206,6 +206,13 @@ struct OverviewTests {
             ("flowchart LR\n  A --> B\n  linkStyle 0 stroke:red,filter:blur", "CSS"),
             ("flowchart LR\n  A --> B\n  style A", "styles"),
             ("flowchart LR\n  A[\"&lt;img src=x&gt;\"] --> B", "HTML"),
+            // A tag needs no `>`: mermaid's labels and KaTeX read it anyway.
+            ("flowchart LR\n  A[\"<img src=x onerror=alert(1)// <br/>\"] --> B", "HTML tag `<img src=x onerror=alert(1)// <br/>"),
+            ("flowchart LR\n  A[\"x</b\"] --> B", "HTML tag `</b"),
+            ("flowchart LR\n  A[\"<br/ onload=x>\"] --> B", "HTML tag `<br/ onload"),
+            ("sequenceDiagram\n  A->>B: <img src=x onerror=x// <br/>$$x$$", "$$"),
+            ("sequenceDiagram\n  A->>B: <img src=x onerror=x// <br/>", "HTML tag `<img"),
+            ("flowchart LR\n  A[\"$$x$$\"] --> B", "$$"),
             ("flowchart LR\n  subgraph S\n  A --> B", "without an `end`"),
             ("flowchart LR\n  A --> B\n  end", "without a `subgraph`"),
         ]
@@ -223,6 +230,8 @@ struct OverviewTests {
             "sequenceDiagram\n  box Aqua Payments\n  participant A as Shop\n  participant B\n  end\n  A->>B: API call to billing\n"
                 + "  Note over A: click Pay\n  loop Retry\n  B-->>A: called back\n  end",
             "graph TD\n  subgraph S1[\"Service\"]\n    A-->B\n    subgraph S2\n      C\n    end\n  end\n  B-->C",
+            "flowchart LR\n  A[\"one<br/>two<br>three<br />four\"] <--> B(\"x < y, $5\")\n  B <-.-> C",
+            "sequenceDiagram\n  A->>B: one<br/>two\n  B<<->>A: x < 2<br>y",
         ]
         for flow in fine { #expect(flowProblem(flow) == nil, "\(flow): \(flowProblem(flow) ?? "")") }
     }

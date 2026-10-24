@@ -501,18 +501,33 @@ modules with their files in a popover and the why, the why's sources as tags, AK
 run's one Translate menu) and the **Flow**, then a **Requests | Map** switch. What differs from or
 adds to the decisions:
 
-- The flow is drawn by `mermaid.js` 11.4.1 (`AKit/Resources/Mermaid`, MIT, sha256 in its README)
+- The flow is drawn by `mermaid.js` 11.17.2 (`AKit/Resources/Mermaid`, MIT, sha256 in its README)
   in a `WKWebView` (`MermaidView`): the library is a user script, the page loads with no base URL
-  and a content policy `default-src 'none'; script-src 'self' 'unsafe-inline'; style-src
-  'unsafe-inline'; img-src data:; font-src data:`; a content rule list blocks every URL but
-  `about:` and `data:`; `securityLevel: "strict"`; the source goes in as a JSON string with `<`,
-  `>`, U+2028/2029 escaped; every navigation after the first load is cancelled, no windows, a
+  and a content policy `default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src
+  data:; font-src data:`; a content rule list blocks every URL but `about:` and `data:`;
+  `securityLevel: "strict"`; the source goes in as an argument of `callAsyncJavaScript`; every
+  navigation after the first load is cancelled, no windows, a
   non-persistent store, no context menu, the wheel scrolls the screen. A policy violation is
   counted under the diagram. The height follows the SVG; light and dark redraw. A hostile flow
   (`A@{ img: … }`, a label `<img src=…>`, `url(…)` in `classDef`/`style`) made no request to a
   local server: the image shape ends in mermaid's "Loading error", the label image is a counted
   violation, `url(` doesn't parse. Snapshots draw a picture of the web view on top
   (`takeSnapshot`), since `cacheDisplay` can't see it.
+- Review of part (c) (2026-10-24): mermaid 11.17.2 (CVE-2025-54881, KaTeX `innerHTML` in
+  sequence diagrams). The page has no script and `script-src 'none'`, so inline handlers don't
+  run; mermaid (a user script) and AKit's render code (`callAsyncJavaScript`, the source and theme
+  as arguments) run in a content world of their own (`akit-mermaid`), and only that world can post
+  to the `akit` handler (the page world has no `window.webkit`). Labels are SVG text
+  (`htmlLabels: false`); `<br/>` still breaks a line (a sequence diagram's KaTeX is still
+  HTML). The flow check refuses any `<` before a
+  letter, `/`, `!` or `?` (closed or not) but `<br/>`, `<br>`, `<br />`, and `$$`. Checked
+  against a local server with the flows fed to the view directly: label and sequence `<img>`,
+  KaTeX `$$…$$`, `A@{ img: … }`, `url(…)`: no request reached it, the sequence image is a counted
+  violation, inline handlers were blocked. A new diagram clears the error and the blocked loads
+  (at most 20 kept); the rule list's first load draws the current diagram. Open in GitLab only
+  for a link on the run's GitLab host. A left-out flow's button is **Copy Unchecked Source**.
+  The map works out its id index once, resets its folds for another map, uses positions as list
+  ids, and a node has an accessibility action that selects it.
 - The Map is native SwiftUI: three lanes in a fixed layout, lines in a `Canvas` from anchor
   preferences (between lanes; imports as arcs on the first lane's left), hover lights a node's
   lines, a click opens an inspector (files and the file's diff, findings with Show Request, a
