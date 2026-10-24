@@ -1,5 +1,6 @@
 import AKitBrain
 import AKitFoundation
+import AKitLab
 import AKitReview
 import Foundation
 
@@ -13,7 +14,8 @@ extension AKitCLI {
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
-                         [--impact auto|off|always] [--gather-only] [--anyway] [--full]
+                         [--impact auto|off|always] [--summary-language CODE] [--gather-only]
+                         [--anyway] [--full]
                                         Gather: Pi reads the merge request and its work items through
                                         its MCP servers; AKit adds the worktree at head_sha, the diff,
                                         history, commands and knowledge into a context pack. Then the
@@ -48,6 +50,9 @@ extension AKitCLI {
       --impact auto|off|always          Look for uses of the change in other GitLab repositories
                                         through the GitLab MCP server (the impact pass): auto when the
                                         brief found a boundary (default), always, or off
+      --summary-language CODE           The language of the overview AKit shows you (never posted):
+                                        \(LabLanguage.codes); default the Mac's preferred language,
+                                        else English
       --step COMMAND                    A Pi step after the roles: /run AGENT [TASK] (a pi-subagents
                                         agent), /TEMPLATE [ARGS], /skill:NAME [REQUEST] or plain text.
                                         AKit runs it as its own pass with the review's reading tools
@@ -87,6 +92,10 @@ extension AKitCLI {
                                         and worst finding, unchanged files that import them, the
                                         boundaries (APIs, packages, events, config) and the other
                                         repositories that use them; --mermaid prints a flowchart
+      akit review overview RUN [--json | --mermaid]
+                                        The overview in the summary language: 3–5 points on what
+                                        happens, the modules that change with their files and why, where
+                                        the why comes from, and the flow; --mermaid prints the flow only
       akit review outcomes [RUN] [--sync]
                                         What became of the 🤖 threads in GitLab (fixed, dismissed,
                                         ignored, open) and the share accepted by role and model;
@@ -130,6 +139,12 @@ extension AKitCLI {
         if let text = args.value("--impact") {
             guard let impact = ReviewImpact(rawValue: text) else { throw Failure(message: "--impact takes auto, off or always, not \(text).") }
             settings.impact = impact
+        }
+        if let text = args.value("--summary-language") {
+            guard let language = LabLanguage(rawValue: text.lowercased()) else {
+                throw Failure(message: "--summary-language is one of \(LabLanguage.codes), not \(text).")
+            }
+            settings.summaryLanguage = language
         }
         let mrText = args.value("--mr")
         let gatherOnly = args.flag("--gather-only")
@@ -341,6 +356,22 @@ extension AKitCLI {
                 throw Failure(message: "No map for run \(id): it has no map.json and no worktree to make one from. Review it again.")
             }
             out(json ? String(decoding: try ReviewJSON.encoder.encode(map), as: UTF8.self) : mermaid ? map.mermaid : map.text)
+            return 0
+        case "overview":
+            let json = args.flag("--json")
+            let mermaid = args.flag("--mermaid")
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review overview RUN.") }
+            try args.finish()
+            if json && mermaid { throw Failure(message: "Choose one: --json or --mermaid.") }
+            guard let overview = ReviewOverview.load(folder: try runFolder(id, env: env)) else {
+                throw Failure(message: "No overview for run \(id): the brief submitted none, or the run was made before overviews. Review it again.")
+            }
+            if mermaid {
+                guard let flow = overview.flow else { throw Failure(message: "The overview of run \(id) has no flow.") }
+                out(flow)
+            } else {
+                out(json ? String(decoding: try ReviewJSON.encoder.encode(overview), as: UTF8.self) : overview.text)
+            }
             return 0
         case "outcomes":
             let sync = args.flag("--sync")

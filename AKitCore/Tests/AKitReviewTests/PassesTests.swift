@@ -67,6 +67,7 @@ struct ReviewRunFixture {
     [ -f "$HOME/fake/$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/$AKIT_REVIEW_PASS.json"
     [ -f "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/boundaries.json"
     [ -f "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/consumers.json"
+    [ -f "$HOME/fake/overview-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/overview-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/overview.json"
     if [ -d "$HOME/fake/calls-$AKIT_REVIEW_PASS" ]; then
       mkdir -p "$AKIT_REVIEW_RUN/mcp/calls"; cp "$HOME/fake/calls-$AKIT_REVIEW_PASS"/*.json "$AKIT_REVIEW_RUN/mcp/calls/"
     fi
@@ -149,7 +150,7 @@ extension ReviewProcessTests {
                 #expect(brief.contains(flag), "\(flag)")
             }
             #expect(!brief.contains("--no-mcp"), "the passes read through Pi's MCP servers by default")
-            #expect(brief.contains(ReviewPasses.tools + ",akit_submit_boundaries,codemode,tool_search,mcp__*"),
+            #expect(brief.contains(ReviewPasses.tools + ",akit_submit_boundaries,akit_submit_overview,codemode,tool_search,mcp__*"),
                     "every server of Pi; the extension checks each call; the brief names the boundaries")
             #expect(brief.contains(run.folder.appending(path: "akit-review.ts").path))
             #expect(brief.filter { $0 == "--skill" }.count == 4)

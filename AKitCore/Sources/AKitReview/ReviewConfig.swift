@@ -1,3 +1,4 @@
+import AKitLab
 import Foundation
 import Yams
 
@@ -123,6 +124,8 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
     public var maxChangedLines: Int?
     /// Whether the `impact` pass looks in other repositories (`impact: auto|off|always`).
     public var impact: ReviewImpact?
+    /// The language of the overview AKit shows the user (`summary_language`, R46); never posted.
+    public var summaryLanguage: LabLanguage?
 
     public init(passes: ReviewModelChoice? = nil, verifier: ReviewModelChoice? = nil, marker: String? = nil,
                 severityThreshold: ReviewSeverity? = nil, confidenceThreshold: Double? = nil, maxInline: Int? = nil,
@@ -190,6 +193,12 @@ public struct ReviewSettingsPatch: Sendable, Hashable {
                 throw ReviewRole.Failure(message: "\(where_): impact \(value) is not auto, off or always.")
             }
             patch.impact = impact
+        }
+        if let value = map["summary_language"] {
+            guard let language = (value as? String).flatMap({ LabLanguage(rawValue: $0.lowercased()) }) else {
+                throw ReviewRole.Failure(message: "\(where_): summary_language \(value) is not one of \(LabLanguage.codes).")
+            }
+            patch.summaryLanguage = language
         }
         return patch
     }

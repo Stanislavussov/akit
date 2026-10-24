@@ -428,9 +428,11 @@ public enum ReviewPasses {
 
         do {
             let main = ["--session-id", log.mainSession]
-            try? FileManager.default.removeItem(at: folder.appending(path: "passes/boundaries.json"))
+            for path in ["passes/boundaries.json", "passes/overview.json", "overview.json"] {
+                try? FileManager.default.removeItem(at: folder.appending(path: path))
+            }
             let brief = try await pass("brief", role: nil, prompt: ReviewPrompts.brief(spec: spec), model: spec.passes.value, gate: passesGate,
-                                       session: main, tools: tools + ",akit_submit_boundaries")
+                                       session: main, tools: tools + ",akit_submit_boundaries,akit_submit_overview")
             log.brief = brief.answer.map(SecretFilter.masked)
             try ReviewJSON.write(log, to: logFile)
             // The boundaries the brief named (R41): only those whose quote is in a changed file.
@@ -440,6 +442,19 @@ public enum ReviewPasses {
             // Other repositories (R42–R44): the impact pass, in the main session, before the roles.
             let consumers = try await impact(folder: folder, spec: spec, boundaries: boundaries, options: options) { name, prompt, tools in
                 _ = try await pass(name, role: nil, prompt: prompt, model: spec.passes.value, gate: passesGate, session: main, tools: tools)
+            }
+            // The overview (R45–R47), after the impact pass so the flow shows the other repositories.
+            // For the user only: a failure never fails the run.
+            if let overview = ReviewOverview.check(folder: folder, spec: spec) {
+                do {
+                    try overview.save(in: folder)
+                    options.progress("Overview: \(overview.points.count) points, \(overview.modules.count) modules"
+                                     + (overview.flow == nil ? ", no flow." : ", a flow."))
+                } catch {
+                    options.progress("The overview failed: \(error.localizedDescription)")
+                }
+            } else {
+                options.progress("Overview: the brief submitted none.")
             }
             // A use this change breaks is a contracts finding: that role runs whenever there are uses,
             // unless the user turned it off.
@@ -739,6 +754,7 @@ public enum ReviewPasses {
             case "akit_submit_boundaries":
                 let count = (args["boundaries"] as? [Any])?.count ?? 0
                 return "submits \(count) boundar\(count == 1 ? "y" : "ies")"
+            case "akit_submit_overview": return "submits the overview"
             case "akit_submit_consumers":
                 let count = (args["consumers"] as? [Any])?.count ?? 0
                 return "submits \(count) use\(count == 1 ? "" : "s") in other repositories"

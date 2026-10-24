@@ -225,6 +225,15 @@ looks for uses of the change in other GitLab repositories through the GitLab MCP
 in `context/consumers.md`; a use the change breaks becomes a `contracts` finding on the changed
 line. Use `--impact off` for a quick review, `always` when the user asks what else a change breaks.
 
+`akit review overview RUN [--json | --mermaid]` prints a review run's overview: 3–5 points on what
+happens, the modules that change with their files and why (from the work item chain, the
+description and the notes), where the why comes from, and the flow as Mermaid with the changed
+parts marked and the other repositories added. Use it when the user asks what a merge request
+does or why; `--json` for the data, `--mermaid` for the flow only. It is never posted.
+`akit review MR-URL --summary-language CODE` (also `akit review local`; `summary_language` in
+review.yaml or a profile's `review:`) sets the overview's language (`en`, `ru`, `cs`, …); the default
+is the Mac's preferred language, else English. GitLab text keeps `posting: language`.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

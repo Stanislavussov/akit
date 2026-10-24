@@ -175,6 +175,7 @@ extension ReviewSettingsPatch {
         patch.maxInlineMedium = other.maxInlineMedium ?? maxInlineMedium
         patch.language = other.language ?? language
         patch.impact = other.impact ?? impact
+        patch.summaryLanguage = other.summaryLanguage ?? summaryLanguage
         return patch
     }
 }

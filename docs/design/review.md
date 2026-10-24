@@ -511,6 +511,39 @@ Built as part (d), before the Map tab.
 | R47 | The flow | In the same tool: a Mermaid diagram (`flowchart` or `sequenceDiagram`, at most 40 nodes and 6000 characters) of the path a request or data takes through the system where the change is (UI → micro-frontend → API → service → database, a job, an event), with the changed parts in a class `changed`. After the `impact` pass AKit adds the other repositories' uses as nodes under a `subgraph` (from `consumers.json`, not from the model). AKit rejects a diagram with `click`, `href`, `call`, `%%{init` or `<script` and keeps the text for the gap. The app renders it with `mermaid.js` shipped inside AKit (a pinned version, MIT, no network: `securityLevel: "strict"`, a content policy with no outside loads), light and dark; a syntax error shows the source and the error. **Copy Mermaid** copies the source |
 | R48 | The work item chain | The fetch pass reads the work item named by the branch (R39), then its parent, the parent's parent and so on to the top (Task → User Story → Feature → Epic; at most 6 levels, a visited set against loops), each with its description, acceptance criteria and **all comments**; related items one level from the named item. Gather keeps the whole chain (R39's filter keeps ancestors of a named item, not only the direct parent). `work-items.md` shows the chain from the top down, so the overview's why can name the epic's or feature's goal |
 
+Built: part (d) (2026-10-24): R45–R48 and `akit review overview RUN [--json | --mermaid]`
+(`ReviewOverview.swift`). The brief gets `akit_submit_overview`; AKit checks it after the impact
+pass and writes `<run>/overview.json` (a failure there only writes a progress line). What differs
+from or adds to the table:
+
+- The chain: the fetch prompt names both ways to a parent (`System.LinkTypes.Hierarchy-Reverse`
+  and the field `System.Parent`, which AKit now reads too) and `tool_search`. Gather keeps each
+  named item, its first parent and so on (at most 6 above it, a visited set), then the items
+  related to a named item; each item's reason says `parent of #N` or `related to #N`. A parent
+  the fetch pass didn't read is a gap ("Work item #P, the parent of #N"), not an error. The
+  context pack has one `work-items.md` instead of `work-items/<id>.md`: a line per chain
+  (`Epic #1 → Feature #2 → … → Task #4`), the items from the top down, then the related items.
+- `summary_language` is read at the top of review.yaml and in a profile's `review:`; `--summary-
+  language` on `akit review` and `akit review local`. The default is the first of the Mac's
+  preferred languages by its first two letters, when it is a `LabLanguage`, else English
+  (`[built-in]` in `config show`). A run made before has none: AKit resolves it the same way when
+  it reads the run.
+- The check: points are masked and cut to 400 characters; fewer than 3 gives a note "short",
+  more than 5 keeps the first 5. A module keeps only changed files (a deleted file by its old
+  path) and goes when none is left. The flow is masked and must start with `flowchart`, `graph` or
+  `sequenceDiagram`; AKit drops it for `click` (a word), `href`, `call` with a function call,
+  `%%{`, `<script`, `javascript:`, `<iframe`, any HTML tag but `<br/>`, over 6000 characters or
+  about 40 nodes (a rough count of ids outside labels, or of participants). A plain "call" in a
+  label is allowed: only `call fn(` is the callback form. The dropped text stays in
+  `overview.json` as `flowOriginal` with the reason in `notes`, not in `gaps.json`: gaps can reach
+  the merge request's summary, the overview never does.
+- The other repositories: for a flowchart only, a `subgraph akit_others` with one node per project
+  of `consumers.json` (`akit_c1`…, at most 20, escaped like the map's labels, "· breaks" when a use
+  breaks) and a dashed edge from the subgraph to each node whose label holds the file name of a
+  used boundary.
+- Translate: the overview's points (`overview:point:N`) and modules' why (`overview:module:N`)
+  are parts of the run's translation, next to the brief and the requests.
+
 The Review screen of a run: **Overview** (points, modules, flow) on top, then the tabs **Map**
 (R40) and the requests.
 

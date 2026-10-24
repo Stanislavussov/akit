@@ -131,7 +131,8 @@ public enum ReviewPrompts {
     }
 
     static func brief(spec: ReviewRunSpec) -> String {
-        """
+        let language = spec.overviewLanguage()
+        return """
         Pass 1 of the review: the brief. Don't submit findings in this pass.
 
         Read the context pack: README.md, \(spec.notes == nil ? "" : "notes.md (the developer's own notes: start there), ")\
@@ -160,6 +161,19 @@ public enum ReviewPrompts {
         most often. For each: the name other repositories would search for, the changed file, the line and the exact code \
         line as the quote, with `side: "old"` and the line of the old file when the line is removed (in a deleted file too). \
         An empty list is a valid answer.
+
+        Then call akit_submit_overview once: an overview for the developer in AKit, never posted. Write its texts (the points, \
+        the modules' names and why, the flow's labels) in \(language.name) (`\(language.rawValue)`). Only the overview uses \
+        this language: the brief, findings, notes and gaps keep the language the rules above give them. \
+        `points`: 3–5 short points on what happens. `modules`: the parts that change, each with its changed files (paths as in \
+        changes.md) and why it changes. Take the why from the work items in work-items.md, from the top of the chain down (the \
+        epic's or feature's goal, then the user story, then the task), from the merge request's description and from the \
+        developer's notes; `why_sources` says which of `work-item`, `description`, `notes` you used, or `none`. `flow`: a \
+        Mermaid `flowchart` (or a `sequenceDiagram` with `flow_kind: "sequenceDiagram"`) of the path a request or data takes \
+        through the system where the change is (UI → micro-frontend → API → service → database, a job, an event), at most 40 \
+        nodes and 6000 characters. Mark the changed parts: `classDef changed fill:#fde68a,stroke:#b45309` and \
+        `class A,B changed`. Quote labels with `"…"`; no `click`, links, HTML (only `<br/>`), `%%{` or scripts: AKit drops \
+        such a flow.
         """
     }
 
@@ -403,7 +417,12 @@ public enum ReviewPrompts {
         if let tracker = spec.tracker { items += "; tracker \(tracker.kind), organization \(tracker.org), project \(tracker.project)" }
         items += "). Numbers in the title, description or commits don't count: don't read those items"
         if !spec.workItems.isEmpty { items += ". Read \(spec.workItems.map { "#\($0)" }.joined(separator: ", ")) in any case" }
-        items += ". Read each item with its relations, its parent and related items one level deep, and its comments. "
+        items += ". Read each item with its relations and ALL its comments. Then read its chain of parents up to the top "
+            + "(Task → User Story → Feature → Epic): the parent, the parent's parent and so on, at most 6 levels, and stop when an item "
+            + "comes again. Each parent with its description, acceptance criteria and all its comments. An item's parent is the relation "
+            + "`System.LinkTypes.Hierarchy-Reverse` (its `url` ends with the number), or the field `System.Parent`; ask for the item "
+            + "with its relations (expand relations or all). Read the related items (`System.LinkTypes.Related`) of the named item, "
+            + "one level only. When the tracker tools are deferred, load them with `tool_search` first. "
             + "When the branch names no item, read none: the review then checks the code alone."
         return """
         AKit review, step Gather. Read GitLab merge request \(mr.url) (project `\(mr.projectPath)`, merge request number \(mr.iid)) \
