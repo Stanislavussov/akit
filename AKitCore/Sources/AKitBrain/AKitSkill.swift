@@ -31,6 +31,9 @@ akit doctor pi [--live] [--json] # when Pi misbehaves: install, settings, env, M
                                 # (exit 1 on a problem); --live also connects MCP servers, checks sign-in;
                                 # + lines: what recent Pi sessions say is extra, each with its akit command
 akit instructions remove FILE (--line N | --section HEADING) [--yes]  # drop one section (a repeated one)
+akit mcp set NAME --harness pi --exposure direct|deferred|codemode|hidden [--yes]  # how Pi reaches its tools
+akit mcp login NAME --harness pi [--yes]  # Pi's OAuth sign-in for a server (runs pi mcp login)
+akit pi packages [install [SOURCE] | remove SOURCE] [--yes]  # Pi's packages; pi does the install
 akit answers [PROJECT]          # saved answers of a project
 akit plan  [PROJECT] [ANSWERS]  # every change with a diff; never writes
 akit apply [PROJECT] [ANSWERS] [--include PATH]

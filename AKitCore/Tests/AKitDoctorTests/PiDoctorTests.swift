@@ -153,6 +153,9 @@ struct PiDoctorTests {
         try write(".pi/agent/extensions/tool/index.ts", "export default function () {}")
         let report = await check()
         #expect(lines(report, .problem).contains("npm:pi-missing isn't installed"))
+        let missing = report.sections.flatMap(\.lines).first { $0.text == "npm:pi-missing isn't installed" }
+        #expect(missing?.command == "akit pi packages install npm:pi-missing")
+        #expect(missing?.action == .installPackage(source: "npm:pi-missing", project: nil))
         #expect(lines(report, .problem).contains { $0.hasPrefix("extensions entry ./gone.ts:") })
         #expect(lines(report, .ok).contains("npm:pi-here: pi-here 2.0.0"))
         #expect(lines(report, .warning).contains { $0.hasPrefix("extensions/settings-only/ has no index.ts") })
@@ -216,6 +219,11 @@ struct PiDoctorTests {
         #expect(Set(lines(report, .problem)) == ["sentry: needs sign-in", "broken (project): failed: spawn ENOENT",
                                                  "~/.pi/agent/mcp.json: server \"x\" must be an object",
                                                  "sign-in for anthropic: no usable credentials"])
+        let signIn = report.sections.flatMap(\.lines).first { $0.text == "sentry: needs sign-in" }
+        #expect(signIn?.command == "akit mcp login sentry --harness pi" && signIn?.action == .mcpLogin(server: "sentry"))
+        // Every fix is an akit command or a hand edit; none sends the user to pi.
+        let fixes = report.sections.flatMap(\.lines).compactMap(\.fix)
+        #expect(!fixes.contains { $0.contains("Run pi") || $0.contains("in a terminal") }, "\(fixes)")
         let calls = pi.lock.withLock { pi.calls }
         #expect(calls.contains(["auth", "check", "--provider", "anthropic", "--json", "--no-refresh"]))
         #expect(!calls.joined().contains("--credentials"))

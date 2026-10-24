@@ -35,13 +35,17 @@ public enum PiDoctor {
         public let command: String?
         /// The app screen with the same action (a `SidebarSection` raw value: skills, mcp, instructions).
         public let screen: String?
+        /// A `pi` command AKit runs for this fix (after the user's yes); `command` is its akit form.
+        public let action: PiCommands.Action?
 
-        public init(_ level: Level, _ text: String, fix: String? = nil, command: String? = nil, screen: String? = nil) {
+        public init(_ level: Level, _ text: String, fix: String? = nil, command: String? = nil, screen: String? = nil,
+                    action: PiCommands.Action? = nil) {
             self.level = level
             self.text = text
             self.fix = fix
-            self.command = command
+            self.command = command ?? action?.akitCommand
             self.screen = screen
+            self.action = action
         }
     }
 
@@ -305,6 +309,8 @@ public enum PiDoctor {
         var piSkills: [Skill] = []
         /// Server names of the global mcp.json, from `mcp()`.
         var mcpServers: Set<String> = []
+        /// `exposure` of the global mcp.json's servers that set one.
+        var mcpExposures: [String: String] = [:]
 
         var home: URL { env.homeDirectory }
         var configRoot: URL { env.piAgentDirectory }
@@ -348,7 +354,7 @@ public enum PiDoctor {
                     lines.append(Line(.ok, "pi: \(tilde(executable)), version \(version)"))
                 } else {
                     lines.append(Line(.problem, "pi: \(tilde(executable)) doesn't answer pi --version",
-                                      fix: "Run pi --version in a terminal; reinstall Pi if it fails (npm install -g @earendil-works/pi-coding-agent)."))
+                                      fix: "Reinstall Pi (npm install -g @earendil-works/pi-coding-agent), then check again: akit doctor pi."))
                 }
             } else {
                 lines.append(Line(.problem, "pi isn't on PATH",
@@ -422,7 +428,7 @@ public enum PiDoctor {
             case .success: lines.append(Line(.ok, "\(tilde(models)): readable"))
             case .failure(let error):
                 lines.append(Line(.problem, "\(tilde(models)) can't be read: \(error.errorDescription ?? "not valid JSON")",
-                                  fix: "Fix the JSON; Pi can't load your custom models and endpoints until then."))
+                                  fix: "Fix the JSON by hand at the place the error names; Pi can't load your custom models and endpoints until then. Then: akit doctor pi."))
             }
             add("Settings", lines)
             return global
@@ -434,7 +440,7 @@ public enum PiDoctor {
             switch read {
             case .failure(let error):
                 lines.append(Line(.problem, "\(name) can't be read: \(error.errorDescription ?? "not valid JSON")",
-                                  fix: "Fix the JSON. Pi reports a broken settings file at start and doesn't use it."))
+                                  fix: "Fix the JSON by hand at the place the error names; Pi doesn't use a broken settings file. Then: akit doctor pi."))
                 return nil
             case .success(let settings):
                 var found: [Line] = []
@@ -510,6 +516,11 @@ public enum PiDoctor {
             let globalFile = configRoot.appending(path: "mcp.json")
             let globalNames = mcpFile(globalFile, project: false, globalNames: [], into: &lines)
             mcpServers = globalNames
+            if let root = FileWalk.jsonObject(globalFile), let servers = root["mcpServers"] as? [String: Any] {
+                for (name, entry) in servers {
+                    if let exposure = (entry as? [String: Any])?["exposure"] as? String { mcpExposures[name] = exposure }
+                }
+            }
             for project in projects {
                 _ = mcpFile(project.appending(path: ".pi/mcp.json"), project: true, globalNames: globalNames, into: &lines)
             }
@@ -527,7 +538,7 @@ public enum PiDoctor {
             guard case .success(let root) = read else {
                 if case .failure(let error) = read {
                     lines.append(Line(.problem, "\(name) can't be read: \(error.errorDescription ?? "not valid JSON")",
-                                      fix: "Fix the JSON; Pi connects none of its servers until then."))
+                                      fix: "Fix the JSON by hand at the place the error names; Pi connects none of its servers until then. Then: akit doctor pi."))
                 }
                 return []
             }
@@ -649,13 +660,18 @@ public enum PiDoctor {
                     lines.append(Line(.ok, "\(package.source): \(package.name)\(package.version.map { " \($0)" } ?? "")\(place)"))
                 } else if package.kind == .local {
                     lines.append(Line(.problem, "\(package.source)\(place): the folder doesn't exist",
-                                      fix: "Fix the path in packages, or remove the entry (pi remove \(package.source))."))
+                                      fix: "Put the folder back, or remove the entry; Pi runs the removal.",
+                                      action: .removePackage(source: package.source, project: project(of: package))))
                 } else {
                     lines.append(Line(.problem, "\(package.source)\(place) isn't installed",
-                                      fix: "Run pi update --extensions to install the packages in settings (packages.md)."))
+                                      fix: "Pi installs it (packages.md); the command shows what runs first.",
+                                      action: .installPackage(source: package.source, project: project(of: package))))
                 }
             }
             if listing.packages.isEmpty { lines.append(Line(.ok, "no packages")) }
+            if listing.packages.filter({ !$0.isInstalled && $0.kind != .local }).count > 1 {
+                lines.append(Line(.ok, "several packages are missing: one command installs them all", action: .installMissingPackages))
+            }
             lines += listing.notes.map { Line(.warning, $0) }
             // settings.md: `extensions` lists files or folders, resolved from the agent folder;
             // `!pattern`, `+path`, `-path` and globs filter; `builtin:<name>` are Pi's own.
@@ -694,6 +710,12 @@ public enum PiDoctor {
                 lines.append(Line(.ok, "\(tilde(folder)): \(loaded) extension\(loaded == 1 ? "" : "s") Pi loads"))
             }
             add("Packages and extensions", lines)
+        }
+
+        /// The project folder of a project's package, for Pi's `-l`.
+        func project(of package: PiPackage) -> String? {
+            if case .project(let url) = package.scope { return url.path }
+            return nil
         }
 
         func extensionEntries(in folder: URL) -> Bool {
@@ -829,6 +851,16 @@ public enum PiDoctor {
                                       fix: "Turn it off for Pi; its entry stays, so turning it on again is one command.",
                                       command: "akit mcp set \(name) --harness pi --off everywhere", screen: "mcp"))
                 }
+                // mcp.md: a `direct` server's tools are declared to the model in every request; a
+                // `deferred` one's only after tool_search loads a match. For a server called in fewer
+                // requests than the sessions it was in, deferred saves those declarations.
+                for server in tools.servers where !server.unused && server.calls < server.availableSessions {
+                    guard let name = mcpServers.first(where: { $0.replacingOccurrences(of: "-", with: "_") == server.name.replacingOccurrences(of: "-", with: "_") }),
+                          mcpExposures[name] == "direct" else { continue }
+                    lines.append(Line(.suggestion, "MCP server \(name) is direct: its \(server.tools) tool\(server.tools == 1 ? " is" : "s are") declared in every request, but Pi called \(server.calls == 1 ? "one" : "them") \(server.calls) time\(server.calls == 1 ? "" : "s") in \(server.availableSessions) sessions",
+                                      fix: "deferred declares them only after tool_search finds one (mcp.md), so the other requests don't carry their schemas.",
+                                      command: "akit mcp set \(name) --harness pi --exposure deferred", screen: "mcp"))
+                }
             }
 
             // Instructions: what each loaded file costs, and sections the model gets twice. A
@@ -874,7 +906,7 @@ public enum PiDoctor {
             switch read {
             case .failure(let error):
                 lines.append(Line(.problem, "\(name) can't be read: \(error.errorDescription ?? "not valid JSON")",
-                                  fix: "Fix the JSON; Pi uses its default keys until then."))
+                                  fix: "Fix the JSON by hand at the place the error names; Pi uses its default keys until then. Then: akit doctor pi."))
             case .success(let bindings):
                 for action in bindings.keys.sorted() {
                     let value = bindings[action]!
@@ -907,15 +939,15 @@ public enum PiDoctor {
             if let result = await run(executable, ["mcp", "list", "--json"], home, timeout) {
                 if result.timedOut {
                     lines.append(Line(.problem, "pi mcp list didn't finish in \(Int(timeout)) s",
-                                      fix: "Run pi mcp list in a terminal to see which server hangs."))
+                                      fix: "A server hangs. Turn servers off one at a time (akit mcp set NAME --harness pi --off everywhere), then akit doctor pi --live."))
                 } else if let json = PiDoctor.jsonObject(in: result.output) {
                     lines += mcpListLines(json)
                 } else {
                     lines.append(Line(.problem, "pi mcp list gave no JSON: \(PiDoctor.firstLine(result.output))",
-                                      fix: "Run pi mcp list in a terminal."))
+                                      fix: "akit doctor pi --live --json shows the lines as they came."))
                 }
             } else {
-                lines.append(Line(.problem, "pi mcp list couldn't be started"))
+                lines.append(Line(.problem, "pi mcp list couldn't be started", fix: "Check the Install section above, then akit doctor pi --live."))
             }
             // cli.md: `pi auth check` prints ready, not_ready or invalid. Never --credentials.
             if let provider, !provider.isEmpty {
@@ -925,14 +957,14 @@ public enum PiDoctor {
                     case "ready": lines.append(Line(.ok, "sign-in for \(provider): ready"))
                     case "not_ready":
                         lines.append(Line(.problem, "sign-in for \(provider): no usable credentials",
-                                          fix: "Run pi and /login, or set the provider's API key variable (providers.md)."))
+                                          fix: "Provider sign-in happens inside Pi (/login), which AKit can't start; or set the provider's API key variable (providers.md). Then: akit doctor pi --live."))
                     case "invalid":
                         lines.append(Line(.problem, "sign-in for \(provider): the credentials are invalid or expired",
-                                          fix: "Run pi and /login again (an expired sign-in also refreshes when Pi starts)."))
+                                          fix: "Sign in again inside Pi (/login), which AKit can't start; an expired sign-in also refreshes when Pi starts. Then: akit doctor pi --live."))
                     default:
                         lines.append(Line(.problem, result.timedOut ? "pi auth check didn't finish in 30 s"
                                           : "pi auth check: \(PiDoctor.firstLine(result.output))",
-                                          fix: "Run pi auth check --provider \(provider) in a terminal."))
+                                          fix: "akit doctor pi --live --json shows the whole answer."))
                     }
                 } else {
                     lines.append(Line(.problem, "pi auth check couldn't be started"))
@@ -956,16 +988,17 @@ public enum PiDoctor {
                 case "connected": lines.append(Line(.ok, "\(name)\(scope): connected, \(tools) tool\(tools == 1 ? "" : "s")"))
                 case "disabled": lines.append(Line(.ok, "\(name)\(scope): off"))
                 case "needs-auth":
-                    lines.append(Line(.problem, "\(name)\(scope): needs sign-in", fix: "Run pi mcp login \(name)."))
+                    lines.append(Line(.problem, "\(name)\(scope): needs sign-in", fix: "Pi signs in through the browser and keeps the credentials.",
+                                      action: .mcpLogin(server: name)))
                 default:
                     let error = (server["error"] as? String).map { ": " + PiDoctor.firstLine($0) } ?? ""
                     lines.append(Line(.problem, "\(name)\(scope): \(state)\(error)",
-                                      fix: "Run pi mcp list in a terminal; /mcp in Pi shows the server's stderr."))
+                                      fix: "akit doctor pi --live --json shows the whole error."))
                 }
             }
             for error in json["errors"] as? [String] ?? [] {
                 lines.append(Line(.problem, PiDoctor.firstLine(error.replacingOccurrences(of: home.path + "/", with: "~/")),
-                                  fix: "Fix the entry; Pi skips it."))
+                                  fix: "Fix the entry by hand; Pi skips it. Then: akit doctor pi --live."))
             }
             if lines.isEmpty { lines.append(Line(.ok, "no MCP servers configured")) }
             return lines
@@ -974,7 +1007,7 @@ public enum PiDoctor {
 
     /// A path for a shell: as is when safe, else in single quotes.
     static func shellQuoted(_ text: String) -> String {
-        text.allSatisfy { $0.isLetter || $0.isNumber || "~/._-+".contains($0) } ? text : "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        text.allSatisfy { $0.isLetter || $0.isNumber || "~/._-+:@=,%".contains($0) } ? text : "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// The JSON object in a program's output (stderr may be around it).

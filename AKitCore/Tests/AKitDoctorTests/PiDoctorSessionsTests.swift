@@ -45,11 +45,12 @@ struct PiDoctorSessionsTests {
             if day == 1 {
                 content.append(["type": "toolCall", "id": "c1", "name": "read",
                                 "arguments": ["path": home.appending(path: ".pi/agent/skills/pdf-tools/SKILL.md").path]])
+                content.append(["type": "toolCall", "id": "c2", "name": "mcp__web__fetch", "arguments": ["url": "https://example.com"]])
             }
             let lines: [[String: Any]] = [
                 ["type": "session", "version": 3, "id": id, "timestamp": "\(date)T10:00:00.000Z", "cwd": project.path],
                 message("a", "01", ["role": "system", "content": "", "sections": [
-                    "tools": "<tools>\n- read: Read file contents\n- mcp__notes__search: Search the notes\n</tools>"]]),
+                    "tools": "<tools>\n- read: Read file contents\n- mcp__notes__search: Search the notes\n- mcp__web__fetch: Fetch a page\n</tools>"]]),
                 message("b", "02", ["role": "user", "content": [["type": "text", "text": "Go"]]]),
                 message("c", "03", ["role": "assistant", "provider": "anthropic", "model": "claude", "content": content,
                                     "usage": ["input": 100, "output": 5, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 105,
@@ -66,7 +67,7 @@ struct PiDoctorSessionsTests {
         try write("bin/notes-mcp", "#!/bin/sh\n")
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/notes-mcp").path)
         try write(".pi/agent/settings.json", "{}")
-        try write(".pi/agent/mcp.json", #"{"mcpServers": {"notes": {"command": "notes-mcp"}}}"#)
+        try write(".pi/agent/mcp.json", #"{"mcpServers": {"notes": {"command": "notes-mcp"}, "web": {"command": "notes-mcp", "exposure": "direct"}}}"#)
         try write(".pi/agent/skills/pdf-tools/SKILL.md", "---\nname: pdf-tools\ndescription: Read PDFs.\n---\nBody")
         try write(".pi/agent/skills/slides/SKILL.md", "---\nname: slides\ndescription: Make slide decks from notes.\n---\nBody")
         try write(".pi/agent/AGENTS.md", "# Rules\n\n## Style\nShort sentences.\n")
@@ -97,12 +98,14 @@ struct PiDoctorSessionsTests {
         #expect(suggestions.map(\.command) == [
             "akit skills set slides --harness pi --state off",
             "akit mcp set notes --harness pi --off everywhere",
+            "akit mcp set web --harness pi --exposure deferred",
             "akit instructions remove ~/Projects/app/AGENTS.md --line 3",
         ], "\(report.text)")
-        #expect(suggestions.map(\.screen) == ["skills", "mcp", "instructions"])
-        #expect(suggestions[2].text.hasPrefix("## Style is in ~/.pi/agent/AGENTS.md:3 and ~/Projects/app/AGENTS.md:3: the model gets it twice"))
+        #expect(suggestions.map(\.screen) == ["skills", "mcp", "mcp", "instructions"])
+        #expect(suggestions[2].text == "MCP server web is direct: its 1 tool is declared in every request, but Pi called one 1 time in 20 sessions")
+        #expect(suggestions[3].text.hasPrefix("## Style is in ~/.pi/agent/AGENTS.md:3 and ~/Projects/app/AGENTS.md:3: the model gets it twice"))
         // Suggestions are not problems.
-        #expect(report.problems == 0 && report.suggestions == 3)
+        #expect(report.problems == 0 && report.suggestions == 4)
         #expect(report.text.contains("$ akit skills set slides --harness pi --state off"))
     }
 

@@ -73,12 +73,31 @@ public enum AKitCLI {
                                           Back on: in those projects, or everywhere and in every folder.
                                           Removes only what AKit added; --include-unmanaged also removes
                                           entries made outside AKit (by /mcp or by hand)
+          akit mcp set NAME --harness pi --exposure direct|deferred|codemode|hidden [--project PATH] [--yes]
+                                          How Pi's model reaches the server's tools (mcp.md): direct is
+                                          declared in every request, deferred only after tool_search
+                                          finds a tool, codemode (the default) only from codemode
+                                          scripts, hidden never. Written on the entry in
+                                          ~/.pi/agent/mcp.json (or the project's own .pi/mcp.json)
           akit mcp connectors on|off [--yes]
                                           All claude.ai connectors: disableClaudeAiConnectors in
                                           ~/.claude/settings.json
                                           Each shows the change (only the changed entries); --yes writes
                                           it after a backup and refuses if those entries changed meanwhile.
                                           Plugin servers have no switch: turn the plugin off with /plugin
+          akit mcp login NAME --harness pi [--yes]
+                                          Pi's OAuth sign-in for a server: shows the command; --yes runs
+                                          pi mcp login NAME (Pi opens the browser and keeps the
+                                          credentials; AKit never reads them) and says how it ended
+
+        Pi packages (Pi installs and removes them; AKit shows the pi command first, --yes runs it):
+          akit pi packages [--json]       Every package in Pi's settings (global and projects), installed or not
+          akit pi packages install [SOURCE] [--project PATH] [--yes]
+                                          Without SOURCE: every missing one (pi update --extensions).
+                                          SOURCE (npm:…, git:…, a path): pi install SOURCE, which also adds
+                                          it to the settings (--project: the project's .pi/settings.json)
+          akit pi packages remove SOURCE [--project PATH] [--yes]
+                                          pi remove SOURCE: the package and its entry in the settings
 
         Worktrees (a local-only project's AKit files, linked into its other git worktrees):
           akit worktrees [PROJECT]        Each worktree of the repository and the links it lacks
@@ -390,6 +409,10 @@ public enum AKitCLI {
                 out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot])))
                 return 0
             }
+            if command == "pi" {
+                try refuseProjectOptions(options, command: "pi")
+                return try await pi(&args, yes: options.yes, json: options.json, env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
+            }
             if command == "instructions" {
                 try refuseProjectOptions(options, command: "instructions")
                 if args.peek == "remove" {
@@ -420,8 +443,8 @@ public enum AKitCLI {
                 var checked = options
                 checked.includeUnmanaged = false
                 try refuseProjectOptions(checked, command: "mcp")
-                return try mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
-                               projectsRoot: projectsRoot, out: out, err: err)
+                return try await mcp(&args, yes: options.yes, includeUnmanaged: options.includeUnmanaged, env: env, cwd: cwd,
+                                     projectsRoot: projectsRoot, out: out, err: err)
             }
             if command == "move" {
                 var checked = options
