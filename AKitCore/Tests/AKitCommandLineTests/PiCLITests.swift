@@ -14,13 +14,17 @@ struct PiCLITests {
         try fm.createDirectory(at: home, withIntermediateDirectories: true)
         try write("bin/pi", "#!/bin/sh\necho \"$PWD $*\" >> \"$HOME/pi-calls.txt\"\necho \"pi did $1\"\n")
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/pi").path)
+        try write("bin/fake-shell", "#!/bin/sh\nshift 3\nexec /bin/sh -c \"$1\"\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/fake-shell").path)
         try write(".pi/agent/settings.json", #"{"lastChangelogVersion": "1.0.4", "packages": ["npm:pi-here", "npm:pi-missing"]}"#)
         try write(".pi/agent/npm/node_modules/pi-here/package.json", #"{"name": "pi-here", "version": "2.0.0"}"#)
         try write(".pi/agent/mcp.json", "{\n  \"mcpServers\": {\n    \"docs\": {\"url\": \"https://example.com/mcp\", \"exposure\": \"direct\"}\n  }\n}\n")
     }
 
+    /// A fake login shell, so `akit mcp login` (MCPApprove.signIn) doesn't start the user's own.
     var env: HarnessEnvironment {
-        HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path], executableSearchPaths: [home.appending(path: "bin")])
+        HarnessEnvironment(homeDirectory: home, variables: ["HOME": home.path, "SHELL": home.appending(path: "bin/fake-shell").path],
+                           executableSearchPaths: [home.appending(path: "bin")])
     }
 
     func write(_ path: String, _ text: String) throws {
@@ -66,14 +70,17 @@ struct PiCLITests {
         #expect(await akit("pi", "packages", "remove").code == 2)
     }
 
-    @Test func mcpLoginRunsPiMCPLoginWithYes() async throws {
+    @Test func mcpLoginRunsTheHarnessSignInWithYes() async throws {
         let plan = await akit("mcp", "login", "docs", "--harness", "pi")
-        #expect(plan.out == "Runs: pi mcp login docs --timeout 300\nRun again with --yes to do it.", "\(plan.out) \(plan.err)")
+        #expect(plan.out == "Runs: pi mcp login docs --timeout 300 (in ~)\nRun again with --yes to do it.", "\(plan.out) \(plan.err)")
         #expect(calls.isEmpty)
-        #expect(await akit("mcp", "login", "docs", "--harness", "pi", "--yes").code == 0)
-        #expect(calls.count == 1 && calls[0].hasSuffix(" mcp login docs --timeout 300"))
+        let done = await akit("mcp", "login", "docs", "--harness", "pi", "--yes")
+        #expect(done.code == 0, "\(done.out) \(done.err)")
+        #expect(calls == ["\(FileWalk.realPath(home) ?? home.path) mcp login docs --timeout 300"])
         #expect(await akit("mcp", "login", "nope", "--harness", "pi").code == 2)
+        // Claude Code doesn't use docs here.
         #expect(await akit("mcp", "login", "docs", "--harness", "claude").code == 2)
+        #expect(await akit("mcp", "login", "docs").code == 2)
     }
 
     @Test func exposureShowsTheChangeAndWritesWithABackup() async throws {

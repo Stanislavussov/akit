@@ -2,6 +2,7 @@ import AKitFoundation
 import AKitHarnesses
 import AKitInsights
 import AKitInstructions
+import AKitMCP
 import AKitModel
 import AKitProjectSetup
 import AKitSkills
@@ -37,15 +38,18 @@ public enum PiDoctor {
         public let screen: String?
         /// A `pi` command AKit runs for this fix (after the user's yes); `command` is its akit form.
         public let action: PiCommands.Action?
+        /// A Pi MCP server that needs sign-in: the sheet's Sign In… is MCP Servers → Connection's.
+        public let signIn: String?
 
         public init(_ level: Level, _ text: String, fix: String? = nil, command: String? = nil, screen: String? = nil,
-                    action: PiCommands.Action? = nil) {
+                    action: PiCommands.Action? = nil, signIn: String? = nil) {
             self.level = level
             self.text = text
             self.fix = fix
             self.command = command ?? action?.akitCommand
             self.screen = screen
             self.action = action
+            self.signIn = signIn
         }
     }
 
@@ -125,8 +129,10 @@ public enum PiDoctor {
     /// packages are checked too; nil: the projects Pi knows (its session headers). `sessions`:
     /// also judge the context by recent Pi sessions (imports new session lines into AKit's index
     /// first, like `akit stats`); `projectsRoot` binds them to projects.
+    /// `shellTimeout`: how long the login shell may take to start for the live MCP check.
     public static func check(env: HarnessEnvironment, projects: [URL]? = nil, live: Bool = false, sessions: Bool = true,
-                             projectsRoot: URL? = nil, runner: Runner? = nil, now: Date = Date()) async -> Report {
+                             projectsRoot: URL? = nil, runner: Runner? = nil, shellTimeout: TimeInterval = 30,
+                             now: Date = Date()) async -> Report {
         let run = runner ?? processRunner(env: env)
         var check = Check(env: env)
         let executable = env.findExecutable("pi")
@@ -147,9 +153,17 @@ public enum PiDoctor {
             await check.recentSessions(projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), now: now)
         }
         if live {
-            await check.live(executable: executable, provider: settings?["defaultProvider"] as? String, run: run)
+            await check.live(executable: executable, provider: settings?["defaultProvider"] as? String, run: run,
+                             shellTimeout: shellTimeout)
         }
         return Report(sections: check.sections, live: live)
+    }
+
+    /// Pi's global MCP servers as AKit reads them (`MCPScanner`), for the live check.
+    public static func piServers(env: HarnessEnvironment) -> [MCPServer] {
+        guard let adapter = HarnessCatalog.adapter(for: .pi), let pi = adapter.detect(in: env) else { return [] }
+        return MCPScanner.scan(installations: [pi], projects: [], adapters: [adapter], in: env).servers
+            .filter { $0.usedBy.contains(.pi) && $0.scope == .global }
     }
 
     /// Project folders Pi has sessions for.
@@ -928,26 +942,23 @@ public enum PiDoctor {
 
         // MARK: Live
 
-        mutating func live(executable: URL?, provider: String?, run: Runner) async {
+        mutating func live(executable: URL?, provider: String?, run: Runner, shellTimeout: TimeInterval) async {
             var lines: [Line] = []
             guard let executable else {
                 add("Servers and sign-in", [Line(.problem, "can't check: pi isn't on PATH")])
                 return
             }
-            // cli.md: `pi mcp list [--json]` connects to every enabled server; from home, so no project's .pi/mcp.json.
-            let timeout: TimeInterval = 90
-            if let result = await run(executable, ["mcp", "list", "--json"], home, timeout) {
-                if result.timedOut {
-                    lines.append(Line(.problem, "pi mcp list didn't finish in \(Int(timeout)) s",
-                                      fix: "A server hangs. Turn servers off one at a time (akit mcp set NAME --harness pi --off everywhere), then akit doctor pi --live."))
-                } else if let json = PiDoctor.jsonObject(in: result.output) {
-                    lines += mcpListLines(json)
-                } else {
-                    lines.append(Line(.problem, "pi mcp list gave no JSON: \(PiDoctor.firstLine(result.output))",
-                                      fix: "akit doctor pi --live --json shows the lines as they came."))
-                }
+            // The same check as MCP Servers → Connection (`MCPCheck`, docs/design/mcp-check.md):
+            // `pi mcp list --json` in the home folder with the login shell's environment; the
+            // results go to `~/.akit/mcp-checks.json`, so the screen shows them too.
+            let servers = PiDoctor.piServers(env: env)
+            if servers.isEmpty {
+                lines.append(Line(.ok, "no MCP servers configured"))
             } else {
-                lines.append(Line(.problem, "pi mcp list couldn't be started", fix: "Check the Install section above, then akit doctor pi --live."))
+                let requests = MCPCheck.requests(for: servers, harness: .pi, context: nil, home: home)
+                let results = await MCPCheck.run(requests, in: env, shellTimeout: shellTimeout)
+                try? MCPCheckStore.save(results, home: home)
+                lines += results.sorted { $0.name < $1.name }.map(mcpLine)
             }
             // cli.md: `pi auth check` prints ready, not_ready or invalid. Never --credentials.
             if let provider, !provider.isEmpty {
@@ -975,33 +986,27 @@ public enum PiDoctor {
             add("Servers and sign-in", lines)
         }
 
-        /// `{servers: [{name, scope, enabled, state, tools: [names], error?}], errors: [text]}`
-        /// (`list` in dist/extensions/mcp/cli.js, 1.0.4), read leniently.
-        func mcpListLines(_ json: [String: Any]) -> [Line] {
-            var lines: [Line] = []
-            for server in json["servers"] as? [[String: Any]] ?? [] {
-                let name = server["name"] as? String ?? "?"
-                let state = server["state"] as? String ?? "unknown"
-                let tools = (server["tools"] as? [Any])?.count ?? 0
-                let scope = (server["scope"] as? String).map { $0 == "global" ? "" : " (\($0))" } ?? ""
-                switch state {
-                case "connected": lines.append(Line(.ok, "\(name)\(scope): connected, \(tools) tool\(tools == 1 ? "" : "s")"))
-                case "disabled": lines.append(Line(.ok, "\(name)\(scope): off"))
-                case "needs-auth":
-                    lines.append(Line(.problem, "\(name)\(scope): needs sign-in", fix: "Pi signs in through the browser and keeps the credentials.",
-                                      action: .mcpLogin(server: name)))
-                default:
-                    let error = (server["error"] as? String).map { ": " + PiDoctor.firstLine($0) } ?? ""
-                    lines.append(Line(.problem, "\(name)\(scope): \(state)\(error)",
-                                      fix: "akit doctor pi --live --json shows the whole error."))
-                }
+        /// One `MCPCheck` result as a doctor line; a problem's fix is an akit command.
+        func mcpLine(_ result: MCPCheckResult) -> Line {
+            let name = result.name
+            let detail = result.detail.map { ": " + PiDoctor.firstLine($0) } ?? ""
+            switch result.state {
+            case .connected:
+                let tools = result.tools?.count ?? 0
+                return Line(.ok, "\(name): connected, \(tools) tool\(tools == 1 ? "" : "s")")
+            case .off:
+                return Line(.ok, "\(name): off")
+            case .needsSignIn:
+                return Line(.problem, "\(name): needs sign-in", fix: "Pi signs in through the browser and keeps the credentials.",
+                            command: "akit mcp login \(PiDoctor.shellQuoted(name)) --harness pi", signIn: name)
+            case .missingVariables:
+                return Line(.problem, "\(name): missing \(result.missingVariables.joined(separator: ", "))\(detail)",
+                            fix: "Set the variables (MCP Servers → Needs variables → Set in Keychain…), then akit mcp check \(PiDoctor.shellQuoted(name)) --harness pi.",
+                            screen: "mcp")
+            default:
+                return Line(.problem, "\(name): \(result.state.title.lowercased())\(detail)",
+                            fix: "akit mcp check \(PiDoctor.shellQuoted(name)) --harness pi shows the whole answer.", screen: "mcp")
             }
-            for error in json["errors"] as? [String] ?? [] {
-                lines.append(Line(.problem, PiDoctor.firstLine(error.replacingOccurrences(of: home.path + "/", with: "~/")),
-                                  fix: "Fix the entry by hand; Pi skips it. Then: akit doctor pi --live."))
-            }
-            if lines.isEmpty { lines.append(Line(.ok, "no MCP servers configured")) }
-            return lines
         }
     }
 

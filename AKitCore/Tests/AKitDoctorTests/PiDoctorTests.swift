@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import AKitFoundation
+import AKitMCP
 @testable import AKitDoctor
 
 /// `akit doctor pi` in a temporary fake home; `pi` is a fake runner, never the real one.
@@ -201,26 +202,38 @@ struct PiDoctorTests {
         #expect(lines(await check(), .problem) == ["pi isn't on PATH"])
     }
 
-    @Test func theLiveCheckReadsPiMCPListAndAuthCheckWithoutCredentials() async throws {
+    @Test func theLiveCheckUsesTheMCPCheckAndAuthCheckWithoutCredentials() async throws {
         try setUpClean()
-        let pi = FakePi()
-        pi.mcpList = #"""
-            warning on stderr
+        try write(".pi/agent/mcp.json", #"{"mcpServers": {"tools": {"command": "my-mcp"}, "sentry": {"url": "https://mcp.sentry.dev/mcp"}, "broken": {"command": "my-mcp"}}}"#)
+        // MCPCheck runs pi with the login shell's environment: a fake shell and a fake pi here.
+        try write("bin/fake-shell", "#!/bin/sh\nshift 3\nexec /bin/sh -c \"$1\"\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/fake-shell").path)
+        try write("bin/pi", """
+            #!/bin/sh
+            cat <<'EOF'
             {"servers": [
               {"name": "tools", "scope": "global", "enabled": true, "state": "connected", "tools": ["a", "b"]},
               {"name": "sentry", "scope": "global", "enabled": true, "state": "needs-auth", "tools": []},
-              {"name": "broken", "scope": "project", "enabled": true, "state": "failed", "tools": [], "error": "spawn ENOENT\nmore"}
-            ], "errors": ["\#(home.path)/.pi/agent/mcp.json: server \"x\" must be an object"]}
-            """#
+              {"name": "broken", "scope": "global", "enabled": true, "state": "failed", "tools": [], "error": "spawn ENOENT"}
+            ], "errors": []}
+            EOF
+            exit 1
+
+            """)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: home.appending(path: "bin/pi").path)
+        var env = env
+        env.variables["SHELL"] = home.appending(path: "bin/fake-shell").path
+        let pi = FakePi()
         pi.auth = #"{"status": "not_ready", "provider": "anthropic"}"#
-        let report = await check(live: true, pi: pi)
+        let report = await PiDoctor.check(env: env, projects: [], live: true, sessions: false, runner: pi.runner, shellTimeout: 120)
         #expect(report.live)
-        #expect(lines(report, .ok).contains("tools: connected, 2 tools"))
-        #expect(Set(lines(report, .problem)) == ["sentry: needs sign-in", "broken (project): failed: spawn ENOENT",
-                                                 "~/.pi/agent/mcp.json: server \"x\" must be an object",
-                                                 "sign-in for anthropic: no usable credentials"])
+        #expect(lines(report, .ok).contains("tools: connected, 2 tools"), "\(report.text)")
+        #expect(Set(lines(report, .problem)) == ["sentry: needs sign-in", "broken: failed: spawn ENOENT",
+                                                 "sign-in for anthropic: no usable credentials"], "\(report.text)")
         let signIn = report.sections.flatMap(\.lines).first { $0.text == "sentry: needs sign-in" }
-        #expect(signIn?.command == "akit mcp login sentry --harness pi" && signIn?.action == .mcpLogin(server: "sentry"))
+        #expect(signIn?.command == "akit mcp login sentry --harness pi" && signIn?.signIn == "sentry")
+        // The same results as MCP Servers → Connection: saved for the screen.
+        #expect(MCPCheckStore.load(home: home).values.filter { $0.harness == "pi" }.count == 3)
         // Every fix is an akit command or a hand edit; none sends the user to pi.
         let fixes = report.sections.flatMap(\.lines).compactMap(\.fix)
         #expect(!fixes.contains { $0.contains("Run pi") || $0.contains("in a terminal") }, "\(fixes)")

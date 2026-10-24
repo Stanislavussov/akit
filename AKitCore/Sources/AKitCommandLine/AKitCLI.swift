@@ -95,10 +95,12 @@ public enum AKitCLI {
                                           the name in enabledMcpjsonServers of .claude/settings.local.json
                                           (only that key is shown; --yes writes it after a backup)
                                           Plugin servers have no switch: turn the plugin off with /plugin
-          akit mcp login NAME --harness pi [--yes]
-                                          Pi's OAuth sign-in for a server: shows the command; --yes runs
-                                          pi mcp login NAME (Pi opens the browser and keeps the
-                                          credentials; AKit never reads them) and says how it ended
+          akit mcp login NAME --harness claude|pi [--project PATH] [--yes]
+                                          The harness's OAuth sign-in for a server (the same as MCP
+                                          Servers → Connection → Sign In…): shows the command; --yes
+                                          runs claude/pi mcp login NAME in the folder (default ~) with
+                                          your login shell's environment; the harness opens the browser
+                                          and keeps the credentials, AKit never reads them
 
         Pi packages (Pi installs and removes them; AKit shows the pi command first, --yes runs it):
           akit pi packages [--json]       Every package in Pi's settings (global and projects), installed or not

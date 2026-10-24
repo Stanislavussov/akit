@@ -2,10 +2,10 @@ import AKitFoundation
 import Foundation
 
 /// The few `pi` commands AKit runs for the user, so every fix Pi doctor suggests is an `akit`
-/// command (`akit pi packages install|remove`, `akit mcp login NAME --harness pi`) or a button
+/// command (`akit pi packages install|remove`) or a button
 /// that runs the same thing. AKit only starts `pi` with fixed arguments and reports how it ended:
 /// Pi does the work and keeps its own files, and AKit never reads a token. Flags checked against
-/// `pi install|remove|update|mcp login --help` (1.0.4) and packages.md, mcp.md.
+/// `pi install|remove|update --help` (1.0.4) and packages.md. MCP sign-in is `MCPApprove.signIn`.
 public enum PiCommands {
     /// What a fix runs: the shown command line is exactly what is started.
     public enum Action: Codable, Hashable, Sendable {
@@ -16,8 +16,6 @@ public enum PiCommands {
         case installPackage(source: String, project: String?)
         /// `pi remove SOURCE [-l]`: removes it and its entry.
         case removePackage(source: String, project: String?)
-        /// `pi mcp login NAME`: Pi opens the browser and keeps the credentials itself.
-        case mcpLogin(server: String)
 
         /// The `akit` command that does the same.
         public var akitCommand: String {
@@ -27,7 +25,6 @@ public enum PiCommands {
                 "akit pi packages install \(PiDoctor.shellQuoted(source))\(project.map { " --project \(PiDoctor.shellQuoted($0))" } ?? "")"
             case .removePackage(let source, let project):
                 "akit pi packages remove \(PiDoctor.shellQuoted(source))\(project.map { " --project \(PiDoctor.shellQuoted($0))" } ?? "")"
-            case .mcpLogin(let server): "akit mcp login \(PiDoctor.shellQuoted(server)) --harness pi"
             }
         }
 
@@ -37,7 +34,6 @@ public enum PiCommands {
             case .installMissingPackages: "Install Missing Packages…"
             case .installPackage: "Install…"
             case .removePackage: "Remove…"
-            case .mcpLogin: "Sign In…"
             }
         }
 
@@ -47,7 +43,6 @@ public enum PiCommands {
             case .installMissingPackages: ["update", "--extensions"]
             case .installPackage(let source, let project): ["install", source] + (project == nil ? [] : ["-l"])
             case .removePackage(let source, let project): ["remove", source] + (project == nil ? [] : ["-l"])
-            case .mcpLogin(let server): ["mcp", "login", server, "--timeout", String(Int(Self.loginSeconds))]
             }
         }
 
@@ -59,15 +54,8 @@ public enum PiCommands {
             }
         }
 
-        /// Installs fetch from npm or git; a sign-in waits for the browser.
-        var timeout: TimeInterval {
-            switch self {
-            case .mcpLogin: Self.loginSeconds + 30
-            default: 600
-            }
-        }
-
-        static let loginSeconds: TimeInterval = 300
+        /// Installs fetch from npm or git.
+        var timeout: TimeInterval { 600 }
 
         /// What runs, for the user to read before saying yes.
         public func shown(home: URL) -> String {
@@ -82,6 +70,11 @@ public enum PiCommands {
         public let succeeded: Bool
         /// Pi's output, through `SecretFilter.masked`.
         public let output: String
+
+        public init(succeeded: Bool, output: String) {
+            self.succeeded = succeeded
+            self.output = output
+        }
     }
 
     /// Runs the action with `pi` from `executable` (nil: found on the environment's PATH).

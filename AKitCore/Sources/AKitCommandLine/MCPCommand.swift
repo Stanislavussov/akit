@@ -12,7 +12,7 @@ import Foundation
 extension AKitCLI {
     static let mcpUsage = "Use: akit mcp state [NAME] | akit mcp set NAME --harness claude|pi (--off everywhere | --off project --project PATH... | --on [--project PATH...]) [--yes]"
         + " | akit mcp set NAME --harness pi --exposure direct|deferred|codemode|hidden [--project PATH] [--yes]"
-        + " | akit mcp login NAME --harness pi [--yes]"
+        + " | akit mcp login NAME --harness claude|pi [--project PATH] [--yes]"
         + " | akit mcp connectors on|off [--yes] | akit mcp check [NAME] [--harness claude|pi] [--project PATH] | akit mcp approve NAME --project PATH [--yes]"
 
     static func mcp(_ args: inout Arguments, yes: Bool, includeUnmanaged: Bool, env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
@@ -32,15 +32,34 @@ extension AKitCLI {
         if exposure != nil, subcommand != "set" { throw Failure(message: mcpUsage) }
         switch subcommand {
         case "login":
-            // Pi's own OAuth sign-in (mcp.md): Pi opens the browser and stores the credentials; AKit
-            // only starts it and says how it ended.
-            guard let name, harnessName == "pi", offMode == nil, !turnOn, projectPaths.isEmpty, !includeUnmanaged else {
-                throw Failure(message: "Use: akit mcp login NAME --harness pi [--yes] (only Pi's sign-in is started by AKit).")
+            // The harness's own OAuth sign-in (`MCPApprove.signIn`, the same as MCP Servers →
+            // Connection → Sign In…): it opens the browser and keeps the credentials.
+            guard let name, let harnessName, offMode == nil, !turnOn, projectPaths.count <= 1, !includeUnmanaged else {
+                throw Failure(message: "Use: akit mcp login NAME --harness claude|pi [--project PATH] [--yes]")
             }
-            guard servers.contains(where: { $0.name == name && $0.usedBy.contains(.pi) }) else {
-                throw Failure(message: "No MCP server named \(name) that Pi uses.")
+            let harness: HarnessID
+            switch harnessName {
+            case "claude", "claude-code": harness = .claudeCode
+            case "pi": harness = .pi
+            default: throw Failure(message: "--harness is claude or pi.")
             }
-            return await runPiAction(.mcpLogin(server: name), yes: yes, env: env, out: out)
+            guard servers.contains(where: { $0.name == name && $0.usedBy.contains(harness) }) else {
+                throw Failure(message: "No MCP server named \(name) that \(harness.displayName) uses.")
+            }
+            let folder = projectPaths.first.map { resolve($0, cwd: cwd, env: env) } ?? env.homeDirectory
+            let program = harness == .pi ? "pi" : "claude"
+            let shown = "\(program) mcp login \(name)" + (harness == .pi ? " --timeout 300" : "")
+                + " (in \(folder.standardizedFileURL.path == env.homeDirectory.standardizedFileURL.path ? "~" : FileWalk.tilde(folder, home: env.homeDirectory)))"
+            guard yes else {
+                out("Runs: \(shown)\nRun again with --yes to do it.")
+                return 0
+            }
+            if let failure = await MCPApprove.signIn(name, harness: harness, folder: folder, in: env, timeout: 300) {
+                out("Ran: \(shown)\n\(failure)")
+                return 1
+            }
+            out("Ran: \(shown)\nSigned in. akit mcp check \(name) --harness \(harnessName) checks the connection.")
+            return 0
         case "state":
             if harnessName != nil || offMode != nil || turnOn || !projectPaths.isEmpty || yes || includeUnmanaged { throw Failure(message: mcpUsage) }
             let shown = name.map { name in servers.filter { $0.name == name } } ?? servers

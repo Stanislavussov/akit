@@ -1,5 +1,7 @@
 import AKitDoctor
 import AKitFoundation
+import AKitMCP
+import AKitModel
 import AppKit
 import SwiftUI
 
@@ -43,6 +45,8 @@ struct PiDoctorSheet: View {
                                         dismiss()
                                     } run: { action in
                                         pending = action
+                                    } signIn: { name in
+                                        Task { await signIn(name) }
                                     }
                                 }
                             }
@@ -64,7 +68,7 @@ struct PiDoctorSheet: View {
             HStack {
                 Button("Check Servers and Sign-In") { Task { await run(live: true) } }
                     .disabled(busy)
-                    .help("Runs pi mcp list and pi auth check --no-refresh; never reads a credential")
+                    .help("The MCP Servers screen's connection check for Pi's servers, and pi auth check --no-refresh; never reads a credential")
                 if checkingLive || running {
                     ProgressView().controlSize(.small)
                     Text(running ? "Pi is working…" : "Connecting to the servers…").font(.callout).foregroundStyle(.secondary)
@@ -115,6 +119,21 @@ struct PiDoctorSheet: View {
         .font(.callout)
     }
 
+    /// Sign In… of MCP Servers → Connection (`AppModel.signInMCP`: the harness's own `mcp login`,
+    /// then a new check of that server), then this check again.
+    private func signIn(_ name: String) async {
+        let env = HarnessEnvironment.current
+        // The doctor saved its check with the screen's; the screen's Sign In… needs that result.
+        model.mcpChecks = MCPCheckStore.load(home: env.homeDirectory)
+        let id = MCPCheckResult.key(harness: HarnessID.pi.rawValue, name: name, folder: env.homeDirectory.standardizedFileURL.path)
+        guard let server = model.mcpServers.first(where: { $0.name == name && $0.usedBy.contains(.pi) && $0.scope == .global }) else { return }
+        running = true
+        await model.signInMCP(server, harness: .pi, id: id)
+        running = false
+        if let failure = model.mcpFixErrors[id] { outcome = PiCommands.Outcome(succeeded: false, output: failure) }
+        await run(live: true)
+    }
+
     /// Runs the fix's `pi` command (the user said yes), then checks again.
     private func runPi(_ action: PiCommands.Action) async {
         running = true
@@ -133,6 +152,8 @@ struct PiDoctorSheet: View {
         let env = HarnessEnvironment.current
         let root = model.projectRoots.first.map(env.expand)
         report = await Task.detached { await PiDoctor.check(env: env, live: live, projectsRoot: root) }.value
+        // The live check saved its MCP results where MCP Servers → Connection reads them.
+        if live { model.mcpChecks = MCPCheckStore.load(home: env.homeDirectory) }
         busy = false
         checkingLive = false
     }
@@ -145,6 +166,7 @@ private struct LineRow: View {
     let busy: Bool
     let open: (SidebarSection) -> Void
     let run: (PiCommands.Action) -> Void
+    let signIn: (String) -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -156,7 +178,14 @@ private struct LineRow: View {
                 }
                 if let command = line.command {
                     Text(command).font(.callout.monospaced()).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if line.command != nil || line.screen != nil {
                     HStack(spacing: 8) {
+                        if let name = line.signIn {
+                            Button("Sign In…") { signIn(name) }
+                                .disabled(busy)
+                                .help("The same as Sign In… on MCP Servers → Connection: Pi opens the browser and keeps the credentials")
+                        }
                         if let action = line.action {
                             Button(action.title) { run(action) }
                                 .disabled(busy)
@@ -166,11 +195,13 @@ private struct LineRow: View {
                             Button("Open \(screen.title)") { open(screen) }
                                 .help("The \(screen.title) screen has the same action; it shows the change before it writes")
                         }
-                        Button("Copy Command") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(command, forType: .string)
+                        if let command = line.command {
+                            Button("Copy Command") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(command, forType: .string)
+                            }
+                            .help("The akit command shows the change; add --yes to write it")
                         }
-                        .help("The akit command shows the change; add --yes to write it")
                     }
                     .controlSize(.small)
                 }

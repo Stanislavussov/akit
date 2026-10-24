@@ -147,7 +147,8 @@ Pi exposure (2026-10-24, for Pi doctor): `exposure` on the server's entry in the
 defines it (`direct`, `deferred`, `codemode` = the default and removes the key, `hidden`; mcp.md
 "Control tool exposure"), through `SettingsFile` like the switches (`MCPSwitches.exposurePlan`,
 `akit mcp set NAME --harness pi --exposure …`, Switches → Exposure → Change). Not written as a
-project override of a user server. `akit mcp login NAME --harness pi` starts `pi mcp login`.
+project override of a user server. `akit mcp login NAME --harness claude|pi` is the CLI of
+`MCPApprove.signIn` (`mcp-check.md`).
 
 ## Layers (`layers.md`)
 

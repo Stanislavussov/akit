@@ -501,7 +501,7 @@ AKit запоминает выбор на этом Mac.
 1. В карточке **Pi** нажмите **Check Pi…**. Откроется окно **Pi Doctor**.
 2. Вверху справа написано, сколько проблем (problems) и предупреждений (warnings) найдено. Если всё в порядке, там «No problems found».
 3. Найдите строки с красным значком: это проблемы. Серая строка под ними говорит, что сделать.
-4. Нажмите **Check Servers and Sign-In**, чтобы проверить ещё и связь. AKit подключится к каждому MCP-серверу (`pi mcp list`) и проверит вход у провайдера по умолчанию (`pi auth check`). Пока идёт проверка, рядом крутится индикатор.
+4. Нажмите **Check Servers and Sign-In**, чтобы проверить ещё и связь. AKit проверяет MCP-серверы Pi так же, как блок **Connection** на экране MCP Servers, и результат виден там тоже. Ещё он проверяет вход у провайдера по умолчанию (`pi auth check`). Пока идёт проверка, рядом крутится индикатор.
 5. Исправьте файл и нажмите **Refresh**: проверка пройдёт заново.
 
 ![Окно Pi Doctor: вверху «3 problems, 1 warning»; разделы Install, Settings, Environment, MCP servers, Packages and extensions; красные строки «defaultThinkingLevel has a value Pi doesn't know» и «server "browser" runs playwright-mcp, which isn't found», оранжевая строка «unknown key showTokens», под каждой серая строка с тем, что сделать; внизу кнопки Check Servers and Sign-In, Copy Report, Refresh и Done](images/overview-pi-doctor.png)
@@ -549,7 +549,7 @@ AKit запоминает выбор на этом Mac.
 
 - **Install…** у пакета, который не установлен (`pi install`); **Install Missing Packages…**, если таких несколько (`pi update --extensions`).
 - **Remove…** у локального пакета, чьей папки нет (`pi remove`).
-- **Sign In…** у MCP-сервера, которому нужен вход (`pi mcp login`). Pi открывает браузер и сам хранит токены.
+- **Sign In…** у MCP-сервера, которому нужен вход. Это та же кнопка, что **Sign In…** в блоке **Connection** экрана MCP Servers: Pi открывает браузер и сам хранит токены.
 
 После **Run** AKit запускает команду, показывает ответ Pi и проверяет заново. В терминале то же: команда `akit …` из строки, с `--yes`.
 
@@ -1738,7 +1738,7 @@ akit remove skill ИМЯ --everywhere
 - `akit mcp set ИМЯ --harness claude|pi --on [--project ПУТЬ]` включает обратно.
 - `akit mcp connectors on|off` включает или выключает коннекторы claude.ai.
 - `akit mcp set ИМЯ --harness pi --exposure direct|deferred|codemode|hidden` меняет exposure сервера у Pi.
-- `akit mcp login ИМЯ --harness pi` запускает вход Pi в сервер через браузер (`pi mcp login`). AKit токены не читает.
+- `akit mcp login ИМЯ --harness claude|pi [--project ПУТЬ]` делает то же, что кнопка **Sign In…**: агент открывает браузер и сам хранит токены. AKit токены не читает.
 - `akit worktrees sync` дописывает записи Pi в новые worktree.
 - Без `--yes` команды `set`, `connectors` и `login` только показывают, что будет сделано.
 
