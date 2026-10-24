@@ -4,6 +4,7 @@ import SwiftUI
 /// App entry point.
 @main
 struct AKitApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model: AppModel
     @State private var rebuild = SelfRebuild()
     @State private var update = AppUpdate()
@@ -127,5 +128,21 @@ struct AKitApp: App {
                 .environment(guides)
         }
         .defaultSize(width: 820, height: 860)
+    }
+}
+
+/// Quit: AKit answers "later", commits what waits in the knowledge bases' commit queues (U2),
+/// all within 5 s, then lets the app go. What a hung flush didn't commit stays pending in the
+/// base's `.akit-pending.json` for the next launch.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        Task { @MainActor in
+            await KnowledgeModel.within(seconds: 5) {
+                // Step 2.2b: force-post and save every dirty canvas here, before the flush.
+                await KnowledgeModel.flushBeforeQuit()
+            }
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

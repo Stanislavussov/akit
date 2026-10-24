@@ -193,5 +193,8 @@ shot review-quality      $MAIN --section review --tab quality
 shot review-log          $MAIN --section review --tab log --select 20261015-091500-orders-service-42
 # New Review… in Local Workspace mode: a query starting with "/" is the workspace path.
 shot review-local        $MAIN --section review --query "$DEMO/work/orders-service" --add
+# Knowledge (guide knowledge.ru.md): the made-up base from tools/demo-home.sh.
+shot knowledge           $MAIN --section knowledge --select payments/orders-api
+shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
 
 exit $FAILED

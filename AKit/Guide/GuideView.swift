@@ -8,6 +8,7 @@ enum Guide: String, CaseIterable {
     /// The glossary: every label of the screens. Ask AKit reads it first (`AskAKit.glossaryGuide`).
     case terms
     case review
+    case knowledge
 
     var title: String {
         switch self {
@@ -15,6 +16,7 @@ enum Guide: String, CaseIterable {
         case .errorAnalysis: "Error Analysis"
         case .terms: "AKit Terms"
         case .review: "AKit Review"
+        case .knowledge: "Knowledge Base"
         }
     }
 

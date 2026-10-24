@@ -118,6 +118,27 @@ struct GuideDocumentTests {
         }
     }
 
+    /// The Knowledge screen's Guide button and the parts of `docs/guides/knowledge.ru.md`; every
+    /// `[text](guide#id)` link in it opens a section that guide has.
+    @Test func theKnowledgeGuideHasItsPartsAndItsLinksResolve() throws {
+        let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../docs/guides").standardizedFileURL
+        var documents: [String: GuideDocument] = [:]
+        for name in ["knowledge", "screens", "terms"] {
+            documents[name] = GuideDocument.parse(try String(contentsOf: folder.appending(path: "\(name).ru.md"), encoding: .utf8))
+        }
+        let document = try #require(documents["knowledge"])
+        #expect(!document.title.isEmpty)
+        for id in ["overview", "create", "spaces", "note", "commits", "details", "links"] {
+            #expect(document.path(to: id) == [id], "no section \(id)")
+        }
+        let text = try String(contentsOf: folder.appending(path: "knowledge.ru.md"), encoding: .utf8)
+        for match in text.matches(of: /\]\(([a-z-]*)#([A-Za-z0-9-]+)\)/) {
+            let guide = match.output.1.isEmpty ? "knowledge" : String(match.output.1)
+            let target = try #require(documents[guide], "no guide \(guide)")
+            #expect(target.path(to: String(match.output.2)) != nil, "knowledge.ru.md links to \(guide)#\(match.output.2), which doesn't exist")
+        }
+    }
+
     /// The sidebar opens `docs/guides/screens.ru.md` at its group and screen ids
     /// (`SidebarGroup`, `SidebarSection` raw values in the app).
     @Test func theScreensGuideHasASectionPerSidebarItem() throws {
@@ -126,7 +147,7 @@ struct GuideDocumentTests {
         let document = GuideDocument.parse(try String(contentsOf: file, encoding: .utf8))
         #expect(!document.title.isEmpty)
         let screens = ["installed": ["overview", "skills", "skillsSh", "mcp"], "setup": ["brain"],
-                       "activity": ["sessions", "usage"], "improve": ["insights", "lab", "analysis"], "work": ["review"]]
+                       "activity": ["sessions", "usage"], "improve": ["insights", "lab", "analysis"], "work": ["review", "knowledge"]]
         for (group, ids) in screens {
             #expect(document.path(to: group) == [group], "no section \(group)")
             for id in ids { #expect(document.path(to: id) == [group, id], "no section \(id) in \(group)") }
@@ -139,13 +160,13 @@ struct GuideDocumentTests {
     @Test func theTermsGuideHasAGroupPerScreenAndItsLinksResolve() throws {
         let folder = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../docs/guides").standardizedFileURL
         var documents: [String: GuideDocument] = [:]
-        for name in ["terms", "screens", "error-analysis", "review"] {
+        for name in ["terms", "screens", "error-analysis", "review", "knowledge"] {
             documents[name] = GuideDocument.parse(try String(contentsOf: folder.appending(path: "\(name).ru.md"), encoding: .utf8))
         }
         let terms = try #require(documents["terms"])
         #expect(!terms.title.isEmpty)
         for id in ["terms-sidebar", "terms-overview", "terms-skills", "terms-skillsSh", "terms-mcp", "terms-instructions", "terms-settings",
-                   "terms-sessions", "terms-usage", "terms-brain", "terms-insights", "terms-lab", "terms-analysis"] {
+                   "terms-sessions", "terms-usage", "terms-brain", "terms-insights", "terms-lab", "terms-analysis", "terms-knowledge"] {
             #expect(terms.path(to: id) == [id], "no section \(id)")
         }
         #expect(terms.path(to: "terms-sidebar-ask") == ["terms-sidebar", "terms-sidebar-ask"])

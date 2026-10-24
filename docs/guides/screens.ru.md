@@ -128,7 +128,7 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - **Setup**: что у агентов должно быть, то есть ваш эталон настройки. Экран Brain.
 - **Activity**: как агенты работали. Экраны Sessions и Usage.
 - **Improve**: что в настройке лишнее, почему сессии шли плохо и помогло ли исправление. Экраны Insights, Lab и Error Analysis.
-- **Work**: агенты, которые помогают в ежедневной работе. Экран Review: ИИ-ревью merge request'ов GitLab.
+- **Work**: агенты, которые помогают в ежедневной работе. Экран Review: ИИ-ревью merge request'ов GitLab. Экран Knowledge: база знаний о ваших сервисах и потоках, которую читают агенты.
 
 Отдельно от меню есть **Settings** (⌘,): папки проектов, тип этого Mac, репозиторий brain и правила отправки данных моделям.
 
@@ -236,7 +236,7 @@ Help → **Copy Diagnostics** кладёт в буфер обмена отчёт
 - **Setup**: [Brain](#brain). Что у агентов должно быть.
 - **Activity**: [Sessions](#sessions), [Usage](#usage). Как агенты работали.
 - **Improve**: [Insights](#insights), [Lab](#lab), [Error Analysis](#analysis). Что лишнее, что ломается и помог ли фикс.
-- **Work**: [Review](#review). Агенты, которые помогают в ежедневной работе: ревью merge request'ов.
+- **Work**: [Review](#review), [Knowledge](#knowledge). Агенты, которые помогают в ежедневной работе: ревью merge request'ов и база знаний.
 
 Что ещё есть в боковом меню:
 
@@ -3903,9 +3903,10 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 ## Work: агенты для ежедневной работы
 <!-- section: work -->
 
-Экраны этой группы помогают в обычной работе разработчика, а не в настройке агентов. Пока здесь один экран.
+Экраны этой группы помогают в обычной работе разработчика, а не в настройке агентов.
 
 - **Review** — ИИ-ревью merge request'ов GitLab. Агент Pi читает MR и предлагает комментарии. Вы одобряете каждый, и только тогда он попадает в GitLab как ваш черновик.
+- **Knowledge** — база знаний: заметки о сервисах, потоках и командах по пространствам. Это файлы Markdown в локальном git-репозитории без remote. Агенты читают их командами `akit kb`.
 
 ### Review
 <!-- section: review -->
@@ -3970,6 +3971,48 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - Отправку модели разрешает политика отправки: [Settings](#settings) → **Lab**. Каждый проход виден в [Lab](#lab) на вкладке **Sends**.
 - Общие роли и сценарии лежат в [Brain](#brain), в слое `review`.
 - Все надписи экрана: [словарь](terms#terms-review).
+
+### Knowledge
+<!-- section: knowledge -->
+
+**Что это:** база знаний этого Mac — папка `~/.akit/local/knowledge/<мир>` (например, `work`) с заметками Markdown по пространствам (`areas/payments`, `areas/logistics`). Это локальный git-репозиторий, у которого никогда нет remote. Агенты читают базу командами `akit kb areas` и `akit kb notes`. Вы пишете её здесь или в Obsidian.
+
+У этого экрана есть своё подробное руководство. Откройте его кнопкой **Guide** на этом экране или через Help → **Knowledge Base Guide**. Ниже — только вход.
+
+**Когда пригодится:**
+
+- «Агент каждый раз спрашивает, что делает `orders-api`» → **New Note…** в пространстве `payments`, вид `service`.
+- «Хочу поправить заметку» → откройте её и нажмите **Edit**: правка сразу сохраняется в файл.
+- «Удобнее писать в Obsidian» → **Open in Obsidian**.
+
+![Экран Knowledge: слева Spaces с logistics и payments, в середине заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Copy, Paste, Open in Obsidian и Delete…, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
+
+#### Что на экране
+<!-- section: knowledge-screen -->
+
+- **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Show in Finder** и **Delete…**.
+- Список заметок пространства: заголовок, вид (`service`, `flow`) и путь.
+- Панель заметки: вкладки открытых заметок, кнопки **Edit**, **Copy**, **Paste**, **Open in Obsidian**, **Delete…** и текст.
+- Панель инструментов: **New Area…**, **New Note…**, **Guide**. Если баз несколько — список **Base**.
+- Если базы нет: «No knowledge base» и кнопка **Create Base…**.
+
+Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note).
+
+#### Просто: первая заметка
+<!-- section: knowledge-first -->
+
+1. Нажмите **Create Base…** и **Create Base** (мир `work` или `personal`).
+2. **New Area…** → имя `payments` → **Add Area**.
+3. **New Note…** → **Name** `orders-api`, **Kind** `service` → **Add Note**.
+4. Нажмите **Edit** и напишите, что делает сервис.
+
+> **Важно:** кнопки Commit нет. AKit коммитит правки сам: когда вы закрываете вкладку, через 5 минут без правок и при выходе. Подробнее: [коммиты правок](knowledge#commits).
+
+#### Связи с другими экранами
+<!-- section: knowledge-links -->
+
+- Где может жить база, решает тип Mac в [Settings](#settings): на рабочем Mac — только в `~/.akit/local/knowledge`.
+- Все надписи экрана: [словарь](terms#terms-knowledge).
 
 ## Settings
 <!-- section: settings -->

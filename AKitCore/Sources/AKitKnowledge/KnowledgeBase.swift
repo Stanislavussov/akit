@@ -256,6 +256,66 @@ public struct KnowledgeBase: Sendable, Hashable {
         return path
     }
 
+    /// Creates the folder `areas/NAME/`. Nothing to commit: git keeps no empty folders, and the
+    /// area's first note commits it.
+    public func newArea(_ name: String) throws(Failure) {
+        let name = Self.nfc(name.trimmingCharacters(in: .whitespaces))
+        guard Self.validName(name) else {
+            throw Failure(message: "“\(name)” can't be used: an area is one folder name, without /, and doesn't start with a dot.")
+        }
+        let folder = areasFolder.appending(path: name, directoryHint: .isDirectory)
+        if FileManager.default.fileExists(atPath: folder.path) { throw Failure(message: "The area \(name) exists already.") }
+        do { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) } catch {
+            throw Failure(message: "Couldn't create areas/\(name): \(error.localizedDescription)")
+        }
+    }
+
+    /// The file of a note id (`payments/orders-api` → `areas/payments/orders-api.md`).
+    public func noteFile(_ id: String) -> URL { root.appending(path: notePath(id)) }
+
+    /// The base-relative path of a note id.
+    public func notePath(_ id: String) -> String { "areas/\(id).md" }
+
+    /// Writes a note's whole text atomically, byte for byte (P4), and returns its base-relative
+    /// path for the commit queue (U2). Only an existing note under `areas/` is written.
+    @discardableResult
+    public func save(note id: String, text: String) throws(Failure) -> String {
+        let path = notePath(id)
+        guard KnowledgeGit.isInside(path), FileWalk.isRegularFile(noteFile(id)) else {
+            throw Failure(message: "No note \(id) in \(root.path).")
+        }
+        do { try KnowledgeNote(text: text).write(to: noteFile(id)) } catch {
+            throw Failure(message: "Couldn't save \(path): \(error.localizedDescription)")
+        }
+        return path
+    }
+
+    /// Moves a note, or with `area` a whole area, to the Trash and commits the removal at once:
+    /// one commit, only that path (P8).
+    public func moveToTrash(note id: String? = nil, area: String? = nil, env: HarnessEnvironment,
+                            trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
+        let path: String, label: String
+        if let id {
+            (path, label) = (notePath(id), "note \(id)")
+        } else if let area, Self.validName(area) {
+            (path, label) = ("areas/\(area)", "area \(area)")
+        } else {
+            throw Failure(message: "Nothing to move to the Trash.")
+        }
+        let url = root.appending(path: path)
+        guard KnowledgeGit.isInside(path), FileManager.default.fileExists(atPath: url.path) else {
+            throw Failure(message: "No \(label) in \(root.path).")
+        }
+        do { _ = try trash(url) } catch {
+            throw Failure(message: "Couldn't move \(path) to the Trash: \(error.localizedDescription)")
+        }
+        do {
+            try await KnowledgeGit(base: root, env: env).commit(paths: [path], message: "Delete \(label)")
+        } catch {
+            throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: \(error.message)")
+        }
+    }
+
     /// One file or folder name: no `/`, not `.` or `..`, not hidden, not empty.
     static func validName(_ name: String) -> Bool {
         !name.isEmpty && !name.contains("/") && !name.hasPrefix(".") && !name.contains(where: \.isNewline) && name.count <= 200

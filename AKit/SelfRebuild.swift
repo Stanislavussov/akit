@@ -82,6 +82,8 @@ final class SelfRebuild {
             if Self.requestedAtLaunch { FileHandle.standardError.write(Data("rebuild: \(reason)\n\(output)\n".utf8)) }
             return
         }
+        // The new instance must not start while note edits wait for their commit (U2).
+        await KnowledgeModel.within(seconds: 5) { await KnowledgeModel.flushBeforeQuit() }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         do {

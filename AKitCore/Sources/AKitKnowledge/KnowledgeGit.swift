@@ -28,9 +28,7 @@ public struct KnowledgeGit: Sendable {
     @discardableResult
     public func commit(paths: [String], message: String, lockTimeout: TimeInterval = 2) async throws(Failure) -> Bool {
         guard !paths.isEmpty else { return false }
-        if let bad = paths.first(where: { $0.isEmpty || $0.hasPrefix("/") || $0.split(separator: "/").contains("..") }) {
-            throw Failure(message: "\(bad) is not a path inside the base.")
-        }
+        try Self.checkInside(paths)
         let lockFile = base.appending(path: KnowledgeBase.queueLockName)
         let lock: FileLock?
         do { lock = try FileLock.acquire(lockFile, timeout: lockTimeout) } catch {
@@ -40,6 +38,15 @@ public struct KnowledgeGit: Sendable {
             throw Failure(message: "Another AKit is writing to the knowledge base (\(lockFile.lastPathComponent) is held); try again in a moment.")
         }
         defer { lock.release() }
+        return try await commit(paths: paths, message: message, alreadyLocked: lock)
+    }
+
+    /// The commit itself, for a caller that holds the base's git lock already (the commit queue's
+    /// flush, which must not take it a second time: a second `flock` on a new descriptor of the
+    /// same file would wait for the first one, in the same process too).
+    func commit(paths: [String], message: String, alreadyLocked lock: FileLock) async throws(Failure) -> Bool {
+        guard !paths.isEmpty else { return false }
+        try Self.checkInside(paths)
         let remotes = try await run(["remote"])
         if !remotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw Failure(message: "\(base.path) has a git remote (\(remotes.split(separator: "\n").joined(separator: ", "))), and a knowledge base never has one, so nothing was committed. Remove it: git -C \(base.path) remote remove <name>")
@@ -53,6 +60,15 @@ public struct KnowledgeGit: Sendable {
         guard !(try await run(["diff", "--cached", "--name-only", "--"] + staged)).isEmpty else { return false }
         _ = try await run(["-c", "commit.gpgsign=false", "commit", "--quiet", "--no-verify", "-m", message, "--"] + staged)
         return true
+    }
+
+    /// Every path is base-relative and stays inside the base.
+    static func checkInside(_ paths: [String]) throws(Failure) {
+        if let bad = paths.first(where: { !isInside($0) }) { throw Failure(message: "\(bad) is not a path inside the base.") }
+    }
+
+    static func isInside(_ path: String) -> Bool {
+        !path.isEmpty && !path.hasPrefix("/") && !path.split(separator: "/").contains("..")
     }
 
     /// The base's remote names; empty when it has none. nil when it is not a git repo.

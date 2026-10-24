@@ -44,6 +44,10 @@ import SwiftUI
 /// scrolls to that table, `--query unused` turns on Unused Only and `--query open` opens every MCP server's tool list; it
 /// imports first, so give it `--delay 8`.
 ///
+/// Knowledge (`--section knowledge`): `--select <note id>` (`payments/orders-api`) opens that note; `--tab edit` shows
+/// it in Edit, `--tab delete` asks Delete…, `--tab new-area|new-note|create-base` opens that sheet. The capture
+/// prints the screen's state as text (base, spaces, notes, tabs, the note in view), so a check needs no image.
+///
 /// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
 /// menu's items (to check which places get Ask AKit About This);
 /// `--ask` opens the Ask AKit panel with a made-up chat about the Listing budget (no model call).
@@ -198,6 +202,9 @@ enum DebugSnapshot {
                 try? await Task.sleep(for: .milliseconds(200))
             }
             NotificationCenter.default.removeObserver(observer)
+        }
+        if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
+            print(manifest)
         }
         let bounds = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { exit(1) }

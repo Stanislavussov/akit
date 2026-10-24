@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds a made-up home folder for README screenshots: a brain with a few layers and skills,
-# two projects and some MCP servers. Nothing in it comes from a real machine.
+# two projects, some MCP servers and a knowledge base. Nothing in it comes from a real machine.
 #
 #   tools/demo-home.sh /tmp/akit-demo      (then: make screenshots)
 set -euo pipefail
@@ -1060,5 +1060,88 @@ git -C "$LOCAL" add -A && GIT_AUTHOR_NAME="Alice" git -C "$LOCAL" commit -qm "Te
 # Not committed yet: a changed controller and a new file.
 cat >> "$LOCAL/src/Orders/OrdersController.cs" <<<"// GET /orders.csv: OrderCsv.Write(store.All())"
 file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."
+
+# Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world with two spaces and
+# six notes, committed. Maps come with step 2.3.
+"$AKIT" kb init --world work >/dev/null
+KB="$DEMO/.akit/local/knowledge/work"
+file "$KB/areas/payments/orders-api.md" <<'EOF'
+---
+kind: service
+repo: git@example.com:shop/orders-api.git
+files: [src/events/order-created.ts]
+---
+# orders-api
+
+Takes orders from the shop and publishes `order.created` for [[billing]].
+
+## Events
+
+- order created: sent once the order is saved; see [[order-to-billing]].
+- retry: a failed publish is retried three times, then the order waits in the outbox.
+
+## Owners
+
+The checkout team.
+EOF
+file "$KB/areas/payments/billing.md" <<'EOF'
+---
+kind: service
+repo: git@example.com:shop/billing.git
+---
+# billing
+
+Bills each order once.
+
+## Invoices
+
+An invoice is made from `order.created` and sent by email the same day.
+EOF
+file "$KB/areas/payments/flows/order-to-billing.md" <<'EOF'
+---
+kind: flow
+---
+# order-to-billing
+
+[[orders-api]] publishes the `order.created` event; [[billing]] reads it and makes the invoice.
+A duplicate event is ignored by its order id.
+EOF
+file "$KB/areas/logistics/warehouse.md" <<'EOF'
+---
+kind: service
+repo: git@example.com:shop/warehouse.git
+---
+# warehouse
+
+Keeps the stock and reserves items for paid orders.
+EOF
+file "$KB/areas/logistics/shipping.md" <<'EOF'
+---
+kind: service
+---
+# shipping
+
+Books the courier and tracks each parcel.
+EOF
+file "$KB/areas/logistics/flows/pick-and-ship.md" <<'EOF'
+---
+kind: flow
+---
+# pick-and-ship
+
+[[warehouse]] picks the items, then [[shipping]] books the courier.
+EOF
+git -C "$KB" add -A && git -C "$KB" commit -qm "Add the payments and logistics notes"
+
+# The repo that orders-api's note points at (repo: and files:), found under ~/Projects.
+ORDERS="$DEMO/Projects/orders-api"
+mkdir -p "$ORDERS" && git -C "$ORDERS" init -q
+git -C "$ORDERS" remote add origin "git@example.com:shop/orders-api.git"
+file "$ORDERS/src/events/order-created.ts" <<'EOF'
+export type OrderCreated = { orderId: string; total: number };
+EOF
+git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Add the order created event"
+echo "export const retries = 3;" >> "$ORDERS/src/events/order-created.ts"
+git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Retry a failed publish three times"
 
 echo "Demo home: $DEMO"

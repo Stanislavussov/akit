@@ -1,6 +1,7 @@
 # Knowledge base: maps of systems and notes an agent can search
 
-Status: designed 2026-10-24 (grilling with the user); nothing built yet. Steps in [Steps](#steps).
+Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (base, notes, links,
+`akit kb`, the Knowledge screen, the commit queue, guide `knowledge.ru.md`). Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -75,7 +76,7 @@ panel on the right with **Open in Obsidian**; **Inbox** and **Lint** as tabs of 
 
 | Step | What | Built |
 |---|---|---|
-| 1 | Base folder + git without remote; Knowledge screen: spaces, note list, note panel (read and edit), **Open in Obsidian** | — |
+| 1 | Base folder + git without remote; Knowledge screen: spaces, note list, note panel (read and edit), **Open in Obsidian** | 2026-10-24: `AKitKnowledge` (base, notes, links, `KnowledgeGit`, `KnowledgeCommitQueue`), `akit kb areas/notes/init/new-note`, the Knowledge screen with New Area…, New Note…, Delete…, Edit, Copy, Paste; batch commits on tab close, after 5 min, at quit and rebuild |
 | 2 | Excalidraw in the app, offline: map tabs, block ↔ `[[note]]`, jump to another map, relations from arrows | — |
 | 3 | SQLite index (FTS + graph); `akit kb search / show / neighbors / context --json`; the Pi template in the core layer; the `/akit` skill | — |
 | 4 | Lint: block without a note, unbound arrow, broken repo/file references | — |
