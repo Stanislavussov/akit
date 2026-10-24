@@ -22,6 +22,14 @@ final class KnowledgeModel {
     private(set) var areas: [KnowledgeBase.Area] = []
     var area: String?
     private(set) var notes: [KnowledgeBase.NoteEntry] = []
+    /// The maps (`.excalidraw` ids, `payments/maps/overview`) of the chosen area.
+    private(set) var maps: [String] = []
+    /// The map in view (read only until 2.2b); nil shows the note panel alone.
+    private(set) var map: String?
+    /// The `.excalidraw` text of the map in view, as on disk when it was opened.
+    private(set) var mapScene = ""
+    /// A note opened from the map (a click on its block) shows beside the map.
+    private(set) var noteBesideMap = false
     /// Open note tabs (ids), in the order they were opened.
     private(set) var tabs: [String] = []
     private(set) var note: String?
@@ -53,6 +61,8 @@ final class KnowledgeModel {
 
     var noteEntry: KnowledgeBase.NoteEntry? { note.flatMap { id in allNotes.first { $0.id == id } } }
     private var allNotes: [KnowledgeBase.NoteEntry] = []
+    /// Every note and map of the base, for resolving a map's links (P1).
+    private var targets = KnowledgeLinks(notes: [], maps: [])
 
     /// The kinds New Note… and Properties offer: the ones in `kb.yaml`, in its order.
     var kinds: [String] { kindsFile.names }
@@ -75,6 +85,8 @@ final class KnowledgeModel {
         if let select, allNotes.contains(where: { $0.id == select }) {
             open(select)
             if DebugSnapshot.options?.tab == "delete" { deleteRequest = select }
+        } else if let select, targets.maps.contains(select) {
+            open(map: select)
         }
     }
 
@@ -88,6 +100,7 @@ final class KnowledgeModel {
     func reload() {
         guard let base else {
             (areas, notes, allNotes, tabs, note, text) = ([], [], [], [], nil, "")
+            (maps, map, mapScene, targets) = ([], nil, "", KnowledgeLinks(notes: [], maps: []))
             kindsFile = .defaults
             return
         }
@@ -100,6 +113,9 @@ final class KnowledgeModel {
         if area == nil { area = areas.first?.name }
         allNotes = (try? base.notes()) ?? []
         notes = allNotes.filter { $0.area == area }
+        targets = base.linkTargets()
+        maps = Self.maps(of: area, in: targets)
+        if let map, !targets.maps.contains(map) { self.map = nil }
         tabs = tabs.filter { id in allNotes.contains { $0.id == id } }
         if let note, !tabs.contains(note) { self.note = nil }
         if note == nil { note = tabs.last }
@@ -111,21 +127,69 @@ final class KnowledgeModel {
         let old = self.base
         Task { await flush(old) }
         self.base = base
-        (area, tabs, note) = (nil, [], nil)
+        (area, tabs, note, map) = (nil, [], nil, nil)
         reload()
     }
 
     func choose(area: String?) {
         self.area = area
         notes = allNotes.filter { $0.area == area }
+        maps = Self.maps(of: area, in: targets)
+    }
+
+    static func maps(of area: String?, in targets: KnowledgeLinks) -> [String] {
+        guard let area else { return [] }
+        return targets.maps.filter { $0.hasPrefix(area + "/") }
+    }
+
+    // MARK: - Maps
+
+    /// Shows a map (read only): its file's text goes to the canvas.
+    func open(map id: String) {
+        guard let base, targets.maps.contains(id) else { return }
+        do {
+            mapScene = try String(contentsOf: base.areasFolder.appending(path: id + ".excalidraw"), encoding: .utf8)
+        } catch {
+            problem = "Can't read the map \(id): \(error.localizedDescription)"
+            return
+        }
+        let area = String(id.split(separator: "/").first ?? "")
+        if area != self.area { choose(area: area) }
+        map = id
+        noteBesideMap = false
+    }
+
+    /// Back to the note panel alone.
+    func closeMap() {
+        (map, mapScene, noteBesideMap) = (nil, "", false)
+    }
+
+    /// A block or arrow of the map in view was opened (a click in view mode): a note link opens
+    /// the note beside the map, a map link that map, a web link the default browser.
+    func openLink(_ link: String) {
+        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        switch targets.resolve(trimmed, from: map ?? area ?? "") {
+        case .note(let id):
+            open(id)
+            noteBesideMap = true
+        case .map(let id):
+            open(map: id)
+        case .missing:
+            notice = "The link \(trimmed) points to no note or map in this base."
+        case .ambiguous(let ids):
+            notice = "The link \(trimmed) fits more than one: \(ids.joined(separator: ", "))."
+        }
     }
 
     // MARK: - Tabs
 
     func open(_ id: String) {
         guard let entry = allNotes.first(where: { $0.id == id }) else { return }
-        area = entry.area
-        notes = allNotes.filter { $0.area == entry.area }
+        if entry.area != area { choose(area: entry.area) }
         if !tabs.contains(id) { tabs.append(id) }
         note = id
         readNote()
@@ -467,6 +531,8 @@ final class KnowledgeModel {
                      "bases: " + bases.map { $0.name + ($0 == sampleBase ? " (sample)" : "") }.joined(separator: ", ")]
         lines.append("areas: " + areas.map { "\($0.name)\($0.name == area ? "*" : "") (\($0.notes))" }.joined(separator: ", "))
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
+        lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
+        if let map { lines.append("map: \(map), view only" + (noteBesideMap && note != nil ? ", note beside it" : "")) }
         lines.append("tabs: " + tabs.joined(separator: ", "))
         if let entry = noteEntry {
             lines.append("note: \(entry.title) (\(entry.id)\(entry.kind.map { ", kind \($0)" } ?? "")), \(editing ? "Edit" : "read")")

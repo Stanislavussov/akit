@@ -6,7 +6,9 @@ Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (b
 folder per world in `bases.json`, `akit kb path`, Settings → Knowledge; 1.5, K26: the sample base
 `akit kb seed`, Add/Remove Sample Base…, `akit kb rm`); spike 2.0 (Excalidraw
 bundle, results below) done 2026-10-24; 2.1 (reading `.excalidraw`, the map graph, `akit kb maps`,
-`relations`, `new-map`, two seeded maps) built 2026-10-24. Steps in [Steps](#steps).
+`relations`, `new-map`, two seeded maps) built 2026-10-24; 2.2a (the read-only map view: Maps
+in the list, view mode, a click on a block opens its note, map snapshots) built 2026-10-24.
+Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -144,6 +146,16 @@ from the demo base, and `cli-draft.excalidraw` (the raw JSON draft). The fixture
 `.git`, which can't be committed inside this repo. Decided in 2.1: the read commands accept
 `--base PATH` for a folder with `areas/` and no git (`KnowledgeBase.isReadable`); every write
 still needs a base with git (`isBase`) and is refused there.
+
+How 2.2a shows a map: a click in the list's Maps opens it in place of the note panel, in view mode
+(`viewModeEnabled`, from `window.akitOptions`, which AKit sets with a user script before the page's
+scripts). Excalidraw opens a link on a click anywhere on the element only when its canvas is at least
+730 px wide; narrower, it counts as a phone and opens links only from the small link icon. So in view
+mode the bridge finds the clicked element itself (the topmost element with a link whose box holds the
+point, shapes before arrows; a drag of more than 4 px is a pan) and posts `linkOpen`; Excalidraw's
+own `onLinkOpen` is only prevented. A note link opens that note beside the map, a map link that map,
+an `http(s)` link the default browser. A synthetic AppKit click does not reach a web view, so
+snapshots (`--click` on the canvas) send pointer events into the page (`akitClick`).
 
 How 2.1 reads a map (`ExcalidrawFile`, `MapGraph`): a block is a live shape whose `link`
 resolves to a note (P1, from the map's path); its label is its bound text or, in a CLI draft,

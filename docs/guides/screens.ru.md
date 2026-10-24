@@ -3991,12 +3991,13 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 <!-- section: knowledge-screen -->
 
 - **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**.
-- Список заметок пространства: заголовок, вид (`service`, `flow`) и путь.
+- Список заметок пространства: заголовок, вид (`service`, `flow`) и путь. Над ним часть **Maps**, если у пространства есть карты.
+- Карта (вместо панели заметки, когда вы её открыли): **View only**, **Show in Finder**, **Close Map**. Нажатие на блок открывает его заметку рядом.
 - Панель заметки: вкладки открытых заметок, кнопки **Edit**, **Properties** (вид и поля заметки), **Copy**, **Paste**, **Open in Obsidian**, **Delete…** и текст.
 - Панель инструментов: **New Area…**, **New Note…**, **Kinds…** (виды заметок и их поля), меню **Sample Base** (**Add Sample Base…**, **Remove Sample Base…**: пример базы с выдуманными заметками), **Guide**. Если баз несколько — список **Base**.
 - Если базы нет: «No knowledge base» и кнопки **Create Base…** и **Add Sample Base…**.
 
-Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings).
+Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [карты](knowledge#maps), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings).
 
 #### Просто: первая заметка
 <!-- section: knowledge-first -->

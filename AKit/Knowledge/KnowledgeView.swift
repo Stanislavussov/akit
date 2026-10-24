@@ -37,11 +37,7 @@ struct KnowledgeView: View {
                 .background(.orange.opacity(0.15))
                 .overlay(alignment: .bottom) { Divider() }
             }
-            if DebugSnapshot.options?.tab == "map" {
-                // Spike 2.0: the map canvas alone, showing the `.excalidraw` file `--query` names.
-                MapCanvasView(scene: DebugSnapshot.options?.query.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
-                    ?? #"{"type":"excalidraw","version":2,"elements":[]}"#)
-            } else if model.base == nil {
+            if model.base == nil {
                 if model.loaded {
                     ContentUnavailableView {
                         Label("No knowledge base", systemImage: "books.vertical")
@@ -59,7 +55,14 @@ struct KnowledgeView: View {
                 HSplitView {
                     spaces.frame(minWidth: 150, idealWidth: 180, maxWidth: 260)
                     noteList.frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
-                    NotePanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                    if model.map != nil {
+                        MapPanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                        if model.noteBesideMap, model.note != nil {
+                            NotePanel().frame(minWidth: 360, idealWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    } else {
+                        NotePanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
         }
@@ -169,28 +172,64 @@ struct KnowledgeView: View {
         }
     }
 
+    /// The selection of the middle list: a note id, or `map:` and a map id.
+    private var listSelection: Binding<String?> {
+        Binding(get: { model.map.map { "map:" + $0 } ?? model.note }, set: { value in
+            guard let value else { return }
+            if value.hasPrefix("map:") {
+                model.open(map: String(value.dropFirst("map:".count)))
+            } else {
+                model.closeMap()
+                model.open(value)
+            }
+        })
+    }
+
     private var noteList: some View {
-        List(selection: Binding(get: { model.note }, set: { if let id = $0 { model.open(id) } })) {
-            ForEach(model.notes, id: \.id) { note in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(note.title).fontWeight(.medium).lineLimit(1)
-                    Text([note.kind, note.id.split(separator: "/").dropFirst().joined(separator: "/")].compactMap(\.self).joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                .padding(.vertical, 2)
-                .tag(Optional(note.id))
-                .contextMenu {
-                    Button("Show in Finder") {
-                        if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
+        List(selection: listSelection) {
+            if !model.maps.isEmpty {
+                Section("Maps") {
+                    ForEach(model.maps, id: \.self) { id in
+                        Label(id.split(separator: "/").dropFirst(2).joined(separator: "/"), systemImage: "point.3.connected.trianglepath.dotted")
+                            .lineLimit(1)
+                            .tag(Optional("map:" + id))
+                            .help("areas/\(id).excalidraw: click to view the map; click a block on it to open its note")
+                            .contextMenu {
+                                Button("Show in Finder") {
+                                    if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.areasFolder.appending(path: id + ".excalidraw")]) }
+                                }
+                            }
                     }
-                    Button("Delete…", role: .destructive) { model.deleteRequest = note.id }
                 }
+            }
+            if model.maps.isEmpty {
+                notesRows
+            } else {
+                Section("Notes") { notesRows }
             }
         }
         .overlay {
-            if model.notes.isEmpty, model.area != nil {
+            if model.notes.isEmpty, model.maps.isEmpty, model.area != nil {
                 ContentUnavailableView("No notes", systemImage: "doc.text",
                                        description: Text("New Note… writes the first one in this space."))
+            }
+        }
+    }
+
+    @ViewBuilder private var notesRows: some View {
+        ForEach(model.notes, id: \.id) { note in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.title).fontWeight(.medium).lineLimit(1)
+                Text([note.kind, note.id.split(separator: "/").dropFirst().joined(separator: "/")].compactMap(\.self).joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .padding(.vertical, 2)
+            .tag(Optional(note.id))
+            .contextMenu {
+                Button("Show in Finder") {
+                    if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
+                }
+                Button("Delete…", role: .destructive) { model.deleteRequest = note.id }
             }
         }
     }

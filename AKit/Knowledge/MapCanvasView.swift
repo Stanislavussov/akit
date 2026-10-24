@@ -8,8 +8,11 @@ import WebKit
 /// every http(s) load, and other navigations are cancelled. The page talks to AKit through the
 /// `kb` message handler (`web/excalidraw/bridge.js` describes the messages).
 struct MapCanvasView: NSViewRepresentable {
-    /// The `.excalidraw` text to show once the canvas is ready.
+    /// The `.excalidraw` text to show once the canvas is ready; a new text replaces the scene.
     var scene: String
+    /// Excalidraw's view mode (`viewModeEnabled`): nothing can be edited, and a click on a block or
+    /// arrow opens its link. Editing comes in 2.2b.
+    var viewMode = true
     /// Every message from the page (`type`: ready, sceneLoaded, linkOpen, problem).
     var onMessage: (MapCanvasMessage) -> Void = { _ in }
 
@@ -25,10 +28,16 @@ struct MapCanvasView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(scene: scene, onMessage: onMessage) }
 
+    /// What the page reads before its scripts run (the CSP doesn't apply to a user script).
+    static func optionsScript(viewMode: Bool) -> WKUserScript {
+        WKUserScript(source: "window.akitOptions = { viewMode: \(viewMode) };", injectionTime: .atDocumentStart, forMainFrameOnly: true)
+    }
+
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(context.coordinator.files, forURLScheme: Self.scheme)
         configuration.userContentController.add(context.coordinator, name: "kb")
+        configuration.userContentController.addUserScript(Self.optionsScript(viewMode: viewMode))
         // Nothing is kept between runs: no cookies, caches or storage on disk.
         configuration.websiteDataStore = .nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -40,6 +49,10 @@ struct MapCanvasView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.onMessage = onMessage
+        if context.coordinator.scene != scene {
+            context.coordinator.scene = scene
+            if context.coordinator.isReady { Task { await context.coordinator.loadScene() } }
+        }
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -55,10 +68,19 @@ struct MapCanvasView: NSViewRepresentable {
         weak var webView: WKWebView?
         /// Navigations the delegate cancelled (anything but the map page itself).
         private(set) var cancelledNavigations = 0
+        /// The page posted `ready`: its API is there.
+        private(set) var isReady = false
+        /// The element count of the last `sceneLoaded`; nil until a scene is on the canvas.
+        private(set) var loadedElements: Int?
+
+        /// The canvas on screen, for snapshots (one map at a time).
+        private(set) static weak var current: Coordinator?
 
         init(scene: String, onMessage: @escaping (MapCanvasMessage) -> Void) {
             self.scene = scene
             self.onMessage = onMessage
+            super.init()
+            Self.current = self
         }
 
         /// Installs the http(s) block, then loads the page.
@@ -83,20 +105,46 @@ struct MapCanvasView: NSViewRepresentable {
             let event = MapCanvasMessage(type: type, body: body)
             onMessage(event)
             if DebugSnapshot.options != nil { print("map: \(type) \(Self.json(body))") }
-            if type == "ready" { Task { await loadScene() } }
-            if type == "sceneLoaded", DebugSnapshot.options != nil { Task { await printDiagnostics() } }
+            switch type {
+            case "ready":
+                isReady = true
+                Task { await loadScene() }
+            case "sceneLoaded":
+                loadedElements = (body["elements"] as? NSNumber)?.intValue ?? 0
+            default: break
+            }
         }
 
-        /// Snapshots: what the page loaded and what was refused, as text (no image needed).
-        /// WebKit lists no resource timing for a custom scheme, so the served paths come from
-        /// the scheme handler.
-        func printDiagnostics() async {
-            let result = (try? await call("akitDiagnostics")) as? [String: Any] ?? [:]
-            for name in result["resources"] as? [String] ?? [] { print("map resource: \(name)") }
+        /// Snapshots: waits (up to `timeout` seconds) until the page is ready and a scene is on the
+        /// canvas, then (up to 3 s more) until no font reports `error`: right after a fresh build
+        /// a font can report `error` first and `loaded` a moment later (spike 2.0). Prints what
+        /// the page loaded and what was refused, as text (no image needed). WebKit lists no
+        /// resource timing for a custom scheme, so the served paths come from the scheme handler.
+        static func waitAndPrint(timeout: Double = 10) async {
+            let deadline = Date.now.addingTimeInterval(timeout)
+            while current?.isReady != true || current?.loadedElements == nil, Date.now < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let canvas = current, canvas.isReady, let elements = canvas.loadedElements else {
+                print("map: not loaded after \(Int(timeout)) s (ready \(current?.isReady ?? false))")
+                return
+            }
+            var result: [String: Any] = [:]
+            let fontDeadline = Date.now.addingTimeInterval(3)
+            repeat {
+                result = (try? await canvas.call("akitDiagnostics")) as? [String: Any] ?? [:]
+                let fonts = result["fonts"] as? [String] ?? []
+                if !fonts.contains(where: { $0.hasSuffix(" error") }) { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            } while Date.now < fontDeadline
+            // Excalidraw draws on the next animation frames.
+            try? await Task.sleep(for: .milliseconds(400))
             for font in result["fonts"] as? [String] ?? [] { print("map font: \(font)") }
             for problem in result["problems"] as? [String] ?? [] { print("map problem: \(problem)") }
-            for path in files.served { print("map served: \(path)") }
-            print("map refused loads: \(files.refused), cancelled navigations: \(cancelledNavigations)")
+            for link in result["links"] as? [String] ?? [] { print("map link: \(link)") }
+            for path in canvas.files.served { print("map served: \(MapCanvasView.scheme)://app/\(path)") }
+            print("map refused loads: \(canvas.files.refused), cancelled navigations: \(canvas.cancelledNavigations)")
+            print("map elements: \(elements)")
         }
 
         static func json(_ value: Any) -> String {
@@ -112,6 +160,12 @@ struct MapCanvasView: NSViewRepresentable {
             }
         }
 
+        /// Snapshots (`--click` on the canvas): a click at a point of the page, in CSS pixels from its top left.
+        func click(x: Double, y: Double) async {
+            let target = try? await webView?.callAsyncJavaScript("return akitClick(x, y)", arguments: ["x": x, "y": y], contentWorld: .page)
+            print("map click: \(Int(x)),\(Int(y)) on \(target as? String ?? "nothing")")
+        }
+
         /// Runs a bridge function and returns its result (`akitSerialize`, `akitDiagnostics`).
         func call(_ function: String) async throws -> Any? {
             try await webView?.callAsyncJavaScript("return await \(function)()", contentWorld: .page)
@@ -122,6 +176,11 @@ struct MapCanvasView: NSViewRepresentable {
                 return .allow
             }
             cancelledNavigations += 1
+            // A web link the user clicked opens in the default browser, never in the canvas.
+            if action.navigationType == .linkActivated, let url = action.request.url,
+               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+                NSWorkspace.shared.open(url)
+            }
             return .cancel
         }
     }

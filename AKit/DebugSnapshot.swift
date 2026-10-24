@@ -50,8 +50,10 @@ import SwiftUI
 /// `--tab sample` shows the sample base (`akit kb seed`) and `--tab sample-remove` also asks Remove Sample Base….
 /// The capture prints the screen's state as text (base, spaces, notes, tabs, the note in view, with Properties its kind
 /// and fields, the kinds or the area settings), so a check needs no image.
-/// `--tab map --query <file.excalidraw>` shows only the map canvas with that file (spike 2.0) and prints
-/// the page's messages, fonts, problems, the files the `akit-web:` handler served and the refused loads.
+/// `--tab map --select <map id>` (`payments/maps/overview`) opens that map (read only); the capture waits until the
+/// canvas is ready and its scene loaded (10 s at most), draws the web view into the image and prints the page's
+/// messages, fonts, problems, every file the `akit-web:` handler served, the refused loads, the scene's element
+/// count and the canvas frame (`map canvas: x,y,w,h` in snapshot points from the top left).
 ///
 /// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
 /// menu's items (to check which places get Ask AKit About This);
@@ -167,13 +169,25 @@ enum DebugSnapshot {
             FileHandle.standardError.write(Data("snapshot: window not found\n".utf8))
             exit(1)
         }
+        // A map waits for its canvas first, so a click can open a block's link.
+        let mapOpen = options.section == .knowledge && KnowledgeModel.current?.map != nil
+        if mapOpen { await MapCanvasView.Coordinator.waitAndPrint() }
         if let click = options.click {
             // SwiftUI takes clicks only in the key window of the active app.
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             try? await Task.sleep(for: .milliseconds(300))
             let point = view.convert(NSPoint(x: click.x, y: view.isFlipped ? click.y : view.bounds.height - click.y), to: nil)
-            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            // A web view takes no events from sendEvent: on the map canvas the click goes into
+            // the page as pointer events instead.
+            let canvas = mapOpen ? MapCanvasView.Coordinator.current : nil
+            let inCanvas = canvas?.webView.map { webView in webView.convert(point, from: nil) }.flatMap { local in
+                canvas?.webView.flatMap { $0.bounds.contains(local) ? local : nil }
+            }
+            if let canvas, let local = inCanvas, let webView = canvas.webView {
+                await canvas.click(x: local.x, y: webView.isFlipped ? local.y : webView.bounds.height - local.y)
+            }
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] where inCanvas == nil {
                 if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                                   windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
                     window.sendEvent(event)
@@ -217,6 +231,20 @@ enum DebugSnapshot {
         let bounds = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { exit(1) }
         view.cacheDisplay(in: bounds, to: rep)
+        // cacheDisplay draws no web view: draw the map canvas's own snapshot over its place.
+        if mapOpen, let webView = MapCanvasView.Coordinator.current?.webView, webView.window == window,
+           let image = try? await webView.takeSnapshot(configuration: nil) {
+            var frame = webView.convert(webView.bounds, to: view)
+            if view.isFlipped { frame.origin.y = bounds.height - frame.maxY }
+            print("map canvas: \(Int(frame.minX)),\(Int(bounds.height - frame.maxY)),\(Int(frame.width)),\(Int(frame.height))")
+            if let context = NSGraphicsContext(bitmapImageRep: rep) {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                image.draw(in: frame)
+                context.flushGraphics()
+                NSGraphicsContext.restoreGraphicsState()
+            }
+        }
         guard let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
         do {
             try png.write(to: options.output)
