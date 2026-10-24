@@ -41,5 +41,10 @@ Pi and other harnesses read this file too.
   and the status note of its design doc.
 - AKit only reads harness files unless a step explicitly adds safe writing
   (backup + diff first). Deleting moves things to the Trash.
+- The `/akit` skill lets an agent do in the terminal what the UI does. When a feature or an
+  `akit` command is finished, update the skill in the same commit: the template
+  `AKitCore/Sources/AKitBrain/AKitSkill.swift` (new brains get it) and the user's copy
+  `~/.akit/registry/skills/akit/SKILL.md` (commit it in the brain repo, then
+  `akit apply --home`). Say the command, when to use it, and its `--json` / `--yes` flags.
 - Never display or copy secrets: auth.json files, tokens, MCP env/headers,
   `settings.local.json`.
