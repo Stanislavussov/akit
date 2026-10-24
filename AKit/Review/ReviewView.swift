@@ -218,8 +218,23 @@ struct ReviewRunDetail: View {
     @State private var showMissed = false
     /// Snapshots: `--tab log` opens it.
     @State private var showLog = DebugSnapshot.options?.tab == "log"
-    /// Translate of the brief and the requests; what goes to GitLab stays the original.
+    /// Translate of the brief, the overview and the requests; what goes to GitLab stays the original.
     @State private var translator = Translator()
+    /// The requests or the map. Snapshots: `--tab map`.
+    @State private var tab: Tab = DebugSnapshot.options?.tab == "map" ? .map : .requests
+    /// `overview.json` and `map.json`, read (the map maybe built) off the main thread.
+    @State private var overview: ReviewOverview?
+    @State private var map: ReviewMap?
+    @State private var mapLoaded = false
+
+    enum Tab: String, CaseIterable {
+        case requests = "Requests", map = "Map"
+    }
+
+    /// What the overview and the map show: they are read again when the findings change.
+    private var filesKey: String {
+        "\(run.id)|\(run.status?.stage.rawValue ?? "")|\(run.findings?.version ?? 0)|\(run.findings?.created.timeIntervalSince1970 ?? 0)"
+    }
 
     private var requests: [ReviewRequest] { run.plan?.requests ?? [] }
     private var approved: [ReviewRequest] { requests.filter { $0.decision == .approved && !$0.isSent } }
@@ -228,6 +243,7 @@ struct ReviewRunDetail: View {
         // The actions stand under the scroll view, not in a safe-area inset: in the HSplitView the
         // cards scrolled under and below the bar.
         VStack(spacing: 0) {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     header
@@ -240,15 +256,31 @@ struct ReviewRunDetail: View {
                             Text(translator.text(ReviewWorkflow.Run.TranslationKey.brief, brief)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    requestsSection
-                    onlyInAKit
-                    hiddenFindings(.preExisting, title: "Before this MR",
-                                   help: "Problems already there before this merge request: not the author's change. Make a task of its own for them.")
+                    if let overview {
+                        ReviewOverviewSection(overview: overview, translator: translator) { translate }
+                    }
+                    Picker("Show", selection: $tab) {
+                        ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Requests: what AKit wants to write to GitLab. Map: what the change touches, its boundaries and the other repositories that use them.")
+                    switch tab {
+                    case .requests:
+                        requestsSection
+                        onlyInAKit
+                        hiddenFindings(.preExisting, title: "Before this MR",
+                                       help: "Problems already there before this merge request: not the author's change. Make a task of its own for them.")
+                    case .map:
+                        mapSection(proxy)
+                    }
                     gaps
                     missed
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
             }
             actions
         }
@@ -262,6 +294,47 @@ struct ReviewRunDetail: View {
             }
         }
         .sheet(isPresented: $showMissed) { AddMissedSheet(files: run.snapshot?.diffs.map(\.newPath) ?? []) }
+        .task(id: filesKey) {
+            let folder = run.folder
+            let found = await Task.detached { (ReviewOverview.load(folder: folder), ReviewMap.load(folder: folder)) }.value
+            overview = found.0
+            map = found.1
+            mapLoaded = true
+        }
+    }
+
+    /// The run's one Translate menu (the brief, the overview, the requests) and its note: on the
+    /// overview when there is one, else over the requests.
+    @ViewBuilder private var translate: some View {
+        let run = run
+        HStack(spacing: 8) {
+            TranslationNote(translator: translator)
+            TranslateMenu(translator: translator, id: run.id) { run.translationSource }
+                .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder private func mapSection(_ proxy: ScrollViewProxy) -> some View {
+        if let map {
+            ReviewMapView(map: map, run: run) { finding in
+                guard let request = requests.first(where: { $0.findingID == finding }) else { return }
+                tab = .requests
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(100))
+                    withAnimation { proxy.scrollTo("request:\(request.id)", anchor: .top) }
+                }
+            }
+        } else if mapLoaded {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("No map for this run").font(.headline)
+                Text("A run made before the map, whose worktree is gone, has none. Review Again… makes a new run with one.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("Review Again…") { model.again = run.spec }
+                    .disabled(model.isBusy)
+            }
+        } else {
+            ProgressView().controlSize(.small)
+        }
     }
 
     @ViewBuilder private var discussBanner: some View {
@@ -395,11 +468,8 @@ struct ReviewRunDetail: View {
                 Text("Requests").font(.headline)
                 Text("Nothing goes to GitLab until you approve it.").font(.callout).foregroundStyle(.secondary)
                 Spacer()
-                let run = run
-                TranslateMenu(translator: translator, id: run.id) { run.translationSource }
-                    .controlSize(.small)
+                if overview == nil { translate }
             }
-            TranslationNote(translator: translator)
             if run.plan == nil {
                 Text(run.status?.stage == .planned || run.findings != nil ? "No plan yet." : "The requests appear when the passes are done.")
                     .foregroundStyle(.secondary)
@@ -409,6 +479,7 @@ struct ReviewRunDetail: View {
             ForEach(requests) { request in
                 ReviewRequestCard(run: run, request: request,
                                   shownText: translator.text(ReviewWorkflow.Run.TranslationKey.request(request.id), request.text))
+                    .id("request:\(request.id)")
             }
         }
     }

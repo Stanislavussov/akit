@@ -32,6 +32,9 @@ struct NewReviewSheet: View {
     @State private var cap = ""
     @State private var maxChangedLines = ""
     @State private var fullReview = false
+    /// nil: from the configuration.
+    @State private var impact: ReviewImpact?
+    @State private var summaryLanguage: LabLanguage?
     @State private var notes = ""
     @State private var links = ""
     @State private var extraServers: Set<String> = []
@@ -63,6 +66,8 @@ struct NewReviewSheet: View {
         _extraServers = State(initialValue: Set((again.mcpServers ?? []).filter { $0.source == .run }.map(\.name)))
         if again.passes.source == .run { _passesModel = State(initialValue: again.passes.value.model) }
         if again.verifier.source == .run { _verifierModel = State(initialValue: again.verifier.value.model) }
+        if again.impact?.source == .run { _impact = State(initialValue: again.impact?.value) }
+        if again.summaryLanguage?.source == .run { _summaryLanguage = State(initialValue: again.summaryLanguage?.value) }
         _fullReview = State(initialValue: true)
     }
 
@@ -88,6 +93,15 @@ struct NewReviewSheet: View {
     private var configuredPasses: String {
         [profile?.settings.passes?.model, catalog?.brainDefaults.passes?.model, catalog?.builtInDefaults.passes?.model]
             .compactMap { $0 }.first { !$0.isEmpty } ?? ""
+    }
+    /// `impact` from the configuration: the profile, the brain, the built-in default.
+    private var configuredImpact: ReviewImpact {
+        profile?.settings.impact ?? catalog?.brainDefaults.impact ?? catalog?.builtInDefaults.impact ?? .auto
+    }
+    /// `summary_language` from the configuration, else the Mac's preferred language.
+    private var configuredLanguage: LabLanguage {
+        profile?.settings.summaryLanguage ?? catalog?.brainDefaults.summaryLanguage ?? catalog?.builtInDefaults.summaryLanguage
+            ?? ReviewResolver.preferredLanguage(Locale.preferredLanguages)
     }
     private var canStart: Bool {
         guard !model.isBusy, (try? checkedLinks.get()) != nil, flagsProblem == nil else { return false }
@@ -172,6 +186,8 @@ struct NewReviewSheet: View {
                     }
                     TextField("Credit cap", text: $cap, prompt: Text("empty: from the configuration"))
                     TextField("Max changed lines", text: $maxChangedLines, prompt: Text("over it the review asks first (empty: from the configuration)"))
+                    ReviewImpactPicker(selection: $impact, empty: "From the configuration (\(configuredImpact.title))")
+                    ReviewLanguagePicker(selection: $summaryLanguage, empty: "From the configuration (\(configuredLanguage.name))")
                     if source == .mergeRequest {
                         Toggle("Full review", isOn: $fullReview)
                             .help("A rerun after a push reviews only what changed since the last review and carries the earlier findings. "
@@ -468,6 +484,8 @@ struct NewReviewSheet: View {
         if let value = Int(cap), value > 0 { choices.settings.capCredits = value }
         if let value = Int(maxChangedLines), value > 0 { choices.settings.maxChangedLines = value }
         choices.fullReview = fullReview
+        choices.settings.impact = impact
+        choices.settings.summaryLanguage = summaryLanguage
         choices.notes = notes
         choices.links = (try? checkedLinks.get()) ?? []
         choices.extraServers = extraServers.sorted()
@@ -559,6 +577,7 @@ struct ReviewSettingsSheet: View {
                     Text("Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens. A review reads with their reading tools, writes only the drafts you approved, word for word, and never publishes, approves, merges or resolves. A profile's mcp: names the servers and tools it may use; a Context server (Figma, Confluence, a wiki) is added on top and only reads.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                overviewSection
                 Section {
                     ForEach(catalog?.profiles ?? [], id: \.slug) { profile in
                         HStack {
@@ -610,9 +629,42 @@ struct ReviewSettingsSheet: View {
                 if saved {
                     catalog = model.catalog(brain: brain)
                     extras = access.extraServers
-                    message = "Saved the context servers in \(box.save.file.lastPathComponent)."
+                    message = "Saved \(box.save.file.lastPathComponent)."
                 }
             }
+        }
+    }
+
+    /// Other repositories and Summary language of the level picked in Rules of: the brain's
+    /// review.yaml (Default) or the profile's review: block. Each change shows its diff first.
+    @ViewBuilder private var overviewSection: some View {
+        let brainImpact = catalog?.brainDefaults.impact ?? catalog?.builtInDefaults.impact ?? .auto
+        let brainLanguage = catalog?.brainDefaults.summaryLanguage ?? catalog?.builtInDefaults.summaryLanguage
+        let preferred = ReviewResolver.preferredLanguage(Locale.preferredLanguages)
+        Section {
+            ReviewImpactPicker(selection: Binding(get: { profile == nil ? catalog?.brainDefaults.impact : profile?.settings.impact },
+                                                  set: { value in plan { try ReviewConfigEditor.reviewSetting(impact: value, profile: profile?.slug, home: model.home, brain: brain) } }),
+                               empty: profile == nil ? "Built-in (\(brainImpact.title))" : "From the brain (\(brainImpact.title))")
+            ReviewLanguagePicker(selection: Binding(get: { profile == nil ? catalog?.brainDefaults.summaryLanguage : profile?.settings.summaryLanguage },
+                                                    set: { value in plan { try ReviewConfigEditor.reviewSetting(summaryLanguage: value, profile: profile?.slug,
+                                                                                                                  home: model.home, brain: brain) } }),
+                                 empty: profile == nil ? "The Mac's language (\(preferred.name))"
+                                     : "From the brain (\((brainLanguage ?? preferred).name))")
+        } header: {
+            Text("Overview and other repositories")
+        } footer: {
+            Text(profile == nil
+                 ? "Default: the brain's review.yaml (impact, summary_language). A project profile's review: block and New Review… can change them."
+                 : "This project's profile (review: impact, summary_language). New Review… can change them for one run.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func plan(_ make: () throws -> ReviewConfigEditor.Save) {
+        do {
+            save = try make()
+        } catch {
+            message = error.localizedDescription
         }
     }
 
@@ -996,6 +1048,52 @@ struct ReviewRunLogSheet: View {
 }
 
 /// A field's label with a red asterisk: the form can't go on without it.
+extension ReviewImpact {
+    var title: String {
+        switch self {
+        case .auto: "Auto"
+        case .off: "Off"
+        case .always: "Always"
+        }
+    }
+}
+
+/// Other repositories (`impact`, R42): whether the review looks for uses of the change in other
+/// GitLab repositories. nil: the level above decides.
+struct ReviewImpactPicker: View {
+    @Binding var selection: ReviewImpact?
+    let empty: String
+
+    var body: some View {
+        Picker(selection: $selection) {
+            Text(empty).tag(ReviewImpact?.none)
+            ForEach(ReviewImpact.allCases, id: \.self) { Text($0.title).tag(ReviewImpact?.some($0)) }
+        } label: {
+            Text("Other repositories")
+        }
+        .help("Auto: when the change has a boundary (an API, a micro-frontend, a shared package, an event, a config key), Pi searches GitLab through its MCP server "
+              + "for the other repositories that use it, first in the group, then in the whole GitLab. Always: also when the brief found no boundary. "
+              + "Off: never. Only reading tools; nothing is written to other repositories.")
+    }
+}
+
+/// Summary language (`summary_language`, R46): the language of the overview in AKit. GitLab
+/// comments keep the posting language.
+struct ReviewLanguagePicker: View {
+    @Binding var selection: LabLanguage?
+    let empty: String
+
+    var body: some View {
+        Picker(selection: $selection) {
+            Text(empty).tag(LabLanguage?.none)
+            ForEach(LabLanguage.allCases, id: \.self) { Text($0.name).tag(LabLanguage?.some($0)) }
+        } label: {
+            Text("Summary language")
+        }
+        .help("The language of the run's Overview and the flow's labels. It stays in AKit: comments for GitLab keep the posting language.")
+    }
+}
+
 struct RequiredLabel: View {
     let title: String
     init(_ title: String) { self.title = title }
