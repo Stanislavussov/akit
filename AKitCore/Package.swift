@@ -88,7 +88,9 @@ let package = Package(
         .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitKnowledge", "AKitInsights", "AKitMCP", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
         .testTarget(name: "AKitReviewTests", dependencies: ["AKitReview", "AKitFoundation", "AKitLab", "AKitBrain"]),
         .testTarget(name: "AKitHelpTests", dependencies: ["AKitHelp", "AKitFoundation"]),
-        .testTarget(name: "AKitKnowledgeTests", dependencies: ["AKitKnowledge", "AKitFoundation", "AKitBrain"]),
+        .testTarget(name: "AKitKnowledgeTests", dependencies: ["AKitKnowledge", "AKitFoundation", "AKitBrain"],
+                    // Read by path (#filePath): a base layout with Excalidraw 0.17.6 maps, not bundle resources.
+                    exclude: ["Fixtures"]),
         .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitKnowledge", "AKitDoctor", "AKitReview", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
     ]
 )

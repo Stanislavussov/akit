@@ -1,7 +1,8 @@
 # Knowledge base: maps of systems and notes an agent can search
 
 Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (base, notes, links,
-`akit kb`, the Knowledge screen, the commit queue, guide `knowledge.ru.md`). Steps in [Steps](#steps).
+`akit kb`, the Knowledge screen, the commit queue, guide `knowledge.ru.md`); spike 2.0 (Excalidraw
+bundle, results below) done 2026-10-24. Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -39,6 +40,10 @@ describe the system once, by hand, and let the agent read it.
 | K18 | AKit Review | Yes, the user wants it (2026-10-24), as step 6. Gather adds only a **card** of the systems an MR touches and their neighbours (names, one line each, relations), within the profile's `knowledge_budget` (8 000 tokens by default; the user found 1 500 too small); the roles get `akit_kb_search` / `akit_kb_show` for the rest. The profile field `knowledge:` keeps working |
 | K19 | Token budget | The point of the RAG is to send little. `akit kb context`: a card, 4 000 tokens at most by default. `search`: the 10 best chunks (one chunk = one `##` section of a note), snippets first. `show`: a whole note only when the agent asks for it. Each command takes `--max-tokens`. The defaults are a first guess; tune them from real Review logs |
 | K20 | RAG engine | All in one SQLite file: FTS5 with BM25 for words, `nodes` / `edges` tables for the graph, and (step 7) one vector BLOB per chunk with cosine similarity in Swift (Accelerate), no extension: macOS's system SQLite can't load `sqlite-vec` (checked 2026-10-24 on macOS 15.6.1: SQLite 3.43.2 is built with `OMIT_LOAD_EXTENSION`, the SDK header has no `sqlite3_load_extension`; `ENABLE_FTS5` is on and an FTS5 table with `bm25()` works). Embeddings from a local model (`NLContextualEmbedding` or Ollama) |
+| K21 | Maps drawn by an agent | Added 2026-10-24 at the user's request. Pi draws a map from a prompt with [`@swiftlysingh/excalidraw-cli`](https://github.com/swiftlysingh/excalidraw-cli) (MIT; runs in the agent's harness, AKit ships no Node) and sends it with `akit kb propose --map AREA/NAME --file F`. The draft waits in Inbox; on Accept, AKit links each block whose label names one note to `[[note]]` and saves Excalidraw's own bytes. In AKit: **Draw Map with Pi…** (a prompt → Pi → the same path). Spike answer 6 lists the format gaps |
+| K22 | AKit and Pi | Added 2026-10-24 at the user's request: everything works from AKit (a button) and from Pi (an `akit kb` command with `--json` / `--yes`). The `/akit` skill lists the person-only commands too, with the rule: run them only when the user asked for that action in the session; never accept or reject a proposal on your own |
+| K23 | Separate folders | Added 2026-10-24 at the user's request: one area `areas/<name>/` per project, system or unrelated entity, with its own notes and maps; unrelated worlds get separate bases. Every create or proposal names its area; an agent proposes a new area instead of mixing unrelated systems, and the area is created on Accept |
+| K24 | Kinds and settings | Added 2026-10-24 at the user's request: kinds and their fields are data in `<base>/kb.yaml` (defaults `service`, `flow`, `team`, `database`, `queue`, `external`; the user adds, renames, removes). A note's kind and fields change in the note panel's **Properties** or with `akit kb set NOTE KEY=VALUE`, one frontmatter line at a time. `areas/<name>/area.yaml` maps an area to projects (remotes, `~/` paths, globs), so focus and Review find the area for new clones and folders without setup |
 
 ## Layout
 
@@ -88,5 +93,43 @@ panel on the right with **Open in Obsidian**; **Inbox** and **Lint** as tabs of 
 
 - The exact word in K16's Pi block, and where `akit kb context` looks for the base when a
   Mac has more than one.
-- How Excalidraw is bundled (a prebuilt web bundle in the app resources) and how AKit
-  reads and writes the file it edits.
+- How AKit reads and writes the file it edits (steps 2.1 and 2.2b). The bundle is settled: see
+  [Spike 2.0 results](#spike-20-results).
+
+## Spike 2.0 results
+
+Run 2026-10-24 in the app's own web view (`MapCanvasView`, debug snapshot
+`--section knowledge --tab map --query <file.excalidraw>` on a made-up home); the page posted
+its findings through the `kb` message handler to stdout. A1 works, so the A1′ try (0.18 ESM
+through an import map) was skipped.
+
+**Bundle.** `tools/fetch-excalidraw.sh` takes `@excalidraw/excalidraw@0.17.6`, `react@18.3.1`
+and `react-dom@18.3.1` from registry.npmjs.org, checks each tarball against a pinned SHA-256
+and against npm's `dist.integrity`, and keeps the production UMD files, Excalidraw's
+`excalidraw-assets/` (5 fonts, the vendor chunk it loads at start, the ru-RU locale; English is
+built in) and the licenses: 16 files, 4.4 MB (4,559,653 bytes), in `web/excalidraw/vendor/`.
+The vendor chunk (2.9 MB) is not optional: the bundle imports it at load. The npm tarball of
+Excalidraw has no LICENSE file; the script writes the repository's MIT text. The app bundles
+`web/excalidraw` as `AKit.app/Contents/Resources/excalidraw/`, served as `akit-web://app/…`.
+`EXCALIDRAW_ASSET_PATH` is `akit-web://app/vendor/` (Excalidraw appends `excalidraw-assets/…`).
+
+| # | Question | Answer | Evidence |
+|---|---|---|---|
+| 1 | Does `[[note]]` survive 0.17.6's link editor? | **Yes**, so no fallback is needed (`akit:note/…` also survives) | The editor and the open path run `normalizeLink`: trim, `"` → `&quot;`, then `sanitizeUrl`, which only rewrites `javascript:`, `data:` and `vbscript:` schemes. Typed into the editor (⌘K, Enter): `[[billing#Invoices\|Billing]]`, `[[payments/billing]]`, `akit:note/payments/billing` were stored unchanged; `link` fields set in the file survive `restore` and `serializeAsJSON` |
+| 2 | Can `onLinkOpen` call `preventDefault` and post to Swift? | **Yes** | Each open posted `{type: "linkOpen", link, elementId, elementType}` (e.g. `[[order-to-billing]]` from the arrow `arr-events`); `window.open` was called 0 times, the page stayed at `akit-web://app/index.html`, 0 navigations were cancelled |
+| 3 | Do fonts load offline? | **Yes** | The scheme handler served only `akit-web://app/…` files (page, scripts, the vendor chunk, `Assistant-*.woff2`, `Virgil.woff2` once text is drawn); `document.fonts` shows them `loaded`. WebKit lists no `performance` resource entries for a custom scheme, so the served list comes from the handler. `fetch("https://example.com/")` fails twice over: CSP `connect-src` and, with the CSP relaxed to `*`, the content rule list. Refused: `%2e%2e` paths, `..%2f`, a missing file, another host (4 of 4). Once, right after a fresh build, Assistant 500/700 reported `error` at the first check and `loaded` later; a font answer delayed 2–3 s reproduces the `error` |
+| 4 | How does a user open a link? | **Edit mode: the link icon** at the element's top-right corner (cursor turns to a hand), or the link in the popup of a **selected** element. A click on the block only selects it. **View mode** (`viewModeEnabled`): a click anywhere on the block or arrow opens it | Synthetic pointer events: icon → 1 `linkOpen`; block centre → 0 (selected); popup anchor click → 1; view mode block centre → 1, arrow middle → 1. In the code: `isPointHittingLink` is false for a selected element, true on the whole element in view mode, else only on the icon |
+| 5 | Which CSP do the workers need? | **None**: no worker starts. The smallest policy that works: `default-src akit-web:; img-src akit-web: data:; style-src akit-web: 'unsafe-inline'` | The main bundle has no `new Worker`; the vendor chunk's three (pica, image compression via `data:`/`blob:`) serve image import, which is off. Without `img-src data:`: "img-src blocked data" (cursors, icons). Without `style-src 'unsafe-inline'`: 220 violations and no fonts (Excalidraw injects `<style>`). Scripts need no `'unsafe-inline'`: the page has no inline script. The policy is sent as a response header by the scheme handler |
+| 6 | Do drafts from `@swiftlysingh/excalidraw-cli` 1.5.0 (MIT) work in 0.17.6? | **They load, with gaps** | A DSL draft (`[Orders API] -> "events" -> [Billing]`) and a JSON one (`{nodes, edges}`): both `restore` and draw. Arrows are bound at both ends (`startBinding`/`endBinding.elementId`), the edge label is bound text (`containerId` = the arrow). Node labels are **free text**, not bound to their box (`containerId` null; the box's `boundElements` lists only the arrow). Ids from JSON input survive (`blk-orders`); DSL ids are random. The file says `version: 2`, `source: "https://github.com/swiftlysingh/excalidraw-cli"`. It is written for a newer Excalidraw: `fontFamily: 5` (Excalifont, unknown to 0.17.6, drawn in a fallback font), bindings with `mode`/`fixedPoint` and no `gap`, `index`, `elbowed`, `autoResize` (the last three dropped by 0.17.6's `restore`). A `link` in JSON input is dropped. So 2.1 must name a block by its own `link` or by overlapping text, and a draft gets its links after import |
+
+Fixtures for 2.1 (made in the running canvas with `convertToExcalidrawElements` and saved with
+`serializeAsJSON(…, "local")`, so `source` is `akit-web://app`) are in
+`AKitCore/Tests/AKitKnowledgeTests/Fixtures/`: `base/areas/payments/maps/overview.excalidraw`
+(blocks `blk-orders` `[[orders-api]]` and `blk-billing` `[[billing]]` with bound labels; arrow
+`arr-events` bound at both ends, label "events", link `[[order-to-billing]]`; the unbound arrow
+`arr-loose`; `blk-detail` linking `[[maps/billing-detail]]`), `…/maps/billing-detail.excalidraw`
+(the same notes as `[[payments/orders-api]]` and `[[billing]]`, arrow `arr-invoices` labelled
+"invoice requests", a block without a link, a link back to `[[maps/overview]]`), the three notes
+from the demo base, and `cli-draft.excalidraw` (the raw JSON draft). The fixture base has no
+`.git`, which can't be committed inside this repo, so `KnowledgeBase.isBase` rejects it today;
+2.1 decides (for example: `--base PATH` reads accept a folder with `areas/`).

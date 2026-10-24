@@ -32,7 +32,11 @@ struct KnowledgeView: View {
                 .background(.orange.opacity(0.15))
                 .overlay(alignment: .bottom) { Divider() }
             }
-            if model.base == nil {
+            if DebugSnapshot.options?.tab == "map" {
+                // Spike 2.0: the map canvas alone, showing the `.excalidraw` file `--query` names.
+                MapCanvasView(scene: DebugSnapshot.options?.query.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+                    ?? #"{"type":"excalidraw","version":2,"elements":[]}"#)
+            } else if model.base == nil {
                 if model.loaded {
                     ContentUnavailableView {
                         Label("No knowledge base", systemImage: "books.vertical")

@@ -17,6 +17,11 @@ targets:
       - path: docs/guides
         type: folder
         buildPhase: resources
+      # Knowledge maps: the vendored Excalidraw canvas (tools/fetch-excalidraw.sh), served by
+      # MapCanvasView's akit-web: scheme from the bundle's excalidraw folder.
+      - path: web/excalidraw
+        type: folder
+        buildPhase: resources
     dependencies:
       # One product per module the app imports (see AKitCore/Package.swift).
       - package: AKitCore
