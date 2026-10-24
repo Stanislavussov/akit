@@ -10,7 +10,7 @@ import SwiftUI
 /// without a remote; AKit commits your edits in batches.
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
-    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings`.
+    /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings|focus|context`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
     /// Add Sample Base… / Remove Sample Base… waiting for confirmation. Snapshots: `--tab sample-remove`.
@@ -20,6 +20,7 @@ struct KnowledgeView: View {
 
     enum Sheet: String, Identifiable {
         case createBase = "create-base", newArea = "new-area", newNote = "new-note", newMap = "new-map", kinds, areaSettings = "area-settings"
+        case focus, context
         var id: Self { self }
     }
 
@@ -53,8 +54,12 @@ struct KnowledgeView: View {
                 }
             } else {
                 HSplitView {
-                    spaces.frame(minWidth: 150, idealWidth: 180, maxWidth: 260)
-                    noteList.frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
+                    spaces.safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusLine() }
+                        .frame(minWidth: 150, idealWidth: 180, maxWidth: 260)
+                    Group {
+                        if model.searchText.trimmingCharacters(in: .whitespaces).isEmpty { noteList } else { SearchResultsList() }
+                    }
+                    .frame(minWidth: 200, idealWidth: 240, maxWidth: 360)
                     if model.map != nil {
                         MapPanel().frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
                         if model.noteBesideMap, model.note != nil {
@@ -100,6 +105,16 @@ struct KnowledgeView: View {
                     .help("The kinds of notes in this base (service, flow, team…) and the fields of each, kept in kb.yaml")
             }
             ToolbarItem {
+                Button("Focus…", systemImage: "scope") { sheet = .focus }
+                    .disabled(model.base == nil)
+                    .help("Choose the space an agent's knowledge card starts from in a project (akit kb focus)")
+            }
+            ToolbarItem {
+                Button("Preview Agent Context…", systemImage: "text.viewfinder") { sheet = .context }
+                    .disabled(model.base == nil)
+                    .help("See exactly what an agent reads from this base in a project (akit kb context), with its token count")
+            }
+            ToolbarItem {
                 Menu("Sample Base", systemImage: "shippingbox") {
                     Button("Add Sample Base…") { sampleRequest = .add }
                     Button("Remove Sample Base…") { sampleRequest = .remove }
@@ -119,8 +134,12 @@ struct KnowledgeView: View {
             case .newMap: NewMapSheet()
             case .kinds: KindsSheet()
             case .areaSettings: AreaSettingsSheet(area: model.area ?? "")
+            case .focus: FocusSheet()
+            case .context: AgentContextSheet()
             }
         }
+        .searchable(text: Binding(get: { model.searchText }, set: { model.search($0) }), placement: .toolbar,
+                    prompt: Text("Search notes"))
         .confirmationDialog("Move the space \(areaToDelete ?? "") and all its notes to the Trash?",
                             isPresented: Binding(get: { areaToDelete != nil }, set: { if !$0 { areaToDelete = nil } })) {
             Button("Move to Trash", role: .destructive) {

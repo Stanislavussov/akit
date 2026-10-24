@@ -206,6 +206,10 @@ shot knowledge-map-edit  $MAIN --section knowledge --tab map-edit --select payme
 shot knowledge-relations $MAIN --section knowledge --tab map --select block:blk-orders
 # Rename… of the note billing to invoicing: the planned changes.
 shot knowledge-rename    $MAIN --section knowledge --tab rename --select payments/billing --query invoicing
+# The toolbar search for "order": its hits (note, section, snippet) instead of the note list.
+shot knowledge-search    $MAIN --section knowledge --query order
+# Preview Agent Context… for the project orders-api, with the note orders-api in view (its neighbors too).
+shot knowledge-context   $MAIN --section knowledge --tab context --project orders-api --select payments/orders-api
 # Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.
 if [[ "$ONLY" == "  " || "$ONLY" == *" knowledge-sample "* ]]; then
     HOME="$DEMO" GIT_CONFIG_GLOBAL=/dev/null "$ROOT/AKitCore/.build/debug/akit" kb seed >/dev/null

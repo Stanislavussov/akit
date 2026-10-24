@@ -1223,6 +1223,14 @@ Friction («трение») — места, где агент спотыкалс
 - **Rename…** (вид): новое имя вида в `kb.yaml` и во всех заметках этого вида, всё или ничего, одним коммитом сразу. То же делает `akit kb kinds rename`. Подробнее: [Rename… вида](knowledge#kinds-rename)
 - **Area Settings…**: правый щелчок по пространству: **Title**, **Description** и **Projects** пространства, файл `area.yaml`. То же делает `akit kb area`. Подробнее: [Area Settings…](knowledge#area-settings-edit)
 - **Projects / Add Project**: в **Area Settings…**: git remote, путь `~/…` или маска, о которых это пространство. Подробнее: [Настройки пространства](knowledge#area-settings)
+- **Search notes**: поле поиска в панели инструментов: ищет разделы заметок, где есть все слова запроса; находки — заметка, раздел и кусок текста — видны вместо списка заметок, нажатие открывает заметку на этом разделе. То же делает `akit kb search`. Подробнее: [Поиск](knowledge#search)
+- **N hits / No hits**: сколько разделов нашёл поиск; «No hits» — ни в одном разделе нет всех слов запроса. Подробнее: [Найти заметку](knowledge#search-find)
+- **Index: N notes, M sections**: строка под **Spaces**: размер индекса поиска `.akit-index.sqlite`. **stale** — индекс сейчас обновляет другая программа, поиск показывает его прошлое состояние. Подробнее: [Индекс поиска](knowledge#search-index)
+- **Reindex**: кнопка с круглой стрелкой в строке индекса: построить индекс заново из файлов. То же делает `akit kb index --rebuild`. Подробнее: [Индекс поиска](knowledge#search-index)
+- **Inbox: N**: сколько файлов ждёт в `inbox/`: заметки и карты, которые предлагают агенты. Подробнее: [Что такое база](knowledge#overview)
+- **Focus… / Now / Focus / None**: пространство, с которого агент начинает в проекте. **Now** — фокус сейчас и откуда он (**your choice**, **Area Settings**, **a note's repo:**); **None** убирает ваш выбор. **Save** пишет `~/.akit/local/knowledge/focus.json`. То же делает `akit kb focus --set` / `--clear`. Подробнее: [Focus…](knowledge#focus-set)
+- **Preview Agent Context… / List / JSON**: карточка, которую агент читает в начале задачи в проекте (`akit kb context`), и число её токенов из 4000; **cut** — AKit её обрезал. **JSON** — ровно вывод `--json`. Ниже — **Neighbors of …**: стрелки открытой заметки на картах (`akit kb neighbors`). Подробнее: [Что видит агент](knowledge#context)
+- **Other Folder…**: в **Focus…** и **Preview Agent Context…**: выбрать папку проекта, которой нет в списке **Project**. Подробнее: [Focus…](knowledge#focus-set)
 
 ### Панель заметки
 <!-- section: terms-knowledge-note -->
@@ -1247,6 +1255,7 @@ Friction («трение») — места, где агент спотыкалс
 - **New Map… / Add Map**: новая пустая карта пространства. Поля **Area** и **Name** обязательные. AKit сразу коммитит её и открывает в **Edit**. То же делает `akit kb new-map`. Подробнее: [New Map…](knowledge#maps-new)
 - **Delete…** (карта): переместить файл карты в Корзину и сразу закоммитить удаление. То же делает `akit kb rm <карта> --yes`. Подробнее: [Delete… карты](knowledge#maps-delete)
 - **Changed on disk / Reload / Keep Mine**: файл карты поменялся на диске, пока она была открыта; AKit ничего не записал. **Reload** показывает карту с диска, **Keep Mine** записывает вашу, а копию с диска кладёт в `~/.akit/backups`. Подробнее: [Changed on disk](knowledge#maps-conflict)
+- **Changed on disk / Reload / Keep Mine** (заметка): заметку, открытую в **Edit**, поменяли снаружи (Obsidian, git). **Reload** показывает версию с диска, **Keep Mine** записывает ваш текст, а копию с диска кладёт в `~/.akit/backups`. Подробнее: [Правка в Obsidian](knowledge#search-watch)
 - **Show in Finder** (карта): показать файл `.excalidraw` карты в Finder. Есть над картой и в правом щелчке по карте в **Maps**. Подробнее: [Открыть карту](knowledge#maps-open)
 - **The link … points to no note or map in this base.**: ссылка блока или стрелки ни на что в базе не ведёт. Поправьте ссылку или создайте заметку. Подробнее: [Открыть заметку блока](knowledge#maps-block)
 

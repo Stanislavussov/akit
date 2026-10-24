@@ -57,8 +57,8 @@ final class KnowledgeModel {
     /// The text of the note in view, as on disk after the last save.
     private(set) var text = ""
     var problem: String?
-    /// The note panel shows the Markdown to edit (Edit). Snapshots: `--tab edit`.
-    var editing = DebugSnapshot.options?.tab == "edit"
+    /// The note panel shows the Markdown to edit (Edit). Snapshots: `--tab edit` (and `watch-edit`).
+    var editing = ["edit", "watch-edit"].contains(DebugSnapshot.options?.tab)
     /// The note panel shows the Properties form (kind and fields). Snapshots: `--tab properties`.
     var showingProperties = DebugSnapshot.options?.tab == "properties"
     /// The base's kinds from `kb.yaml` (K24): the defaults without the file, or when it can't be read.
@@ -68,6 +68,30 @@ final class KnowledgeModel {
     /// What the last write did, under the panel's buttons.
     var notice: String?
     private(set) var loaded = false
+
+    // Search, index, watch (3.3)
+    /// The toolbar search field. Snapshots: `--query` without a `--tab` (or with `--tab watch`).
+    var searchText = DebugSnapshot.options.flatMap { [nil, "watch", "watch-edit"].contains($0.tab) ? $0.query : nil } ?? ""
+    /// The hits of `searchText`; nil while it is empty.
+    private(set) var searchAnswer: KnowledgeIndex.SearchAnswer?
+    private var searchTask: Task<Void, Never>?
+    /// The index as last counted ("Index: N notes …"); nil before the first count.
+    private(set) var indexStatus: KnowledgeIndex.Status?
+    private(set) var indexing = false
+    /// Files waiting in `inbox/` (agents' proposals, 5.x): the Inbox badge.
+    private(set) var inboxCount = 0
+    /// The heading a search hit opened the note at; the read view scrolls to it.
+    private(set) var sectionTarget: String?
+    /// The note in Edit changed on disk, not by AKit: Reload or Keep Mine.
+    var noteConflict: String?
+    /// Per note: the hash of its bytes as AKit last read or wrote them (the own-write rule).
+    private var noteHashes: [String: String] = [:]
+    private var watcher: KnowledgeWatcher?
+    /// The reindex and search after the watcher's last batch (snapshots wait for it).
+    private(set) var watchTask: Task<Void, Never>?
+    /// Focus… and Preview Agent Context…: what they show for the chosen project folder.
+    private(set) var focusInfo: FocusInfo?
+    private(set) var agentContext: AgentContext?
 
     /// Saved paths whose enqueue found the lock held: tried again before every flush.
     private var unqueued: Set<String> = []
@@ -114,6 +138,8 @@ final class KnowledgeModel {
         }
         // Snapshots: `--tab rename` asks Rename… of the selected note or map, `--query` is the new name.
         if DebugSnapshot.options?.tab == "rename", let item = map ?? note { renameRequest = item }
+        await refreshIndex()
+        if !searchText.isEmpty { await runSearch() }
     }
 
     /// Snapshots (`--select block:<element id>`): the map that has this element opens, and its link
@@ -142,7 +168,14 @@ final class KnowledgeModel {
             (areas, notes, allNotes, tabs, note, text) = ([], [], [], [], nil, "")
             (maps, map, targets) = ([], nil, KnowledgeLinks(notes: [], maps: []))
             kindsFile = .defaults
+            (watcher, indexStatus, searchAnswer, inboxCount) = (nil, nil, nil, 0)
             return
+        }
+        if watcher?.root != base.root {
+            watcher = KnowledgeWatcher(root: base.root) { [weak self] paths in self?.changed(paths) }
+            noteHashes = [:]
+            inboxCount = WatchFilter.inboxCount(base.root)
+            if loaded { Task { await refreshIndex() } }
         }
         do { kindsFile = try base.kinds() } catch {
             kindsFile = .defaults
@@ -452,6 +485,7 @@ final class KnowledgeModel {
 
     func open(_ id: String) {
         guard let entry = allNotes.first(where: { $0.id == id }) else { return }
+        sectionTarget = nil
         if entry.area != area { choose(area: entry.area) }
         if !tabs.contains(id) { tabs.append(id) }
         note = id
@@ -482,7 +516,11 @@ final class KnowledgeModel {
             noteRelations = []
             return
         }
-        text = KnowledgeNote.load(base.noteFile(note))?.text ?? ""
+        // Changed on disk waits for Reload / Keep Mine: the editor keeps your text until then.
+        if noteConflict != note {
+            text = KnowledgeNote.load(base.noteFile(note))?.text ?? ""
+            noteHashes[note] = KnowledgeWrite.hash(of: base.noteFile(note))
+        }
         noteRelations = (try? base.mapGraph().relations(of: note)) ?? []
     }
 
@@ -490,10 +528,11 @@ final class KnowledgeModel {
 
     /// Edit: the file is saved at once with exactly this text; the commit waits in the queue.
     func save(_ newText: String) {
-        guard let base, let note, newText != text else { return }
+        guard let base, let note, newText != text, noteConflict != note else { return }
         do {
             let path = try base.save(note: note, text: newText)
             text = newText
+            noteHashes[note] = KnowledgeWrite.hash(of: base.noteFile(note))
             enqueue(path, in: base)
             if let index = allNotes.firstIndex(where: { $0.id == note }), let title = KnowledgeNote(text: newText).title,
                title != allNotes[index].title {
@@ -698,6 +737,219 @@ final class KnowledgeModel {
         }
     }
 
+    // MARK: - Search, index, watch (3.3)
+
+    /// The search field changed: the hits follow after a short pause in typing (`kb search`).
+    func search(_ text: String) {
+        searchText = text
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            await self?.runSearch()
+        }
+    }
+
+    /// `KnowledgeIndex.search` of the field's text in the whole base (its misses aren't logged:
+    /// the miss log is about agents' searches).
+    func runSearch() async {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let base, !query.isEmpty else {
+            searchAnswer = nil
+            return
+        }
+        let result: Result<KnowledgeIndex.SearchAnswer, any Error> = await Task.detached {
+            do { return .success(try KnowledgeIndex(base: base).search(query, limit: 30, maxTokens: .max, logMisses: false)) } catch {
+                return .failure(error)
+            }
+        }.value
+        guard query == searchText.trimmingCharacters(in: .whitespacesAndNewlines), base == self.base else { return }
+        switch result {
+        case .success(let answer): searchAnswer = answer
+        case .failure(let error): problem = error.localizedDescription
+        }
+    }
+
+    /// A search hit: its note opens, scrolled to the hit's section.
+    func open(hit: KnowledgeIndex.Hit) async {
+        await closeMap()
+        open(hit.note)
+        sectionTarget = hit.heading
+    }
+
+    /// Brings the index up to the files (`kb index`; with `rebuild`, `kb index --rebuild`) and counts it.
+    func refreshIndex(rebuild: Bool = false) async {
+        guard let base, !indexing else { return }
+        indexing = true
+        let result: Result<KnowledgeIndex.Status, any Error> = await Task.detached {
+            do { return .success(try KnowledgeIndex(base: base).refresh(rebuild: rebuild)) } catch { return .failure(error) }
+        }.value
+        indexing = false
+        guard base == self.base else { return }
+        switch result {
+        case .success(let status):
+            indexStatus = status
+            if rebuild { notice = "Rebuilt the index: \(status.notes) notes, \(status.chunks) sections." }
+        case .failure(let error): problem = error.localizedDescription
+        }
+    }
+
+    /// One quiet batch from the watcher (`WatchFilter`): outside edits are queued for the batch
+    /// commit and reindexed; AKit's own saves are reindexed only; `inbox/` only recounts. An open
+    /// note in Edit or map in Edit changed by someone else asks Reload / Keep Mine; in read or view
+    /// mode it simply shows the disk version.
+    func changed(_ paths: [String]) {
+        guard let base else { return }
+        var own: [String: String] = [:]
+        for (id, hash) in noteHashes { own[base.notePath(id)] = hash }
+        for (id, hash) in mapHashes { own[base.mapPath(id)] = hash }
+        let root = base.root
+        let batch = WatchFilter.batch(paths, own: own) { KnowledgeWrite.hash(of: root.appending(path: $0)) }
+        if DebugSnapshot.options != nil {
+            print("watch: \(paths.joined(separator: ", ")) → reindex \(batch.reindex), queued \(batch.enqueue.joined(separator: ", ")), inbox \(batch.inbox)")
+        }
+        if batch.inbox { inboxCount = WatchFilter.inboxCount(root) }
+        for path in batch.enqueue { enqueue(path, in: base) }
+        if let note, editing, batch.outside.contains(base.notePath(note)), FileWalk.isRegularFile(base.noteFile(note)) {
+            noteConflict = note
+        }
+        if let map, batch.outside.contains(base.mapPath(map)), FileWalk.isRegularFile(base.mapFile(map)), mapConflict == nil {
+            mapChangedOnDisk(map)
+        }
+        guard batch.reindex else { return }
+        reload()
+        let previous = watchTask
+        watchTask = Task {
+            await previous?.value
+            await refreshIndex()
+            if !searchText.isEmpty { await runSearch() }
+        }
+    }
+
+    /// The map in view changed on disk, not by AKit. In Edit: the existing Changed on disk choice,
+    /// with the canvas's scene as yours. In view mode: the disk version goes on the canvas.
+    private func mapChangedOnDisk(_ id: String) {
+        guard mapEditing, let canvas = MapCanvasView.Coordinator.current else {
+            reloadMapFromDisk(id)
+            return
+        }
+        Task {
+            if let json = (try? await canvas.call("akitSerialize")) as? String, map == id {
+                mapConflict = MapConflict(id: id, bytes: Data(json.utf8))
+            } else {
+                reloadMapFromDisk(id)
+            }
+        }
+    }
+
+    private func reloadMapFromDisk(_ id: String) {
+        guard let base, let data = try? Data(contentsOf: base.mapFile(id)) else { return }
+        mapHashes[id] = KnowledgeWrite.hash(data)
+        if map == id {
+            mapScene = MapCanvasView.Scene(key: id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+        }
+        notice = "\(id) changed on disk; showing that version."
+    }
+
+    /// Changed on disk → Reload: the note's disk version replaces the text in the editor.
+    func reloadConflictedNote() {
+        guard noteConflict != nil else { return }
+        noteConflict = nil
+        readNote()
+        notice = "Reloaded the note from disk."
+    }
+
+    /// Changed on disk → Keep Mine: the disk copy is backed up (`~/.akit/backups`), then your text
+    /// is written over it and queued for its commit.
+    func keepMineInNoteConflict() {
+        guard let id = noteConflict, let base else { return }
+        noteConflict = nil
+        let file = base.noteFile(id)
+        guard let disk = try? Data(contentsOf: file) else {
+            problem = "The note \(id) is gone from disk, so there is nothing to keep it over."
+            return
+        }
+        do {
+            let backup = try Backup.save(disk, as: file, home: home)
+            let path = try base.save(note: id, text: text)
+            noteHashes[id] = KnowledgeWrite.hash(of: file)
+            enqueue(path, in: base)
+            notice = "Kept your version; the disk copy is in \(backup.tildePath)."
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    // MARK: - Focus and agent context (3.3)
+
+    struct FocusInfo: Equatable {
+        var folder: URL
+        /// The id `focus.json` keys the project by (its normalized remote, else `local/…`).
+        var project: String
+        var choice: KnowledgeBase.FocusChoice
+    }
+
+    /// What `akit kb context FOLDER` prints for a project, and the note in view's `kb neighbors`.
+    struct AgentContext: Sendable {
+        var folder: URL
+        var project: String
+        var choice: KnowledgeBase.FocusChoice
+        /// The base the CLI picks for the folder; nil when there is none.
+        var base: KnowledgeBase?
+        var answer: KnowledgeIndex.ContextAnswer?
+        var neighbors: KnowledgeIndex.NeighborsAnswer?
+        var problem: String?
+    }
+
+    /// Focus…: the project's focus in this base and where it comes from (`akit kb focus FOLDER`).
+    func loadFocus(folder: URL, projectsRoot: URL) async {
+        guard let base else { return }
+        let (project, choice) = await base.focus(folder: folder, env: env, projectsRoot: projectsRoot)
+        focusInfo = FocusInfo(folder: folder, project: project, choice: choice)
+    }
+
+    /// Focus… Save: `akit kb focus FOLDER --set AREA` (nil: `--clear`), in `focus.json` on this Mac.
+    func saveFocus(area: String?, projectsRoot: URL) async -> Bool {
+        guard let info = focusInfo else { return false }
+        do {
+            try KnowledgeBase.Focus.load(home: home).setting(area: area, project: info.project).save(home: home)
+        } catch {
+            problem = error.message
+            return false
+        }
+        await loadFocus(folder: info.folder, projectsRoot: projectsRoot)
+        notice = area.map { "\(info.project): focus \($0)." } ?? "\(info.project): your focus choice is cleared."
+        return true
+    }
+
+    /// Preview Agent Context…: `akit kb context FOLDER` exactly (the base the CLI picks for the
+    /// folder, the folder's focus, the 4000-token cap), and `akit kb neighbors` of the note in view.
+    func loadContext(folder: URL, projectsRoot: URL) async {
+        let env = env, note = note
+        agentContext = await Task.detached {
+            var context = AgentContext(folder: folder, project: "", choice: .none)
+            do {
+                guard let base = try await KnowledgeBase.choose(option: nil, folder: folder, env: env, projectsRoot: projectsRoot,
+                                                                forReading: true) else {
+                    context.problem = "No knowledge base on this Mac."
+                    return context
+                }
+                context.base = base
+                (context.project, context.choice) = await base.focus(folder: folder, env: env, projectsRoot: projectsRoot)
+                let index = KnowledgeIndex(base: base)
+                context.answer = try index.context(focus: context.choice.area)
+                if let note { context.neighbors = try? index.neighbors(note) }
+            } catch let error as KnowledgeIndex.Failure {
+                context.problem = error.message
+            } catch let error as KnowledgeBase.Failure {
+                context.problem = error.message
+            } catch {
+                context.problem = error.localizedDescription
+            }
+            return context
+        }.value
+    }
+
     // MARK: - Commit queue
 
     private func enqueue(_ path: String, in base: KnowledgeBase) {
@@ -826,7 +1078,37 @@ final class KnowledgeModel {
             case .failure(let error): lines.append("rename refused: \(error.message)")
             }
         }
+        if let status = indexStatus {
+            lines.append("index: \(status.notes) notes, \(status.maps) maps, \(status.chunks) sections" + (status.stale ? ", stale" : ""))
+        }
+        lines.append("inbox: \(inboxCount)")
+        if let answer = searchAnswer {
+            lines.append("search: “\(searchText)”, \(answer.results.count) hit\(answer.results.count == 1 ? "" : "s")" + (answer.stale ? ", stale" : ""))
+            for hit in answer.results.prefix(10) {
+                lines.append("hit: \(hit.note)" + (hit.heading.map { " ## \($0)" } ?? "") + ": \(hit.snippet)")
+            }
+        }
+        if let sectionTarget { lines.append("section: \(sectionTarget)") }
+        if let noteConflict { lines.append("conflict: Changed on disk, note \(noteConflict): Reload / Keep Mine") }
         switch DebugSnapshot.options?.tab {
+        case "focus":
+            if let info = focusInfo {
+                lines.append("focus: \(info.folder.tildePath) → \(info.project), " + (info.choice.area.map { "\($0) (\(info.choice.source?.rawValue ?? "-"))" } ?? "none"))
+            }
+        case "context":
+            if let context = agentContext {
+                lines.append("context: \(context.folder.tildePath) → \(context.project), focus \(context.choice.area ?? "none")"
+                    + (context.problem.map { ", \($0)" } ?? ""))
+                if let answer = context.answer {
+                    lines.append("context card: \(answer.systems.count) systems, \(answer.relations.count) relations, \(answer.tokens) of \(Budget.defaultTokens) tokens"
+                        + (answer.truncated ? ", cut" : ""))
+                    for system in answer.systems { lines.append("system: \(system.note): \(system.line)") }
+                    for relation in answer.relations { lines.append("relation: \(relation.from) → \(relation.to)" + (relation.kind.map { " \"\($0)\"" } ?? "")) }
+                }
+                if let neighbors = context.neighbors {
+                    lines.append("neighbors of \(neighbors.note): \(neighbors.edges.count) arrows, \(neighbors.tokens) tokens")
+                }
+            }
         case "kinds":
             lines.append("kinds: " + kindsFile.kinds.map { "\($0.name) (\($0.fields.joined(separator: ", ")))" }.joined(separator: ", "))
         case "area-settings":

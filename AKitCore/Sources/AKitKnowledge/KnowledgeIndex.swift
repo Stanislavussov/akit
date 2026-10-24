@@ -145,9 +145,10 @@ public struct KnowledgeIndex {
 
     /// The best chunks for `query` (every word must be there, BM25 order), at most `limit`, then
     /// cut from the end to stay under `maxTokens`. A miss (no result, or a best score at or above
-    /// `missScore`) adds a line to `.akit-misses.log`.
+    /// `missScore`) adds a line to `.akit-misses.log`; AKit's search field passes `logMisses: false`,
+    /// so a person's typing doesn't count as an agent's miss.
     public func search(_ query: String, area: String? = nil, limit: Int = 10,
-                       maxTokens: Int = Budget.defaultTokens) throws(Failure) -> SearchAnswer {
+                       maxTokens: Int = Budget.defaultTokens, logMisses: Bool = true) throws(Failure) -> SearchAnswer {
         let area = area.map(KnowledgeBase.nfc)
         if let area, !base.areas().contains(where: { $0.name == area }) {
             throw Failure(message: "No area “\(area)” in \(base.root.path). Areas: \(base.areas().map(\.name).joined(separator: ", ")).")
@@ -178,7 +179,7 @@ public struct KnowledgeIndex {
                 throw failure(error)
             }
         }
-        if !match.isEmpty, hits.first.map({ $0.score >= Self.missScore }) ?? true { logMiss(query, hits: hits) }
+        if logMisses, !match.isEmpty, hits.first.map({ $0.score >= Self.missScore }) ?? true { logMiss(query, hits: hits) }
         var answer = SearchAnswer(results: hits, stale: opened.stale)
         while Budget.measure(&answer, field: \.tokens) > maxTokens, !answer.results.isEmpty { answer.results.removeLast() }
         return answer

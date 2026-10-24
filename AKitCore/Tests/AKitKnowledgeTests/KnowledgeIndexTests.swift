@@ -212,6 +212,9 @@ struct KnowledgeIndexTests {
         #expect(fields.count == 4 && fields[1] == "0" && fields[2] == "-" && fields[3] == "kubernetes ingress")
         _ = try index.search("kubernetes\tingress")
         #expect(lines().count == 2 && lines()[1].hasSuffix("\tkubernetes ingress"))
+        // AKit's search field logs no misses.
+        _ = try index.search("kubernetes", logMisses: false)
+        #expect(lines().count == 2)
     }
 
     @Test func anEditOnDiskIsFoundByTheNextSearch() throws {

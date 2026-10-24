@@ -1,3 +1,5 @@
+import AKitFoundation
+import AKitKnowledge
 import AppKit
 import SwiftUI
 
@@ -62,6 +64,12 @@ import SwiftUI
 /// opens the map with that element and its link (as a click would); `--tab rename` asks Rename… of the selected note or map
 /// (`--query` the new name); `--tab map-drop --query <note id>` drops a note on the map; `--tab map-rename --query <note>=<name>`
 /// renames right after an unsaved edit (N5). Every map snapshot prints `posts: N` (0 after an open).
+/// 3.3: `--query <words>` (no `--tab`) fills the toolbar search and prints the hits; `--tab focus` and `--tab context`
+/// open Focus… and Preview Agent Context… (`--project <folder name>` picks the project, `--query json` the JSON view).
+/// `--tab watch --select <note id> --query <word>` is the watcher check: it appends a section with the word to the
+/// note's file from outside, waits for the watcher's batch, searches the word and prints the hit, the time it took
+/// and the commit queue (the edit is queued, not committed: that waits for the 5 min idle flush, or the quit).
+/// `--tab watch-edit` does the same with the note in Edit, so "Changed on disk" (Reload / Keep Mine) appears.
 ///
 /// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
 /// menu's items (to check which places get Ask AKit About This);
@@ -282,6 +290,28 @@ enum DebugSnapshot {
                 try? await Task.sleep(for: .milliseconds(200))
             }
             NotificationCenter.default.removeObserver(observer)
+        }
+        if options.section == .knowledge, ["watch", "watch-edit"].contains(options.tab), let model = KnowledgeModel.current, let base = model.base,
+           let id = options.select, let word = options.query {
+            let start = Date()
+            if let handle = try? FileHandle(forWritingTo: base.noteFile(id)) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: Data("\n## Watch check\n\nWritten from outside: \(word).\n".utf8))
+                try? handle.close()
+                print("watch: appended a section with “\(word)” to \(base.notePath(id)) from outside")
+            }
+            // The watcher's quiet second plus FSEvents' latency; the search runs after its batch.
+            while Date().timeIntervalSince(start) < 5,
+                  !KnowledgeCommitQueue(base: base.root, env: .current).pending().contains(base.notePath(id)) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            await model.watchTask?.value
+            model.searchText = word
+            await model.runSearch()
+            let hit = model.searchAnswer?.results.first { $0.note == id }
+            print(String(format: "watch: search “%@” after %.1f s: ", word, Date().timeIntervalSince(start))
+                + (hit.map { "\($0.note) ## \($0.heading ?? "-")" } ?? "no hit"))
+            print("watch: pending commits: " + KnowledgeCommitQueue(base: base.root, env: .current).pending().joined(separator: ", "))
         }
         if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
             print(manifest)

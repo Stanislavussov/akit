@@ -33,7 +33,7 @@ struct NotePanel: View {
                         .onChange(of: draft) { _, text in model.save(text) }
                         .onChange(of: model.text) { _, text in if text != draft { draft = text } }
                 } else {
-                    NoteReadView(text: model.text)
+                    NoteReadView(text: model.text, section: model.sectionTarget)
                 }
             } else {
                 ContentUnavailableView("No note open", systemImage: "doc.text",
@@ -48,6 +48,12 @@ struct NotePanel: View {
             }
         } message: {
             Text("The file goes to the Trash, and its removal is committed in the base's git. Links to it from other notes stay as they are.")
+        }
+        .alert("Changed on disk", isPresented: Binding(get: { model.noteConflict != nil }, set: { _ in })) {
+            Button("Reload") { model.reloadConflictedNote() }
+            Button("Keep Mine") { model.keepMineInNoteConflict() }
+        } message: {
+            Text("The note \(model.noteConflict ?? "") changed on disk while you edit it, in another app like Obsidian or by git. Reload shows the version on disk. Keep Mine saves your text and backs up the one on disk in ~/.akit/backups.")
         }
     }
 
@@ -219,33 +225,45 @@ private struct PropertyField: View {
 /// A note as text: its frontmatter as a small table, then the Markdown body, headings bigger.
 struct NoteReadView: View {
     let text: String
+    /// A heading to scroll to (a search hit's section).
+    var section: String?
 
     var body: some View {
         let note = KnowledgeNote(text: text)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                let front = note.frontmatter.sorted { $0.key < $1.key }
-                if !front.isEmpty {
-                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 3) {
-                        ForEach(front, id: \.key) { key, value in
-                            GridRow {
-                                Text(key).foregroundStyle(.secondary)
-                                Text(Self.describe(value)).textSelection(.enabled)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    let front = note.frontmatter.sorted { $0.key < $1.key }
+                    if !front.isEmpty {
+                        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 3) {
+                            ForEach(front, id: \.key) { key, value in
+                                GridRow {
+                                    Text(key).foregroundStyle(.secondary)
+                                    Text(Self.describe(value)).textSelection(.enabled)
+                                }
                             }
                         }
+                        .font(.callout)
+                        .padding(8)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .font(.callout)
-                    .padding(8)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    ForEach(Array(Self.blocks(note.body).enumerated()), id: \.offset) { _, block in
+                        block
+                    }
                 }
-                ForEach(Array(Self.blocks(note.body).enumerated()), id: \.offset) { _, block in
-                    block
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
+            // The note's text is in the key too: the same heading in another note scrolls again.
+            .onChange(of: section.map { [$0, text] }, initial: true) {
+                guard let section else { return }
+                Task { @MainActor in proxy.scrollTo(Self.anchor(section), anchor: .top) }
+            }
         }
     }
+
+    /// The scroll id of a heading's line.
+    static func anchor(_ heading: String) -> String { "heading:" + heading }
 
     static func describe(_ value: Any) -> String {
         if let list = value as? [Any] { return list.map { "\($0)" }.joined(separator: ", ") }
@@ -270,7 +288,7 @@ struct NoteReadView: View {
             if (1...3).contains(level), line.dropFirst(level).first == " " {
                 let title = String(line.dropFirst(level + 1))
                 views.append(AnyView(Text(title).font(level == 1 ? .title2.bold() : level == 2 ? .title3.bold() : .headline)
-                    .padding(.top, level == 1 ? 2 : 8)))
+                    .padding(.top, level == 1 ? 2 : 8).id(anchor(title))))
             } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 views.append(AnyView(Spacer().frame(height: 2)))
             } else {

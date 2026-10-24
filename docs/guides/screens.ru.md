@@ -3990,15 +3990,15 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 #### Что на экране
 <!-- section: knowledge-screen -->
 
-- **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**.
+- **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**. Под ними строка индекса поиска («Index: 10 notes, 21 sections», **Reindex**) и **Inbox** — число предложений агентов.
 - Список заметок пространства: заголовок, вид (`service`, `flow`) и путь. Над ним часть **Maps**, если у пространства есть карты.
 - Карта (вместо панели заметки, когда вы её открыли), во вкладке: **Edit**, **Show in Finder**, **Rename…**, **Delete…**, **Close Map**. В режиме просмотра нажатие на блок открывает его заметку рядом. Заметку из списка можно перетащить на карту: появится блок со ссылкой на неё.
 - В панели заметки часть **Relations** — стрелки к заметке и от неё на картах — и кнопка **Rename…**.
 - Панель заметки: вкладки открытых заметок, кнопки **Edit**, **Properties** (вид и поля заметки), **Copy**, **Paste**, **Open in Obsidian**, **Delete…** и текст.
-- Панель инструментов: **New Area…**, **New Note…**, **New Map…**, **Kinds…** (виды заметок и их поля), меню **Sample Base** (**Add Sample Base…**, **Remove Sample Base…**: пример базы с выдуманными заметками), **Guide**. Если баз несколько — список **Base**.
+- Панель инструментов: поле поиска **Search notes** (находки — вместо списка заметок), **New Area…**, **New Note…**, **New Map…**, **Kinds…** (виды заметок и их поля), **Focus…** (с какого пространства агент начинает в проекте), **Preview Agent Context…** (что агент читает в начале задачи), меню **Sample Base** (**Add Sample Base…**, **Remove Sample Base…**: пример базы с выдуманными заметками), **Guide**. Если баз несколько — список **Base**.
 - Если базы нет: «No knowledge base» и кнопки **Create Base…** и **Add Sample Base…**.
 
-Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [карты](knowledge#maps), [переименовать](knowledge#rename), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings).
+Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [карты](knowledge#maps), [переименовать](knowledge#rename), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings), [поиск](knowledge#search), [фокус](knowledge#focus), [что видит агент](knowledge#context).
 
 #### Просто: первая заметка
 <!-- section: knowledge-first -->
