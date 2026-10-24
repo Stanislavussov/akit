@@ -43,6 +43,7 @@ struct ReviewPointSearch: View {
     /// The chosen point; nil = Cancel.
     let pick: (ReviewLocalPoint?) -> Void
     @State private var query = ""
+    @State private var filter: ReviewLocalPoint.Filter = DebugSnapshot.options?.select.flatMap(ReviewLocalPoint.Filter.init(rawValue:)) ?? .all
     @State private var points: [ReviewLocalPoint] = []
     @State private var problem: String?
     @State private var loaded = false
@@ -52,6 +53,11 @@ struct ReviewPointSearch: View {
             Text("Find the \(title.lowercased())").font(.headline)
             TextField("Search", text: $query, prompt: Text("a word of a branch, tag, commit message or id"))
                 .textFieldStyle(.roundedBorder)
+            Picker("Show", selection: $filter) {
+                ForEach(ReviewLocalPoint.Filter.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
             if let problem {
                 Text(problem).font(.caption).foregroundStyle(.red)
             } else if loaded && points.isEmpty {
@@ -65,7 +71,8 @@ struct ReviewPointSearch: View {
                 .listStyle(.plain)
             }
             HStack {
-                Text("Branches and tags first, the most recent first; then the commits of all branches. Click one to use it.")
+                Text(filter == .all ? "Branches and tags first, the most recent first; then the commits of all branches. Click one to use it."
+                     : "The most recent first. Click one to use it.")
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { pick(nil) }.keyboardShortcut(.cancelAction)
@@ -73,7 +80,7 @@ struct ReviewPointSearch: View {
         }
         .padding()
         .frame(width: 560, height: 420)
-        .task(id: query) { await search() }
+        .task(id: "\(filter.rawValue)|\(query)") { await search() }
     }
 
     private func row(_ point: ReviewLocalPoint) -> some View {
@@ -110,7 +117,7 @@ struct ReviewPointSearch: View {
         if loaded { try? await Task.sleep(for: .milliseconds(250)) }
         guard !Task.isCancelled else { return }
         do {
-            let found = try await ReviewLocal.points(path: workspace, query: query, env: env)
+            let found = try await ReviewLocal.points(path: workspace, query: query, filter: filter, env: env)
             guard !Task.isCancelled else { return }
             points = found
             problem = nil

@@ -194,7 +194,8 @@ branch or commit name):
   (an annotated tag gives its commit, the commit's author and date, its own message) and the last
   1,000 commits of all branches and HEAD (newest first), plus an older commit by an id start of
   4+ hex characters. Every word of the query must be in the name, the subject or the author, or
-  start the id; any case. Refs first (the most recent first, `creatordate`: a tag by its own date),
+  start the id; any case. A filter (All, Branches with the remote ones, Tags, Commits; `--kind`)
+  keeps one kind before the limit. Refs first (the most recent first, `creatordate`: a tag by its own date),
   then commits; at most 30. A tag on a tree or a blob is left out. New Review… clears the range
   while it reads a new Base or Head, so Start Review never takes the old one.
 - Head: `inspect(path, base?, head?)`. A head other than the workspace's HEAD reviews

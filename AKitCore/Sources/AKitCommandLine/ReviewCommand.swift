@@ -27,11 +27,12 @@ extension AKitCLI {
                                         already reviewed this commit. A rerun after a push reviews
                                         only what changed since the last review; --full reads the
                                         whole merge request again
-      akit review points [PATH] [--find TEXT] [--json]
+      akit review points [PATH] [--find TEXT] [--kind branches|tags|commits] [--json]
                                         Find a base or head for a local review: the branches, remote
                                         branches, tags and commits of the workspace (PATH: the current
                                         folder) whose name, commit message, author or id holds every
-                                        word of TEXT; the most recent first
+                                        word of TEXT; the most recent first. --kind shows one kind
+                                        (branches: the remote ones too)
       akit review local [PATH] [--base REF] [--head REF] [--what all|commits|uncommitted] [--show]
                          [--scenario S] [--project P] [--role +ID|-ID]… [--passes-model M]
                          [--verifier-model M] [--cap CREDITS] [--note TEXT]… [--note-file PATH]…
@@ -164,6 +165,7 @@ extension AKitCLI {
         let baseRef = args.value("--base")
         let headRef = args.value("--head")
         let findText = args.value("--find")
+        let kindText = args.value("--kind")
         let whatText = args.value("--what")
         let showOnly = args.flag("--show")
         var choices = ReviewRunChoices(scenario: scenario, settings: settings, workItems: wis)
@@ -404,7 +406,13 @@ extension AKitCLI {
             let path = args.positional().map { resolve($0, cwd: cwd, env: env) } ?? cwd
             let json = args.flag("--json")
             try args.finish()
-            let points = try await ReviewLocal.points(path: path, query: findText ?? "", env: env)
+            let filter = try kindText.map { text -> ReviewLocalPoint.Filter in
+                guard let filter = ReviewLocalPoint.Filter(rawValue: text), filter != .all else {
+                    throw Failure(message: "--kind is branches, tags or commits, not \(text).")
+                }
+                return filter
+            } ?? .all
+            let points = try await ReviewLocal.points(path: path, query: findText ?? "", filter: filter, env: env)
             if json {
                 out(String(decoding: try ReviewJSON.encoder.encode(points), as: UTF8.self))
             } else if points.isEmpty {
