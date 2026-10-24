@@ -83,7 +83,9 @@ targets:
           tag="$(git -C "$SRCROOT" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null)"
           stamp AKitVersionTag "$tag"
           [ -z "$tag" ] || stamp AKitCommitsSinceTag "$(git -C "$SRCROOT" rev-list --count "$tag..HEAD" 2>/dev/null)"
-          stamp AKitGitDirty "$(git -C "$SRCROOT" status --porcelain --untracked-files=no 2>/dev/null | head -1 | grep -q . && echo yes || echo no)"
+          # No index lock: `head` closes the pipe early, and a git killed while it holds
+          # index.lock blocks the next commit in this checkout.
+          stamp AKitGitDirty "$([ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$SRCROOT" status --porcelain --untracked-files=no 2>/dev/null)" ] && echo yes || echo no)"
           stamp AKitBuildDate "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     settings:
       base:
