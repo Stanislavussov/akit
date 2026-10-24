@@ -13,7 +13,7 @@ extension AKitCLI {
       akit review MR-URL [--wi N]… [--scenario S] [--project P] [--role +ID|-ID]…
                          [--passes-model M] [--verifier-model M] [--cap CREDITS] [--brain DIR]
                          [--note TEXT]… [--note-file PATH]… [--link URL]… [--extra-server NAME]…
-                         [--gather-only] [--anyway] [--full]
+                         [--impact auto|off|always] [--gather-only] [--anyway] [--full]
                                         Gather: Pi reads the merge request and its work items through
                                         its MCP servers; AKit adds the worktree at head_sha, the diff,
                                         history, commands and knowledge into a context pack. Then the
@@ -45,6 +45,9 @@ extension AKitCLI {
                                         server's reading tools (context/links.md; a gap when it can't)
       --extra-server NAME               A Pi MCP server added for this run as a read-only context
                                         server, on top of the profile's mcp: servers and extra_servers
+      --impact auto|off|always          Look for uses of the change in other GitLab repositories
+                                        through the GitLab MCP server (the impact pass): auto when the
+                                        brief found a boundary (default), always, or off
       --step COMMAND                    A Pi step after the roles: /run AGENT [TASK] (a pi-subagents
                                         agent), /TEMPLATE [ARGS], /skill:NAME [REQUEST] or plain text.
                                         AKit runs it as its own pass with the review's reading tools
@@ -124,6 +127,10 @@ extension AKitCLI {
         if let model = args.value("--verifier-model") { settings.verifier = ReviewModelChoice(model: model) }
         if let cap = try positiveNumber(args.value("--cap"), "--cap") { settings.capCredits = cap }
         if let lines = try positiveNumber(args.value("--max-changed-lines"), "--max-changed-lines") { settings.maxChangedLines = lines }
+        if let text = args.value("--impact") {
+            guard let impact = ReviewImpact(rawValue: text) else { throw Failure(message: "--impact takes auto, off or always, not \(text).") }
+            settings.impact = impact
+        }
         let mrText = args.value("--mr")
         let gatherOnly = args.flag("--gather-only")
         let yes = args.flag("--yes")

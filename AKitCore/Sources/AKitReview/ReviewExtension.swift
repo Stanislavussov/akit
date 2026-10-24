@@ -22,7 +22,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 8
+    public static let version = 9
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -36,7 +36,7 @@ public enum ReviewExtension {
     }
 
     public static let source = #"""
-    // akit-review.ts v8: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v9: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -75,7 +75,7 @@ public enum ReviewExtension {
     const kinds = ["finding", "ac", "question"];
     const boundaryKinds = ["http-api", "graphql", "mfe", "shared-lib", "event", "db-schema", "infra", "ci", "config"];
     const readTools = ["read", "grep", "find", "ls"];
-    const ownTools = ["akit_submit_findings", "akit_submit_boundaries", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link"];
+    const ownTools = ["akit_submit_findings", "akit_submit_boundaries", "akit_submit_consumers", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link"];
     const resourceTools = ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"];
     const forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"];
     const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
@@ -355,6 +355,27 @@ public enum ReviewExtension {
       return out;
     }
 
+    // A use of a boundary in another repository (the impact pass). AKit checks each against the
+    // saved GitLab answers; this only checks the shape.
+    function consumerProblems(list: any[]): string[] {
+      const out: string[] = [];
+      list.forEach((c, i) => {
+        const at = `consumers[${i}]`;
+        if (typeof c !== "object" || c === null) { out.push(`${at} is not an object`); return; }
+        if (typeof c.boundary !== "string" || c.boundary.trim() === "") out.push(`${at}.boundary names the boundary (its id, such as b1, or its name)`);
+        if (typeof c.project !== "string" || c.project.trim() === "") out.push(`${at}.project is the other project's path in GitLab`);
+        if (typeof c.file !== "string" || c.file.trim() === "") out.push(`${at}.file is missing`);
+        if (c.ref !== undefined && c.ref !== null && typeof c.ref !== "string") out.push(`${at}.ref must be a branch or commit`);
+        if (c.line !== undefined && c.line !== null && (!Number.isInteger(c.line) || c.line < 1)) out.push(`${at}.line must be a line number from 1`);
+        if (typeof c.quote !== "string" || c.quote.trim() === "") out.push(`${at}.quote must copy the line from GitLab's answer`);
+        if (typeof c.usage !== "string" || c.usage.trim() === "") out.push(`${at}.usage says how the file uses the boundary`);
+        if (c.breaks !== undefined && typeof c.breaks !== "boolean") out.push(`${at}.breaks must be true or false`);
+        if (c.why !== undefined && typeof c.why !== "string") out.push(`${at}.why must be text`);
+        if (c.breaks === true && (typeof c.why !== "string" || c.why.trim() === "")) out.push(`${at}.why says how this change breaks it`);
+      });
+      return out;
+    }
+
     export default function (pi: any) {
       if (mode === "review") {
         pi.registerTool({
@@ -458,6 +479,51 @@ public enum ReviewExtension {
         });
       }
 
+      if (mode === "review" && pass === "impact") {
+        pi.registerTool({
+          name: "akit_submit_consumers",
+          label: "Submit uses in other repositories",
+          description: "Hand AKit the uses of the change's boundaries you found in other GitLab projects, each once. You may call it "
+            + "again with more; an empty list is a valid answer. AKit keeps a use only when its quote is in an answer GitLab gave you "
+            + "in this pass.",
+          parameters: {
+            type: "object",
+            properties: {
+              consumers: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    boundary: { type: "string", description: "The boundary's id (b1, b2, …) or, for one you named yourself, its name" },
+                    project: { type: "string", description: "The other project's path in GitLab (group/project)" },
+                    file: { type: "string", description: "The file's path in that project" },
+                    ref: { type: ["string", "null"], description: "The branch or commit you read it at" },
+                    line: { type: ["integer", "null"] },
+                    quote: { type: "string", description: "The exact line that uses the boundary, copied from GitLab's answer; never a secret's value" },
+                    usage: { type: "string", description: "One short sentence: how the file uses the boundary" },
+                    breaks: { type: "boolean", description: "true: this change breaks the use" },
+                    why: { type: "string", description: "How this change breaks it (or why not)" },
+                  },
+                  required: ["boundary", "project", "file", "quote", "usage"],
+                },
+              },
+            },
+          },
+          async execute(_id: string, params: any) {
+            const list = Array.isArray(params?.consumers) ? params.consumers : [];
+            const wrong = consumerProblems(list);
+            if (wrong.length > 0) {
+              return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
+            }
+            const file = path.join(run, "passes/consumers.json");
+            const earlier = parse(readText(file))?.consumers;
+            const all = (Array.isArray(earlier) ? earlier : []).concat(list).slice(0, 200);
+            write("passes/consumers.json", JSON.stringify({ pass, consumers: all }, null, 2));
+            return { content: [{ type: "text", text: `Saved ${list.length} uses (${all.length} in all).` }], details: undefined };
+          },
+        });
+      }
+
       if (mode === "fetch") {
         pi.registerTool({
           name: "akit_submit_context",
@@ -557,7 +623,8 @@ public enum ReviewExtension {
               + "and review never publishes, approves, merges or resolves.");
           }
           const parts = split(name);
-          if (parts !== null && !serverBase(parts.server) && !serverExtra(parts.server) && tooMuchFor(event.input)) {
+          // The impact pass searches other projects: short queries to every server, GitLab too.
+          if (parts !== null && (pass === "impact" || (!serverBase(parts.server) && !serverExtra(parts.server))) && tooMuchFor(event.input)) {
             return refuse(name, `AKit review sends ${parts.server} only short queries without line breaks (at most ${openArgumentLimit} `
               + "characters each): ask with names of libraries, APIs or pages, never with code or file contents.");
           }

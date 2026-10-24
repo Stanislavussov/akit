@@ -21,6 +21,7 @@ public enum ReviewBuiltIns {
     cost:
       cap_credits_per_run: 600
       max_changed_lines: 6000
+    impact: auto        # look for uses of the change in other GitLab repositories: auto, off or always
     """
 
     public static let scenarioFiles: [String: String] = [

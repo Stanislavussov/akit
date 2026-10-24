@@ -414,6 +414,33 @@ or adds to the table:
   asks, when its worktree is still there. Apply (Discuss in Pi…) doesn't build the map again,
   so its severities are those of the passes' findings until the next run.
 
+Built: part (b) (2026-10-24): R42–R44, the `impact` pass (`ReviewPasses.impact`,
+`ReviewConsumers.swift`, `ReviewPrompts.impact`). `impact: auto | off | always` in review.yaml
+(top level), a profile's `review:` block and the run (`--impact`, also for `akit review local`);
+`config show` lists it. The pass runs after the brief's boundary check, in the main session, with
+the reading tools, MCP, `tool_search`, `akit_submit_consumers` and `akit_report_context_gap`.
+What differs from or adds to the table:
+
+- The run's GitLab server is the one the fetch pass read the merge request with (the run's own
+  server whose saved answer holds it; for an older run, its own servers named like GitLab). A
+  local review, `mcp: in_passes: false` or no such server: a gap (system `gitlab`) and no pass.
+  A failed impact pass is a gap too; the review goes on.
+- The top group for `group_id` is the first segment of the merge request's project path; the
+  prompt also names the full namespace. The 300-character, one-line argument limit holds for
+  every server in this pass, GitLab included.
+- `always` with no boundary from the brief: the pass also gets `akit_submit_boundaries`, AKit
+  checks those like the brief's, and a use names such a boundary by its name.
+- `akit_submit_consumers` may be called more than once; the calls add up (at most 200).
+- AKit keeps a use when its boundary is kept, its project is a GitLab path other than the merge
+  request's, and its quote (each line, spaces collapsed, split at `...`) is in one answer of a
+  run's GitLab server to this pass that also names the file (its name in the call or the
+  answer); JSON strings and base64 file contents count. One use per project, file and boundary,
+  at most 100; texts masked and cut. `url` is `<host>/<project>/-/blob/<ref or HEAD>/<file>#L<line>`.
+- Searches (`search`, `semantic_search`, `query_graph`) and file reads (`…file…`, `…blob…`) are
+  counted from the saved answers or the pass's own tool calls, whichever is more.
+- The contracts role that R44 adds is the built-in one, after the scenario's roles; `run.json`
+  lists it with the reason "added: other repositories use the change".
+
 ### Overview, flow and the work item chain (2026-10-24)
 
 Asked by the user later on 2026-10-24: "a summary in the chosen language: 3–5 points on what

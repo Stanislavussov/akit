@@ -28,7 +28,7 @@ struct ReviewRunFixture {
         home.write("bin/pi", fakePi, executable: true)
     }
 
-    static func make(allowed: Bool = true, cap: Int? = nil) async throws -> ReviewRunFixture {
+    static func make(allowed: Bool = true, cap: Int? = nil, choices: ReviewRunChoices = ReviewRunFixture.choices) async throws -> ReviewRunFixture {
         let (home, head) = try ReviewProcessTests.GatherTests().setUp()
         var choices = choices
         choices.settings.capCredits = cap
@@ -66,6 +66,10 @@ struct ReviewRunFixture {
     mkdir -p "$AKIT_REVIEW_RUN/passes"
     [ -f "$HOME/fake/$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/$AKIT_REVIEW_PASS.json"
     [ -f "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/boundaries-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/boundaries.json"
+    [ -f "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" ] && cp "$HOME/fake/consumers-$AKIT_REVIEW_PASS.json" "$AKIT_REVIEW_RUN/passes/consumers.json"
+    if [ -d "$HOME/fake/calls-$AKIT_REVIEW_PASS" ]; then
+      mkdir -p "$AKIT_REVIEW_RUN/mcp/calls"; cp "$HOME/fake/calls-$AKIT_REVIEW_PASS"/*.json "$AKIT_REVIEW_RUN/mcp/calls/"
+    fi
     [ -f "$HOME/fake/gaps-$AKIT_REVIEW_PASS.jsonl" ] && cp "$HOME/fake/gaps-$AKIT_REVIEW_PASS.jsonl" "$AKIT_REVIEW_RUN/passes/gaps-$AKIT_REVIEW_PASS.jsonl"
     if [ -f "$HOME/fake/fail-$AKIT_REVIEW_PASS" ]; then
       echo '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"quota exceeded","usage":{"input":10,"output":0,"cacheRead":0,"cacheWrite":0}}}'

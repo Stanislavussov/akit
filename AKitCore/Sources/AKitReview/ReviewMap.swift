@@ -466,6 +466,7 @@ public struct ReviewMap: Codable, Sendable, Hashable {
             lines.append("  \(project.label)  \(uses.count) use\(uses.count == 1 ? "" : "s")\(broken > 0 ? ", \(broken) broken" : "")")
             for use in uses.sorted(by: { ($0.file, $0.line ?? 0) < ($1.file, $1.line ?? 0) }) {
                 lines.append("    \(use.file)\(use.line.map { ":\($0)" } ?? "") uses \(use.boundary)\(use.breaks ? " · breaks: \(use.why)" : "")")
+                if let url = use.url { lines.append("      \(url)") }
             }
         }
         if !notes.isEmpty {

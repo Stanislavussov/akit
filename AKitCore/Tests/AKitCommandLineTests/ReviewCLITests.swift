@@ -53,6 +53,21 @@ extension AKitCLITests {
         #expect(await review(["--help"]).out.contains("--link URL"))
     }
 
+    /// `--impact`: whether the impact pass looks in other repositories, over the profile's choice.
+    @Test func reviewImpactOption() async throws {
+        try write(".akit/local/review/projects/app.yaml", """
+        gitlab: { host: https://gitlab.test, project_path: team/app }
+        review: { impact: off }
+
+        """)
+        let none = home.appending(path: "none").path
+        #expect(await review(["config", "show", "--project", "app", "--brain", none]).out.contains("impact: off  [project]"))
+        let shown = await review(["config", "show", "--project", "app", "--brain", none, "--impact", "always"])
+        #expect(shown.code == 0 && shown.out.contains("impact: always  [run]"), "\(shown)")
+        #expect(await review(["config", "show", "--brain", none, "--impact", "maybe"]).err.contains("--impact takes auto, off or always"))
+        #expect(await review(["--help"]).out.contains("--impact auto|off|always"))
+    }
+
     @Test func reviewNeedsAMergeRequest() async throws {
         #expect(await review(["https://gitlab.test/a/-/issues/1"]).err.contains("not a merge request address"))
         let help = await review(["--help"])

@@ -219,6 +219,12 @@ boundaries the change provides or uses (APIs, packages, events, infra, config) a
 repositories that use them. Use it when the user asks what a merge request affects; `--json`
 for the data, `--mermaid` for a `flowchart LR` to paste. It never posts anything.
 
+`akit review MR-URL --impact auto|off|always` (also `akit review local`) says whether the review
+looks for uses of the change in other GitLab repositories through the GitLab MCP server: `auto`
+(default) when the brief found a boundary, `always`, or `off`. The kept uses are on the map and
+in `context/consumers.md`; a use the change breaks becomes a `contracts` finding on the changed
+line. Use `--impact off` for a quick review, `always` when the user asks what else a change breaks.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

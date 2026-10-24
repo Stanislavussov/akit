@@ -160,6 +160,11 @@ public struct ReviewRunSpec: Codable, Sendable, Hashable {
 
     /// Over this many changed lines the passes ask first; nil in runs made before 2026-10-22.
     public var maxChangedLines: Sourced<Int>?
+    /// Whether the `impact` pass looks in other repositories (R42); nil in runs made before 2026-10-24.
+    public var impact: Sourced<ReviewImpact>?
+
+    /// The run's `impact`: `auto` when the run predates it.
+    public var impactMode: ReviewImpact { impact?.value ?? .auto }
 
     /// Every extra flag, in level order.
     public var extraFlags: [String] { (piFlags ?? []).flatMap(\.value) }
@@ -304,6 +309,7 @@ public enum ReviewResolver {
         spec.mcpServers = servers
         spec.fullReview = choices.fullReview ? true : nil
         spec.maxChangedLines = pick(\.maxChangedLines, fallback: 6000)
+        spec.impact = pick(\.impact, fallback: .auto)
         let levels: [(ReviewPiExtras, ReviewSource)] = [(catalog.brainPi, .brain), (profile?.pi ?? ReviewPiExtras(), .project), (choices.pi, .run)]
         for (extras, _) in levels {
             if let problem = ReviewPiFlags.problem(extras.flags) { throw Failure(message: "Pi flags: \(problem)") }
@@ -400,6 +406,7 @@ public enum ReviewResolver {
                   "Cost:",
                   line("cap_credits_per_run", String(spec.capCredits.value), spec.capCredits.source)]
         if let size = spec.maxChangedLines { lines.append(line("max_changed_lines", String(size.value), size.source)) }
+        if let impact = spec.impact { lines += ["Other repositories:", line("impact", impact.value.rawValue, impact.source)] }
         if !spec.constraints.isEmpty { lines += ["Constraints [project]:"] + spec.constraints.map { "  - \($0)" } }
         if !spec.pathInstructions.isEmpty {
             lines += ["Path instructions [project]:"] + spec.pathInstructions.map {
