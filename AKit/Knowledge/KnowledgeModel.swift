@@ -68,6 +68,24 @@ final class KnowledgeModel {
     /// What the last write did, under the panel's buttons.
     var notice: String?
     private(set) var loaded = false
+    /// The Lint tab of the screen is in view (4.1). Snapshots: `--tab lint`.
+    var showingLint = DebugSnapshot.options?.tab == "lint"
+    /// The base's lint findings (`akit kb lint`), read again with the base: the Lint tab lists
+    /// them, and the note panel greys the links and paths they are about.
+    private(set) var lintFindings: [KnowledgeLint.Finding] = []
+    /// Where lint finds the known projects and their local copies: the app's projects folder
+    /// and brain (set by the screen), `~/Projects` and `~/.akit/registry` until then.
+    var projectsRoot: URL?
+    var brainRoot: URL?
+    /// The known projects, found once per load (Check Again finds them again).
+    private var lintProjects: KnowledgeLint.Projects?
+    /// Create Note… of a broken link: New Note… filled in with its area and name.
+    struct NewNoteRequest: Identifiable {
+        let area: String
+        let name: String
+        var id: String { "\(area)/\(name)" }
+    }
+    var newNoteRequest: NewNoteRequest?
 
     // Search, index, watch (3.3)
     /// The toolbar search field. Snapshots: `--query` without a `--tab` (or with `--tab watch`).
@@ -119,6 +137,7 @@ final class KnowledgeModel {
     func load(select: String? = nil) async {
         bases = KnowledgeBase.all(home: home)
         sampleBase = bases.first { KnowledgeSeed.marker(of: $0) != nil }
+        lintProjects = nil
         if !bases.contains(where: { $0 == base }) { base = Self.defaultBase(bases, home: home) }
         // Snapshots: `--tab sample` shows the sample base, `--tab sample-remove` asks Remove Sample Base….
         if DebugSnapshot.options?.tab?.hasPrefix("sample") == true, let sampleBase { base = sampleBase }
@@ -169,8 +188,10 @@ final class KnowledgeModel {
             (maps, map, targets) = ([], nil, KnowledgeLinks(notes: [], maps: []))
             kindsFile = .defaults
             (watcher, indexStatus, searchAnswer, inboxCount) = (nil, nil, nil, 0)
+            lintFindings = []
             return
         }
+        defer { lint() }
         if watcher?.root != base.root {
             watcher = KnowledgeWatcher(root: base.root) { [weak self] paths in self?.changed(paths) }
             noteHashes = [:]
@@ -479,6 +500,43 @@ final class KnowledgeModel {
         case .ambiguous(let ids):
             notice = "The link \(trimmed) fits more than one: \(ids.joined(separator: ", "))."
         }
+    }
+
+    // MARK: - Lint
+
+    /// Checks the base again (`akit kb lint`); `rescan` finds the known projects again too.
+    func lint(rescan: Bool = false) {
+        guard let base else {
+            lintFindings = []
+            return
+        }
+        if rescan || lintProjects == nil {
+            lintProjects = KnowledgeLint.Projects.find(home: home, projectsRoot: projectsRoot ?? home.appending(path: "Projects"),
+                                                       brainRoot: brainRoot ?? Brain.defaultRoot(home: home))
+        }
+        lintFindings = KnowledgeLint.run(base, projects: lintProjects ?? .init(), home: home)
+    }
+
+    /// The findings about one note (its links, `repo:`, `files:`, `kind:`).
+    func lintFindings(of note: String) -> [KnowledgeLint.Finding] {
+        lintFindings.filter { $0.note == note }
+    }
+
+    /// Open: the note or the map of a finding, out of the Lint tab.
+    func open(finding: KnowledgeLint.Finding) async {
+        showingLint = false
+        if let id = finding.map {
+            open(map: id)
+        } else if let id = finding.note {
+            await closeMap()
+            open(id)
+        }
+    }
+
+    /// Create Note… of a broken link: New Note… with the link's area and name.
+    func createNote(for finding: KnowledgeLint.Finding) {
+        guard let target = KnowledgeLint.newNote(for: finding) else { return }
+        newNoteRequest = NewNoteRequest(area: target.area, name: target.name)
     }
 
     // MARK: - Tabs
@@ -1049,6 +1107,14 @@ final class KnowledgeModel {
     var manifest: String {
         var lines = ["knowledge base: \(base?.root.tildePath ?? "none")",
                      "bases: " + bases.map { $0.name + ($0 == sampleBase ? " (sample)" : "") }.joined(separator: ", ")]
+        let counts = KnowledgeLint.counts(lintFindings)
+        lines.append("tab: \(showingLint ? "Lint" : "Notes"), lint \(counts.error) errors, \(counts.warning) warnings, \(counts.hint) hints")
+        if showingLint {
+            lines += lintFindings.map { finding in
+                "finding: \(finding.severity.rawValue) \(finding.rule.rawValue) \(finding.file)" + (finding.element.map { " \($0)" } ?? "")
+                    + (finding.link.map { " \($0)" } ?? "") + (KnowledgeLint.newNote(for: finding) == nil ? ", Open" : ", Open, Create Note…")
+            }
+        }
         lines.append("areas: " + areas.map { "\($0.name)\($0.name == area ? "*" : "") (\($0.notes))" }.joined(separator: ", "))
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
         lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
@@ -1065,6 +1131,10 @@ final class KnowledgeModel {
             }
             let sections = KnowledgeNote(text: text).sections.map(\.heading)
             if !sections.isEmpty { lines.append("sections: " + sections.joined(separator: ", ")) }
+            let checks = lintFindings(of: entry.id)
+            if !checks.isEmpty {
+                lines.append("note checks (grey): " + checks.map { "\($0.rule.rawValue) \($0.link ?? "-")" }.joined(separator: "; "))
+            }
             if showingProperties {
                 lines.append("properties: kind \(entry.kind ?? "none")"
                     + noteProperties.map { "; \($0.key) \($0.value.isEmpty ? "-" : $0.value)\($0.isField ? "" : " (not a field of the kind)")" }.joined())

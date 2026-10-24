@@ -16,7 +16,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 3
+    public static let version = 4
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -178,8 +178,8 @@ public enum KnowledgeSeed {
 
     /// The made-up content: two unrelated areas (payments, logistics) with `area.yaml`, a note of
     /// every default kind of `kb.yaml` with its fields and `##` sections, `[[links]]` within an
-    /// area and across areas, a flow note in each area, and a map in each area (2.1). Later
-    /// steps add theirs here.
+    /// area and across areas, a flow note in each area, a map in each area (2.1), and the area
+    /// lint-examples with one finding of each lint rule (4.1). Later steps add theirs here.
     public static let files: [File] = [
         // Area settings (1.3): payments has no projects, logistics has a remote and a glob.
         File(path: "areas/payments/area.yaml", text: """
@@ -352,10 +352,89 @@ public enum KnowledgeSeed {
             100 bookings a minute; more get an error and are tried again later.
 
             """),
-        // Maps (2.1), 0.17.6-shaped: an arrow labelled "events" with a flow link, jumps between the
-        // two areas' maps both ways, and an unbound arrow.
+        // Maps (2.1), 0.17.6-shaped: an arrow labelled "events" with a flow link and jumps between
+        // the two areas' maps both ways (the unbound arrow is on lint-examples' map).
         File(path: "areas/payments/maps/overview.excalidraw", text: overviewMap),
         File(path: "areas/logistics/maps/routes.excalidraw", text: routesMap),
+        // Lint (4.1): one finding of each rule, on purpose, in an area of its own; the rest of the
+        // seed has none when the made-up repos are cloned (tools/demo-home.sh makes orders-api,
+        // billing, orders-db and lint-examples in ~/Projects). missing-file needs the local copy of
+        // lint-examples; without it, that note's repo is an unknown one instead. Its repo is one of
+        // its own: a repo: of orders-api here would make lint-examples the focus of orders-api.
+        File(path: "areas/lint-examples/area.yaml", text: """
+            title: Lint examples
+            description: One finding of each lint rule, on purpose. Open the Lint tab to see them.
+
+            """),
+        // broken-link, and ambiguous-link: [[status]] fits old/status and new/status.
+        File(path: "areas/lint-examples/links.md", text: """
+            # links
+
+            A link to [[no-such-note]], which points nowhere, and one to [[status]], which fits two notes.
+
+            """),
+        File(path: "areas/lint-examples/old/status.md", text: """
+            # status
+
+            The old status page.
+
+            """),
+        File(path: "areas/lint-examples/new/status.md", text: """
+            # status
+
+            The new status page.
+
+            """),
+        // unknown-repo.
+        File(path: "areas/lint-examples/unknown-repo.md", text: """
+            ---
+            kind: service
+            repo: git@example.com:shop/no-such-repo.git
+            ---
+            # unknown-repo
+
+            Its repo is no project this Mac knows.
+
+            """),
+        // missing-file: the local copy of lint-examples has no src/.
+        File(path: "areas/lint-examples/missing-file.md", text: """
+            ---
+            kind: service
+            repo: git@example.com:shop/lint-examples.git
+            files: [src/status-page.ts]
+            ---
+            # missing-file
+
+            A file that the local copy of lint-examples doesn't have.
+
+            """),
+        // missing-home-path.
+        File(path: "areas/lint-examples/home-path.md", text: """
+            ---
+            kind: service
+            files: [~/akit-lint-examples/notes.txt]
+            ---
+            # home-path
+
+            A ~/ path that doesn't exist.
+
+            """),
+        // unknown-kind (a hint, K24).
+        File(path: "areas/lint-examples/gadget.md", text: """
+            ---
+            kind: gadget
+            ---
+            # gadget
+
+            A kind that kb.yaml doesn't list.
+
+            """),
+        // block-without-note, unbound-arrow and unrelated-area (a hint, R-SEP); then map-parse.
+        File(path: "areas/lint-examples/maps/examples.excalidraw", text: lintMap),
+        File(path: "areas/lint-examples/maps/broken.excalidraw", text: """
+            {"type": "excalidraw", "version": 2, "elements": [
+
+            """),
     ]
 
     /// payments/maps/overview: orders-api → billing "events" (flow order-to-billing), and a block
@@ -369,15 +448,24 @@ public enum KnowledgeSeed {
             + NewMap.block(routes, label: "logistics routes", link: "[[logistics/maps/routes]]"))
     }()
 
-    /// logistics/maps/routes: warehouse → shipping "ships to" (flow pick-and-ship), a block that
-    /// jumps back to payments/maps/overview, and an arrow bound at neither end.
+    /// logistics/maps/routes: warehouse → shipping "ships to" (flow pick-and-ship) and a block that
+    /// jumps back to payments/maps/overview.
     static let routesMap: String = {
         let warehouse = NewMap.Box(id: "blk-warehouse", x: 0, y: 0), shipping = NewMap.Box(id: "blk-shipping", x: 420, y: 0)
         let overview = NewMap.Box(id: "blk-overview", x: 420, y: 200)
         return NewMap.scene(elements: NewMap.block(warehouse, label: "warehouse", link: "[[warehouse]]", arrows: ["arr-ships"])
             + NewMap.block(shipping, label: "shipping", link: "[[shipping]]", arrows: ["arr-ships"])
             + NewMap.arrow("arr-ships", from: warehouse, to: shipping, label: "ships to", link: "[[pick-and-ship]]")
-            + NewMap.block(overview, label: "payments overview", link: "[[payments/maps/overview]]")
+            + NewMap.block(overview, label: "payments overview", link: "[[payments/maps/overview]]"))
+    }()
+
+    /// lint-examples/maps/examples: a block with a label and no link, a block for a note of
+    /// logistics (an area no map of lint-examples jumps to or from), and an arrow bound at
+    /// neither end (the unbound arrow of 2.1).
+    static let lintMap: String = {
+        let draft = NewMap.Box(id: "blk-draft", x: 0, y: 0), courier = NewMap.Box(id: "blk-courier", x: 420, y: 0)
+        return NewMap.scene(elements: NewMap.block(draft, label: "draft", link: nil)
+            + NewMap.block(courier, label: "courier-api", link: "[[logistics/courier-api]]")
             + NewMap.arrow("arr-loose", start: (0.5, 220), end: (200.5, 220)))
     }()
 }

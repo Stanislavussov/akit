@@ -57,6 +57,13 @@ extension AKitCLI {
                                         The focus area of a project and why: the choice in
                                         focus.json, an area.yaml that names its remote or folder,
                                         or a note whose repo: is its remote
+      akit kb lint [--json] [--base PATH|WORLD]
+                                        Check the base: broken and ambiguous links, map blocks with
+                                        no note, unbound arrows, maps that don't parse (errors and
+                                        warnings), repo: not among the known projects, files: and
+                                        ~/ paths that don't exist; hints for a kind not in kb.yaml
+                                        and a block of an unrelated area. --json: {base, findings:
+                                        [{rule, severity, file, element, link, message, fix}], counts}
 
     Write (for a person only: an agent runs these only when the user asked for that action in
     this session; otherwise it proposes or asks):
@@ -205,6 +212,27 @@ extension AKitCLI {
             let path: String
             do { path = try await base.newNote(area: area, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
             out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
+            return 0
+        case "lint":
+            let brain = args.value("--brain").map { resolve($0, cwd: cwd, env: env) } ?? Brain.defaultRoot(home: env.homeDirectory)
+            try args.finish()
+            guard let base = try await chosen() else {
+                out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+                return 0
+            }
+            let projects = KnowledgeLint.Projects.find(home: env.homeDirectory, projectsRoot: projectsRoot, brainRoot: brain)
+            let findings = KnowledgeLint.run(base, projects: projects, home: env.homeDirectory)
+            if json {
+                out(encode(KnowledgeLint.Answer(base: base.root.path, findings: findings)))
+            } else if findings.isEmpty {
+                out("No findings in \(FileWalk.tilde(base.root, home: env.homeDirectory)).")
+            } else {
+                let counts = KnowledgeLint.counts(findings)
+                out(findings.map { finding in
+                    "\(finding.severity.rawValue)  \(finding.rule.rawValue)  \(finding.file)" + (finding.element.map { "  \($0)" } ?? "")
+                        + "\n    \(finding.message)" + (finding.fix.map { "\n    fix: \($0)" } ?? "")
+                }.joined(separator: "\n") + "\n\(count(counts.error, "error")), \(count(counts.warning, "warning")), \(count(counts.hint, "hint")).")
+            }
             return 0
         case "search", "show", "index":
             return try await knowledgeSearch(command!, &args, json: json, base: chosen, env: env, out: out)

@@ -250,7 +250,15 @@ akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]
                                                    # one note: title, kind, repo, files, sections
 akit kb index [--rebuild] [--json] [--base PATH|WORLD]
                                                    # bring the search index up to the files
+akit kb lint [--json] [--base PATH|WORLD]          # check the base: {base, findings: [{rule, severity,
+                                                   # file, element, link, message, fix}], counts}
 ```
+
+Run `kb lint` before you trust a note's `repo:`/`files:` or a map's blocks, and after you
+propose a change. Errors: a broken link, a map that doesn't parse. Warnings: an ambiguous link,
+a map block with no note, an unbound arrow (no relation), a `repo:` that is no known project,
+a `files:` or `~/` path that doesn't exist. Hints: a kind not in `kb.yaml`, a block for a note
+of an unrelated area. Tell the user or propose a fix; never edit the base to fix them.
 
 To find text, `kb search` first, then `kb show NOTE --section H` for the one section you
 need; both stay under `--max-tokens` (default 4000). Search reads `areas/` only, never the

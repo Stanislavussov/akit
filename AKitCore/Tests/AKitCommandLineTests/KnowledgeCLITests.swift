@@ -60,7 +60,7 @@ struct KnowledgeCLITests {
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
         for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]",
-                        "akit kb search", "akit kb show", "akit kb index", "akit kb neighbors", "akit kb context", "akit kb focus [FOLDER] [--json]"] {
+                        "akit kb search", "akit kb show", "akit kb index", "akit kb neighbors", "akit kb context", "akit kb focus [FOLDER] [--json]", "akit kb lint"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(!lines[index...].prefix(3).contains { $0.contains("person only") }, "\(command) is a read command")
         }
@@ -74,7 +74,7 @@ struct KnowledgeCLITests {
         #expect(areas.out == "{\n  \"base\" : null,\n  \"reason\" : \"no base\"\n}")
         let notes = await akit("kb", "notes")
         #expect(notes.code == 0 && notes.out.contains("No knowledge base on this Mac"))
-        for command in [["search", "retry"], ["show", "orders-api"], ["index"], ["neighbors", "orders-api"], ["context"], ["focus"]] {
+        for command in [["search", "retry"], ["show", "orders-api"], ["index"], ["neighbors", "orders-api"], ["context"], ["focus"], ["lint"]] {
             let answer = await akit(["kb"] + command + ["--json"])
             #expect(answer.code == 0 && answer.out == areas.out, "\(command)")
         }
@@ -119,8 +119,33 @@ struct KnowledgeCLITests {
 
         let index = try json(await akit("kb", "index", "--rebuild", "--json", "--base", base).out)
         #expect(Set(index.keys) == ["notes", "maps", "chunks", "rebuilt", "stale", "tokens"])
-        #expect(index["notes"] as? Int == 10 && index["maps"] as? Int == 2 && index["rebuilt"] as? Bool == true)
-        #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 10 notes, 2 maps,"))
+        #expect(index["notes"] as? Int == 17 && index["maps"] as? Int == 4 && index["rebuilt"] as? Bool == true)
+        #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 17 notes, 4 maps,"))
+    }
+
+    @Test func lintFindsOnlyTheSeededExamplesWhenTheReposAreCloned() async throws {
+        let base = try seedFolder()
+        // The made-up repos of the seed under the projects root, as tools/demo-home.sh makes them.
+        for name in ["orders-api", "billing", "orders-db"] {
+            let repo = home.appending(path: "Projects/\(name)")
+            try fm.createDirectory(at: repo.appending(path: ".git"), withIntermediateDirectories: true)
+            try Data("[remote \"origin\"]\n\turl = git@example.com:shop/\(name).git\n".utf8).write(to: repo.appending(path: ".git/config"))
+        }
+        try fm.createDirectory(at: home.appending(path: "Projects/orders-api/src/events"), withIntermediateDirectories: true)
+        try Data("export {}\n".utf8).write(to: home.appending(path: "Projects/orders-api/src/events/order-created.ts"))
+
+        let lint = await akit("kb", "lint", "--json", "--base", base)
+        #expect(lint.code == 0, "\(lint.err)")
+        let answer = try json(lint.out)
+        #expect(Set(answer.keys) == ["base", "findings", "counts"])
+        #expect((answer["counts"] as? [String: Int]) == ["error": 2, "warning": 6, "hint": 2])
+        let findings = try #require(answer["findings"] as? [[String: Any]])
+        #expect(findings.count == 10 && findings.allSatisfy { ($0["file"] as? String)?.hasPrefix("areas/lint-examples/") == true })
+        #expect(Set(findings.flatMap(\.keys)) == ["rule", "severity", "file", "element", "link", "message", "fix"])
+        let text = await akit("kb", "lint", "--base", base).out
+        #expect(text.hasPrefix("error  broken-link  areas/lint-examples/links.md\n    The link [[no-such-note]] points to no note or map in the base."))
+        #expect(text.hasSuffix("\n2 errors, 6 warnings, 2 hints."))
+        #expect(await akit("kb", "lint", "extra", "--base", base).code == 2)
     }
 
     @Test func neighborsContextAndFocusAnswerInTheirJSONShapes() async throws {
@@ -429,7 +454,7 @@ struct KnowledgeCLITests {
         #expect((answer["files"] as? [String])?.contains(".akit-seed.json") == true)
         #expect(try json(await akit("kb", "seed", "--json").out)["status"] as? String == "unchanged")
         let areas = try json(await akit("kb", "areas", "--base", "sample", "--json").out)
-        #expect((areas["areas"] as? [[String: Any]])?.count == 2)
+        #expect((areas["areas"] as? [[String: Any]])?.count == 3)
 
         // kb rm: without --yes nothing moves; with it, one commit and the file is in the Trash.
         let note = sample.appending(path: "areas/payments/orders-db.md")
@@ -446,7 +471,7 @@ struct KnowledgeCLITests {
         #expect(await akit("kb", "rm", "inbox/payments/x.md", "--base", "sample", "--yes").err.contains("akit kb reject"))
         // The seeded map: listed, then removed as a map in one commit.
         let seededMaps = try json(await akit("kb", "maps", "--base", "sample", "--json").out)["maps"] as? [[String: Any]]
-        #expect(seededMaps?.map { $0["id"] as? String } == ["logistics/maps/routes", "payments/maps/overview"])
+        #expect(seededMaps?.map { $0["id"] as? String } == ["lint-examples/maps/broken", "lint-examples/maps/examples", "logistics/maps/routes", "payments/maps/overview"])
         let map = try json(await akit("kb", "rm", "payments/maps/overview", "--base", "sample", "--yes", "--json").out)
         #expect(map["kind"] as? String == "map" && map["path"] as? String == "areas/payments/maps/overview.excalidraw")
         #expect(!fm.fileExists(atPath: sample.appending(path: "areas/payments/maps/overview.excalidraw").path))

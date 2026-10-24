@@ -25,6 +25,11 @@ struct NotePanel: View {
                     RelationsView(note: entry.id)
                     Divider()
                 }
+                let checks = model.lintFindings(of: entry.id)
+                if !checks.isEmpty {
+                    NoteChecksView(findings: checks)
+                    Divider()
+                }
                 if model.editing {
                     TextEditor(text: $draft)
                         .font(.body.monospaced())
@@ -33,7 +38,7 @@ struct NotePanel: View {
                         .onChange(of: draft) { _, text in model.save(text) }
                         .onChange(of: model.text) { _, text in if text != draft { draft = text } }
                 } else {
-                    NoteReadView(text: model.text, section: model.sectionTarget)
+                    NoteReadView(text: model.text, section: model.sectionTarget, grey: Set(checks.compactMap(\.link)))
                 }
             } else {
                 ContentUnavailableView("No note open", systemImage: "doc.text",
@@ -223,10 +228,13 @@ private struct PropertyField: View {
 }
 
 /// A note as text: its frontmatter as a small table, then the Markdown body, headings bigger.
+/// The links and paths lint flags (`grey`: broken or ambiguous links, unknown repos, missing
+/// files) are grey.
 struct NoteReadView: View {
     let text: String
     /// A heading to scroll to (a search hit's section).
     var section: String?
+    var grey: Set<String> = []
 
     var body: some View {
         let note = KnowledgeNote(text: text)
@@ -239,7 +247,9 @@ struct NoteReadView: View {
                             ForEach(front, id: \.key) { key, value in
                                 GridRow {
                                     Text(key).foregroundStyle(.secondary)
-                                    Text(Self.describe(value)).textSelection(.enabled)
+                                    let shown = Self.describe(value)
+                                    Text(shown).textSelection(.enabled)
+                                        .foregroundStyle(grey.contains { shown.contains($0) } ? .secondary : .primary)
                                 }
                             }
                         }
@@ -247,7 +257,7 @@ struct NoteReadView: View {
                         .padding(8)
                         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    ForEach(Array(Self.blocks(note.body).enumerated()), id: \.offset) { _, block in
+                    ForEach(Array(Self.blocks(note.body, grey: grey).enumerated()), id: \.offset) { _, block in
                         block
                     }
                 }
@@ -271,7 +281,7 @@ struct NoteReadView: View {
     }
 
     /// One view per line: `#` headings bigger, code fences monospaced, the rest inline Markdown.
-    static func blocks(_ body: Substring) -> [AnyView] {
+    static func blocks(_ body: Substring, grey: Set<String> = []) -> [AnyView] {
         var views: [AnyView] = []
         var inFence = false
         for raw in body.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -292,8 +302,15 @@ struct NoteReadView: View {
             } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 views.append(AnyView(Spacer().frame(height: 2)))
             } else {
-                let attributed = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+                var attributed = (try? AttributedString(markdown: line, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
                     ?? AttributedString(line)
+                for link in grey {
+                    var start = attributed.startIndex
+                    while start < attributed.endIndex, let found = attributed[start...].range(of: link) {
+                        attributed[found].foregroundColor = .secondary
+                        start = found.upperBound
+                    }
+                }
                 views.append(AnyView(Text(attributed).textSelection(.enabled)))
             }
         }
@@ -335,5 +352,28 @@ struct RelationsView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+    }
+}
+
+/// What lint finds in the note (4.1): one grey line per finding, its link or path greyed in the
+/// text below. The Lint tab lists the whole base's.
+struct NoteChecksView: View {
+    let findings: [KnowledgeLint.Finding]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Checks").font(.caption.bold()).foregroundStyle(.secondary)
+            ForEach(findings, id: \.self) { finding in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    LintIcon(severity: finding.severity)
+                    Text(finding.message).foregroundStyle(.secondary).lineLimit(2)
+                        .help(finding.fix ?? finding.message)
+                }
+                .font(.callout)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

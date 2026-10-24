@@ -1077,4 +1077,12 @@ git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Add the order created ev
 echo "export const retries = 3;" >> "$ORDERS/src/events/order-created.ts"
 git -C "$ORDERS" add -A && git -C "$ORDERS" commit -qm "Retry a failed publish three times"
 
+# The other repos the notes name (repo:): billing and orders-db of payments, lint-examples of the
+# space's missing-file example (an empty copy), so akit kb lint finds only the findings the space
+# lint-examples has on purpose. No harness files: no screen lists them as projects.
+for name in billing orders-db lint-examples; do
+    mkdir -p "$DEMO/Projects/$name" && git -C "$DEMO/Projects/$name" init -q
+    git -C "$DEMO/Projects/$name" remote add origin "git@example.com:shop/$name.git"
+done
+
 echo "Demo home: $DEMO"

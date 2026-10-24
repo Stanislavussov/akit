@@ -50,6 +50,7 @@ import SwiftUI
 /// it in Edit, `--tab properties` shows its Properties form, `--tab delete` asks Delete…, `--tab new-area|new-note|create-base`
 /// opens that sheet, `--tab kinds` the Kinds… sheet and `--tab area-settings` Area Settings… of the selected note's space;
 /// `--tab sample` shows the sample base (`akit kb seed`) and `--tab sample-remove` also asks Remove Sample Base….
+/// `--tab lint` shows the Lint tab (4.1); the capture prints each finding with its buttons.
 /// The capture prints the screen's state as text (base, spaces, notes, tabs, the note in view, with Properties its kind
 /// and fields, the kinds or the area settings), so a check needs no image.
 /// `--tab map --select <map id>` (`payments/maps/overview`) opens that map (read only); the capture waits until the

@@ -3985,20 +3985,21 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - «Хочу поправить заметку» → откройте её и нажмите **Edit**: правка сразу сохраняется в файл.
 - «Удобнее писать в Obsidian» → **Open in Obsidian**.
 
-![Экран Knowledge: слева Spaces с logistics и payments, в середине карта overview и заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…, частью Relations, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева Spaces с lint-examples, logistics и payments, в середине карта overview и заметки billing, order-to-billing и orders-api, справа открытая заметка orders-api с кнопками Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…, частью Relations, таблицей полей kind, repo, files и разделами Events и Owners](images/knowledge.png)
 
 #### Что на экране
 <!-- section: knowledge-screen -->
 
-- **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**. Под ними строка индекса поиска («Index: 10 notes, 21 sections», **Reindex**) и **Inbox** — число предложений агентов.
+- **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**. Под ними строка индекса поиска («Index: 17 notes, 28 sections», **Reindex**) и **Inbox** — число предложений агентов.
 - Список заметок пространства: заголовок, вид (`service`, `flow`) и путь. Над ним часть **Maps**, если у пространства есть карты.
 - Карта (вместо панели заметки, когда вы её открыли), во вкладке: **Edit**, **Show in Finder**, **Rename…**, **Delete…**, **Close Map**. В режиме просмотра нажатие на блок открывает его заметку рядом. Заметку из списка можно перетащить на карту: появится блок со ссылкой на неё.
 - В панели заметки часть **Relations** — стрелки к заметке и от неё на картах — и кнопка **Rename…**.
 - Панель заметки: вкладки открытых заметок, кнопки **Edit**, **Properties** (вид и поля заметки), **Copy**, **Paste**, **Open in Obsidian**, **Delete…** и текст.
 - Панель инструментов: поле поиска **Search notes** (находки — вместо списка заметок), **New Area…**, **New Note…**, **New Map…**, **Kinds…** (виды заметок и их поля), **Focus…** (с какого пространства агент начинает в проекте), **Preview Agent Context…** (что агент читает в начале задачи), меню **Sample Base** (**Add Sample Base…**, **Remove Sample Base…**: пример базы с выдуманными заметками), **Guide**. Если баз несколько — список **Base**.
 - Если базы нет: «No knowledge base» и кнопки **Create Base…** и **Add Sample Base…**.
+- Переключатель вверху: **Notes** (всё, что выше) и **Lint** — находки проверки базы: сломанные и неясные ссылки, блоки без заметки, непривязанные стрелки, неизвестные репозитории и несуществующие пути, с кнопками **Open** и **Create Note…**. Находки открытой заметки видны в её части **Checks**. То же делает `akit kb lint`.
 
-Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [карты](knowledge#maps), [переименовать](knowledge#rename), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings), [поиск](knowledge#search), [фокус](knowledge#focus), [что видит агент](knowledge#context).
+Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [карты](knowledge#maps), [переименовать](knowledge#rename), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings), [поиск](knowledge#search), [фокус](knowledge#focus), [что видит агент](knowledge#context), [проверка](knowledge#lint).
 
 #### Просто: первая заметка
 <!-- section: knowledge-first -->

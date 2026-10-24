@@ -1,0 +1,19 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "https://excalidraw.com",
+  "elements": [
+    {"id": "blk-draft", "type": "rectangle", "x": 0, "y": 0, "width": 200, "height": 80, "isDeleted": false, "link": null,
+     "boundElements": [{"type": "text", "id": "txt-draft"}]},
+    {"id": "txt-draft", "type": "text", "x": 60, "y": 30, "width": 80, "height": 20, "isDeleted": false, "text": "draft",
+     "containerId": "blk-draft"},
+    {"id": "blk-thing", "type": "rectangle", "x": 400, "y": 0, "width": 200, "height": 80, "isDeleted": false,
+     "link": "[[other/thing]]", "boundElements": [{"type": "text", "id": "txt-thing"}]},
+    {"id": "txt-thing", "type": "text", "x": 460, "y": 30, "width": 80, "height": 20, "isDeleted": false, "text": "thing",
+     "containerId": "blk-thing"},
+    {"id": "arr-loose", "type": "arrow", "x": 0, "y": 200, "width": 200, "height": 0, "isDeleted": false,
+     "points": [[0, 0], [200, 0]], "startBinding": null, "endBinding": null}
+  ],
+  "appState": {},
+  "files": {}
+}

@@ -15,7 +15,7 @@
 - Знания уже лежат в README и `AGENTS.md` проекта, и агенту их хватает.
 - Вам нужна общая вики команды. База живёт на одном Mac и не имеет remote.
 
-**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пример базы, пространства и заметки, читать и править, карты, переименовать, папка базы и Obsidian, виды и свойства, настройки пространства, поиск, фокус, что видит агент, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
+**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пример базы, пространства и заметки, читать и править, карты, переименовать, папка базы и Obsidian, виды и свойства, настройки пространства, поиск, фокус, что видит агент, проверка, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
 
 **Как искать.** Меню Help → **Search Guides and Screens…** (⌥⌘F). Это руководство открывает кнопка **Guide** на экране Knowledge или Help → **Knowledge Base Guide**.
 
@@ -34,7 +34,7 @@
 - «Где код этого сервиса?» → поле `repo:` в начале заметки, например `repo: git@example.com:shop/orders-api.git`.
 - «Как данные идут от заказа до счёта?» → заметка вида `flow` в папке `flows/`.
 
-![Экран Knowledge: слева список Spaces с пространствами logistics с числом заметок 4 и payments с числом заметок 6; в середине часть Maps с картой overview и заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева список Spaces с пространствами lint-examples с числом заметок 7, logistics с числом заметок 4 и payments с числом заметок 6; в середине часть Maps с картой overview и заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
 
 ### Главные слова
 <!-- section: overview-terms -->
@@ -67,7 +67,7 @@ AKit создаёт папку мира, `areas/`, `inbox/`, файлы `.gitign
 ## Пример базы: Sample Base
 <!-- section: sample -->
 
-**Что это:** пример базы — отдельная база мира `sample` с выдуманными заметками о магазине. В ней видно всё, что умеет экран: два несвязанных пространства `payments` и `logistics` с настройками `area.yaml`, заметка каждого вида из `kb.yaml` (`service`, `flow`, `team`, `database`, `queue`, `external`) с полями и разделами `##`, ссылки `[[…]]` внутри пространства и в другое пространство. Каждая новая возможность AKit добавляет сюда свой пример. Ваши базы пример не трогает.
+**Что это:** пример базы — отдельная база мира `sample` с выдуманными заметками о магазине. В ней видно всё, что умеет экран: два несвязанных пространства `payments` и `logistics` с настройками `area.yaml`, заметка каждого вида из `kb.yaml` (`service`, `flow`, `team`, `database`, `queue`, `external`) с полями и разделами `##`, ссылки `[[…]]` внутри пространства и в другое пространство, карты и пространство `lint-examples` с нарочными ошибками для вкладки **Lint** ([Проверка](#lint)). Каждая новая возможность AKit добавляет сюда свой пример. Ваши базы пример не трогает.
 
 **Когда пригодится:**
 
@@ -84,7 +84,7 @@ AKit создаёт базу в папке мира `sample` (по умолча�
 
 То же делает `akit kb seed` в терминале.
 
-![Экран Knowledge с примером базы: в подзаголовке sample и путь ~/.akit/local/knowledge/sample, в панели инструментов список Base и меню Sample Base; слева Spaces с пространствами logistics (4 заметки) и payments (6 заметок); в середине часть Maps с картой overview и заметки payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db; справа открыта заметка order-events вида queue со ссылками на orders-api, billing и logistics/warehouse](images/knowledge-sample.png)
+![Экран Knowledge с примером базы: в подзаголовке sample и путь ~/.akit/local/knowledge/sample, в панели инструментов список Base и меню Sample Base; слева Spaces с пространствами lint-examples (7 заметок), logistics (4 заметки) и payments (6 заметок); в середине часть Maps с картой overview и заметки payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db; справа открыта заметка order-events вида queue со ссылками на orders-api, billing и logistics/warehouse](images/knowledge-sample.png)
 
 ### Просто: Remove Sample Base…
 <!-- section: sample-remove -->
@@ -442,7 +442,7 @@ AKit записывает `area.yaml`. Коммит ждёт в очереди, 
 - «В какой заметке про `retry`?» → введите `retry`.
 - «Что агент найдёт по слову `order`?» → введите `order`: вы видите те же разделы, что и агент.
 
-![Поиск order на экране Knowledge: в поле поиска панели инструментов слово order; в середине вместо списка заметок часть «7 hits» с находками payments/orders-api с разделом ## Events, payments/billing, payments/flows/order-to-billing, payments/order-events, payments/orders-db с разделом ## Tables, payments/orders-api и payments/billing с разделом ## Invoices, у каждой — кусок текста с найденным словом; слева под Spaces строка Index: 10 notes, 21 sections, кнопка Reindex и Inbox: 0](images/knowledge-search.png)
+![Поиск order на экране Knowledge: в поле поиска панели инструментов слово order; в середине вместо списка заметок часть «7 hits» с находками payments/orders-api с разделом ## Events, payments/billing, payments/flows/order-to-billing, payments/order-events, payments/orders-db с разделом ## Tables, payments/orders-api и payments/billing с разделом ## Invoices, у каждой — кусок текста с найденным словом; слева под Spaces строка Index: 17 notes, 28 sections, кнопка Reindex и Inbox: 0](images/knowledge-search.png)
 
 ### Просто: найти заметку
 <!-- section: search-find -->
@@ -459,7 +459,7 @@ AKit записывает `area.yaml`. Коммит ждёт в очереди, 
 ### Средне: индекс поиска
 <!-- section: search-index -->
 
-Поиск идёт по индексу — файлу `.akit-index.sqlite` в базе. Строка под **Spaces** показывает его размер: «Index: 10 notes, 21 sections».
+Поиск идёт по индексу — файлу `.akit-index.sqlite` в базе. Строка под **Spaces** показывает его размер: «Index: 17 notes, 28 sections».
 
 - AKit сам следит за папкой базы. Вы поправили заметку в AKit, в Obsidian или в другом редакторе — через секунду-две поиск её находит.
 - **stale** рядом со строкой: индекс сейчас обновляет другая программа (например, `akit kb index` в терминале). Поиск показывает его прошлое состояние.
@@ -515,7 +515,7 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 - «Почему агент не знает про `billing`?» → посмотрите, есть ли `billing` в карточке.
 - «Карточка не помещается?» → число токенов и пометка **cut** покажут, что AKit обрезал.
 
-![Preview Agent Context… для проекта orders-api: сверху выбор Project orders-api и Show List или JSON; строка Focus: payments (a note's repo:) и 345 of 4000 tokens; список заметок payments/billing, payments/checkout-team, payments/flows/order-to-billing, payments/order-events, payments/orders-api и payments/orders-db с одной строкой о каждой; часть Relations со стрелкой payments/orders-api → payments/billing «events»; ниже Neighbors of payments/orders-api со стрелкой на карте overview; кнопка Done](images/knowledge-context.png)
+![Preview Agent Context… для проекта orders-api: сверху выбор Project orders-api и Show List или JSON; строка Focus: payments (a note's repo:) и 346 of 4000 tokens; список заметок payments/billing, payments/checkout-team, payments/flows/order-to-billing, payments/order-events, payments/orders-api и payments/orders-db с одной строкой о каждой; часть Relations со стрелкой payments/orders-api → payments/billing «events»; ниже Neighbors of payments/orders-api со стрелкой на карте overview; кнопка Done](images/knowledge-context.png)
 
 ### Просто: Preview Agent Context…
 <!-- section: context-preview -->
@@ -529,6 +529,76 @@ AKit замечает правку заметки снаружи (в Obsidian, �
 Если фокуса нет, карточка пустая. Задайте его в **Focus…** или в **Area Settings…** пространства.
 
 То же в терминале: `akit kb context ~/Projects/orders-api` и `akit kb neighbors payments/orders-api`, с `--json`.
+
+## Проверка
+<!-- section: lint -->
+
+**Что это:** вкладка **Lint** вверху экрана проверяет всю базу. Она находит то, что ведёт в никуда или на то, чего нет на этом Mac. У каждой находки есть важность:
+
+| Важность | Значок | Что значит |
+|---|---|---|
+| Error | красный | ссылка или карта сломана: агент получит неверный ответ |
+| Warning | оранжевый | что-то не найдено или неясно: стоит поправить |
+| Hint | серая лампочка | совет: можно оставить как есть |
+
+**Когда пригодится:**
+
+- «Переименовал заметку в Finder, и ссылки на неё сломались» → находка **broken-link**.
+- «Склонировал репозиторий в другую папку, и агент не находит код» → находки **unknown-repo** и **missing-file**.
+- «Нарисовал карту, но связи на ней агент не видит» → находки **block-without-note** и **unbound-arrow**.
+
+В примере базы есть пространство `lint-examples`: в нём по одной находке каждого правила, нарочно.
+
+![Экран Knowledge, вкладка Lint: вверху переключатель Notes и Lint (8), строка «2 errors, 6 warnings, 2 hints» и кнопка Check Again; ниже части Errors, Warnings и Hints; в каждой строке значок важности, текст находки, правило, файл и элемент карты, совет, кнопка Open, а у сломанной ссылки [[no-such-note]] ещё Create Note…](images/knowledge-lint.png)
+
+### Просто: вкладка Lint
+<!-- section: lint-tab -->
+
+1. Нажмите **Lint** в переключателе вверху экрана. Число в скобках — сколько ошибок и предупреждений.
+2. Находки идут частями: **Errors**, **Warnings**, **Hints**.
+3. **Open** открывает заметку или карту находки. Вкладка снова становится **Notes**.
+4. **Create Note…** есть у сломанной ссылки на заметку. Она открывает **New Note…** с пространством и именем из ссылки. Нажмите **Add Note**, и ссылка заработает.
+5. **Check Again** проверяет базу заново и заново ищет проекты в папке проектов. Например, после того как вы склонировали репозиторий.
+
+Пример: в заметке `lint-examples/links` есть `[[no-such-note]]`. **Create Note…** предлагает **Area** `lint-examples` и **Name** `no-such-note`.
+
+### Средне: что проверяет Lint
+<!-- section: lint-rules -->
+
+| Правило | Важность | Что нашлось |
+|---|---|---|
+| `broken-link` | Error | ссылка `[[…]]` или `akit:` в заметке или на карте не ведёт ни к одной заметке или карте |
+| `map-parse` | Error | файл `.excalidraw` не читается как карта Excalidraw |
+| `ambiguous-link` | Warning | ссылке подходят несколько заметок, например `[[status]]` при `old/status` и `new/status` |
+| `block-without-note` | Warning | у фигуры на карте есть подпись, но нет ссылки на заметку |
+| `unbound-arrow` | Warning | стрелка не привязана к блокам обоими концами, поэтому это не связь |
+| `unknown-repo` | Warning | `repo:` заметки — не известный проект |
+| `missing-file` | Warning | пути из `files:` нет в локальной копии репозитория |
+| `missing-home-path` | Warning | путь `~/…` в `repo:` или `files:` не существует |
+| `unknown-kind` | Hint | вида из `kind:` нет в `kb.yaml` |
+| `unrelated-area` | Hint | на карте пространства блок заметки другого пространства, а карты этих пространств не ссылаются друг на друга |
+
+**Известный проект** — это:
+
+- репозиторий в папке проектов (по умолчанию `~/Projects`, и на одну папку глубже) с таким же `origin`;
+- проект, о котором AKit уже знает (в brain или в `~/.akit/local/projects`);
+- проект из **Projects** любого пространства ([Настройки пространства](#area-settings)).
+
+Адреса сравниваются без разницы в записи: `git@example.com:shop/orders-api.git` и `https://example.com/shop/orders-api` — один проект. `missing-file` проверяет файлы, только когда копия репозитория есть в папке проектов.
+
+> **Почему так:** `unrelated-area` — только совет. Одно пространство — одна система. Если блок другой системы попал на карту, возможно, ему место в своём пространстве. Если системы связаны, добавьте на карту блок со ссылкой на карту другого пространства: тогда совета нет.
+
+### Просто: серые ссылки в заметке
+<!-- section: lint-note -->
+
+Если в открытой заметке есть находки, под кнопками заметки видна часть **Checks**: по строке на находку. Сломанные и неясные ссылки, неизвестный `repo:` и несуществующие пути в тексте и в таблице полей — серые.
+
+Пример: откройте `lint-examples/links`. В **Checks** две строки, `[[no-such-note]]` и `[[status]]` в тексте серые.
+
+### Средне: проверка в терминале: akit kb lint
+<!-- section: lint-terminal -->
+
+`akit kb lint` печатает те же находки, что и вкладка **Lint**, и в конце «2 errors, 6 warnings, 2 hints.». `akit kb lint --json` отдаёт `{base, findings, counts}`. Каждая находка — `rule`, `severity`, `file`, `element` (элемент карты), `link`, `message` и `fix` (что сделать). Команда только читает базу, поэтому агенты её запускают сами.
 
 ## Коммиты правок
 <!-- section: commits -->
@@ -563,7 +633,7 @@ AKit коммитит очередь одним коммитом, когда:
 - Список заметок показывает заголовок `#` из текста заметки. Если заголовка нет, показано имя файла.
 - Файлы и папки с точкой в начале (например, `.obsidian`) экран не показывает.
 - Индекс поиска, замки, очередь и настройки Obsidian не попадают в git: они в `.gitignore` базы.
-- Агенты читают базу командами `akit kb areas`, `akit kb notes`, `akit kb kinds`, `akit kb area`, `akit kb search`, `akit kb show`, `akit kb neighbors` и `akit kb context`. Команды, которые меняют базу (`akit kb init`, `new-note`, `set`, `kinds add`, `kinds rename`, `area … --project`, `path --set`, `rm`, `seed` и другие), помечены в `akit kb --help` как команды для человека. Агент запускает их, только если вы попросили об этом в этой сессии.
+- Агенты читают базу командами `akit kb areas`, `akit kb notes`, `akit kb kinds`, `akit kb area`, `akit kb search`, `akit kb show`, `akit kb neighbors`, `akit kb context` и `akit kb lint`. Команды, которые меняют базу (`akit kb init`, `new-note`, `set`, `kinds add`, `kinds rename`, `area … --project`, `path --set`, `rm`, `seed` и другие), помечены в `akit kb --help` как команды для человека. Агент запускает их, только если вы попросили об этом в этой сессии.
 - `kb.yaml` и `area.yaml` AKit пишет целиком. Если вы вписали туда ключ, который AKit не знает, AKit этот файл не перепишет и скажет об этом: поправьте его вручную.
 - Если `kb.yaml` нет (база создана старой версией AKit), экран и команды берут виды по умолчанию.
 

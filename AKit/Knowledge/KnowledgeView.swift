@@ -10,6 +10,7 @@ import SwiftUI
 /// without a remote; AKit commits your edits in batches.
 struct KnowledgeView: View {
     @Environment(KnowledgeModel.self) private var model
+    @Environment(AppModel.self) private var app
     /// Snapshots: `--tab new-area|new-note|new-map|create-base|kinds|area-settings|focus|context`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
@@ -52,6 +53,8 @@ struct KnowledgeView: View {
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+            } else if model.showingLint {
+                LintPanel()
             } else {
                 HSplitView {
                     spaces.safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusLine() }
@@ -75,6 +78,15 @@ struct KnowledgeView: View {
         .navigationTitle("Knowledge")
         .navigationSubtitle(model.base.map { "\($0.name) · \($0.root.tildePath)" } ?? "")
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("View", selection: $model.showingLint) {
+                    Text("Notes").tag(false)
+                    Text(lintTitle).tag(true)
+                }
+                .pickerStyle(.segmented)
+                .disabled(model.base == nil)
+                .help("Notes: the spaces, notes and maps. Lint: what in them points nowhere or at something this Mac doesn't have (akit kb lint)")
+            }
             if model.bases.count > 1 {
                 ToolbarItem(placement: .navigation) {
                     Picker("Base", selection: Binding(get: { model.base }, set: { if let base = $0 { model.choose(base: base) } })) {
@@ -126,6 +138,9 @@ struct KnowledgeView: View {
                 GuideButton(guide: .knowledge)
             }
         }
+        .sheet(item: $model.newNoteRequest) { request in
+            NewNoteSheet(initialArea: request.area, initialName: request.name)
+        }
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case .createBase: CreateBaseSheet()
@@ -138,7 +153,11 @@ struct KnowledgeView: View {
             case .context: AgentContextSheet()
             }
         }
-        .searchable(text: Binding(get: { model.searchText }, set: { model.search($0) }), placement: .toolbar,
+        // A query shows its hits in the Notes view, so typing one leaves the Lint view.
+        .searchable(text: Binding(get: { model.searchText }, set: {
+            if !$0.isEmpty { model.showingLint = false }
+            model.search($0)
+        }), placement: .toolbar,
                     prompt: Text("Search notes"))
         .confirmationDialog("Move the space \(areaToDelete ?? "") and all its notes to the Trash?",
                             isPresented: Binding(get: { areaToDelete != nil }, set: { if !$0 { areaToDelete = nil } })) {
@@ -179,7 +198,16 @@ struct KnowledgeView: View {
         } message: {
             Text("The map \(model.mapConflict?.id ?? "") changed on disk after AKit opened it, in another app or by git. Reload shows the version on disk and drops your change. Keep Mine saves your version and backs up the one on disk in ~/.akit/backups.")
         }
-        .task { await model.load(select: DebugSnapshot.options?.select) }
+        .task {
+            (model.projectsRoot, model.brainRoot) = (app.projectsRoot, app.brainRoot)
+            await model.load(select: DebugSnapshot.options?.select)
+        }
+    }
+
+    /// "Lint" with the number of errors and warnings, when there are some.
+    private var lintTitle: String {
+        let count = model.lintFindings.filter { $0.severity != .hint }.count
+        return count == 0 ? "Lint" : "Lint (\(count))"
     }
 
     private var spaces: some View {
@@ -350,6 +378,9 @@ struct NewAreaSheet: View {
 struct NewNoteSheet: View {
     @Environment(KnowledgeModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    /// Create Note… of a lint finding: the broken link's area (maybe a new one) and name.
+    var initialArea: String?
+    var initialName = ""
     @State private var area = ""
     @State private var name = ""
     @State private var kind = ""
@@ -360,7 +391,7 @@ struct NewNoteSheet: View {
             Text("New Note").font(.title3.bold())
             Form {
                 Picker(selection: $area) {
-                    ForEach(model.areas, id: \.name) { Text($0.name).tag($0.name) }
+                    ForEach(areaNames, id: \.self) { Text($0).tag($0) }
                 } label: { RequiredLabel("Area") }
                 TextField(text: $name, prompt: Text("orders-api")) { RequiredLabel("Name") }
                 Picker("Kind", selection: $kind) {
@@ -388,7 +419,17 @@ struct NewNoteSheet: View {
         }
         .padding(20)
         .frame(width: 420)
-        .onAppear { area = model.area ?? model.areas.first?.name ?? "" }
+        .onAppear {
+            area = initialArea ?? model.area ?? model.areas.first?.name ?? ""
+            name = initialName
+        }
+    }
+
+    /// The areas, and a new one a broken link names.
+    private var areaNames: [String] {
+        let names = model.areas.map(\.name)
+        guard let initialArea, !names.contains(initialArea) else { return names }
+        return (names + [initialArea]).sorted()
     }
 }
 

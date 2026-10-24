@@ -40,7 +40,7 @@ struct KnowledgeSeedTests {
     /// One row per feature the sample base shows. Each later step appends its rows (K26): maps,
     /// arrows, search text, lint findings, inbox proposals, check marks.
     static let features: [(feature: String, check: @Sendable (KnowledgeBase) throws -> Bool)] = [
-        ("two unrelated areas", { base in base.areas().map(\.name) == ["logistics", "payments"] }),
+        ("two unrelated areas, and lint-examples", { base in base.areas().map(\.name) == ["lint-examples", "logistics", "payments"] }),
         ("area.yaml with a title in each area", { base in try base.areas().allSatisfy { try base.settings(area: $0.name).title != nil } }),
         ("payments has no projects, so kb area --project adds the first", { base in try base.settings(area: "payments").projects.isEmpty }),
         ("logistics names a remote and a glob", { base in
@@ -69,7 +69,7 @@ struct KnowledgeSeedTests {
         }),
         ("every [[link]] resolves", { base in
             let targets = base.linkTargets()
-            return try base.notes().allSatisfy { note in
+            return try base.notes().filter { $0.area != "lint-examples" }.allSatisfy { note in
                 let text = KnowledgeNote.load(base.noteFile(note.id))?.text ?? ""
                 return links(in: text).allSatisfy { if case .note = targets.resolve($0, from: note.path) { true } else { false } }
             }
@@ -93,7 +93,7 @@ struct KnowledgeSeedTests {
         }),
         // Maps (2.1).
         ("a map in each area, every one readable", { base in
-            let maps = try base.mapGraph().maps
+            let maps = try base.mapGraph().maps.filter { $0.area != "lint-examples" }
             return maps.map(\.id) == ["logistics/maps/routes", "payments/maps/overview"] && maps.allSatisfy { $0.error == nil }
         }),
         ("orders-api → billing \"events\" with its flow note, from blk-orders", { base in
@@ -106,13 +106,15 @@ struct KnowledgeSeedTests {
             try base.mapGraph().relations(of: "logistics/warehouse").map { "\($0.to) \($0.kind ?? "")" } == ["logistics/shipping ships to"]
         }),
         ("jumps between the maps of the two areas, both ways", { base in
-            let maps = try base.mapGraph().maps
+            let maps = try base.mapGraph().maps.filter { $0.area != "lint-examples" }
             return maps.map { $0.jumps.map(\.map) } == [["payments/maps/overview"], ["logistics/maps/routes"]]
         }),
-        ("an unbound arrow", { base in try base.mapGraph(area: "logistics").maps[0].unbound.map(\.arrow) == ["arr-loose"] }),
+        ("an unbound arrow", { base in
+            try base.mapGraph(area: "lint-examples").maps.first { $0.id == "lint-examples/maps/examples" }?.unbound.map(\.arrow) == ["arr-loose"]
+        }),
         ("every block and arrow link on a map resolves", { base in
             let targets = base.linkTargets()
-            return try base.mapGraph().maps.allSatisfy { map in
+            return try base.mapGraph().maps.filter { $0.area != "lint-examples" }.allSatisfy { map in
                 guard case .success(let scene) = ExcalidrawFile.load(base.root.appending(path: map.path)) else { return false }
                 return scene.live.compactMap(\.link).allSatisfy {
                     switch targets.resolve($0, from: map.path) { case .note, .map: true; default: false }
@@ -143,7 +145,31 @@ struct KnowledgeSeedTests {
             return card.systems.count == 6 && card.relations == [.init(from: "payments/orders-api", kind: "events", to: "payments/billing")]
                 && card.tokens <= Budget.defaultTokens && !card.truncated
         }),
+        // Lint (4.1), with the made-up repos cloned as tools/demo-home.sh clones them.
+        ("lint-examples has one finding of each rule", { base in
+            let found = try lint(base).filter { $0.severity != .hint }
+            return found.allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } && found.count == 8
+                && Set(found.map(\.rule)) == Set(KnowledgeLint.Rule.allCases.filter { $0.severity != .hint })
+        }),
+        ("lint-examples has the hints unknown kind and unrelated area", { base in
+            try lint(base).filter { $0.severity == .hint }.map { "\($0.rule.rawValue) \($0.file) \($0.element ?? "")" } == [
+                "unknown-kind areas/lint-examples/gadget.md ", "unrelated-area areas/lint-examples/maps/examples.excalidraw blk-courier",
+            ]
+        }),
+        ("the rest of the seed has no findings", { base in try lint(base).allSatisfy { $0.file.hasPrefix("areas/lint-examples/") } }),
     ]
+
+    /// The seed's findings with orders-api (holding src/events/order-created.ts), billing,
+    /// orders-db and lint-examples cloned, as in the demo home.
+    static func lint(_ base: KnowledgeBase) throws -> [KnowledgeLint.Finding] {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "akit-lint-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "orders-api/src/events/order-created.ts")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("export {}\n".utf8).write(to: file)
+        let copies = Dictionary(uniqueKeysWithValues: ["orders-api", "billing", "orders-db", "lint-examples"].map { ("example.com/shop/\($0)", folder.appending(path: $0)) })
+        return KnowledgeLint.run(base, projects: KnowledgeLint.Projects(copies: copies), home: folder.appending(path: "home"))
+    }
 
     static func links(in text: String) -> [String] {
         text.components(separatedBy: "[[").dropFirst().compactMap { $0.components(separatedBy: "]]").first }
@@ -243,6 +269,6 @@ struct KnowledgeSeedTests {
             #expect(Int(try await git("rev-list", "--count", "HEAD", in: base.root)) == Int(before)! + 1, "\(name)")
             #expect(try await git("status", "--porcelain", in: base.root).isEmpty, "\(name)")
         }
-        #expect(base.areas().map(\.name) == ["payments"])
+        #expect(base.areas().map(\.name) == ["lint-examples", "payments"])
     }
 }
