@@ -26,6 +26,11 @@ final class KnowledgeModel {
     private(set) var maps: [String] = []
     /// The map in view; nil shows the note panel alone.
     private(set) var map: String?
+    /// Open map tabs (ids), in the order they were opened. The tab bar shows those of the area
+    /// of the map in view.
+    private(set) var mapTabs: [String] = []
+    /// The arrows to and from the note in view on every map (`MapGraph.relations(of:)`).
+    private(set) var noteRelations: [MapGraph.Edge] = []
     /// What the canvas shows: the map's `.excalidraw` text as on disk when it was opened (or
     /// reloaded). AKit's own saves don't change it: the canvas has those edits already.
     private(set) var mapScene = MapCanvasView.Scene(key: "", text: "")
@@ -104,7 +109,25 @@ final class KnowledgeModel {
         } else if let select, targets.maps.contains(select) {
             open(map: select)
             if DebugSnapshot.options?.tab == "map-delete" { mapDeleteRequest = select }
+        } else if let select, select.hasPrefix("block:") {
+            openBlock(String(select.dropFirst("block:".count)))
         }
+        // Snapshots: `--tab rename` asks Rename… of the selected note or map, `--query` is the new name.
+        if DebugSnapshot.options?.tab == "rename", let item = map ?? note { renameRequest = item }
+    }
+
+    /// Snapshots (`--select block:<element id>`): the map that has this element opens, and its link
+    /// opens as a click on it would.
+    func openBlock(_ element: String) {
+        guard let base else { return }
+        for id in targets.maps {
+            guard case .success(let scene) = ExcalidrawFile.load(base.mapFile(id)),
+                  let found = scene.live.first(where: { $0.id == element }) else { continue }
+            open(map: id)
+            if let link = found.link, !link.isEmpty { openLink(link) }
+            return
+        }
+        problem = "No map has an element \(element)."
     }
 
     /// The only base, else the one named like this Mac's kind, else the first.
@@ -132,7 +155,8 @@ final class KnowledgeModel {
         notes = allNotes.filter { $0.area == area }
         targets = base.linkTargets()
         maps = Self.maps(of: area, in: targets)
-        if let map, !targets.maps.contains(map) { self.map = nil }
+        mapTabs = mapTabs.filter { targets.maps.contains($0) }
+        if let map, !targets.maps.contains(map) { self.map = mapTabs.last }
         tabs = tabs.filter { id in allNotes.contains { $0.id == id } }
         if let note, !tabs.contains(note) { self.note = nil }
         if note == nil { note = tabs.last }
@@ -147,6 +171,7 @@ final class KnowledgeModel {
             await forcePostDirty()
             self.base = base
             (area, tabs, note, map) = (nil, [], nil, nil)
+            mapTabs = []
             reload()
             await flush(old)
         }
@@ -178,15 +203,65 @@ final class KnowledgeModel {
         if area != self.area { choose(area: area) }
         mapHashes[id] = KnowledgeWrite.hash(data)
         mapScene = MapCanvasView.Scene(key: id, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+        if !mapTabs.contains(id) { mapTabs.append(id) }
         map = id
         noteBesideMap = false
     }
 
-    /// Close Map: the last change is saved, then the queue is committed (like a tab close, U2).
+    /// The map tabs the tab bar shows: those of the area of the map in view.
+    var areaMapTabs: [String] {
+        guard let map else { return [] }
+        let area = map.split(separator: "/").first.map(String.init)
+        return mapTabs.filter { $0.split(separator: "/").first.map(String.init) == area }
+    }
+
+    /// Close Map: the map in view's tab closes. Its last change is saved first, then the queue is
+    /// committed (a tab close, U2). The area's next open map shows, else the note panel.
     func closeMap() async {
-        await forcePostDirty()
-        (map, noteBesideMap) = (nil, false)
+        guard let map else { return }
+        await close(mapTab: map)
+    }
+
+    /// Closes a map tab; for the map in view, its last change is saved first (N5).
+    func close(mapTab id: String) async {
+        if id == map { _ = await forcePostDirty() }
+        let others = areaMapTabs.filter { $0 != id }
+        mapTabs.removeAll { $0 == id }
+        if id == map {
+            if let next = others.last { open(map: next) } else { (map, noteBesideMap) = (nil, false) }
+        }
         await flush(base)
+    }
+
+    /// The other side of a relation, or its map, from the note panel's Relations.
+    func showRelation(note id: String) {
+        if map != nil { noteBesideMap = true }
+        open(id)
+    }
+
+    /// A relation's map: it opens with the note in view beside it.
+    func showRelation(map id: String) {
+        open(map: id)
+        noteBesideMap = note != nil
+    }
+
+    /// A note dragged from the list onto the map (K6): a block linking it, at the drop point (page
+    /// pixels from the canvas's top left). The link is the shortest one that resolves to the note
+    /// from the map; the block is saved like any other change.
+    func drop(note id: String, at point: CGPoint) async {
+        guard let map, let canvas = MapCanvasView.Coordinator.current, allNotes.contains(where: { $0.id == id }) else { return }
+        let path = "areas/\(map).excalidraw"
+        let parts = id.split(separator: "/").map(String.init)
+        let forms = (1...parts.count).reversed().map { parts.suffix($0).joined(separator: "/") }.reversed()
+        let link = forms.map { "[[\($0)]]" }.first { targets.resolve($0, from: path) == .note(id) } ?? "akit:note/\(id)"
+        let label = allNotes.first { $0.id == id }?.title ?? parts.last ?? id
+        mapEditing = true
+        if let element = await canvas.addLinkedBlock(link: link, label: label, at: point) {
+            notice = "Added a block for \(id) (\(link))."
+            if DebugSnapshot.options != nil { print("map: dropped \(id) as \(element) with \(link)") }
+        } else {
+            problem = "Couldn't add a block for \(id) to the map."
+        }
     }
 
     /// A `save` from the canvas: Excalidraw's own serialization, written as it is when the file on
@@ -208,6 +283,7 @@ final class KnowledgeModel {
             case .saved(let hash):
                 mapHashes[id] = hash
                 enqueue(path, in: base)
+                if let note { noteRelations = (try? base.mapGraph().relations(of: note)) ?? [] }
             case .conflict:
                 mapConflict = MapConflict(id: id, bytes: bytes)
             }
@@ -216,13 +292,72 @@ final class KnowledgeModel {
         }
     }
 
-    /// Before a flush (tab or map close, quit, Update) and a base switch (N5): the open canvas
-    /// hands over a change still waiting for its 800 ms post, and it is saved now.
-    func forcePostDirty() async {
-        guard map != nil, let canvas = MapCanvasView.Coordinator.current, let save = await canvas.takeUnsaved() else { return }
+    /// Before a flush (tab or map close, quit, Update), a base switch and a rename (N5): the open
+    /// canvas hands over a change still waiting for its 800 ms post, and it is saved now. false when
+    /// the page didn't answer or the save didn't go through (a conflict, a write error).
+    @discardableResult
+    func forcePostDirty() async -> Bool {
+        guard map != nil, let canvas = MapCanvasView.Coordinator.current else { return true }
+        let save: (key: String, json: String)?
+        do { save = try await canvas.takeUnsaved() } catch { return false }
+        guard let save else { return mapConflict == nil }
         if DebugSnapshot.options != nil { print("map: force-posted \(save.key), \(save.json.utf8.count) bytes") }
+        let problemBefore = problem
         saveMap(save.key, json: save.json)
         await lastEnqueue?.value
+        return mapConflict == nil && problem == problemBefore
+    }
+
+    // MARK: - Rename (R3)
+
+    /// Rename… waiting in its sheet: the note or map id. Snapshots: `--tab rename`.
+    var renameRequest: String?
+
+    /// The rename's plan for the sheet's preview (nothing is written): the plan, or why it is refused.
+    func planRename(_ id: String, to new: String) -> Result<KnowledgeRename, KnowledgeBase.Failure> {
+        guard let base else { return .failure(KnowledgeBase.Failure(message: "No base.")) }
+        do { return .success(try base.planRename(id, to: new)) } catch { return .failure(error) }
+    }
+
+    /// Rename…: the open map's last change is saved first (N5; refused with "Save the open map
+    /// first" when that fails), then the rename is planned again on the saved files and applied in
+    /// one commit. Tabs follow the new ids, and every open map whose file changed is read again.
+    func rename(_ id: String, to new: String) async -> Bool {
+        guard let base else { return false }
+        guard await forcePostDirty() else {
+            problem = "Save the open map first: its last change couldn't be saved, so nothing was renamed."
+            return false
+        }
+        do {
+            let plan = try base.planRename(id, to: new)
+            try await base.apply(plan, env: env)
+            let changedMaps = plan.files.filter { $0.path.hasSuffix(".excalidraw") }.map { change in
+                (old: String(change.path.dropFirst("areas/".count).dropLast(".excalidraw".count)),
+                 new: String(change.newPath.dropFirst("areas/".count).dropLast(".excalidraw".count)))
+            }
+            func moved(_ value: String) -> String { value == plan.from ? plan.to : value }
+            tabs = tabs.map(moved)
+            note = note.map(moved)
+            mapTabs = mapTabs.map(moved)
+            let visible = map.map(moved)
+            map = visible
+            reload()
+            for change in changedMaps {
+                mapHashes[change.old] = nil
+                if mapTabs.contains(change.new), let data = try? Data(contentsOf: base.mapFile(change.new)) {
+                    mapHashes[change.new] = KnowledgeWrite.hash(data)
+                    if change.new == visible {
+                        mapScene = MapCanvasView.Scene(key: change.new, text: String(decoding: data, as: UTF8.self), generation: mapScene.generation + 1)
+                    }
+                }
+            }
+            if let visible, !changedMaps.contains(where: { $0.new == visible }) { mapScene.key = visible }
+            notice = "Renamed \(plan.from) to \(plan.to) and \(plan.linkCount) link\(plan.linkCount == 1 ? "" : "s"), committed."
+            return true
+        } catch {
+            problem = error.message
+            return false
+        }
     }
 
     /// Changed on disk → Reload: the disk version goes on the canvas; the unsaved change is dropped.
@@ -344,9 +479,11 @@ final class KnowledgeModel {
     private func readNote() {
         guard let base, let note else {
             text = ""
+            noteRelations = []
             return
         }
         text = KnowledgeNote.load(base.noteFile(note))?.text ?? ""
+        noteRelations = (try? base.mapGraph().relations(of: note)) ?? []
     }
 
     // MARK: - Writes
@@ -663,11 +800,17 @@ final class KnowledgeModel {
         lines.append("areas: " + areas.map { "\($0.name)\($0.name == area ? "*" : "") (\($0.notes))" }.joined(separator: ", "))
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
         lines.append("maps: " + maps.map { $0 == map ? "\($0)*" : $0 }.joined(separator: ", "))
+        if !mapTabs.isEmpty { lines.append("map tabs: " + mapTabs.joined(separator: ", ")) }
         if let map { lines.append("map: \(map), \(mapEditing ? "Edit" : "view only")" + (noteBesideMap && note != nil ? ", note beside it" : "")) }
         if let mapConflict { lines.append("conflict: Changed on disk, \(mapConflict.id): Reload / Keep Mine") }
         lines.append("tabs: " + tabs.joined(separator: ", "))
         if let entry = noteEntry {
             lines.append("note: \(entry.title) (\(entry.id)\(entry.kind.map { ", kind \($0)" } ?? "")), \(editing ? "Edit" : "read")")
+            if !noteRelations.isEmpty {
+                lines.append("relations: " + noteRelations.map { edge in
+                    "\(edge.from) → \(edge.to)" + (edge.kind.map { " \"\($0)\"" } ?? "") + (edge.flow.map { " flow \($0)" } ?? "") + " (\(edge.map))"
+                }.joined(separator: "; "))
+            }
             let sections = KnowledgeNote(text: text).sections.map(\.heading)
             if !sections.isEmpty { lines.append("sections: " + sections.joined(separator: ", ")) }
             if showingProperties {
@@ -676,6 +819,12 @@ final class KnowledgeModel {
             }
         } else {
             lines.append("note: none")
+        }
+        if let renameRequest, let new = DebugSnapshot.options?.query {
+            switch planRename(renameRequest, to: new) {
+            case .success(let plan): lines.append("rename: \(plan.from) → \(plan.to), \(plan.linkCount) links in " + plan.files.map(\.path).joined(separator: ", "))
+            case .failure(let error): lines.append("rename refused: \(error.message)")
+            }
         }
         switch DebugSnapshot.options?.tab {
         case "kinds":

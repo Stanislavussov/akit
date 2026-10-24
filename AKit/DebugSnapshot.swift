@@ -58,7 +58,10 @@ import SwiftUI
 /// opens New Map…. Checks: `--tab map-add` adds a rectangle through Excalidraw's API and waits past the 800 ms save
 /// (prints `posts: 1`; the file is saved and queued, not committed); `--tab map-add-quit` adds one and quits at once
 /// (the quit flush force-posts, saves and commits it; no image); `--tab map-conflict` first appends a space to the file
-/// on disk, then adds one, so "Changed on disk" appears (`--query keep|reload` then answers it). Every map snapshot prints `posts: N` (0 after an open).
+/// on disk, then adds one, so "Changed on disk" appears (`--query keep|reload` then answers it). 2.3: `--select block:<element id>`
+/// opens the map with that element and its link (as a click would); `--tab rename` asks Rename… of the selected note or map
+/// (`--query` the new name); `--tab map-drop --query <note id>` drops a note on the map; `--tab map-rename --query <note>=<name>`
+/// renames right after an unsaved edit (N5). Every map snapshot prints `posts: N` (0 after an open).
 ///
 /// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
 /// menu's items (to check which places get Ask AKit About This);
@@ -177,6 +180,29 @@ enum DebugSnapshot {
         // A map waits for its canvas first, so a click can open a block's link.
         let mapOpen = options.section == .knowledge && KnowledgeModel.current?.map != nil
         if mapOpen { await MapCanvasView.Coordinator.waitAndPrint() }
+        // Checks of 2.3: `--tab map-drop --query <note id>` drops the note in the canvas's middle (K6) and waits past
+        // the save; `--tab map-rename --query <note>=<new name>` adds a rectangle (not yet saved) and renames at once (N5).
+        if mapOpen, let canvas = MapCanvasView.Coordinator.current, let model = KnowledgeModel.current, let webView = canvas.webView,
+           let tab = options.tab, ["map-drop", "map-rename"].contains(tab), let query = options.query {
+            if tab == "map-drop" {
+                await model.drop(note: query, at: CGPoint(x: webView.bounds.midX, y: webView.bounds.midY))
+                try? await Task.sleep(for: .milliseconds(1600))
+            } else {
+                let parts = query.split(separator: "=", maxSplits: 1).map(String.init)
+                let count = (try? await canvas.call("akitDebugAddRectangle")) as? NSNumber
+                print("map: added a rectangle, \(count?.intValue ?? -1) elements")
+                if parts.count == 2 {
+                    let renamed = await model.rename(parts[0], to: parts[1])
+                    print("map: rename \(parts[0]) → \(parts[1]): " + (renamed ? model.notice ?? "" : model.problem ?? "refused"))
+                }
+                try? await Task.sleep(for: .milliseconds(1200))
+                let result = (try? await canvas.call("akitDiagnostics")) as? [String: Any] ?? [:]
+                for link in result["links"] as? [String] ?? [] { print("map link after: \(link)") }
+                let serialized = (try? await canvas.call("akitSerialize")) as? String
+                print("map elements after: \((serialized.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["elements"] as? [Any])?.count ?? -1)")
+            }
+            await canvas.printPosts()
+        }
         if mapOpen, let canvas = MapCanvasView.Coordinator.current, let model = KnowledgeModel.current, let id = model.map,
            let tab = options.tab, ["map-add", "map-add-quit", "map-conflict"].contains(tab) {
             // Checks of 2.2b without a hand: the file changes on disk first (map-conflict), then a

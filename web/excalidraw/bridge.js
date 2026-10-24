@@ -17,6 +17,8 @@
 //   akitTakeUnsaved()    a change still waiting for its post, now ({key, json}), or null; for AKit's flushes
 //   akitSetViewMode(on)  view mode on or off (Edit in AKit)
 //   akitPosts()          how many saves were handed to AKit (posts and akitTakeUnsaved)
+//   akitAddLinkedBlock(link, label, x, y)  a note dropped on the canvas: a labelled rectangle with that
+//                        link, centred on the page point; returns its id (saved like any change)
 //   akitDebugAddRectangle()  snapshots: adds one rectangle through the API, like a user would
 //   akitDiagnostics()    what the page loaded, for snapshots and checks
 //   akitClick(x, y)      snapshots: a pointer click at that page point (a web view takes no synthetic AppKit clicks)
@@ -115,6 +117,18 @@ window.EXCALIDRAW_ASSET_PATH = new URL("vendor/", location.href).href;
     ]);
     api.updateScene({ elements: api.getSceneElementsIncludingDeleted().concat([rectangle]) });
     return api.getSceneElements().length;
+  };
+
+  window.akitAddLinkedBlock = function (link, label, x, y) {
+    if (!api) throw new Error("The canvas is not ready yet.");
+    const lib = window.ExcalidrawLib;
+    const point = lib.viewportCoordsToSceneCoords({ clientX: x, clientY: y }, api.getAppState());
+    const id = "blk-" + Date.now().toString(36);
+    const elements = lib.convertToExcalidrawElements([
+      { type: "rectangle", id, x: point.x - 90, y: point.y - 40, width: 180, height: 80, link, label: { text: label } },
+    ]);
+    api.updateScene({ elements: api.getSceneElementsIncludingDeleted().concat(elements) });
+    return id;
   };
 
   window.akitLoadScene = function (json, key) {

@@ -15,7 +15,7 @@
 - Знания уже лежат в README и `AGENTS.md` проекта, и агенту их хватает.
 - Вам нужна общая вики команды. База живёт на одном Mac и не имеет remote.
 
-**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пример базы, пространства и заметки, читать и править, карты, папка базы и Obsidian, виды и свойства, настройки пространства, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
+**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пример базы, пространства и заметки, читать и править, карты, переименовать, папка базы и Obsidian, виды и свойства, настройки пространства, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
 
 **Как искать.** Меню Help → **Search Guides and Screens…** (⌥⌘F). Это руководство открывает кнопка **Guide** на экране Knowledge или Help → **Knowledge Base Guide**.
 
@@ -34,7 +34,7 @@
 - «Где код этого сервиса?» → поле `repo:` в начале заметки, например `repo: git@example.com:shop/orders-api.git`.
 - «Как данные идут от заказа до счёта?» → заметка вида `flow` в папке `flows/`.
 
-![Экран Knowledge: слева список Spaces с пространствами logistics с числом заметок 4 и payments с числом заметок 6; в середине заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Copy, Paste, Open in Obsidian и Delete…; ниже таблица полей files, kind service и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева список Spaces с пространствами logistics с числом заметок 4 и payments с числом заметок 6; в середине часть Maps с картой overview и заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations со строкой → payments/billing «events», flow order-to-billing и картой overview, таблица полей files, kind service и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
 
 ### Главные слова
 <!-- section: overview-terms -->
@@ -84,7 +84,7 @@ AKit создаёт базу в папке мира `sample` (по умолча�
 
 То же делает `akit kb seed` в терминале.
 
-![Экран Knowledge с примером базы: в подзаголовке sample и путь ~/.akit/local/knowledge/sample, в панели инструментов список Base и меню Sample Base; слева Spaces с пространствами logistics (4 заметки) и payments (6 заметок); в середине заметки payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db; справа открыта заметка order-events вида queue со ссылками на orders-api, billing и logistics/warehouse](images/knowledge-sample.png)
+![Экран Knowledge с примером базы: в подзаголовке sample и путь ~/.akit/local/knowledge/sample, в панели инструментов список Base и меню Sample Base; слева Spaces с пространствами logistics (4 заметки) и payments (6 заметок); в середине часть Maps с картой overview и заметки payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db; справа открыта заметка order-events вида queue со ссылками на orders-api, billing и logistics/warehouse](images/knowledge-sample.png)
 
 ### Просто: Remove Sample Base…
 <!-- section: sample-remove -->
@@ -168,7 +168,7 @@ AKit создаёт файл `areas/<пространство>/<имя>.md` с �
 
 AKit пишет файл целиком и атомарно: сначала во временный файл, потом подменяет. Байты, которые вы не меняли, остаются как были: переносы строк, начало заметки, порядок полей.
 
-![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Copy, Paste, Open in Obsidian и Delete…; ниже Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
+![Панель заметки orders-api в режиме Edit: нажатая кнопка Edit, рядом Properties, Copy, Paste, Open in Obsidian, Rename… и Delete…; ниже часть Relations и Markdown заметки моноширинным шрифтом: строки kind: service, repo: git@example.com:shop/orders-api.git, files: [src/events/order-created.ts] между линиями ---, заголовок # orders-api и раздел ## Events со строками order created и retry](images/knowledge-note.png)
 
 ### Просто: Copy и Paste
 <!-- section: note-copy -->
@@ -198,9 +198,9 @@ AKit пишет файл целиком и атомарно: сначала во
 1. Нажмите на пространство в **Spaces**, например `payments`.
 2. Над заметками есть часть **Maps**. Нажмите на карту, например `overview`.
 
-Карта открывается справа, вместо панели заметки, в режиме просмотра: на ней ничего нельзя сдвинуть или стереть. Сверху — имя карты, путь файла и кнопки **Edit**, **Show in Finder**, **Delete…** и **Close Map**. Карту можно двигать мышью и колёсиком. **Show in Finder** показывает файл карты в Finder. **Close Map** возвращает панель заметки и коммитит ждущие правки.
+Карта открывается справа, вместо панели заметки, в режиме просмотра, в своей вкладке. Откройте ещё одну карту пространства — у неё будет своя вкладка рядом; крестик на вкладке закрывает её и коммитит ждущие правки. Вкладки показаны для карт пространства той карты, что на экране. Карта на ней ничего нельзя сдвинуть или стереть. Сверху — имя карты, путь файла и кнопки **Edit**, **Show in Finder**, **Delete…** и **Close Map**. Карту можно двигать мышью и колёсиком. **Show in Finder** показывает файл карты в Finder. **Close Map** возвращает панель заметки и коммитит ждущие правки.
 
-![Экран Knowledge с открытой картой overview пространства payments: в середине часть Maps с картами flows-overview и overview над списком Notes; справа заголовок overview, путь areas/payments/maps/overview.excalidraw, кнопки Edit, Show in Finder, Delete… и Close Map; ниже карта Excalidraw в режиме просмотра: блоки orders-api и billing со стрелкой events между ними и блок logistics routes](images/knowledge-map.png)
+![Экран Knowledge с открытой картой overview пространства payments: в середине часть Maps с картой overview над списком Notes; справа вкладка карты overview, ниже заголовок overview, путь areas/payments/maps/overview.excalidraw, кнопки Edit, Show in Finder, Rename…, Delete… и Close Map; ниже карта Excalidraw в режиме просмотра: блоки orders-api и billing со стрелкой events между ними и блок logistics routes](images/knowledge-map.png)
 
 ### Просто: открыть заметку блока
 <!-- section: maps-block -->
@@ -213,6 +213,21 @@ AKit пишет файл целиком и атомарно: сначала во
 - Если ссылка не ведёт ни на одну заметку или карту базы, в заголовке карты появится строка «The link … points to no note or map in this base.».
 
 Ссылки на карте читаются так же, как в заметках: `[[orders-api]]` ищется сначала в пространстве карты. Нажатие на заметку в списке закрывает карту.
+
+### Просто: Relations заметки
+<!-- section: maps-relations -->
+
+Если заметка стоит блоком на карте и к ней ведёт стрелка, в панели заметки есть часть **Relations**: по строке на стрелку. Стрелка вправо — от этой заметки, влево — к ней. В строке другая заметка, подпись стрелки в кавычках, заметка потока (**flow …**) и справа имя карты. Нажмите на заметку, поток или карту, чтобы открыть их. Связи только для чтения: их рисуют стрелками на карте. То же показывает `akit kb relations orders-api`.
+
+![Карта overview, рядом панель заметки orders-api, открытой нажатием на её блок: под кнопками заметки часть Relations со строкой: стрелка вправо, payments/billing, «events», flow order-to-billing и справа overview; ниже поля и текст заметки](images/knowledge-relations.png)
+
+### Средне: перетащить заметку на карту
+<!-- section: maps-drag -->
+
+1. Откройте карту.
+2. Перетащите заметку из списка заметок на карту.
+
+На месте, где вы отпустили заметку, появится блок с её заголовком и ссылкой на неё, например `[[orders-db]]`. Ссылка — самая короткая, которая с этой карты ведёт ровно на эту заметку. Карта переходит в **Edit**, а блок сохраняется, как любая другая правка. Соедините его стрелкой с другим блоком — и у обеих заметок появится строка в **Relations**.
 
 ### Просто: New Map…
 <!-- section: maps-new -->
@@ -249,6 +264,31 @@ AKit создаёт пустую карту `areas/<пространство>/ma
 - **Keep Mine** — записать вашу карту. Копия с диска сначала уходит в `~/.akit/backups/<время>/…`, её путь показан в заголовке карты.
 
 Пример: вы правите `overview` в AKit, а в Obsidian кто-то сдвинул блок в той же карте. Следующая правка в AKit спросит «Changed on disk». Выберите **Reload**, если правка из Obsidian важнее, или **Keep Mine**, если важнее ваша: копия из Obsidian останется в резервной папке.
+
+## Переименовать: Rename…
+<!-- section: rename -->
+
+**Что это:** **Rename…** меняет имя заметки или карты и все ссылки на неё в заметках и картах базы. Всё или ничего, одним коммитом.
+
+1. Нажмите **Rename…** в панели заметки (или в заголовке карты, или правым щелчком по заметке или карте в списке).
+2. Впишите **New name**, например `invoicing`. Это имя в той же папке; заметку можно перенести в другое пространство, вписав `logistics/invoicing`.
+3. В части **Changes** AKit сразу показывает план: файл, который переименуется, и каждую ссылку, которая поменяется, строками `-` (было) и `+` (станет).
+4. Нажмите **Rename**.
+
+![Окно Rename Note для payments/billing: поле New name со значением invoicing, в части Changes строки «5 links change», areas/payments/billing.md → areas/payments/invoicing.md и по файлу на каждую ссылку: checkout-team, order-to-billing, maps/overview.excalidraw, order-events, orders-api со строками - [[billing]] и + [[invoicing]]; внизу Cancel и Rename](images/knowledge-rename.png)
+
+Что AKit сохраняет в ссылке: псевдоним (`[[billing|Счета]]` → `[[invoicing|Счета]]`), заголовок (`[[billing#Invoices]]`), `.md`, форму `akit:note/…` и длину пути: `[[payments/billing]]` станет `[[payments/invoicing]]`. В карте меняется только значение `"link"` блока, остальные байты файла остаются. Подпись блока на карте — ваш текст, её AKit не трогает.
+
+Перед коммитом AKit проверяет план целиком:
+
+- каждая ссылка базы до и после ведёт туда же, куда вела, кроме ссылок на переименованное;
+- каждая изменённая карта читается и связывает те же блоки с теми же заметками.
+
+Если что-то не так, **Rename** серая, а в **Changes** красным написано, почему. Пример: заметку `a/foo` нельзя назвать `bar`, если есть `b/bar` и где-то написано `[[bar]]`: после переименования эта ссылка стала бы неоднозначной. Ничего не записывается.
+
+Ждущие правки AKit сначала коммитит отдельно. Открытая карта отдаёт свою последнюю правку, и AKit её сохраняет до плана. Если это не удалось, появится «Save the open map first…», и ничего не переименуется. После коммита открытые вкладки заметок и карт показывают новые имена и ссылки.
+
+То же делает `akit kb rename payments/billing invoicing`: без `--yes` она только показывает план, с `--yes` переименовывает. Коммит называется «Rename note payments/billing to payments/invoicing, 5 links in 5 files».
 
 ## Папка базы и Obsidian
 <!-- section: folder -->
@@ -333,7 +373,7 @@ AKit сначала коммитит правки из очереди ([Комм
 
 Ключи, которых нет у вида, форма показывает ниже полей вида: AKit их не трогает. **Add Field…** добавляет свой ключ: впишите **Name** (например, `url`) и **Value** и нажмите **Add**.
 
-![Панель заметки orders-api с нажатой кнопкой Properties: над текстом форма со списком Kind со значением service, полями repo со значением git@example.com:shop/orders-api.git, files со значением [src/events/order-created.ts], пустым полем owner и кнопкой Add Field…](images/knowledge-properties.png)
+![Панель заметки orders-api с нажатой кнопкой Properties: над частью Relations и текстом форма со списком Kind со значением service, полями repo со значением git@example.com:shop/orders-api.git, files со значением [src/events/order-created.ts], пустым полем owner и кнопкой Add Field…](images/knowledge-properties.png)
 
 > **Почему так:** AKit меняет одну строку начала заметки, а все остальные байты оставляет как были: порядок полей, комментарии, переносы строк Windows (CRLF), текст заметки. Строка `owner:` в тексте заметки, ниже начала, тоже не меняется. Если у заметки нет начала, AKit добавляет его.
 

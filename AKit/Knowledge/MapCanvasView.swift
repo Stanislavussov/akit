@@ -49,6 +49,9 @@ struct MapCanvasView: NSViewRepresentable {
         // Nothing is kept between runs: no cookies, caches or storage on disk.
         configuration.websiteDataStore = .nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        // Drops go to SwiftUI's drop destination around the canvas (a note → a linked block), not
+        // into the page, which would make a free text of it.
+        webView.unregisterDraggedTypes()
         webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         context.coordinator.start()
@@ -183,13 +186,21 @@ struct MapCanvasView: NSViewRepresentable {
         }
 
         /// The flushes (N5): a change still waiting for its 800 ms post, handed over now; nil when
-        /// the scene is as last posted, or the page doesn't answer.
-        func takeUnsaved() async -> (key: String, json: String)? {
-            guard isReady, let webView,
-                  let save = try? await webView.callAsyncJavaScript("return akitTakeUnsaved()", contentWorld: .page) as? [String: Any],
+        /// the scene is as last posted. Throws when the page doesn't answer.
+        func takeUnsaved() async throws -> (key: String, json: String)? {
+            guard isReady, let webView else { return nil }
+            guard let save = try await webView.callAsyncJavaScript("return akitTakeUnsaved()", contentWorld: .page) as? [String: Any],
                   let key = save["key"] as? String, let json = save["json"] as? String
             else { return nil }
             return (key, json)
+        }
+
+        /// A note dropped on the canvas (K6): a labelled block with its link, centred on `point`
+        /// (page pixels from the top left). The element id, or nil when the page refused.
+        func addLinkedBlock(link: String, label: String, at point: CGPoint) async -> String? {
+            try? await webView?.callAsyncJavaScript("return akitAddLinkedBlock(link, label, x, y)",
+                                                    arguments: ["link": link, "label": label, "x": point.x, "y": point.y],
+                                                    contentWorld: .page) as? String
         }
 
         func loadScene() async {

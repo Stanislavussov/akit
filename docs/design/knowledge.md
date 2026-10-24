@@ -8,8 +8,9 @@ folder per world in `bases.json`, `akit kb path`, Settings → Knowledge; 1.5, K
 bundle, results below) done 2026-10-24; 2.1 (reading `.excalidraw`, the map graph, `akit kb maps`,
 `relations`, `new-map`, two seeded maps) built 2026-10-24; 2.2a (the read-only map view: Maps
 in the list, view mode, a click on a block opens its note, map snapshots) built 2026-10-24; 2.2b (Edit,
-saves of Excalidraw's own bytes, Changed on disk, maps in the commit queue, New Map…, Delete…) built 2026-10-24.
-Steps in [Steps](#steps).
+saves of Excalidraw's own bytes, Changed on disk, maps in the commit queue, New Map…, Delete…) built 2026-10-24;
+2.3 (map tabs, a dragged note becomes a linked block, Relations in the note panel, Rename… and
+`akit kb rename`) built 2026-10-24: step 2 is done. Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -95,7 +96,7 @@ panel on the right with **Open in Obsidian**; **Inbox** and **Lint** as tabs of 
 | Step | What | Built |
 |---|---|---|
 | 1 | Base folder + git without remote; Knowledge screen: spaces, note list, note panel (read and edit), **Open in Obsidian** | 2026-10-24: `AKitKnowledge` (base, notes, links, `KnowledgeGit`, `KnowledgeCommitQueue`), `akit kb areas/notes/init/new-note`, the Knowledge screen with New Area…, New Note…, Delete…, Edit, Copy, Paste; batch commits on tab close, after 5 min, at quit and rebuild |
-| 2 | Excalidraw in the app, offline: map tabs, block ↔ `[[note]]`, jump to another map, relations from arrows | — |
+| 2 | Excalidraw in the app, offline: map tabs, block ↔ `[[note]]`, jump to another map, relations from arrows | 2026-10-24: the bundle and `MapCanvasView` (2.0), `ExcalidrawFile`, `MapGraph`, `akit kb maps/relations/new-map` (2.1), the map view (2.2a), Edit with checked saves and Changed on disk (2.2b), map tabs, drag a note onto a map, Relations, `KnowledgeRename` and `akit kb rename` (2.3) |
 | 3 | SQLite index (FTS + graph); `akit kb search / show / neighbors / context --json`; the Pi template in the core layer; the `/akit` skill | — |
 | 4 | Lint: block without a note, unbound arrow, broken repo/file references | — |
 | 5 | `akit kb propose`, Inbox, the light-model check, Accept / Reject with a commit | — |
@@ -170,6 +171,20 @@ Update flush first take the change still waiting (`akitTakeUnsaved`, the N5 rout
 way: `NSApp.terminate` called from a main-actor task hangs, because `.terminateLater` waits in a
 nested event loop for the flush, which needs the main actor; Update now terminates from the run
 loop (`perform(_:with:afterDelay:)`).
+
+How 2.3 renames (`KnowledgeRename.swift`, R3): every `[[…]]` and `akit:note|map/…` token in the notes
+and every JSON `"link"` string value in the maps that resolves to the old id gets a new value with its
+alias, `#heading`, extension and form kept and its path as long as before when that still resolves
+(else the full id). Every link in the base is resolved before and after on the planned contents; only
+the planned ones may change target, and each changed map must parse to the expected (element id,
+target) pairs. A refusal throws with the planned diff; `apply` flushes the queue, checks no file
+changed since the plan, writes (putting back what it wrote on failure), moves the file and commits
+once ("Rename note A to B, N links in M files"). NEW is a name in the same folder, or for a note
+area/name (not into a `maps/` folder). In the app the open map force-posts first ("Save the open map
+first" when that fails), the rename is planned again on the saved files, and open tabs follow.
+A dragged note becomes a rectangle with its title as the bound label and the shortest link that
+resolves to it from the map (`akitAddLinkedBlock`); the web view gives up its own drop types so
+SwiftUI's drop destination gets the drag. Relations come from `MapGraph.relations(of:)`.
 
 How 2.1 reads a map (`ExcalidrawFile`, `MapGraph`): a block is a live shape whose `link`
 resolves to a note (P1, from the map's path); its label is its bound text or, in a CLI draft,

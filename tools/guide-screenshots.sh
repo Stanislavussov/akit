@@ -202,6 +202,10 @@ shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api 
 shot knowledge-map       $MAIN --section knowledge --tab map --select payments/maps/overview
 # The same map in Edit: Excalidraw's tools and the pressed Edit button.
 shot knowledge-map-edit  $MAIN --section knowledge --tab map-edit --select payments/maps/overview
+# A block's note beside its map (as a click on the block orders-api), with its Relations.
+shot knowledge-relations $MAIN --section knowledge --tab map --select block:blk-orders
+# Rename… of the note billing to invoicing: the planned changes.
+shot knowledge-rename    $MAIN --section knowledge --tab rename --select payments/billing --query invoicing
 # Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.
 if [[ "$ONLY" == "  " || "$ONLY" == *" knowledge-sample "* ]]; then
     HOME="$DEMO" GIT_CONFIG_GLOBAL=/dev/null "$ROOT/AKitCore/.build/debug/akit" kb seed >/dev/null

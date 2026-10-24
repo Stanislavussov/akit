@@ -21,6 +21,10 @@ struct NotePanel: View {
                     PropertiesForm(entry: entry)
                     Divider()
                 }
+                if !model.noteRelations.isEmpty {
+                    RelationsView(note: entry.id)
+                    Divider()
+                }
                 if model.editing {
                     TextEditor(text: $draft)
                         .font(.body.monospaced())
@@ -96,6 +100,8 @@ struct NotePanel: View {
                 .help("Add the clipboard's text at the end of the note and save it")
             Button("Open in Obsidian", systemImage: "arrow.up.forward.app") { model.openInObsidian() }
                 .help("Open the note in Obsidian: the base is a plain Obsidian vault")
+            Button("Rename…", systemImage: "character.cursor.ibeam") { model.renameRequest = entry.id }
+                .help("Rename the note and every link to it in notes and maps, all or nothing, in one commit")
             Button("Delete…", systemImage: "trash") { model.deleteRequest = entry.id }
                 .help("Move the note to the Trash and commit its removal")
         }
@@ -274,5 +280,42 @@ struct NoteReadView: View {
             }
         }
         return views
+    }
+}
+
+/// Relations: the arrows to and from the note on every map (read only; draw them on a map). The
+/// other note opens on a click, and so does the map.
+struct RelationsView: View {
+    @Environment(KnowledgeModel.self) private var model
+    let note: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Relations").font(.caption.bold()).foregroundStyle(.secondary)
+            ForEach(model.noteRelations, id: \.arrow) { edge in
+                let outgoing = edge.from == note
+                let other = outgoing ? edge.to : edge.from
+                HStack(spacing: 6) {
+                    Image(systemName: outgoing ? "arrow.right" : "arrow.left").foregroundStyle(.secondary)
+                    Button(other) { model.showRelation(note: other) }
+                        .buttonStyle(.link)
+                        .help(outgoing ? "\(note) → \(other): open \(other)" : "\(other) → \(note): open \(other)")
+                    if let kind = edge.kind { Text("“\(kind)”").foregroundStyle(.secondary) }
+                    if let flow = edge.flow {
+                        Button("flow \(flow.split(separator: "/").last.map(String.init) ?? flow)") { model.showRelation(note: flow) }
+                            .buttonStyle(.link)
+                            .help("The note the arrow links: \(flow)")
+                    }
+                    Spacer()
+                    Button(edge.map.split(separator: "/").dropFirst(2).joined(separator: "/")) { model.showRelation(map: edge.map) }
+                        .buttonStyle(.link)
+                        .help("Open the map \(edge.map)")
+                }
+                .font(.callout)
+                .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 }

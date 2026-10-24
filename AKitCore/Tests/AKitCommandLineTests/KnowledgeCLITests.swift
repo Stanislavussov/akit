@@ -53,7 +53,7 @@ struct KnowledgeCLITests {
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
         for command in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
-                        "akit kb rm", "akit kb seed [", "akit kb seed --remove"] {
+                        "akit kb rm", "akit kb rename", "akit kb seed [", "akit kb seed --remove"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
@@ -162,6 +162,38 @@ struct KnowledgeCLITests {
         #expect(await akit("kb", "new-map", "payments").code == 2)
         #expect(await akit("kb", "new-map", "payments", "y", "--json").code == 2)
         #expect(await akit("kb", "areas").out == "payments  0 notes, 1 map")
+    }
+
+    @Test func renameShowsThePlanThenRenamesWithYes() async throws {
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        #expect(await akit("kb", "new-note", "payments", "billing").code == 0)
+        #expect(await akit("kb", "new-note", "payments", "orders-api").code == 0)
+        let orders = base.appending(path: "areas/payments/orders-api.md")
+        try Data("# orders-api\nSends [[billing|Billing]].\n".utf8).write(to: orders)
+        #expect(await akit("kb", "set", "orders-api", "kind=service").code == 0)
+        let plan = await akit("kb", "rename", "billing", "invoicing")
+        #expect(plan.code == 0 && plan.out == """
+            Would rename the note payments/billing to payments/invoicing and 1 link, then commit. Run again with --yes to do it:
+            areas/payments/billing.md → areas/payments/invoicing.md
+            areas/payments/orders-api.md
+              - [[billing|Billing]]
+              + [[invoicing|Billing]]
+            """, "\(plan.out)\n\(plan.err)")
+        #expect(fm.fileExists(atPath: base.appending(path: "areas/payments/billing.md").path))
+        let answer = try json(await akit("kb", "rename", "billing", "invoicing", "--json").out)
+        #expect(answer["renamed"] as? Bool == false)
+        let rename = try #require(answer["rename"] as? [String: Any])
+        #expect(rename["from"] as? String == "payments/billing" && rename["to"] as? String == "payments/invoicing" && rename["kind"] as? String == "note")
+        #expect((rename["files"] as? [[String: Any]])?.count == 2)
+        let done = await akit("kb", "rename", "billing", "invoicing", "--yes")
+        #expect(done.code == 0 && done.out.hasPrefix("Renamed the note payments/billing to payments/invoicing and 1 link, committed:"), "\(done.err)")
+        #expect(try await git("log", "-1", "--format=%s") == "Rename note payments/billing to payments/invoicing, 1 link in 1 file")
+        #expect(try await git("status", "--porcelain").isEmpty)
+        #expect(try String(contentsOf: orders, encoding: .utf8).contains("Sends [[invoicing|Billing]]."))
+        // Refused: an existing name, an area, missing arguments.
+        #expect(await akit("kb", "rename", "invoicing", "orders-api", "--yes").code == 2)
+        #expect(await akit("kb", "rename", "payments", "pay").code == 2)
+        #expect(await akit("kb", "rename", "invoicing").code == 2)
     }
 
     @Test func kindsSetAndAreaCommitAtOnce() async throws {

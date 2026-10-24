@@ -260,6 +260,10 @@ akit kb path [WORLD] [--set PATH | --move PATH | --reset] [--json]
                                                    # --set uses a folder (an Obsidian vault too),
                                                    # --move commits pending edits and moves it,
                                                    # --reset goes back to ~/.akit/local/knowledge
+akit kb rename NOTE|MAP NEW [--yes] [--json]      # rename a note or map and every link to it,
+                                                   # all or nothing, one commit; without --yes it
+                                                   # only shows the plan (refused with its diff when
+                                                   # another link would change its target)
 akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
                                                    # commit; without --yes it only shows what goes
 akit kb seed [--world NAME] [--json]               # the sample base (world sample): made-up notes

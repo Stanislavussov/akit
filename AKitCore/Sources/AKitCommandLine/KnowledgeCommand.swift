@@ -66,6 +66,14 @@ extension AKitCLI {
       akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]…
                                         For a person only. Change areas/AREA/area.yaml and commit it
                                         at once. P is a git remote, a ~/ path or a glob
+      akit kb rename NOTE|MAP NEW [--yes] [--json] [--base PATH|WORLD]
+                                        For a person only. Rename a note or a map (NEW: a name in the
+                                        same folder, or for a note area/name) and rewrite every link
+                                        to it in notes and maps, keeping aliases and #headings. All
+                                        or nothing: refused, with the planned diff, when another link
+                                        would change its target or a map wouldn't parse. Pending
+                                        edits are committed first, then the rename in one commit.
+                                        Without --yes it only shows the plan
       akit kb rm NOTE|MAP|AREA [--yes] [--json] [--base PATH|WORLD]
                                         For a person only. Move a note, a map or a whole area to
                                         the Trash and commit the removal at once. Without --yes it
@@ -195,6 +203,29 @@ extension AKitCLI {
             } else {
                 out(yes ? "Moved the \(item.kind.rawValue) \(item.id) (\(item.path)) to the Trash, committed."
                     : "Would move the \(item.kind.rawValue) \(item.id) (\(item.path)) to the Trash and commit the removal. Run again with --yes to do it.")
+            }
+            return 0
+        case "rename":
+            let yes = args.flag("--yes")
+            guard let name = args.positional(), let new = args.positional() else {
+                throw Failure(message: "Use: akit kb rename NOTE|MAP NEW [--yes] [--json] [--base PATH|WORLD]")
+            }
+            try args.finish()
+            let base = try await writable(chosen)
+            let plan: KnowledgeRename
+            do {
+                plan = try base.planRename(name, to: new)
+                if yes { try await base.apply(plan, env: env) }
+            } catch {
+                throw Failure(message: error.message)
+            }
+            if json {
+                out(encode(RenameAnswer(base: base.root.path, rename: plan, renamed: yes)))
+            } else {
+                let links = plan.linkCount == 1 ? "1 link" : "\(plan.linkCount) links"
+                out((yes ? "Renamed the \(plan.kind.rawValue) \(plan.from) to \(plan.to) and \(links), committed:"
+                    : "Would rename the \(plan.kind.rawValue) \(plan.from) to \(plan.to) and \(links), then commit. Run again with --yes to do it:")
+                    + "\n" + plan.diff)
             }
             return 0
         case "seed":
@@ -641,6 +672,13 @@ extension AKitCLI {
             try container.encode(file, forKey: .file)
             try settings.encode(to: encoder)
         }
+    }
+
+    struct RenameAnswer: Encodable {
+        let base: String
+        let rename: KnowledgeRename
+        /// false without --yes: nothing was written.
+        let renamed: Bool
     }
 
     struct RemoveAnswer: Encodable {

@@ -151,6 +151,9 @@ struct KnowledgeView: View {
         } message: {
             Text("The .excalidraw file goes to the Trash, and its removal is committed in the base's git. Notes stay as they are.")
         }
+        .sheet(isPresented: Binding(get: { model.renameRequest != nil }, set: { if !$0 { model.renameRequest = nil } })) {
+            if let id = model.renameRequest { RenameSheet(id: id) }
+        }
         .alert("Changed on disk", isPresented: Binding(get: { model.mapConflict != nil }, set: { _ in })) {
             Button("Reload") { model.reloadConflictedMap() }
             Button("Keep Mine") { model.keepMineInConflict() }
@@ -220,6 +223,7 @@ struct KnowledgeView: View {
                                 Button("Show in Finder") {
                                     if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
                                 }
+                                Button("Rename…") { model.renameRequest = id }
                                 Button("Delete…", role: .destructive) { model.mapDeleteRequest = id }
                             }
                     }
@@ -248,10 +252,13 @@ struct KnowledgeView: View {
             }
             .padding(.vertical, 2)
             .tag(Optional(note.id))
+            // Drag onto an open map: a block linked to the note (K6).
+            .draggable(note.id)
             .contextMenu {
                 Button("Show in Finder") {
                     if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.noteFile(note.id)]) }
                 }
+                Button("Rename…") { model.renameRequest = note.id }
                 Button("Delete…", role: .destructive) { model.deleteRequest = note.id }
             }
         }

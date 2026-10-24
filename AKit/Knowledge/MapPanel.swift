@@ -13,6 +13,8 @@ struct MapPanel: View {
         @Bindable var model = model
         VStack(spacing: 0) {
             if let id = model.map {
+                tabBar
+                Divider()
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(id.split(separator: "/").dropFirst(2).joined(separator: "/")).font(.headline).lineLimit(1)
@@ -31,10 +33,12 @@ struct MapPanel: View {
                         if let base = model.base { NSWorkspace.shared.activateFileViewerSelecting([base.mapFile(id)]) }
                     }
                     .help("Show the map's .excalidraw file in Finder")
+                    Button("Rename…", systemImage: "character.cursor.ibeam") { model.renameRequest = id }
+                        .help("Rename the map and every link to it ([[maps/…]]) in notes and maps, all or nothing, in one commit")
                     Button("Delete…", systemImage: "trash") { model.mapDeleteRequest = id }
                         .help("Move the map to the Trash and commit its removal")
                     Button("Close Map", systemImage: "xmark") { Task { await model.closeMap() } }
-                        .help("Back to the note panel; your saved changes are committed now")
+                        .help("Close this map's tab; your saved changes are committed now")
                 }
                 .labelStyle(.titleAndIcon)
                 .controlSize(.small)
@@ -49,8 +53,104 @@ struct MapPanel: View {
                     default: break
                     }
                 }
+                // A note dragged from the list becomes a block linked to it (K6).
+                .dropDestination(for: String.self) { ids, location in
+                    guard let id = ids.first else { return false }
+                    Task { await model.drop(note: id, at: location) }
+                    return true
+                }
             }
         }
+    }
+
+    /// The open maps of this area, one tab each; the cross closes one (its changes are committed).
+    private var tabBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 2) {
+                ForEach(model.areaMapTabs, id: \.self) { id in
+                    HStack(spacing: 4) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(.secondary)
+                        Text(id.split(separator: "/").dropFirst(2).joined(separator: "/")).lineLimit(1)
+                        Button("Close Tab", systemImage: "xmark") { Task { await model.close(mapTab: id) } }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                            .help("Close the map's tab; your saved changes are committed now")
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(id == model.map ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                    .contentShape(Rectangle())
+                    .onTapGesture { if id != model.map { model.open(map: id) } }
+                    .help(id)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+/// Rename… of a note or a map: the new name and the planned changes (every link that changes),
+/// or why the rename is refused. Rename writes it all in one commit (`akit kb rename`).
+struct RenameSheet: View {
+    @Environment(KnowledgeModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let id: String
+    @State private var name = ""
+    @State private var working = false
+
+    private var isMap: Bool { id.split(separator: "/").dropLast().contains("maps") }
+
+    var body: some View {
+        let new = name.trimmingCharacters(in: .whitespaces)
+        let plan = new.isEmpty ? nil : model.planRename(id, to: new)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(isMap ? "Rename Map" : "Rename Note").font(.title3.bold())
+            Text("Renames \(id) and rewrites every link to it in the notes and maps of this base, keeping aliases and #headings. All or nothing, in one commit.")
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Form {
+                TextField(text: $name, prompt: Text(isMap ? "flows" : "invoicing")) { RequiredLabel("New name") }
+                    .help(isMap ? "A name in the same maps/ folder" : "A name in the same folder, or area/name to move the note to another space")
+            }
+            GroupBox {
+                ScrollView {
+                    Group {
+                        switch plan {
+                        case .success(let plan)?:
+                            Text("\(plan.linkCount) link\(plan.linkCount == 1 ? "" : "s") change:\n" + plan.diff)
+                        case .failure(let error)?:
+                            Text(error.message).foregroundStyle(.red)
+                        case nil:
+                            Text("Type the new name to see what changes.").foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.callout.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 180)
+            } label: {
+                Text("Changes")
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Rename") {
+                    working = true
+                    Task {
+                        if await model.rename(id, to: new) { dismiss() }
+                        working = false
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(working || { if case .success? = plan { false } else { true } }())
+            }
+        }
+        .padding(20)
+        .frame(width: 560)
+        .onAppear { name = DebugSnapshot.options?.tab == "rename" ? DebugSnapshot.options?.query ?? "" : "" }
     }
 }
 
