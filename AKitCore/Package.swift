@@ -56,8 +56,9 @@ let package = Package(
         .target(name: "AKitErrorAnalysis", dependencies: ["AKitFoundation", "AKitModel", "AKitSessions", "AKitLab", "AKitInsights", "AKitBrain", "AKitRender"]),
         // → MCP: Pi project files of MCP switches stay out of git (MCPProjectSwitch).
         .target(name: "AKitProjectSetup", dependencies: ["AKitFoundation", "AKitModel", "AKitSkills", "AKitInstructions", "AKitBrain", "AKitRender", "AKitInsights", "AKitMCP"]),
-        // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md).
-        .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitBrain", "AKitProjectSetup"]),
+        // akit doctor and Help → Copy Diagnostics: a read-only report of this Mac (docs/design/machine-setup.md);
+        // akit doctor pi / Check Pi…: Pi's setup (→ Instructions: the global AGENTS.md Pi loads).
+        .target(name: "AKitDoctor", dependencies: ["AKitFoundation", "AKitModel", "AKitHarnesses", "AKitSkills", "AKitInstructions", "AKitBrain", "AKitProjectSetup"]),
         // Ask AKit: questions about a screen, answered from the in-app guides (docs/design/ask-akit.md).
         .target(name: "AKitHelp", dependencies: ["AKitFoundation"]),
         // AI review of GitLab merge requests: AKit gathers, Pi reads, AKit posts drafts after approval (docs/design/review.md).
@@ -82,6 +83,6 @@ let package = Package(
         .testTarget(name: "AKitDoctorTests", dependencies: ["AKitDoctor", "AKitFoundation", "AKitBrain", "AKitProjectSetup"]),
         .testTarget(name: "AKitReviewTests", dependencies: ["AKitReview", "AKitFoundation", "AKitLab", "AKitBrain"]),
         .testTarget(name: "AKitHelpTests", dependencies: ["AKitHelp", "AKitFoundation"]),
-        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitReview", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
+        .testTarget(name: "AKitCommandLineTests", dependencies: ["AKitCommandLine", "AKitDoctor", "AKitReview", "AKitFoundation", "AKitBrain", "AKitInsights", "AKitErrorAnalysis", "AKitLab"]),
     ]
 )
