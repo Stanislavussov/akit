@@ -19,6 +19,10 @@
 //   akitPosts()          how many saves were handed to AKit (posts and akitTakeUnsaved)
 //   akitAddLinkedBlock(link, label, x, y)  a note dropped on the canvas: a labelled rectangle with that
 //                        link, centred on the page point; returns its id (saved like any change)
+//   akitAddArrow(spec)   Accept of an arrow proposal: spec {from, to, label}, each end {element, link, label};
+//                        an end without an element gets a new labelled block with that link right of the
+//                        drawing; then an arrow bound to both blocks, labelled; returns {arrow, from, to} ids
+//                        (saved like any change)
 //   akitDebugAddRectangle()  snapshots: adds one rectangle through the API, like a user would
 //   akitDiagnostics()    what the page loaded, for snapshots and checks
 //   akitClick(x, y)      snapshots: a pointer click at that page point (a web view takes no synthetic AppKit clicks)
@@ -129,6 +133,68 @@ window.EXCALIDRAW_ASSET_PATH = new URL("vendor/", location.href).href;
     ]);
     api.updateScene({ elements: api.getSceneElementsIncludingDeleted().concat(elements) });
     return id;
+  };
+
+  window.akitAddArrow = function (spec) {
+    if (!api) throw new Error("The canvas is not ready yet.");
+    const lib = window.ExcalidrawLib;
+    const live = api.getSceneElements();
+    const stamp = Date.now().toString(36);
+    // New blocks go in a column right of the drawing, from its top.
+    let right = 0, top = 0;
+    if (live.length) {
+      right = Math.max(...live.map((element) => Math.max(element.x, element.x + element.width)));
+      top = Math.min(...live.map((element) => Math.min(element.y, element.y + element.height)));
+    }
+    const added = [];
+    const changed = {};
+    let row = 0;
+    function block(end, name) {
+      const found = end.element && live.find((element) => element.id === end.element);
+      if (found) return found;
+      const id = "blk-" + stamp + "-" + name;
+      added.push(...lib.convertToExcalidrawElements([
+        { type: "rectangle", id, x: right + 160, y: top + row * 160, width: 180, height: 80, link: end.link, label: { text: end.label } },
+      ], { regenerateIds: false }));
+      row += 1;
+      return added.find((element) => element.id === id);
+    }
+    const from = block(spec.from, "from");
+    const to = block(spec.to, "to");
+    // From the edge of one box towards the centre of the other.
+    function centre(element) { return { x: element.x + element.width / 2, y: element.y + element.height / 2 }; }
+    function edge(element, towards, gap) {
+      const c = centre(element);
+      const dx = towards.x - c.x, dy = towards.y - c.y;
+      const scale = Math.min(dx ? (element.width / 2 + gap) / Math.abs(dx) : Infinity, dy ? (element.height / 2 + gap) / Math.abs(dy) : Infinity);
+      return Number.isFinite(scale) ? { x: c.x + dx * scale, y: c.y + dy * scale } : c;
+    }
+    const start = edge(from, centre(to), 8), end = edge(to, centre(from), 8);
+    const arrowId = "arr-" + stamp;
+    const arrowSkeleton = { type: "arrow", id: arrowId, x: start.x, y: start.y, width: (end.x - start.x) || 1, height: (end.y - start.y) || 1 };
+    if (spec.label) arrowSkeleton.label = { text: spec.label };
+    const arrowElements = lib.convertToExcalidrawElements([arrowSkeleton], { regenerateIds: false });
+    const arrow = arrowElements.find((element) => element.id === arrowId);
+    Object.assign(arrow, {
+      points: [[0, 0], [end.x - start.x, end.y - start.y]],
+      width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y),
+      startBinding: { elementId: from.id, focus: 0, gap: 8 },
+      endBinding: { elementId: to.id, focus: 0, gap: 8 },
+    });
+    // Each block lists the arrow among its bound elements; a block already on the map changes as a new version.
+    for (const element of from === to ? [from] : [from, to]) {
+      const bound = (element.boundElements || []).concat([{ type: "arrow", id: arrowId }]);
+      if (added.includes(element)) {
+        element.boundElements = bound;
+      } else {
+        changed[element.id] = Object.assign({}, element, {
+          boundElements: bound, version: element.version + 1, versionNonce: Math.floor(Math.random() * 2147483647), updated: Date.now(),
+        });
+      }
+    }
+    const elements = api.getSceneElementsIncludingDeleted().map((element) => changed[element.id] || element);
+    api.updateScene({ elements: elements.concat(added, arrowElements) });
+    return { arrow: arrowId, from: from.id, to: to.id };
   };
 
   window.akitLoadScene = function (json, key) {

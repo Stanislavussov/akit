@@ -68,8 +68,11 @@ final class KnowledgeModel {
     /// What the last write did, under the panel's buttons.
     var notice: String?
     private(set) var loaded = false
-    /// The Lint tab of the screen is in view (4.1). Snapshots: `--tab lint`.
-    var showingLint = DebugSnapshot.options?.tab == "lint"
+    /// The screen's tabs: Notes (spaces, notes, maps), Inbox (agents' proposals, 5.3), Lint (4.1).
+    enum ScreenTab: String { case notes = "Notes", inbox = "Inbox", lint = "Lint" }
+    /// Snapshots: `--tab lint`, `--tab inbox` (and inbox-accept, inbox-reject, inbox-arrow).
+    var screenTab: ScreenTab = DebugSnapshot.options?.tab == "lint" ? .lint
+        : DebugSnapshot.options?.tab?.hasPrefix("inbox") == true ? .inbox : .notes
     /// The base's lint findings (`akit kb lint`), read again with the base: the Lint tab lists
     /// them, and the note panel greys the links and paths they are about.
     private(set) var lintFindings: [KnowledgeLint.Finding] = []
@@ -96,8 +99,29 @@ final class KnowledgeModel {
     /// The index as last counted ("Index: N notes …"); nil before the first count.
     private(set) var indexStatus: KnowledgeIndex.Status?
     private(set) var indexing = false
-    /// Files waiting in `inbox/` (agents' proposals, 5.x): the Inbox badge.
-    private(set) var inboxCount = 0
+    /// Files waiting in `inbox/` (agents' proposals, 5.x): the Inbox line under the spaces.
+    var inboxCount = 0
+
+    // Inbox (5.3); the methods are in InboxModel.swift.
+    /// The proposals in `inbox/` with their checks and model marks (`akit kb inbox`), read with the
+    /// base and again on every `inbox/` change the watcher sees.
+    var proposals: [KnowledgeInbox.Entry] = []
+    /// The proposal in view on the Inbox tab. Snapshots: `--tab inbox --select <proposal id>`.
+    var proposalID: String?
+    /// Accept… of a note proposal waiting for its confirmation (the plan's diff).
+    var acceptRequest: KnowledgeInbox.Plan?
+    /// Reject… waiting for its confirmation: the proposal id.
+    var rejectRequest: String?
+    /// The proposal Check Again is running for.
+    var checkingProposal: String?
+    /// Accept… of an arrow proposal that names no map, and its area has several: which map.
+    struct ArrowMapRequest: Equatable {
+        var proposal: String
+        var maps: [String]
+    }
+    var arrowMapRequest: ArrowMapRequest?
+    /// "Add an arrow?" on the map in Edit: what Add draws.
+    var arrowRequest: KnowledgeInbox.ArrowPlan?
     /// The heading a search hit opened the note at; the read view scrolls to it.
     private(set) var sectionTarget: String?
     /// The note in Edit changed on disk, not by AKit: Reload or Keep Mine.
@@ -157,6 +181,14 @@ final class KnowledgeModel {
         }
         // Snapshots: `--tab rename` asks Rename… of the selected note or map, `--query` is the new name.
         if DebugSnapshot.options?.tab == "rename", let item = map ?? note { renameRequest = item }
+        // Snapshots: `--tab inbox… --select <proposal id>` shows that proposal; `--tab inbox-arrow`
+        // accepts it, so its map opens in Edit with "Add an arrow?" (`--query <map id>` picks the map).
+        if let tab = DebugSnapshot.options?.tab, tab.hasPrefix("inbox") {
+            if let select, proposals.contains(where: { $0.id == select }) { proposalID = select }
+            if tab == "inbox-arrow", let entry = selectedProposal {
+                if let map = DebugSnapshot.options?.query { openArrow(entry.id, on: map) } else { requestAccept(entry) }
+            }
+        }
         await refreshIndex()
         if !searchText.isEmpty { await runSearch() }
     }
@@ -189,9 +221,13 @@ final class KnowledgeModel {
             kindsFile = .defaults
             (watcher, indexStatus, searchAnswer, inboxCount) = (nil, nil, nil, 0)
             lintFindings = []
+            (proposals, proposalID, arrowRequest) = ([], nil, nil)
             return
         }
-        defer { lint() }
+        defer {
+            lint()
+            readInbox()
+        }
         if watcher?.root != base.root {
             watcher = KnowledgeWatcher(root: base.root) { [weak self] paths in self?.changed(paths) }
             noteHashes = [:]
@@ -524,7 +560,7 @@ final class KnowledgeModel {
 
     /// Open: the note or the map of a finding, out of the Lint tab.
     func open(finding: KnowledgeLint.Finding) async {
-        showingLint = false
+        screenTab = .notes
         if let id = finding.map {
             open(map: id)
         } else if let id = finding.note {
@@ -866,7 +902,7 @@ final class KnowledgeModel {
         if DebugSnapshot.options != nil {
             print("watch: \(paths.joined(separator: ", ")) → reindex \(batch.reindex), queued \(batch.enqueue.joined(separator: ", ")), inbox \(batch.inbox)")
         }
-        if batch.inbox { inboxCount = WatchFilter.inboxCount(root) }
+        if batch.inbox { readInbox() }
         for path in batch.enqueue { enqueue(path, in: base) }
         if let note, editing, batch.outside.contains(base.notePath(note)), FileWalk.isRegularFile(base.noteFile(note)) {
             noteConflict = note
@@ -1010,6 +1046,16 @@ final class KnowledgeModel {
 
     // MARK: - Commit queue
 
+    /// Waits until the last save is queued (before a write that flushes the queue, like Accept).
+    func lastEnqueueDone() async { await lastEnqueue?.value }
+
+    /// A note AKit wrote outside the editor (Accept): its bytes now are AKit's own, so the watcher
+    /// doesn't queue them as an outside edit.
+    func markOwnWrite(note id: String) {
+        guard let base else { return }
+        noteHashes[id] = KnowledgeWrite.hash(of: base.noteFile(id))
+    }
+
     private func enqueue(_ path: String, in base: KnowledgeBase) {
         let queue = KnowledgeCommitQueue(base: base.root, env: env)
         let wanted = unqueued.union([path])
@@ -1108,8 +1154,13 @@ final class KnowledgeModel {
         var lines = ["knowledge base: \(base?.root.tildePath ?? "none")",
                      "bases: " + bases.map { $0.name + ($0 == sampleBase ? " (sample)" : "") }.joined(separator: ", ")]
         let counts = KnowledgeLint.counts(lintFindings)
-        lines.append("tab: \(showingLint ? "Lint" : "Notes"), lint \(counts.error) errors, \(counts.warning) warnings, \(counts.hint) hints")
-        if showingLint {
+        lines.append("tab: \(screenTab.rawValue), lint \(counts.error) errors, \(counts.warning) warnings, \(counts.hint) hints, inbox \(proposals.count)")
+        if screenTab == .inbox { lines += inboxManifest }
+        if let arrowRequest {
+            lines.append("add an arrow?: \(arrowRequest.text) on \(arrowRequest.map)" + (arrowRequest.exists ? " (already there)" : "")
+                + [arrowRequest.from, arrowRequest.to].filter { $0.element == nil }.map { ", new block \($0.label) \($0.link)" }.joined())
+        }
+        if screenTab == .lint {
             lines += lintFindings.map { finding in
                 "finding: \(finding.severity.rawValue) \(finding.rule.rawValue) \(finding.file)" + (finding.element.map { " \($0)" } ?? "")
                     + (finding.link.map { " \($0)" } ?? "") + (KnowledgeLint.newNote(for: finding) == nil ? ", Open" : ", Open, Create Note…")

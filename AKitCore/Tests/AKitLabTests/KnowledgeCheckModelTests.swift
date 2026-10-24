@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import AKitFoundation
+import AKitKnowledge
 @testable import AKitLab
 
 /// The knowledge check's origin, its model setting, and one call through a fake `pi` (K15).
@@ -71,5 +72,24 @@ struct KnowledgeCheckModelTests {
             try await ModelCall.run(request, gate: refusing, folder: home.appending(path: "work"), env: env)
         }
         #expect(SendLog.records(env: env).count == 1)
+    }
+
+    /// The one check `akit kb check` and Inbox → Check Again share: the marks are kept beside the
+    /// proposal, the send log has kb-check, and the base gets no commit.
+    @Test func theSharedCheckerKeepsTheMarksAndCommitsNothing() async throws {
+        var variables = env.variables
+        (variables["GIT_CONFIG_GLOBAL"], variables["GIT_CONFIG_NOSYSTEM"]) = ("/dev/null", "1")
+        let env = HarnessEnvironment(homeDirectory: home, variables: variables, executableSearchPaths: env.executableSearchPaths)
+        let base = try await KnowledgeBase.create(world: "work", env: env)
+        try await base.newNote(area: "payments", name: "billing", kind: nil, env: env)
+        let proposal = try base.propose(.init(.note("payments/billing", body: "## Retries\nThree tries.\n", set: []))).proposal
+        let head = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["rev-parse", "HEAD"], directory: base.root,
+                                                         environment: variables, timeout: 20)).output
+        let outcome = try await KnowledgeChecker.run(proposal, in: base, env: env)
+        #expect(outcome.result.marks.isEmpty && outcome.result.model == "Pi · opencode-go/gpt-6-luna · low")
+        #expect(base.check(of: proposal) == outcome.result)
+        #expect(SendLog.records(env: env).map(\.purpose) == ["kb-check"])
+        #expect(try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["rev-parse", "HEAD"], directory: base.root,
+                                                      environment: variables, timeout: 20)).output == head)
     }
 }

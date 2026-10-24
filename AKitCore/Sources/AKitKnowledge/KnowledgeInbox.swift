@@ -706,6 +706,106 @@ extension KnowledgeBase {
 }
 
 extension KnowledgeInbox {
+    /// What Accept of an arrow proposal draws on one map (5.3): each end's block, or a new block
+    /// with a link to the note when the map has none, and the arrow between them. The app draws it
+    /// through the canvas (bridge.js `akitAddArrow`), saves Excalidraw's bytes the normal way, then
+    /// closes the proposal (`closeArrow`).
+    public struct ArrowPlan: Sendable, Equatable {
+        public struct End: Sendable, Equatable {
+            /// The note id.
+            public let note: String
+            /// The map's block for the note (the first one); nil when a new block is drawn.
+            public let element: String?
+            /// The new block's link: the shortest `[[…]]` that resolves to the note from the map.
+            public let link: String
+            /// The new block's label: the note's title.
+            public let label: String
+        }
+
+        public let proposal: KnowledgeProposal
+        /// The map id.
+        public let map: String
+        public let from: End
+        public let to: End
+        /// The arrow's label; nil for a bare arrow.
+        public let kind: String?
+        /// The map has this arrow already: Add only closes the proposal.
+        public let exists: Bool
+
+        /// `payments/billing -paid orders-> logistics/warehouse`.
+        public var text: String { proposal.arrow?.text ?? "\(from.note) -> \(to.note)" }
+    }
+}
+
+extension KnowledgeBase {
+    // MARK: - Arrow proposals (5.3)
+
+    /// The maps an arrow proposal can go on: the one it names, else the maps of its ends' areas
+    /// (the start's first), so the person picks one.
+    public func arrowMaps(for proposal: Proposal) -> [String] {
+        guard let arrow = proposal.arrow else { return [] }
+        if let map = arrow.map { return [map] }
+        let maps = linkTargets().maps
+        var areas: [String] = []
+        for note in [arrow.from, arrow.to] {
+            if let area = note.split(separator: "/").first.map(String.init), !areas.contains(area) { areas.append(area) }
+        }
+        return areas.flatMap { area in maps.filter { $0.hasPrefix(area + "/maps/") } }
+    }
+
+    /// What Accept of an arrow proposal draws on `map` (nothing is written). Refused for a note
+    /// proposal, for one whose checks fail now, and for a map that doesn't parse.
+    public func planArrow(_ proposal: Proposal, on map: String) throws(Failure) -> KnowledgeInbox.ArrowPlan {
+        guard proposal.kind == .arrow, let arrow = proposal.arrow else {
+            throw Failure(message: "\(proposal.id) is not an arrow proposal.")
+        }
+        if let failed = checks(of: proposal).first(where: { $0.status == .failed }) {
+            throw Failure(message: "The proposal fails its \(failed.name) check: \(failed.message ?? "")")
+        }
+        let targets = linkTargets()
+        guard targets.maps.contains(map) else { throw Failure(message: "No map \(map) in the base.") }
+        let graph = MapGraph.map(id: map, file: ExcalidrawFile.load(mapFile(map)), targets: targets)
+        if let error = graph.error { throw Failure(message: "The map \(map) can't be read: \(error)") }
+        let titles = Dictionary(((try? notes()) ?? []).map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
+        func end(_ note: String) -> KnowledgeInbox.ArrowPlan.End {
+            let parts = note.split(separator: "/").map(String.init)
+            let forms = (1...parts.count).map { parts.suffix($0).joined(separator: "/") }
+            let link = forms.map { "[[\($0)]]" }.first { targets.resolve($0, from: mapPath(map)) == .note(note) } ?? "akit:note/\(note)"
+            return .init(note: note, element: graph.blocks.first { $0.note == note }?.element, link: link,
+                         label: titles[note] ?? parts.last ?? note)
+        }
+        let exists = graph.edges.contains { $0.from == arrow.from && $0.to == arrow.to && $0.kind == arrow.kind }
+        return KnowledgeInbox.ArrowPlan(proposal: proposal, map: map, from: end(arrow.from), to: end(arrow.to), kind: arrow.kind,
+                                        exists: exists)
+    }
+
+    /// Closes an arrow proposal once the app has drawn it: the map on disk must have the arrow
+    /// (from → to with its label); then the proposal file and its marks are removed. The map's
+    /// edit goes through the commit queue like any canvas save; the proposal was never tracked
+    /// (P3), so nothing is committed, unless it was, and then its removal is.
+    public func closeArrow(_ proposal: Proposal, on map: String, env: HarnessEnvironment) async throws(Failure) {
+        guard proposal.kind == .arrow, let arrow = proposal.arrow else {
+            throw Failure(message: "\(proposal.id) is not an arrow proposal.")
+        }
+        let graph = MapGraph.map(id: map, file: ExcalidrawFile.load(mapFile(map)), targets: linkTargets())
+        guard graph.edges.contains(where: { $0.from == arrow.from && $0.to == arrow.to && $0.kind == arrow.kind }) else {
+            throw Failure(message: "The map \(map) has no arrow \(arrow.text) yet, so the proposal stays open.")
+        }
+        let file = root.appending(path: proposal.path)
+        let git = KnowledgeGit(base: root, env: env)
+        let tracked = !((try? await git.run(["ls-files", "--", proposal.path])) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        do { try FileManager.default.removeItem(at: file) } catch {
+            throw Failure(message: "Couldn't remove \(proposal.path): \(error.localizedDescription)")
+        }
+        removeCheck(of: proposal.id)
+        guard tracked else { return }
+        do { try await git.commit(paths: [proposal.path], message: "Close proposal \(proposal.id) (arrow drawn on \(map))") } catch {
+            throw Failure(message: "\(proposal.path) is removed, but its removal wasn't committed: \(error.message)")
+        }
+    }
+}
+
+extension KnowledgeInbox {
     /// What the CLI says for an arrow proposal: the person draws it in the app.
     public static func arrowMessage(_ proposal: KnowledgeProposal) -> String {
         guard let arrow = proposal.arrow else { return "The proposal \(proposal.id) has no arrow." }

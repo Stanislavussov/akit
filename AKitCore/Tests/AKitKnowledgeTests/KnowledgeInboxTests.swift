@@ -205,6 +205,52 @@ struct KnowledgeInboxTests {
         #expect(KnowledgeInbox.arrowMessage(bare).contains("-> payments/billing on a map of payments"))
     }
 
+    /// 5.3: Accept of an arrow in the app: the plan finds each end's block (or a new block's link
+    /// and label), the proposal closes only once the map on disk has the arrow, and nothing is committed.
+    @Test func anArrowProposalClosesOnlyOnceTheMapHasTheArrow() async throws {
+        let base = try await makeBase()
+        _ = try await base.newMap(area: "payments", name: "overview", env: env)
+        let orders = NewMap.Box(id: "blk-o", x: 0, y: 0), billing = NewMap.Box(id: "blk-b", x: 420, y: 0)
+        try Data(NewMap.scene(elements: NewMap.block(orders, label: "orders-api", link: "[[orders-api]]")).utf8)
+            .write(to: base.mapFile("payments/maps/overview"))
+        let proposal = try base.propose(.init(.arrow("orders-api -order created-> billing", map: "overview")), now: now).proposal
+        let bare = try base.propose(.init(.arrow("billing -> orders-api", map: nil)), now: now).proposal
+        #expect(base.arrowMaps(for: proposal) == ["payments/maps/overview"])
+        #expect(base.arrowMaps(for: bare) == ["payments/maps/overview"])
+        let plan = try base.planArrow(proposal, on: "payments/maps/overview")
+        #expect(plan.from == .init(note: "payments/orders-api", element: "blk-o", link: "[[orders-api]]", label: "orders-api"))
+        #expect(plan.to == .init(note: "payments/billing", element: nil, link: "[[billing]]", label: "billing"))
+        #expect(plan.kind == "order created" && !plan.exists)
+        #expect(plan.text == "payments/orders-api -order created-> payments/billing")
+        #expect(throws: KnowledgeBase.Failure.self) { try base.planArrow(proposal, on: "payments/maps/none") }
+        let noteProposal = try base.propose(note("payments/billing", body: "## Retries\nThree.\n"), now: now).proposal
+        #expect(throws: KnowledgeBase.Failure.self) { try base.planArrow(noteProposal, on: "payments/maps/overview") }
+        _ = try base.saveCheck([], of: proposal, model: "test")
+        let commits = try await git("rev-list", "--count", "HEAD", in: base.root)
+
+        // Not drawn yet: refused, the proposal stays.
+        await #expect(throws: KnowledgeBase.Failure.self) { try await base.closeArrow(proposal, on: "payments/maps/overview", env: env) }
+        #expect(fm.fileExists(atPath: base.root.appending(path: proposal.path).path))
+        // Drawn (an arrow with another label doesn't count), then closed.
+        func draw(_ label: String) throws {
+            let elements = NewMap.block(orders, label: "orders-api", link: "[[orders-api]]", arrows: ["arr"])
+                + NewMap.block(billing, label: "billing", link: "[[billing]]", arrows: ["arr"])
+                + NewMap.arrow("arr", from: orders, to: billing, label: label, link: nil)
+            try Data(NewMap.scene(elements: elements).utf8).write(to: base.mapFile("payments/maps/overview"))
+        }
+        try draw("events")
+        await #expect(throws: KnowledgeBase.Failure.self) { try await base.closeArrow(proposal, on: "payments/maps/overview", env: env) }
+        try draw("order created")
+        #expect(try base.planArrow(proposal, on: "payments/maps/overview").exists)
+        try await base.closeArrow(proposal, on: "payments/maps/overview", env: env)
+        #expect(!fm.fileExists(atPath: base.root.appending(path: proposal.path).path))
+        #expect(!fm.fileExists(atPath: base.root.appending(path: KnowledgeCheck.path(of: proposal.id)).path))
+        #expect(try await git("rev-list", "--count", "HEAD", in: base.root) == commits)
+        #expect(Set(try await git("status", "--porcelain", "--", "inbox", in: base.root).split(separator: "\n").map(String.init))
+            == ["?? inbox/\(bare.id).md", "?? inbox/\(noteProposal.id).md"])
+        await #expect(throws: KnowledgeBase.Failure.self) { try await base.closeArrow(noteProposal, on: "payments/maps/overview", env: env) }
+    }
+
     @Test func theListedChecksAreRunAgainstTheBaseAsItIsNow() async throws {
         let base = try await makeBase()
         try await base.newNote(area: "payments", name: "refunds", kind: nil, env: env)

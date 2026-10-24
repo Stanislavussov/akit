@@ -72,6 +72,11 @@ import SwiftUI
 /// note's file from outside, waits for the watcher's batch, searches the word and prints the hit, the time it took
 /// and the commit queue (the edit is queued, not committed: that waits for the 5 min idle flush, or the quit).
 /// `--tab watch-edit` does the same with the note in Edit, so "Changed on disk" (Reload / Keep Mine) appears.
+/// 5.3: `--tab inbox [--select <proposal id>]` shows the Inbox tab and prints each proposal with its checks and marks,
+/// and the selected one's diff (or arrow) and model marks. Checks: `--tab inbox-accept --select <id>` accepts a note
+/// proposal (prints the result and the new commit), `--tab inbox-reject --select <id>` rejects one (to the Trash),
+/// `--tab inbox-arrow --select <id> [--query <map id>]` accepts an arrow: its map opens in Edit with "Add an arrow?",
+/// Add draws it and saves the map, and the capture prints the posts, the map's relations and the inbox left.
 ///
 /// `--right-click 300,400;300,420` right-clicks there before the capture and prints each context
 /// menu's items (to check which places get Ask AKit About This);
@@ -213,6 +218,19 @@ enum DebugSnapshot {
             }
             await canvas.printPosts()
         }
+        if mapOpen, options.tab == "inbox-arrow", let canvas = MapCanvasView.Coordinator.current, let model = KnowledgeModel.current,
+           let plan = model.arrowRequest {
+            print("inbox: add an arrow? \(plan.text) on \(plan.map)")
+            let added = await model.addArrow()
+            print("inbox: add: " + (added ? model.notice ?? "" : model.problem ?? "refused"))
+            await canvas.printPosts()
+            if let base = model.base, let graph = try? base.mapGraph() {
+                for edge in graph.edges where edge.map == plan.map {
+                    print("relation: \(edge.from) → \(edge.to)" + (edge.kind.map { " \"\($0)\"" } ?? "") + " (\(edge.map))")
+                }
+                print("map pending commit: " + KnowledgeCommitQueue(base: base.root, env: .current).pending().joined(separator: ", "))
+            }
+        }
         if mapOpen, let canvas = MapCanvasView.Coordinator.current, let model = KnowledgeModel.current, let id = model.map,
            let tab = options.tab, ["map-add", "map-add-quit", "map-conflict"].contains(tab) {
             // Checks of 2.2b without a hand: the file changes on disk first (map-conflict), then a
@@ -314,6 +332,25 @@ enum DebugSnapshot {
             print(String(format: "watch: search “%@” after %.1f s: ", word, Date().timeIntervalSince(start))
                 + (hit.map { "\($0.note) ## \($0.heading ?? "-")" } ?? "no hit"))
             print("watch: pending commits: " + KnowledgeCommitQueue(base: base.root, env: .current).pending().joined(separator: ", "))
+        }
+        if options.section == .knowledge, let tab = options.tab, ["inbox-accept", "inbox-reject"].contains(tab),
+           let model = KnowledgeModel.current, let base = model.base, let entry = model.selectedProposal {
+            if tab == "inbox-accept" {
+                if case .success(let plan)? = model.acceptPlan(entry) {
+                    let accepted = await model.accept(plan)
+                    print("inbox: accept \(entry.id): " + (accepted ? model.notice ?? "" : model.problem ?? "refused"))
+                } else {
+                    print("inbox: accept \(entry.id) refused: " + ({ if case .failure(let error)? = model.acceptPlan(entry) { error.message } else { "not a note proposal" } }()))
+                }
+            } else {
+                let rejected = await model.reject(entry.id)
+                print("inbox: reject \(entry.id): " + (rejected ? model.notice ?? "" : model.problem ?? "refused"))
+            }
+            let git = URL(filePath: "/usr/bin/git")
+            let log = await ProcessRunner.run(git, arguments: ["log", "-1", "--format=%s"], directory: base.root, environment: HarnessEnvironment.current.variables, timeout: 20)
+            let status = await ProcessRunner.run(git, arguments: ["status", "--porcelain"], directory: base.root, environment: HarnessEnvironment.current.variables, timeout: 20)
+            print("inbox: last commit: \(log?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? "-")")
+            print("inbox: git status: " + (status?.output.split(separator: "\n").joined(separator: "; ") ?? "-"))
         }
         if options.section == .knowledge, let manifest = KnowledgeModel.current?.manifest {
             print(manifest)

@@ -1,3 +1,4 @@
+import AKitKnowledge
 import AppKit
 import SwiftUI
 import WebKit
@@ -201,6 +202,17 @@ struct MapCanvasView: NSViewRepresentable {
             try? await webView?.callAsyncJavaScript("return akitAddLinkedBlock(link, label, x, y)",
                                                     arguments: ["link": link, "label": label, "x": point.x, "y": point.y],
                                                     contentWorld: .page) as? String
+        }
+
+        /// Accept of an arrow proposal (5.3): the arrow between the plan's blocks, and a new linked
+        /// block for an end the map lacks. The arrow's element id; throws the page's error.
+        func addArrow(_ plan: KnowledgeInbox.ArrowPlan) async throws -> String? {
+            func end(_ end: KnowledgeInbox.ArrowPlan.End) -> [String: Any] {
+                ["element": end.element ?? NSNull(), "link": end.link, "label": end.label]
+            }
+            let spec: [String: Any] = ["from": end(plan.from), "to": end(plan.to), "label": plan.kind ?? NSNull()]
+            let result = try await webView?.callAsyncJavaScript("return akitAddArrow(spec)", arguments: ["spec": spec], contentWorld: .page)
+            return (result as? [String: Any])?["arrow"] as? String
         }
 
         func loadScene() async {

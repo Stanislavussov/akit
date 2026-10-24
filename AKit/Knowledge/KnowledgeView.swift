@@ -53,8 +53,10 @@ struct KnowledgeView: View {
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else if model.showingLint {
+            } else if model.screenTab == .lint {
                 LintPanel()
+            } else if model.screenTab == .inbox {
+                InboxPanel()
             } else {
                 HSplitView {
                     spaces.safeAreaInset(edge: .bottom, spacing: 0) { IndexStatusLine() }
@@ -82,9 +84,9 @@ struct KnowledgeView: View {
             NewNoteSheet(initialArea: request.area, initialName: request.name)
         }
         .sheet(item: $sheet, content: sheetView)
-        // A query shows its hits in the Notes view, so typing one leaves the Lint view.
+        // A query shows its hits in the Notes view, so typing one leaves the Lint and Inbox views.
         .searchable(text: Binding(get: { model.searchText }, set: {
-            if !$0.isEmpty { model.showingLint = false }
+            if !$0.isEmpty { model.screenTab = .notes }
             model.search($0)
         }), placement: .toolbar,
                     prompt: Text("Search notes"))
@@ -118,6 +120,7 @@ struct KnowledgeView: View {
         } message: {
             Text("The .excalidraw file goes to the Trash, and its removal is committed in the base's git. Notes stay as they are.")
         }
+        .modifier(InboxDialogs())
         .sheet(isPresented: Binding(get: { model.renameRequest != nil }, set: { if !$0 { model.renameRequest = nil } })) {
             if let id = model.renameRequest { RenameSheet(id: id) }
         }
@@ -137,13 +140,14 @@ struct KnowledgeView: View {
     private var toolbar: some ToolbarContent {
         @Bindable var model = model
         ToolbarItem(placement: .principal) {
-            Picker("View", selection: $model.showingLint) {
-                Text("Notes").tag(false)
-                Text(lintTitle).tag(true)
+            Picker("View", selection: $model.screenTab) {
+                Text("Notes").tag(KnowledgeModel.ScreenTab.notes)
+                Text(model.proposals.isEmpty ? "Inbox" : "Inbox (\(model.proposals.count))").tag(KnowledgeModel.ScreenTab.inbox)
+                Text(lintTitle).tag(KnowledgeModel.ScreenTab.lint)
             }
             .pickerStyle(.segmented)
             .disabled(model.base == nil)
-            .help("Notes: the spaces, notes and maps. Lint: what in them points nowhere or at something this Mac doesn't have (akit kb lint)")
+            .help("Notes: the spaces, notes and maps. Inbox: the changes agents propose, to accept or reject (akit kb inbox). Lint: what in them points nowhere or at something this Mac doesn't have (akit kb lint)")
         }
         if model.bases.count > 1 {
             ToolbarItem(placement: .navigation) {

@@ -44,6 +44,10 @@ struct MapPanel: View {
                 .controlSize(.small)
                 .padding(8)
                 Divider()
+                if let plan = model.arrowRequest, plan.map == id {
+                    AddArrowBanner(plan: plan)
+                    Divider()
+                }
                 MapCanvasView(scene: model.mapScene, viewMode: !model.mapEditing) { message in
                     switch message.type {
                     case "linkOpen":

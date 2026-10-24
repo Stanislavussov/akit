@@ -214,6 +214,8 @@ shot knowledge-context   $MAIN --section knowledge --tab context --project order
 shot knowledge-pi-template $MAIN --section knowledge --tab pi-template
 # The Lint tab: the findings the seed's space lint-examples has on purpose (akit kb lint).
 shot knowledge-lint      $MAIN --section knowledge --tab lint
+# The Inbox tab: the seed's two proposals; the note proposal for billing selected, with its diff and the seeded mark.
+shot knowledge-inbox     $MAIN --section knowledge --tab inbox --select 2026-10-24-payments-billing
 # Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.
 if [[ "$ONLY" == "  " || "$ONLY" == *" knowledge-sample "* ]]; then
     HOME="$DEMO" GIT_CONFIG_GLOBAL=/dev/null "$ROOT/AKitCore/.build/debug/akit" kb seed >/dev/null

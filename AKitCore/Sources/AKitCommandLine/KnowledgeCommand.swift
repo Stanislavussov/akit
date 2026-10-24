@@ -906,25 +906,9 @@ extension AKitCLI {
             guard modelOption.contains("/") else { throw Failure(message: "--model is a Pi model provider/model, like \(KnowledgeCheckModel.defaultAgent.model).") }
             agent = LabAgent(harness: .pi, model: modelOption, effort: agent.effort, mode: .call)
         }
-        let candidates = base.checkCandidates(for: proposal)
-        let request = ModelCall.Request(agent: agent, purpose: KnowledgeCheckModel.purpose, system: KnowledgeCheck.system,
-                                        input: KnowledgeCheck.input(proposal, candidates: candidates), schema: KnowledgeCheck.schema,
-                                        origin: .knowledgeBase)
-        let folder = FileManager.default.temporaryDirectory.appending(path: "akit-kb-check-\(UUID().uuidString)", directoryHint: .isDirectory)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let marks: [KnowledgeCheck.Mark]
-        let result: KnowledgeCheck.Result
-        do {
-            let gate = try await SendGate.open(agent: agent, env: env)
-            let answer = try await ModelCall.run(request, gate: gate, folder: folder, env: env)
-            marks = try KnowledgeCheck.marks(fromAnswer: answer.text)
-            // The answer only marks: the proposal and the base stay as they are.
-            result = try base.saveCheck(marks, of: proposal, model: KnowledgeCheckModel.label(agent))
-        } catch let error as KnowledgeCheck.Failure {
-            throw Failure(message: error.message)
-        } catch let error as KnowledgeBase.Failure {
-            throw Failure(message: error.message)
-        }
+        let outcome: KnowledgeChecker.Outcome
+        do { outcome = try await KnowledgeChecker.run(proposal, in: base, agent: agent, env: env) } catch { throw Failure(message: error.message) }
+        let (result, candidates, marks) = (outcome.result, outcome.candidates, outcome.result.marks)
         if json {
             out(encode(CheckAnswer(base: base.root.path, id: proposal.id, model: result.model, checked: result.checked, marks: marks,
                                    candidates: candidates)))

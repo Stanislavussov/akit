@@ -60,6 +60,11 @@ Foundation, Model, Brain and Yams. `AKitDoctor → AKitKnowledge` (the "knowledg
 `AKitCommandLine → AKitKnowledge` (`akit kb`); the app imports it too. Knowledge sits beside
 Review, below Doctor, so the arrows still point down.
 
+2026-10-25 (knowledge base, slice 5.3): `AKitLab → AKitKnowledge`, for `KnowledgeChecker`: the
+check model's call on a proposal (candidates, `ModelCall` with the origin `knowledgeBase`, the
+stored marks), which `akit kb check` and the app's Inbox → Check Again share. Knowledge needs
+nothing from Lab (its model calls are only built there), so the arrows still point down.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -162,7 +167,7 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitInsights` | Foundation, Model, Harnesses, Skills, Sessions, Brain |
 | `AKitRender` | Foundation (`JSONValue`), Brain |
 | `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
-| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
+| `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac), Knowledge (`KnowledgeChecker`: the check model's call on a proposal, shared by `akit kb check` and the app's Inbox, 2026-10-25) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
 | `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
