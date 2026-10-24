@@ -253,6 +253,12 @@ public enum AKitCLI {
           akit doctor                     What AKit sees on this Mac and what is wrong (lines with !,
                                           each with what to do). Only reads, never shows a secret.
                                           Run it first when AKit doesn't behave
+          akit doctor pi [--live] [--json]
+                                          Pi's setup, like claude doctor: install, settings,
+                                          environment, MCP servers, packages and extensions,
+                                          skills, context size, keybindings (exit 1 on a problem).
+                                          --live also connects to the MCP servers (pi mcp list)
+                                          and checks the default provider's sign-in
           akit machine                    Show whether this is a personal or a work Mac
           akit machine work [--name NAME] Work Mac: answers and locks of projects stay in
                                           ~/.akit/local/projects, nothing about them reaches the
@@ -357,7 +363,24 @@ public enum AKitCLI {
                                            runner: runner, out: out, err: err)
             }
             if command == "doctor" {
-                try refuseProjectOptions(options, command: "doctor")
+                var checked = options
+                checked.json = false
+                try refuseProjectOptions(checked, command: "doctor")
+                if args.peek == "pi" {
+                    _ = args.positional()
+                    let live = args.flag("--live")
+                    try args.finish()
+                    let report = await PiDoctor.check(env: env, live: live)
+                    if options.json {
+                        let encoder = JSONEncoder()
+                        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+                        out(SecretFilter.masked(String(decoding: try encoder.encode(report), as: UTF8.self)))
+                    } else {
+                        out(report.text)
+                    }
+                    return report.problems > 0 ? 1 : 0
+                }
+                if options.json { throw Failure(message: "--json goes only with akit doctor pi.") }
                 try args.finish()
                 out(await Doctor.report(.init(env: env, brainRoot: brainRoot(options, cwd: cwd, env: env), projectRoots: [projectsRoot])))
                 return 0

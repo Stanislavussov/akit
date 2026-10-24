@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import AKitBrain
+import AKitDoctor
 import AKitFoundation
 @testable import AKitCommandLine
 
@@ -136,5 +137,19 @@ struct LocalOnlyCLITests {
         #expect(!doctor.out.contains("clidoctorsecret"))
         #expect(await akit("doctor", "extra").code == 2)
         #expect(AKitCLI.usage.contains("akit doctor") && AKitCLI.usage.contains("akit worktrees sync [PROJECT]"))
+    }
+
+    @Test func doctorPiExitsOneOnAProblemAndSpeaksJSON() async throws {
+        try write(".pi/agent/settings.json", #"{"defaultThinkingLevel": "huge"}"#)
+        let text = await akit("doctor", "pi")
+        #expect(text.code == 1, "\(text.err)")
+        #expect(text.out.hasPrefix("Pi doctor"))
+        #expect(text.out.contains("! ~/.pi/agent/settings.json: defaultThinkingLevel has a value Pi doesn't know"))
+        let json = await akit("doctor", "pi", "--json")
+        #expect(json.code == 1)
+        let decoded = try JSONDecoder().decode(PiDoctor.Report.self, from: Data(json.out.utf8))
+        #expect(decoded.problems >= 1 && !decoded.live)
+        #expect(await akit("doctor", "--json").code == 2)
+        #expect(AKitCLI.usage.contains("akit doctor pi [--live] [--json]"))
     }
 }
