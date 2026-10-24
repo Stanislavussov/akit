@@ -7,10 +7,19 @@ import WebKit
 /// `securityLevel: "strict"`, a content rule list that blocks every URL but `about:` and `data:`,
 /// no navigation after the first load, no windows, a data store that keeps nothing. A diagram
 /// mermaid can't draw shows its error and the source; a load the policy stopped is counted.
+///
+/// Inline it fits the pane's width but never shrinks below `minScale` (text about 11 points):
+/// a wider diagram scrolls sideways. With a `zoom` (Open Larger) it is drawn at that share of its
+/// natural size, for a scroll view around it.
 struct MermaidView: View {
     let source: String
+    var zoom: CGFloat?
+    /// Called with the diagram's natural size in points once it is drawn.
+    var onDrawn: ((CGSize) -> Void)?
     @Environment(\.colorScheme) private var colorScheme
     @State private var height: CGFloat = 80
+    @State private var natural: CGSize = .zero
+    @State private var pane: CGFloat = 0
     @State private var error: String?
     /// URLs the content policy stopped (an image or a `url(…)` in the diagram).
     @State private var blocked: [String] = []
@@ -27,9 +36,7 @@ struct MermaidView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 4) {
-                MermaidWebView(source: source, dark: colorScheme == .dark, height: $height, error: $error, blocked: $blocked)
-                    .frame(height: height)
-                    .frame(maxWidth: .infinity)
+                diagram
                     .background(MermaidWebView.background(dark: colorScheme == .dark), in: RoundedRectangle(cornerRadius: 6))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 if !blocked.isEmpty {
@@ -38,14 +45,110 @@ struct MermaidView: View {
                         .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
+            .onChange(of: natural) { _, size in onDrawn?(size) }
         }
     }
+
+    /// Mermaid draws its text at 16 px: 0.7 keeps it at about 11.
+    static let minScale: CGFloat = 0.7
+    /// The page's padding around the diagram, both sides together.
+    static let padding: CGFloat = 16
+
+    @ViewBuilder private var diagram: some View {
+        let web = MermaidWebView(source: source, dark: colorScheme == .dark, large: zoom != nil,
+                                 height: $height, natural: $natural, error: $error, blocked: $blocked)
+        if let zoom {
+            web.frame(width: natural.width > 0 ? natural.width * zoom + Self.padding : 600, height: height)
+        } else {
+            // One structure whether it scrolls or not: a switch would load the page again.
+            let least = natural.width > 0 ? natural.width * Self.minScale + Self.padding : 0
+            let scrolls = pane > 0 && least > pane + 1
+            ScrollView(.horizontal) {
+                web.frame(width: pane > 0 ? max(pane, least) : nil, height: height)
+            }
+            .scrollDisabled(!scrolls)
+            .scrollIndicators(scrolls ? .visible : .never)
+            .frame(height: height + (scrolls ? 14 : 0))
+            .frame(maxWidth: .infinity)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { pane = $0 }
+        }
+    }
+}
+
+/// Open Larger: the diagram in a sheet of 90% of the screen, with Fit, 100% and zoom buttons.
+struct MermaidLargeView: View {
+    let title: String
+    let source: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var zoom: CGFloat = 1
+    @State private var natural: CGSize = .zero
+    @State private var viewport: CGSize = .zero
+    @State private var fitted = false
+
+    static let zooms: ClosedRange<CGFloat> = 0.25...4
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(title).font(.headline)
+                Spacer()
+                Button("Fit") { zoom = fit }
+                    .keyboardShortcut("0")
+                    .help("Show the whole diagram in the window (⌘0)")
+                Button("100%") { zoom = 1 }
+                    .help("The diagram at its natural size")
+                Button("Zoom Out", systemImage: "minus.magnifyingglass") { set(zoom / 1.25) }
+                    .labelStyle(.iconOnly)
+                    .keyboardShortcut("-")
+                    .help("Zoom out (⌘−)")
+                    .disabled(zoom <= Self.zooms.lowerBound)
+                Text("\(Int((zoom * 100).rounded()))%").font(.callout.monospacedDigit()).frame(width: 44)
+                Button("Zoom In", systemImage: "plus.magnifyingglass") { set(zoom * 1.25) }
+                    .labelStyle(.iconOnly)
+                    .keyboardShortcut("=")
+                    .help("Zoom in (⌘=)")
+                    .disabled(zoom >= Self.zooms.upperBound)
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(10)
+            Divider()
+            ScrollView([.horizontal, .vertical]) {
+                MermaidView(source: source, zoom: zoom) { size in
+                    natural = size
+                    // It opens larger than inline: a small diagram fitted (up to 200%), a wide one at 100%.
+                    if !fitted { fitted = true; zoom = min(max(fit, 1), 2) }
+                }
+                .padding(8)
+            }
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { viewport = $0 }
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+    }
+
+    /// 90% of the screen.
+    static var size: CGSize {
+        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1280, height: 800)
+        return CGSize(width: (screen.width * 0.9).rounded(), height: (screen.height * 0.9).rounded())
+    }
+
+    /// The zoom that shows the whole diagram in the viewport.
+    private var fit: CGFloat {
+        guard natural.width > 0, natural.height > 0, viewport.width > 0 else { return 1 }
+        let room = CGSize(width: viewport.width - 16 - MermaidView.padding - 4, height: viewport.height - 16 - MermaidView.padding - 4)
+        return min(max(min(room.width / natural.width, room.height / natural.height), Self.zooms.lowerBound), Self.zooms.upperBound)
+    }
+
+    private func set(_ value: CGFloat) { zoom = min(max(value, Self.zooms.lowerBound), Self.zooms.upperBound) }
 }
 
 private struct MermaidWebView: NSViewRepresentable {
     let source: String
     let dark: Bool
+    /// Open Larger: the diagram fills the page's width at any size, larger than natural too.
+    let large: Bool
     @Binding var height: CGFloat
+    /// The diagram's natural size (its view box), whatever the page's width.
+    @Binding var natural: CGSize
     @Binding var error: String?
     @Binding var blocked: [String]
 
@@ -87,14 +190,14 @@ private struct MermaidWebView: NSViewRepresentable {
             DispatchQueue.main.async { error = "mermaid.js is missing from AKit." }
         } else {
             // The rule list first: nothing loads before it is in place.
-            Task { @MainActor [coordinator = context.coordinator, source, dark] in
+            Task { @MainActor [coordinator = context.coordinator, source, dark, large] in
                 guard let rules = await Self.rules() else {
                     coordinator.parent.error = "AKit couldn't set up the diagram's content rules."
                     return
                 }
                 content.add(rules)
                 coordinator.ready = true
-                coordinator.load(source: source, dark: dark)
+                coordinator.load(source: source, dark: dark, large: large)
             }
         }
         return container
@@ -102,7 +205,7 @@ private struct MermaidWebView: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.load(source: source, dark: dark)
+        context.coordinator.load(source: source, dark: dark, large: large)
     }
 
     /// Blocks every URL but `about:` and `data:`: a second wall behind the page's content policy.
@@ -125,7 +228,7 @@ private struct MermaidWebView: NSViewRepresentable {
 
     /// The page for one diagram. The source goes in as a JSON string with `<` escaped, never as
     /// raw text, so nothing in it can end the script.
-    static func page(source: String, dark: Bool) -> String {
+    static func page(source: String, dark: Bool, large: Bool) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: [source])) ?? Data("[\"\"]".utf8)
         let json = String(decoding: data, as: UTF8.self)
             .replacingOccurrences(of: "<", with: "\\u003c").replacingOccurrences(of: ">", with: "\\u003e")
@@ -134,7 +237,7 @@ private struct MermaidWebView: NSViewRepresentable {
         return """
         <!doctype html><html><head><meta charset="utf-8">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">
-        <style>html,body{margin:0;padding:0;background:\(background);overflow:hidden}#d{padding:8px}#d svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+        <style>html,body{margin:0;padding:0;background:\(background);overflow:hidden}#d{padding:8px}#d svg{display:block;margin:0 auto;max-width:100%;height:auto}\(large ? "#d svg{max-width:none!important;width:100%}" : "")</style>
         </head><body><div id="d"></div><script>
         (async function () {
           const post = function (m) { window.webkit.messageHandlers.akit.postMessage(m); };
@@ -147,7 +250,10 @@ private struct MermaidWebView: NSViewRepresentable {
             const result = await mermaid.render("akit-diagram", source);
             const d = document.getElementById("d");
             d.innerHTML = result.svg;
-            const report = function () { post({ height: Math.ceil(d.getBoundingClientRect().height) }); };
+            const svg = d.querySelector("svg");
+            const box = svg && svg.viewBox && svg.viewBox.baseVal;
+            const natural = box && box.width > 0 ? [box.width, box.height] : [0, 0];
+            const report = function () { post({ height: Math.ceil(d.getBoundingClientRect().height), natural: natural }); };
             new ResizeObserver(report).observe(d);
             report();
           } catch (e) {
@@ -163,7 +269,7 @@ private struct MermaidWebView: NSViewRepresentable {
         var parent: MermaidWebView
         weak var web: WKWebView?
         weak var container: NSView?
-        private var loaded: (source: String, dark: Bool)?
+        private var loaded: (source: String, dark: Bool, large: Bool)?
         /// Only the page AKit loads itself is allowed; every other navigation is cancelled.
         private var allowLoad = false
         private var snapshot: NSImageView?
@@ -172,13 +278,13 @@ private struct MermaidWebView: NSViewRepresentable {
 
         init(_ parent: MermaidWebView) { self.parent = parent }
 
-        func load(source: String, dark: Bool) {
-            guard ready, let web, loaded.map({ $0.source != source || $0.dark != dark }) ?? true else { return }
-            loaded = (source, dark)
+        func load(source: String, dark: Bool, large: Bool) {
+            guard ready, let web, loaded.map({ $0.source != source || $0.dark != dark || $0.large != large }) ?? true else { return }
+            loaded = (source, dark, large)
             snapshot?.removeFromSuperview()
             snapshot = nil
             allowLoad = true
-            web.loadHTMLString(MermaidWebView.page(source: source, dark: dark), baseURL: nil)
+            web.loadHTMLString(MermaidWebView.page(source: source, dark: dark, large: large), baseURL: nil)
         }
 
         func receive(_ body: Any) {
@@ -191,10 +297,14 @@ private struct MermaidWebView: NSViewRepresentable {
                 parent.error = String(error.prefix(500))
                 if DebugSnapshot.options != nil { print("mermaid: error \(error)") }
             } else if let height = message["height"] as? Double, height > 0 {
-                let fitted = min(CGFloat(height), 4000)
+                if let size = message["natural"] as? [Double], size.count == 2, size[0] > 0 {
+                    let natural = CGSize(width: size[0], height: size[1])
+                    if parent.natural != natural { parent.natural = natural }
+                }
+                let fitted = min(CGFloat(height), parent.large ? 40000 : 4000)
                 if abs(parent.height - fitted) > 1 { parent.height = fitted }
                 if DebugSnapshot.options != nil {
-                    print("mermaid: drawn, \(Int(fitted)) points high")
+                    print("mermaid: drawn, \(Int(fitted)) points high, natural \(Int(parent.natural.width))×\(Int(parent.natural.height))\(parent.large ? ", large" : "")")
                     freeze()
                 }
             }
@@ -239,7 +349,7 @@ private struct MermaidWebView: NSViewRepresentable {
     }
 }
 
-/// The diagram fits its height, so the wheel scrolls the screen around it, and it has no
+/// The diagram fits its height, so the wheel scrolls the scroll view around it, and it has no
 /// context menu (Reload, Inspect Element).
 private final class DiagramWebView: WKWebView {
     override func scrollWheel(with event: NSEvent) { nextResponder?.scrollWheel(with: event) }

@@ -29,6 +29,8 @@ struct ReviewMapView: View {
     /// Modules and projects folded to one node; those over 8 files start folded.
     @State private var folded: Set<String>
     @State private var dependentsOpen = false
+    /// The lanes' width beside the inspector: each lane gets its share of it.
+    @State private var lanesWidth: CGFloat = 0
 
     /// Over this many files a module (or a project) starts folded.
     static let foldOver = 8
@@ -81,11 +83,13 @@ struct ReviewMapView: View {
         }
     }
 
+    private static let laneSpacing: CGFloat = 36
+
     private var lanes: some View {
-        HStack(alignment: .top, spacing: 36) {
-            lane("This change", systemImage: "doc.text") { changeLane }
-            lane("Boundaries", systemImage: "square.dashed") { boundariesLane }
-            lane("Other repositories", systemImage: "shippingbox") { othersLane }
+        HStack(alignment: .top, spacing: Self.laneSpacing) {
+            lane("This change", systemImage: "doc.text", width: laneWidth(0.38, least: 200)) { changeLane }
+            lane("Boundaries", systemImage: "square.dashed", width: laneWidth(0.30, least: 160)) { boundariesLane }
+            lane("Other repositories", systemImage: "shippingbox", width: laneWidth(0.32, least: 170)) { othersLane }
         }
         .backgroundPreferenceValue(MapAnchors.self) { anchors in
             GeometryReader { proxy in
@@ -94,14 +98,20 @@ struct ReviewMapView: View {
             .allowsHitTesting(false)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { lanesWidth = $0 }
     }
 
-    private func lane(_ title: String, systemImage: String, @ViewBuilder content: () -> some View) -> some View {
+    /// A lane's share of the width beside the inspector, at least `least`; nil before it is measured.
+    private func laneWidth(_ share: CGFloat, least: CGFloat) -> CGFloat? {
+        lanesWidth > 0 ? max(least, ((lanesWidth - 2 * Self.laneSpacing) * share).rounded(.down)) : nil
+    }
+
+    private func lane(_ title: String, systemImage: String, width: CGFloat?, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: systemImage).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
             content()
         }
-        .frame(minWidth: 150, maxWidth: .infinity, alignment: .topLeading)
+        .frame(minWidth: width ?? 150, maxWidth: width ?? .infinity, alignment: .topLeading)
     }
 
     // MARK: - Lanes
@@ -174,11 +184,7 @@ struct ReviewMapView: View {
             if let symbol = symbol(node) {
                 Image(systemName: symbol).font(.caption).foregroundStyle(.secondary).frame(width: 14)
             }
-            Text(label(node))
-                .font(node.kind == .module || node.kind == .project ? .callout.weight(.medium) : .callout)
-                .strikethrough(node.boundary?.isRemoved == true)
-                .lineLimit(2)
-                .truncationMode(.middle)
+            title(node)
             if node.boundary?.isRemoved == true {
                 Text("removed").font(.caption2.weight(.semibold)).foregroundStyle(.red)
             }
@@ -210,14 +216,32 @@ struct ReviewMapView: View {
         .onTapGesture { selected = selected == node.id ? nil : node.id }
         .onHover { inside in hovered = inside ? node.id : (hovered == node.id ? nil : hovered) }
         .anchorPreference(key: MapAnchors.self, value: .bounds) { [node.id: $0] }
-        .help(node.path ?? node.label)
+        .help(node.boundary.map { "\($0.name)\n\($0.file)" } ?? node.path ?? node.label)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
 
-    private func label(_ node: ReviewMap.Node) -> String {
-        guard let boundary = node.boundary else { return node.label }
-        return boundary.name
+    /// Over this many characters a file's path shows its name on the first line and its folder below.
+    static let longPath = 24
+
+    /// A file's path (under a module, relative to it): a long one as its name in full and its folder
+    /// in secondary text. Modules, boundaries and projects wrap to three lines.
+    @ViewBuilder private func title(_ node: ReviewMap.Node) -> some View {
+        let label = node.boundary?.name ?? node.label
+        let slash = label.lastIndex(of: "/")
+        if [.file, .dependent, .consumer].contains(node.kind), label.count > Self.longPath, let slash, slash != label.startIndex {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label[label.index(after: slash)...]).font(.callout).lineLimit(1).truncationMode(.middle)
+                Text(label[..<slash]).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+            }
+        } else {
+            Text(label)
+                .font(node.kind == .module || node.kind == .project ? .callout.weight(.medium) : .callout)
+                .strikethrough(node.boundary?.isRemoved == true)
+                .lineLimit(3)
+                .truncationMode(.middle)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func background(_ node: ReviewMap.Node) -> Color {

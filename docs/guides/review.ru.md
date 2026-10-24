@@ -1031,6 +1031,7 @@ To review: commits and uncommitted changes.
 - «Зачем меняют этот модуль?» → колонка «Why it changes»: ответ из задачи, её родителей и описания MR.
 - «Как запрос проходит через систему?» → схема **Flow**, изменённые части выделены.
 - «Кого сломает это изменение?» → вкладка **Map**, третья колонка **Other repositories**.
+- «Схема мелкая, текст не прочесть» → **Open Larger** у схемы **Flow**.
 - «Хочу показать схему команде» → **Copy Mermaid** или **Copy as Mermaid**.
 
 ### Просто: прочитать Overview
@@ -1038,7 +1039,7 @@ To review: commits and uncommitted changes.
 
 Блок **Overview** стоит в начале ревью, над запросами. Он открыт сразу; стрелка слева сворачивает его. Рядом с заголовком — язык обзора (например «Russian») и кнопка **Translate**.
 
-![Ревью shop/orders-service!42 с раскрытым блоком Overview: метка Russian и кнопка Translate; четыре тезиса по-русски (middleware пишет заголовок в лог, запрос без заголовка получает 401, флаг ORDERS_ALLOW_ANONYMOUS удалён, новый тест проверяет 401); таблица Module / Files / Why it changes со строками src/Auth, src/Orders, helm, tests, у каждой «1 file» и причина из задачи; строка Why from: с метками work item и description; под ней Flow с подписью flowchart, кнопкой Copy Mermaid и схемой: страница заказа web-mfe и smoke-тест staging идут в OrdersController.cs, дальше AuthMiddleware.cs, ответ 401, база заказов и общий лог, изменённые узлы жёлтые, справа группа Other repositories с shop/web-mfe · 2 uses · breaks, shop/billing-service · 1 use и shop/deploy-config · 1 use · breaks; ниже переключатель Requests | Map](images/review-overview.png)
+![Ревью shop/orders-service!42 с раскрытым блоком Overview: метка Russian и кнопка Translate; четыре тезиса по-русски (middleware пишет заголовок в лог, запрос без заголовка получает 401, флаг ORDERS_ALLOW_ANONYMOUS удалён, новый тест проверяет 401); таблица Module / Files / Why it changes со строками src/Auth, src/Orders, helm, tests, у каждой «1 file» и причина из задачи; строка Why from: с метками work item и description; под ней Flow с подписью flowchart, кнопками Open Larger и Copy Mermaid и схемой: страница заказа web-mfe и smoke-тест staging идут в OrdersController.cs, дальше AuthMiddleware.cs, ответ 401, база заказов и общий лог, изменённые узлы жёлтые; схема шире блока, и её правая часть с группой Other repositories (shop/web-mfe · 2 uses · breaks, shop/billing-service · 1 use, shop/deploy-config · 1 use · breaks) видна при прокрутке вбок; ниже переключатель Requests | Map](images/review-overview.png)
 
 Что в блоке, сверху вниз:
 
@@ -1088,6 +1089,12 @@ To review: commits and uncommitted changes.
 Пример: на схеме выше страница заказа идёт в `OrdersController.cs`, потом в `AuthMiddleware.cs`; без заголовка — ответ 401.
 
 После поиска в других репозиториях AKit сам добавляет группу **Other repositories**: по узлу на проект, с числом использований и пометкой «breaks», если изменение его ломает. Пунктир ведёт к узлу, где лежит граница. Эту группу пишет AKit из найденного, а не модель.
+
+- Схема занимает ширину блока, но не мельче, чем нужно для чтения текста. Широкая схема не сжимается дальше: её можно прокрутить вбок.
+- **Open Larger** открывает схему в большом окне (90% экрана). Сверху кнопки: **Fit** — вся схема в окне, **100%** — настоящий размер, лупы **−** и **+** — мельче и крупнее (от 25% до 400%), между ними текущий масштаб. Схему в окне можно прокручивать в обе стороны. **Done** закрывает окно. Клавиши: ⌘0 — **Fit**, ⌘− и ⌘= — мельче и крупнее.
+- Окно открывается крупнее, чем схема в обзоре: маленькая схема растянута на окно (до 200%), широкая показана в настоящем размере.
+
+![Окно Open Larger со схемой Flow ревью shop/orders-service!42: сверху заголовок Flow, кнопки Fit и 100%, лупы минус и плюс с масштабом 100% между ними и кнопка Done; ниже схема в настоящем размере, крупным текстом: страница заказа web-mfe и smoke-тест staging идут в OrdersController.cs, дальше AuthMiddleware.cs и ответ 401; правая часть схемы уходит за край окна, её можно прокрутить](images/review-flow-large.png)
 
 - **Copy Mermaid** копирует текст схемы. Его можно вставить в описание MR, в вики или на mermaid.live.
 - Схему рисует mermaid.js, встроенный в AKit (версия 11.4.1). Интернет не нужен; схема ничего не загружает из сети.

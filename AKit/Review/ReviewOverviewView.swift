@@ -13,6 +13,8 @@ struct ReviewOverviewSection<Translate: View>: View {
     @ViewBuilder let translate: () -> Translate
     /// Snapshots: `--tab requests` and `--tab map` fold it, to show the tab.
     @State private var expanded = !["requests", "map"].contains(DebugSnapshot.options?.tab)
+    /// Open Larger; snapshots: `--tab flow` opens it.
+    @State private var showLarge = DebugSnapshot.options?.tab == "flow"
 
     var body: some View {
         DisclosureGroup(isExpanded: $expanded) {
@@ -101,11 +103,15 @@ struct ReviewOverviewSection<Translate: View>: View {
                     Text("Flow").font(.subheadline.weight(.medium))
                     Text(overview.flowKind == .sequenceDiagram ? "sequence diagram" : "flowchart").font(.caption).foregroundStyle(.secondary)
                     Spacer()
+                    Button("Open Larger", systemImage: "arrow.up.left.and.arrow.down.right") { showLarge = true }
+                        .controlSize(.small)
+                        .help("Open the diagram in a large sheet with zoom")
                     Button("Copy Mermaid", systemImage: "doc.on.doc") { copy(flow) }
                         .controlSize(.small)
                         .help("Copy the diagram's Mermaid source, to paste into a merge request, a wiki or mermaid.live")
                 }
                 MermaidView(source: flow)
+                    .sheet(isPresented: $showLarge) { MermaidLargeView(title: "Flow", source: flow) }
                 Text("Changed parts are marked; the other repositories that use the change are a group of their own.")
                     .font(.caption).foregroundStyle(.secondary)
             }
