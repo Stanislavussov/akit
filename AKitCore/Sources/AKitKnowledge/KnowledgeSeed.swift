@@ -16,7 +16,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 1
+    public static let version = 2
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -178,7 +178,8 @@ public enum KnowledgeSeed {
 
     /// The made-up content: two unrelated areas (payments, logistics) with `area.yaml`, a note of
     /// every default kind of `kb.yaml` with its fields and `##` sections, `[[links]]` within an
-    /// area and across areas, and a flow note in each area. Later steps add theirs here.
+    /// area and across areas, a flow note in each area, and a map in each area (2.1). Later
+    /// steps add theirs here.
     public static let files: [File] = [
         // Area settings (1.3): payments has no projects, logistics has a remote and a glob.
         File(path: "areas/payments/area.yaml", text: """
@@ -329,5 +330,32 @@ public enum KnowledgeSeed {
             100 bookings a minute; more get an error and are tried again later.
 
             """),
+        // Maps (2.1), 0.17.6-shaped: an arrow labelled "events" with a flow link, jumps between the
+        // two areas' maps both ways, and an unbound arrow.
+        File(path: "areas/payments/maps/overview.excalidraw", text: overviewMap),
+        File(path: "areas/logistics/maps/routes.excalidraw", text: routesMap),
     ]
+
+    /// payments/maps/overview: orders-api → billing "events" (flow order-to-billing), and a block
+    /// that jumps to logistics/maps/routes.
+    static let overviewMap: String = {
+        let orders = NewMap.Box(id: "blk-orders", x: 0, y: 0), billing = NewMap.Box(id: "blk-billing", x: 420, y: 0)
+        let routes = NewMap.Box(id: "blk-routes", x: 420, y: 200)
+        return NewMap.scene(elements: NewMap.block(orders, label: "orders-api", link: "[[orders-api]]", arrows: ["arr-events"])
+            + NewMap.block(billing, label: "billing", link: "[[billing]]", arrows: ["arr-events"])
+            + NewMap.arrow("arr-events", from: orders, to: billing, label: "events", link: "[[order-to-billing]]")
+            + NewMap.block(routes, label: "logistics routes", link: "[[logistics/maps/routes]]"))
+    }()
+
+    /// logistics/maps/routes: warehouse → shipping "ships to" (flow pick-and-ship), a block that
+    /// jumps back to payments/maps/overview, and an arrow bound at neither end.
+    static let routesMap: String = {
+        let warehouse = NewMap.Box(id: "blk-warehouse", x: 0, y: 0), shipping = NewMap.Box(id: "blk-shipping", x: 420, y: 0)
+        let overview = NewMap.Box(id: "blk-overview", x: 420, y: 200)
+        return NewMap.scene(elements: NewMap.block(warehouse, label: "warehouse", link: "[[warehouse]]", arrows: ["arr-ships"])
+            + NewMap.block(shipping, label: "shipping", link: "[[shipping]]", arrows: ["arr-ships"])
+            + NewMap.arrow("arr-ships", from: warehouse, to: shipping, label: "ships to", link: "[[pick-and-ship]]")
+            + NewMap.block(overview, label: "payments overview", link: "[[payments/maps/overview]]")
+            + NewMap.arrow("arr-loose", start: (0.5, 220), end: (200.5, 220)))
+    }()
 }

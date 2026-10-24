@@ -226,12 +226,19 @@ akit kb notes [AREA] [--json] [--base PATH|WORLD]  # notes: id (payments/orders-
 akit kb kinds [--json] [--base PATH|WORLD]         # the kinds of notes and each kind's fields (kb.yaml)
 akit kb area AREA [--json] [--base PATH|WORLD]     # one area's settings: projects = git remotes,
                                                    # ~/ paths or globs the area is about
+akit kb maps [AREA] [--json] [--base PATH|WORLD]   # the maps (.excalidraw): blocks (shapes linked to
+                                                   # a note), arrows, unbound arrows, jumps to maps
+akit kb relations NOTE [--json] [--base PATH|WORLD]
+                                                   # arrows to and from a note on every map:
+                                                   # {from, kind, to, flow, map}; kind = the label
 ```
 
 `--base` picks a base (a world name or a folder); without it akit takes the project's choice,
 the only base, or the one named like this Mac's kind. No base: `{"base": null, "reason":
-"no base"}`, exit 0; then there is nothing to read. Kinds and fields are data in the base's
-`kb.yaml`, never a fixed list: read `akit kb kinds` before you name a kind or a field.
+"no base"}`, exit 0; then there is nothing to read. Reads also take `--base PATH` for a folder
+with `areas/` and no git. Kinds and fields are data in the base's `kb.yaml`, never a fixed
+list: read `akit kb kinds` before you name a kind or a field. On maps, a block stands for the
+note its link names, and an arrow's label says what flows (`kb relations orders-api`).
 
 Commands marked "for a person only" in `akit kb --help` change the base: run them only when
 the user asked for that action in this session; otherwise propose (`akit kb propose`, coming
@@ -241,6 +248,7 @@ per command:
 ```
 akit kb init [--world NAME]                        # create a base
 akit kb new-note AREA NAME [--kind K]              # a new note
+akit kb new-map AREA NAME                          # a new, empty map areas/AREA/maps/NAME.excalidraw
 akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json]
                                                    # note properties (kind=flow, owner=team-a,
                                                    # files=[a.ts, b.ts]); one frontmatter line each

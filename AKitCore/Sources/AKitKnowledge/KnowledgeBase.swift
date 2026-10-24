@@ -61,8 +61,12 @@ public struct KnowledgeBase: Sendable, Hashable {
 
     /// A folder with `areas/` and a git repo.
     public static func isBase(_ url: URL) -> Bool {
-        FileWalk.isDirectory(url.appending(path: "areas")) && FileManager.default.fileExists(atPath: url.appending(path: ".git").path)
+        isReadable(url) && FileManager.default.fileExists(atPath: url.appending(path: ".git").path)
     }
+
+    /// A folder with `areas/`, git or not: enough for the read commands given `--base PATH` (a
+    /// folder of test fixtures, a copy). Writes still need `isBase`.
+    public static func isReadable(_ url: URL) -> Bool { FileWalk.isDirectory(url.appending(path: "areas")) }
 
     /// The bases of this Mac, sorted by name: each world set in `bases.json` whose folder is a
     /// base (K25), then the bases in `~/.akit/local/knowledge` of the other worlds.
@@ -444,15 +448,17 @@ public struct KnowledgeBase: Sendable, Hashable {
     /// Which base a command uses, in this order: `--base PATH|WORLD`; the project's entry in
     /// `focus.json`; the only base of this Mac; the base named like this Mac's kind (`work` or
     /// `personal`). nil when this Mac has no base (P6: commands answer "no base", exit 0). Several
-    /// bases and none of these → an error listing them.
-    public static func choose(option: String?, folder: URL, env: HarnessEnvironment, projectsRoot: URL) async throws(Failure) -> KnowledgeBase? {
+    /// bases and none of these → an error listing them. `forReading` lets `--base PATH` name a
+    /// folder that has `areas/` but no git (`isReadable`); a write checks `isBase` itself.
+    public static func choose(option: String?, folder: URL, env: HarnessEnvironment, projectsRoot: URL,
+                              forReading: Bool = false) async throws(Failure) -> KnowledgeBase? {
         let home = env.homeDirectory
         let bases = all(home: home)
         func named(_ value: String, from: String) throws(Failure) -> KnowledgeBase {
             let isPath = value.contains("/") || value.hasPrefix("~") || value.hasPrefix(".")
             let url = isPath ? (value.hasPrefix("/") || value.hasPrefix("~") ? env.expand(value) : folder.appending(path: value))
                 : root(world: value, home: home)
-            guard isBase(url) else {
+            guard isBase(url) || (forReading && isPath && isReadable(url)) else {
                 throw Failure(message: "No knowledge base at \(url.standardized.path) (\(from)). \(listing(bases, home: home))")
             }
             let found = KnowledgeBase(root: url.standardized, world: isPath ? nil : value)

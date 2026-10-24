@@ -25,6 +25,13 @@ extension AKitCLI {
       akit kb area AREA [--json] [--base PATH|WORLD]
                                         An area's settings from areas/AREA/area.yaml: title,
                                         description, projects (git remotes, ~/ paths, globs)
+      akit kb maps [AREA] [--json] [--base PATH|WORLD]
+                                        The maps (.excalidraw) of an area or of all: blocks (shapes
+                                        linked to a note), arrows between them, unbound arrows, and
+                                        the maps each one links to
+      akit kb relations NOTE [--json] [--base PATH|WORLD]
+                                        The arrows to and from a note on every map: from, kind (the
+                                        arrow's label), to, flow (the note the arrow links), map
 
     Write (for a person only: an agent runs these only when the user asked for that action in
     this session; otherwise it proposes or asks):
@@ -44,6 +51,9 @@ extension AKitCLI {
       akit kb new-note AREA NAME [--kind K] [--base PATH|WORLD]
                                         For a person only. Create areas/AREA/NAME.md (# NAME, and
                                         kind: K in the frontmatter) and commit it at once
+      akit kb new-map AREA NAME [--base PATH|WORLD]
+                                        For a person only. Create areas/AREA/maps/NAME.excalidraw
+                                        (an empty map) and commit it at once
       akit kb set NOTE KEY=VALUE… [--unset KEY]… [--json] [--base PATH|WORLD]
                                         For a person only. Set or remove frontmatter properties of a
                                         note (kind=flow, owner=team-a, files=[a.ts, b.ts]), one line
@@ -74,6 +84,7 @@ extension AKitCLI {
     Which base (--base, else in this order): the current project's entry in
     ~/.akit/local/knowledge/focus.json, the only base, the base named like this Mac's kind. With
     no base, the read commands say so (--json: {"base": null, "reason": "no base"}) and exit 0.
+    The read commands also read --base PATH when PATH has areas/ but no git; changes need git.
     """
 
     static func knowledge(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
@@ -88,7 +99,8 @@ extension AKitCLI {
         let command = args.positional()
         func chosen() async throws -> KnowledgeBase? {
             do {
-                return try await KnowledgeBase.choose(option: baseOption, folder: cwd, env: env, projectsRoot: projectsRoot)
+                // Reads take a folder with areas/ and no git too (test fixtures); `writable` needs git.
+                return try await KnowledgeBase.choose(option: baseOption, folder: cwd, env: env, projectsRoot: projectsRoot, forReading: true)
             } catch {
                 throw Failure(message: error.message)
             }
@@ -151,13 +163,13 @@ extension AKitCLI {
             }
             try args.finish()
             if json { throw Failure(message: "--json doesn't go with akit kb new-note.") }
-            guard let base = try await chosen() else {
-                throw Failure(message: "No knowledge base on this Mac. Create one first: akit kb init [--world NAME]")
-            }
+            let base = try await writable(chosen)
             let path: String
             do { path = try await base.newNote(area: area, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
             out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
             return 0
+        case "maps", "relations", "new-map":
+            return try await knowledgeMaps(command!, &args, json: json, base: chosen, env: env, out: out)
         case "path":
             return try await knowledgePath(&args, json: json, cwd: cwd, env: env, out: out)
         case "kinds":
@@ -192,12 +204,69 @@ extension AKitCLI {
         }
     }
 
-    /// The base for a write, or the error that says to create one.
+    /// The base for a write, or the error that says to create one. A folder with `areas/` but no
+    /// git, which the read commands accept, is refused: every write commits.
     private static func writable(_ base: () async throws -> KnowledgeBase?) async throws -> KnowledgeBase {
         guard let base = try await base() else {
             throw Failure(message: "No knowledge base on this Mac. Create one first: akit kb init [--world NAME]")
         }
+        guard KnowledgeBase.isBase(base.root) else {
+            throw Failure(message: "\(base.root.path) has areas/ but no git, so it can only be read; a change needs a base (akit kb init --base PATH).")
+        }
         return base
+    }
+
+    /// `kb maps [AREA]`, `kb relations NOTE` (read) and `kb new-map AREA NAME` (person only).
+    private static func knowledgeMaps(_ command: String, _ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                      env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        if command == "new-map" {
+            guard let area = args.positional(), let name = args.positional() else {
+                throw Failure(message: "Use: akit kb new-map AREA NAME [--base PATH|WORLD]")
+            }
+            try args.finish()
+            if json { throw Failure(message: "--json doesn't go with akit kb new-map.") }
+            let base = try await writable(chosen)
+            let path: String
+            do { path = try await base.newMap(area: area, name: name, env: env) } catch { throw Failure(message: error.message) }
+            out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
+            return 0
+        }
+        let name = args.positional()
+        if command == "relations", name == nil { throw Failure(message: "Use: akit kb relations NOTE [--json] [--base PATH|WORLD]") }
+        try args.finish()
+        guard let base = try await chosen() else {
+            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+            return 0
+        }
+        if command == "maps" {
+            let graph: MapGraph
+            do { graph = try base.mapGraph(area: name) } catch { throw Failure(message: error.message) }
+            if json {
+                out(encode(MapsAnswer(base: base.root.path, area: name, maps: graph.maps.map(MapSummary.init))))
+            } else {
+                out(graph.maps.isEmpty ? "No maps\(name.map { " in \($0)" } ?? "") yet." : graph.maps.map { map in
+                    "\(map.id)  " + (map.error.map { "can't be read: \($0)" }
+                        ?? "\(count(map.blocks.count, "block")), \(count(map.edges.count, "arrow")), \(map.unbound.count) unbound"
+                        + (map.jumps.isEmpty ? "" : ", jumps to " + map.jumps.map(\.map).joined(separator: ", ")))
+                }.joined(separator: "\n"))
+            }
+            return 0
+        }
+        let note: String, relations: [MapGraph.Edge]
+        do {
+            note = try base.noteID(name!)
+            relations = try base.mapGraph().relations(of: note)
+        } catch {
+            throw Failure(message: error.message)
+        }
+        if json {
+            out(encode(RelationsAnswer(base: base.root.path, note: note, relations: relations)))
+        } else {
+            out(relations.isEmpty ? "No map has an arrow to or from \(note)." : relations.map { edge in
+                "\(edge.from) → \(edge.to)" + (edge.kind.map { "  \"\($0)\"" } ?? "") + (edge.flow.map { "  flow \($0)" } ?? "") + "  (\(edge.map))"
+            }.joined(separator: "\n"))
+        }
+        return 0
     }
 
     /// `kb path [WORLD]` and its person-only changes `--set`, `--move`, `--reset` (K25).
@@ -287,8 +356,7 @@ extension AKitCLI {
         }
         let base: KnowledgeBase
         if baseOption != nil {
-            guard let found = try await chosen() else { throw Failure(message: "No knowledge base on this Mac.") }
-            base = found
+            base = try await writable(chosen)
         } else {
             let name = world ?? KnowledgeSeed.world
             base = KnowledgeBase(root: KnowledgeBase.root(world: name, home: home), world: name)
@@ -477,6 +545,46 @@ extension AKitCLI {
             try container.encode(area, forKey: .area) // null for every area
             try container.encode(notes, forKey: .notes)
         }
+    }
+
+    struct MapsAnswer: Encodable {
+        let base: String
+        let area: String?
+        let maps: [MapSummary]
+
+        private enum CodingKeys: String, CodingKey { case base, area, maps }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(base, forKey: .base)
+            try container.encode(area, forKey: .area) // null for every area
+            try container.encode(maps, forKey: .maps)
+        }
+    }
+
+    /// One map in `kb maps --json`: counts, the maps it jumps to, and an error for a file that
+    /// can't be read.
+    struct MapSummary: Encodable {
+        let id: String
+        let area: String
+        let path: String
+        let elements: Int
+        let blocks: Int
+        let arrows: Int
+        let unbound: Int
+        let jumps: [MapGraph.Jump]
+        let error: String?
+
+        init(_ map: MapGraph.Map) {
+            (id, area, path, elements) = (map.id, map.area, map.path, map.elements)
+            (blocks, arrows, unbound, jumps, error) = (map.blocks.count, map.edges.count, map.unbound.count, map.jumps, map.error)
+        }
+    }
+
+    struct RelationsAnswer: Encodable {
+        let base: String
+        let note: String
+        let relations: [MapGraph.Edge]
     }
 
     struct PathAnswer: Encodable {

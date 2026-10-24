@@ -91,6 +91,34 @@ struct KnowledgeSeedTests {
                 && api.contains("files: [src/events/order-created.ts]") && billing.contains("## Invoices") && flow.contains("order.created")
                 && ["logistics/warehouse", "logistics/shipping", "logistics/flows/pick-and-ship"].allSatisfy { fileExists(base.noteFile($0)) }
         }),
+        // Maps (2.1).
+        ("a map in each area, every one readable", { base in
+            let maps = try base.mapGraph().maps
+            return maps.map(\.id) == ["logistics/maps/routes", "payments/maps/overview"] && maps.allSatisfy { $0.error == nil }
+        }),
+        ("orders-api → billing \"events\" with its flow note, from blk-orders", { base in
+            let graph = try base.mapGraph(area: "payments")
+            return graph.edges == [MapGraph.Edge(from: "payments/orders-api", to: "payments/billing", kind: "events",
+                                                 flow: "payments/flows/order-to-billing", map: "payments/maps/overview", arrow: "arr-events")]
+                && graph.maps[0].blocks.contains { $0.element == "blk-orders" && $0.label == "orders-api" }
+        }),
+        ("warehouse → shipping \"ships to\"", { base in
+            try base.mapGraph().relations(of: "logistics/warehouse").map { "\($0.to) \($0.kind ?? "")" } == ["logistics/shipping ships to"]
+        }),
+        ("jumps between the maps of the two areas, both ways", { base in
+            let maps = try base.mapGraph().maps
+            return maps.map { $0.jumps.map(\.map) } == [["payments/maps/overview"], ["logistics/maps/routes"]]
+        }),
+        ("an unbound arrow", { base in try base.mapGraph(area: "logistics").maps[0].unbound.map(\.arrow) == ["arr-loose"] }),
+        ("every block and arrow link on a map resolves", { base in
+            let targets = base.linkTargets()
+            return try base.mapGraph().maps.allSatisfy { map in
+                guard case .success(let scene) = ExcalidrawFile.load(base.root.appending(path: map.path)) else { return false }
+                return scene.live.compactMap(\.link).allSatisfy {
+                    switch targets.resolve($0, from: map.path) { case .note, .map: true; default: false }
+                }
+            }
+        }),
     ]
 
     static func links(in text: String) -> [String] {
@@ -171,11 +199,8 @@ struct KnowledgeSeedTests {
     }
 
     @Test func rmFindsNotesMapsAndAreasAndRefusesTheInbox() async throws {
+        // The seeded map payments/maps/overview is removed as a map.
         let base = try await KnowledgeSeed.seed(env: env).base
-        try fm.createDirectory(at: base.areasFolder.appending(path: "payments/maps"), withIntermediateDirectories: true)
-        try Data(#"{"type":"excalidraw","version":2,"elements":[]}"#.utf8).write(to: base.areasFolder.appending(path: "payments/maps/overview.excalidraw"))
-        _ = try await git("add", "-A", in: base.root)
-        _ = try await git("commit", "-qm", "Add a map", in: base.root)
 
         #expect(try base.item("payments") == .init(kind: .area, id: "payments", path: "areas/payments"))
         #expect(try base.item("areas/logistics/") == .init(kind: .area, id: "logistics", path: "areas/logistics"))

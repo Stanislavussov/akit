@@ -5,7 +5,8 @@ Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (b
 `kb.yaml`, Properties and `akit kb set`, Kinds…, `area.yaml` and Area Settings…; 1.4, K25: the base
 folder per world in `bases.json`, `akit kb path`, Settings → Knowledge; 1.5, K26: the sample base
 `akit kb seed`, Add/Remove Sample Base…, `akit kb rm`); spike 2.0 (Excalidraw
-bundle, results below) done 2026-10-24. Steps in [Steps](#steps).
+bundle, results below) done 2026-10-24; 2.1 (reading `.excalidraw`, the map graph, `akit kb maps`,
+`relations`, `new-map`, two seeded maps) built 2026-10-24. Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -140,5 +141,14 @@ Fixtures for 2.1 (made in the running canvas with `convertToExcalidrawElements` 
 (the same notes as `[[payments/orders-api]]` and `[[billing]]`, arrow `arr-invoices` labelled
 "invoice requests", a block without a link, a link back to `[[maps/overview]]`), the three notes
 from the demo base, and `cli-draft.excalidraw` (the raw JSON draft). The fixture base has no
-`.git`, which can't be committed inside this repo, so `KnowledgeBase.isBase` rejects it today;
-2.1 decides (for example: `--base PATH` reads accept a folder with `areas/`).
+`.git`, which can't be committed inside this repo. Decided in 2.1: the read commands accept
+`--base PATH` for a folder with `areas/` and no git (`KnowledgeBase.isReadable`); every write
+still needs a base with git (`isBase`) and is refused there.
+
+How 2.1 reads a map (`ExcalidrawFile`, `MapGraph`): a block is a live shape whose `link`
+resolves to a note (P1, from the map's path); its label is its bound text or, in a CLI draft,
+the free text whose centre lies inside it. An arrow bound at both ends to blocks is an edge
+(kind = its bound label, flow = the note its own link names); any other arrow, also one bound
+to a shape without a note, is listed as unbound. A shape linking a map is a jump. A file that
+isn't a JSON scene is listed with its error, never thrown. The maps of the sample base come
+from `KnowledgeSeed` (not from `tools/demo-home.sh`, as 2.3 first planned).

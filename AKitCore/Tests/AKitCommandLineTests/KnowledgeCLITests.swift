@@ -52,12 +52,12 @@ struct KnowledgeCLITests {
         let help = await akit("kb", "--help")
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
-        for command in ["akit kb init", "akit kb new-note", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
+        for command in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
                         "akit kb rm", "akit kb seed [", "akit kb seed --remove"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
-        for command in ["akit kb areas", "akit kb notes", "akit kb kinds [--json]", "akit kb area AREA [--json]"] {
+        for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(!lines[index...].prefix(3).contains { $0.contains("person only") }, "\(command) is a read command")
         }
@@ -107,6 +107,61 @@ struct KnowledgeCLITests {
         #expect(await akit("kb", "notes").out == "payments/billing  -  billing\npayments/orders-api  service  orders-api")
         #expect(await akit("kb", "notes", "nope").code == 2)
         #expect(await akit("kb", "areas", "--base", "nope").code == 2)
+    }
+
+    /// The 0.17.6 fixture base of AKitKnowledgeTests: areas/ and no git.
+    static let fixtureBase = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appending(path: "AKitKnowledgeTests/Fixtures/base")
+
+    @Test func mapsAndRelationsReadAFolderWithoutGit() async throws {
+        let base = Self.fixtureBase.path
+        let relations = await akit("kb", "relations", "payments/orders-api", "--json", "--base", base)
+        #expect(relations.code == 0, "\(relations.err)")
+        let answer = try json(relations.out)
+        #expect(answer["note"] as? String == "payments/orders-api")
+        let edges = try #require(answer["relations"] as? [[String: Any]])
+        #expect(edges.filter { $0["to"] as? String == "payments/billing" }.count == 2)
+        #expect(Set(edges[0].keys) == ["from", "kind", "to", "flow", "map", "arrow"])
+        let events = try #require(edges.first { $0["kind"] as? String == "events" })
+        #expect(events["flow"] as? String == "payments/flows/order-to-billing" && events["map"] as? String == "payments/maps/overview")
+        #expect(edges.first { $0["kind"] as? String == "invoice requests" }?["flow"] is NSNull)
+        #expect(await akit("kb", "relations", "orders-api", "--base", base).out
+            == "payments/orders-api → payments/billing  \"invoice requests\"  (payments/maps/billing-detail)\npayments/orders-api → payments/billing  \"events\"  flow payments/flows/order-to-billing  (payments/maps/overview)")
+        #expect(await akit("kb", "relations", "--base", base).code == 2)
+        #expect(await akit("kb", "relations", "nope", "--base", base).code == 2)
+
+        let maps = try json(await akit("kb", "maps", "payments", "--json", "--base", base).out)
+        #expect(maps["area"] as? String == "payments")
+        let list = try #require(maps["maps"] as? [[String: Any]])
+        #expect(list.map { $0["id"] as? String } == ["payments/maps/billing-detail", "payments/maps/overview"])
+        let overview = list[1]
+        #expect(overview["blocks"] as? Int == 2 && overview["arrows"] as? Int == 1 && overview["unbound"] as? Int == 1)
+        #expect(overview["path"] as? String == "areas/payments/maps/overview.excalidraw" && overview["area"] as? String == "payments")
+        #expect((overview["jumps"] as? [[String: Any]])?.map { $0["map"] as? String } == ["payments/maps/billing-detail"])
+        #expect(await akit("kb", "maps", "--base", base).out.hasPrefix("payments/maps/billing-detail  2 blocks, 1 arrow, 1 unbound, jumps to payments/maps/overview"))
+
+        // Reads only: a change needs a base with git.
+        let refused = await akit("kb", "new-map", "payments", "x", "--base", base)
+        #expect(refused.code == 2 && refused.err.contains("no git"), "\(refused.err)")
+        #expect(await akit("kb", "new-note", "payments", "x", "--base", base).code == 2)
+        #expect(!fm.fileExists(atPath: Self.fixtureBase.appending(path: "areas/payments/maps/x.excalidraw").path))
+    }
+
+    @Test func newMapCommitsAnEmptyMapAtOnce() async throws {
+        #expect(await akit("kb", "maps", "--json").out.contains("no base"))
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        #expect(await akit("kb", "maps").out == "No maps yet.")
+        let created = await akit("kb", "new-map", "payments", "flows-overview")
+        #expect(created.code == 0 && created.out == "Created ~/.akit/local/knowledge/work/areas/payments/maps/flows-overview.excalidraw, committed.", "\(created.err)")
+        #expect(try await git("log", "--format=%s") == "Add map payments/maps/flows-overview\nCreate the knowledge base")
+        #expect(try await git("status", "--porcelain").isEmpty)
+        let maps = try json(await akit("kb", "maps", "payments", "--json").out)
+        let map = try #require((maps["maps"] as? [[String: Any]])?.first)
+        #expect(map["id"] as? String == "payments/maps/flows-overview" && map["elements"] as? Int == 0 && map["error"] == nil)
+        #expect(await akit("kb", "new-map", "payments", "flows-overview").code == 2)
+        #expect(await akit("kb", "new-map", "payments").code == 2)
+        #expect(await akit("kb", "new-map", "payments", "y", "--json").code == 2)
+        #expect(await akit("kb", "areas").out == "payments  0 notes, 1 map")
     }
 
     @Test func kindsSetAndAreaCommitAtOnce() async throws {
@@ -240,6 +295,12 @@ struct KnowledgeCLITests {
                                                         environment: env.variables, timeout: 20)).output
         #expect(log.hasPrefix("Delete note payments/orders-db\nSeed: sample base v"))
         #expect(await akit("kb", "rm", "inbox/payments/x.md", "--base", "sample", "--yes").err.contains("akit kb reject"))
+        // The seeded map: listed, then removed as a map in one commit.
+        let seededMaps = try json(await akit("kb", "maps", "--base", "sample", "--json").out)["maps"] as? [[String: Any]]
+        #expect(seededMaps?.map { $0["id"] as? String } == ["logistics/maps/routes", "payments/maps/overview"])
+        let map = try json(await akit("kb", "rm", "payments/maps/overview", "--base", "sample", "--yes", "--json").out)
+        #expect(map["kind"] as? String == "map" && map["path"] as? String == "areas/payments/maps/overview.excalidraw")
+        #expect(!fm.fileExists(atPath: sample.appending(path: "areas/payments/maps/overview.excalidraw").path))
         // Seeding again after a change of the user: refused.
         #expect(await akit("kb", "seed").err.contains("Remove it first"))
 
@@ -255,6 +316,6 @@ struct KnowledgeCLITests {
         let gone = try json(await akit("kb", "seed", "--remove", "--yes", "--json").out)
         #expect(gone["removed"] as? Bool == true && gone["world"] as? String == "sample")
         #expect(!fm.fileExists(atPath: sample.path))
-        #expect(try fm.contentsOfDirectory(atPath: home.appending(path: "Trash").path).count == 2)
+        #expect(try fm.contentsOfDirectory(atPath: home.appending(path: "Trash").path).count == 3)
     }
 }
