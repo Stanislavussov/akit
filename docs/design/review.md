@@ -525,16 +525,16 @@ from or adds to the table:
   (`Epic #1 → Feature #2 → … → Task #4`), the items from the top down, then the related items.
 - `summary_language` is read at the top of review.yaml and in a profile's `review:`; `--summary-
   language` on `akit review` and `akit review local`. The default is the first of the Mac's
-  preferred languages by its first two letters, when it is a `LabLanguage`, else English
+  preferred languages by its language code (before the first `-`), when it is a `LabLanguage`, else English
   (`[built-in]` in `config show`). A run made before has none: AKit resolves it the same way when
   it reads the run.
 - The check: points are masked and cut to 400 characters; fewer than 3 gives a note "short",
   more than 5 keeps the first 5. A module keeps only changed files (a deleted file by its old
   path) and goes when none is left. The flow is masked and must start with `flowchart`, `graph` or
-  `sequenceDiagram`; AKit drops it for `click` (a word), `href`, `call` with a function call,
+  `sequenceDiagram`; AKit drops it for `click`, `href` and `call` outside labels,
   `%%{`, `<script`, `javascript:`, `<iframe`, any HTML tag but `<br/>`, over 6000 characters or
-  about 40 nodes (a rough count of ids outside labels, or of participants). A plain "call" in a
-  label is allowed: only `call fn(` is the callback form. The dropped text stays in
+  about 40 nodes (a rough count of ids outside labels, or of participants); see the review of
+  part (d) below for the full list. The dropped text stays in
   `overview.json` as `flowOriginal` with the reason in `notes`, not in `gaps.json`: gaps can reach
   the merge request's summary, the overview never does.
 - The other repositories: for a flowchart only, a `subgraph akit_others` with one node per project
@@ -543,6 +543,28 @@ from or adds to the table:
   used boundary.
 - Translate: the overview's points (`overview:point:N`) and modules' why (`overview:module:N`)
   are parts of the run's translation, next to the brief and the requests.
+- Review of part (d) (2026-10-24): the flow check now reads a check form of the text (NFKC,
+  zero-width characters out, `&#…;`, `#…;` and named entities decoded, lowercased; the flow keeps
+  the text as given) and refuses, over the whole text with labels: `://`, `url(`, `@import`, `@{`
+  (Mermaid 11.3+ shapes and images), ids that start with `akit_` (AKit's own). A URL in a label
+  is refused too: a label doesn't load it, but one strict rule is simpler to trust. Outside
+  labels and edge texts (`"…"`, `[…]`, `(…)`, `{…}`, `|…|`, `-- … -->` and a sequence diagram's
+  message and note texts blanked first, each `;` a statement): `click` at a statement's start,
+  `href`, `call`, and `link`, `links` or `properties` lines (sequence diagram link menus). So
+  `A["Click Pay"]` and `A[API call to billing]` pass. A `style`, `classDef` or `linkStyle` line
+  may set only `fill`, `stroke`, `stroke-width`, `color`, `stroke-dasharray` and `font-weight`
+  with a hex color, a word or numbers (a trailing `;` dropped as Mermaid does; no other `;`, `{`
+  or `}`). A flowchart's `subgraph` and `end` lines must pair up. `box` stays allowed: it takes a
+  color, never a URL. The other repositories' edge finds a node only by a real node label (ids
+  `[A-Za-z_]\w*` after a line start, a space, `&`, `|` or an arrow; one-line labels, so `A-->B` is
+  not the id `A--`) holding the boundary's file name on a word or path boundary (`api.ts` is not in
+  `openapi.ts`). The module check also takes `a/`, `b/`, `/` and `./` paths and a renamed file's
+  old path. The default summary language takes the code before the first `-` (`kok-IN` is not
+  Korean, `zh-Hans` is Chinese). A named item is always "named by the merge request", also when it
+  is the parent of another named item, and a chain cut after 6 levels is a gap ("AKit reads at
+  most 6 levels above a named work item"). The brief prompt says the brief's own answer stays in
+  English; `log.brief` goes only to the verifier's prompt, the app and Translate, never to a
+  draft (ReviewPlan doesn't read it).
 
 The Review screen of a run: **Overview** (points, modules, flow) on top, then the tabs **Map**
 (R40) and the requests.

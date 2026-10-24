@@ -395,11 +395,12 @@ public enum ReviewResolver {
     }
 
     /// The default overview language (R46): the first of the Mac's preferred languages
-    /// (`Locale.preferredLanguages`, such as `ru-CZ`) by its first two letters, when it is a
-    /// `LabLanguage`; else English.
+    /// (`Locale.preferredLanguages`, such as `ru-CZ` or `zh-Hans`) by its language code before
+    /// the first `-`, when it is a `LabLanguage`; else English (`fil` is not Finnish).
     public static func preferredLanguage(_ preferred: [String]) -> LabLanguage {
         guard let first = preferred.first else { return .english }
-        return LabLanguage(rawValue: String(first.prefix(2)).lowercased()) ?? .english
+        let code = first.split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? ""
+        return LabLanguage(rawValue: code.lowercased()) ?? .english
     }
 
     /// `akit review config show`: every resolved value with its source.

@@ -148,6 +148,12 @@ public enum ReviewGather {
                 how: "Check that the tracker MCP server can read the item's parent.",
                 effect: "The overview's why can't name the goal above #\(stop.item).")
         }
+        for stop in kept.cut where local == nil {
+            gap(tracker, "Work item #\(stop.parent), the parent of #\(stop.item)",
+                "AKit reads at most \(maxChainLevels) levels above a named work item, so the chain is cut at #\(stop.item).",
+                how: "Read the items above it in the tracker, or in Discuss in Pi….",
+                effect: "The overview's why can't name the goal above #\(stop.item).")
+        }
         if ids.isEmpty {
             progress("No work item in the branch \(mr.sourceBranch): the review checks the code alone (contracts, regressions).")
         }
@@ -697,12 +703,15 @@ public enum ReviewGather {
     /// The work items Gather keeps (R39, R48): each named item, then its parent, the parent's
     /// parent and so on (at most `maxChainLevels`, a visited set against loops), then the items
     /// related to a named item. `unread`: where a chain stops because the fetch pass didn't read
-    /// the parent an item names.
-    static func keptWorkItems(_ all: [WorkItem], named ids: [Int]) -> (items: [WorkItem], unread: [(item: Int, parent: Int)]) {
+    /// the parent an item names; `cut`: where a chain stops after `maxChainLevels` though the
+    /// item there names a parent.
+    static func keptWorkItems(_ all: [WorkItem], named ids: [Int])
+        -> (items: [WorkItem], unread: [(item: Int, parent: Int)], cut: [(item: Int, parent: Int)]) {
         var byID: [Int: WorkItem] = [:]
         for item in all where byID[item.id] == nil { byID[item.id] = item }
         var kept: [WorkItem] = []
         var unread: [(item: Int, parent: Int)] = []
+        var cut: [(item: Int, parent: Int)] = []
         func keep(_ item: WorkItem, _ reason: String) -> Bool {
             guard !kept.contains(where: { $0.id == item.id }) else { return false }
             var item = item
@@ -710,13 +719,19 @@ public enum ReviewGather {
             kept.append(item)
             return true
         }
+        // Named items first: one that is also a parent of another named item stays "named".
         for id in ids {
-            guard let named = byID[id] else { continue }
-            _ = keep(named, "named by the merge request")
-            var current = named
+            if let named = byID[id] { _ = keep(named, "named by the merge request") }
+        }
+        for id in ids {
+            guard var current = byID[id] else { continue }
             var visited: Set<Int> = [id]
-            for _ in 0..<maxChainLevels {
-                guard let parent = current.parents.first, visited.insert(parent).inserted else { break }
+            var level = 0
+            while let parent = current.parents.first, visited.insert(parent).inserted {
+                guard level < maxChainLevels else {
+                    cut.append((current.id, parent))
+                    break
+                }
                 guard let item = byID[parent] else {
                     unread.append((current.id, parent))
                     break
@@ -724,6 +739,7 @@ public enum ReviewGather {
                 // A chain already kept from another named item goes on from there.
                 guard keep(item, "parent of #\(current.id)") else { break }
                 current = item
+                level += 1
             }
         }
         for id in ids {
@@ -731,7 +747,7 @@ public enum ReviewGather {
                 if let item = byID[related] { _ = keep(item, "related to #\(id)") }
             }
         }
-        return (kept, unread)
+        return (kept, unread, cut)
     }
 
     /// `work-items.md`: each named item's chain from the top down (Epic → … → the named item),

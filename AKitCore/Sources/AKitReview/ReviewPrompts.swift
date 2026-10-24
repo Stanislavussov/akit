@@ -164,7 +164,8 @@ public enum ReviewPrompts {
 
         Then call akit_submit_overview once: an overview for the developer in AKit, never posted. Write its texts (the points, \
         the modules' names and why, the flow's labels) in \(language.name) (`\(language.rawValue)`). Only the overview uses \
-        this language: the brief, findings, notes and gaps keep the language the rules above give them. \
+        this language: your brief answer stays in English, and findings, notes and gaps keep the language the rules above \
+        give them. \
         `points`: 3–5 short points on what happens. `modules`: the parts that change, each with its changed files (paths as in \
         changes.md) and why it changes. Take the why from the work items in work-items.md, from the top of the chain down (the \
         epic's or feature's goal, then the user story, then the task), from the merge request's description and from the \
@@ -172,8 +173,9 @@ public enum ReviewPrompts {
         Mermaid `flowchart` (or a `sequenceDiagram` with `flow_kind: "sequenceDiagram"`) of the path a request or data takes \
         through the system where the change is (UI → micro-frontend → API → service → database, a job, an event), at most 40 \
         nodes and 6000 characters. Mark the changed parts: `classDef changed fill:#fde68a,stroke:#b45309` and \
-        `class A,B changed`. Quote labels with `"…"`; no `click`, links, HTML (only `<br/>`), `%%{` or scripts: AKit drops \
-        such a flow.
+        `class A,B changed`. Quote labels with `"…"`; no `click`, links or URLs, `@{…}` shapes or images, HTML (only `<br/>`), \
+        `%%{`, scripts, CSS beyond fill, stroke, stroke-width, color, stroke-dasharray and font-weight, or ids that start with \
+        `akit_`: AKit drops such a flow.
         """
     }
 
