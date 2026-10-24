@@ -122,6 +122,28 @@ struct MCPCheckTests {
         #expect(MCPCheck.parsePiList("zsh: no job control\nnot json", folder: "/x", checkedAt: date) == nil)
     }
 
+    // MARK: Review fixes
+
+    @Test func issueTextThatLooksLikeAStatusDoesntHideTheStatus() {
+        let line = "x: cmd - ✘ Failed to connect — error - ! foo"
+        #expect(MCPCheck.claudeStatusPart(line) == "✘ Failed to connect — error - ! foo")
+        let results = MCPCheck.parseClaudeList(line, names: ["x"], folder: "/x", checkedAt: date)
+        #expect(results.first?.state == .failed)
+    }
+
+    @Test func piJSONAfterAnotherJSONLine() throws {
+        let output = "{\"warning\": \"old config\"}\n{\"servers\": [{\"name\": \"p\", \"enabled\": true, \"state\": \"connected\", \"tools\": []}]}"
+        let results = try #require(MCPCheck.parsePiList(output, folder: "/x", checkedAt: date))
+        #expect(results.map(\.state) == [.connected])
+    }
+
+    @Test func missingVariablesKeepAStateWithItsOwnFix() async throws {
+        let env = try fakeTools(claude: "x:\n  Status: ⏸ Pending approval (run `claude` to approve)", pi: "")
+        let results = await MCPCheck.run([MCPCheck.Request(harness: .claudeCode, folder: home, names: ["x"], variables: ["x": ["NOWHERE_TOKEN"]])], in: env, shellTimeout: 120)
+        #expect(results.first?.state == .pendingApproval)
+        #expect(results.first?.missingVariables == ["NOWHERE_TOKEN"])
+    }
+
     // MARK: Requests
 
     @Test func requestsGroupByHarnessAndFolder() throws {
@@ -167,7 +189,7 @@ struct MCPCheckTests {
             MCPCheck.Request(harness: .claudeCode, folder: home, names: ["x"], variables: ["x": ["SHELL_ONLY_TOKEN", "NOWHERE_TOKEN"]]),
             MCPCheck.Request(harness: .pi, folder: project, names: ["p"]),
         ]
-        let results = await MCPCheck.run(requests, in: env, now: { Date(timeIntervalSince1970: 1_800_000_000) })
+        let results = await MCPCheck.run(requests, in: env, shellTimeout: 120, now: { Date(timeIntervalSince1970: 1_800_000_000) })
         let claude = try #require(results.first { $0.harness == HarnessID.claudeCode.rawValue })
         #expect(claude.state == .missingVariables)
         #expect(claude.missingVariables == ["NOWHERE_TOKEN"])
@@ -186,7 +208,7 @@ struct MCPCheckTests {
 
     @Test func piUntrustedProjectIsNotAFailure() async throws {
         let env = try fakeTools(claude: "", pi: #"{"servers":[],"errors":[],"note":"/x/.pi/mcp.json is ignored because the project is not trusted."}"#)
-        let results = await MCPCheck.run([MCPCheck.Request(harness: .pi, folder: project, names: ["p"])], in: env)
+        let results = await MCPCheck.run([MCPCheck.Request(harness: .pi, folder: project, names: ["p"])], in: env, shellTimeout: 120)
         #expect(results.map(\.state) == [.untrustedProject])
     }
 
@@ -243,6 +265,11 @@ struct MCPApproveTests {
         #expect(saved.value(at: ["enabledMcpjsonServers"]) == .array([.string("other"), .string("shared")]))
         #expect(saved.value(at: ["env", "API_TOKEN"]) == .string("sk-live-abcdefghijklmnopqrstuvwxyz012345"))
         #expect(throws: SettingsFile.Failure.self) { try MCPApprove.plan("shared", project: project, env: env) }
+    }
+
+    @Test func aKeyThatIsNoListIsRefused() throws {
+        try Data(#"{"enabledMcpjsonServers": "shared"}"#.utf8).write(to: MCPApprove.file(in: project))
+        #expect(throws: SettingsFile.Failure.self) { try MCPApprove.plan("other", project: project, env: env) }
     }
 
     @Test func createsTheFileWhenMissing() throws {

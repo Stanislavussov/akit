@@ -21,10 +21,13 @@ public enum MCPApprove {
         let home = env.homeDirectory
         let file = file(in: project)
         let current = try SettingsFile.read(file, home: home)?.value
-        var names = current?.value(at: ["enabledMcpjsonServers"]).flatMap { value -> [JSONValue]? in
-            if case .array(let items) = value { return items }
-            return nil
-        } ?? []
+        var names: [JSONValue] = []
+        switch current?.value(at: ["enabledMcpjsonServers"]) {
+        case nil: break
+        case .array(let items)?: names = items
+        default:
+            throw SettingsFile.Failure("enabledMcpjsonServers in \(FileWalk.tilde(file, home: home)) isn't a list; fix it by hand first.")
+        }
         if names.contains(.string(name)) {
             throw SettingsFile.Failure("“\(name)” is already approved in \(FileWalk.tilde(file, home: home)).")
         }

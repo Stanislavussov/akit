@@ -51,8 +51,10 @@ struct MCPServerEditor: View {
     @State private var error: String?
     @State private var isApplying = false
     @State private var done: MCPWriter.Outcome?
-    /// The plan Apply wrote, for the check after it, Edit Again and Undo.
+    /// The plan Apply wrote last, for the check after it and Edit Again.
     @State private var applied: MCPWritePlan?
+    /// The first plan Apply wrote in this sheet: Undo goes back to before it.
+    @State private var firstApplied: MCPWritePlan?
     /// The shown plan takes an applied one back.
     @State private var undoing = false
     /// Edit Again: the form now edits the server as Apply wrote it.
@@ -117,7 +119,7 @@ struct MCPServerEditor: View {
     private var form: some View {
         Form {
             if !catalogNotes.isEmpty {
-                Section("From the Catalog") {
+                Section(copying == nil ? "From the Catalog" : "Copy") {
                     ForEach(catalogNotes, id: \.self) { note in
                         Text(note).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                     }
@@ -144,7 +146,8 @@ struct MCPServerEditor: View {
                 values("Headers", $draft.headers, keyPrompt: "Authorization")
             }
             Section("Where") {
-                if editing == nil {
+                // After Edit Again the server stays where Apply wrote it.
+                if editing == nil, editedName == nil {
                 Picker("Add to", selection: $targetID) {
                     ForEach(targetGroups, id: \.scope) { group in
                         Section(group.title) {
@@ -357,7 +360,7 @@ struct MCPServerEditor: View {
                 if let applied, let server = appliedServer, !model.mcpCheckProblems(of: server).isEmpty,
                    !model.mcpChecks(of: server).contains(where: { model.mcpChecking.contains($0.id) }) {
                     Button("Undo…") { undo(applied) }
-                        .help(applied.originalName == nil ? "Delete “\(applied.name)” again (a diff first)"
+                        .help((firstApplied ?? applied).originalName == nil ? "Delete “\(applied.name)” again (a diff first)"
                                                           : "Put the entry back as it was before Apply (a diff first)")
                     Button("Edit Again") { editAgain(applied) }
                 }
@@ -393,7 +396,10 @@ struct MCPServerEditor: View {
                 if model.lastScan != nil { error = "AKit can't read the entry of “\(server.name)”." }
                 return
             }
-            draft = MCPDraft.editing(name: server.name, entry: raw.entry, dialect: source.dialect, keychain: KeychainSecretStore())
+            let copy = MCPDraft.copying(name: server.name, entry: raw.entry, from: source.dialect, toClaude: harness == .claudeCode,
+                                        keychain: KeychainSecretStore())
+            draft = copy.draft
+            catalogNotes = copy.notes
             argumentLine = MCPDraft.joinArguments(draft.arguments)
             // Only the places the other harness alone reads: the same level (a project's own file) when it has one.
             targets = targets.filter { $0.harnesses == [harness] && $0.blockedReason == nil }
@@ -487,6 +493,7 @@ struct MCPServerEditor: View {
             // A new or changed server: does it connect? (docs/design/mcp-check.md)
             guard !plan.isRemoval, !undoing else { return }
             applied = plan
+            if firstApplied == nil { firstApplied = plan }
             if let server = appliedServer { await model.checkMCP([server]) }
         }
     }
@@ -505,7 +512,7 @@ struct MCPServerEditor: View {
     /// The undo plan in the preview: a diff first, then Undo writes it.
     private func undo(_ applied: MCPWritePlan) {
         do {
-            plan = try MCPWriter.undoPlan(of: applied, home: HarnessEnvironment.current.homeDirectory)
+            plan = try MCPWriter.undoPlan(of: firstApplied ?? applied, last: applied, home: HarnessEnvironment.current.homeDirectory)
             undoing = true
             self.applied = nil
             done = nil

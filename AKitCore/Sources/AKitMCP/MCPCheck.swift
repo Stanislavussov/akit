@@ -57,9 +57,11 @@ public enum MCPCheck {
 
     /// Runs the requests one after the other (each starts the user's servers) and returns a
     /// result for every requested name, plus Pi's other servers in that folder.
-    public static func run(_ requests: [Request], in env: HarnessEnvironment, now: @Sendable () -> Date = Date.init) async -> [MCPCheckResult] {
+    /// `shellTimeout`: how long the login shell may take to start (a busy Mac scans new programs).
+    public static func run(_ requests: [Request], in env: HarnessEnvironment, shellTimeout: TimeInterval = 30,
+                           now: @Sendable () -> Date = Date.init) async -> [MCPCheckResult] {
         guard !requests.isEmpty else { return [] }
-        let shell = await LoginShell.variables(in: env)
+        let shell = await LoginShell.variables(in: env, timeout: shellTimeout)
         var results: [MCPCheckResult] = []
         for request in requests {
             results += await run(request, shell: shell, in: env, now: now)
@@ -121,11 +123,13 @@ public enum MCPCheck {
                                  detail: "\(program) doesn't list this server in \(FileWalk.tilde(folder, home: env.homeDirectory)).", checkedAt: date))
         }
         // A server that didn't connect while a variable it needs is missing: name the variable.
+        // Only a plain failure becomes Missing Variables; Pending Approval, Needs Sign-In and the
+        // others keep their state (and their fix), with the variables named beside it.
         for index in parsed.indices where parsed[index].state.isProblem {
             let missing = (request.variables[parsed[index].name] ?? []).filter { (shell.values[$0] ?? "").isEmpty }
             guard !missing.isEmpty else { continue }
             parsed[index].missingVariables = missing
-            parsed[index].state = .missingVariables
+            if parsed[index].state == .failed || parsed[index].state == .timedOut { parsed[index].state = .missingVariables }
         }
         return parsed
     }
@@ -176,9 +180,11 @@ public enum MCPCheck {
 
     private static let statusMarks: [Character] = ["✔", "✓", "✘", "✗", "!", "⏸", "-"]
 
-    /// The text after the last ` - ` that starts a status (a mark and a word).
+    /// The status: the text after the last ` - ` that starts one (a mark and a word), searched
+    /// only before the issue (` — `), whose text may hold such a piece too.
     static func claudeStatusPart(_ line: String) -> String? {
-        var search = line.endIndex
+        let issueStart = line.range(of: " — ")?.lowerBound ?? line.endIndex
+        var search = issueStart
         while let range = line.range(of: " - ", options: .backwards, range: line.startIndex..<search) {
             let rest = line[range.upperBound...]
             if let first = rest.first, statusMarks.contains(first), rest.dropFirst().first == " " { return String(rest) }
@@ -232,12 +238,21 @@ public enum MCPCheck {
         piJSON(output)?["note"] as? String
     }
 
-    /// The JSON object in the output: from the first line that is `{` (a login shell may print before it).
+    /// The JSON object with `servers` in the output: tried from each line that starts with `{`
+    /// (a login shell or a warning may print before it).
     private static func piJSON(_ output: String) -> [String: Any]? {
-        guard let start = output.range(of: "\n{")?.lowerBound ?? (output.hasPrefix("{") ? output.startIndex : nil),
-              let end = output.range(of: "}", options: .backwards)?.upperBound, start < end else { return nil }
-        let text = output[start..<end]
-        return (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+        guard let end = output.range(of: "}", options: .backwards)?.upperBound else { return nil }
+        var starts = output.hasPrefix("{") ? [output.startIndex] : []
+        var from = output.startIndex
+        while let range = output.range(of: "\n{", range: from..<output.endIndex) {
+            starts.append(output.index(after: range.lowerBound))
+            from = range.upperBound
+        }
+        for start in starts where start < end {
+            if let object = (try? JSONSerialization.jsonObject(with: Data(output[start..<end].utf8))) as? [String: Any],
+               object["servers"] != nil { return object }
+        }
+        return nil
     }
 
     /// Error text from a harness may quote a command line or a URL with a token in it.

@@ -87,6 +87,13 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
   for single tools now (Pi `toolExposure`, Claude `mcp__server__tool` deny rules stay
   read-only). Built without the Insights use of each tool: the app model doesn't hold tool
   stats (only the Insights screen loads them); see Later.
+- **Review round (2026-10-24).** Only Failed and Timed Out become Missing Variables (Pending
+  Approval, Needs Sign-In keep their fix, with the variables named); after Edit Again the
+  server stays in its file; Undo goes back to before the sheet's first Apply and refuses
+  when Claude's entry changed since; a check waits for a running one; Copy turns Pi's
+  `$env:VAR` into `${VAR}` for Claude Code and leaves out fields the form doesn't cover and
+  values that run a command of the source harness (named in the form); Approve refuses an
+  `enabledMcpjsonServers` that isn't a list.
 - **CLI.** `akit mcp check [NAME] [--harness claude|pi] [--project P]`, the same states and
   error text, exit 1 when a checked server isn't Connected.
 
@@ -104,4 +111,7 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 
 - Switches for single tools (Pi `toolExposure`, Claude deny rules).
 - Codex and OpenCode.
+- Error text from a harness is masked by `SecretFilter`, which knows token shapes and
+  secret-looking names; an unusual secret quoted in a command line (`--key=abc123`) can
+  still reach the result (review, 2026-10-24).
 - Next to each listed tool, whether Insights saw it called (needs the tool stats in the app model).

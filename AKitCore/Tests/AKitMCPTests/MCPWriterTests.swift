@@ -296,6 +296,9 @@ struct MCPWriterTests {
         let user = try #require(try targets().first { $0.claudeScope == "user" })
         let rename = try MCPWriter.plan(MCPDraft(name: "new", command: "new"), into: user, secretMode: .environment, replacing: "old",
                                         keychain: MemorySecretStore(), home: home)
+        // As Claude left it after Apply; Undo refuses while the entry differs.
+        #expect(throws: ConfigTextError.self) { try MCPWriter.undoPlan(of: rename, home: home) }
+        try write(".claude.json", #"{"mcpServers": {"new": \#(rename.entryCompact)}}"#)
         let undoRename = try MCPWriter.undoPlan(of: rename, home: home)
         let calls = CallLog()
         _ = try await MCPWriter.apply(undoRename, secrets: MemorySecretStore(), home: home) { args, _ in calls.add(args) }
@@ -331,6 +334,34 @@ struct MCPWriterTests {
         #expect(envValues["API_KEY"]?.hasPrefix("!") == true)
         #expect(envValues["GH"]?.hasPrefix("!") == true && envValues["GH"]?.contains("GH_TOKEN") == true)
         #expect(entry["args"] as? [String] == ["--port", "1"])
+    }
+
+    /// Copy from Pi to Claude Code: `$env:VAR` becomes `${VAR}`, a foreign `!command` and
+    /// fields Claude may not know are left out and named.
+    @Test func copyFromPiFitsTheEntryForClaude() {
+        let entry: [String: Any] = ["url": "https://x.example.com/mcp", "headers": ["Authorization": "Bearer $env:X_TOKEN", "X-Key": "!op read item"],
+                                    "exposure": "direct", "lifecycle": "keep-alive"]
+        let (draft, notes) = MCPDraft.copying(name: "x", entry: entry, from: .standard, toClaude: true, keychain: MemorySecretStore())
+        #expect(draft.headers.map(\.key) == ["Authorization"])
+        #expect(draft.headers.first?.value == "Bearer ${X_TOKEN}")
+        #expect(notes.contains { $0.contains("exposure, lifecycle") })
+        #expect(notes.contains { $0.contains("X-Key") })
+    }
+
+    /// Undo after Edit Again and a second Apply goes back to before the first one.
+    @Test func undoAfterTwoAppliesGoesBackToTheStart() async throws {
+        try write(".claude/settings.json", "{}")
+        try write("Projects/app/.mcp.json", #"{"mcpServers": {"a": {"command": "a"}}}"#)
+        let shared = try #require(try targets().first { $0.file.lastPathComponent == ".mcp.json" })
+        let start = try String(contentsOf: shared.file, encoding: .utf8)
+        let first = try MCPWriter.plan(MCPDraft(name: "a", command: "b"), into: shared, secretMode: .environment, replacing: "a",
+                                       keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(first, secrets: MemorySecretStore(), home: home) { _, _ in }
+        let second = try MCPWriter.plan(MCPDraft(name: "a", command: "c"), into: shared, secretMode: .environment, replacing: "a",
+                                        keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(second, secrets: MemorySecretStore(), home: home) { _, _ in }
+        _ = try await MCPWriter.apply(try MCPWriter.undoPlan(of: first, last: second, home: home), secrets: MemorySecretStore(), home: home) { _, _ in }
+        #expect(try String(contentsOf: shared.file, encoding: .utf8) == start)
     }
 
     /// The real-CLI `apply` with a fake `claude` script: arguments, PATH, masked failure output.

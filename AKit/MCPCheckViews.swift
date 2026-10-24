@@ -27,7 +27,12 @@ extension AppModel {
         let ids = Set(requests.flatMap { request in
             request.names.map { MCPCheckResult.key(harness: request.harness.rawValue, name: $0, folder: request.folder.standardizedFileURL.path) }
         })
-        guard !ids.isEmpty, ids.isDisjoint(with: mcpChecking) else { return }
+        guard !ids.isEmpty else { return }
+        // A check of these servers is running (Check All): wait for it, so this one sees the
+        // config as it is now (the check after Apply).
+        while !ids.isDisjoint(with: mcpChecking) {
+            try? await Task.sleep(for: .milliseconds(300))
+        }
         mcpChecking.formUnion(ids)
         defer { mcpChecking.subtract(ids) }
         let results = await MCPCheck.run(requests, in: env)
@@ -208,8 +213,11 @@ struct MCPApproveSheet: View {
         }
         .padding(20)
         .frame(width: 520)
-        .onAppear {
-            do { plan = try MCPApprove.plan(server.name, project: project, env: .current) } catch { self.error = error.localizedDescription }
+        .task {
+            // Off the main thread: the plan asks git whether the file is tracked.
+            let name = server.name, project = project
+            do { plan = try await Task.detached { try MCPApprove.plan(name, project: project, env: .current) }.value }
+            catch { self.error = error.localizedDescription }
         }
     }
 
