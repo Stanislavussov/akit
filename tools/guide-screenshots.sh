@@ -54,6 +54,28 @@ CELL=20261001-071100-c011                                   # a variant cell tha
 REVIEW=20261001-120000-demo
 
 shot overview            $MAIN --section overview
+# Only for this shot: Pi settings and MCP servers with a few mistakes, a stand-in MCP server
+# command, and a stand-in pi that answers pi mcp list and pi auth check. Removed afterwards.
+if [[ "$ONLY" == "  " || "$ONLY" == *" overview-pi-doctor "* ]]; then
+    PI_BIN="$DEMO/.local/bin/pi"
+    cp "$PI_BIN" "$PI_BIN.keep"
+    cat > "$PI_BIN" <<'EOF'
+#!/bin/sh
+case "$1" in
+  mcp) echo '{"servers": [{"name": "notes", "scope": "global", "enabled": true, "state": "connected", "tools": ["search", "read", "create", "tag"]}, {"name": "github", "scope": "global", "enabled": true, "state": "needs-auth", "tools": []}], "errors": []}' ;;
+  auth) echo '{"status": "ready", "provider": "anthropic", "authType": "oauth"}' ;;
+  *) echo "1.0.4" ;;
+esac
+EOF
+    printf '#!/bin/sh\n' > "$DEMO/.local/bin/notes-mcp" && chmod +x "$DEMO/.local/bin/notes-mcp"
+    printf '{\n  "defaultProvider": "anthropic",\n  "defaultModel": "claude-sonnet-4-5",\n  "defaultThinkingLevel": "hihg",\n  "showTokens": true\n}\n' > "$DEMO/.pi/agent/settings.json"
+    printf '{"mcpServers": {\n  "notes": {"command": "notes-mcp"},\n  "github": {"url": "https://api.githubcopilot.com/mcp/", "headers": {"Authorization": "Bearer ${GITHUB_TOKEN}"}},\n  "browser": {"command": "playwright-mcp"}\n}}\n' > "$DEMO/.pi/agent/mcp.json"
+fi
+shot overview-pi-doctor  $MAIN --section overview --tab pi-doctor --delay 6 --capture
+if [[ -e "${PI_BIN:-}.keep" ]]; then
+    mv "$PI_BIN.keep" "$PI_BIN"
+    rm -f "$DEMO/.local/bin/notes-mcp" "$DEMO/.pi/agent/settings.json" "$DEMO/.pi/agent/mcp.json"
+fi
 shot skills              $MAIN --section skills
 shot skills-switch       $MAIN --section skills --query tdd --add
 shot skills-invocation   $MAIN --section skills --tab invocation --select grilling

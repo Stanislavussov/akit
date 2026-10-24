@@ -113,6 +113,8 @@ private struct HarnessCard: View {
     let onEdit: (() -> Void)?
     @State private var confirmRemove = false
     @State private var removeError: String?
+    /// Check Pi… (snapshot: `--section overview --tab pi-doctor`, `--capture` also runs the live part).
+    @State private var checkingPi = DebugSnapshot.options?.tab == "pi-doctor"
 
     var body: some View {
         GroupBox {
@@ -150,6 +152,12 @@ private struct HarnessCard: View {
                 if let version {
                     Text(version).font(.callout).foregroundStyle(.secondary)
                 }
+                if installation.id == .pi {
+                    Spacer()
+                    Button("Check Pi…") { checkingPi = true }
+                        .controlSize(.small)
+                        .help("What is wrong in Pi's setup, like claude doctor (the same as akit doctor pi)")
+                }
                 if let onEdit {
                     Text("Custom").font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -164,6 +172,9 @@ private struct HarnessCard: View {
             "Config: \(installation.configRoot.tildePath)",
             installation.isCustom ? "Described by the user (Custom)" : "",
         ])
+        .sheet(isPresented: Binding(get: { checkingPi && installation.id == .pi }, set: { checkingPi = $0 })) {
+            PiDoctorSheet()
+        }
         .confirmationDialog("Remove “\(installation.displayName)” from AKit?", isPresented: $confirmRemove,
                             titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
