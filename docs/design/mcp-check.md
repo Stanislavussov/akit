@@ -1,0 +1,90 @@
+# MCP check: does the server connect, and what to do when it doesn't
+
+Status: designed 2026-10-24 (grilling with the user), not built. Steps in [Steps](#steps).
+
+## Goal
+
+AKit adds, edits and switches MCP servers, but it can't say whether a server works. The
+user finds out in the next agent session, often as a missing tool. This design adds a
+check from AKit, a fix button for each failure that has one fix, a copy of a server from
+one harness to the other, and the list of a server's tools.
+
+```
+Add / Edit → Apply ──► check this server ──► Connected ✓
+                 ▲                      ├──► Needs Sign-In    → Sign In…
+                 │                      ├──► Pending Approval → Approve…
+                 │                      ├──► Missing Variables → Set Variable…
+                 └── Edit Again / Undo ◄┴──► Failed / Timed Out (error text)
+```
+
+## Decisions
+
+- **The harness checks, not AKit.** AKit doesn't speak MCP. It asks the harness that
+  will run the server, so the result is what a session will get. Only Claude Code and Pi.
+
+  | | Claude Code | Pi |
+  |---|---|---|
+  | One server | `claude mcp get NAME` | — |
+  | All servers | `claude mcp list` | `pi mcp list --json` |
+  | Output | text: Connected, Failed, Needs authentication, Pending approval | JSON per server: `state`, `tools`, `error` (with the tail of stderr), `exposure`, `enabled`; `note` for an untrusted project |
+  | Sign in | `claude mcp login NAME` | `pi mcp login NAME` |
+
+  Pi (checked in 1.0.4 and 1.4.0, the newest on npm on 2026-10-24) has no CLI check of one
+  server: `pi mcp list` refuses a name (`dist/extensions/mcp/cli.js`), and
+  `pi -p "/mcp reconnect NAME"` starts a session, which connects every server too
+  (`docs/mcp.md`). So AKit runs `pi mcp list --json`, shows the server asked for first and
+  keeps the other results, which cost nothing more.
+- **When.** By a button: Check Connection on a server, Check All in the toolbar. And by
+  itself after Apply in Add / Edit, for that server. Never when the screen opens: a check
+  starts real processes (`npx`, `uvx`, docker) and may open OAuth.
+- **Where.** The check runs in a folder, because that decides what the harness sees. A
+  project server: in its project. A global server: in the project of the screen's filter
+  (`Project · X`) when one is chosen, else in the home folder. So a server off in that
+  project, or replaced by a project server with the same name, shows as such. A Pi project
+  that isn't trusted gets "Pi doesn't trust this project yet: start Pi there once", not
+  Failed.
+- **Environment.** AKit.app started from the Dock has no variables of the user's shell.
+  The check runs the harness through the user's login shell (`$SHELL -l -i -c …`), the same
+  environment as a terminal. Before that AKit compares the server's `variables`
+  (`MCPServer.variables`) with that environment and names the missing ones (Missing
+  Variables). Only the JSON or the status lines are read from the output, so text that a
+  `.zshrc` prints doesn't matter. Secrets in the `keychainLookup` mode work either way.
+- **Timeout** 90 s per check. On timeout: "Timed out after 90 s; the first run of npx may
+  download the package", and Check Again.
+- **States.** Connected, Failed (with the error), Needs Sign-In, Pending Approval (Claude,
+  `.mcp.json`), Untrusted Project (Pi), Off, Missing Variables, Timed Out. The last result
+  is kept with its time ("Connected · 5 min ago") until the next check.
+- **Fix buttons** next to the result:
+  - Sign In… runs `claude mcp login NAME` / `pi mcp login NAME` (it opens the browser),
+    waits, then checks again.
+  - Approve… adds the name to `enabledMcpjsonServers` of the project's entry in
+    `~/.claude.json` (where Claude's own approval goes; to verify before step 3). A write
+    to a harness file: backup and diff first, like the switches.
+  - Set Variable… stores the value in Keychain, like Set in Keychain… today.
+- **After a failed check from Apply** the sheet stays open: the result, its fix button,
+  Edit Again and Undo (the file back from the backup, or the new server removed). Nothing
+  is undone by itself: Needs Sign-In or a slow first `npx` is no config error.
+- **Copy to Pi… / Copy to Claude Code…** fills the Add Server form from the server. The
+  user picks where it goes (global or a project), reads the diff and presses Apply; the
+  check follows. Secret values are never copied; a Keychain reference is translated
+  between the harnesses' mechanisms (Claude's `headersHelper`, Pi's `!` lookups).
+- **Tools are only shown.** The tools of a Pi server from its last check, with their
+  exposure and whether Insights saw them used. No switches for single tools now (Pi
+  `toolExposure`, Claude `mcp__server__tool` deny rules stay read-only).
+- **CLI.** `akit mcp check [NAME] [--harness claude|pi] [--project P]`, the same states and
+  error text, exit 1 when a checked server isn't Connected.
+
+## Steps
+
+| # | Step | Status |
+|---|---|---|
+| 1 | The check core (both harnesses, folder, login shell, missing variables, timeout, saved results) and `akit mcp check` | — |
+| 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | — |
+| 3 | Sign In…, Set Variable…, Approve… (verify Claude's approval key first) | — |
+| 4 | Copy to Pi… / Copy to Claude Code… | — |
+| 5 | The tools of a Pi server | — |
+
+## Later
+
+- Switches for single tools (Pi `toolExposure`, Claude deny rules).
+- Codex and OpenCode.
