@@ -257,6 +257,113 @@ struct MCPWriterTests {
         #expect(calls.all.map { Array($0.prefix(2)) + [$0[4]] } == [["mcp", "add-json", "b"], ["mcp", "remove", "a"], ["mcp", "remove", "a"]]) // rename adds first
     }
 
+    /// Undo after a failed connection check: a new server goes, an edit is taken back.
+    @Test func undoOfAddEditAndClaudeEdit() async throws {
+        try write(".claude/settings.json", "{}")
+        try write("Projects/app/.mcp.json", #"{"mcpServers": {"a": {"command": "a", "env": {"K": "literal-secret-abc"}}}}"#)
+        let shared = try #require(try targets().first { $0.file.lastPathComponent == ".mcp.json" })
+        let original = try String(contentsOf: shared.file, encoding: .utf8)
+
+        let add = try MCPWriter.plan(MCPDraft(name: "n", command: "n"), into: shared, secretMode: .environment, keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(add, secrets: MemorySecretStore(), home: home) { _, _ in }
+        let undoAdd = try MCPWriter.undoPlan(of: add, home: home)
+        #expect(undoAdd.isRemoval)
+        _ = try await MCPWriter.apply(undoAdd, secrets: MemorySecretStore(), home: home) { _, _ in }
+        #expect((try read("Projects/app/.mcp.json")["mcpServers"] as? [String: Any]).map { Set($0.keys) } == ["a"])
+
+        let edit = try MCPWriter.plan(MCPDraft(name: "b", command: "b"), into: shared, secretMode: .environment, replacing: "a",
+                                      keychain: MemorySecretStore(), home: home)
+        let before = try String(contentsOf: shared.file, encoding: .utf8)
+        _ = try await MCPWriter.apply(edit, secrets: MemorySecretStore(), home: home) { _, _ in }
+        let undoEdit = try MCPWriter.undoPlan(of: edit, home: home)
+        #expect(!undoEdit.diff.map { "\($0)" }.joined().contains("literal-secret-abc"))
+        _ = try await MCPWriter.apply(undoEdit, secrets: MemorySecretStore(), home: home) { _, _ in }
+        #expect(try String(contentsOf: shared.file, encoding: .utf8) == before)
+        #expect(before.contains("literal-secret-abc") && original.contains("literal-secret-abc"))
+
+        // Changed by someone after Apply: Undo refuses rather than lose that change.
+        _ = try await MCPWriter.apply(try MCPWriter.plan(MCPDraft(name: "a", command: "z"), into: shared, secretMode: .environment,
+                                                         replacing: "a", keychain: MemorySecretStore(), home: home),
+                                      secrets: MemorySecretStore(), home: home) { _, _ in }
+        let later = try MCPWriter.plan(MCPDraft(name: "a", command: "y"), into: shared, secretMode: .environment, replacing: "a",
+                                       keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(later, secrets: MemorySecretStore(), home: home) { _, _ in }
+        try write("Projects/app/.mcp.json", #"{"mcpServers": {"a": {"command": "by hand"}}}"#)
+        #expect(throws: ConfigTextError.self) { try MCPWriter.undoPlan(of: later, home: home) }
+
+        // Claude's own file: the old entry goes back through the CLI, under its old name.
+        try write(".claude.json", #"{"mcpServers": {"old": {"command": "old"}}}"#)
+        let user = try #require(try targets().first { $0.claudeScope == "user" })
+        let rename = try MCPWriter.plan(MCPDraft(name: "new", command: "new"), into: user, secretMode: .environment, replacing: "old",
+                                        keychain: MemorySecretStore(), home: home)
+        // As Claude left it after Apply; Undo refuses while the entry differs.
+        #expect(throws: ConfigTextError.self) { try MCPWriter.undoPlan(of: rename, home: home) }
+        try write(".claude.json", #"{"mcpServers": {"new": \#(rename.entryCompact)}}"#)
+        let undoRename = try MCPWriter.undoPlan(of: rename, home: home)
+        let calls = CallLog()
+        _ = try await MCPWriter.apply(undoRename, secrets: MemorySecretStore(), home: home) { args, _ in calls.add(args) }
+        #expect(calls.all.map { Array($0.prefix(2)) + [$0[4]] } == [["mcp", "add-json", "old"], ["mcp", "remove", "new"]])
+        #expect(calls.all.first?.last == #"{"command":"old"}"#)
+    }
+
+    /// Copy to Pi…: the Claude entry fills the form with hidden values; a literal secret goes
+    /// into the Keychain and Pi's file gets a lookup, never the value; a Keychain item keeps its name.
+    @Test func copyFromClaudeToPi() async throws {
+        try write(".claude/settings.json", "{}")
+        try write(".pi/agent/mcp.json", #"{"mcpServers": {}}"#)
+        try write(".claude.json", #"{"mcpServers": {"api": {"command": "api-server", "args": ["--port", "1"], "env": {"API_KEY": "literal-secret-abc123", "MODE": "fast", "GH": "${GH_TOKEN}"}}}}"#)
+        let all = try targets()
+        let source = try #require(all.first { $0.claudeScope == "user" })
+        let pi = try #require(all.first { $0.harnesses == [.pi] && $0.scope == .global && $0.blockedReason == nil })
+        let server = try #require(MCPScanner.scan(installations: HarnessCatalog.detectAll(in: env), projects: [], in: env)
+            .servers.first { $0.name == "api" })
+        let raw = try #require(MCPWriter.rawEntry(of: server, target: source))
+        let keychain = MemorySecretStore()
+        try keychain.save("ghp_kept", for: "GH_TOKEN")
+        let draft = MCPDraft.editing(name: "api", entry: raw.entry, dialect: source.dialect, keychain: keychain)
+        #expect(draft.environment.allSatisfy { $0.value.isEmpty || $0.key == "MODE" })
+        let plan = try MCPWriter.plan(draft, into: pi, secretMode: .keychainLookup, keychain: keychain, home: home)
+        #expect(!plan.diff.map { "\($0)" }.joined().contains("literal-secret-abc123"))
+        _ = try await MCPWriter.apply(plan, secrets: keychain, home: home) { _, _ in }
+        let text = try String(contentsOf: pi.file, encoding: .utf8)
+        #expect(!text.contains("literal-secret-abc123"))
+        #expect(keychain.value("API_KEY") == "literal-secret-abc123")
+        let entry = try #require((try read(".pi/agent/mcp.json")["mcpServers"] as? [String: Any])?["api"] as? [String: Any])
+        let envValues = try #require(entry["env"] as? [String: String])
+        #expect(envValues["MODE"] == "fast")
+        #expect(envValues["API_KEY"]?.hasPrefix("!") == true)
+        #expect(envValues["GH"]?.hasPrefix("!") == true && envValues["GH"]?.contains("GH_TOKEN") == true)
+        #expect(entry["args"] as? [String] == ["--port", "1"])
+    }
+
+    /// Copy from Pi to Claude Code: `$env:VAR` becomes `${VAR}`, a foreign `!command` and
+    /// fields Claude may not know are left out and named.
+    @Test func copyFromPiFitsTheEntryForClaude() {
+        let entry: [String: Any] = ["url": "https://x.example.com/mcp", "headers": ["Authorization": "Bearer $env:X_TOKEN", "X-Key": "!op read item"],
+                                    "exposure": "direct", "lifecycle": "keep-alive"]
+        let (draft, notes) = MCPDraft.copying(name: "x", entry: entry, from: .standard, toClaude: true, keychain: MemorySecretStore())
+        #expect(draft.headers.map(\.key) == ["Authorization"])
+        #expect(draft.headers.first?.value == "Bearer ${X_TOKEN}")
+        #expect(notes.contains { $0.contains("exposure, lifecycle") })
+        #expect(notes.contains { $0.contains("X-Key") })
+    }
+
+    /// Undo after Edit Again and a second Apply goes back to before the first one.
+    @Test func undoAfterTwoAppliesGoesBackToTheStart() async throws {
+        try write(".claude/settings.json", "{}")
+        try write("Projects/app/.mcp.json", #"{"mcpServers": {"a": {"command": "a"}}}"#)
+        let shared = try #require(try targets().first { $0.file.lastPathComponent == ".mcp.json" })
+        let start = try String(contentsOf: shared.file, encoding: .utf8)
+        let first = try MCPWriter.plan(MCPDraft(name: "a", command: "b"), into: shared, secretMode: .environment, replacing: "a",
+                                       keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(first, secrets: MemorySecretStore(), home: home) { _, _ in }
+        let second = try MCPWriter.plan(MCPDraft(name: "a", command: "c"), into: shared, secretMode: .environment, replacing: "a",
+                                        keychain: MemorySecretStore(), home: home)
+        _ = try await MCPWriter.apply(second, secrets: MemorySecretStore(), home: home) { _, _ in }
+        _ = try await MCPWriter.apply(try MCPWriter.undoPlan(of: first, last: second, home: home), secrets: MemorySecretStore(), home: home) { _, _ in }
+        #expect(try String(contentsOf: shared.file, encoding: .utf8) == start)
+    }
+
     /// The real-CLI `apply` with a fake `claude` script: arguments, PATH, masked failure output.
     @Test func claudeCLIRunsWithEnvironmentAndMasksFailures() async throws {
         try write(".claude/settings.json", "{}")

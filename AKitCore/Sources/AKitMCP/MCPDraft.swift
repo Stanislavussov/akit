@@ -305,6 +305,49 @@ extension MCPDraft {
         return draft
     }
 
+    /// Copy to Pi… / Copy to Claude Code…: the `editing` draft of an entry, made fit for the
+    /// other harness. Values stay hidden. Fields the form doesn't cover (`cwd`, `lifecycle`,
+    /// `exposure`, a foreign `headersHelper`, …) are left out, since the other harness may not
+    /// know them; a value that runs a command of the source harness (Pi's `!cmd`) is left out
+    /// too; Pi's `$env:VAR` becomes `${VAR}` for Claude Code. The notes name what was left out.
+    public static func copying(name: String, entry: [String: Any], from dialect: MCPSource.Dialect, toClaude: Bool,
+                               keychain: SecretStore) -> (draft: MCPDraft, notes: [String]) {
+        var draft = editing(name: name, entry: entry, dialect: dialect, keychain: keychain)
+        var notes: [String] = []
+        if let preserved = draft.preservedJSON,
+           let object = try? JSONSerialization.jsonObject(with: Data(preserved.utf8)) as? [String: Any], !object.isEmpty {
+            notes.append("Not copied (the other harness may not know them; add them by hand if it does): \(object.keys.sorted().joined(separator: ", ")).")
+        }
+        draft.preservedJSON = nil
+        var commands: [String] = []
+        func fit(_ values: [Value]) -> [Value] {
+            values.compactMap { value in
+                if value.existingLiteral?.hasPrefix("!") == true {
+                    commands.append(value.key)
+                    return nil
+                }
+                var value = value
+                if toClaude { value.value = piReferences(value.value) }
+                return value
+            }
+        }
+        draft.environment = fit(draft.environment)
+        draft.headers = fit(draft.headers)
+        if toClaude {
+            draft.url = piReferences(draft.url)
+            draft.arguments = draft.arguments.map(piReferences)
+        }
+        if !commands.isEmpty {
+            notes.append("Not copied, they run a command in the source harness: \(commands.joined(separator: ", ")). Set them here by hand.")
+        }
+        return (draft, notes)
+    }
+
+    /// Pi's `$env:VAR` → `${VAR}`.
+    static func piReferences(_ text: String) -> String {
+        text.replacingOccurrences(of: #"\$env:([A-Za-z_][A-Za-z0-9_]*)"#, with: "${$1}", options: .regularExpression)
+    }
+
     /// `${VAR}` or `{env:VAR}` and nothing else → VAR.
     static func pureReference(_ text: String) -> String? {
         for pattern in [#"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$"#, #"^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$"#] {

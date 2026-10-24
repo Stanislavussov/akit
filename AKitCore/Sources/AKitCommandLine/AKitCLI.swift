@@ -84,6 +84,16 @@ public enum AKitCLI {
                                           ~/.claude/settings.json
                                           Each shows the change (only the changed entries); --yes writes
                                           it after a backup and refuses if those entries changed meanwhile.
+          akit mcp check [NAME] [--harness claude|pi] [--project PATH]
+                                          Does the server connect? Asks the harness (claude mcp get / list,
+                                          pi mcp list --json) with your login shell's environment, in the
+                                          server's project, or for a global server in --project or the
+                                          home folder. Names missing variables; Pi also lists the tools.
+                                          Exit 1 when a checked server doesn't connect (Off is fine)
+          akit mcp approve NAME --project PATH [--yes]
+                                          Claude Code's approval of the project's .mcp.json server NAME:
+                                          the name in enabledMcpjsonServers of .claude/settings.local.json
+                                          (only that key is shown; --yes writes it after a backup)
                                           Plugin servers have no switch: turn the plugin off with /plugin
           akit mcp login NAME --harness pi [--yes]
                                           Pi's OAuth sign-in for a server: shows the command; --yes runs

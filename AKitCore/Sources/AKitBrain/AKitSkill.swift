@@ -183,6 +183,31 @@ core or the home folder when a project fails. Blocked lines: a project with its 
 first), a claude.ai, plugin or Pi package skill (use `akit skills set` instead). For 3+
 projects suggest a layer instead.
 
+## MCP servers
+
+When an MCP server doesn't work in Claude Code or Pi, ask the harness itself:
+
+```
+akit mcp check [NAME] [--harness claude|pi] [--project PATH]
+```
+
+It runs `claude mcp get NAME` / `claude mcp list` or `pi mcp list --json` in the server's
+project (a global server in `--project` or the home folder), with the login shell's
+environment. One line per server: Connected, Failed (with the harness's error), Missing
+Variables (named), Needs Sign-In, Pending Approval, Untrusted Project, Off, Timed Out,
+Not Found; Pi also counts the tools. Exit 1 when a checked server doesn't connect (Off is
+fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
+
+- Missing Variables: the user stores the value (MCP Servers → Set Variable… in the app);
+  never ask for or print the token.
+- Needs Sign-In: the user runs `claude mcp login NAME` or `pi mcp login NAME` (a browser).
+- Pending Approval (a project's `.mcp.json` server in Claude Code):
+  `akit mcp approve NAME --project PATH` shows the one key it adds
+  (`enabledMcpjsonServers` of `.claude/settings.local.json`); after a yes, `--yes` writes it
+  with a backup. Never show or read the rest of that file.
+- Off without deleting: `akit mcp state [NAME]`, `akit mcp set NAME --harness claude|pi
+  --off everywhere | --off project --project PATH | --on` (shows the change; `--yes` writes).
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.
