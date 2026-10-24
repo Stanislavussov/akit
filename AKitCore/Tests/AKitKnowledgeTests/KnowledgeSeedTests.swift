@@ -130,6 +130,19 @@ struct KnowledgeSeedTests {
             return try index.search("order created").results.first.map { $0.score < KnowledgeIndex.missScore } == true
                 && (unrelated.isEmpty || unrelated[0].score >= KnowledgeIndex.missScore)
         }),
+        // Focus and context (3.2b): the demo's ~/Projects/orders-api has orders-api's remote.
+        ("kb context: orders-api's remote focuses payments (repo:), ~/Projects/shipping-* logistics (area.yaml)", { base in
+            let home = URL(filePath: "/Users/demo")
+            return base.focus(remote: "git@example.com:shop/orders-api.git", folder: home.appending(path: "Projects/orders-api"), home: home)
+                == .init(area: "payments", source: .repo)
+                && base.focus(remote: nil, folder: home.appending(path: "Projects/shipping-labels"), home: home)
+                == .init(area: "logistics", source: .areaSettings)
+        }),
+        ("kb context's card of payments has its notes and the events arrow, under 4000 tokens", { base in
+            let card = try KnowledgeIndex(base: base).context(focus: "payments")
+            return card.systems.count == 6 && card.relations == [.init(from: "payments/orders-api", kind: "events", to: "payments/billing")]
+                && card.tokens <= Budget.defaultTokens && !card.truncated
+        }),
     ]
 
     static func links(in text: String) -> [String] {

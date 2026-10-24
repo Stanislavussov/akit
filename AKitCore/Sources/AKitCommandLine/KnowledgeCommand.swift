@@ -44,6 +44,19 @@ extension AKitCLI {
                                         git-ignored) up to the files, or build it again. search
                                         does it itself; "stale": true means another process holds
                                         the index and the answer comes from its last state
+      akit kb neighbors NOTE [--depth 1|2] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                        The arrows to and from a note on every map, from the index
+                                        (with --depth 2 also those of the notes one arrow away)
+      akit kb context [FOLDER] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                        The card to read at the start of a task about systems:
+                                        the project's focus area (FOLDER, default the current one),
+                                        its notes with a title and one line, the arrows touching
+                                        them and their neighbours in other areas; at most 4000
+                                        tokens unless --max-tokens
+      akit kb focus [FOLDER] [--json] [--base PATH|WORLD]
+                                        The focus area of a project and why: the choice in
+                                        focus.json, an area.yaml that names its remote or folder,
+                                        or a note whose repo: is its remote
 
     Write (for a person only: an agent runs these only when the user asked for that action in
     this session; otherwise it proposes or asks):
@@ -78,6 +91,11 @@ extension AKitCLI {
       akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]…
                                         For a person only. Change areas/AREA/area.yaml and commit it
                                         at once. P is a git remote, a ~/ path or a glob
+      akit kb focus [FOLDER] --set AREA | --clear [--json] [--base PATH|WORLD]
+                                        For a person only. Choose the area a project's sessions
+                                        start from (kept on this Mac in
+                                        ~/.akit/local/knowledge/focus.json, not in the base), or
+                                        clear the choice to go back to area.yaml and repo:
       akit kb rename NOTE|MAP NEW [--yes] [--json] [--base PATH|WORLD]
                                         For a person only. Rename a note or a map (NEW: a name in the
                                         same folder, or for a note area/name) and rewrite every link
@@ -192,6 +210,9 @@ extension AKitCLI {
             return try await knowledgeSearch(command!, &args, json: json, base: chosen, env: env, out: out)
         case "maps", "relations", "new-map":
             return try await knowledgeMaps(command!, &args, json: json, base: chosen, env: env, out: out)
+        case "neighbors", "context", "focus":
+            return try await knowledgeFocus(command!, &args, json: json, baseOption: baseOption, cwd: cwd, env: env,
+                                            projectsRoot: projectsRoot, out: out)
         case "path":
             return try await knowledgePath(&args, json: json, cwd: cwd, env: env, out: out)
         case "kinds":
@@ -388,6 +409,105 @@ extension AKitCLI {
                 out((status.stale ? "Another process is updating the index; as it is now: " : status.rebuilt ? "Built the index: " : "The index is up to date: ")
                     + "\(count(status.notes, "note")), \(count(status.maps, "map")), \(count(status.chunks, "section")) in "
                     + FileWalk.tilde(index.file, home: home) + ".")
+            }
+            return 0
+        }
+    }
+
+    /// `kb neighbors NOTE`, `kb context [FOLDER]` (read, for agents; K5, K19) and `kb focus
+    /// [FOLDER]` with its person-only `--set AREA` / `--clear`.
+    private static func knowledgeFocus(_ command: String, _ args: inout Arguments, json: Bool, baseOption: String?, cwd: URL,
+                                       env: HarnessEnvironment, projectsRoot: URL, out: (String) -> Void) async throws -> Int32 {
+        let home = env.homeDirectory
+        let maxText = args.value("--max-tokens"), depthText = args.value("--depth")
+        let set = args.value("--set"), clear = args.flag("--clear")
+        let name = args.positional()
+        try args.finish()
+        let maxTokens: Int
+        if let maxText {
+            guard command != "focus", let value = Int(maxText), value > 0 else {
+                throw Failure(message: command == "focus" ? "--max-tokens doesn't go with akit kb focus."
+                    : "--max-tokens takes a whole number above 0, not “\(maxText)”.")
+            }
+            maxTokens = value
+        } else {
+            maxTokens = Budget.defaultTokens
+        }
+        if command != "focus", set != nil || clear { throw Failure(message: "--set and --clear go with akit kb focus.") }
+        if command != "neighbors", depthText != nil { throw Failure(message: "--depth goes with akit kb neighbors.") }
+        if command == "neighbors", name == nil {
+            throw Failure(message: "Use: akit kb neighbors NOTE [--depth 1|2] [--max-tokens N] [--json] [--base PATH|WORLD]")
+        }
+        if set != nil, clear { throw Failure(message: "Use --set AREA or --clear, not both.") }
+        let depth = Int(depthText ?? "1") ?? 0
+        guard depth == 1 || depth == 2 else { throw Failure(message: "--depth is 1 or 2, not “\(depthText ?? "")”.") }
+        // context and focus name a project folder (default: the current one); it also picks the base.
+        let folder = command == "neighbors" ? cwd : name.map { resolve($0, cwd: cwd, env: env) } ?? cwd
+        if command != "neighbors", !FileWalk.isDirectory(folder) { throw Failure(message: "No folder \(folder.path).") }
+        let found: KnowledgeBase?
+        do {
+            found = try await KnowledgeBase.choose(option: baseOption, folder: folder, env: env, projectsRoot: projectsRoot, forReading: true)
+        } catch {
+            throw Failure(message: error.message)
+        }
+        guard let base = found else {
+            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+            return 0
+        }
+        let index = KnowledgeIndex(base: base)
+        switch command {
+        case "neighbors":
+            let answer: KnowledgeIndex.NeighborsAnswer
+            do { answer = try index.neighbors(name!, depth: depth, maxTokens: maxTokens) } catch { throw Failure(message: error.message) }
+            if json {
+                out(encode(answer))
+            } else {
+                var lines = answer.edges.isEmpty ? ["No map has an arrow to or from \(answer.note)."] : answer.edges.map { edge in
+                    "\(edge.from) → \(edge.to)" + (edge.kind.map { "  \"\($0)\"" } ?? "") + (edge.flow.map { "  flow \($0)" } ?? "") + "  (\(edge.map))"
+                }
+                if answer.truncated { lines.append("(Cut to \(maxTokens) tokens: ask for a larger --max-tokens.)") }
+                if answer.stale { lines.append("(Another process is updating the index: these come from its last state.)") }
+                out(lines.joined(separator: "\n"))
+            }
+            return 0
+        case "context":
+            let focus = await base.focus(folder: folder, env: env, projectsRoot: projectsRoot)
+            let answer: KnowledgeIndex.ContextAnswer
+            do { answer = try index.context(focus: focus.choice.area, maxTokens: maxTokens) } catch { throw Failure(message: error.message) }
+            if json {
+                out(encode(answer))
+            } else {
+                guard let area = answer.focus else {
+                    out("No area of \(FileWalk.tilde(base.root, home: home)) names this project (its remote or folder). See akit kb areas.")
+                    return 0
+                }
+                var lines = ["Focus: \(area) (\(focus.choice.source?.rawValue ?? "-"))"]
+                lines += answer.systems.map { "\($0.note)  \($0.title)" + ($0.line.isEmpty ? "" : ": \($0.line)") }
+                lines += answer.relations.map { "\($0.from) → \($0.to)" + ($0.kind.map { "  \"\($0)\"" } ?? "") }
+                if answer.truncated { lines.append("(Cut to \(maxTokens) tokens: ask for a larger --max-tokens.)") }
+                if answer.stale { lines.append("(Another process is updating the index: these come from its last state.)") }
+                out(lines.joined(separator: "\n"))
+            }
+            return 0
+        default:
+            var (project, choice) = await base.focus(folder: folder, env: env, projectsRoot: projectsRoot)
+            if set != nil || clear {
+                if let set, !base.areas().contains(where: { $0.name == set.precomposedStringWithCanonicalMapping }) {
+                    throw Failure(message: "No area “\(set)” in \(base.root.path). Areas: \(base.areas().map(\.name).joined(separator: ", ")).")
+                }
+                do {
+                    try KnowledgeBase.Focus.load(home: home)
+                        .setting(area: set?.precomposedStringWithCanonicalMapping, project: project).save(home: home)
+                } catch {
+                    throw Failure(message: error.message)
+                }
+                choice = await base.focus(folder: folder, env: env, projectsRoot: projectsRoot).choice
+            }
+            if json {
+                out(encode(FocusAnswer(base: base.root.path, project: project, focus: choice.area, source: choice.source?.rawValue)))
+            } else {
+                let what = choice.area.map { "\($0) (\(choice.source?.rawValue ?? "-"))" } ?? "none (no area names its remote or folder)"
+                out("\(project): focus \(what)" + (set != nil ? "; set in ~/.akit/local/knowledge/focus.json." : clear ? "; your choice is cleared." : ""))
             }
             return 0
         }
@@ -709,6 +829,25 @@ extension AKitCLI {
         let base: String
         let note: String
         let relations: [MapGraph.Edge]
+    }
+
+    struct FocusAnswer: Encodable {
+        let base: String
+        /// The id `focus.json` keys the project by (its normalized remote, else `local/…`).
+        let project: String
+        let focus: String?
+        /// override, area.yaml or repo; null without a focus.
+        let source: String?
+
+        private enum CodingKeys: String, CodingKey { case base, project, focus, source }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(base, forKey: .base)
+            try container.encode(project, forKey: .project)
+            try container.encode(focus, forKey: .focus)
+            try container.encode(source, forKey: .source)
+        }
     }
 
     struct PathAnswer: Encodable {

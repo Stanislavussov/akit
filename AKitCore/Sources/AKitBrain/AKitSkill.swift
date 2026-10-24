@@ -217,9 +217,20 @@ Notes and maps of the systems around a repository: which service sends what to w
 repo owns what. A base is a folder per world (by default `~/.akit/local/knowledge/<world>`, or
 the folder `akit kb path` sets, like one in an Obsidian vault; git without a remote);
 `areas/<area>/` holds the notes, one area per project, system or unrelated entity.
-Read it when a task is about systems:
+Read it when a task is about systems. Start with the card of the project's focus area:
 
 ```
+akit kb context [FOLDER] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # run it at the start of a task about systems:
+                                                   # {base, focus, systems: [{note, title, line}],
+                                                   # relations: [{from, kind, to}], truncated};
+                                                   # FOLDER defaults to the current project
+akit kb neighbors NOTE [--depth 1|2] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # the arrows to and from a note (depth 2: also
+                                                   # its neighbours'): {note, edges: [{from, kind,
+                                                   # to, flow, map}]}
+akit kb focus [FOLDER] [--json]                    # the focus area and why: override (the user's
+                                                   # choice), area.yaml or repo
 akit kb areas [--json] [--base PATH|WORLD]         # the areas: note and map counts, and their
                                                    # settings (title, description, projects)
 akit kb notes [AREA] [--json] [--base PATH|WORLD]  # notes: id (payments/orders-api), kind, title
@@ -246,6 +257,11 @@ need; both stay under `--max-tokens` (default 4000). Search reads `areas/` only,
 proposals in `inbox/`, and refreshes the index itself (`kb index` is rarely needed).
 `"stale": true` means another process is updating the index: the answer is from its last
 state.
+
+The focus is where to start, never a wall: follow a relation or a link into another area
+when the task needs it. `"focus": null` means no area names this project (its remote or
+folder): look at `kb areas`, and when you propose a note for a new system, propose a new area
+rather than mixing unrelated systems.
 
 `--base` picks a base (a world name or a folder); without it akit takes the project's choice,
 the only base, or the one named like this Mac's kind. No base: `{"base": null, "reason":
@@ -274,6 +290,10 @@ akit kb path [WORLD] [--set PATH | --move PATH | --reset] [--json]
                                                    # --set uses a folder (an Obsidian vault too),
                                                    # --move commits pending edits and moves it,
                                                    # --reset goes back to ~/.akit/local/knowledge
+akit kb focus [FOLDER] --set AREA | --clear [--json]
+                                                   # the area a project starts from, kept on this
+                                                   # Mac (~/.akit/local/knowledge/focus.json);
+                                                   # --clear goes back to area.yaml and repo:
 akit kb rename NOTE|MAP NEW [--yes] [--json]      # rename a note or map and every link to it,
                                                    # all or nothing, one commit; without --yes it
                                                    # only shows the plan (refused with its diff when

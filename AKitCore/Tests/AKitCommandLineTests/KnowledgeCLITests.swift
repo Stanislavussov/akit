@@ -55,12 +55,12 @@ struct KnowledgeCLITests {
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
         for command in ["akit kb init", "akit kb new-note", "akit kb new-map", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
-                        "akit kb rm", "akit kb rename", "akit kb seed [", "akit kb seed --remove"] {
+                        "akit kb rm", "akit kb rename", "akit kb seed [", "akit kb seed --remove", "akit kb focus [FOLDER] --set"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
         for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]",
-                        "akit kb search", "akit kb show", "akit kb index"] {
+                        "akit kb search", "akit kb show", "akit kb index", "akit kb neighbors", "akit kb context", "akit kb focus [FOLDER] [--json]"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(!lines[index...].prefix(3).contains { $0.contains("person only") }, "\(command) is a read command")
         }
@@ -74,7 +74,7 @@ struct KnowledgeCLITests {
         #expect(areas.out == "{\n  \"base\" : null,\n  \"reason\" : \"no base\"\n}")
         let notes = await akit("kb", "notes")
         #expect(notes.code == 0 && notes.out.contains("No knowledge base on this Mac"))
-        for command in [["search", "retry"], ["show", "orders-api"], ["index"]] {
+        for command in [["search", "retry"], ["show", "orders-api"], ["index"], ["neighbors", "orders-api"], ["context"], ["focus"]] {
             let answer = await akit(["kb"] + command + ["--json"])
             #expect(answer.code == 0 && answer.out == areas.out, "\(command)")
         }
@@ -121,6 +121,63 @@ struct KnowledgeCLITests {
         #expect(Set(index.keys) == ["notes", "maps", "chunks", "rebuilt", "stale", "tokens"])
         #expect(index["notes"] as? Int == 10 && index["maps"] as? Int == 2 && index["rebuilt"] as? Bool == true)
         #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 10 notes, 2 maps,"))
+    }
+
+    @Test func neighborsContextAndFocusAnswerInTheirJSONShapes() async throws {
+        let base = try seedFolder()
+        let neighbors = try json(await akit("kb", "neighbors", "orders-api", "--json", "--base", base).out)
+        #expect(Set(neighbors.keys) == ["note", "edges", "truncated", "stale", "tokens"])
+        let edges = try #require(neighbors["edges"] as? [[String: Any]])
+        #expect(edges.count == 1 && Set(edges[0].keys) == ["from", "kind", "to", "flow", "map", "arrow"])
+        #expect(edges[0]["kind"] as? String == "events" && edges[0]["to"] as? String == "payments/billing")
+        #expect(await akit("kb", "neighbors", "orders-api", "--depth", "3", "--base", base).code == 2)
+        #expect(await akit("kb", "neighbors", "--base", base).code == 2)
+        #expect(await akit("kb", "neighbors", "billing", "--base", base).out == "payments/orders-api → payments/billing  \"events\"  flow payments/flows/order-to-billing  (payments/maps/overview)")
+
+        // A clone of orders-api under ~/Projects: focus payments, by the note's repo:.
+        let orders = home.appending(path: "Projects/orders-api")
+        try fm.createDirectory(at: orders, withIntermediateDirectories: true)
+        for args in [["init", "-q"], ["remote", "add", "origin", "git@example.com:shop/orders-api.git"]] {
+            _ = await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: args, directory: orders, environment: env.variables, timeout: 20)
+        }
+        let context = await akit("kb", "context", orders.path, "--json", "--base", base)
+        #expect(context.code == 0, "\(context.err)")
+        let card = try json(context.out)
+        #expect(Set(card.keys) == ["base", "focus", "systems", "relations", "truncated", "stale", "tokens"])
+        #expect(card["focus"] as? String == "payments" && card["truncated"] as? Bool == false && (card["tokens"] as? Int ?? 9999) <= 4000)
+        let systems = try #require(card["systems"] as? [[String: Any]])
+        #expect(systems.count == 6 && Set(systems[0].keys) == ["note", "title", "line"])
+        let relations = try #require(card["relations"] as? [[String: Any]])
+        #expect(relations.count == 1 && Set(relations[0].keys) == ["from", "kind", "to"])
+        let cut = try json(await akit("kb", "context", orders.path, "--max-tokens", "150", "--json", "--base", base).out)
+        #expect(cut["truncated"] as? Bool == true && (cut["tokens"] as? Int ?? 9999) <= 150)
+        #expect(await akit("kb", "context", orders.path, "--base", base).out.hasPrefix("Focus: payments (repo)\npayments/billing  billing: Bills each order once."))
+        // A folder no area names: focus null, an empty card.
+        let other = home.appending(path: "Projects/other")
+        try fm.createDirectory(at: other, withIntermediateDirectories: true)
+        let empty = try json(await akit("kb", "context", other.path, "--json", "--base", base).out)
+        #expect(empty["focus"] is NSNull && (empty["systems"] as? [Any])?.isEmpty == true)
+        #expect(await akit("kb", "context", home.appending(path: "missing").path, "--base", base).code == 2)
+
+        // A folder that logistics' area.yaml names with ~/Projects/shipping-*.
+        let labels = home.appending(path: "Projects/shipping-labels")
+        try fm.createDirectory(at: labels, withIntermediateDirectories: true)
+        let focus = try json(await akit("kb", "focus", labels.path, "--json", "--base", base).out)
+        #expect(focus as NSDictionary == ["base": base, "project": "local/shipping-labels", "focus": "logistics", "source": "area.yaml"] as NSDictionary)
+
+        // --set keeps the choice on this Mac (focus.json), never in the base; --clear drops it.
+        let file = KnowledgeBase.focusFile(home: home)
+        let set = try json(await akit("kb", "focus", orders.path, "--set", "logistics", "--json", "--base", base).out)
+        #expect(set["focus"] as? String == "logistics" && set["source"] as? String == "override")
+        #expect(KnowledgeBase.Focus.load(home: home).projects["example.com/shop/orders-api"]?.area == "logistics")
+        #expect(try json(await akit("kb", "context", orders.path, "--json", "--base", base).out)["focus"] as? String == "logistics")
+        #expect(await akit("kb", "focus", orders.path, "--set", "nowhere", "--base", base).code == 2)
+        #expect(await akit("kb", "focus", orders.path, "--set", "payments", "--clear", "--base", base).code == 2)
+        #expect(await akit("kb", "context", orders.path, "--set", "payments", "--base", base).code == 2)
+        let cleared = await akit("kb", "focus", orders.path, "--clear", "--base", base)
+        #expect(cleared.out == "example.com/shop/orders-api: focus payments (repo); your choice is cleared.")
+        #expect(KnowledgeBase.Focus.load(home: home).projects.isEmpty && fm.fileExists(atPath: file.path))
+        #expect(!fm.fileExists(atPath: URL(filePath: base).appending(path: "focus.json").path))
     }
 
     @Test func aBusyIndexLockWithNoIndexFileIsEmptyStaleAndExitsZero() async throws {

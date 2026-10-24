@@ -263,7 +263,7 @@ public struct KnowledgeIndex {
 
     /// A connection to read from, whether it is stale, and whether it was built from nothing. Takes
     /// the index lock without waiting; busy → the current snapshot (nil when there is none), stale.
-    private func prepare(rebuild: Bool) throws(Failure) -> (database: SQLiteDatabase?, stale: Bool, rebuilt: Bool) {
+    func prepare(rebuild: Bool) throws(Failure) -> (database: SQLiteDatabase?, stale: Bool, rebuilt: Bool) {
         let fm = FileManager.default
         // A base folder AKit can't write to is read as it is, like a busy lock.
         guard let lock = try? FileLock.acquire(lockFile) else { return (try snapshot(), true, false) }
@@ -445,7 +445,7 @@ public struct KnowledgeIndex {
         _ = line.utf8CString.withUnsafeBufferPointer { write(fd, $0.baseAddress, $0.count - 1) }
     }
 
-    private func failure(_ error: any Error) -> Failure {
+    func failure(_ error: any Error) -> Failure {
         Failure(message: "The knowledge index \(file.path) failed: \(error.localizedDescription)")
     }
 
