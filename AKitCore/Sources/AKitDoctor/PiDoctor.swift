@@ -1,7 +1,9 @@
 import AKitFoundation
 import AKitHarnesses
+import AKitInsights
 import AKitInstructions
 import AKitModel
+import AKitProjectSetup
 import AKitSkills
 import Foundation
 
@@ -20,6 +22,8 @@ import Foundation
 public enum PiDoctor {
     public enum Level: String, Codable, Sendable {
         case ok, warning, problem
+        /// Context from recent sessions: something Pi pays for and barely uses. Not a problem.
+        case suggestion
     }
 
     public struct Line: Codable, Hashable, Sendable {
@@ -27,11 +31,17 @@ public enum PiDoctor {
         public let text: String
         /// What to do; nil for an ok line.
         public let fix: String?
+        /// A suggestion's `akit …` command: it shows the change and writes only with `--yes`.
+        public let command: String?
+        /// The app screen with the same action (a `SidebarSection` raw value: skills, mcp, instructions).
+        public let screen: String?
 
-        public init(_ level: Level, _ text: String, fix: String? = nil) {
+        public init(_ level: Level, _ text: String, fix: String? = nil, command: String? = nil, screen: String? = nil) {
             self.level = level
             self.text = text
             self.fix = fix
+            self.command = command
+            self.screen = screen
         }
     }
 
@@ -48,20 +58,24 @@ public enum PiDoctor {
 
         public var problems: Int { sections.reduce(0) { $0 + $1.lines.filter { $0.level == .problem }.count } }
         public var warnings: Int { sections.reduce(0) { $0 + $1.lines.filter { $0.level == .warning }.count } }
+        public var suggestions: Int { sections.reduce(0) { $0 + $1.lines.filter { $0.level == .suggestion }.count } }
 
-        /// Plain text like `akit doctor`: `!` starts a problem, `?` a warning, `→` what to do.
+        /// Plain text like `akit doctor`: `!` starts a problem, `?` a warning, `+` a suggestion,
+        /// `→` what to do, `$` the akit command that does it.
         public var text: String {
-            var lines = ["Pi doctor (lines starting with ! are problems, ? warnings; → what to do)"]
+            var lines = ["Pi doctor (lines starting with ! are problems, ? warnings, + suggestions; → what to do, $ the akit command)"]
             for section in sections {
                 lines += ["", section.title]
                 for line in section.lines {
-                    let mark = switch line.level { case .ok: " "; case .warning: "?"; case .problem: "!" }
+                    let mark = switch line.level { case .ok: " "; case .warning: "?"; case .problem: "!"; case .suggestion: "+" }
                     lines.append("\(mark) \(line.text)")
                     if let fix = line.fix { lines.append("    → \(fix)") }
+                    if let command = line.command { lines.append("    $ \(command)") }
                 }
             }
             lines.append("")
-            let warned = warnings == 0 ? "" : " \(warnings) warning\(warnings == 1 ? "" : "s")."
+            let warned = (warnings == 0 ? "" : " \(warnings) warning\(warnings == 1 ? "" : "s").")
+                + (suggestions == 0 ? "" : " \(suggestions) suggestion\(suggestions == 1 ? "" : "s").")
             lines.append(problems == 0 ? "No problems found.\(warned)"
                          : "\(problems) problem\(problems == 1 ? "" : "s") found.\(warned)")
             return SecretFilter.masked(lines.joined(separator: "\n"))
@@ -104,9 +118,11 @@ public enum PiDoctor {
     }
 
     /// The whole check. `projects`: folders whose `.pi/settings.json`, `.pi/mcp.json` and
-    /// packages are checked too; nil: the projects Pi knows (its session headers).
-    public static func check(env: HarnessEnvironment, projects: [URL]? = nil, live: Bool = false,
-                             runner: Runner? = nil) async -> Report {
+    /// packages are checked too; nil: the projects Pi knows (its session headers). `sessions`:
+    /// also judge the context by recent Pi sessions (imports new session lines into AKit's index
+    /// first, like `akit stats`); `projectsRoot` binds them to projects.
+    public static func check(env: HarnessEnvironment, projects: [URL]? = nil, live: Bool = false, sessions: Bool = true,
+                             projectsRoot: URL? = nil, runner: Runner? = nil, now: Date = Date()) async -> Report {
         let run = runner ?? processRunner(env: env)
         var check = Check(env: env)
         let executable = env.findExecutable("pi")
@@ -123,6 +139,9 @@ public enum PiDoctor {
         check.skills()
         check.context()
         check.keybindings()
+        if sessions {
+            await check.recentSessions(projectsRoot: projectsRoot ?? env.homeDirectory.appending(path: "Projects"), now: now)
+        }
         if live {
             await check.live(executable: executable, provider: settings?["defaultProvider"] as? String, run: run)
         }
@@ -282,6 +301,10 @@ public enum PiDoctor {
     struct Check {
         let env: HarnessEnvironment
         var sections: [Section] = []
+        /// The global skills Pi sees, from `skills()`.
+        var piSkills: [Skill] = []
+        /// Server names of the global mcp.json, from `mcp()`.
+        var mcpServers: Set<String> = []
 
         var home: URL { env.homeDirectory }
         var configRoot: URL { env.piAgentDirectory }
@@ -486,6 +509,7 @@ public enum PiDoctor {
             var lines: [Line] = []
             let globalFile = configRoot.appending(path: "mcp.json")
             let globalNames = mcpFile(globalFile, project: false, globalNames: [], into: &lines)
+            mcpServers = globalNames
             for project in projects {
                 _ = mcpFile(project.appending(path: ".pi/mcp.json"), project: true, globalNames: globalNames, into: &lines)
             }
@@ -689,6 +713,7 @@ public enum PiDoctor {
             guard let adapter = HarnessCatalog.adapter(for: .pi), let pi = adapter.detect(in: env) else { return }
             let skills = SkillScanner.scan(installations: [pi], adapters: [adapter], projects: [], in: env)
                 .filter { $0.places[.pi] != nil }
+            piSkills = skills.filter { $0.visibleTo.contains(.pi) }
             var listing = 0
             for skill in skills {
                 let where_ = tilde(skill.file)
@@ -737,6 +762,106 @@ public enum PiDoctor {
                 if FileWalk.isRegularFile(file) { lines.append(Line(.ok, "\(tilde(file)) \(what)")) }
             }
             add("Context", lines)
+        }
+
+        // MARK: Context from recent sessions
+
+        /// What the last 30 days of Pi sessions say about Pi's context: skills Pi lists but never
+        /// called, MCP servers whose tools it never called, the cost of the instruction files and
+        /// their sections the model gets twice. Only recorded data (AKit's session index); each
+        /// suggestion is an `akit` command that shows the change and writes only with `--yes`.
+        mutating func recentSessions(projectsRoot: URL, now: Date) async {
+            var lines: [Line] = []
+            defer { add("Context from recent sessions", lines) }
+            let database: IndexDatabase
+            do {
+                database = try IndexSchema.open(InsightsPaths(env: env).database)
+            } catch {
+                lines.append(Line(.warning, "AKit's session index can't be opened: \(error.localizedDescription)",
+                                  fix: "akit sessions import rebuilds what it can."))
+                return
+            }
+            let imported = try? await QuickImport.run(env: env, projectsRoot: projectsRoot, database: database, now: now)
+            let days = InsightsStats.defaultDays
+            guard let activity = try? InsightsStats.activity(database, harness: "pi", days: days, now: now) else {
+                lines.append(Line(.warning, "AKit's session index can't be read", fix: "akit sessions import rebuilds what it can."))
+                return
+            }
+            guard activity.sessions > 0 else {
+                lines.append(Line(.ok, "no Pi sessions in the last \(days) days: nothing to judge the context by"))
+                return
+            }
+            let requests = activity.requests
+            lines.append(Line(.ok, "\(activity.sessions) Pi session\(activity.sessions == 1 ? "" : "s") on \(activity.activeDays) day\(activity.activeDays == 1 ? "" : "s") in the last \(days) days, \(requests) request\(requests == 1 ? "" : "s")"))
+            lines += (imported?.notes ?? []).map { Line(.ok, "import: \($0)") }
+            // ≈ tokens: characters / 4, the same rule as `akit instructions`.
+            func tokens(_ characters: Int) -> Int { max(1, characters / 4) }
+
+            // Skills. Pi records no skill list, so a skill counts as listed in every session it is
+            // installed for now; its calls are the model's reads of its SKILL.md and /skill:name.
+            // The evidence bar is akit recommend's: at least 20 sessions on at least 14 days.
+            let minSessions = Recommender.defaultMinSessions, minDays = Recommender.defaultMinDays
+            let uncalled = piSkills.filter { (activity.skillCalls[$0.name] ?? 0) == 0 }
+                .map { (skill: $0, cost: tokens($0.name.count + $0.description.count)) }
+                .sorted { ($0.cost, $1.skill.name) > ($1.cost, $0.skill.name) }
+            if uncalled.isEmpty {
+                lines.append(Line(.ok, "every global skill Pi sees was called in these sessions"))
+            } else if activity.sessions < minSessions || activity.activeDays < minDays {
+                lines.append(Line(.ok, "\(uncalled.count) global skill\(uncalled.count == 1 ? "" : "s") not called yet; AKit suggests turning skills off after \(minSessions) Pi sessions on \(minDays) days (the bar of akit recommend)"))
+            } else {
+                let total = uncalled.reduce(0) { $0 + $1.cost }
+                lines.append(Line(.ok, "\(uncalled.count) global skill\(uncalled.count == 1 ? "" : "s") never called: ≈ \(total) tokens of names and descriptions in each request. Pi records no skill list, so these are the skills Pi sees now. Pi has only on and off; akit move skill NAME --to PROJECT keeps one where it is needed"))
+                for (skill, cost) in uncalled {
+                    lines.append(Line(.suggestion, "skill \(skill.name): no call in \(activity.sessions) Pi sessions, ≈ \(cost) tokens in each of \(requests) requests",
+                                      command: "akit skills set \(skill.name) --harness pi --state off", screen: "skills"))
+                }
+            }
+
+            // MCP servers: tools Pi's sessions had available, none called (`akit stats tools --unused`, Pi only),
+            // past the same bar as the skills.
+            if activity.sessions >= minSessions, activity.activeDays >= minDays,
+               let tools = try? ToolStats.report(database, days: days, harness: "pi", now: now) {
+                for server in tools.servers where server.unused && server.availableSessions >= minSessions {
+                    // Tool names carry the server with - turned into _ (mcp.md); match today's mcp.json names.
+                    guard let name = mcpServers.first(where: { $0.replacingOccurrences(of: "-", with: "_") == server.name.replacingOccurrences(of: "-", with: "_") })
+                    else { continue }
+                    lines.append(Line(.suggestion, "MCP server \(name): \(server.tools) tool\(server.tools == 1 ? "" : "s") available in \(server.availableSessions) Pi sessions, none called",
+                                      fix: "Turn it off for Pi; its entry stays, so turning it on again is one command.",
+                                      command: "akit mcp set \(name) --harness pi --off everywhere", screen: "mcp"))
+                }
+            }
+
+            // Instructions: what each loaded file costs, and sections the model gets twice. A
+            // session records no use of a section, so AKit never calls a section unused.
+            let global = InstructionScanner.view(harness: .pi, project: nil, env: env)
+            for entry in global.loaded {
+                lines.append(Line(.ok, "\(tilde(entry.file)): ≈ \(tokens(entry.sentBytes)) tokens in each of \(requests) requests"))
+            }
+            var seen: Set<String> = []
+            let rendered: Set<String> = []
+            for (cwd, folderRequests) in activity.requestsByFolder.sorted(by: { $0.value > $1.value }) {
+                let folder = URL(filePath: cwd, directoryHint: .isDirectory)
+                guard folder.standardizedFileURL.path != home.standardizedFileURL.path, FileWalk.isDirectory(folder) else { continue }
+                let view = InstructionScanner.view(harness: .pi, project: folder, env: env)
+                for group in view.duplicates where group.kind == .same {
+                    let key = group.places.map { "\($0.file.path):\($0.section.line)" }.joined(separator: ",")
+                    guard seen.insert(key).inserted, group.places.count > 1 else { continue }
+                    // The later copy goes (the model already got the earlier one), unless AKit can't change it.
+                    let removable = group.places.reversed().first { InstructionEdit.unavailable($0.section, in: $0.file, rendered: rendered) == nil }
+                    let title = group.heading.map { "## \($0)" } ?? "the text before the first heading"
+                    let places = group.places.map { "\(tilde($0.file)):\($0.section.line)" }.joined(separator: " and ")
+                    let cost = tokens(group.places[0].section.text.utf8.count)
+                    if let place = removable {
+                        lines.append(Line(.suggestion, "\(title) is in \(places): the model gets it twice, ≈ \(cost) tokens more in each of \(folderRequests) requests in \(tilde(folder))",
+                                          fix: "Keep one copy.",
+                                          command: "akit instructions remove \(PiDoctor.shellQuoted(tilde(place.file))) --line \(place.section.line)",
+                                          screen: "instructions"))
+                    } else {
+                        lines.append(Line(.suggestion, "\(title) is in \(places): the model gets it twice",
+                                          fix: InstructionEdit.unavailable(group.places[0].section, in: group.places[0].file, rendered: rendered)))
+                    }
+                }
+            }
         }
 
         // MARK: Keybindings
@@ -845,6 +970,11 @@ public enum PiDoctor {
             if lines.isEmpty { lines.append(Line(.ok, "no MCP servers configured")) }
             return lines
         }
+    }
+
+    /// A path for a shell: as is when safe, else in single quotes.
+    static func shellQuoted(_ text: String) -> String {
+        text.allSatisfy { $0.isLetter || $0.isNumber || "~/._-+".contains($0) } ? text : "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// The JSON object in a program's output (stderr may be around it).

@@ -64,12 +64,19 @@ all from the docs shipped in Pi 1.0.4 (and its `dist/` where the docs are silent
 | Skills | what `SkillScanner` finds for Pi in the global skills: no description (a problem: Pi skips it), the name rule, long descriptions, collisions; name ≠ folder as a warning (Pi doesn't mind, other Agent Skills tools do); the size of the listing | `skills.md` |
 | Context | the global instruction file Pi loads (`InstructionScanner`), a warning over 40,000 characters (Claude Code's `/doctor` line; Pi has none); `SYSTEM.md`, `APPEND_SYSTEM.md` | `configuration.md` |
 | Keybindings | `keybindings.json` parses, each value a key or a list, each key in the documented syntax | `keybindings.md` |
+| Context from recent sessions | AKit's session index (imported first, like `akit stats`), Pi sessions of the last 30 days: global skills Pi sees with no call and MCP servers whose tools Pi never called, both only past `akit recommend`'s bar (20 sessions on 14 days); the ≈ tokens (characters / 4) of the global instruction file per request; `##` sections the model gets twice in the folders Pi worked in (`InstructionView.duplicates`). Each suggestion is an `akit` command that shows the change and writes only with `--yes` (`akit skills set … --harness pi --state off`, `akit mcp set … --harness pi --off everywhere`, `akit instructions remove FILE --line N`, new: a thin CLI over `InstructionEdit`, the core of Remove This Copy…); the sheet opens the screen with the same action. Never "unused" for a section: sessions don't record that | `skills.md` (Pi records no skill list: `PiFacts`), `InsightsStats.activity`, `ToolStats.report(harness:)` |
 | Servers and sign-in (live) | only with `--live` or **Check Servers and Sign-In**: `pi mcp list --json` (state, tool count, errors per server; 90 s) and `pi auth check --provider <defaultProvider> --json --no-refresh` (never `--credentials`; 30 s) | `cli.md`, `list` in `dist/extensions/mcp/cli.js` |
 
 Lines are ok, warning (`?`) or problem (`!`), each problem with what to do (`→`); the text ends
 "No problems found." when there is none. `akit doctor pi` exits 1 on a problem; `--json` gives the
 sections. `akit doctor` adds one line to its Tools section ("Pi setup: N problems, M warnings").
 The app's sheet shows the same lines with colored icons, Copy Report and Refresh.
+
+Not suggested: `exposure: deferred` for a large server (mcp.md allows it, but AKit has no command or
+screen to change a server's exposure yet; the user's rule is that every fix goes through an `akit`
+command); sections that repeat a skill's text (AKit doesn't detect that). Fixes that still name a
+Pi command or a hand edit, because AKit has no operation for them: installing a package (`pi update
+--extensions`), MCP and provider sign-in (`pi mcp login`, `/login`), fixing broken JSON.
 
 Not checked: whether Pi trusts a project (`trust.json`), the session folder's contents, themes and
 prompt templates, the latest Pi version (that needs the network).

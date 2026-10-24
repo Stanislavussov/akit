@@ -265,6 +265,8 @@ public enum InsightsStats {
         /// Leaves out the sessions bound to this project at a confidence of the set (Move to Project:
         /// the sessions that would lose the skill).
         var outside: String? = nil
+        /// Only this harness's sessions (`claude`, `pi`); nil: every harness.
+        var harness: String? = nil
 
         /// `scoped AS (…)` for a `WITH` clause, and its values.
         var cte: (sql: String, values: [any SQLBindable]) { cte(as: "scoped") }
@@ -283,6 +285,10 @@ public enum InsightsStats {
                 sql += " AND NOT EXISTS(SELECT 1 FROM bindings o WHERE o.session_key = s.key AND o.project_id = ? AND o.confidence IN \(bindings.sqlList))"
                 values.append(outside)
             }
+            if let harness {
+                sql += " AND s.harness = ?"
+                values.append(harness)
+            }
             return (sql + ")", values)
         }
 
@@ -292,6 +298,49 @@ public enum InsightsStats {
             let (sql, values) = cte
             return (sql + ", starts AS (SELECT key AS skill, value AS start FROM json_each(?))", values + [json])
         }
+    }
+
+    /// One harness's sessions started in the window: how many, on how many days, their main
+    /// requests (all and per session folder), and the counted skill calls per skill. For Pi, which
+    /// records no skill list, this is all there is to judge a skill by (Pi doctor).
+    public struct HarnessActivity: Equatable, Sendable {
+        public let days: Int
+        public let sessions: Int
+        public let activeDays: Int
+        public let requests: Int
+        /// Main requests per session `cwd`.
+        public let requestsByFolder: [String: Int]
+        /// Counted calls (`countedCallsSQL`) per skill, made in the window.
+        public let skillCalls: [String: Int]
+    }
+
+    public static func activity(_ database: IndexDatabase, harness: String, days: Int = defaultDays,
+                                now: Date = Date()) throws -> HarnessActivity {
+        let from = now.addingTimeInterval(-Double(days) * 86_400)
+        let (scoped, values) = Scope(project: nil, from: from, to: now, harness: harness).cte
+        let summary = try database.rows("""
+            WITH \(scoped) SELECT COUNT(*), COUNT(DISTINCT date(x.started, 'unixepoch', 'localtime'))
+            FROM scoped s JOIN sessions x ON x.key = s.key
+            """, values).first
+        var byFolder: [String: Int] = [:]
+        var requests = 0
+        for row in try database.rows("""
+            WITH \(scoped) SELECT x.cwd, COUNT(r.event_key) FROM scoped s JOIN sessions x ON x.key = s.key
+            LEFT JOIN requests r ON r.session_key = s.key AND r.is_subagent = 0 GROUP BY x.cwd
+            """, values) {
+            let count = row[1].int ?? 0
+            requests += count
+            if let cwd = row[0].text { byFolder[cwd, default: 0] += count }
+        }
+        var calls: [String: Int] = [:]
+        for row in try database.rows("""
+            WITH \(scoped) SELECT c.skill, COUNT(*) FROM skill_calls c JOIN scoped s ON s.key = c.session_key
+            WHERE c.skill IS NOT NULL AND c.ts >= ? AND \(countedCallsSQL) GROUP BY c.skill
+            """, values + [from.timeIntervalSince1970]) {
+            if let skill = row[0].text { calls[skill] = row[1].int ?? 0 }
+        }
+        return HarnessActivity(days: days, sessions: summary?[0].int ?? 0, activeDays: summary?[1].int ?? 0, requests: requests,
+                               requestsByFolder: byFolder, skillCalls: calls)
     }
 
     /// Calls that count: every model call, and the user's skill calls (not built-in commands), of `skill_calls c`.

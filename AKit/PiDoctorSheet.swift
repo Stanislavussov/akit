@@ -4,8 +4,11 @@ import AppKit
 import SwiftUI
 
 /// Overview → Pi → Check Pi…: `akit doctor pi` as a sheet. Only reads; the live part
-/// (`pi mcp list`, `pi auth check`) runs only on Check Servers and Sign-In.
+/// (`pi mcp list`, `pi auth check`) runs only on Check Servers and Sign-In. A suggestion's
+/// button opens the screen whose action does the same as its `akit` command; nothing is
+/// written from here.
 struct PiDoctorSheet: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var report: PiDoctor.Report?
     @State private var busy = false
@@ -19,7 +22,7 @@ struct PiDoctorSheet: View {
                 Spacer()
                 if let report { summary(report) }
             }
-            Text("What is wrong in Pi's setup, like claude doctor: the install, settings, environment, MCP servers, packages, skills and instructions. Only reads.")
+            Text("What is wrong in Pi's setup, like claude doctor: the install, settings, environment, MCP servers, packages, skills and instructions, and what recent Pi sessions say is extra in the context. Only reads.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -31,7 +34,10 @@ struct PiDoctorSheet: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(section.title).font(.headline)
                                 ForEach(Array(section.lines.enumerated()), id: \.offset) { _, line in
-                                    LineRow(line: line)
+                                    LineRow(line: line) { screen in
+                                        model.section = screen
+                                        dismiss()
+                                    }
                                 }
                             }
                         }
@@ -81,7 +87,8 @@ struct PiDoctorSheet: View {
     private func summary(_ report: PiDoctor.Report) -> some View {
         Group {
             if report.problems == 0 && report.warnings == 0 {
-                Label("No problems found", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                Label(report.suggestions == 0 ? "No problems found" : "No problems, \(report.suggestions) suggestion\(report.suggestions == 1 ? "" : "s")",
+                      systemImage: "checkmark.circle.fill").foregroundStyle(.green)
             } else {
                 Label("\(report.problems) problem\(report.problems == 1 ? "" : "s"), \(report.warnings) warning\(report.warnings == 1 ? "" : "s")",
                       systemImage: report.problems > 0 ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
@@ -96,15 +103,18 @@ struct PiDoctorSheet: View {
         checkingLive = live
         copied = false
         let env = HarnessEnvironment.current
-        report = await Task.detached { await PiDoctor.check(env: env, live: live) }.value
+        let root = model.projectRoots.first.map(env.expand)
+        report = await Task.detached { await PiDoctor.check(env: env, live: live, projectsRoot: root) }.value
         busy = false
         checkingLive = false
     }
 }
 
-/// One line: a colored icon by level, the text, and what to do under it.
+/// One line: a colored icon by level, the text, and what to do under it; a suggestion also
+/// shows its `akit` command, Copy Command and a button to the screen with the same action.
 private struct LineRow: View {
     let line: PiDoctor.Line
+    let open: (SidebarSection) -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -113,6 +123,21 @@ private struct LineRow: View {
                 Text(line.text).fixedSize(horizontal: false, vertical: true)
                 if let fix = line.fix {
                     Text(fix).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if let command = line.command {
+                    Text(command).font(.callout.monospaced()).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        if let screen = line.screen.flatMap(SidebarSection.init(rawValue:)) {
+                            Button("Open \(screen.title)") { open(screen) }
+                                .help("The \(screen.title) screen has the same action; it shows the change before it writes")
+                        }
+                        Button("Copy Command") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(command, forType: .string)
+                        }
+                        .help("The akit command shows the change; add --yes to write it")
+                    }
+                    .controlSize(.small)
                 }
             }
         }
@@ -123,6 +148,7 @@ private struct LineRow: View {
         case .ok: "checkmark.circle.fill"
         case .warning: "exclamationmark.triangle.fill"
         case .problem: "xmark.octagon.fill"
+        case .suggestion: "lightbulb.fill"
         }
     }
 
@@ -131,6 +157,7 @@ private struct LineRow: View {
         case .ok: .green
         case .warning: .orange
         case .problem: .red
+        case .suggestion: .blue
         }
     }
 }

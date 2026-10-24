@@ -114,7 +114,7 @@ public enum Doctor {
         let missing = adapters.filter { adapter in !installations.contains { $0.id == adapter.id } }.map(\.displayName)
         if !missing.isEmpty { lines.append("  not found: \(missing.joined(separator: ", "))") }
         if installations.contains(where: { $0.id == .pi }) {
-            let pi = await PiDoctor.check(env: env)
+            let pi = await PiDoctor.check(env: env, sessions: false)
             lines.append(pi.problems == 0 ? "  Pi setup: \(pi.summary) (akit doctor pi)"
                          : "! Pi setup: \(pi.summary); run akit doctor pi for what to do.")
         }
