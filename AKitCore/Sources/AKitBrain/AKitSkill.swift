@@ -234,6 +234,14 @@ does or why; `--json` for the data, `--mermaid` for the flow only. It is never p
 review.yaml or a profile's `review:`) sets the overview's language (`en`, `ru`, `cs`, …); the default
 is the Mac's preferred language, else English. GitLab text keeps `posting: language`.
 
+`akit review points [PATH] --find TEXT [--json]` lists the branches, remote branches, tags and
+commits of a local workspace whose name, commit message, author or id start holds every word of
+TEXT (refs first, the most recent first). Use it when the user names a branch or a commit only
+roughly, then review with `akit review local [PATH] --base NAME --head NAME`: `--head` ends the
+range at another branch or commit than HEAD (without the uncommitted changes), e.g.
+`--base v1.4.0 --head v1.5.0` for what a release added. In the app: New Review… → Local
+Workspace → Find… next to Base and Head.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

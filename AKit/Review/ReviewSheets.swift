@@ -20,6 +20,7 @@ struct NewReviewSheet: View {
     @State private var address = DebugSnapshot.options?.query.flatMap { $0.hasPrefix("/") ? nil : $0 } ?? ""
     @State private var workspace = DebugSnapshot.options?.query.flatMap { $0.hasPrefix("/") ? $0 : nil } ?? ""
     @State private var baseRef = ""
+    @State private var headRef = ""
     @State private var inspection: ReviewLocal.Inspection?
     @State private var inspectionProblem: String?
     @State private var mode: ReviewLocalTarget.Mode = .all
@@ -56,6 +57,7 @@ struct NewReviewSheet: View {
             _source = State(initialValue: .local)
             _workspace = State(initialValue: local.path)
             _baseRef = State(initialValue: local.baseRef)
+            _headRef = State(initialValue: local.headRef ?? "")
             _mode = State(initialValue: local.mode)
         } else {
             _address = State(initialValue: again.mergeRequest.url)
@@ -217,7 +219,7 @@ struct NewReviewSheet: View {
         .onChange(of: address) {
             if let preset = profile?.defaultScenario { scenario = preset }
         }
-        .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)") { await inspect() }
+        .task(id: "\(source.rawValue)|\(workspace)|\(baseRef)|\(headRef)") { await inspect() }
         .task { await loadPi() }
         .task { piModels = await LabRuns.models(for: .pi, env: model.env) }
     }
@@ -400,11 +402,15 @@ struct NewReviewSheet: View {
                 TextField(text: $workspace, prompt: Text("a git worktree of Orca or herdr, or any clone")) { RequiredLabel("Workspace") }
                 Button("Choose…") { chooseWorkspace() }
             }
-            TextField("Base", text: $baseRef, prompt: Text("empty: the default branch (origin/HEAD, main or master)"))
+            ReviewPointField(title: "Base", text: $baseRef, prompt: "empty: the default branch (origin/HEAD, main or master)",
+                             workspace: workspaceURL, env: model.env)
+            ReviewPointField(title: "Head", text: $headRef, prompt: "empty: HEAD of the workspace, with its uncommitted changes",
+                             workspace: workspaceURL, env: model.env)
             if let problem = inspectionProblem {
                 Text(problem).font(.caption).foregroundStyle(.red)
             } else if let inspection {
-                Text("\(inspection.branch) at \(inspection.head.prefix(10)) · base \(inspection.baseRef ?? "none")").font(.caption.monospaced())
+                Text((inspection.headRef == nil ? "" : "up to ") + "\(inspection.branch) at \(inspection.head.prefix(10)) · base \(inspection.baseRef ?? "none")")
+                    .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                 Text(inspection.summary).font(.callout)
                 if inspection.baseRef == nil {
@@ -431,9 +437,17 @@ struct NewReviewSheet: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         } footer: {
-            Text("In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF).")
+            Text("In a terminal of the workspace: akit review local . (--what commits | uncommitted, --base REF, --head REF); akit review points . --find TEXT finds a ref.")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    /// The workspace Find… searches: the typed folder, once it is there.
+    private var workspaceURL: URL? {
+        let path = workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        let url = model.env.expand(path)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     /// The choices that differ: all three with commits and uncommitted changes, else the one there is.
@@ -458,11 +472,15 @@ struct NewReviewSheet: View {
             inspectionProblem = nil
             return
         }
+        // The old range must not start while the new one is read (a Return right after Find…).
+        inspection = nil
         try? await Task.sleep(for: .milliseconds(400))
         guard !Task.isCancelled else { return }
         let base = baseRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        let head = headRef.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            let found = try await ReviewLocal.inspect(path: model.env.expand(path), baseRef: base.isEmpty ? nil : base, env: model.env)
+            let found = try await ReviewLocal.inspect(path: model.env.expand(path), baseRef: base.isEmpty ? nil : base,
+                                                      headRef: head.isEmpty ? nil : head, env: model.env)
             guard !Task.isCancelled else { return }
             inspection = found
             inspectionProblem = nil

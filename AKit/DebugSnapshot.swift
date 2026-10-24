@@ -29,6 +29,7 @@ import SwiftUI
 /// `--brain <folder>` reads the brain repo from there (not saved in Settings); `--appearance light|dark`;
 /// `--click 640,400` clicks there (snapshot points from the top left) before the capture;
 /// `--size 1280x800` sets the window size; `--select <layer>` (or `project:<id>`) on the Brain screen; `--demo` hides the build badge (README screenshots, see `make screenshots`); on the Brain screen
+/// Review: `--add` opens New Review… (`--query /path` on Local Workspace; `--tab find-base` or `find-head` then opens that Find…).
 /// `--tab setup` opens Set Up Project (with `--project`, `--query <layers>`, `--local-only` picks Local only, `--capture` for the preview).
 /// Lab: `--tab sends` shows the send log; with `--select <run id>` of a review, `--tab notes` opens its
 /// notes' disclosures and `--tab recheck` the Re-check sheet (`tools/demo-home.sh` has one). Settings: `--tab lab` (or `scrub`) scrolls to the sending

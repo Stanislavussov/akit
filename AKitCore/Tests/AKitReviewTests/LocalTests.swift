@@ -98,11 +98,61 @@ extension ReviewProcessTests {
             #expect(home.git(repo, "worktree", "list").split(separator: "\n").count == 1)
         }
 
+        /// Base and Head by a word of a branch, a tag, a commit's subject or its id.
+        @Test func findsPointsByNameMessageOrID() async throws {
+            let (home, repo) = try workspace()
+            home.git(repo, "tag", "-a", "v1", "-m", "First", "main")
+            let all = try await ReviewLocal.points(path: repo, env: home.env)
+            #expect(all.first?.kind == .branch, "refs before commits")
+            #expect(Set(all.filter { $0.kind != .commit }.map(\.name)) == ["main", "feature/AB#41-total", "v1"])
+            // Same-second commits: their order is git's.
+            #expect(Set(all.filter { $0.kind == .commit }.map(\.subject)) == ["Add VAT", "Add a total", "Add the cart"])
+            home.git(repo, "tag", "tree-tag", home.git(repo, "write-tree"))
+            #expect(try await ReviewLocal.points(path: repo, query: "tree-tag", env: home.env).isEmpty, "a tag on a tree is no point")
+
+            let byBranch = try await ReviewLocal.points(path: repo, query: "41 TOTAL", env: home.env)
+            #expect(byBranch.map(\.name) == ["feature/AB#41-total"], "every word, any case")
+            let byMessage = try await ReviewLocal.points(path: repo, query: "vat", env: home.env)
+            #expect(byMessage.count == 2 && byMessage.contains { $0.kind == .branch } && byMessage.contains { $0.kind == .commit && $0.subject == "Add VAT" })
+            let tag = try await ReviewLocal.points(path: repo, query: "v1", env: home.env).first { $0.kind == .tag }
+            #expect(tag?.sha == home.git(repo, "rev-parse", "main") && tag?.subject == "First" && tag?.date.isEmpty == false && tag?.author.isEmpty == false,
+                    "an annotated tag gives its commit, the commit's author and date, and its own message")
+
+            let first = home.git(repo, "rev-parse", "main")
+            let byID = try await ReviewLocal.points(path: repo, query: String(first.prefix(7)), env: home.env)
+            #expect(byID.contains { $0.kind == .commit && $0.sha == first && $0.name == String(first.prefix(12)) })
+            #expect(try await ReviewLocal.points(path: repo, query: "nothing-like-this", env: home.env).isEmpty)
+            await #expect(throws: ReviewLocal.Failure.self) { try await ReviewLocal.points(path: home.url, env: home.env) }
+        }
+
+        /// Head: another commit than the workspace's HEAD reviews that range, without the uncommitted changes.
+        @Test func reviewsUpToAnotherHead() async throws {
+            let (home, repo) = try workspace()
+            let middle = home.git(repo, "rev-parse", "HEAD~1")
+            let inspection = try await ReviewLocal.inspect(path: repo, headRef: "HEAD~1", env: home.env)
+            #expect(inspection.head == middle && inspection.headRef == "HEAD~1" && inspection.branch == "HEAD~1")
+            #expect(inspection.commits.map(\.subject) == ["Add a total"] && inspection.uncommitted.isEmpty)
+            #expect(inspection.suggestedMode == .commits)
+            let target = try await ReviewLocal.target(inspection, mode: .commits, env: home.env)
+            #expect(target.head == middle && target.headRef == "HEAD~1" && target.base == home.git(repo, "rev-parse", "main"))
+
+            // The workspace's own branch by name is still HEAD, with its changes.
+            let same = try await ReviewLocal.inspect(path: repo, headRef: "feature/AB#41-total", env: home.env)
+            #expect(same.headRef == nil && same.uncommitted.count == 3 && same.commits.count == 2)
+            // Base and Head together: only the commits between them.
+            let between = try await ReviewLocal.inspect(path: repo, baseRef: "HEAD~1", headRef: "HEAD", env: home.env)
+            #expect(between.commits.map(\.subject) == ["Add VAT"])
+            await #expect(throws: ReviewLocal.Failure.self) { try await ReviewLocal.inspect(path: repo, headRef: "no-such-branch", env: home.env) }
+            await #expect(throws: ReviewLocal.Failure.self) { try await ReviewLocal.inspect(path: repo, headRef: "--all", env: home.env) }
+        }
+
         @Test func readsRemotes() {
             #expect(ReviewLocal.remoteProject("git@gitlab.corp.example:team/shop.git")! == ("gitlab.corp.example", "team/shop"))
             #expect(ReviewLocal.remoteProject("https://GitLab.corp.example/team/sub/shop.git")! == ("gitlab.corp.example", "team/sub/shop"))
             #expect(ReviewLocal.remoteProject("ssh://git@gitlab.corp.example:2222/team/shop")! == ("gitlab.corp.example", "team/shop"))
             #expect(ReviewLocal.isRefName("origin/main") && ReviewLocal.isRefName("HEAD~3") && !ReviewLocal.isRefName("-x") && !ReviewLocal.isRefName("a..b"))
+            #expect(ReviewLocal.isRefName("feature/AB#41-total") && ReviewLocal.isRefName("v1.2+build") && ReviewLocal.isRefName("main^"))
+            #expect(!ReviewLocal.isRefName("main@{1}") && !ReviewLocal.isRefName("a b") && !ReviewLocal.isRefName("x:y") && !ReviewLocal.isRefName("a\\b"))
         }
     }
 }

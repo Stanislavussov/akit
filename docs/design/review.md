@@ -187,6 +187,26 @@ path, showing the commit range or saying that only the diff is there):
   current folder, so `akit review local .` in an Orca or herdr terminal); New Review… →
   **Local Workspace** with Choose…, Base, What to review, the commits and the uncommitted files.
 
+Finding the points (2026-10-24, the user's request: find the commits and points of a review by a
+branch or commit name):
+
+- `ReviewLocal.points(path, query)`: the branches, remote branches (without `origin/HEAD`), tags
+  (an annotated tag gives its commit, the commit's author and date, its own message) and the last
+  1,000 commits of all branches and HEAD (newest first), plus an older commit by an id start of
+  4+ hex characters. Every word of the query must be in the name, the subject or the author, or
+  start the id; any case. Refs first (the most recent first, `creatordate`: a tag by its own date),
+  then commits; at most 30. A tag on a tree or a blob is left out. New Review… clears the range
+  while it reads a new Base or Head, so Start Review never takes the old one.
+- Head: `inspect(path, base?, head?)`. A head other than the workspace's HEAD reviews
+  `merge-base(head, base)..head` without the uncommitted changes (they belong to HEAD), so only
+  **Commits only** is offered; the current branch by name is still HEAD. `ReviewLocalTarget.headRef`
+  keeps it for Review Again….
+- A ref the user types may hold `#` and `+` now (`feature/AB#41-total` was refused); still no
+  leading `-`, no spaces, `:`, `?`, `*`, `[`, `\`, `{`, `}` or `..`.
+- `akit review points [PATH] [--find TEXT] [--json]`, `akit review local --head REF`; New Review… →
+  Local Workspace → **Find…** next to **Base** and the new **Head** opens a search sheet; a click
+  puts the name (a commit: 12 characters of its id) into the field.
+
 Context and extra servers (2026-10-22, GitHub issue #1 "Code review improvement - context for
 review"; the user chose the three parts below):
 

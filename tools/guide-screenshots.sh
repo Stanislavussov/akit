@@ -197,5 +197,7 @@ shot review-quality      $MAIN --section review --tab quality
 shot review-log          $MAIN --section review --tab log --select 20261015-091500-orders-service-42
 # New Review… in Local Workspace mode: a query starting with "/" is the workspace path.
 shot review-local        $MAIN --section review --query "$DEMO/work/orders-service" --add
+# Base → Find…: the branches, the tag and the commits of the made-up clone.
+shot review-local-find   $MAIN --section review --query "$DEMO/work/orders-service" --tab find-base --add
 
 exit $FAILED
