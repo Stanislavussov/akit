@@ -16,7 +16,7 @@ public enum KnowledgeSeed {
     public typealias Failure = KnowledgeBase.Failure
 
     /// The seed's version: raised whenever `files` changes.
-    public static let version = 2
+    public static let version = 3
     /// The world of the sample base unless one is named.
     public static let world = "sample"
     public static let markerName = ".akit-seed.json"
@@ -285,6 +285,8 @@ public enum KnowledgeSeed {
             [[logistics/warehouse]] read it.
 
             """),
+        // Search (3.2a): warehouse and shipping have sections about other things, so a word of
+        // orders is rare enough in the base for BM25 to score a real match below the miss cutoff.
         File(path: "areas/logistics/warehouse.md", text: """
             ---
             kind: service
@@ -294,6 +296,18 @@ public enum KnowledgeSeed {
 
             Keeps the stock and reserves items for paid orders.
 
+            ## Stock
+
+            Counted every night; a shelf below its minimum asks the supplier for more.
+
+            ## Locations
+
+            Two halls, north and south. Heavy items stay on the ground floor.
+
+            ## Returns
+
+            A returned item is checked, then put back on its shelf or thrown away.
+
             """),
         File(path: "areas/logistics/shipping.md", text: """
             ---
@@ -302,6 +316,14 @@ public enum KnowledgeSeed {
             # shipping
 
             Books the courier and tracks each parcel.
+
+            ## Tracking
+
+            Each parcel gets a tracking number; the status page asks the courier every hour.
+
+            ## Labels
+
+            Labels are printed in the south hall, one per parcel, with the address and a barcode.
 
             """),
         File(path: "areas/logistics/flows/pick-and-ship.md", text: """

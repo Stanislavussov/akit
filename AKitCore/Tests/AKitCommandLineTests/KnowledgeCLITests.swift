@@ -23,7 +23,9 @@ struct KnowledgeCLITests {
 
     var base: URL { home.appending(path: ".akit/local/knowledge/work") }
 
-    func akit(_ arguments: String...) async -> (code: Int32, out: String, err: String) {
+    func akit(_ arguments: String...) async -> (code: Int32, out: String, err: String) { await akit(arguments) }
+
+    func akit(_ arguments: [String]) async -> (code: Int32, out: String, err: String) {
         var out: [String] = [], err: [String] = []
         let code = await AKitCLI.run(arguments, env: env, cwd: home, projectsRoot: home.appending(path: "Projects"),
                                      hostName: "TestMac.local", out: { out.append($0) }, err: { err.append($0) }, trash: fakeTrash)
@@ -57,7 +59,8 @@ struct KnowledgeCLITests {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
-        for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]"] {
+        for command in ["akit kb areas", "akit kb notes", "akit kb maps", "akit kb relations", "akit kb kinds [--json]", "akit kb area AREA [--json]",
+                        "akit kb search", "akit kb show", "akit kb index"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(!lines[index...].prefix(3).contains { $0.contains("person only") }, "\(command) is a read command")
         }
@@ -71,7 +74,64 @@ struct KnowledgeCLITests {
         #expect(areas.out == "{\n  \"base\" : null,\n  \"reason\" : \"no base\"\n}")
         let notes = await akit("kb", "notes")
         #expect(notes.code == 0 && notes.out.contains("No knowledge base on this Mac"))
+        for command in [["search", "retry"], ["show", "orders-api"], ["index"]] {
+            let answer = await akit(["kb"] + command + ["--json"])
+            #expect(answer.code == 0 && answer.out == areas.out, "\(command)")
+        }
         #expect(await akit("kb", "new-note", "a", "b").code == 2)
+    }
+
+    /// The seed's files in a folder of the fake home, without git (the index needs only areas/).
+    func seedFolder() throws -> String {
+        let folder = home.appending(path: "kb")
+        for file in KnowledgeSeed.files {
+            let url = folder.appending(path: file.path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(file.text.utf8).write(to: url)
+        }
+        return folder.path
+    }
+
+    @Test func searchShowAndIndexAnswerInTheirJSONShapes() async throws {
+        let base = try seedFolder()
+        let search = await akit("kb", "search", "order-created: retry", "--json", "--base", base)
+        #expect(search.code == 0, "\(search.err)")
+        let found = try json(search.out)
+        #expect(Set(found.keys) == ["results", "stale", "tokens"])
+        let results = try #require(found["results"] as? [[String: Any]])
+        #expect(!results.isEmpty && results.count <= 10)
+        #expect(Set(results[0].keys) == ["note", "heading", "score", "snippet", "neighbors"])
+        #expect(results[0]["note"] as? String == "payments/orders-api" && results[0]["heading"] as? String == "Events")
+        #expect(found["stale"] as? Bool == false && (found["tokens"] as? Int ?? 0) > 0)
+        #expect(await akit("kb", "search", "order", "--limit", "2", "--json", "--base", base).out.components(separatedBy: "\"note\"").count == 3)
+        #expect(await akit("kb", "search", "order", "--max-tokens", "0", "--base", base).code == 2)
+        #expect(await akit("kb", "search", "--base", base).code == 2)
+        #expect(await akit("kb", "search", "retry", "--base", base).out.hasPrefix("payments/orders-api  ## Events  -"))
+
+        let show = try json(await akit("kb", "show", "orders-api", "--section", "Events", "--json", "--base", base).out)
+        #expect(Set(show.keys) == ["note", "title", "frontmatter", "sections", "truncated", "stale", "tokens"])
+        #expect(Set((show["frontmatter"] as? [String: Any] ?? [:]).keys) == ["kind", "repo", "files"])
+        let sections = try #require(show["sections"] as? [[String: Any]])
+        #expect(sections.count == 1 && sections[0]["heading"] as? String == "Events" && Set(sections[0].keys) == ["heading", "text"])
+        let text = await akit("kb", "show", "billing", "--base", base).out
+        #expect(text.hasPrefix("# billing  (payments/billing)\nkind: service  repo: git@example.com:shop/billing.git\n\nBills each order once.\n\n## Invoices\n"))
+        #expect(await akit("kb", "show", "nope", "--base", base).code == 2)
+
+        let index = try json(await akit("kb", "index", "--rebuild", "--json", "--base", base).out)
+        #expect(Set(index.keys) == ["notes", "maps", "chunks", "rebuilt", "stale", "tokens"])
+        #expect(index["notes"] as? Int == 10 && index["maps"] as? Int == 2 && index["rebuilt"] as? Bool == true)
+        #expect(await akit("kb", "index", "--base", base).out.hasPrefix("The index is up to date: 10 notes, 2 maps,"))
+    }
+
+    @Test func aBusyIndexLockWithNoIndexFileIsEmptyStaleAndExitsZero() async throws {
+        let base = try seedFolder()
+        let lock = try #require(try FileLock.acquire(URL(filePath: base).appending(path: KnowledgeIndex.lockName)))
+        let busy = await akit("kb", "search", "retry", "--json", "--base", base)
+        #expect(busy.code == 0)
+        let answer = try json(busy.out)
+        #expect((answer["results"] as? [Any])?.isEmpty == true && answer["stale"] as? Bool == true)
+        lock.release()
+        #expect(try json(await akit("kb", "search", "retry", "--json", "--base", base).out)["stale"] as? Bool == false)
     }
 
     @Test func initNewNoteAndTheJSONShapes() async throws {

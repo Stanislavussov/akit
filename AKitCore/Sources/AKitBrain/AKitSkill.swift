@@ -231,7 +231,21 @@ akit kb maps [AREA] [--json] [--base PATH|WORLD]   # the maps (.excalidraw): blo
 akit kb relations NOTE [--json] [--base PATH|WORLD]
                                                    # arrows to and from a note on every map:
                                                    # {from, kind, to, flow, map}; kind = the label
+akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # the best ## sections with every word:
+                                                   # {note, heading, score, snippet, neighbors};
+                                                   # score is BM25, lower is better
+akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                                   # one note: title, kind, repo, files, sections
+akit kb index [--rebuild] [--json] [--base PATH|WORLD]
+                                                   # bring the search index up to the files
 ```
+
+To find text, `kb search` first, then `kb show NOTE --section H` for the one section you
+need; both stay under `--max-tokens` (default 4000). Search reads `areas/` only, never the
+proposals in `inbox/`, and refreshes the index itself (`kb index` is rarely needed).
+`"stale": true` means another process is updating the index: the answer is from its last
+state.
 
 `--base` picks a base (a world name or a folder); without it akit takes the project's choice,
 the only base, or the one named like this Mac's kind. No base: `{"base": null, "reason":

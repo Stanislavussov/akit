@@ -119,6 +119,17 @@ struct KnowledgeSeedTests {
                 }
             }
         }),
+        // Search (3.2a).
+        ("kb search finds the Events section of orders-api for retry, with its neighbor", { base in
+            let hit = try KnowledgeIndex(base: base).search("retry").results.first
+            return hit?.note == "payments/orders-api" && hit?.heading == "Events" && hit?.neighbors == ["payments/billing"]
+        }),
+        ("\"order created\" scores below the miss cutoff, \"kubernetes ingress\" is a miss", { base in
+            let index = KnowledgeIndex(base: base)
+            let unrelated = try index.search("kubernetes ingress").results
+            return try index.search("order created").results.first.map { $0.score < KnowledgeIndex.missScore } == true
+                && (unrelated.isEmpty || unrelated[0].score >= KnowledgeIndex.missScore)
+        }),
     ]
 
     static func links(in text: String) -> [String] {

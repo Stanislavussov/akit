@@ -32,6 +32,18 @@ extension AKitCLI {
       akit kb relations NOTE [--json] [--base PATH|WORLD]
                                         The arrows to and from a note on every map: from, kind (the
                                         arrow's label), to, flow (the note the arrow links), map
+      akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                        The best sections of notes with every word of QUERY (BM25:
+                                        a lower score is better): note, heading, snippet and the
+                                        notes one arrow away on a map. Only areas/, never inbox/
+      akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]
+                                        A note: title, kind, repo, files and its sections (only H
+                                        with --section), cut to --max-tokens (default 4000)
+      akit kb index [--rebuild] [--json] [--base PATH|WORLD]
+                                        Bring the search index (.akit-index.sqlite in the base,
+                                        git-ignored) up to the files, or build it again. search
+                                        does it itself; "stale": true means another process holds
+                                        the index and the answer comes from its last state
 
     Write (for a person only: an agent runs these only when the user asked for that action in
     this session; otherwise it proposes or asks):
@@ -176,6 +188,8 @@ extension AKitCLI {
             do { path = try await base.newNote(area: area, name: name, kind: kind, env: env) } catch { throw Failure(message: error.message) }
             out("Created \(FileWalk.tilde(base.root.appending(path: path), home: env.homeDirectory)), committed.")
             return 0
+        case "search", "show", "index":
+            return try await knowledgeSearch(command!, &args, json: json, base: chosen, env: env, out: out)
         case "maps", "relations", "new-map":
             return try await knowledgeMaps(command!, &args, json: json, base: chosen, env: env, out: out)
         case "path":
@@ -298,6 +312,85 @@ extension AKitCLI {
             }.joined(separator: "\n"))
         }
         return 0
+    }
+
+    /// `kb search QUERY`, `kb show NOTE` and `kb index` (read, for agents; K19, K20).
+    private static func knowledgeSearch(_ command: String, _ args: inout Arguments, json: Bool, base chosen: () async throws -> KnowledgeBase?,
+                                        env: HarnessEnvironment, out: (String) -> Void) async throws -> Int32 {
+        func number(_ name: String, _ fallback: Int) throws -> Int {
+            guard let text = args.value(name) else { return fallback }
+            guard let value = Int(text), value > 0 else { throw Failure(message: "\(name) takes a whole number above 0, not “\(text)”.") }
+            return value
+        }
+        let maxTokens = try number("--max-tokens", Budget.defaultTokens)
+        let home = env.homeDirectory
+        func noBase() -> Int32 {
+            out(json ? encode(NoBase()) : "No knowledge base on this Mac (a person creates one with akit kb init).")
+            return 0
+        }
+        switch command {
+        case "search":
+            let area = args.value("--area"), limit = try number("--limit", 10)
+            guard let query = args.positional() else {
+                throw Failure(message: "Use: akit kb search QUERY [--area A] [--limit 10] [--max-tokens N] [--json] [--base PATH|WORLD]")
+            }
+            try args.finish()
+            guard let base = try await chosen() else { return noBase() }
+            let answer: KnowledgeIndex.SearchAnswer
+            do { answer = try KnowledgeIndex(base: base).search(query, area: area, limit: limit, maxTokens: maxTokens) } catch {
+                throw Failure(message: error.message)
+            }
+            if json {
+                out(encode(answer))
+            } else {
+                var lines = answer.results.isEmpty ? ["No section of \(FileWalk.tilde(base.root, home: home)) has every word of “\(query)”."]
+                    : answer.results.map { hit in
+                        "\(hit.note)" + (hit.heading.map { "  ## \($0)" } ?? "") + "  \(hit.score)\n    \(hit.snippet)"
+                            + (hit.neighbors.isEmpty ? "" : "\n    next to: " + hit.neighbors.joined(separator: ", "))
+                    }
+                if answer.stale { lines.append("(Another process is updating the index: these come from its last state.)") }
+                out(lines.joined(separator: "\n"))
+            }
+            return 0
+        case "show":
+            let section = args.value("--section")
+            guard let name = args.positional() else {
+                throw Failure(message: "Use: akit kb show NOTE [--section H] [--max-tokens N] [--json] [--base PATH|WORLD]")
+            }
+            try args.finish()
+            guard let base = try await chosen() else { return noBase() }
+            let answer: KnowledgeIndex.ShowAnswer
+            do { answer = try KnowledgeIndex(base: base).show(name, section: section, maxTokens: maxTokens) } catch {
+                throw Failure(message: error.message)
+            }
+            if json {
+                out(encode(answer))
+            } else {
+                let front = answer.frontmatter
+                let facts = [front.kind.map { "kind: \($0)" }, front.repo.map { "repo: \($0)" },
+                             front.files.isEmpty ? nil : "files: " + front.files.joined(separator: ", ")].compactMap(\.self)
+                var parts = ["# \(answer.title)  (\(answer.note))" + (facts.isEmpty ? "" : "\n" + facts.joined(separator: "  "))]
+                parts += answer.sections.map { section in (section.heading.map { "## \($0)\n" } ?? "") + section.text }
+                if answer.truncated { parts.append("(Cut to \(maxTokens) tokens: ask for one --section, or a larger --max-tokens.)") }
+                out(parts.joined(separator: "\n\n"))
+            }
+            return 0
+        default:
+            let rebuild = args.flag("--rebuild")
+            try args.finish()
+            guard let base = try await chosen() else { return noBase() }
+            let index = KnowledgeIndex(base: base)
+            let status: KnowledgeIndex.Status
+            do { status = try index.refresh(rebuild: rebuild) } catch { throw Failure(message: error.message) }
+            if json {
+                out(encode(status))
+            } else {
+                out((status.stale ? "Another process is updating the index; as it is now: " : status.rebuilt ? "Built the index: " : "The index is up to date: ")
+                    + "\(count(status.notes, "note")), \(count(status.maps, "map")), \(count(status.chunks, "section")) in "
+                    + FileWalk.tilde(index.file, home: home) + ".")
+            }
+            return 0
+        }
     }
 
     /// `kb path [WORLD]` and its person-only changes `--set`, `--move`, `--reset` (K25).

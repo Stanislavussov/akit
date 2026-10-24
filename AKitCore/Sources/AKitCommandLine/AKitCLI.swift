@@ -270,8 +270,8 @@ public enum AKitCLI {
 
         Knowledge base (notes and maps of your systems; a folder per world, git without a remote):
           akit kb areas | notes [AREA] | maps [AREA] | relations NOTE | kinds | area AREA
-                [--json] [--base PATH|WORLD]
-                                          What the base holds. akit kb --help lists the rest, with
+                | search QUERY | show NOTE | index [--json] [--base PATH|WORLD]
+                                          What the base holds, and search in it. akit kb --help lists the rest, with
                                           the commands for a person only
 
         Translate (model-written output in another language; the original stays):

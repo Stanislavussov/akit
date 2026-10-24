@@ -10,7 +10,8 @@ bundle, results below) done 2026-10-24; 2.1 (reading `.excalidraw`, the map grap
 in the list, view mode, a click on a block opens its note, map snapshots) built 2026-10-24; 2.2b (Edit,
 saves of Excalidraw's own bytes, Changed on disk, maps in the commit queue, New Map…, Delete…) built 2026-10-24;
 2.3 (map tabs, a dragged note becomes a linked block, Relations in the note panel, Rename… and
-`akit kb rename`) built 2026-10-24: step 2 is done. Steps in [Steps](#steps).
+`akit kb rename`) built 2026-10-24: step 2 is done. 3.2a (the search index `.akit-index.sqlite` with FTS5,
+`akit kb search`, `show`, `index`, the miss log; seed v3) built 2026-10-24. Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
 ## Goal
@@ -97,7 +98,7 @@ panel on the right with **Open in Obsidian**; **Inbox** and **Lint** as tabs of 
 |---|---|---|
 | 1 | Base folder + git without remote; Knowledge screen: spaces, note list, note panel (read and edit), **Open in Obsidian** | 2026-10-24: `AKitKnowledge` (base, notes, links, `KnowledgeGit`, `KnowledgeCommitQueue`), `akit kb areas/notes/init/new-note`, the Knowledge screen with New Area…, New Note…, Delete…, Edit, Copy, Paste; batch commits on tab close, after 5 min, at quit and rebuild |
 | 2 | Excalidraw in the app, offline: map tabs, block ↔ `[[note]]`, jump to another map, relations from arrows | 2026-10-24: the bundle and `MapCanvasView` (2.0), `ExcalidrawFile`, `MapGraph`, `akit kb maps/relations/new-map` (2.1), the map view (2.2a), Edit with checked saves and Changed on disk (2.2b), map tabs, drag a note onto a map, Relations, `KnowledgeRename` and `akit kb rename` (2.3) |
-| 3 | SQLite index (FTS + graph); `akit kb search / show / neighbors / context --json`; the Pi template in the core layer; the `/akit` skill | — |
+| 3 | SQLite index (FTS + graph); `akit kb search / show / neighbors / context --json`; the Pi template in the core layer; the `/akit` skill | 2026-10-24 so far (3.2a): `KnowledgeIndex` (`<base>/.akit-index.sqlite`: files, notes, nodes, edges, chunks + FTS5; schema version with "Update akit"; incremental refresh under `.akit-index.lock`, `stale` when busy), `Budget` (tokens ≈ bytes / 4), `.akit-misses.log`, `akit kb search / show / index` |
 | 4 | Lint: block without a note, unbound arrow, broken repo/file references | — |
 | 5 | `akit kb propose`, Inbox, the light-model check, Accept / Reject with a commit | — |
 | 6 | AKit Review reads the base (K18) | — |
