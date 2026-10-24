@@ -16,6 +16,10 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
+Added 2026-10-24 (branch `review-impact-map`): R40–R44, a map of the change for the user and its
+uses in other repositories, found by the agent through GitLab's MCP server (section "Change map
+and impact on other repositories").
+
 Added 2026-10-23 (branch `review-branch-wi`): R39, the work item comes only from the source branch
 (`COL-317494`); without one the review checks the code alone.
 
@@ -375,6 +379,51 @@ CodeRabbit field study). Built on branch `review-practices` in four parts: (a) R
 Not taken: CI layers (Danger, reviewdog, SAST, a `.gitlab-ci.yml` template) are the team's
 repository set-up, and a team set-up is not a goal; the team agreement on 🤖 comments is the
 user's. Automatic choice of a verifier model of another family (R25: the user wants it explicit).
+
+## Change map and impact on other repositories (2026-10-24)
+
+Asked by the user on 2026-10-24: "a graphic view of the merge request for me: the links, what
+each change affects". When the change is on a boundary (an API, a micro-frontend, a shared
+library, an event, infrastructure), the agent itself searches the whole GitLab through the MCP
+server for the other repositories that use it. The user names no repositories. Built on branch
+`review-impact-map` in three parts: (a) R40, R41 and `akit review map`; (b) R42–R44, the `impact` pass; (c) the Map tab, the guide and the `/akit` skill.
+
+| # | Question | Decision |
+|---|---|---|
+| R40 | What is on the map? | Three lanes, left to right. **This change**: the changed files, grouped by module (the nearest folder with `package.json`, else the top folder), with lines added and removed and the worst severity of their findings. **Boundaries**: what the change provides or uses across the repository's edge. **Other repositories**: the projects and files that use a boundary. Faded nodes in the first lane: unchanged files of this repository that import a changed file. For TS/JS AKit reads the imports itself (`import`, `export … from`, `require`, `import()`), relative paths and the workspace's own package names; files of other languages are nodes without edges. The map is for the user only and is never posted. Saved as `<run>/map.json`; built again on each run and rerun |
+| R41 | Who finds the boundaries? | The brief, with a new tool `akit_submit_boundaries`. Each boundary has a kind (`http-api`, `graphql`, `mfe` (an exposed or remote module), `shared-lib` (a published package), `event` (a topic, a queue, a message schema), `db-schema`, `infra` (Helm, Terraform, Kubernetes, Docker), `ci` (a shared CI template, a job others include), `config` (an environment variable, a feature flag, a config key)), a direction (`provides` or `uses`), a name to search for (an endpoint path, a package name, a module name, a topic, a variable; at most 120 characters), the file, the line and a quote. AKit keeps a boundary only when its quote is in the file at the reviewed commit, like a finding (Checks without a model). A boundary of a file the change doesn't touch is dropped |
+| R42 | When does AKit look in other repositories? | Automatically, when the brief kept at least one boundary and the run has a GitLab server. A new pass `impact` runs after the brief and before the roles, in the main session, so the roles see what it found. `impact: auto` (default), `off` or `always` at the three config levels (review.yaml, the profile, the run: New Review… → Other repositories, `--impact`). `always` runs the pass even when the brief kept no boundary: the pass then looks at the diff itself. Without a GitLab server the run gets a gap |
+| R43 | How does the pass search? | GitLab's MCP server, reading tools only (R22's policy, the 300-character argument limit): `search` with `scope: blobs` and the name, first in the merge request's top group (`group_id`), then in the whole GitLab when the group gives fewer than 3 projects; `get_repository_file` to read a hit around the use; `semantic_search` and Orbit's `query_graph` when the server offers them. A budget, given to the pass in its prompt and counted by AKit: 20 searches and 30 files read; over it AKit only alerts (R37). When search over code in a group or the instance fails (it can need Advanced search), the pass reports a gap that says so and what it tried. The pass submits each use with `akit_submit_consumers`: the boundary, the project path, the file, the ref, the line, a quote and how the file uses the boundary, and whether this change breaks it with the reason. AKit keeps a use only when its quote is in an answer the pass got from GitLab in `mcp/calls/` (never the model's word alone) and the project is not the merge request's own. The kept uses go to `context/consumers.md` for the roles and onto the map |
+| R44 | Where do the uses go? | On the map (the third lane). A use that this change breaks is a candidate of the `contracts` role, which now runs in every run that has kept uses: its anchor is the changed line in this merge request (never a line in the other repository), its text names the other project and file, and it goes through the verifier and the user's approval like any finding. Answers from other projects are context: they never become this merge request's data (R30's rule) and AKit never writes to another project |
+
+### The map on the Review screen
+
+```
+┌ This change ──────────────┐  ┌ Boundaries ────────────┐  ┌ Other repositories ──┐
+│ orders/  +120 −40         │  │ ⇄ GET /api/orders/{id} │─►│ shop-mfe        2 ●  │
+│   api/orders.ts   ● high  │─►│ ▣ mfe: ./OrderWidget   │─►│ billing-svc     1    │
+│   ui/OrderForm.tsx        │  │ ⚙ env ORDERS_URL       │  └──────────────────────┘
+│ helm/values.yaml  ● med   │─►│                        │
+│ ┄ checkout/Cart.tsx ┄     │  └────────────────────────┘
+└───────────────────────────┘
+ a node selected → the inspector: files, findings, quotes, the GitLab link of a use
+```
+
+A tab **Map** next to the requests of a run. Native SwiftUI, a fixed lane layout (no force
+layout), lines drawn between the lanes; hovering a node lights up its lines. Clicking a node
+opens the inspector on the right: the files and their changed lines, the findings on them (a
+click goes to the request), a boundary's quote, a use's quote and its GitLab link. A node's dot
+is the worst severity of its findings. **Copy as Mermaid** copies the map as a `flowchart LR`.
+`akit review map RUN [--json | --mermaid]` prints it in a terminal. A run without `map.json`
+(made before) shows "No map for this run" and **Review Again…**.
+
+### Facts to check on the work Mac
+
+- Whether `search` with `scope: blobs` works at the group and instance level on the work
+  GitLab (it may need Advanced search or exact code search).
+- Whether the server offers `semantic_search` (Duo add-on) and the `orbit` toolset.
+- How long a search over the instance takes.
+
 
 ## One run
 
