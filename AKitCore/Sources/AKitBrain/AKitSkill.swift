@@ -211,6 +211,23 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
   (also `direct`, `codemode` = Pi's default, `hidden`; shows the change; `--yes` writes).
   `akit doctor pi` suggests it for a direct server Pi rarely calls.
 
+## Knowledge base
+
+Notes and maps of the systems around a repository: which service sends what to whom, which
+repo owns what. A base is a folder per world (`~/.akit/local/knowledge/<world>`, git without
+a remote); `areas/<area>/` holds the notes. Read it when a task is about systems:
+
+```
+akit kb areas [--json] [--base PATH|WORLD]         # the areas, with note and map counts
+akit kb notes [AREA] [--json] [--base PATH|WORLD]  # notes: id (payments/orders-api), kind, title
+```
+
+`--base` picks a base (a world name or a folder); without it akit takes the project's choice,
+the only base, or the one named like this Mac's kind. No base: `{"base": null, "reason":
+"no base"}`, exit 0; then there is nothing to read. Never run `akit kb accept`, `reject`,
+`init`, `new-note` or any other command `akit kb --help` marks "for a person only"; ask the
+user to do it.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

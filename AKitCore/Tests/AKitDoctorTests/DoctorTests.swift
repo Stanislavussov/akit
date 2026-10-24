@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import AKitBrain
 import AKitFoundation
+import AKitKnowledge
 import AKitProjectSetup
 @testable import AKitDoctor
 
@@ -94,6 +95,17 @@ struct DoctorTests {
         #expect(report.contains("! worktree ~/trees/x lacks .agents/skills/tdd, .claude/skills, AGENTS.md, CLAUDE.md; run akit worktrees sync ~/Projects/task."))
         #expect(report.contains("  github.com/me/elsewhere: not on this Mac"))
         #expect(report.contains("  no AKit crash reports"))
+    }
+
+    @Test func theKnowledgeBaseLineSaysNoRemoteAndARemoteIsAProblem() async throws {
+        func report() async -> String { await Doctor.report(.init(env: env, brainRoot: brainRoot, projectRoots: [home.appending(path: "Projects")])) }
+        #expect(await report().contains("  knowledge base: none (a person creates one with akit kb init)"))
+        let base = try await KnowledgeBase.create(world: "work", env: env)
+        #expect(await report().contains("  knowledge base: ~/.akit/local/knowledge/work, no remote"))
+        try await git("remote", "add", "origin", "https://user:\(secrets[1])@example.com/me/kb.git", in: base.root)
+        let withRemote = await report()
+        #expect(withRemote.contains("! knowledge base: ~/.akit/local/knowledge/work has a git remote (origin)"), "\(withRemote)")
+        #expect(!withRemote.contains(secrets[1]) && !withRemote.contains("example.com/me/kb"))
     }
 
     @Test func theSkillListingBudgetVariableShowsOnlyWhenSet() async throws {

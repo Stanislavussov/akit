@@ -1,0 +1,102 @@
+import AKitFoundation
+import Darwin
+import Foundation
+
+/// Git in a knowledge base (P8). `commit(paths:message:)` is the only way anything in AKit
+/// commits there: it takes the base's git lock (`.akit-queue.lock`, shared with the app's commit
+/// queue and every other process), stages exactly the named paths and commits exactly those
+/// (`git add -- <paths>`, `git commit -- <paths>`), never whatever else is staged. A base never
+/// has a remote (K11): a commit is refused while one is set.
+public struct KnowledgeGit: Sendable {
+    public struct Failure: Error, LocalizedError, Equatable {
+        public let message: String
+        public var errorDescription: String? { message }
+        public init(message: String) { self.message = message }
+    }
+
+    public let base: URL
+    public let env: HarnessEnvironment
+
+    public init(base: URL, env: HarnessEnvironment) {
+        self.base = base
+        self.env = env
+    }
+
+    /// Commits the base-relative `paths` (added, changed or deleted files) with `message`.
+    /// false when none of them changed (nothing is committed). Waits up to `lockTimeout` seconds
+    /// for another writer to finish.
+    @discardableResult
+    public func commit(paths: [String], message: String, lockTimeout: TimeInterval = 2) async throws(Failure) -> Bool {
+        guard !paths.isEmpty else { return false }
+        if let bad = paths.first(where: { $0.isEmpty || $0.hasPrefix("/") || $0.split(separator: "/").contains("..") }) {
+            throw Failure(message: "\(bad) is not a path inside the base.")
+        }
+        let lock = try BaseLock.acquire(base.appending(path: KnowledgeBase.queueLockName), timeout: lockTimeout)
+        defer { lock.release() }
+        let remotes = try await run(["remote"])
+        if !remotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw Failure(message: "\(base.path) has a git remote (\(remotes.split(separator: "\n").joined(separator: ", "))), and a knowledge base never has one, so nothing was committed. Remove it: git -C \(base.path) remote remove <name>")
+        }
+        // A path git doesn't know and that is gone has nothing to add.
+        let present = paths.filter { FileManager.default.fileExists(atPath: base.appending(path: $0).path) }
+        let tracked = try await run(["ls-files", "--"] + paths).split(separator: "\n").map(String.init)
+        let staged = Array(Set(present + paths.filter { path in tracked.contains { $0 == path || $0.hasPrefix(path + "/") } })).sorted()
+        guard !staged.isEmpty else { return false }
+        _ = try await run(["add", "--all", "--"] + staged)
+        guard !(try await run(["diff", "--cached", "--name-only", "--"] + staged)).isEmpty else { return false }
+        _ = try await run(["-c", "commit.gpgsign=false", "commit", "--quiet", "--no-verify", "-m", message, "--"] + staged)
+        return true
+    }
+
+    /// The base's remote names; empty when it has none. nil when it is not a git repo.
+    public func remotes() async -> [String]? {
+        guard FileManager.default.fileExists(atPath: base.appending(path: ".git").path),
+              let output = try? await run(["remote"]) else { return nil }
+        return output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    /// Runs git in the base; the output on success.
+    @discardableResult
+    func run(_ arguments: [String]) async throws(Failure) -> String {
+        let git = env.findExecutable("git") ?? URL(filePath: "/usr/bin/git")
+        let result = await ProcessRunner.run(git, arguments: arguments, directory: base, environment: Self.variables(env), timeout: 30)
+        guard let result, result.succeeded else {
+            let detail = result.map(\.failureText) ?? "couldn't start git"
+            throw Failure(message: "git \(arguments.first { !$0.hasPrefix("-") && !$0.contains("=") } ?? "") failed in \(base.path): \(detail)")
+        }
+        return result.output
+    }
+
+    /// The caller's environment without the variables that would point git at another repository
+    /// (set when akit runs inside a git hook).
+    static func variables(_ env: HarnessEnvironment) -> [String: String] {
+        let redirecting: Set = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_PREFIX"]
+        return env.gitVariables.filter { !redirecting.contains($0.key) }
+    }
+}
+
+/// An exclusive `flock` on a file, polled with `LOCK_NB` until a timeout; released when closed.
+/// Small on purpose: it becomes Foundation's `FileLock` (slice 3.1).
+final class BaseLock: @unchecked Sendable {
+    private let descriptor: Int32
+
+    private init(descriptor: Int32) { self.descriptor = descriptor }
+
+    static func acquire(_ url: URL, timeout: TimeInterval) throws(KnowledgeGit.Failure) -> BaseLock {
+        let descriptor = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
+        guard descriptor >= 0 else {
+            throw KnowledgeGit.Failure(message: "Can't open the lock \(url.path): \(String(cString: strerror(errno))).")
+        }
+        let deadline = Date.now.addingTimeInterval(timeout)
+        while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+            guard errno == EWOULDBLOCK || errno == EINTR, Date.now < deadline else {
+                close(descriptor)
+                throw KnowledgeGit.Failure(message: "Another AKit is writing to the knowledge base (\(url.lastPathComponent) is held); try again in a moment.")
+            }
+            usleep(50_000)
+        }
+        return BaseLock(descriptor: descriptor)
+    }
+
+    func release() { close(descriptor) }
+}

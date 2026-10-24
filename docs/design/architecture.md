@@ -55,6 +55,11 @@ ProjectSetup already sees.
 calls `ModelCall` itself, as for Rewrite with Skill, so `AKitHelp` needs neither Lab nor any harness
 module. It is not in Foundation: the prompt is one feature's logic, not a shared tool.
 
+2026-10-24 (knowledge base, `knowledge.md`, slice 1.1): new module `AKitKnowledge`, on
+Foundation, Model, Brain and Yams. `AKitDoctor → AKitKnowledge` (the "knowledge base" line) and
+`AKitCommandLine → AKitKnowledge` (`akit kb`); the app imports it too. Knowledge sits beside
+Review, below Doctor, so the arrows still point down.
+
 ## Goal
 
 Today almost all logic is one Swift target, `AKitCore` (≈ 17,900 lines in 12 folders).
@@ -103,6 +108,7 @@ its own name (module `Brain` with struct `Brain`) breaks qualified names such as
 | `AKitErrorAnalysis` | Error analysis (added 2026-10-01, `error-analysis.md`): blind notes and the verifier, bootstrap labels, failure modes, checks, batch runs and reports, fixes and control sets. | new |
 | `AKitDoctor` | `akit doctor` and Help → Copy Diagnostics (added 2026-10-09, `machine-setup.md`): a read-only report of what AKit sees on this Mac, never a secret. Also the Help → Report a Bug… / Suggest a Feature… link (`IssueReport`, 2026-10-11). | new |
 | `AKitHelp` | Ask AKit (added 2026-10-14, `ask-akit.md`): the guide sections, prompt and answer of a question about a screen. Pure; the app makes the call. | new |
+| `AKitKnowledge` | Knowledge base (added 2026-10-24, `knowledge.md`): a base folder per world (`~/.akit/local/knowledge/<world>`, git without a remote), its areas and Markdown notes (frontmatter, `##` sections, byte-preserving edits), the `[[link]]` resolver, the base choice, the one commit function under the base's git lock, `obsidian://open` links. No UI, no model calls. | new |
 | `AKitReview` | AKit Review (added 2026-10-15, `review.md`): project profiles and the three config levels, Gather from GitLab and Azure DevOps REST into a context pack, the review passes in Pi, the requests and the drafts AKit writes after approval. | new |
 | `AKitCommandLine` | The logic behind the `akit` command, including the `akit setup` wizard. | `CLI/AKitCLI.swift`; `CLI/Onboarding.swift` (used only by the CLI; moved from `Brain/` in step 11) |
 | `akit` (executable) | Unchanged. It now imports `AKitCommandLine`, `AKitInsights` (`RecordSession`), `AKitHarnesses`, `AKitBrain` and `AKitFoundation`. | `Sources/akit/main.swift` |
@@ -158,10 +164,11 @@ Direct dependencies, for `Package.swift` (each also sees nothing it doesn't list
 | `AKitProjectSetup` | Foundation, Model, Skills (Move to Project), Instructions (the core block markers), Brain, Render, Insights, MCP (MCP switches' project files) |
 | `AKitLab` | Foundation, Model, Sessions, Brain (whether this Mac is a work Mac) |
 | `AKitErrorAnalysis` | Foundation, Model, Sessions, Lab, Insights, Brain, Render (layer evals render a brain layer) |
-| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup |
+| `AKitDoctor` | Foundation, Model, Harnesses, Skills, Instructions (Pi doctor: the global AGENTS.md Pi loads), MCP (Pi doctor: the live check is `MCPCheck`), Brain, Insights (Pi doctor: recent Pi sessions from the index), ProjectSetup, Knowledge (the knowledge base line) |
 | `AKitHelp` | Foundation (`GuideDocument`, `GuideSearch`) |
 | `AKitReview` | Foundation, Model, Harnesses (Pi's packages, for Pi steps), Lab (the sending policy, send log, `Launcher`), Brain (the brain's root and whether this Mac is a work Mac), Yams |
-| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review |
+| `AKitKnowledge` | Foundation, Model, Brain (this Mac's kind, the brain's root, project ids), Yams (note frontmatter) |
+| `AKitCommandLine` | Foundation, Model, Harnesses, Skills, Instructions, Brain, Insights, ProjectSetup, Lab, ErrorAnalysis, Doctor, Review, Knowledge |
 | `akit` | CommandLine, Insights, Harnesses, Brain, Foundation |
 
 Rules:

@@ -1,6 +1,7 @@
 import AKitBrain
 import AKitFoundation
 import AKitHarnesses
+import AKitKnowledge
 import AKitModel
 import AKitProjectSetup
 import AKitSkills
@@ -65,6 +66,7 @@ public enum Doctor {
         lines.append("  \(machine.isWork ? "work" : "personal") Mac\(machine.homeName.map { " (home record name: \($0))" } ?? "")")
         if let problem = machine.problem { lines.append("! \(problem)") }
         lines.append("  project records: \(store.isLocal ? "on this Mac only, " : "in the brain, ")\(tilde(store.root))")
+        lines += await knowledgeLines(env: env, tilde: tilde)
 
         // Brain
         lines += ["", "Brain"]
@@ -164,6 +166,26 @@ public enum Doctor {
     }
 
     // MARK: - Pieces
+
+    /// One line per knowledge base in `~/.akit/local/knowledge` (knowledge.md, K11): it has no
+    /// remote, or a problem line when it has one (only the remote's name, never its URL).
+    static func knowledgeLines(env: HarnessEnvironment, tilde: (URL) -> String) async -> [String] {
+        let bases = KnowledgeBase.all(home: env.homeDirectory)
+        if bases.isEmpty { return ["  knowledge base: none (a person creates one with akit kb init)"] }
+        var lines: [String] = []
+        for base in bases {
+            let path = tilde(base.root)
+            switch await KnowledgeGit(base: base.root, env: env).remotes() {
+            case nil:
+                lines.append("! knowledge base: \(path): git can't read it; run git -C \(path) status to see why.")
+            case let remotes? where remotes.isEmpty:
+                lines.append("  knowledge base: \(path), no remote")
+            case let remotes?:
+                lines.append("! knowledge base: \(path) has a git remote (\(remotes.joined(separator: ", "))); a base stays on this Mac: git -C \(path) remote remove \(remotes[0])")
+            }
+        }
+        return lines
+    }
 
     /// "2026.10.09 + 3, master @ abc1234, built from ~/Projects/akit" from the bundle's BuildInfo.plist.
     static func buildText(_ app: URL, home: URL) -> String? {
