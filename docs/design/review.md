@@ -496,6 +496,38 @@ extension's rules run in the tests, big answers and base64 are capped, AKit's fa
 appended, the estimate counts the impact pass, a failed pass keeps its saved uses, file and ref
 defused, `.`/`..` refs give no link, and trees and file lists don't count as file reads.
 
+Built: part (c) (2026-10-24): the app. A run's detail has **Overview** on top (points, a table of
+modules with their files in a popover and the why, the why's sources as tags, AKit's notes, the
+run's one Translate menu) and the **Flow**, then a **Requests | Map** switch. What differs from or
+adds to the decisions:
+
+- The flow is drawn by `mermaid.js` 11.4.1 (`AKit/Resources/Mermaid`, MIT, sha256 in its README)
+  in a `WKWebView` (`MermaidView`): the library is a user script, the page loads with no base URL
+  and a content policy `default-src 'none'; script-src 'self' 'unsafe-inline'; style-src
+  'unsafe-inline'; img-src data:; font-src data:`; a content rule list blocks every URL but
+  `about:` and `data:`; `securityLevel: "strict"`; the source goes in as a JSON string with `<`,
+  `>`, U+2028/2029 escaped; every navigation after the first load is cancelled, no windows, a
+  non-persistent store, no context menu, the wheel scrolls the screen. A policy violation is
+  counted under the diagram. The height follows the SVG; light and dark redraw. A hostile flow
+  (`A@{ img: … }`, a label `<img src=…>`, `url(…)` in `classDef`/`style`) made no request to a
+  local server: the image shape ends in mermaid's "Loading error", the label image is a counted
+  violation, `url(` doesn't parse. Snapshots draw a picture of the web view on top
+  (`takeSnapshot`), since `cacheDisplay` can't see it.
+- The Map is native SwiftUI: three lanes in a fixed layout, lines in a `Canvas` from anchor
+  preferences (between lanes; imports as arcs on the first lane's left), hover lights a node's
+  lines, a click opens an inspector (files and the file's diff, findings with Show Request, a
+  boundary's quote, each use with its quote, why it breaks and Open in GitLab, only http/https).
+  A module or project with over 8 files starts folded; 8 dependents show until Show All. A run
+  without a map: "No map for this run" and Review Again….
+- New Review… → This run only: **Other repositories** (Auto/Off/Always) and **Summary language**,
+  each with "From the configuration (…)"; Review Again… carries a run-level choice over. Review
+  Settings… → **Overview and other repositories** edits `impact` and `summary_language` for the
+  level in Rules of (`ReviewConfigEditor.reviewSetting`: the top of the brain's review.yaml, or
+  the profile's `review:` block; none takes the key out), shown as a diff before Save.
+- Snapshots: `--tab requests` and `--tab map` fold the overview; `--tab map --query <node id>`
+  selects a node. The demo home has a made-up overview, boundaries and uses for
+  `shop/orders-service!42`; guide shots `review-overview` and `review-map`.
+
 ### Overview, flow and the work item chain (2026-10-24)
 
 Asked by the user later on 2026-10-24: "a summary in the chosen language: 3–5 points on what

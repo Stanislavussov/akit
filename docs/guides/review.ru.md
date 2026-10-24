@@ -18,7 +18,7 @@
 - Вы хотите, чтобы агент сам публиковал комментарии. AKit этого не делает и не будет делать.
 - Нужен просмотр diff. В AKit его нет: diff вы смотрите в GitLab.
 
-**Как построено руководство.** Двенадцать частей идут от простого к сложному: что это, настройка, одно ревью, контекст ревью (заметки, ссылки, дополнительные серверы, шаги Pi), ревью локальной копии, экран, куда идут находки, пробелы контекста, обсуждение в Pi, повторные ревью, настройка ролей, качество. Внутри частей задачи идут от «Просто» к «Сложно». Все надписи экрана собраны в словаре: [AKit Terms → Review](terms#terms-review).
+**Как построено руководство.** Тринадцать частей идут от простого к сложному: что это, настройка, одно ревью, контекст ревью (заметки, ссылки, дополнительные серверы, шаги Pi), ревью локальной копии, экран, обзор и карта изменения, куда идут находки, пробелы контекста, обсуждение в Pi, повторные ревью, настройка ролей, качество. Внутри частей задачи идут от «Просто» к «Сложно». Все надписи экрана собраны в словаре: [AKit Terms → Review](terms#terms-review).
 
 **Как искать.** Меню Help → **Search Guides and Screens…** (⌥⌘F) открывает окно руководства с курсором в поле поиска. Поиск находит названия кнопок, вкладок и подписи к картинкам. Это руководство открывает кнопка **Guide** на экране Review или Help → **AKit Review Guide**.
 
@@ -37,7 +37,7 @@
 - «Хочу ревью своей ветки до MR» → **New Review…** → **Local Workspace** или `akit review local .` в терминале worktree (см. [ревью локальной копии](#local)).
 - «Агенту нужен макет из Figma или страница вики» → поля **Context for this review**, **Links** и блок **Extra servers** в **New Review…** (см. [контекст ревью](#context)).
 
-![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) и строкой Verifier: confirmed; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
+![Экран Review, страница Runs: слева список с ревью shop/orders-service!42, меткой Ready и строкой Bugfix · bug-hunter, requirements, tests, security; справа заголовок Stop logging the Authorization header (AB#4512), ссылка shop/orders-service!42 at 4f2c9e1b7a, строка 62.1 of 150 credits и метки проходов fetch, brief, role-bug-hunter, role-requirements, role-tests, role-security, verifier, кнопки Log… и Review Again…; свёрнутый блок Overview с меткой Russian и кнопкой Translate; переключатель Requests | Map; блок Requests с подписью Nothing goes to GitLab until you approve it; карточка New comment src/Auth/AuthMiddleware.cs:8 с меткой Approved, кодом вокруг строки 8, чешским текстом комментария (Hlavička Authorization se celá zapisuje do logu) и строкой Verifier: confirmed; внизу кнопки Add Missed…, Add to Eval Set, Sync Outcomes, Discuss in Pi…, счётчик 1 approved и Send Drafts…](images/review-run.png)
 
 ### Зачем это нужно
 <!-- section: overview-why -->
@@ -130,7 +130,7 @@
 - «Ревью остановилось с Not allowed» → [разрешите адресата](#setup-policy).
 - «Агент видит только diff, а не весь файл» → в профиле нет `checkout`: [профиль проекта](#setup-profile).
 
-![Окно Review Settings…: блок Pi's MCP servers со списком Rules of (Default) и кнопкой Check Servers, строка Pick a project profile in Rules of to add context servers to it (mcp: extra_servers)., подпись: Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens, а ревью пишет только одобренные черновики слово в слово, никогда не публикует, а Context server (Figma, Confluence, вики) добавляется сверху и только читает; блок Project profiles со строкой orders-service, адресом https://gitlab.example.com/shop/orders-service · MCP: gitlab, azure-devops и кнопкой Edit…, кнопками New Profile… и Show Folder и подписью о папке ~/.akit/local/review/projects; кнопка Done](images/review-settings.png)
+![Окно Review Settings…: блок Pi's MCP servers со списком Rules of (Default) и кнопкой Check Servers, строка Pick a project profile in Rules of to add context servers to it (mcp: extra_servers)., подпись: Pi connects to GitLab, Azure DevOps and your other trackers with the MCP servers in its own settings; AKit keeps no tokens, а ревью пишет только одобренные черновики слово в слово, никогда не публикует, а Context server (Figma, Confluence, вики) добавляется сверху и только читает; блок Overview and other repositories со списками Other repositories и Summary language и подписью о review.yaml в brain; блок Project profiles со строкой orders-service, адресом https://gitlab.example.com/shop/orders-service · MCP: gitlab, azure-devops и кнопкой Edit…, кнопками New Profile… и Show Folder и подписью о папке ~/.akit/local/review/projects; кнопка Done](images/review-settings.png)
 
 ### Просто: MCP-серверы GitLab и трекера в Pi
 <!-- section: setup-mcp -->
@@ -426,7 +426,8 @@ default_scenario: bugfix
 - `changes.md` — все изменённые файлы. Какие из них исключены правилами или слишком велики для GitLab.
 - `diff.patch` — diff последней версии MR. Если есть worktree, AKit считает его сам через git; иначе берёт diff из ответа GitLab. Больше 400 тысяч символов — обрезается.
 - `threads.md` — все треды: открытые и закрытые, с позицией.
-- `work-items/<id>.md` — задачи: заголовок, описание, критерии приёмки, шаги воспроизведения, состояние, комментарии, история. Ещё родительские и связанные задачи, на один уровень.
+- `work-items.md` — задачи: заголовок, описание, критерии приёмки, шаги воспроизведения, состояние, все комментарии, история. Вся цепочка родителей названной задачи (Task → User Story → Feature → Epic, до 6 уровней вверх) и связанные задачи на один уровень. Вверху файла — строка цепочки, задачи идут сверху вниз (см. [откуда «зачем»](#map-why)).
+- `consumers.md` — использования изменения в других репозиториях, если был проход `impact` (см. [как агент ищет](#map-impact)).
 - `project-rules.md` — правила проекта из профиля.
 - `history.md` — история изменённых файлов:
   - последние 8 коммитов каждого файла (не больше 40 файлов, новые файлы пропускаются; только при worktree);
@@ -840,7 +841,9 @@ To review: commits and uncommitted changes.
 - Строка: сценарий, роли, кредиты («62.1 of 150 credits»).
 - Метки проходов: **fetch**, **brief**, **role-…**, **verifier**, после отправок **send-1** ….
 - **Brief** — раскрывающийся текст brief.
-- **Requests** с подписью «Nothing goes to GitLab until you approve it.» — карточки запросов. Справа от заголовка кнопка **Translate** (глобус): см. [перевод ревью](#screen-translate).
+- **Overview** — обзор изменения: тезисы, модули и зачем они меняются, схема **Flow**. Справа от заголовка язык обзора и кнопка **Translate** (глобус): см. [обзор](#map-overview) и [перевод ревью](#screen-translate).
+- Переключатель **Requests | Map**: запросы или [карта изменения](#map-tab).
+- **Requests** с подписью «Nothing goes to GitLab until you approve it.» — карточки запросов. Если у ревью нет обзора, **Translate** стоит здесь.
 - **Only in AKit (N)** — находки, которые не идут в GitLab (см. [Only in AKit](#noise-move)).
 - **Context gaps (N)** — пробелы контекста (см. [пробелы](#gaps)).
 - **Missed by the reviewer (N)** — что вы добавили через **Add Missed…** (см. [Add Missed…](#quality-missed)).
@@ -899,9 +902,9 @@ To review: commits and uncommitted changes.
 
 Пример: роли пишут по-чешски (язык комментариев по умолчанию), а вы хотите быстро прочитать запросы по-русски.
 
-1. Нажмите **Translate** (глобус) справа от заголовка **Requests** и выберите **Russian**.
+1. Нажмите **Translate** (глобус) справа от заголовка **Overview** (если обзора нет — справа от заголовка **Requests**) и выберите **Russian**.
 2. Если это ревью ещё не переводили, появится окно «Translate to Russian?»: сколько символов уйдёт, какой модели и примерная цена. Нажмите **Translate**.
-3. Brief и тексты всех запросов заменятся переводом. Над карточками строка «Translated to Russian · …».
+3. Brief, тезисы и причины модулей обзора и тексты всех запросов заменятся переводом. Рядом с кнопкой строка «Translated to Russian · …».
 4. **Show Original** возвращает оригинал.
 
 - В GitLab уходит только оригинал на чешском. Перевод не меняет запросы и язык комментариев, а **Edit** правит оригинальный текст.
@@ -1016,6 +1019,164 @@ To review: commits and uncommitted changes.
 - `akit review post RUN` — показать запросы. `--yes` отправляет одобренные как черновики через MCP-сервер GitLab в Pi, слово в слово.
 
 Одобрить всё одной командой нельзя: такой опции нет.
+
+## Обзор и карта изменения
+<!-- section: map -->
+
+**Что это:** у ревью два способа понять изменение до чтения запросов. **Overview** — короткий рассказ: что происходит, какие модули меняются и зачем, и схема пути запроса или данных (**Flow**). Вкладка **Map** — карта: изменённые файлы, их границы с внешним миром и другие репозитории GitLab, которые эти границы используют. Обзор и карта только для вас: в GitLab они не уходят никогда.
+
+**Когда пригодится:**
+
+- «MR большой, с чего начать?» → прочитайте 3–5 тезисов **Overview**.
+- «Зачем меняют этот модуль?» → колонка «Why it changes»: ответ из задачи, её родителей и описания MR.
+- «Как запрос проходит через систему?» → схема **Flow**, изменённые части выделены.
+- «Кого сломает это изменение?» → вкладка **Map**, третья колонка **Other repositories**.
+- «Хочу показать схему команде» → **Copy Mermaid** или **Copy as Mermaid**.
+
+### Просто: прочитать Overview
+<!-- section: map-overview -->
+
+Блок **Overview** стоит в начале ревью, над запросами. Он открыт сразу; стрелка слева сворачивает его. Рядом с заголовком — язык обзора (например «Russian») и кнопка **Translate**.
+
+![Ревью shop/orders-service!42 с раскрытым блоком Overview: метка Russian и кнопка Translate; четыре тезиса по-русски (middleware пишет заголовок в лог, запрос без заголовка получает 401, флаг ORDERS_ALLOW_ANONYMOUS удалён, новый тест проверяет 401); таблица Module / Files / Why it changes со строками src/Auth, src/Orders, helm, tests, у каждой «1 file» и причина из задачи; строка Why from: с метками work item и description; под ней Flow с подписью flowchart, кнопкой Copy Mermaid и схемой: страница заказа web-mfe и smoke-тест staging идут в OrdersController.cs, дальше AuthMiddleware.cs, ответ 401, база заказов и общий лог, изменённые узлы жёлтые, справа группа Other repositories с shop/web-mfe · 2 uses · breaks, shop/billing-service · 1 use и shop/deploy-config · 1 use · breaks; ниже переключатель Requests | Map](images/review-overview.png)
+
+Что в блоке, сверху вниз:
+
+1. **Тезисы** — от 3 до 5 строк: что делает изменение. Пример: «Запрос без заголовка получает 401; GET /api/orders и GET /api/orders/{id} теперь требуют вход.»
+2. **Таблица модулей**: **Module** — папка, **Files** — сколько изменённых файлов (нажмите число — откроется список), **Why it changes** — зачем модуль меняется.
+3. **Why from:** — откуда взята причина. Метки:
+   - **work item** — задача из Azure DevOps и её родители;
+   - **description** — описание MR;
+   - **your notes** — ваша заметка **Context for this review**;
+   - **nothing said** — нигде не сказано, причина — догадка модели по коду.
+4. Серые строки под таблицей — заметки AKit: что он убрал или изменил. Пример: «The overview is short: 2 points instead of 3–5.»
+5. **Flow** — схема (см. ниже).
+
+Обзор пишет проход **brief** инструментом `akit_submit_overview`. AKit проверяет его до показа: модуль остаётся, только если его файлы есть среди изменённых; тезисов остаётся не больше пяти; секреты маскируются.
+
+### Просто: откуда берётся «зачем»
+<!-- section: map-why -->
+
+Ревью всегда читает задачу из Azure DevOps целиком, вместе со всей цепочкой родителей. Пример: в ветке `fix/4512-auth-log` номер задачи 4512. Проход `fetch` читает:
+
+1. Задачу #4512 (Task или Bug): описание, критерии приёмки, **все комментарии**.
+2. Её родителя — например, User Story #4480, тоже с комментариями.
+3. Родителя родителя — Feature, потом Epic. Всего до 6 уровней вверх.
+4. Связанные задачи — на один уровень от названной.
+
+В пакете контекста это один файл `work-items.md`: вверху цепочка («Epic #1 → Feature #2 → User Story #4480 → Task #4512»), ниже задачи сверху вниз. Поэтому причина в обзоре может назвать цель эпика, а не только текст задачи. Пример из таблицы: «Эпик „Безопасность платежей“ требует, чтобы секреты не уходили в логи».
+
+Если родителя прочитать не удалось, это [пробел контекста](#gaps) «Work item #P, the parent of #N», а не ошибка.
+
+### Просто: язык обзора
+<!-- section: map-language -->
+
+Обзор и подписи схемы пишутся на **языке обзора** (Summary language). Комментарии в GitLab от него не зависят: они на языке комментариев (см. [язык комментариев](#noise-language)).
+
+- По умолчанию — первый язык из настроек macOS, если AKit его знает. Иначе английский.
+- Для одного ревью: **New Review…** → блок **This run only** → **Summary language**.
+- Для проекта или для всех: **Review Settings…** → блок **Overview and other repositories** → **Summary language** (см. [настройки](#map-settings)).
+- В терминале: `--summary-language ru` (коды: en, ru, cs, de, fr, es, it, pt, pl, uk, nl, tr, zh, ja, ko, hi, ar).
+
+Прочитать обзор на другом языке можно и без нового ревью: **Translate** у заголовка **Overview** переводит тезисы, причины модулей, brief и запросы одним вызовом (см. [перевод ревью](#screen-translate)). Если у ревью нет обзора, **Translate** стоит у заголовка **Requests**.
+
+### Средне: схема Flow и Copy Mermaid
+<!-- section: map-flow -->
+
+**Flow** — схема пути запроса или данных через систему там, где идёт изменение: интерфейс → micro-frontend → API → сервис → база, задача по расписанию, событие. Изменённые части выделены цветом. Это `flowchart` или `sequenceDiagram` на языке [Mermaid](https://mermaid.js.org).
+
+Пример: на схеме выше страница заказа идёт в `OrdersController.cs`, потом в `AuthMiddleware.cs`; без заголовка — ответ 401.
+
+После поиска в других репозиториях AKit сам добавляет группу **Other repositories**: по узлу на проект, с числом использований и пометкой «breaks», если изменение его ломает. Пунктир ведёт к узлу, где лежит граница. Эту группу пишет AKit из найденного, а не модель.
+
+- **Copy Mermaid** копирует текст схемы. Его можно вставить в описание MR, в вики или на mermaid.live.
+- Схему рисует mermaid.js, встроенный в AKit (версия 11.4.1). Интернет не нужен; схема ничего не загружает из сети.
+- Если Mermaid не смог нарисовать схему, вместо неё — ошибка и текст схемы.
+- Если AKit не пропустил схему модели (в ней ссылки, скрипты, загрузка картинок, больше 40 узлов или 6000 символов), блок называется **Flow left out (the source)**: внутри текст схемы, а причина — в серых заметках.
+
+### Средне: вкладка Map
+<!-- section: map-tab -->
+
+Под обзором — переключатель **Requests | Map**. **Requests** — карточки запросов. **Map** — карта изменения.
+
+![Вкладка Map ревью shop/orders-service!42: кнопка Copy as Mermaid; колонка This change с модулями helm/ (values.yaml, −2), src/ (+5, красная точка high; AuthMiddleware.cs +3 с красной точкой, OrdersController.cs +2) и tests/ (AuthMiddlewareTests.cs +6); колонка Boundaries: GET /api/orders/{id} и GET /api/orders со значком API, зачёркнутый ORDERS_ALLOW_ANONYMOUS со значком настройки и меткой removed; колонка Other repositories: shop/billing-service (OrdersClient.cs), shop/deploy-config (envs/staging/orders.yaml, красная молния), shop/web-mfe (src/api/orders.ts с красной молнией, src/pages/OrderList.tsx); линии от файлов к границам и от границ к файлам других репозиториев, ломающие — красные; справа инспектор A FILE THAT USES IT для src/api/orders.ts: строка src/api/orders.ts:12 @ main, Uses GET /api/orders/{id}, как файл использует границу, красная строка Breaks: It sends no token: the call gets 401 after this change., цитата кода и ссылка Open in GitLab](images/review-map.png)
+
+Три колонки слева направо:
+
+1. **This change** — изменённые файлы по модулям. Модуль — ближайшая папка с `package.json`, иначе верхняя папка. У файла и модуля: строки `+добавлено −удалено` и точка худшей находки (красная — high и critical, оранжевая — medium, жёлтая — low). Точку дают только находки, которые verifier подтвердил и которые принёс этот MR. Ниже бледные файлы с пунктиром — **Import the change, unchanged**: файлы, которые не менялись, но импортируют изменённые (только TS/JS).
+2. **Boundaries** — границы: что изменение даёт другим или берёт у них через край репозитория. Значок показывает вид: API, GraphQL, micro-frontend, общий пакет, событие, схема базы, инфраструктура, CI, настройка. Зачёркнутая граница с меткой **removed** — изменение её удаляет: всех, кто её использует, оно ломает.
+3. **Other repositories** — проекты GitLab, которые используют границы: число использований и красная молния, если изменение их ломает. Под проектом — его файлы.
+
+Как работать с картой:
+
+- Наведите мышь на узел — его линии станут яркими, остальные бледными.
+- Нажмите узел — справа откроется инспектор. Крестик закрывает его.
+- Стрелка у модуля или проекта сворачивает его файлы в один узел. Модуль больше чем с 8 файлами свёрнут сразу. Из бледных файлов видны первые 8; **Show All N** показывает остальные.
+- **Copy as Mermaid** копирует всю карту как `flowchart LR`.
+- Серые строки над колонками — заметки карты. Пример: «… more unchanged files import the change; the map shows 200.» или что поиск импортов остановился на лимите.
+
+Что показывает инспектор:
+
+- **CHANGED FILE** — строки `+/−`, находки на файле и diff файла. **Show Request** у находки переключает на **Requests** и прокручивает к её запросу. Если запроса нет (находка только в AKit, вопрос автору или строка матрицы), кнопка неактивна.
+- **MODULE** — файлы модуля с их строками и находки.
+- **BOUNDARY** — вид и направление, файл и строка, цитата кода, заметка и сколько файлов в других репозиториях её используют.
+- **OTHER REPOSITORY** и **A FILE THAT USES IT** — каждое использование: файл, строка и ветка, какую границу использует, как, ломает ли и почему, цитата кода и **Open in GitLab** (ссылка открывается в браузере).
+
+Если у ревью нет карты, на вкладке «No map for this run» и кнопка **Review Again…**. Так бывает у старого ревью, у которого уже нет worktree.
+
+### Средне: как агент ищет другие репозитории
+<!-- section: map-impact -->
+
+Вы не называете репозитории. Агент ищет их сам:
+
+1. Проход **brief** называет границы инструментом `akit_submit_boundaries`: вид, направление, имя для поиска (путь API, имя пакета, тема события, переменная), файл, строку и цитату. AKit оставляет границу, только если цитата есть в файле на коммите MR (у удалённой — в удалённых строках diff).
+2. Если осталась хотя бы одна граница и у ревью есть MCP-сервер GitLab, идёт проход **impact**, до ролей.
+3. Агент ищет имя через сервер GitLab в Pi, только инструментами чтения: сначала в верхней группе MR (для `shop/orders-service` — группа `shop`), потом во всём GitLab, если в группе меньше 3 проектов. Найденное он читает файлом (`get_repository_file`).
+4. Бюджет — 20 поисков и 30 прочитанных файлов. Если агент выходит за него, AKit только предупреждает.
+5. Каждое использование агент сдаёт инструментом `akit_submit_consumers`: проект, файл, строку, цитату, как файл использует границу и ломает ли его изменение.
+
+Что AKit проверяет сам:
+
+- Использование остаётся, только если его цитата, файл и проект есть в одном ответе GitLab этому проходу (в `mcp/calls/`). Слову модели AKit не верит.
+- Свой же проект MR не считается другим репозиторием.
+- Если поиск по коду в группе или во всём GitLab не работает (ему может быть нужен Advanced search), это [пробел контекста](#gaps): что агент пробовал.
+
+Что дальше:
+
+- Ломающее использование становится кандидатом роли **contracts**. Роль добавляется сама («added: other repositories use the change»), если вы её не выключили. Её находка стоит на изменённой строке **этого** MR и называет другой проект и файл. Дальше всё как обычно: verifier, запрос, ваше **Approve**.
+- AKit ничего не пишет в другие репозитории. Их ответы — только контекст для ролей (`context/consumers.md`) и карта.
+- Без сервера GitLab или в [ревью локальной копии](#local) прохода нет: в **Context gaps** будет пробел.
+
+### Средне: Other repositories и Summary language
+<!-- section: map-settings -->
+
+Поиск в других репозиториях настраивает список **Other repositories**:
+
+- **Auto** — искать, когда brief нашёл границу. Значение по умолчанию.
+- **Always** — искать всегда. Если brief не нашёл границ, агент ищет их в diff сам.
+- **Off** — не искать.
+
+Где выбрать:
+
+- Для одного ревью: **New Review…** → блок **This run only** → **Other repositories** и **Summary language**. Первая строка списка — «From the configuration (…)»: значение из профиля или brain. **Review Again…** переносит ваш выбор в новое ревью.
+- Для проекта: **Review Settings…** → **Rules of** = проект → блок **Overview and other repositories**. AKit пишет `impact` и `summary_language` в блок `review:` профиля. Перед записью он показывает diff, вы нажимаете **Save**. Строка «From the brain (…)» убирает ключ из профиля.
+- Для всех проектов: **Rules of** = **Default**. AKit пишет ключи в начало `review.yaml` слоя `review` в brain и делает коммит.
+- В терминале: `--impact auto|off|always` и `--summary-language CODE` у `akit review` и `akit review local`. `akit review config show` показывает оба значения и их источник.
+
+### Сложно: карта и обзор в терминале
+<!-- section: map-cli -->
+
+- `akit review map RUN` — карта списком по колонкам. `--json` — весь `map.json`. `--mermaid` — `flowchart LR`, тот же текст, что даёт **Copy as Mermaid**.
+- `akit review overview RUN` — тезисы, модули, источники причин, заметки и текст схемы. `--json` — весь `overview.json`. `--mermaid` — только схема.
+
+Файлы в папке ревью:
+
+- `overview.json` — обзор: тезисы, модули, источники, схема (`flow`), исходный текст схемы модели (`flowOriginal`), язык, заметки.
+- `boundaries.json` — границы, которые прошли проверку.
+- `consumers.json` — использования в других репозиториях, которые прошли проверку.
+- `map.json` — карта. AKit строит её в конце проходов и строит заново, когда изменились находки (например после **Make New Version**), границы или использования. У старого ревью карта строится при первом открытии, если worktree ещё есть.
+
+Пример: `akit review map 20261015-091500-orders-service-42 --mermaid > map.mmd`.
 
 ## Куда идёт каждая находка: правила шума
 <!-- section: noise -->
