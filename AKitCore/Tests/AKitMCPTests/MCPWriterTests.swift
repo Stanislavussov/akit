@@ -303,6 +303,36 @@ struct MCPWriterTests {
         #expect(calls.all.first?.last == #"{"command":"old"}"#)
     }
 
+    /// Copy to Pi…: the Claude entry fills the form with hidden values; a literal secret goes
+    /// into the Keychain and Pi's file gets a lookup, never the value; a Keychain item keeps its name.
+    @Test func copyFromClaudeToPi() async throws {
+        try write(".claude/settings.json", "{}")
+        try write(".pi/agent/mcp.json", #"{"mcpServers": {}}"#)
+        try write(".claude.json", #"{"mcpServers": {"api": {"command": "api-server", "args": ["--port", "1"], "env": {"API_KEY": "literal-secret-abc123", "MODE": "fast", "GH": "${GH_TOKEN}"}}}}"#)
+        let all = try targets()
+        let source = try #require(all.first { $0.claudeScope == "user" })
+        let pi = try #require(all.first { $0.harnesses == [.pi] && $0.scope == .global && $0.blockedReason == nil })
+        let server = try #require(MCPScanner.scan(installations: HarnessCatalog.detectAll(in: env), projects: [], in: env)
+            .servers.first { $0.name == "api" })
+        let raw = try #require(MCPWriter.rawEntry(of: server, target: source))
+        let keychain = MemorySecretStore()
+        try keychain.save("ghp_kept", for: "GH_TOKEN")
+        let draft = MCPDraft.editing(name: "api", entry: raw.entry, dialect: source.dialect, keychain: keychain)
+        #expect(draft.environment.allSatisfy { $0.value.isEmpty || $0.key == "MODE" })
+        let plan = try MCPWriter.plan(draft, into: pi, secretMode: .keychainLookup, keychain: keychain, home: home)
+        #expect(!plan.diff.map { "\($0)" }.joined().contains("literal-secret-abc123"))
+        _ = try await MCPWriter.apply(plan, secrets: keychain, home: home) { _, _ in }
+        let text = try String(contentsOf: pi.file, encoding: .utf8)
+        #expect(!text.contains("literal-secret-abc123"))
+        #expect(keychain.value("API_KEY") == "literal-secret-abc123")
+        let entry = try #require((try read(".pi/agent/mcp.json")["mcpServers"] as? [String: Any])?["api"] as? [String: Any])
+        let envValues = try #require(entry["env"] as? [String: String])
+        #expect(envValues["MODE"] == "fast")
+        #expect(envValues["API_KEY"]?.hasPrefix("!") == true)
+        #expect(envValues["GH"]?.hasPrefix("!") == true && envValues["GH"]?.contains("GH_TOKEN") == true)
+        #expect(entry["args"] as? [String] == ["--port", "1"])
+    }
+
     /// The real-CLI `apply` with a fake `claude` script: arguments, PATH, masked failure output.
     @Test func claudeCLIRunsWithEnvironmentAndMasksFailures() async throws {
         try write(".claude/settings.json", "{}")

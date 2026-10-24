@@ -1,6 +1,6 @@
 # MCP check: does the server connect, and what to do when it doesn't
 
-Status: designed 2026-10-24 (grilling with the user); steps 1–3 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
+Status: designed 2026-10-24 (grilling with the user); steps 1–4 built 2026-10-24 (`AKitMCP/MCPCheck.swift`,
 `AKitFoundation/LoginShell.swift`, `akit mcp check`, `MCPWriter.undoPlan`, `AKit/MCPCheckViews.swift`, `AKitMCP/MCPApprove.swift`). Steps in [Steps](#steps).
 
 ## Goal
@@ -74,10 +74,14 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 - **After a failed check from Apply** the sheet stays open: the result, its fix button,
   Edit Again and Undo (the file back from the backup, or the new server removed). Nothing
   is undone by itself: Needs Sign-In or a slow first `npx` is no config error.
-- **Copy to Pi… / Copy to Claude Code…** fills the Add Server form from the server. The
-  user picks where it goes (global or a project), reads the diff and presses Apply; the
-  check follows. Secret values are never copied; a Keychain reference is translated
-  between the harnesses' mechanisms (Claude's `headersHelper`, Pi's `!` lookups).
+- **Copy to Pi… / Copy to Claude Code…** fills the Add Server form from the server
+  (`MCPServerEditor` mode `.copy`, the draft of `MCPDraft.editing`: values stay hidden and in
+  memory). The places offered are only those the other harness alone reads, the same level
+  first. The user reads the diff and presses Apply; the check follows. A Keychain item keeps
+  its name and reaches the other harness through its own mechanism (Claude's `headersHelper`
+  or the stdio wrapper, Pi's `!security` lookups); a secret written in the source file goes
+  into the Keychain, never into the new file; `${VAR}` stays as it is. Offered when a harness
+  of the two doesn't read the server yet and has a place to write; not for plugin servers.
 - **Tools are only shown.** The tools of a Pi server from its last check, with their
   exposure and whether Insights saw them used. No switches for single tools now (Pi
   `toolExposure`, Claude `mcp__server__tool` deny rules stay read-only).
@@ -91,7 +95,7 @@ Add / Edit → Apply ──► check this server ──► Connected ✓
 | 1 | The check core (both harnesses, folder, login shell, missing variables, timeout, saved results in `~/.akit/mcp-checks.json`) and `akit mcp check` | built 2026-10-24 |
 | 2 | UI: Check Connection, Check All, the check after Apply, the result with Edit Again and Undo | built 2026-10-24 |
 | 3 | Sign In…, Set Variable…, Approve… and `akit mcp approve` (`AKitMCP/MCPApprove.swift`) | built 2026-10-24 |
-| 4 | Copy to Pi… / Copy to Claude Code… | — |
+| 4 | Copy to Pi… / Copy to Claude Code… | built 2026-10-24 |
 | 5 | The tools of a Pi server | — |
 
 ## Later

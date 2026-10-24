@@ -247,6 +247,10 @@ file "$DEMO/.codex/config.toml" <<'EOF'
 command = "npx"
 args = ["-y", "@upstash/context7-mcp"]
 EOF
+# A Pi with built-in MCP (0.99+): AKit reads the version from here when no pi command is found.
+file "$DEMO/.pi/agent/settings.json" <<'EOF'
+{ "lastChangelogVersion": "1.4.0" }
+EOF
 # Last connection checks (MCP Servers → Connection): github lacks its token, playwright connects.
 # The folder as AKit keys it (standardized: /private/tmp is /tmp).
 CHECKED="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)"

@@ -98,6 +98,7 @@ shot mcp-catalog         $MAIN --section mcp --tab catalog --query github --sele
 shot mcp-add-filled      $MAIN --section mcp --tab catalog --query github --select io.github.DiceHoldingsInc/dice-mcp --delay 8 --add --capture
 shot mcp-add-preview     $MAIN --section mcp --tab preview --query '{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}' --add
 shot mcp-switch          $MAIN --section mcp --tab switch
+shot mcp-copy            $MAIN --section mcp --tab copy
 shot sessions            $MAIN --section sessions
 shot sessions-usage      $MAIN --section sessions --tab usage
 shot sessions-analysis   $MAIN --section sessions --tab analysis

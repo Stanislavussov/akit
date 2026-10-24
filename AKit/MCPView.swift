@@ -22,7 +22,8 @@ struct MCPView: View {
                 if let server = model.mcpServers.first(where: { $0.id == selection }) {
                     MCPServerDetailView(server: server,
                                         onEdit: { editor = EditorRequest(mode: .edit(server)) },
-                                        onDelete: { editor = EditorRequest(mode: .remove(server)) })
+                                        onDelete: { editor = EditorRequest(mode: .remove(server)) },
+                                        onCopy: { editor = EditorRequest(mode: .copy(server, to: $0)) })
                 } else {
                     ContentUnavailableView("Select a server", systemImage: "server.rack")
                 }
@@ -123,6 +124,12 @@ struct MCPView: View {
             if let tab = DebugSnapshot.options?.tab, editor == nil, let server = filtered.first {
                 if tab == "edit" { editor = EditorRequest(mode: .edit(server)) }
                 if tab == "delete" { editor = EditorRequest(mode: .remove(server)) }
+                // `--tab copy`: Copy to… of the first server another harness could get.
+                if tab == "copy", let (source, harness) = filtered.lazy.compactMap({ server in
+                    model.copyTargets(of: server).first.map { (server, $0) }
+                }).first {
+                    editor = EditorRequest(mode: .copy(source, to: harness))
+                }
                 // `--tab switch`: Off in Project… of the first server with a switch.
                 if tab == "switch", model.mcpSwitchRequest == nil,
                    let (target, harness) = filtered.lazy.compactMap({ server in
@@ -162,6 +169,9 @@ struct MCPView: View {
                                     .disabled(!model.canEdit(server))
                                 Button("Delete…", role: .destructive) { editor = EditorRequest(mode: .remove(server)) }
                                     .disabled(!model.canEdit(server))
+                                ForEach(model.copyTargets(of: server), id: \.self) { harness in
+                                    Button("Copy to \(harness == .pi ? "Pi" : "Claude Code")…") { editor = EditorRequest(mode: .copy(server, to: harness)) }
+                                }
                                 Divider()
                                 MCPSwitchMenu(server: server)
                                 Divider()
@@ -362,6 +372,7 @@ private struct MCPServerDetailView: View {
     let server: MCPServer
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let onCopy: (HarnessID) -> Void
     @State private var secretFor: String?
 
     var body: some View {
@@ -397,6 +408,10 @@ private struct MCPServerDetailView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            ForEach(model.copyTargets(of: server), id: \.self) { harness in
+                Button("Copy to \(harness == .pi ? "Pi" : "Claude Code")…", systemImage: "doc.on.doc") { onCopy(harness) }
+                    .help("Add this server to \(harness == .pi ? "Pi" : "Claude Code") too: the form is filled from it, values stay hidden, Keychain items are reused")
+            }
             if model.canEdit(server) {
                 Button("Edit…", systemImage: "pencil", action: onEdit)
                     .help("Change this server; values in the file stay hidden")

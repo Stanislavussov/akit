@@ -47,6 +47,17 @@ extension AppModel {
         await checkMCP([server])
     }
 
+    /// Copy to Pi… / Copy to Claude Code…: the harnesses (of these two) that don't read the
+    /// server yet and have a place of their own to write it. Not for plugins or files AKit
+    /// can't read.
+    func copyTargets(of server: MCPServer) -> [HarnessID] {
+        guard MCPWriter.target(of: server, in: mcpWriteTargets) != nil else { return [] }
+        return MCPCheck.harnesses.filter { harness in
+            installations.contains { $0.id == harness } && !server.usedBy.contains(harness)
+                && mcpWriteTargets.contains { $0.harnesses == [harness] && $0.blockedReason == nil }
+        }
+    }
+
     /// Problems of the last checks of a server, for the list's mark; empty when all connected.
     func mcpCheckProblems(of server: MCPServer) -> [MCPCheckResult] {
         mcpChecks(of: server).compactMap { mcpChecks[$0.id] }.filter(\.state.isProblem)

@@ -12,6 +12,10 @@ struct MCPServerEditor: View {
         /// `catalog` opens the sheet on the catalog search.
         case add(project: URL?, catalog: Bool = false)
         case edit(MCPServer)
+        /// A server of one harness added to another (Claude Code ↔ Pi): the form filled from
+        /// its entry, values kept hidden; Keychain items keep their names and reach the new
+        /// harness through its own mechanism.
+        case copy(MCPServer, to: HarnessID)
         case remove(MCPServer)
     }
 
@@ -87,9 +91,9 @@ struct MCPServerEditor: View {
     private var editor: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(editing == nil ? "Add MCP Server" : "Edit “\(editing!.name)”").font(.title2.bold())
+                Text(formTitle).font(.title2.bold())
                 Spacer()
-                if editing == nil {
+                if editing == nil, copying == nil {
                     Picker("Input", selection: $input) {
                         ForEach(Input.allCases, id: \.self) { Text($0.rawValue) }
                     }
@@ -384,6 +388,17 @@ struct MCPServerEditor: View {
             } else {
                 error = "“\(server.name)” is no longer in \(target.file.tildePath)."
             }
+        case .copy(let server, let harness):
+            guard let source = MCPWriter.target(of: server, in: targets), let raw = MCPWriter.rawEntry(of: server, target: source) else {
+                if model.lastScan != nil { error = "AKit can't read the entry of “\(server.name)”." }
+                return
+            }
+            draft = MCPDraft.editing(name: server.name, entry: raw.entry, dialect: source.dialect, keychain: KeychainSecretStore())
+            argumentLine = MCPDraft.joinArguments(draft.arguments)
+            // Only the places the other harness alone reads: the same level (a project's own file) when it has one.
+            targets = targets.filter { $0.harnesses == [harness] && $0.blockedReason == nil }
+            targetID = (targets.first { $0.scope == server.scope } ?? targets.first { $0.scope == .global })?.id
+            secretMode = .keychainLookup
         case .remove(let server):
             guard let target = MCPWriter.target(of: server, in: targets) else {
                 if model.lastScan != nil { error = "AKit can't edit this file." }
@@ -513,6 +528,17 @@ struct MCPServerEditor: View {
     private var editing: MCPServer? {
         if case .edit(let server) = mode { return server }
         return nil
+    }
+
+    private var copying: (server: MCPServer, harness: HarnessID)? {
+        if case .copy(let server, let harness) = mode { return (server, harness) }
+        return nil
+    }
+
+    private var formTitle: String {
+        if let editing { return "Edit “\(editing.name)”" }
+        if let copying { return "Copy “\(copying.server.name)” to \(copying.harness == .pi ? "Pi" : "Claude Code")" }
+        return "Add MCP Server"
     }
 
     private func planTitle(_ plan: MCPWritePlan) -> String {

@@ -1297,8 +1297,9 @@ akit remove skill ИМЯ --everywhere
 - «Токен лежит прямо в конфиге, хочу его спрятать» → **Edit…**, флажок **Secret** у значения.
 - «Сервер нужен в одном проекте, а в остальных только ест контекст» → в карточке сервера блок **Switches**, меню **Change** → **Off in Project…**.
 - «Добавил сервер, а агент его не видит» → в карточке сервера блок **Connection**, кнопка **Check Connection**.
+- «Сервер есть в Claude Code, хочу его и в Pi» → кнопка **Copy to Pi…** в шапке карточки.
 
-![Экран MCP Servers: слева группа Global с серверами context7, github и playwright и значками агентов Codex и Claude, у github значок ключа от последней проверки; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Connection (Claude · Missing Variables · 5 minutes ago, строки Not set in your shell: GITHUB_TOKEN и Failed to connect: HTTP 401: Unauthorized, кнопки Set Variable… и Check Connection), Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Check All, Catalog…, Add Server…](images/mcp.png)
+![Экран MCP Servers: слева группа Global с серверами context7, github и playwright и значками агентов Codex и Claude, у github значок ключа от последней проверки; справа карточка сервера github с предупреждением Needs GITHUB_TOKEN, блоками Used by, Connection (Claude · Missing Variables · 5 minutes ago, строки Not set in your shell: GITHUB_TOKEN и Failed to connect: HTTP 401: Unauthorized, кнопки Set Variable… и Check Connection), Switches (состояние On, меню Change), Headers и Needs variables с кнопками Set in Keychain… и Copy Line; в шапке кнопки Copy to Pi…, Edit…, Delete…, открыть в редакторе, Show in Finder; в панели инструментов All Servers, All Harnesses, Refresh, облако claude.ai Connectors, Check All, Catalog…, Add Server…](images/mcp.png)
 
 #### Что на экране
 <!-- section: mcp-screen -->
@@ -1324,14 +1325,14 @@ akit remove skill ИМЯ --everywhere
 - Оранжевый треугольник рядом с именем означает предупреждение. Его текст есть в карточке.
 - Красный или оранжевый значок после треугольника — итог последней проверки подключения: сервер не подключился. Наведите курсор, чтобы увидеть агента, состояние и время проверки.
 - Оранжевая строка под именем, например «Claude · off in 1 folder», означает, что сервер выключен переключателем.
-- Правый клик по серверу: **Open имя-файла in VS Code** (есть, только если VS Code установлен), **Show in Finder**, **Edit…**, **Delete…**, переключатели (пункты **Claude: …** и **Pi: …**) и **Check Connection**.
+- Правый клик по серверу: **Open имя-файла in VS Code** (есть, только если VS Code установлен), **Show in Finder**, **Edit…**, **Delete…**, **Copy to Pi…** или **Copy to Claude Code…**, переключатели (пункты **Claude: …** и **Pi: …**) и **Check Connection**.
 - Раздел **Worktree Sync** внизу списка показывает, что добавила последняя синхронизация worktree. Кнопка **Dismiss** убирает раздел.
 - Раздел **Couldn't read** перечисляет файлы настроек, которые AKit не смог прочитать.
 
 Карточка сервера справа:
 
 - Шапка: имя, вид подключения (`stdio`, `HTTP` или `SSE`), метка **Read-only** у сервера, который AKit не может менять.
-- Кнопки в шапке: **Edit…**, **Delete…** (корзина), **Open in VS Code** (есть, только если VS Code установлен), **Show in Finder**.
+- Кнопки в шапке: **Copy to Pi…** или **Copy to Claude Code…** (есть, если другой агент этот сервер ещё не читает), **Edit…**, **Delete…** (корзина), **Open in VS Code** (есть, только если VS Code установлен), **Show in Finder**.
 - **Defined in**: файл, где сервер записан. **Command** — команда запуска с аргументами. **URL** — адрес удалённого сервера. **Folder** — рабочая папка, если она задана.
 - **Used by**: какой агент читает сервер, из какого уровня настроек и в каком он состоянии. Состояния: **Active**, **Turned off**, **Waiting for approval** (Claude Code спросит о сервере проекта перед первым использованием), **Rejected** (вы отклонили его в Claude Code), **Overridden by …** (побеждает другая запись с тем же именем).
 - **Connection**: итог последней проверки подключения для Claude Code и Pi, время проверки и кнопка **Check Connection**. Блок есть, только если сервер читает Claude Code или Pi.
@@ -1452,6 +1453,24 @@ akit remove skill ИМЯ --everywhere
 - Если в JSON несколько серверов, AKit покажет кнопки с их именами: выберите один.
 
 > **Совет:** если в меню области выбран проект, окно сразу предлагает записать сервер в этот проект.
+
+#### Средне: скопировать сервер в другого агента
+<!-- section: mcp-copy -->
+
+Пример: сервер `github` настроен в Claude Code, и вы хотите те же инструменты в Pi.
+
+1. Откройте карточку сервера и нажмите **Copy to Pi…** (или **Copy to Claude Code…** у сервера Pi). То же есть в контекстном меню списка.
+2. Откроется форма «Copy “github” to Pi», заполненная из записи сервера. Значения из файла скрыты, как при **Edit…**.
+3. В **Add to** выберите место. Предлагаются только файлы другого агента: для глобального сервера — его глобальный файл, для сервера проекта — файл этого проекта.
+4. Нажмите **Preview…**, проверьте diff и нажмите **Apply**. Сразу после этого AKit проверяет подключение (раздел [«Проверить, что сервер подключается»](#mcp-check)).
+
+![Окно Copy “github” to Pi: поля Name (github), Transport (Remote (HTTP)), URL (https://api.githubcopilot.com/mcp/), раздел Headers со строкой Authorization и значением Bearer ${GITHUB_TOKEN}, раздел Where с меню Add to (Pi · Pi global (mcp.json)) и путём ~/.pi/agent/mcp.json; кнопки Cancel и Preview…](images/mcp-copy.png)
+
+Как переносятся секреты:
+
+- Значение из Keychain не копируется. Новая запись ссылается на тот же элемент Keychain, но способом другого агента: у Claude Code это `headersHelper` или обёртка команды, у Pi — команда `!security …`.
+- Секретное значение, записанное в файле открытым текстом, AKit переносит в Keychain. В новый файл попадает только ссылка.
+- Ссылка вида `${ИМЯ}` переносится как есть: агент возьмёт значение из своего окружения.
 
 #### Средне: спрятать секрет
 <!-- section: mcp-secret -->
