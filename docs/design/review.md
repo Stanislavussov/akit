@@ -16,8 +16,8 @@ reply without AKit's name); the hidden line is `<!-- ai-review:v1 … -->` and t
 don't count against a role's `max_findings`, so the matrix has a row per criterion. The
 Feature scenario gets `bug-hunter` as a required role. Mermaid diagrams of a run under One run.
 
-Added 2026-10-24 (branch `review-impact-map`): R40–R44, a map of the change for the user and its
-uses in other repositories, found by the agent through GitLab's MCP server (section "Change map
+Added 2026-10-24 (branch `review-impact-map`): R40–R48, a map of the change for the user and its
+uses in other repositories, an overview with a flow diagram in the chosen language, the whole work item chain, found by the agent through GitLab's MCP server (section "Change map
 and impact on other repositories").
 
 Added 2026-10-23 (branch `review-branch-wi`): R39, the work item comes only from the source branch
@@ -413,6 +413,24 @@ or adds to the table:
 - A run made before the map gets one the first time `akit review map` (or `ReviewMap.load`)
   asks, when its worktree is still there. Apply (Discuss in Pi…) doesn't build the map again,
   so its severities are those of the passes' findings until the next run.
+
+### Overview, flow and the work item chain (2026-10-24)
+
+Asked by the user later on 2026-10-24: "a summary in the chosen language: 3–5 points on what
+happens, which modules change and why (from the task and Azure DevOps through MCP); draw the
+flow with Mermaid, how the change affects it"; and "the review always reads Azure DevOps: the
+task, its parents up through every level (task, user story, feature, epic) and their comments".
+Built as part (d), before the Map tab.
+
+| # | Question | Decision |
+|---|---|---|
+| R45 | A short overview for the user | The brief submits it with a new tool `akit_submit_overview`: 3–5 points on what happens; the modules that change, each with its files and why it changes; where the why comes from (`work-item`, `description`, `notes`, `none`, more than one allowed). AKit keeps a module only when its files are changed files of the run, and keeps 3–5 points (fewer: the overview says it is short; more: the first 5). Saved as `<run>/overview.json`. Never posted |
+| R46 | Its language | `summary_language` at the three config levels (review.yaml, the profile, the run: New Review… → Summary language, `--summary-language`), a `LabLanguage` code; default the Mac's preferred language when AKit knows it, else English. Only the overview and the flow's labels use it; GitLab text stays in `posting: language` (R35). Translate works on the overview too |
+| R47 | The flow | In the same tool: a Mermaid diagram (`flowchart` or `sequenceDiagram`, at most 40 nodes and 6000 characters) of the path a request or data takes through the system where the change is (UI → micro-frontend → API → service → database, a job, an event), with the changed parts in a class `changed`. After the `impact` pass AKit adds the other repositories' uses as nodes under a `subgraph` (from `consumers.json`, not from the model). AKit rejects a diagram with `click`, `href`, `call`, `%%{init` or `<script` and keeps the text for the gap. The app renders it with `mermaid.js` shipped inside AKit (a pinned version, MIT, no network: `securityLevel: "strict"`, a content policy with no outside loads), light and dark; a syntax error shows the source and the error. **Copy Mermaid** copies the source |
+| R48 | The work item chain | The fetch pass reads the work item named by the branch (R39), then its parent, the parent's parent and so on to the top (Task → User Story → Feature → Epic; at most 6 levels, a visited set against loops), each with its description, acceptance criteria and **all comments**; related items one level from the named item. Gather keeps the whole chain (R39's filter keeps ancestors of a named item, not only the direct parent). `work-items.md` shows the chain from the top down, so the overview's why can name the epic's or feature's goal |
+
+The Review screen of a run: **Overview** (points, modules, flow) on top, then the tabs **Map**
+(R40) and the requests.
 
 ### The map on the Review screen
 
