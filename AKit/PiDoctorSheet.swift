@@ -14,6 +14,10 @@ struct PiDoctorSheet: View {
     @State private var busy = false
     @State private var checkingLive = false
     @State private var copied = false
+    /// A `pi` command waiting for the user's yes, and how the last one ended.
+    @State private var pending: PiCommands.Action?
+    @State private var running = false
+    @State private var outcome: PiCommands.Outcome?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -34,9 +38,11 @@ struct PiDoctorSheet: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(section.title).font(.headline)
                                 ForEach(Array(section.lines.enumerated()), id: \.offset) { _, line in
-                                    LineRow(line: line) { screen in
+                                    LineRow(line: line, busy: running) { screen in
                                         model.section = screen
                                         dismiss()
+                                    } run: { action in
+                                        pending = action
                                     }
                                 }
                             }
@@ -59,9 +65,9 @@ struct PiDoctorSheet: View {
                 Button("Check Servers and Sign-In") { Task { await run(live: true) } }
                     .disabled(busy)
                     .help("Runs pi mcp list and pi auth check --no-refresh; never reads a credential")
-                if checkingLive {
+                if checkingLive || running {
                     ProgressView().controlSize(.small)
-                    Text("Connecting to the servers…").font(.callout).foregroundStyle(.secondary)
+                    Text(running ? "Pi is working…" : "Connecting to the servers…").font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button(copied ? "Copied" : "Copy Report") {
@@ -78,6 +84,17 @@ struct PiDoctorSheet: View {
         }
         .padding(20)
         .frame(width: 680, height: 600)
+        .confirmationDialog(pending?.title.replacingOccurrences(of: "…", with: "") ?? "", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+                            titleVisibility: .visible, presenting: pending) { action in
+            Button("Run") { Task { await runPi(action) } }
+        } message: { action in
+            Text("AKit runs: \(action.shown(home: HarnessEnvironment.current.homeDirectory))\n\nThe same as \(action.akitCommand) --yes. Pi does the work and keeps its own files and credentials.")
+        }
+        .alert(outcome?.succeeded == true ? "Done" : "Pi reported a failure", isPresented: Binding(get: { outcome != nil }, set: { if !$0 { outcome = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(String((outcome?.output ?? "").suffix(1500)))
+        }
         .task {
             await run(live: false)
             if DebugSnapshot.options?.capture == true { await run(live: true) }
@@ -98,6 +115,17 @@ struct PiDoctorSheet: View {
         .font(.callout)
     }
 
+    /// Runs the fix's `pi` command (the user said yes), then checks again.
+    private func runPi(_ action: PiCommands.Action) async {
+        running = true
+        let env = HarnessEnvironment.current
+        let result = await Task.detached { await PiCommands.run(action, env: env) }.value
+        running = false
+        outcome = result
+        await run(live: report?.live ?? false)
+        await model.refresh()
+    }
+
     private func run(live: Bool) async {
         busy = true
         checkingLive = live
@@ -114,7 +142,9 @@ struct PiDoctorSheet: View {
 /// shows its `akit` command, Copy Command and a button to the screen with the same action.
 private struct LineRow: View {
     let line: PiDoctor.Line
+    let busy: Bool
     let open: (SidebarSection) -> Void
+    let run: (PiCommands.Action) -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -127,6 +157,11 @@ private struct LineRow: View {
                 if let command = line.command {
                     Text(command).font(.callout.monospaced()).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
+                        if let action = line.action {
+                            Button(action.title) { run(action) }
+                                .disabled(busy)
+                                .help("Shows the pi command AKit will run, then runs it (the same as \(action.akitCommand) --yes)")
+                        }
                         if let screen = line.screen.flatMap(SidebarSection.init(rawValue:)) {
                             Button("Open \(screen.title)") { open(screen) }
                                 .help("The \(screen.title) screen has the same action; it shows the change before it writes")

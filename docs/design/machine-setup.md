@@ -72,11 +72,19 @@ Lines are ok, warning (`?`) or problem (`!`), each problem with what to do (`→
 sections. `akit doctor` adds one line to its Tools section ("Pi setup: N problems, M warnings").
 The app's sheet shows the same lines with colored icons, Copy Report and Refresh.
 
-Not suggested: `exposure: deferred` for a large server (mcp.md allows it, but AKit has no command or
-screen to change a server's exposure yet; the user's rule is that every fix goes through an `akit`
-command); sections that repeat a skill's text (AKit doesn't detect that). Fixes that still name a
-Pi command or a hand edit, because AKit has no operation for them: installing a package (`pi update
---extensions`), MCP and provider sign-in (`pi mcp login`, `/login`), fixing broken JSON.
+Every fix is an `akit` command (decided by the user, 2026-10-24: "everything must go through
+akit"), added where it was missing, each showing what it does first and acting only with `--yes`:
+
+| Fix | Command | In the app |
+|---|---|---|
+| A package not installed / gone | `akit pi packages install [SOURCE] [--project PATH]`, `akit pi packages remove SOURCE` (run `pi update --extensions`, `pi install`, `pi remove`; `PiCommands`) | Install… / Remove… on the doctor's lines and on Overview → Pi → Packages |
+| An MCP server needs sign-in | `akit mcp login NAME --harness pi` (runs `pi mcp login NAME --timeout 300`; Pi keeps the credentials) | Sign In… on the live line |
+| A `direct` server Pi rarely calls | `akit mcp set NAME --harness pi --exposure deferred` (`MCPSwitches.exposurePlan`: `SettingsFile`, diff, backup, refused if changed). mcp.md: direct tools are declared in every request, deferred ones only after `tool_search` loads a match | MCP Servers → Switches → Exposure → Change |
+| A section the model gets twice | `akit instructions remove FILE --line N` | Instructions → Remove This Copy… |
+
+Left outside: provider sign-in (`/login` inside Pi; the line says so and to re-check with `akit
+doctor pi --live`), broken JSON (a hand edit at the place the parser names), reinstalling Pi (npm).
+Not detected: sections that repeat a skill's text.
 
 Not checked: whether Pi trusts a project (`trust.json`), the session folder's contents, themes and
 prompt templates, the latest Pi version (that needs the network).
