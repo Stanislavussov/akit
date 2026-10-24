@@ -79,6 +79,11 @@ extension AKitCLI {
       akit review log RUN [--json]      What the run did, for analysis: each pass's model, thinking,
                                         time, usage and credits, the MCP calls and blocked calls,
                                         and what each role's findings became
+      akit review map RUN [--json | --mermaid]
+                                        The change map: changed files by module with their lines
+                                        and worst finding, unchanged files that import them, the
+                                        boundaries (APIs, packages, events, config) and the other
+                                        repositories that use them; --mermaid prints a flowchart
       akit review outcomes [RUN] [--sync]
                                         What became of the 🤖 threads in GitLab (fixed, dismissed,
                                         ignored, open) and the share accepted by role and model;
@@ -318,6 +323,17 @@ extension AKitCLI {
             } else {
                 out(log.markdown)
             }
+            return 0
+        case "map":
+            let json = args.flag("--json")
+            let mermaid = args.flag("--mermaid")
+            guard let id = args.positional() else { throw Failure(message: "Which run? akit review map RUN.") }
+            try args.finish()
+            if json && mermaid { throw Failure(message: "Choose one: --json or --mermaid.") }
+            guard let map = ReviewMap.load(folder: try runFolder(id, env: env)) else {
+                throw Failure(message: "No map for run \(id): it has no map.json and no worktree to make one from. Review it again.")
+            }
+            out(json ? String(decoding: try ReviewJSON.encoder.encode(map), as: UTF8.self) : mermaid ? map.mermaid : map.text)
             return 0
         case "outcomes":
             let sync = args.flag("--sync")

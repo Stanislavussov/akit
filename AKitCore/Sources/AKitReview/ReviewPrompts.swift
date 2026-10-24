@@ -152,6 +152,12 @@ public enum ReviewPrompts {
         generated change: unrelated refactors, a helper that duplicates an existing one, calls to APIs that don't exist, tests \
         that only test mocks, errors swallowed, a description that promises more than the diff does. Write "none seen" for \
         each part with nothing.
+
+        Before you answer, call akit_submit_boundaries once with every boundary the changed files provide or use across the \
+        repository's edge: an HTTP or GraphQL endpoint, an exposed or remote micro-frontend module, a published package, an \
+        event, topic or queue, a database schema, infrastructure (Helm, Terraform, Kubernetes, Docker), a shared CI template \
+        or job, a config key, environment variable or feature flag. For each: the name other repositories would search for, \
+        the changed file, the line and the exact code line as the quote. An empty list is a valid answer.
         """
     }
 

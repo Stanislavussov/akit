@@ -211,6 +211,14 @@ fine). It starts the servers (npx, docker), so run it when asked, not in a loop.
   (also `direct`, `codemode` = Pi's default, `hidden`; shows the change; `--yes` writes).
   `akit doctor pi` suggests it for a direct server Pi rarely calls.
 
+## Merge request review
+
+`akit review map RUN [--json | --mermaid]` prints a review run's change map: the changed files
+by module with their lines and worst finding, the unchanged files that import them, the
+boundaries the change provides or uses (APIs, packages, events, infra, config) and the other
+repositories that use them. Use it when the user asks what a merge request affects; `--json`
+for the data, `--mermaid` for a `flowchart LR` to paste. It never posts anything.
+
 ## Rules
 
 - Never put secrets in fields, templates or skills.

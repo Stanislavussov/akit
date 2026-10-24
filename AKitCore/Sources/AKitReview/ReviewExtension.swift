@@ -22,7 +22,7 @@ import Foundation
 /// AKit reads those, not the model's account.
 public enum ReviewExtension {
     /// Bumped when the text changes; written into the file's first line.
-    public static let version = 7
+    public static let version = 8
 
     /// Folder names and file names a pass may never read (R15). Gather also deletes such
     /// files from the run's worktree, since `grep` and `find` look into folders.
@@ -36,7 +36,7 @@ public enum ReviewExtension {
     }
 
     public static let source = #"""
-    // akit-review.ts v7: written by AKit for one review run. Do not edit: AKit writes it again.
+    // akit-review.ts v8: written by AKit for one review run. Do not edit: AKit writes it again.
     import * as fs from "node:fs";
     import * as path from "node:path";
 
@@ -73,8 +73,9 @@ public enum ReviewExtension {
     const severities = ["nit", "low", "medium", "high", "critical"];
     const verdicts = ["confirmed", "rejected", "question", "merged"];
     const kinds = ["finding", "ac", "question"];
+    const boundaryKinds = ["http-api", "graphql", "mfe", "shared-lib", "event", "db-schema", "infra", "ci", "config"];
     const readTools = ["read", "grep", "find", "ls"];
-    const ownTools = ["akit_submit_findings", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link"];
+    const ownTools = ["akit_submit_findings", "akit_submit_boundaries", "akit_report_context_gap", "akit_submit_context", "akit_approved_requests", "akit_reading_link"];
     const resourceTools = ["list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"];
     const forbiddenWords = ["publish", "submit", "approve", "unapprove", "vote", "resolve", "unresolve", "rebase"];
     const readVerbs = ["get", "list", "search", "read", "show", "view", "fetch", "find", "query", "describe", "download"];
@@ -338,6 +339,22 @@ public enum ReviewExtension {
       return out;
     }
 
+    function boundaryProblems(list: any[]): string[] {
+      const out: string[] = [];
+      list.forEach((b, i) => {
+        const at = `boundaries[${i}]`;
+        if (typeof b !== "object" || b === null) { out.push(`${at} is not an object`); return; }
+        if (!boundaryKinds.includes(b.kind)) out.push(`${at}.kind must be one of ${boundaryKinds.join(", ")}`);
+        if (b.direction !== "provides" && b.direction !== "uses") out.push(`${at}.direction must be provides or uses`);
+        if (typeof b.name !== "string" || b.name.trim() === "" || b.name.length > 120) out.push(`${at}.name must be 1–120 characters`);
+        if (typeof b.file !== "string" || b.file.trim() === "") out.push(`${at}.file is missing`);
+        if (b.line !== undefined && b.line !== null && (!Number.isInteger(b.line) || b.line < 1)) out.push(`${at}.line must be a line number from 1`);
+        if (typeof b.quote !== "string" || b.quote.trim() === "") out.push(`${at}.quote must quote the code`);
+        if (b.note !== undefined && typeof b.note !== "string") out.push(`${at}.note must be text`);
+      });
+      return out;
+    }
+
     export default function (pi: any) {
       if (mode === "review") {
         pi.registerTool({
@@ -397,6 +414,46 @@ public enum ReviewExtension {
             const name = pass === "discuss" ? `passes/discuss-${Date.now()}.json` : `passes/${pass}.json`;
             write(name, JSON.stringify({ pass, role, findings, verdicts: verdictList }, null, 2));
             return { content: [{ type: "text", text: `Saved ${findings.length} findings and ${verdictList.length} verdicts.` }], details: undefined };
+          },
+        });
+      }
+
+      if (mode === "review") {
+        pi.registerTool({
+          name: "akit_submit_boundaries",
+          label: "Submit boundaries",
+          description: "Hand AKit what the change provides or uses across the repository's edge: an HTTP or GraphQL API, a micro-frontend "
+            + "module, a published package, an event or queue, a database schema, infrastructure, a shared CI template, a config key. "
+            + "Call it once; an empty list is a valid answer. AKit keeps a boundary only when its quote is in the changed file.",
+          parameters: {
+            type: "object",
+            properties: {
+              boundaries: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    kind: { type: "string", enum: boundaryKinds },
+                    direction: { type: "string", enum: ["provides", "uses"] },
+                    name: { type: "string", maxLength: 120, description: "What to search for in other repositories: an endpoint path, a package, module, topic or variable name" },
+                    file: { type: "string", description: "The changed file in the repository" },
+                    line: { type: ["integer", "null"] },
+                    quote: { type: "string", description: "The exact code line that declares or uses it, copied from the file; never a secret's value" },
+                    note: { type: "string", description: "One short sentence: what changes for its users" },
+                  },
+                  required: ["kind", "direction", "name", "file", "quote"],
+                },
+              },
+            },
+          },
+          async execute(_id: string, params: any) {
+            const list = Array.isArray(params?.boundaries) ? params.boundaries : [];
+            const wrong = boundaryProblems(list);
+            if (wrong.length > 0) {
+              return { content: [{ type: "text", text: "Not saved. Fix these and call again:\n- " + wrong.join("\n- ") }], details: undefined, isError: true };
+            }
+            write("passes/boundaries.json", JSON.stringify({ pass, boundaries: list }, null, 2));
+            return { content: [{ type: "text", text: `Saved ${list.length} boundaries.` }], details: undefined };
           },
         });
       }

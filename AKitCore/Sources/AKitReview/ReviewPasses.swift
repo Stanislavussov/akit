@@ -400,7 +400,7 @@ public enum ReviewPasses {
         }
 
         func pass(_ name: String, role: ReviewRunSpec.Role?, prompt: String, model: ReviewModelChoice, gate: SendGate,
-                  session: [String]) async throws -> PassOutput {
+                  session: [String], tools: String = Self.tools) async throws -> PassOutput {
             var setup = PassSetup(name: name, mode: "review", role: role, prompt: prompt, model: model, gate: gate, session: session,
                                   skills: skills, tools: tools, mcp: spec.access.inPasses, cwd: cwd, systemPrompt: systemFile, roots: roots)
             setup.flags = spec.extraFlags
@@ -409,10 +409,15 @@ public enum ReviewPasses {
 
         do {
             let main = ["--session-id", log.mainSession]
+            try? FileManager.default.removeItem(at: folder.appending(path: "passes/boundaries.json"))
             let brief = try await pass("brief", role: nil, prompt: ReviewPrompts.brief(spec: spec), model: spec.passes.value, gate: passesGate,
-                                       session: main)
+                                       session: main, tools: tools + ",akit_submit_boundaries")
             log.brief = brief.answer.map(SecretFilter.masked)
             try ReviewJSON.write(log, to: logFile)
+            // The boundaries the brief named (R41): only those whose quote is in a changed file.
+            let boundaries = ReviewBoundaries.check(folder: folder, worktree: hasWorktree ? worktree : nil)
+            try ReviewJSON.write(boundaries, to: folder.appending(path: "boundaries.json"))
+            options.progress("Boundaries: \(boundaries.count) kept.")
             for role in roles {
                 let definition = try? String(contentsOf: folder.appending(path: "roles/review-\(role.id)/SKILL.md"), encoding: .utf8)
                 _ = try await pass("role-\(role.id)", role: role,
@@ -482,6 +487,12 @@ public enum ReviewPasses {
             let findings = ReviewFindingsFile(version: 1, findings: candidates, source: "passes")
             try ReviewJSON.write(findings, to: folder.appending(path: "findings.json"))
             try mergeGaps(folder: folder, codeOnly: spec.workItems.isEmpty)
+            // The change map (R40) is for the user only: a failure never fails the run.
+            do {
+                try ReviewMap.make(folder: folder).save(in: folder)
+            } catch {
+                options.progress("The change map failed: \(error.localizedDescription)")
+            }
             try await ReviewWorkflow.plan(folder, env: env)
             try ReviewRuns.setStatus(.planned, folder: folder)
             return findings
@@ -599,6 +610,9 @@ public enum ReviewPasses {
                 let count = (args["findings"] as? [Any])?.count ?? 0
                 let verdicts = (args["verdicts"] as? [Any])?.count ?? 0
                 return verdicts > 0 ? "submits \(verdicts) verdicts" : "submits \(count) finding\(count == 1 ? "" : "s")"
+            case "akit_submit_boundaries":
+                let count = (args["boundaries"] as? [Any])?.count ?? 0
+                return "submits \(count) boundar\(count == 1 ? "y" : "ies")"
             case "akit_report_context_gap": return "reports a context gap: " + SecretFilter.masked(String((args["needed"] as? String ?? "").prefix(80)))
             case "akit_submit_context": return "hands the merge request's data to AKit"
             case "akit_reading_link": return "reads a link"

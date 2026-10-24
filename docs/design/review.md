@@ -396,6 +396,24 @@ server for the other repositories that use it. The user names no repositories. B
 | R43 | How does the pass search? | GitLab's MCP server, reading tools only (R22's policy, the 300-character argument limit): `search` with `scope: blobs` and the name, first in the merge request's top group (`group_id`), then in the whole GitLab when the group gives fewer than 3 projects; `get_repository_file` to read a hit around the use; `semantic_search` and Orbit's `query_graph` when the server offers them. A budget, given to the pass in its prompt and counted by AKit: 20 searches and 30 files read; over it AKit only alerts (R37). When search over code in a group or the instance fails (it can need Advanced search), the pass reports a gap that says so and what it tried. The pass submits each use with `akit_submit_consumers`: the boundary, the project path, the file, the ref, the line, a quote and how the file uses the boundary, and whether this change breaks it with the reason. AKit keeps a use only when its quote is in an answer the pass got from GitLab in `mcp/calls/` (never the model's word alone) and the project is not the merge request's own. The kept uses go to `context/consumers.md` for the roles and onto the map |
 | R44 | Where do the uses go? | On the map (the third lane). A use that this change breaks is a candidate of the `contracts` role, which now runs in every run that has kept uses: its anchor is the changed line in this merge request (never a line in the other repository), its text names the other project and file, and it goes through the verifier and the user's approval like any finding. Answers from other projects are context: they never become this merge request's data (R30's rule) and AKit never writes to another project |
 
+Built: part (a) (2026-10-24): R40, R41 and `akit review map RUN [--json | --mermaid]`
+(`ReviewMap.swift`). The brief gets `akit_submit_boundaries`; right after it AKit writes
+`<run>/boundaries.json`, and at the end of the passes `<run>/map.json` (a failure there only
+writes a progress line). `consumers.json` (part b) is read when it is there. What differs from
+or adds to the table:
+
+- A boundary is kept only with a worktree (the quote can't be checked without one), in a file
+  the change adds or modifies (not a deleted one); its line moves to the quote's line when the
+  brief's line is more than 3 lines off. Model text is masked.
+- The import scan skips `node_modules`, `dist`, `build` and hidden folders, links and secret
+  files; it reads at most 20,000 TS/JS files (200,000 entries) of up to 1 MB each and says so
+  in the map's notes when it stops early. TS imports of `x.js` find `x.ts`. A workspace
+  package resolves through its `source`, `module`, `main` or `types`, else `index.*` or
+  `src/index.*`; a subpath also under `src/`. At most 200 dependents are shown.
+- A run made before the map gets one the first time `akit review map` (or `ReviewMap.load`)
+  asks, when its worktree is still there. Apply (Discuss in Pi…) doesn't build the map again,
+  so its severities are those of the passes' findings until the next run.
+
 ### The map on the Review screen
 
 ```
