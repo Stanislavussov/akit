@@ -360,7 +360,7 @@ public enum AKitCLI {
                 return try await self.review(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, err: err, input: input)
             }
             if arguments.first == "kb" {
-                return try await knowledge(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out)
+                return try await knowledge(Array(arguments.dropFirst()), env: env, cwd: cwd, projectsRoot: projectsRoot, out: out, trash: trash)
             }
             if arguments.first == "translate" {
                 return try await translate(Array(arguments.dropFirst()), env: env, cwd: cwd, out: out, input: input)

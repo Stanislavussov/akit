@@ -46,7 +46,8 @@ import SwiftUI
 ///
 /// Knowledge (`--section knowledge`): `--select <note id>` (`payments/orders-api`) opens that note; `--tab edit` shows
 /// it in Edit, `--tab properties` shows its Properties form, `--tab delete` asks Delete…, `--tab new-area|new-note|create-base`
-/// opens that sheet, `--tab kinds` the Kinds… sheet and `--tab area-settings` Area Settings… of the selected note's space.
+/// opens that sheet, `--tab kinds` the Kinds… sheet and `--tab area-settings` Area Settings… of the selected note's space;
+/// `--tab sample` shows the sample base (`akit kb seed`) and `--tab sample-remove` also asks Remove Sample Base….
 /// The capture prints the screen's state as text (base, spaces, notes, tabs, the note in view, with Properties its kind
 /// and fields, the kinds or the area settings), so a check needs no image.
 /// `--tab map --query <file.excalidraw>` shows only the map canvas with that file (spike 2.0) and prints

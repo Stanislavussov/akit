@@ -1061,88 +1061,10 @@ git -C "$LOCAL" add -A && GIT_AUTHOR_NAME="Alice" git -C "$LOCAL" commit -qm "Te
 cat >> "$LOCAL/src/Orders/OrdersController.cs" <<<"// GET /orders.csv: OrderCsv.Write(store.All())"
 file "$LOCAL/docs/export.md" <<<"Orders export as CSV: id and total."
 
-# Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world with two spaces, their
-# settings and six notes, committed. Maps come with step 2.3.
-"$AKIT" kb init --world work >/dev/null
-KB="$DEMO/.akit/local/knowledge/work"
-file "$KB/areas/payments/orders-api.md" <<'EOF'
----
-kind: service
-repo: git@example.com:shop/orders-api.git
-files: [src/events/order-created.ts]
----
-# orders-api
-
-Takes orders from the shop and publishes `order.created` for [[billing]].
-
-## Events
-
-- order created: sent once the order is saved; see [[order-to-billing]].
-- retry: a failed publish is retried three times, then the order waits in the outbox.
-
-## Owners
-
-The checkout team.
-EOF
-file "$KB/areas/payments/billing.md" <<'EOF'
----
-kind: service
-repo: git@example.com:shop/billing.git
----
-# billing
-
-Bills each order once.
-
-## Invoices
-
-An invoice is made from `order.created` and sent by email the same day.
-EOF
-file "$KB/areas/payments/flows/order-to-billing.md" <<'EOF'
----
-kind: flow
----
-# order-to-billing
-
-[[orders-api]] publishes the `order.created` event; [[billing]] reads it and makes the invoice.
-A duplicate event is ignored by its order id.
-EOF
-file "$KB/areas/logistics/warehouse.md" <<'EOF'
----
-kind: service
-repo: git@example.com:shop/warehouse.git
----
-# warehouse
-
-Keeps the stock and reserves items for paid orders.
-EOF
-file "$KB/areas/logistics/shipping.md" <<'EOF'
----
-kind: service
----
-# shipping
-
-Books the courier and tracks each parcel.
-EOF
-file "$KB/areas/logistics/flows/pick-and-ship.md" <<'EOF'
----
-kind: flow
----
-# pick-and-ship
-
-[[warehouse]] picks the items, then [[shipping]] books the courier.
-EOF
-# Area settings (Area Settings…): titles, and the projects logistics is about. kb.yaml with the
-# default kinds comes from kb init.
-file "$KB/areas/payments/area.yaml" <<'EOF'
-title: Payments
-description: Orders, billing and invoices.
-EOF
-file "$KB/areas/logistics/area.yaml" <<'EOF'
-title: Logistics
-description: Stock, picking and shipping.
-projects: [git@example.com:shop/warehouse.git, ~/Projects/shipping-*]
-EOF
-git -C "$KB" add -A && git -C "$KB" commit -qm "Add the payments and logistics notes"
+# Knowledge base (Knowledge screen, guide knowledge.ru.md): the work world built from the sample
+# base's content (KnowledgeSeed.swift, one source of made-up notes): two spaces with their
+# settings, a note of every kind, committed. Maps come with step 2.3.
+"$AKIT" kb seed --world work >/dev/null
 
 # The repo that orders-api's note points at (repo: and files:), found under ~/Projects.
 ORDERS="$DEMO/Projects/orders-api"

@@ -13,6 +13,10 @@ struct KnowledgeView: View {
     /// Snapshots: `--tab new-area|new-note|create-base|kinds|area-settings`.
     @State private var sheet: Sheet? = DebugSnapshot.options?.tab.flatMap(Sheet.init(rawValue:))
     @State private var areaToDelete: String?
+    /// Add Sample Base… / Remove Sample Base… waiting for confirmation. Snapshots: `--tab sample-remove`.
+    @State private var sampleRequest: SampleRequest? = DebugSnapshot.options?.tab == "sample-remove" ? .remove : nil
+
+    enum SampleRequest { case add, remove }
 
     enum Sheet: String, Identifiable {
         case createBase = "create-base", newArea = "new-area", newNote = "new-note", kinds, areaSettings = "area-settings"
@@ -45,6 +49,8 @@ struct KnowledgeView: View {
                         Text("A knowledge base holds notes about your services, flows and teams as Markdown files in a local git repo without a remote, by default in ~/.akit/local/knowledge (Settings → Knowledge sets another folder, like one in your Obsidian vault). Agents read it; you write it here or in Obsidian.")
                     } actions: {
                         Button("Create Base…") { sheet = .createBase }
+                        Button("Add Sample Base…") { sampleRequest = .add }
+                            .help("A separate base with made-up notes that shows what the Knowledge screen can do")
                     }
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -86,6 +92,14 @@ struct KnowledgeView: View {
                     .help("The kinds of notes in this base (service, flow, team…) and the fields of each, kept in kb.yaml")
             }
             ToolbarItem {
+                Menu("Sample Base", systemImage: "shippingbox") {
+                    Button("Add Sample Base…") { sampleRequest = .add }
+                    Button("Remove Sample Base…") { sampleRequest = .remove }
+                        .disabled(model.sampleBase == nil)
+                }
+                .help("A separate base, sample, with made-up notes that shows every feature; remove it when you are done")
+            }
+            ToolbarItem {
                 GuideButton(guide: .knowledge)
             }
         }
@@ -105,6 +119,20 @@ struct KnowledgeView: View {
             }
         } message: {
             Text("The folder goes to the Trash, and its removal is committed in the base's git.")
+        }
+        .confirmationDialog(sampleRequest == .remove ? "Move the sample base to the Trash?" : "Add the sample base?",
+                            isPresented: Binding(get: { sampleRequest != nil }, set: { if !$0 { sampleRequest = nil } })) {
+            if sampleRequest == .remove {
+                Button("Move to Trash", role: .destructive) { Task { await model.removeSampleBase() } }
+            } else {
+                Button("Add Sample Base") { Task { await model.addSampleBase() } }
+            }
+        } message: {
+            if sampleRequest == .remove {
+                Text("The whole folder \(model.sampleBase?.root.tildePath ?? "") goes to the Trash. Your other bases stay as they are.")
+            } else {
+                Text("A separate base, sample, with made-up notes about a shop: two spaces, a note of every kind, links between them. Your bases stay as they are; Remove Sample Base… moves it to the Trash.")
+            }
         }
         .task { await model.load(select: DebugSnapshot.options?.select) }
     }

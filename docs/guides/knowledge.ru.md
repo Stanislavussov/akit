@@ -15,7 +15,7 @@
 - Знания уже лежат в README и `AGENTS.md` проекта, и агенту их хватает.
 - Вам нужна общая вики команды. База живёт на одном Mac и не имеет remote.
 
-**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пространства и заметки, читать и править, папка базы и Obsidian, виды и свойства, настройки пространства, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
+**Как построено руководство.** Части идут от простого к сложному: что это, создать базу, пример базы, пространства и заметки, читать и править, папка базы и Obsidian, виды и свойства, настройки пространства, коммиты, тонкости. Все надписи экрана собраны в словаре: [AKit Terms → Knowledge](terms#terms-knowledge).
 
 **Как искать.** Меню Help → **Search Guides and Screens…** (⌥⌘F). Это руководство открывает кнопка **Guide** на экране Knowledge или Help → **Knowledge Base Guide**.
 
@@ -34,7 +34,7 @@
 - «Где код этого сервиса?» → поле `repo:` в начале заметки, например `repo: git@example.com:shop/orders-api.git`.
 - «Как данные идут от заказа до счёта?» → заметка вида `flow` в папке `flows/`.
 
-![Экран Knowledge: слева список Spaces с пространствами logistics и payments и числом заметок 3 у каждого; в середине заметки пространства payments: billing, order-to-billing, orders-api с видом service или flow; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Copy, Paste, Open in Obsidian и Delete…; ниже таблица полей files, kind service и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
+![Экран Knowledge: слева список Spaces с пространствами logistics с числом заметок 4 и payments с числом заметок 6; в середине заметки пространства payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db с видом service, team, flow, queue или database; справа вкладка orders-api, заголовок orders-api и путь areas/payments/orders-api.md, кнопки Edit, Copy, Paste, Open in Obsidian и Delete…; ниже таблица полей files, kind service и repo git@example.com:shop/orders-api.git и текст заметки с разделами Events и Owners](images/knowledge.png)
 
 ### Главные слова
 <!-- section: overview-terms -->
@@ -63,6 +63,48 @@ AKit создаёт папку мира, `areas/`, `inbox/`, файлы `.gitign
 > **Почему так:** база никогда не лежит в brain: brain уходит в ваш личный репозиторий. По умолчанию база лежит в `~/.akit/local/knowledge`. Другую папку, например в вашем vault Obsidian, задаёт [Папка базы и Obsidian](#folder).
 
 Если баз несколько, вверху экрана есть список **Base**: выберите в нём мир.
+
+## Пример базы: Sample Base
+<!-- section: sample -->
+
+**Что это:** пример базы — отдельная база мира `sample` с выдуманными заметками о магазине. В ней видно всё, что умеет экран: два несвязанных пространства `payments` и `logistics` с настройками `area.yaml`, заметка каждого вида из `kb.yaml` (`service`, `flow`, `team`, `database`, `queue`, `external`) с полями и разделами `##`, ссылки `[[…]]` внутри пространства и в другое пространство. Каждая новая возможность AKit добавляет сюда свой пример. Ваши базы пример не трогает.
+
+**Когда пригодится:**
+
+- «Хочу посмотреть, как выглядит база, прежде чем писать свою» → **Add Sample Base…**.
+- «Посмотрел, пример больше не нужен» → **Remove Sample Base…**.
+
+### Просто: Add Sample Base…
+<!-- section: sample-add -->
+
+1. Нажмите меню **Sample Base** в панели инструментов, потом **Add Sample Base…**. Если базы на этом Mac ещё нет, та же кнопка есть рядом с **Create Base…**.
+2. Нажмите **Add Sample Base**.
+
+AKit создаёт базу в папке мира `sample` (по умолчанию `~/.akit/local/knowledge/sample`) и делает один коммит «Seed: sample base v1». Экран сразу показывает пример, а в списке **Base** появляется `sample`. Если пример уже есть, повторное нажатие просто его открывает. Пример старой версии AKit обновит, но только если вы в нём ничего не меняли.
+
+То же делает `akit kb seed` в терминале.
+
+![Экран Knowledge с примером базы: в подзаголовке sample и путь ~/.akit/local/knowledge/sample, в панели инструментов список Base и меню Sample Base; слева Spaces с пространствами logistics (4 заметки) и payments (6 заметок); в середине заметки payments: billing, checkout-team, order-to-billing, order-events, orders-api, orders-db; справа открыта заметка order-events вида queue со ссылками на orders-api, billing и logistics/warehouse](images/knowledge-sample.png)
+
+### Просто: Remove Sample Base…
+<!-- section: sample-remove -->
+
+1. Нажмите **Sample Base** → **Remove Sample Base…**. Кнопка доступна, только когда пример есть.
+2. Нажмите **Move to Trash**.
+
+Вся папка примера уходит в Корзину. Другие базы остаются как есть. То же делает `akit kb seed --remove --yes`.
+
+> **Почему так:** AKit узнаёт пример по файлу `.akit-seed.json` в корне базы: в нём версия примера и список его файлов. Базу без этого файла AKit не удаляет и не перезаписывает, даже если её мир называется `sample`.
+
+### Средне: удалить из терминала: akit kb rm
+<!-- section: sample-rm -->
+
+`akit kb rm` убирает в Корзину заметку, карту или всё пространство и сразу коммитит удаление, как **Delete…** на экране.
+
+1. `akit kb rm payments/orders-db` показывает, что уйдёт в Корзину, и ничего не удаляет.
+2. `akit kb rm payments/orders-db --yes` удаляет. Пространство: `akit kb rm logistics --yes`. Карта: `akit kb rm payments/maps/overview --yes`.
+
+Предложения агентов в `inbox/` эта команда не удаляет: их принимают или отклоняют.
 
 ## Пространства и заметки
 <!-- section: spaces -->
@@ -315,7 +357,7 @@ AKit коммитит очередь одним коммитом, когда:
 - Список заметок показывает заголовок `#` из текста заметки. Если заголовка нет, показано имя файла.
 - Файлы и папки с точкой в начале (например, `.obsidian`) экран не показывает.
 - Индекс поиска, замки, очередь и настройки Obsidian не попадают в git: они в `.gitignore` базы.
-- Агенты читают базу командами `akit kb areas`, `akit kb notes`, `akit kb kinds` и `akit kb area`. Команды, которые меняют базу (`akit kb init`, `new-note`, `set`, `kinds add`, `kinds rename`, `area … --project`, `path --set` и другие), помечены в `akit kb --help` как команды для человека. Агент запускает их, только если вы попросили об этом в этой сессии.
+- Агенты читают базу командами `akit kb areas`, `akit kb notes`, `akit kb kinds` и `akit kb area`. Команды, которые меняют базу (`akit kb init`, `new-note`, `set`, `kinds add`, `kinds rename`, `area … --project`, `path --set`, `rm`, `seed` и другие), помечены в `akit kb --help` как команды для человека. Агент запускает их, только если вы попросили об этом в этой сессии.
 - `kb.yaml` и `area.yaml` AKit пишет целиком. Если вы вписали туда ключ, который AKit не знает, AKit этот файл не перепишет и скажет об этом: поправьте его вручную.
 - Если `kb.yaml` нет (база создана старой версией AKit), экран и команды берут виды по умолчанию.
 

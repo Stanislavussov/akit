@@ -198,6 +198,12 @@ shot knowledge           $MAIN --section knowledge --select payments/orders-api
 shot knowledge-note      $MAIN --section knowledge --select payments/orders-api --tab edit
 shot knowledge-properties $MAIN --section knowledge --select payments/orders-api --tab properties
 shot knowledge-kinds     $MAIN --section knowledge --select payments/orders-api --tab kinds
+# Add Sample Base…: the sample base (akit kb seed) next to the demo base, only for this shot.
+if [[ "$ONLY" == "  " || "$ONLY" == *" knowledge-sample "* ]]; then
+    HOME="$DEMO" GIT_CONFIG_GLOBAL=/dev/null "$ROOT/AKitCore/.build/debug/akit" kb seed >/dev/null
+fi
+shot knowledge-sample    $MAIN --section knowledge --tab sample --select payments/order-events
+rm -rf "$DEMO/.akit/local/knowledge/sample"
 # Settings → Knowledge: the base folder of each world (work has the demo base, personal none yet).
 shot knowledge-settings  900x760 --tab knowledge --settings
 

@@ -26,8 +26,16 @@ struct KnowledgeCLITests {
     func akit(_ arguments: String...) async -> (code: Int32, out: String, err: String) {
         var out: [String] = [], err: [String] = []
         let code = await AKitCLI.run(arguments, env: env, cwd: home, projectsRoot: home.appending(path: "Projects"),
-                                     hostName: "TestMac.local", out: { out.append($0) }, err: { err.append($0) })
+                                     hostName: "TestMac.local", out: { out.append($0) }, err: { err.append($0) }, trash: fakeTrash)
         return (code, out.joined(separator: "\n"), err.joined(separator: "\n"))
+    }
+
+    /// A Trash in the fake home: one folder per move.
+    func fakeTrash(_ url: URL) throws -> URL? {
+        let folder = home.appending(path: "Trash/\(UUID().uuidString)")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        try fm.moveItem(at: url, to: folder.appending(path: url.lastPathComponent))
+        return folder.appending(path: url.lastPathComponent)
     }
 
     func git(_ args: String...) async throws -> String {
@@ -44,7 +52,8 @@ struct KnowledgeCLITests {
         let help = await akit("kb", "--help")
         #expect(help.code == 0)
         let lines = help.out.split(separator: "\n").map(String.init)
-        for command in ["akit kb init", "akit kb new-note", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path"] {
+        for command in ["akit kb init", "akit kb new-note", "akit kb set", "akit kb kinds add", "akit kb area AREA [--title", "akit kb path",
+                        "akit kb rm", "akit kb seed [", "akit kb seed --remove"] {
             let index = try #require(lines.firstIndex { $0.trimmingCharacters(in: .whitespaces).hasPrefix(command) }, "\(command)")
             #expect(lines[index...].prefix(3).contains { $0.contains("For a person only.") }, "\(command) is not marked")
         }
@@ -202,5 +211,50 @@ struct KnowledgeCLITests {
         let reset = await akit("kb", "path", "work", "--reset")
         #expect(reset.out == "The base of work is the default folder again: ~/.akit/local/knowledge/work (no base there yet: akit kb init --world work). ~/Notes/kb stays as it is.")
         #expect(try json(await akit("kb", "path", "--json").out)["configured"] as? Bool == false)
+    }
+
+    @Test func seedRmAndRemoveTheSampleBase() async throws {
+        let sample = home.appending(path: ".akit/local/knowledge/sample")
+        let seeded = await akit("kb", "seed", "--json")
+        #expect(seeded.code == 0, "\(seeded.err)")
+        let answer = try json(seeded.out)
+        #expect(answer["base"] as? String == sample.path)
+        #expect(answer["world"] as? String == "sample")
+        #expect(answer["seedVersion"] as? Int == KnowledgeSeed.version)
+        #expect(answer["status"] as? String == "created")
+        #expect((answer["files"] as? [String])?.contains(".akit-seed.json") == true)
+        #expect(try json(await akit("kb", "seed", "--json").out)["status"] as? String == "unchanged")
+        let areas = try json(await akit("kb", "areas", "--base", "sample", "--json").out)
+        #expect((areas["areas"] as? [[String: Any]])?.count == 2)
+
+        // kb rm: without --yes nothing moves; with it, one commit and the file is in the Trash.
+        let note = sample.appending(path: "areas/payments/orders-db.md")
+        let asked = await akit("kb", "rm", "payments/orders-db", "--base", "sample")
+        #expect(asked.code == 0 && asked.out.hasSuffix("Run again with --yes to do it."))
+        #expect(fm.fileExists(atPath: note.path))
+        let removed = try json(await akit("kb", "rm", "payments/orders-db", "--base", "sample", "--yes", "--json").out)
+        #expect(removed["base"] as? String == sample.path && removed["kind"] as? String == "note" && removed["id"] as? String == "payments/orders-db"
+            && removed["path"] as? String == "areas/payments/orders-db.md" && removed["removed"] as? Bool == true)
+        #expect(!fm.fileExists(atPath: note.path))
+        let log = try #require(await ProcessRunner.run(URL(filePath: "/usr/bin/git"), arguments: ["log", "--format=%s"], directory: sample,
+                                                        environment: env.variables, timeout: 20)).output
+        #expect(log.hasPrefix("Delete note payments/orders-db\nSeed: sample base v"))
+        #expect(await akit("kb", "rm", "inbox/payments/x.md", "--base", "sample", "--yes").err.contains("akit kb reject"))
+        // Seeding again after a change of the user: refused.
+        #expect(await akit("kb", "seed").err.contains("Remove it first"))
+
+        // seed --remove: a base of the user is refused; the sample one goes to the Trash after --yes.
+        #expect(await akit("kb", "init", "--world", "work").code == 0)
+        #expect(await akit("kb", "new-note", "orders", "api", "--base", "work").code == 0)
+        let refused = await akit("kb", "seed", "--remove", "--base", "work", "--yes")
+        #expect(refused.code == 2 && refused.err.contains("not a sample base"))
+        #expect(KnowledgeBase.isBase(base))
+        #expect(await akit("kb", "seed", "--world", "work").err.contains("not a sample one"))
+        #expect(await akit("kb", "seed", "--remove").out.hasSuffix("Run again with --yes to do it."))
+        #expect(KnowledgeBase.isBase(sample))
+        let gone = try json(await akit("kb", "seed", "--remove", "--yes", "--json").out)
+        #expect(gone["removed"] as? Bool == true && gone["world"] as? String == "sample")
+        #expect(!fm.fileExists(atPath: sample.path))
+        #expect(try fm.contentsOfDirectory(atPath: home.appending(path: "Trash").path).count == 2)
     }
 }

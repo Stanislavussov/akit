@@ -3993,8 +3993,8 @@ akit analysis control evaluate swiftui --yes --max-cost 20
 - **Spaces** — пространства базы и число заметок в каждом. Правый щелчок: **Area Settings…**, **Show in Finder** и **Delete…**.
 - Список заметок пространства: заголовок, вид (`service`, `flow`) и путь.
 - Панель заметки: вкладки открытых заметок, кнопки **Edit**, **Properties** (вид и поля заметки), **Copy**, **Paste**, **Open in Obsidian**, **Delete…** и текст.
-- Панель инструментов: **New Area…**, **New Note…**, **Kinds…** (виды заметок и их поля), **Guide**. Если баз несколько — список **Base**.
-- Если базы нет: «No knowledge base» и кнопка **Create Base…**.
+- Панель инструментов: **New Area…**, **New Note…**, **Kinds…** (виды заметок и их поля), меню **Sample Base** (**Add Sample Base…**, **Remove Sample Base…**: пример базы с выдуманными заметками), **Guide**. Если баз несколько — список **Base**.
+- Если базы нет: «No knowledge base» и кнопки **Create Base…** и **Add Sample Base…**.
 
 Подробно: [пространства и заметки](knowledge#spaces), [читать и править](knowledge#note), [виды и свойства](knowledge#kinds), [настройки пространства](knowledge#area-settings).
 

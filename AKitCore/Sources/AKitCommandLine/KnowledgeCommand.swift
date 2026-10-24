@@ -56,6 +56,20 @@ extension AKitCLI {
       akit kb area AREA [--title T] [--description D] [--project P]… [--remove-project P]…
                                         For a person only. Change areas/AREA/area.yaml and commit it
                                         at once. P is a git remote, a ~/ path or a glob
+      akit kb rm NOTE|MAP|AREA [--yes] [--json] [--base PATH|WORLD]
+                                        For a person only. Move a note, a map or a whole area to
+                                        the Trash and commit the removal at once. Without --yes it
+                                        only shows what would go. Proposals in inbox/ are rejected,
+                                        not removed
+      akit kb seed [--world NAME] [--json]
+                                        For a person only. Write the sample base: a separate base
+                                        (world sample unless named) with made-up notes that show
+                                        every feature, committed. Run again, it updates an older
+                                        sample base that has no changes of yours
+      akit kb seed --remove [--world NAME | --base PATH|WORLD] [--yes] [--json]
+                                        For a person only. Move the whole sample base to the Trash.
+                                        Refused for a base that is not a sample one (no
+                                        .akit-seed.json). Without --yes it only shows what would go
 
     Which base (--base, else in this order): the current project's entry in
     ~/.akit/local/knowledge/focus.json, the only base, the base named like this Mac's kind. With
@@ -63,7 +77,7 @@ extension AKitCLI {
     """
 
     static func knowledge(_ arguments: [String], env: HarnessEnvironment, cwd: URL, projectsRoot: URL,
-                          out: (String) -> Void) async throws -> Int32 {
+                          out: (String) -> Void, trash: (URL) throws -> URL? = Trash.move) async throws -> Int32 {
         var args = Arguments(arguments)
         if args.flag("--help") || args.flag("-h") || args.isEmpty {
             out(knowledgeUsage)
@@ -152,6 +166,27 @@ extension AKitCLI {
             return try await knowledgeSet(&args, json: json, base: chosen, env: env, out: out)
         case "area":
             return try await knowledgeArea(&args, json: json, base: chosen, env: env, out: out)
+        case "rm":
+            let yes = args.flag("--yes")
+            guard let name = args.positional() else { throw Failure(message: "Use: akit kb rm NOTE|MAP|AREA [--yes] [--json] [--base PATH|WORLD]") }
+            try args.finish()
+            let base = try await writable(chosen)
+            let item: KnowledgeBase.Item
+            do {
+                item = try base.item(name)
+                if yes { try await base.moveToTrash(item, env: env, trash: trash) }
+            } catch {
+                throw Failure(message: error.message)
+            }
+            if json {
+                out(encode(RemoveAnswer(base: base.root.path, item: item, removed: yes)))
+            } else {
+                out(yes ? "Moved the \(item.kind.rawValue) \(item.id) (\(item.path)) to the Trash, committed."
+                    : "Would move the \(item.kind.rawValue) \(item.id) (\(item.path)) to the Trash and commit the removal. Run again with --yes to do it.")
+            }
+            return 0
+        case "seed":
+            return try await knowledgeSeed(&args, json: json, baseOption: baseOption, base: chosen, env: env, out: out, trash: trash)
         default:
             throw Failure(message: "Unknown command “kb \(command ?? "")”. Run akit kb --help.")
         }
@@ -218,6 +253,61 @@ extension AKitCLI {
             if !answer.isBase { lines.append("No base there yet (a person creates one with akit kb init --world \(world)).") }
             if let vault = answer.vault { lines.append("In the Obsidian vault \(FileWalk.tilde(URL(filePath: vault), home: home)).") }
             out(lines.joined(separator: "\n"))
+        }
+        return 0
+    }
+
+    /// `kb seed` and `kb seed --remove` (person only, K26).
+    private static func knowledgeSeed(_ args: inout Arguments, json: Bool, baseOption: String?, base chosen: () async throws -> KnowledgeBase?,
+                                      env: HarnessEnvironment, out: (String) -> Void, trash: (URL) throws -> URL?) async throws -> Int32 {
+        let home = env.homeDirectory
+        let remove = args.flag("--remove"), yes = args.flag("--yes")
+        let world = args.value("--world")
+        try args.finish()
+        if world != nil, baseOption != nil { throw Failure(message: "Use --world NAME or --base PATH|WORLD, not both.") }
+        guard remove else {
+            if baseOption != nil { throw Failure(message: "akit kb seed names its base with --world NAME (default \(KnowledgeSeed.world)).") }
+            if yes { throw Failure(message: "--yes goes with akit kb seed --remove.") }
+            let outcome: KnowledgeSeed.Outcome
+            do { outcome = try await KnowledgeSeed.seed(world: world ?? KnowledgeSeed.world, env: env, trash: trash) } catch {
+                throw Failure(message: error.message)
+            }
+            let path = FileWalk.tilde(outcome.base.root, home: home)
+            if json {
+                out(encode(SeedAnswer(base: outcome.base.root.path, world: outcome.base.name, seedVersion: KnowledgeSeed.version,
+                                      status: outcome.status.rawValue, files: outcome.files)))
+            } else {
+                switch outcome.status {
+                case .created: out("Created the sample base \(path) (seed v\(KnowledgeSeed.version), \(count(outcome.files.count, "file"))), committed.\nSee it: akit kb areas --base \(outcome.base.name)")
+                case .updated: out("Updated the sample base \(path) to seed v\(KnowledgeSeed.version), committed.")
+                case .unchanged: out("The sample base \(path) is up to date (seed v\(KnowledgeSeed.version)).")
+                }
+            }
+            return 0
+        }
+        let base: KnowledgeBase
+        if baseOption != nil {
+            guard let found = try await chosen() else { throw Failure(message: "No knowledge base on this Mac.") }
+            base = found
+        } else {
+            let name = world ?? KnowledgeSeed.world
+            base = KnowledgeBase(root: KnowledgeBase.root(world: name, home: home), world: name)
+            guard KnowledgeBase.isBase(base.root) else {
+                throw Failure(message: "No sample base of the world \(name) at \(FileWalk.tilde(base.root, home: home)).")
+            }
+        }
+        guard KnowledgeSeed.marker(of: base) != nil else {
+            throw Failure(message: "\(FileWalk.tilde(base.root, home: home)) is not a sample base (it has no \(KnowledgeSeed.markerName)), so AKit doesn't remove it. Remove notes or areas with akit kb rm.")
+        }
+        if yes {
+            do { try KnowledgeSeed.remove(base, home: home, trash: trash) } catch { throw Failure(message: error.message) }
+        }
+        let path = FileWalk.tilde(base.root, home: home)
+        if json {
+            out(encode(SeedRemoveAnswer(base: base.root.path, world: base.world, removed: yes)))
+        } else {
+            out(yes ? "Moved the sample base \(path) to the Trash."
+                : "Would move the sample base \(path) (the whole folder) to the Trash. Run again with --yes to do it.")
         }
         return 0
     }
@@ -442,6 +532,46 @@ extension AKitCLI {
             try container.encode(area, forKey: .area)
             try container.encode(file, forKey: .file)
             try settings.encode(to: encoder)
+        }
+    }
+
+    struct RemoveAnswer: Encodable {
+        let base: String
+        let item: KnowledgeBase.Item
+        /// false without --yes: nothing was removed.
+        let removed: Bool
+
+        private enum CodingKeys: String, CodingKey { case base, removed }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(base, forKey: .base)
+            try item.encode(to: encoder)
+            try container.encode(removed, forKey: .removed)
+        }
+    }
+
+    struct SeedAnswer: Encodable {
+        let base: String
+        let world: String
+        let seedVersion: Int
+        /// created, updated or unchanged.
+        let status: String
+        let files: [String]
+    }
+
+    struct SeedRemoveAnswer: Encodable {
+        let base: String
+        let world: String?
+        let removed: Bool
+
+        private enum CodingKeys: String, CodingKey { case base, world, removed }
+
+        func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(base, forKey: .base)
+            try container.encode(world, forKey: .world) // null for a base named by its path
+            try container.encode(removed, forKey: .removed)
         }
     }
 

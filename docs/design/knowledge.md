@@ -3,7 +3,8 @@
 Status: designed 2026-10-24 (grilling with the user); step 1 built 2026-10-24 (base, notes, links,
 `akit kb`, the Knowledge screen, the commit queue, guide `knowledge.ru.md`; 1.3, K24: kinds in
 `kb.yaml`, Properties and `akit kb set`, Kinds…, `area.yaml` and Area Settings…; 1.4, K25: the base
-folder per world in `bases.json`, `akit kb path`, Settings → Knowledge); spike 2.0 (Excalidraw
+folder per world in `bases.json`, `akit kb path`, Settings → Knowledge; 1.5, K26: the sample base
+`akit kb seed`, Add/Remove Sample Base…, `akit kb rm`); spike 2.0 (Excalidraw
 bundle, results below) done 2026-10-24. Steps in [Steps](#steps).
 First use: the work Mac, with Pi.
 
@@ -47,6 +48,7 @@ describe the system once, by hand, and let the agent read it.
 | K23 | Separate folders | Added 2026-10-24 at the user's request: one area `areas/<name>/` per project, system or unrelated entity, with its own notes and maps; unrelated worlds get separate bases. Every create or proposal names its area; an agent proposes a new area instead of mixing unrelated systems, and the area is created on Accept |
 | K24 | Kinds and settings | Added 2026-10-24 at the user's request: kinds and their fields are data in `<base>/kb.yaml` (defaults `service`, `flow`, `team`, `database`, `queue`, `external`; the user adds, renames, removes). A note's kind and fields change in the note panel's **Properties** or with `akit kb set NOTE KEY=VALUE`, one frontmatter line at a time. `areas/<name>/area.yaml` maps an area to projects (remotes, `~/` paths, globs), so focus and Review find the area for new clones and folders without setup |
 | K25 | Base folder | Added 2026-10-24 at the user's request: the base folder is a setting per world (`~/.akit/local/knowledge/bases.json`, this Mac only), e.g. a folder in the user's Obsidian vault. Any local folder is allowed except inside the brain, a synced folder (iCloud Drive, CloudStorage, Dropbox, Google Drive) or a repo with a remote; this replaces the work-Mac rule "only under `~/.akit/local/`" (K11). **Open in Obsidian** opens the vault that holds the base |
+| K26 | Sample base | Added 2026-10-24 at the user's request: `akit kb seed` / **Add Sample Base…** make a separate base `sample` with made-up content that shows every feature (each later step adds its feature to it); `kb seed --remove` / **Remove Sample Base…** move it to the Trash. `akit kb rm NOTE\|MAP\|AREA` removes from the terminal (to the Trash, one commit) |
 
 ## Layout
 

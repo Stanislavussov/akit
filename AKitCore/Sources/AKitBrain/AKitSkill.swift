@@ -252,6 +252,12 @@ akit kb path [WORLD] [--set PATH | --move PATH | --reset] [--json]
                                                    # --set uses a folder (an Obsidian vault too),
                                                    # --move commits pending edits and moves it,
                                                    # --reset goes back to ~/.akit/local/knowledge
+akit kb rm NOTE|MAP|AREA [--yes] [--json]          # a note, map or whole area to the Trash, one
+                                                   # commit; without --yes it only shows what goes
+akit kb seed [--world NAME] [--json]               # the sample base (world sample): made-up notes
+                                                   # that show every feature, separate from yours
+akit kb seed --remove [--world NAME] [--yes] [--json]
+                                                   # the whole sample base to the Trash
 ```
 
 ## Rules

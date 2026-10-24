@@ -28,6 +28,9 @@ public struct KnowledgeBase: Sendable, Hashable {
     public static func == (lhs: KnowledgeBase, rhs: KnowledgeBase) -> Bool { lhs.root == rhs.root }
     public func hash(into hasher: inout Hasher) { hasher.combine(root) }
 
+    /// The message of a base's first commit.
+    public static let createMessage = "Create the knowledge base"
+
     /// The base's git lock: every git write in a base holds it (P8).
     public static let queueLockName = ".akit-queue.lock"
 
@@ -151,7 +154,7 @@ public struct KnowledgeBase: Sendable, Hashable {
                 try await git.run(["config", "--local", "user.name", "AKit"])
                 try await git.run(["config", "--local", "user.email", "akit@localhost"])
             }
-            try await git.commit(paths: [".gitignore", KnowledgeKinds.fileName], message: "Create the knowledge base")
+            try await git.commit(paths: [".gitignore", KnowledgeKinds.fileName], message: createMessage)
         } catch {
             throw Failure(message: "The knowledge base folder was created, but git failed: \(error.message)")
         }
@@ -341,13 +344,15 @@ public struct KnowledgeBase: Sendable, Hashable {
         return path
     }
 
-    /// Moves a note, or with `area` a whole area, to the Trash and commits the removal at once:
-    /// one commit, only that path (P8).
-    public func moveToTrash(note id: String? = nil, area: String? = nil, env: HarnessEnvironment,
+    /// Moves a note, a map (`.excalidraw`), or with `area` a whole area, to the Trash and commits
+    /// the removal at once: one commit, only that path (P8).
+    public func moveToTrash(note id: String? = nil, area: String? = nil, map: String? = nil, env: HarnessEnvironment,
                             trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
         let path: String, label: String
         if let id {
             (path, label) = (notePath(id), "note \(id)")
+        } else if let map {
+            (path, label) = ("areas/\(map).excalidraw", "map \(map)")
         } else if let area, Self.validName(area) {
             (path, label) = ("areas/\(area)", "area \(area)")
         } else {
@@ -364,6 +369,48 @@ public struct KnowledgeBase: Sendable, Hashable {
             try await KnowledgeGit(base: root, env: env).commit(paths: [path], message: "Delete \(label)")
         } catch {
             throw Failure(message: "\(path) is in the Trash, but the removal wasn't committed: \(error.message)")
+        }
+    }
+
+    /// What `akit kb rm` removes: a note, a map or a whole area.
+    public struct Item: Encodable, Equatable, Sendable {
+        public enum Kind: String, Encodable, Sendable { case note, map, area }
+        public let kind: Kind
+        /// The note or map id (`payments/orders-api`, `payments/maps/overview`), or the area's name.
+        public let id: String
+        /// Base-relative (`areas/payments/orders-api.md`, `areas/payments`).
+        public let path: String
+    }
+
+    /// The note, map or area `name` names: an area's name (`payments`), a map id with or without
+    /// `.excalidraw` (`payments/maps/overview`), else a note as `noteID` finds it (an id, a
+    /// `[[link]]`, a unique name). `areas/` in front is allowed. `inbox/` is refused: a proposal
+    /// is accepted or rejected, not removed.
+    public func item(_ name: String) throws(Failure) -> Item {
+        var name = Self.nfc(name.trimmingCharacters(in: .whitespaces))
+        while name.hasSuffix("/") { name.removeLast() }
+        if name.hasPrefix("areas/") { name.removeFirst("areas/".count) }
+        if name == "inbox" || name.hasPrefix("inbox/") {
+            throw Failure(message: "\(name) is a proposal in inbox/: accept or reject it (akit kb reject), kb rm doesn't remove proposals.")
+        }
+        if !name.contains("/"), let folder = try? areaFolder(name) {
+            return Item(kind: .area, id: folder.lastPathComponent, path: "areas/\(folder.lastPathComponent)")
+        }
+        let map = name.hasSuffix(".excalidraw") ? String(name.dropLast(".excalidraw".count)) : name
+        if KnowledgeGit.isInside(map), FileWalk.isRegularFile(areasFolder.appending(path: map + ".excalidraw")) {
+            return Item(kind: .map, id: map, path: "areas/\(map).excalidraw")
+        }
+        if name.hasSuffix(".excalidraw") { throw Failure(message: "No map “\(map)” in \(root.path).") }
+        let id = try noteID(name.hasSuffix(".md") ? String(name.dropLast(3)) : name)
+        return Item(kind: .note, id: id, path: notePath(id))
+    }
+
+    /// Moves `item` to the Trash and commits its removal (one commit).
+    public func moveToTrash(_ item: Item, env: HarnessEnvironment, trash: (URL) throws -> URL? = Trash.move) async throws(Failure) {
+        switch item.kind {
+        case .note: try await moveToTrash(note: item.id, env: env, trash: trash)
+        case .map: try await moveToTrash(map: item.id, env: env, trash: trash)
+        case .area: try await moveToTrash(area: item.id, env: env, trash: trash)
         }
     }
 

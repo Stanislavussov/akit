@@ -16,6 +16,8 @@ final class KnowledgeModel {
     static let idleFlush: Duration = .seconds(5 * 60)
 
     private(set) var bases: [KnowledgeBase] = []
+    /// The sample base (K26, `.akit-seed.json`) among `bases`, for Remove Sample Base….
+    private(set) var sampleBase: KnowledgeBase?
     private(set) var base: KnowledgeBase?
     private(set) var areas: [KnowledgeBase.Area] = []
     var area: String?
@@ -61,7 +63,10 @@ final class KnowledgeModel {
     /// earlier run left pending.
     func load(select: String? = nil) async {
         bases = KnowledgeBase.all(home: home)
+        sampleBase = bases.first { KnowledgeSeed.marker(of: $0) != nil }
         if !bases.contains(where: { $0 == base }) { base = Self.defaultBase(bases, home: home) }
+        // Snapshots: `--tab sample` shows the sample base, `--tab sample-remove` asks Remove Sample Base….
+        if DebugSnapshot.options?.tab?.hasPrefix("sample") == true, let sampleBase { base = sampleBase }
         if !loaded {
             loaded = true
             await Self.flushQueues(of: bases, env: env)
@@ -205,6 +210,39 @@ final class KnowledgeModel {
         } catch {
             problem = error.message
             return false
+        }
+    }
+
+    // MARK: - Sample base (K26)
+
+    /// Add Sample Base…: `akit kb seed`. Writes (or brings up to date) the base of the world
+    /// `sample` and shows it.
+    func addSampleBase() async {
+        do {
+            let outcome = try await KnowledgeSeed.seed(env: env)
+            base = outcome.base
+            (area, tabs, note) = (nil, [], nil)
+            await load()
+            notice = switch outcome.status {
+            case .created: "Added the sample base \(outcome.base.root.tildePath)."
+            case .updated: "Updated the sample base to seed v\(KnowledgeSeed.version)."
+            case .unchanged: "The sample base is up to date."
+            }
+        } catch {
+            problem = error.message
+        }
+    }
+
+    /// Remove Sample Base…: `akit kb seed --remove --yes`. The whole folder goes to the Trash.
+    func removeSampleBase() async {
+        guard let sample = sampleBase else { return }
+        do {
+            try KnowledgeSeed.remove(sample, home: home)
+            if base == sample { (base, area, tabs, note) = (nil, nil, [], nil) }
+            await load()
+            notice = "Moved the sample base to the Trash."
+        } catch {
+            problem = error.message
         }
     }
 
@@ -425,7 +463,8 @@ final class KnowledgeModel {
     /// What `make snapshot SECTION=knowledge` prints: the visible state as text, so a check
     /// needs no image.
     var manifest: String {
-        var lines = ["knowledge base: \(base?.root.tildePath ?? "none")"]
+        var lines = ["knowledge base: \(base?.root.tildePath ?? "none")",
+                     "bases: " + bases.map { $0.name + ($0 == sampleBase ? " (sample)" : "") }.joined(separator: ", ")]
         lines.append("areas: " + areas.map { "\($0.name)\($0.name == area ? "*" : "") (\($0.notes))" }.joined(separator: ", "))
         lines.append("notes: " + notes.map(\.id).joined(separator: ", "))
         lines.append("tabs: " + tabs.joined(separator: ", "))
